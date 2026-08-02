@@ -253,6 +253,21 @@ define_stable_resource_id!(
     PublishedEndpointId,
     "netendpoint"
 );
+
+impl PublishedEndpointId {
+    /// Derive one named endpoint identity for a workload incarnation.
+    ///
+    /// The upper layer supplies a tenant-qualified workload incarnation key.
+    /// The identity excludes every desired or observed address and port.
+    pub fn for_workload_endpoint(workload_incarnation_key: &str, endpoint_name: &str) -> Self {
+        Self(derive_stable_id(
+            Self::PREFIX,
+            b"nimbus.network.published-endpoint.v1",
+            &[workload_incarnation_key, endpoint_name],
+        ))
+    }
+}
+
 define_stable_resource_id!(
     /// Stable identity of a listener, independent of its observed address.
     ListenerId,
@@ -296,6 +311,25 @@ define_stable_resource_id!(
     IngressRouteId,
     "netroute"
 );
+
+impl IngressRouteId {
+    /// Derive one admitted route identity for a workload incarnation.
+    ///
+    /// The upper layer supplies a tenant-qualified workload incarnation key.
+    /// The identity excludes the admitted host, address, and numeric ports.
+    pub fn for_workload_route(
+        workload_incarnation_key: &str,
+        service_name: &str,
+        route_name: &str,
+    ) -> Self {
+        Self(derive_stable_id(
+            Self::PREFIX,
+            b"nimbus.network.ingress-route.v1",
+            &[workload_incarnation_key, service_name, route_name],
+        ))
+    }
+}
+
 define_stable_resource_id!(
     /// Stable identity of a host-global port reservation.
     PortLeaseId,
@@ -730,6 +764,64 @@ mod tests {
             NetworkProviderId::for_registration_key("nimbus-sandbox.netavark")
         );
         for identity in [listener.as_str(), lease.as_str()] {
+            assert!(!identity.contains("127.0.0.1"));
+            assert!(!identity.contains("8080"));
+        }
+    }
+
+    #[test]
+    fn compiled_endpoint_and_route_ids_are_stable_and_domain_separated() {
+        let endpoint =
+            PublishedEndpointId::for_workload_endpoint("tenant-a/workload-incarnation-a", "api");
+        let endpoint_replay =
+            PublishedEndpointId::for_workload_endpoint("tenant-a/workload-incarnation-a", "api");
+        let endpoint_replacement =
+            PublishedEndpointId::for_workload_endpoint("tenant-a/workload-incarnation-b", "api");
+        let endpoint_other_tenant =
+            PublishedEndpointId::for_workload_endpoint("tenant-b/workload-incarnation-a", "api");
+        let route =
+            IngressRouteId::for_workload_route("tenant-a/workload-incarnation-a", "orders", "api");
+        let route_replay =
+            IngressRouteId::for_workload_route("tenant-a/workload-incarnation-a", "orders", "api");
+        let route_other_name = IngressRouteId::for_workload_route(
+            "tenant-a/workload-incarnation-a",
+            "orders",
+            "metrics",
+        );
+        let route_other_service =
+            IngressRouteId::for_workload_route("tenant-a/workload-incarnation-a", "billing", "api");
+        let route_other_tenant =
+            IngressRouteId::for_workload_route("tenant-b/workload-incarnation-a", "orders", "api");
+
+        assert_eq!(endpoint, endpoint_replay);
+        assert_ne!(endpoint, endpoint_replacement);
+        assert_ne!(endpoint, endpoint_other_tenant);
+        assert_eq!(route, route_replay);
+        assert_ne!(route, route_other_name);
+        assert_ne!(route, route_other_service);
+        assert_ne!(route, route_other_tenant);
+        assert_ne!(
+            PublishedEndpointId::for_workload_endpoint("ab", "c"),
+            PublishedEndpointId::for_workload_endpoint("a", "bc"),
+            "length framing must preserve endpoint component boundaries"
+        );
+        assert_ne!(
+            IngressRouteId::for_workload_route("ab", "c", "d"),
+            IngressRouteId::for_workload_route("a", "bc", "d"),
+            "length framing must preserve route component boundaries"
+        );
+        assert_ne!(endpoint.as_str(), route.as_str());
+        assert_eq!(
+            endpoint.as_str(),
+            "netendpoint_7F4MY42W4RHZVSW3V9C7CD6H0C",
+            "the workload endpoint derivation is durable wire authority"
+        );
+        assert_eq!(
+            route.as_str(),
+            "netroute_3FEGFHKQEHDCBC1A4TE9Z2F610",
+            "the workload route derivation is durable wire authority"
+        );
+        for identity in [endpoint.as_str(), route.as_str()] {
             assert!(!identity.contains("127.0.0.1"));
             assert!(!identity.contains("8080"));
         }

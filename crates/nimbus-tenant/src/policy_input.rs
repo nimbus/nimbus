@@ -1,4 +1,7 @@
-use nimbus_core::{Error, Result};
+use std::collections::BTreeSet;
+use std::net::IpAddr;
+
+use nimbus_core::{Error, Result, is_valid_dns_hostname};
 use nimbus_egress::{CompiledEgressPolicy, EgressAuthorization, EgressPolicy, EgressRequest};
 use nimbus_network::EndpointProtocol;
 use nimbus_runtime::{RuntimePolicy, RuntimeTenantBudget};
@@ -59,28 +62,218 @@ impl TenantNetworkEndpointDecision {
         self.guest_port = Some(guest_port);
         self
     }
+
+    /// Logical admitted service that owns this endpoint.
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    /// Stable endpoint name within the admitted service.
+    pub fn endpoint_name(&self) -> &str {
+        &self.endpoint_name
+    }
+
+    /// Admitted transport protocol.
+    pub const fn protocol(&self) -> EndpointProtocol {
+        self.protocol
+    }
+
+    /// Desired bare DNS name or IP literal, before any provider observation.
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Desired host-side port.
+    pub const fn host_port(&self) -> u16 {
+        self.host_port
+    }
+
+    /// Optional desired sandbox guest port.
+    pub const fn guest_port(&self) -> Option<u16> {
+        self.guest_port
+    }
+}
+
+const fn endpoint_protocol_sort_key(protocol: EndpointProtocol) -> u8 {
+    match protocol {
+        EndpointProtocol::Tcp => 0,
+        EndpointProtocol::Http => 1,
+        EndpointProtocol::Https => 2,
+    }
+}
+
+pub(super) struct NetworkEndpointValidationInput<'a> {
+    service_name: &'a str,
+    endpoint_name: &'a str,
+    host: &'a str,
+    host_port: u16,
+    guest_port: Option<u16>,
+}
+
+impl<'a> NetworkEndpointValidationInput<'a> {
+    pub(super) const fn new(
+        service_name: &'a str,
+        endpoint_name: &'a str,
+        host: &'a str,
+        host_port: u16,
+        guest_port: Option<u16>,
+    ) -> Self {
+        Self {
+            service_name,
+            endpoint_name,
+            host,
+            host_port,
+            guest_port,
+        }
+    }
+}
+
+pub(super) fn validate_network_endpoints<'endpoint, 'service>(
+    endpoints: impl IntoIterator<Item = NetworkEndpointValidationInput<'endpoint>>,
+    admitted_services: impl IntoIterator<Item = &'service str>,
+) -> std::result::Result<(), String> {
+    let admitted_services: BTreeSet<_> = admitted_services.into_iter().collect();
+    let mut seen = BTreeSet::new();
+    for endpoint in endpoints {
+        validate_concrete_name(endpoint.service_name, "service")?;
+        validate_concrete_name(endpoint.endpoint_name, "network endpoint")?;
+        validate_network_host(endpoint.host)?;
+        validate_network_port(endpoint.host_port, "host_port")?;
+        if let Some(guest_port) = endpoint.guest_port {
+            validate_network_port(guest_port, "guest_port")?;
+        }
+        if !admitted_services.contains(endpoint.service_name) {
+            return Err(format!(
+                "network endpoint `{}` references service `{}` that is not in services.allow",
+                endpoint.endpoint_name, endpoint.service_name
+            ));
+        }
+        let key = (endpoint.service_name, endpoint.endpoint_name);
+        if !seen.insert(key) {
+            return Err(format!(
+                "network endpoint `{}/{}` is declared more than once",
+                endpoint.service_name, endpoint.endpoint_name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_concrete_name(value: &str, label: &str) -> std::result::Result<(), String> {
+    if value.trim().is_empty() || value == "*" {
+        return Err(format!("{label} must be a concrete non-empty value"));
+    }
+    if value.contains(char::is_whitespace) {
+        return Err(format!("{label} `{value}` must not contain whitespace"));
+    }
+    Ok(())
+}
+
+fn validate_network_host(host: &str) -> std::result::Result<(), String> {
+    if host.trim().is_empty() {
+        return Err("network host must be a concrete non-empty value".to_owned());
+    }
+    if host != host.trim() || host.contains(char::is_whitespace) {
+        return Err(format!("network host `{host}` must not contain whitespace"));
+    }
+    if host == "*" || host.contains('*') {
+        return Err(format!(
+            "network host `{host}` is a wildcard bind, not an admitted egress endpoint"
+        ));
+    }
+    if host.contains("://")
+        || host.contains('/')
+        || host.contains('\\')
+        || host.contains('@')
+        || host.starts_with('[')
+        || host.ends_with(']')
+    {
+        return Err(format!(
+            "network host `{host}` must be a bare DNS name or IP literal, not a URL or authority"
+        ));
+    }
+    if let Ok(ip) = host.parse::<IpAddr>()
+        && ip.is_unspecified()
+    {
+        return Err(format!("network host `{host}` is unspecified"));
+    }
+    if host.parse::<IpAddr>().is_ok() {
+        return Ok(());
+    }
+    if host.contains(':') {
+        return Err(format!(
+            "network host `{host}` must not include a port or brackets"
+        ));
+    }
+    if !is_valid_dns_hostname(host) {
+        return Err(format!(
+            "network host `{host}` must be a valid DNS hostname or IP literal"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_network_port(port: u16, field: &str) -> std::result::Result<(), String> {
+    if port == 0 {
+        return Err(format!("network {field} must not be 0"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct TenantNetworkPolicyDecision {
     pub(super) endpoints: Vec<TenantNetworkEndpointDecision>,
-    public_exposure_allowed: bool,
-    generic_loopback_allowed: bool,
     sandbox_egress: CompiledEgressPolicy,
 }
 
 impl TenantNetworkPolicyDecision {
     pub fn new(endpoints: impl IntoIterator<Item = TenantNetworkEndpointDecision>) -> Self {
+        let mut endpoints: Vec<_> = endpoints.into_iter().collect();
+        endpoints.sort_by(|left, right| {
+            (
+                left.service_name.as_str(),
+                left.endpoint_name.as_str(),
+                endpoint_protocol_sort_key(left.protocol),
+                left.host.as_str(),
+                left.host_port,
+                left.guest_port,
+            )
+                .cmp(&(
+                    right.service_name.as_str(),
+                    right.endpoint_name.as_str(),
+                    endpoint_protocol_sort_key(right.protocol),
+                    right.host.as_str(),
+                    right.host_port,
+                    right.guest_port,
+                ))
+        });
         Self {
-            endpoints: endpoints.into_iter().collect(),
-            public_exposure_allowed: false,
-            generic_loopback_allowed: false,
+            endpoints,
             sandbox_egress: CompiledEgressPolicy::deny_all(),
         }
     }
 
     pub fn endpoints(&self) -> &[TenantNetworkEndpointDecision] {
         &self.endpoints
+    }
+
+    pub(super) fn validate_for_admission(
+        &self,
+        services: &TenantServiceGrantPolicyDecision,
+    ) -> Result<()> {
+        validate_network_endpoints(
+            self.endpoints.iter().map(|endpoint| {
+                NetworkEndpointValidationInput::new(
+                    endpoint.service_name(),
+                    endpoint.endpoint_name(),
+                    endpoint.host(),
+                    endpoint.host_port(),
+                    endpoint.guest_port(),
+                )
+            }),
+            services.services().iter().map(String::as_str),
+        )
+        .map_err(|message| Error::InvalidInput(format!("tenant network policy invalid: {message}")))
     }
 
     pub fn with_sandbox_egress(mut self, sandbox_egress: EgressPolicy) -> Result<Self> {

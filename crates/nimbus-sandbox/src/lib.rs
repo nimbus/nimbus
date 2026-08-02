@@ -19,6 +19,7 @@ pub mod volume;
 
 pub use crate::backends::oci::network::{MachinePortForwardOutcome, MachinePortForwardReceipt};
 pub use crate::backends::oci::network::{OciNetworkProcess, OciNetworkProcessError};
+pub use crate::backends::{SandboxNetworkPlanRequirements, sandbox_network_plan_requirements};
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 pub use error::{Result, SandboxError};
 pub use inspection::{

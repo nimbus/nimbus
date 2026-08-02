@@ -74,15 +74,30 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.1e complete; NNC6.2
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.2 complete; NNC6.2a
   in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
-  pure admitted-intent to exact `NetworkPlan` compiler. Its completed audit
-  found that the current saga tuple cannot reconstruct full desired network
-  state before first reservation. NNC6.2a now owns the durable compiled-plan
-  carrier and fresh-process replay. NNC6.1e1 remains the later lifecycle
-  ingress and caller cutover. Workloads-owned execution identity and generation now reach
+  pure admitted-intent to exact `NetworkPlan` compiler. C1-C18 are green after
+  correcting five accepted findings from its one full Sol/xhigh/fast review;
+  one standalone display-name/profile finding is rejected from the public API
+  and live test contract. Corrected affected behavior passes `1,477/1,477`
+  with 27 declared skips, NNCV028 passes `18/18` plus `6/6`, and the complete
+  204-case aggregate adversarial contract is green across a bounded prefix and
+  exact continuation. Workspace, format/diff, Bash/ShellCheck, docs 108, and
+  site `17/17` gates are green. Its sole narrow Sol/xhigh/fast review confirmed
+  the behavioral corrections and found one accepted P3 arithmetic defect;
+  exact `198 + 6 = 204` reporting is corrected and proven. Review cadence is
+  exhausted and only the exact item commit remains before NNC6.2a's read-only
+  durable carrier/replay audit. Network resource identity is retained
+  tenant-qualified and rederived for every attachment, route,
+  listener, endpoint, and lease; it never uses the mutable decision digest,
+  address, or port. Source-bearing sovereignty cannot be relaxed, and the
+  exact portable content authenticates the complete plan envelope. Its completed
+  audit found that the current saga tuple cannot reconstruct full desired
+  network state before first reservation. NNC6.2a now owns the durable
+  compiled-plan carrier and fresh-process replay. NNC6.1e1 remains the later
+  lifecycle ingress and caller cutover. Workloads-owned execution identity and generation now reach
   operational node paths, false in-memory desired-state authorities are
   deleted, and status, systemd, cgroup, and exported journal evidence
   correlate one exact identity without cross-record stitching. The sole full

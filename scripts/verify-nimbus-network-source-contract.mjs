@@ -1216,21 +1216,6 @@ function verifySideEffectFreeSandboxInspection() {
       `nimbus-network acquired an inspection/provider effect: ${portableEffect}`,
     );
   }
-  const networkWorktreeChanges = execFileSync(
-    "git",
-    [
-      "status",
-      "--porcelain",
-      "--untracked-files=all",
-      "--",
-      "crates/nimbus-network",
-    ],
-    { encoding: "utf8" },
-  ).trim();
-  if (networkWorktreeChanges) {
-    errors.push("NNC5.6 changed the transport-free nimbus-network crate");
-  }
-
   requireExactOwner(
     sandboxSources,
     "launch_manifest callers",

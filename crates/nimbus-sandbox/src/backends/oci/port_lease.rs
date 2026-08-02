@@ -22,6 +22,7 @@ use nimbus_network::{
 };
 use ulid::Ulid;
 
+use crate::backends::capabilities::SANDBOX_EGRESS_PEP_PROVIDER_KEY;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
@@ -127,7 +128,7 @@ impl OciPortProvider {
         match self {
             Self::Netavark => "nimbus-sandbox.netavark",
             Self::MachinePortProxy => "nimbus-sandbox.machine-port-proxy",
-            Self::EgressPep => "nimbus-sandbox.egress-pep",
+            Self::EgressPep => SANDBOX_EGRESS_PEP_PROVIDER_KEY,
         }
     }
 

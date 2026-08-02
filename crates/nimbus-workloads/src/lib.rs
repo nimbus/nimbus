@@ -2,6 +2,7 @@
 
 mod assignment;
 mod desired;
+mod network_plan;
 mod saga;
 mod scheduling;
 mod store;
@@ -12,6 +13,12 @@ pub use desired::{
     DesiredWorkload, DesiredWorkloadKind, DesiredWorkloadState, EmbeddedNodeClient,
     WorkloadChannelDescriptor, WorkloadEvaluation, WorkloadEventQueue, WorkloadExecutionPhase,
     WorkloadExecutionStatus, WorkloadExecutor,
+};
+pub use network_plan::{
+    CompiledWorkloadNetworkPlan, WORKLOAD_NETWORK_PLAN_FORMAT_VERSION,
+    WorkloadNetworkAttachmentBlueprint, WorkloadNetworkDependencyListenerBlueprint,
+    WorkloadNetworkListenerBlueprint, WorkloadNetworkPlanContent, WorkloadNetworkPlanError,
+    WorkloadNetworkPlanIdentity, WorkloadNetworkPortRequestMode, WorkloadNetworkRouteBlueprint,
 };
 pub use saga::{
     WORKLOAD_SAGA_FORMAT_VERSION, WORKLOAD_SAGA_RECOVERY_ORDER, WorkloadActivationIntent,

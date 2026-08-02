@@ -625,7 +625,7 @@
       "kind": "attachment-registration-construction",
       "symbol": "host_managed_attachment_registration_for_target",
       "ordinal": 1,
-      "line": 171,
+      "line": 226,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6c"

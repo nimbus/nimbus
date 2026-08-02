@@ -103,6 +103,7 @@ impl TenantIsolationDecision {
         input: TenantIsolationPolicyInput,
     ) -> Result<Self> {
         context.admit_if_principal_claim_absent_or_matching("tenant isolation decision")?;
+        input.network.validate_for_admission(&input.services)?;
         let authority = TenantIsolationAuthorityDecision::from_context(context)?;
         let fingerprint = TenantIsolationDecisionFingerprint {
             tenant_id: context.tenant_id.as_str(),

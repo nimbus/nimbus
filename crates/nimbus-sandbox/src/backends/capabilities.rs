@@ -15,12 +15,67 @@ use nimbus_network::{
 };
 use thiserror::Error;
 
+use crate::SandboxBackendKind;
+
 /// Stable identity key for the container host-managed attachment composition.
 pub const CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY: &str =
     "nimbus-sandbox.container.host-managed-attachment";
 /// Stable identity key for the krun host-managed attachment composition.
 pub const KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY: &str =
     "nimbus-sandbox.krun.host-managed-attachment";
+/// Stable identity key for the sandbox-owned egress PEP listener composition.
+pub(crate) const SANDBOX_EGRESS_PEP_PROVIDER_KEY: &str = "nimbus-sandbox.egress-pep";
+
+/// Effect-free network requirements sourced from one OCI sandbox backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxNetworkPlanRequirements {
+    required_attachment_provider_id: NetworkProviderId,
+    pep_provider_id: NetworkProviderId,
+    capability_requirements: NetworkCapabilityRequirements,
+    requires_pep_readiness: bool,
+}
+
+impl SandboxNetworkPlanRequirements {
+    /// Exact source-owned attachment registration required by this backend.
+    pub fn required_attachment_provider_id(&self) -> &NetworkProviderId {
+        &self.required_attachment_provider_id
+    }
+
+    /// Exact source-owned provider identity for the sandbox egress PEP listener.
+    pub fn pep_provider_id(&self) -> &NetworkProviderId {
+        &self.pep_provider_id
+    }
+
+    /// Provider-neutral capability requirements for plan compilation.
+    pub fn capability_requirements(&self) -> &NetworkCapabilityRequirements {
+        &self.capability_requirements
+    }
+
+    /// Whether current execute-mode OCI compositions require PEP readiness.
+    pub const fn requires_pep_readiness(&self) -> bool {
+        self.requires_pep_readiness
+    }
+}
+
+/// Project one sandbox backend's source-owned network-plan requirements.
+///
+/// This function reads no runtime configuration and performs no provider,
+/// filesystem, socket, environment, clock, or random effect. It reports
+/// requirements and stable provider identities; it does not select a provider.
+pub fn sandbox_network_plan_requirements(
+    backend: SandboxBackendKind,
+) -> SandboxNetworkPlanRequirements {
+    let kind = match backend {
+        SandboxBackendKind::Container => SandboxAttachmentRegistrationKind::Container,
+        SandboxBackendKind::Krun => SandboxAttachmentRegistrationKind::Krun,
+    };
+    SandboxNetworkPlanRequirements {
+        required_attachment_provider_id: host_managed_attachment_provider_id(kind),
+        pep_provider_id: NetworkProviderId::for_registration_key(SANDBOX_EGRESS_PEP_PROVIDER_KEY),
+        capability_requirements: host_managed_attachment_requirements(kind),
+        requires_pep_readiness: true,
+    }
+}
 
 /// Why a configured sandbox backend cannot advertise its attachment evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -182,6 +237,79 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+
+    #[test]
+    fn sandbox_network_plan_requirement_projection_is_exact_and_effect_free() {
+        let container =
+            crate::sandbox_network_plan_requirements(crate::SandboxBackendKind::Container);
+        let repeated =
+            crate::sandbox_network_plan_requirements(crate::SandboxBackendKind::Container);
+        let krun = crate::sandbox_network_plan_requirements(crate::SandboxBackendKind::Krun);
+
+        assert_eq!(
+            container, repeated,
+            "the projection must be pure and stable"
+        );
+        assert_ne!(
+            container.required_attachment_provider_id(),
+            krun.required_attachment_provider_id(),
+            "backend-specific attachment registrations must retain distinct identities"
+        );
+        assert_eq!(container.pep_provider_id(), krun.pep_provider_id());
+        assert_eq!(
+            container.pep_provider_id(),
+            &crate::backends::oci::port_lease::OciPortProvider::EgressPep.provider_id(),
+            "the public source projection and lease adapter must share one PEP provider identity"
+        );
+        assert!(container.requires_pep_readiness());
+        assert!(krun.requires_pep_readiness());
+
+        assert_eq!(
+            container
+                .capability_requirements()
+                .attachment()
+                .attachment_modes(),
+            &BTreeSet::from([NetworkAttachmentMode::IsolatedNamespace])
+        );
+        assert_eq!(
+            krun.capability_requirements()
+                .attachment()
+                .attachment_modes(),
+            &BTreeSet::from([
+                NetworkAttachmentMode::IsolatedNamespace,
+                NetworkAttachmentMode::VirtualMachineGuest,
+            ])
+        );
+        for projection in [&container, &krun] {
+            assert_eq!(
+                projection
+                    .capability_requirements()
+                    .attachment()
+                    .management_mode(),
+                NetworkManagementMode::NimbusHostManaged
+            );
+            assert_eq!(
+                projection
+                    .capability_requirements()
+                    .sovereignty()
+                    .maximum_control_plane_locality(),
+                NetworkControlPlaneLocality::LocalOnly
+            );
+            assert!(
+                projection
+                    .capability_requirements()
+                    .sovereignty()
+                    .allowed_external_dependencies()
+                    .is_empty()
+            );
+            assert!(
+                projection
+                    .capability_requirements()
+                    .sovereignty()
+                    .offline_restart_required()
+            );
+        }
+    }
 
     #[test]
     fn linux_registration_facts_are_conservative_and_backend_specific() {

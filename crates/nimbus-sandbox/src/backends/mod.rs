@@ -9,6 +9,7 @@ mod readiness_probe;
 
 pub use capabilities::{
     CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY, KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
-    SandboxAttachmentRegistrationError,
+    SandboxAttachmentRegistrationError, SandboxNetworkPlanRequirements,
+    sandbox_network_plan_requirements,
 };
 pub use oci::network::{OciNetworkProcess, OciNetworkProcessError};
