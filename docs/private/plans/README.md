@@ -196,7 +196,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   pre-ledger executable patch SHA-256 is
   `ff0551ba284866427b2a62fc147e94ab1695f68f1089f2238bb97f0c81be1de3`.
   NNC6.4 is next and owns the atomic provider-command and provision-caller
-  replacement after the exact NNC6.3b item commit.
+  replacement. NNC6.3b is durable at `c42c61fb2`. NNC6.4 starts with a
+  read-only source-derived caller/effect census before any product edit.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
