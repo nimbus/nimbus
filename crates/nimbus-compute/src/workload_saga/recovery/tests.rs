@@ -1,25 +1,33 @@
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
-    NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
-    NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
-    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkResourceGeneration,
-    NetworkSovereigntyRequirements, PublishedEndpointId,
+    EndpointProtocol, NetworkAddressFamily, NetworkAttachmentCapabilitySet,
+    NetworkAttachmentProviderRegistration, NetworkBindRealmKind, NetworkCapabilityBundle,
+    NetworkCapabilityRequirements, NetworkControlPlaneLocality, NetworkEndpointCapabilitySet,
+    NetworkExposure, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
+    NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet, NetworkManagementMode,
+    NetworkPortAssignmentMode, NetworkProviderId, NetworkResourceGeneration,
+    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, NetworkTlsBehavior,
+    PortProtocol, PublishedEndpointId,
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
     WorkloadExecutableEncoding, WorkloadExecutableIntent, WorkloadGeneration,
-    WorkloadInspectionRequirement, WorkloadNetworkIntent, WorkloadNetworkPlanContent,
-    WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
-    WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadPublicationReference,
-    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaIntent,
-    WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
-    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
-    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest, WorkloadTerminalEvidenceDigest,
-    WorkloadTerminalObservation,
+    WorkloadInspectionRequirement, WorkloadNetworkEndpointSemantics,
+    WorkloadNetworkForwardingBehavior, WorkloadNetworkIntent, WorkloadNetworkListenerBlueprint,
+    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadNetworkPortRequestMode,
+    WorkloadOwnerEvidenceDigest, WorkloadPhaseDetail, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent,
+    WorkloadPublicationReference, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
+    WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaPage,
+    WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore,
+    WorkloadSagaStoreError, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
 
 use super::{WorkloadSagaAction, WorkloadSagaCoordinator, WorkloadSagaDecision};
@@ -48,21 +56,86 @@ fn compiled_plan(
         NetworkResourceGeneration::new(generation),
     )
     .expect("fixture network identity is valid");
-    let requirements = NetworkCapabilityRequirements::new(
-        NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []),
-        NetworkEndpointCapabilitySet::new([], [], [], [], []),
-        NetworkIngressCapabilitySet::new([]),
-        NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([]),
-        NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+    let attachment =
+        NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []);
+    let endpoint = NetworkEndpointCapabilitySet::new(
+        [NetworkAddressFamily::Ipv4],
+        [NetworkBindRealmKind::Host],
+        [NetworkExposure::Loopback],
+        [PortProtocol::Tcp],
+        [NetworkPortAssignmentMode::ProviderAssigned],
     );
+    let ingress = NetworkIngressCapabilitySet::new([]);
+    let forwarding = NetworkForwardingCapabilitySet::new([]);
+    let lifecycle = NetworkLifecycleCapabilitySet::new([]);
+    let sovereignty =
+        NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true);
+    let requirements = NetworkCapabilityRequirements::new(
+        attachment.clone(),
+        endpoint.clone(),
+        ingress.clone(),
+        forwarding.clone(),
+        lifecycle.clone(),
+        sovereignty,
+    );
+    let (selection, selection_evidence, listeners) =
+        if publication == WorkloadPublicationIntent::PublishWhenReady {
+            let attachment_provider = NetworkProviderId::for_registration_key("fixture-attachment");
+            let ingress_provider = NetworkProviderId::for_registration_key("fixture-ingress");
+            let bundle = NetworkCapabilityBundle::new(
+                NetworkAttachmentProviderRegistration::new(
+                    attachment_provider,
+                    attachment,
+                    [NetworkAddressFamily::Ipv4],
+                    lifecycle.clone(),
+                    NetworkSovereigntyCapabilities::new(
+                        NetworkControlPlaneLocality::LocalOnly,
+                        [],
+                        true,
+                    ),
+                ),
+                NetworkIngressProviderRegistration::new(
+                    ingress_provider,
+                    endpoint,
+                    ingress,
+                    forwarding,
+                    lifecycle,
+                    NetworkSovereigntyCapabilities::new(
+                        NetworkControlPlaneLocality::LocalOnly,
+                        [],
+                        true,
+                    ),
+                ),
+            );
+            let listener = WorkloadNetworkListenerBlueprint::new(
+                &identity,
+                "api",
+                EndpointProtocol::Http,
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                WorkloadNetworkPortRequestMode::ProviderAssigned,
+                WorkloadNetworkEndpointSemantics::new(
+                    WorkloadNetworkForwardingBehavior::None,
+                    NetworkTlsBehavior::Disabled,
+                ),
+                None,
+            )
+            .expect("fixture listener should validate");
+            (
+                Some(bundle.selection()),
+                Some(bundle.selection_evidence()),
+                vec![listener],
+            )
+        } else {
+            (None, None, Vec::new())
+        };
     let content = WorkloadNetworkPlanContent::new(
         identity,
         requirements,
-        None,
+        selection,
+        selection_evidence,
         None,
         [],
-        [],
+        listeners,
         [],
         activation,
         publication,
@@ -81,15 +154,27 @@ fn intent(
     seed: u8,
 ) -> WorkloadSagaIntent {
     let tenant_id = tenant(label);
+    let executable = WorkloadExecutableIntent::new(
+        WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(r#"{{"fixtureSeed":{seed}}}"#),
+    )
+    .expect("fixture executable is valid");
+    let source = WorkloadProvisionSourceEvidence::standalone_sandbox(
+        WorkloadProvisionSourceIdentity::standalone_sandbox(label, label)
+            .expect("fixture source identity is valid"),
+        WorkloadProvisionSourceGeneration::new(generation),
+        WorkloadProvisionSourceResourceVersion::new(format!("fixture-{seed}"))
+            .expect("fixture source version is valid"),
+        executable.content_digest(),
+        NetworkProviderId::for_registration_key("fixture-attachment"),
+    )
+    .expect("fixture source evidence is valid");
     WorkloadSagaIntent::new(
         DesiredWorkloadKind::Sandbox,
         desired_state,
         WorkloadGeneration::new(generation),
-        WorkloadExecutableIntent::new(
-            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-            format!(r#"{{"fixtureSeed":{seed}}}"#),
-        )
-        .expect("fixture executable is valid"),
+        executable,
+        source,
         WorkloadNetworkIntent::new(compiled_plan(
             &tenant_id,
             label,
@@ -106,10 +191,7 @@ fn intent(
             format!("twu_{}", format!("{:02x}", seed.wrapping_add(1)).repeat(32))
                 .try_into()
                 .expect("fixture workload uid is valid"),
-            Some(
-                NodeIdentity::new(format!("node-{label}-{generation}"))
-                    .expect("fixture node is valid"),
-            ),
+            NodeIdentity::new(format!("node-{label}-{generation}")).expect("fixture node is valid"),
         ),
     )
     .expect("fixture intent is valid")
@@ -151,108 +233,22 @@ fn publication_reference(intent: &WorkloadSagaIntent) -> WorkloadPublicationRefe
         .expect("fixture publication reference is valid")
 }
 
-fn provision_references(
-    phase: WorkloadSagaPhase,
-    intent: &WorkloadSagaIntent,
-    publication: &WorkloadPublicationReference,
-) -> WorkloadEffectReferences {
-    let publication = (intent.publication() == WorkloadPublicationIntent::PublishWhenReady
-        && matches!(
-            phase,
-            WorkloadSagaPhase::Ready | WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed
-        ))
-    .then(|| publication.clone());
-    WorkloadEffectReferences::provision(intent, publication)
-        .expect("fixture provision references are valid")
-}
-
-fn provision_observations(
-    phase: WorkloadSagaPhase,
-    references: &WorkloadEffectReferences,
-    publication: WorkloadPublicationIntent,
-) -> Vec<WorkloadOwnerObservation> {
-    let network = references.network().expect("network is retained").clone();
-    let execution = references
-        .execution()
-        .expect("execution is retained")
-        .clone();
-    let rank = match phase {
-        WorkloadSagaPhase::NetworkReserved => 1,
-        WorkloadSagaPhase::WorkloadPrepared => 2,
-        WorkloadSagaPhase::NetworkAttached => 3,
-        WorkloadSagaPhase::WorkloadActivated => 4,
-        WorkloadSagaPhase::Ready => 5,
-        WorkloadSagaPhase::Published => 6,
-        WorkloadSagaPhase::Observed => {
-            if publication == WorkloadPublicationIntent::PublishWhenReady {
-                6
-            } else {
-                5
-            }
-        }
-        _ => panic!("phase has no provision observations"),
-    };
-    let mut observations = Vec::new();
-    if rank >= 1 {
-        observations.push(WorkloadOwnerObservation::NetworkReserved {
-            reference: network.clone(),
-            evidence: evidence("network-reserved"),
-        });
-    }
-    if rank >= 2 {
-        observations.push(WorkloadOwnerObservation::ExecutionPrepared {
-            reference: execution.clone(),
-            evidence: evidence("execution-prepared"),
-        });
-    }
-    if rank >= 3 {
-        observations.push(WorkloadOwnerObservation::NetworkAttached {
-            reference: network.clone(),
-            evidence: evidence("network-attached"),
-        });
-    }
-    if rank >= 4 {
-        observations.push(WorkloadOwnerObservation::ExecutionActivated {
-            reference: execution.clone(),
-            evidence: evidence("execution-activated"),
-        });
-    }
-    if rank >= 5 {
-        observations.push(WorkloadOwnerObservation::Ready {
-            network,
-            execution,
-            evidence: evidence("ready"),
-        });
-    }
-    if rank >= 6 {
-        observations.push(WorkloadOwnerObservation::PublicationPresent {
-            reference: references
-                .publication()
-                .expect("published phase retains publication")
-                .clone(),
-            evidence: evidence("publication-present"),
-        });
-    }
-    observations
-}
-
 fn advance_provision(
     record: &WorkloadSagaRecord,
     phase: WorkloadSagaPhase,
     publication: &WorkloadPublicationReference,
 ) -> WorkloadSagaRecord {
-    let references = provision_references(phase, record.active_intent(), publication);
-    let observations =
-        provision_observations(phase, &references, record.active_intent().publication());
-    let detail =
-        WorkloadPhaseDetail::provision(phase, record.active_intent(), references, observations)
-            .expect("fixture phase detail is valid");
-    record
-        .advance(phase, detail, None)
-        .expect("fixture provision transition is valid")
+    let _ = publication;
+    let candidate = crate::workload_saga::test_support::confirmed_provision(record);
+    assert_eq!(
+        candidate.phase(),
+        phase,
+        "fixture should reach its target phase"
+    );
+    candidate
 }
 
-fn provision_record(
+pub(crate) fn provision_record(
     label: &str,
     target: WorkloadSagaPhase,
     activation: WorkloadActivationIntent,
@@ -512,6 +508,12 @@ fn assert_decision(
     assert_eq!(decision.action(), &action);
 }
 
+fn assert_provision_decision(record: &WorkloadSagaRecord, target: WorkloadSagaPhase) {
+    let provision = super::super::WorkloadProvisionDecision::plan(record)
+        .expect("valid provision record is reducible");
+    assert_decision(record, target, WorkloadSagaAction::Provision(provision));
+}
+
 #[test]
 fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
     let intent_committed = provision_record(
@@ -520,20 +522,7 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::Withheld,
     );
-    assert_decision(
-        &intent_committed,
-        WorkloadSagaPhase::NetworkReserved,
-        WorkloadSagaAction::ReserveNetwork {
-            reference: nimbus_workloads::WorkloadNetworkReference::for_intent(
-                intent_committed.active_intent(),
-            ),
-            plan: intent_committed
-                .active_intent()
-                .network()
-                .compiled_plan()
-                .clone(),
-        },
-    );
+    assert_provision_decision(&intent_committed, WorkloadSagaPhase::NetworkReserved);
 
     let network_reserved = provision_record(
         "reserved",
@@ -541,18 +530,7 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::Withheld,
     );
-    assert_decision(
-        &network_reserved,
-        WorkloadSagaPhase::WorkloadPrepared,
-        WorkloadSagaAction::PrepareWorkload {
-            reference: network_reserved
-                .phase_detail()
-                .references()
-                .execution()
-                .expect("execution retained")
-                .clone(),
-        },
-    );
+    assert_provision_decision(&network_reserved, WorkloadSagaPhase::WorkloadPrepared);
 
     let workload_prepared = provision_record(
         "prepared",
@@ -560,18 +538,7 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::Withheld,
     );
-    assert_decision(
-        &workload_prepared,
-        WorkloadSagaPhase::NetworkAttached,
-        WorkloadSagaAction::AttachNetwork {
-            reference: workload_prepared
-                .phase_detail()
-                .references()
-                .network()
-                .expect("network retained")
-                .clone(),
-        },
-    );
+    assert_provision_decision(&workload_prepared, WorkloadSagaPhase::NetworkAttached);
 
     let network_attached = provision_record(
         "attached",
@@ -579,18 +546,7 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::Withheld,
     );
-    assert_decision(
-        &network_attached,
-        WorkloadSagaPhase::WorkloadActivated,
-        WorkloadSagaAction::ActivateWorkload {
-            reference: network_attached
-                .phase_detail()
-                .references()
-                .execution()
-                .expect("execution retained")
-                .clone(),
-        },
-    );
+    assert_provision_decision(&network_attached, WorkloadSagaPhase::NetworkAttached);
 
     let activated = provision_record(
         "activated",
@@ -598,18 +554,7 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::Withheld,
     );
-    let activated_refs = activated.phase_detail().references();
-    assert_decision(
-        &activated,
-        WorkloadSagaPhase::Ready,
-        WorkloadSagaAction::InspectReadiness {
-            network: activated_refs.network().expect("network retained").clone(),
-            execution: activated_refs
-                .execution()
-                .expect("execution retained")
-                .clone(),
-        },
-    );
+    assert_provision_decision(&activated, WorkloadSagaPhase::Ready);
 
     let ready = provision_record(
         "ready",
@@ -617,18 +562,7 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::PublishWhenReady,
     );
-    assert_decision(
-        &ready,
-        WorkloadSagaPhase::Published,
-        WorkloadSagaAction::Publish {
-            reference: ready
-                .phase_detail()
-                .references()
-                .publication()
-                .expect("publication retained")
-                .clone(),
-        },
-    );
+    assert_provision_decision(&ready, WorkloadSagaPhase::Published);
 
     let published = provision_record(
         "published",
@@ -636,18 +570,7 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::PublishWhenReady,
     );
-    assert_decision(
-        &published,
-        WorkloadSagaPhase::Observed,
-        WorkloadSagaAction::ObservePublication {
-            reference: published
-                .phase_detail()
-                .references()
-                .publication()
-                .expect("publication retained")
-                .clone(),
-        },
-    );
+    assert_provision_decision(&published, WorkloadSagaPhase::Observed);
 
     let observed = provision_record(
         "observed",
@@ -655,11 +578,7 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::PublishWhenReady,
     );
-    assert_decision(
-        &observed,
-        WorkloadSagaPhase::Observed,
-        WorkloadSagaAction::Quiescent,
-    );
+    assert_provision_decision(&observed, WorkloadSagaPhase::Observed);
 
     let withdrawal = teardown_record("withdrawal", WorkloadSagaPhase::WithdrawalCommitted);
     assert_decision(
@@ -756,7 +675,9 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
     assert_decision(
         &recorded,
         WorkloadSagaPhase::IntentCommitted,
-        WorkloadSagaAction::PromoteSuccessor { intent: successor },
+        WorkloadSagaAction::PromoteSuccessor {
+            intent: Box::new(successor),
+        },
     );
 
     let cleanup = cleanup_pending_record("cleanup");
@@ -783,9 +704,24 @@ fn intent_committed_decision_carries_exact_compiled_network_plan() {
         WorkloadPublicationIntent::Withheld,
     );
     let decision = WorkloadSagaDecision::for_record(&record).expect("record is valid");
-    let WorkloadSagaAction::ReserveNetwork { reference, plan } = decision.action() else {
+    let WorkloadSagaAction::Provision(super::super::WorkloadProvisionDecision::Proposed(proposed)) =
+        decision.action()
+    else {
         panic!("IntentCommitted must produce one complete pure reservation value");
     };
+    let Some(nimbus_workloads::WorkloadProvisionDisposition::AttemptPending(attempt)) =
+        proposed.candidate().provision_disposition()
+    else {
+        panic!("reservation proposal must retain the exact pending attempt");
+    };
+    let nimbus_workloads::WorkloadProvisionSubjects::Network(reference) = attempt.subjects() else {
+        panic!("reservation attempt must carry its network subject");
+    };
+    let plan = proposed
+        .candidate()
+        .active_intent()
+        .network()
+        .compiled_plan();
 
     assert_eq!(plan, record.active_intent().network().compiled_plan());
     assert_eq!(reference.plan_id(), plan.plan().plan_id());
@@ -795,18 +731,14 @@ fn intent_committed_decision_carries_exact_compiled_network_plan() {
 }
 
 #[test]
-fn selector_quiesces_prepare_only_withheld_observed_and_terminal_records() {
+fn selector_delegates_all_provision_phases_and_quiesces_terminal_records() {
     let prepare_only = provision_record(
         "prepare-only",
         WorkloadSagaPhase::NetworkAttached,
         WorkloadActivationIntent::PrepareOnly,
         WorkloadPublicationIntent::Withheld,
     );
-    assert_decision(
-        &prepare_only,
-        WorkloadSagaPhase::NetworkAttached,
-        WorkloadSagaAction::Quiescent,
-    );
+    assert_provision_decision(&prepare_only, WorkloadSagaPhase::NetworkAttached);
 
     let withheld_ready = provision_record(
         "withheld",
@@ -814,11 +746,7 @@ fn selector_quiesces_prepare_only_withheld_observed_and_terminal_records() {
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::Withheld,
     );
-    assert_decision(
-        &withheld_ready,
-        WorkloadSagaPhase::Observed,
-        WorkloadSagaAction::AdvanceWithoutEffect,
-    );
+    assert_provision_decision(&withheld_ready, WorkloadSagaPhase::Observed);
 
     let recorded = WorkloadSagaRecord::new(key("terminal"), stopped_intent("terminal", 1))
         .expect("stopped intent is terminal");
@@ -868,7 +796,9 @@ fn recorded_promotes_only_the_exact_queued_successor_and_exact_target() {
     assert_decision(
         &running_record,
         WorkloadSagaPhase::IntentCommitted,
-        WorkloadSagaAction::PromoteSuccessor { intent: running },
+        WorkloadSagaAction::PromoteSuccessor {
+            intent: Box::new(running),
+        },
     );
 
     let stopped = stopped_intent("successor-stopped", 2);
@@ -876,7 +806,9 @@ fn recorded_promotes_only_the_exact_queued_successor_and_exact_target() {
     assert_decision(
         &stopped_record,
         WorkloadSagaPhase::Recorded,
-        WorkloadSagaAction::PromoteSuccessor { intent: stopped },
+        WorkloadSagaAction::PromoteSuccessor {
+            intent: Box::new(stopped),
+        },
     );
 }
 

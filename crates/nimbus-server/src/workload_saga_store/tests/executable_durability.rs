@@ -30,7 +30,7 @@ use super::super::EngineWorkloadSagaStore;
 use super::super::codec::decode_workload_saga_record;
 use super::super::schema::{workload_saga_table, workload_saga_tenant};
 use super::durability::assert_all_index_projections;
-use super::{compiled_network_plan, document_for};
+use super::{compiled_network_plan, document_for, provision_source};
 
 const CHILD_TEST: &str =
     "workload_saga_store::tests::executable_durability::executable_durability_child";
@@ -350,11 +350,18 @@ fn populated_record() -> (WorkloadSagaRecord, SandboxSpec) {
     let tenant_id = tenant_id();
     let spec = complete_spec();
     let executable = encode_sandbox_spec(&spec).expect("fixed sandbox spec should encode");
+    let source = provision_source(
+        &executable,
+        WORKLOAD,
+        GENERATION,
+        nimbus_network::NetworkProviderId::for_registration_key("fixture-attachment"),
+    );
     let intent = WorkloadSagaIntent::new(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         WorkloadGeneration::new(GENERATION),
         executable,
+        source,
         WorkloadNetworkIntent::new(compiled_network_plan(
             &tenant_id,
             WORKLOAD,
@@ -371,7 +378,7 @@ fn populated_record() -> (WorkloadSagaRecord, SandboxSpec) {
             format!("twu_{}", "4".repeat(64))
                 .try_into()
                 .expect("fixed workload uid should validate"),
-            Some(NodeIdentity::new("node-nnc63a").expect("fixed node should validate")),
+            NodeIdentity::new("node-nnc63a").expect("fixed node should validate"),
         ),
     )
     .expect("fixed workload intent should validate");

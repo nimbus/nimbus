@@ -4,14 +4,15 @@ use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
     NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
     NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
-    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkResourceGeneration,
-    NetworkSovereigntyRequirements,
+    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkProviderId,
+    NetworkResourceGeneration, NetworkSovereigntyRequirements,
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
-    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
-    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadNetworkIntent,
+    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadPhaseDetail,
+    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
+    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion,
     WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
     WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecord,
     WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
@@ -134,6 +135,7 @@ fn compiled_plan(tenant_id: &TenantId, label: &str) -> CompiledWorkloadNetworkPl
         requirements,
         None,
         None,
+        None,
         [],
         [],
         [],
@@ -151,15 +153,27 @@ fn initial_record(label: &str) -> WorkloadSagaRecord {
         tenant_id.clone(),
         WorkloadId::new(format!("workload-{label}")).expect("fixture workload is valid"),
     );
+    let executable = nimbus_workloads::WorkloadExecutableIntent::new(
+        nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(r#"{{"fixture":"desired-{label}"}}"#),
+    )
+    .expect("fixture executable is valid");
+    let source = WorkloadProvisionSourceEvidence::standalone_sandbox(
+        WorkloadProvisionSourceIdentity::standalone_sandbox(format!("workload-{label}"), label)
+            .expect("fixture source identity is valid"),
+        WorkloadProvisionSourceGeneration::new(1),
+        WorkloadProvisionSourceResourceVersion::new(format!("fixture-{label}"))
+            .expect("fixture source version is valid"),
+        executable.content_digest(),
+        NetworkProviderId::for_registration_key("fixture-attachment"),
+    )
+    .expect("fixture source evidence is valid");
     let intent = nimbus_workloads::WorkloadSagaIntent::new(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         nimbus_workloads::WorkloadGeneration::new(1),
-        nimbus_workloads::WorkloadExecutableIntent::new(
-            nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-            format!(r#"{{"fixture":"desired-{label}"}}"#),
-        )
-        .expect("fixture executable is valid"),
+        executable,
+        source,
         WorkloadNetworkIntent::new(compiled_plan(&tenant_id, label)),
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::Withheld,
@@ -170,7 +184,7 @@ fn initial_record(label: &str) -> WorkloadSagaRecord {
             format!("twu_{}", "2".repeat(64))
                 .try_into()
                 .expect("fixture workload uid is valid"),
-            Some(NodeIdentity::new(format!("node-{label}")).expect("fixture node is valid")),
+            NodeIdentity::new(format!("node-{label}")).expect("fixture node is valid"),
         ),
     )
     .expect("fixture intent is valid");
@@ -178,29 +192,7 @@ fn initial_record(label: &str) -> WorkloadSagaRecord {
 }
 
 fn valid_successor(current: &WorkloadSagaRecord) -> WorkloadSagaRecord {
-    let references = WorkloadEffectReferences::provision(current.active_intent(), None)
-        .expect("fixture references are valid");
-    let observation = WorkloadOwnerObservation::NetworkReserved {
-        reference: references
-            .network()
-            .expect("provision references contain network authority")
-            .clone(),
-        evidence: WorkloadOwnerEvidenceDigest::sha256("network-reserved"),
-    };
-    let detail = WorkloadPhaseDetail::provision(
-        nimbus_workloads::WorkloadSagaPhase::NetworkReserved,
-        current.active_intent(),
-        references,
-        vec![observation],
-    )
-    .expect("fixture phase detail is valid");
-    current
-        .advance(
-            nimbus_workloads::WorkloadSagaPhase::NetworkReserved,
-            detail,
-            None,
-        )
-        .expect("fixture successor is valid")
+    crate::workload_saga::test_support::first_proposed_candidate(current)
 }
 
 fn empty_page() -> WorkloadSagaPage {

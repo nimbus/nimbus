@@ -16,6 +16,31 @@ fn provider() -> NetworkProviderCapabilities {
     )
 }
 
+#[test]
+fn empty_ingress_capability_set_has_no_implicit_tls_behavior() {
+    assert!(
+        NetworkIngressCapabilitySet::new([])
+            .tls_behaviors()
+            .is_empty(),
+        "absence of TLS evidence must not fabricate cleartext support"
+    );
+}
+
+#[test]
+fn empty_tls_evidence_does_not_satisfy_disabled_requirement() {
+    let mut requirements = requirements();
+    requirements.ingress =
+        NetworkIngressCapabilitySet::new([]).with_tls_behaviors([NetworkTlsBehavior::Disabled]);
+
+    assert_rejected(
+        &requirements,
+        &provider(),
+        NetworkCapabilityMismatch::TlsBehavior {
+            required: NetworkTlsBehavior::Disabled,
+        },
+    );
+}
+
 fn assert_rejected(
     requirements: &NetworkCapabilityRequirements,
     provider: &NetworkProviderCapabilities,

@@ -44,7 +44,7 @@ const RECOVERY_MATRIX_WRITE_MODE: &str = "write";
 const RECOVERY_MATRIX_READ_MODE: &str = "recover";
 const RECOVERY_MATRIX_BOUNDARY: &str = "workload-saga.phase-matrix-durable";
 const RECOVERY_MATRIX_OBSERVATION: &str =
-    "matrix-30-10ef8f05526b8777eda74ed8bbe18cd634964dd988f6a319010b5de7f51c5e43";
+    "matrix-30-ce399409245e3a983faded0d3ce0270c92572cc132b7a09d95039d207f9c98a0";
 const RECOVERY_MATRIX_TIMEOUT: Duration = Duration::from_secs(20);
 const RECOVERY_MATRIX_PID_PREFIX: &str = "NIMBUS_NNC61E_PROCESS_ID";
 
@@ -419,13 +419,45 @@ async fn recover_process_matrix(root: &Path) -> Result<String, String> {
 
 fn recovery_action_label(action: &WorkloadSagaAction) -> &'static str {
     match action {
-        WorkloadSagaAction::ReserveNetwork { .. } => "reserve-network",
-        WorkloadSagaAction::PrepareWorkload { .. } => "prepare-workload",
-        WorkloadSagaAction::AttachNetwork { .. } => "attach-network",
-        WorkloadSagaAction::ActivateWorkload { .. } => "activate-workload",
-        WorkloadSagaAction::InspectReadiness { .. } => "inspect-readiness",
-        WorkloadSagaAction::Publish { .. } => "publish",
-        WorkloadSagaAction::ObservePublication { .. } => "observe-publication",
+        WorkloadSagaAction::Provision(decision) => match decision {
+            nimbus_compute::workload_saga::WorkloadProvisionDecision::Proposed(proposed) => {
+                match proposed
+                    .candidate()
+                    .provision_disposition()
+                    .and_then(nimbus_workloads::WorkloadProvisionDisposition::attempt)
+                    .map(nimbus_workloads::WorkloadProvisionAttempt::step)
+                {
+                    Some(nimbus_workloads::WorkloadProvisionStep::ReserveNetwork) => {
+                        "reserve-network"
+                    }
+                    Some(nimbus_workloads::WorkloadProvisionStep::PrepareWorkload) => {
+                        "prepare-workload"
+                    }
+                    Some(nimbus_workloads::WorkloadProvisionStep::AttachNetwork) => {
+                        "attach-network"
+                    }
+                    Some(
+                        nimbus_workloads::WorkloadProvisionStep::InspectActivationPrerequisites,
+                    ) => "inspect-activation-prerequisites",
+                    Some(nimbus_workloads::WorkloadProvisionStep::ActivateWorkload) => {
+                        "activate-workload"
+                    }
+                    Some(nimbus_workloads::WorkloadProvisionStep::InspectWorkloadReadiness) => {
+                        "inspect-readiness"
+                    }
+                    Some(nimbus_workloads::WorkloadProvisionStep::Publish) => "publish",
+                    Some(nimbus_workloads::WorkloadProvisionStep::ObservePublication) => {
+                        "observe-publication"
+                    }
+                    None => "advance-without-effect",
+                }
+            }
+            nimbus_compute::workload_saga::WorkloadProvisionDecision::InspectExact(_) => {
+                "inspect-exact-attempt"
+            }
+            nimbus_compute::workload_saga::WorkloadProvisionDecision::DefiniteFailure
+            | nimbus_compute::workload_saga::WorkloadProvisionDecision::Wait => "quiescent",
+        },
         WorkloadSagaAction::WithdrawPublication { .. } => "withdraw-publication",
         WorkloadSagaAction::DrainWorkload { .. } => "drain-workload",
         WorkloadSagaAction::StopWorkload { .. } => "stop-workload",

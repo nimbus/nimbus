@@ -112,6 +112,21 @@ pub enum NetworkIngressFeature {
     Streaming,
 }
 
+/// TLS handling an ingress provider can prove for an admitted endpoint.
+///
+/// This is capability evidence only. Certificate selection and the concrete
+/// TLS effect remain with the ingress owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkTlsBehavior {
+    /// Carry cleartext application traffic without TLS handling.
+    Disabled,
+    /// Preserve TLS bytes for a downstream termination owner.
+    Passthrough,
+    /// Terminate the admitted TLS identity at the ingress owner.
+    TerminateAtIngress,
+}
+
 /// Forwarding lifecycle behavior a provider can realize.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -186,6 +201,8 @@ pub enum NetworkCapabilityDimension {
     PortAssignment,
     /// Ingress behavior.
     IngressFeature,
+    /// TLS handling behavior.
+    TlsBehavior,
     /// Forwarding behavior.
     ForwardingFeature,
     /// Durable lifecycle operation.
@@ -254,6 +271,11 @@ impl_stable_display!(NetworkIngressFeature, {
     NetworkIngressFeature::WebSocket => "web_socket",
     NetworkIngressFeature::Streaming => "streaming",
 });
+impl_stable_display!(NetworkTlsBehavior, {
+    NetworkTlsBehavior::Disabled => "disabled",
+    NetworkTlsBehavior::Passthrough => "passthrough",
+    NetworkTlsBehavior::TerminateAtIngress => "terminate_at_ingress",
+});
 impl_stable_display!(NetworkForwardingFeature, {
     NetworkForwardingFeature::PortForwarding => "port_forwarding",
     NetworkForwardingFeature::ConnectionDrain => "connection_drain",
@@ -285,6 +307,7 @@ impl_stable_display!(NetworkCapabilityDimension, {
     NetworkCapabilityDimension::Protocol => "protocol",
     NetworkCapabilityDimension::PortAssignment => "port_assignment",
     NetworkCapabilityDimension::IngressFeature => "ingress_feature",
+    NetworkCapabilityDimension::TlsBehavior => "tls_behavior",
     NetworkCapabilityDimension::ForwardingFeature => "forwarding_feature",
     NetworkCapabilityDimension::LifecycleFeature => "lifecycle_feature",
     NetworkCapabilityDimension::ControlPlaneLocality => "control_plane_locality",
@@ -440,6 +463,7 @@ impl NetworkEndpointCapabilitySet {
 #[serde(deny_unknown_fields)]
 pub struct NetworkIngressCapabilitySet {
     features: BTreeSet<NetworkIngressFeature>,
+    tls_behaviors: BTreeSet<NetworkTlsBehavior>,
 }
 
 impl NetworkIngressCapabilitySet {
@@ -447,12 +471,27 @@ impl NetworkIngressCapabilitySet {
     pub fn new(features: impl IntoIterator<Item = NetworkIngressFeature>) -> Self {
         Self {
             features: features.into_iter().collect(),
+            tls_behaviors: BTreeSet::new(),
         }
+    }
+
+    /// Replace the supported TLS behaviors with an explicit canonical set.
+    pub fn with_tls_behaviors(
+        mut self,
+        tls_behaviors: impl IntoIterator<Item = NetworkTlsBehavior>,
+    ) -> Self {
+        self.tls_behaviors = tls_behaviors.into_iter().collect();
+        self
     }
 
     /// Required or supported ingress features.
     pub fn features(&self) -> &BTreeSet<NetworkIngressFeature> {
         &self.features
+    }
+
+    /// Required or supported TLS handling behaviors.
+    pub fn tls_behaviors(&self) -> &BTreeSet<NetworkTlsBehavior> {
+        &self.tls_behaviors
     }
 }
 
@@ -771,6 +810,15 @@ impl NetworkProviderCapabilities {
             });
         }
         for required in requirements
+            .ingress
+            .tls_behaviors
+            .difference(&self.ingress.tls_behaviors)
+        {
+            mismatches.push(NetworkCapabilityMismatch::TlsBehavior {
+                required: *required,
+            });
+        }
+        for required in requirements
             .forwarding
             .features
             .difference(&self.forwarding.features)
@@ -855,6 +903,8 @@ pub enum NetworkCapabilityMismatch {
     PortAssignment { required: NetworkPortAssignmentMode },
     /// A required ingress behavior is unsupported.
     IngressFeature { required: NetworkIngressFeature },
+    /// A required TLS handling behavior is unsupported.
+    TlsBehavior { required: NetworkTlsBehavior },
     /// A required forwarding behavior is unsupported.
     ForwardingFeature { required: NetworkForwardingFeature },
     /// A required durable lifecycle operation is unsupported.
@@ -885,6 +935,7 @@ impl NetworkCapabilityMismatch {
             Self::Protocol { .. } => NetworkCapabilityDimension::Protocol,
             Self::PortAssignment { .. } => NetworkCapabilityDimension::PortAssignment,
             Self::IngressFeature { .. } => NetworkCapabilityDimension::IngressFeature,
+            Self::TlsBehavior { .. } => NetworkCapabilityDimension::TlsBehavior,
             Self::ForwardingFeature { .. } => NetworkCapabilityDimension::ForwardingFeature,
             Self::LifecycleFeature { .. } => NetworkCapabilityDimension::LifecycleFeature,
             Self::ControlPlaneLocality { .. } => NetworkCapabilityDimension::ControlPlaneLocality,
@@ -924,6 +975,9 @@ impl Display for NetworkCapabilityMismatch {
                 write!(formatter, "{}(required={required})", self.dimension())
             }
             Self::IngressFeature { required } => {
+                write!(formatter, "{}(required={required})", self.dimension())
+            }
+            Self::TlsBehavior { required } => {
                 write!(formatter, "{}(required={required})", self.dimension())
             }
             Self::ForwardingFeature { required } => {

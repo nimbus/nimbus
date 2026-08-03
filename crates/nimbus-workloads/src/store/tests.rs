@@ -6,8 +6,8 @@ use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
     NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
     NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
-    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkResourceGeneration,
-    NetworkSovereigntyRequirements, PublishedEndpointId,
+    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkProviderId,
+    NetworkResourceGeneration, NetworkSovereigntyRequirements, PublishedEndpointId,
 };
 use nimbus_tenant::TenantIsolationDecisionId;
 
@@ -18,7 +18,9 @@ use crate::{
     WorkloadEffectReferences, WorkloadExecutableEncoding, WorkloadExecutableIntent,
     WorkloadGeneration, WorkloadInspectionRequirement, WorkloadNetworkIntent,
     WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest,
-    WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadPublicationIntent,
+    WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent,
     WorkloadPublicationReference, WorkloadSagaIntent, WorkloadSagaPhase, WorkloadSagaTransitionId,
     WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
@@ -407,23 +409,33 @@ fn assert_store_contract<S: StoreConformance>() {
         "exact replay must win before expectation-conflict handling"
     );
 
-    let revision_one = advance_to(&initial, WorkloadSagaPhase::NetworkReserved);
-    assert_eq!(
-        block_on(store.compare_and_swap(
-            WorkloadSagaExpected::Revision(initial.revision()),
-            revision_one.clone(),
-        ))
-        .unwrap(),
-        WorkloadSagaCommit::Applied
-    );
+    let first_candidates = advance_candidates_to(&initial, WorkloadSagaPhase::NetworkReserved);
+    let mut committed = initial.clone();
+    for candidate in &first_candidates {
+        assert_eq!(
+            block_on(store.compare_and_swap(
+                WorkloadSagaExpected::Revision(committed.revision()),
+                candidate.clone(),
+            ))
+            .unwrap(),
+            WorkloadSagaCommit::Applied
+        );
+        committed = candidate.clone();
+    }
+    let revision_one = committed;
     assert_eq!(
         block_on(store.load(initial.key())).unwrap(),
         Some(revision_one.clone())
     );
 
-    let revision_two = advance_to(&revision_one, WorkloadSagaPhase::WorkloadPrepared);
+    let second_candidates =
+        advance_candidates_to(&revision_one, WorkloadSagaPhase::WorkloadPrepared);
+    let pending_two = second_candidates
+        .first()
+        .expect("provision edge starts with a pending attempt")
+        .clone();
     assert_conflict(
-        block_on(store.compare_and_swap(WorkloadSagaExpected::Missing, revision_two.clone()))
+        block_on(store.compare_and_swap(WorkloadSagaExpected::Missing, pending_two.clone()))
             .unwrap_err(),
         WorkloadSagaExpected::Missing,
         Some(revision_one.revision()),
@@ -431,7 +443,7 @@ fn assert_store_contract<S: StoreConformance>() {
     assert_conflict(
         block_on(store.compare_and_swap(
             WorkloadSagaExpected::Revision(initial.revision()),
-            revision_two.clone(),
+            pending_two.clone(),
         ))
         .unwrap_err(),
         WorkloadSagaExpected::Revision(initial.revision()),
@@ -457,14 +469,18 @@ fn assert_store_contract<S: StoreConformance>() {
         "an invalid successor must not write"
     );
 
-    assert_eq!(
-        block_on(store.compare_and_swap(
-            WorkloadSagaExpected::Revision(revision_one.revision()),
-            revision_two.clone(),
-        ))
-        .unwrap(),
-        WorkloadSagaCommit::Applied
-    );
+    let mut committed = revision_one;
+    for candidate in second_candidates {
+        assert_eq!(
+            block_on(store.compare_and_swap(
+                WorkloadSagaExpected::Revision(committed.revision()),
+                candidate.clone(),
+            ))
+            .unwrap(),
+            WorkloadSagaCommit::Applied
+        );
+        committed = candidate;
+    }
 
     let collision_store = S::default();
     let collision = running_record(
@@ -635,26 +651,38 @@ fn assert_recovery_paging_contract<S: StoreConformance>() {
 
 fn persist_history<S: WorkloadSagaStore>(store: &S, latest: &WorkloadSagaRecord) {
     let initial = running_record_for_key(latest.key().clone(), latest.active_intent().activation());
-    let reserved = advance_to(&initial, WorkloadSagaPhase::NetworkReserved);
-    let prepared = advance_to(&reserved, WorkloadSagaPhase::WorkloadPrepared);
-    let attached = advance_to(&prepared, WorkloadSagaPhase::NetworkAttached);
-
-    let history = match latest.phase() {
-        WorkloadSagaPhase::NetworkReserved => vec![initial, reserved],
-        WorkloadSagaPhase::WorkloadPrepared => vec![initial, reserved, prepared],
-        WorkloadSagaPhase::NetworkAttached => vec![initial, reserved, prepared, attached],
-        phase => panic!("test history does not support {phase:?}"),
-    };
+    let mut history = vec![initial.clone()];
+    let mut current = initial;
+    for target in [
+        WorkloadSagaPhase::NetworkReserved,
+        WorkloadSagaPhase::WorkloadPrepared,
+        WorkloadSagaPhase::NetworkAttached,
+    ] {
+        let candidates = advance_candidates_to(&current, target);
+        current = candidates
+            .last()
+            .expect("provision history edge should produce a candidate")
+            .clone();
+        history.extend(candidates);
+        if latest.phase() == target {
+            break;
+        }
+    }
+    assert!(matches!(
+        latest.phase(),
+        WorkloadSagaPhase::NetworkReserved
+            | WorkloadSagaPhase::WorkloadPrepared
+            | WorkloadSagaPhase::NetworkAttached
+    ));
     assert_eq!(history.last(), Some(latest));
 
-    for (index, record) in history.into_iter().enumerate() {
-        let expected = if index == 0 {
-            WorkloadSagaExpected::Missing
-        } else {
-            WorkloadSagaExpected::Revision(WorkloadSagaRevision::new(
-                u64::try_from(index - 1).unwrap(),
-            ))
-        };
+    let mut previous_revision = None;
+    for record in history {
+        let expected = previous_revision.map_or(
+            WorkloadSagaExpected::Missing,
+            WorkloadSagaExpected::Revision,
+        );
+        previous_revision = Some(record.revision());
         assert_eq!(
             block_on(store.compare_and_swap(expected, record)).unwrap(),
             WorkloadSagaCommit::Applied
@@ -1097,6 +1125,14 @@ fn provision_phase_record(key: WorkloadSagaKey, phase: WorkloadSagaPhase) -> Wor
     panic!("{phase:?} is not a provision fixture phase")
 }
 
+fn confirm_provision_fixture(
+    record: &WorkloadSagaRecord,
+    target_phase: WorkloadSagaPhase,
+    detail: WorkloadPhaseDetail,
+) -> WorkloadSagaRecord {
+    crate::saga::test_support::confirmed_provision(record, target_phase, detail)
+}
+
 fn advance_provision(
     record: &WorkloadSagaRecord,
     phase: WorkloadSagaPhase,
@@ -1117,7 +1153,8 @@ fn advance_provision(
         WorkloadSagaPhase::NetworkAttached => 3,
         WorkloadSagaPhase::WorkloadActivated => 4,
         WorkloadSagaPhase::Ready => 5,
-        WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed => 6,
+        WorkloadSagaPhase::Published => 6,
+        WorkloadSagaPhase::Observed => 7,
         _ => panic!("{phase:?} is not an advanced provision phase"),
     };
     let mut observations = Vec::new();
@@ -1158,10 +1195,16 @@ fn advance_provision(
             evidence: WorkloadOwnerEvidenceDigest::sha256("publication-present"),
         });
     }
+    if rank >= 7 {
+        observations.push(WorkloadOwnerObservation::PublicationObserved {
+            reference: references.publication().unwrap().clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("publication-observed"),
+        });
+    }
     let detail =
         WorkloadPhaseDetail::provision(phase, record.active_intent(), references, observations)
             .unwrap();
-    record.advance(phase, detail, None).unwrap()
+    confirm_provision_fixture(record, phase, detail)
 }
 
 fn begin_teardown(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
@@ -1349,6 +1392,7 @@ fn intent_with_publication(
         requirements,
         None,
         None,
+        None,
         [],
         [],
         [],
@@ -1357,28 +1401,42 @@ fn intent_with_publication(
     )
     .unwrap();
     let compiled_plan = CompiledWorkloadNetworkPlan::from_content(content).unwrap();
+    let executable = WorkloadExecutableIntent::new(
+        WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(r#"{{"workload":"{}"}}"#, key.workload_id().as_str()),
+    )
+    .unwrap();
+    let source = WorkloadProvisionSourceEvidence::sandbox_backed_service(
+        WorkloadProvisionSourceIdentity::sandbox_backed_service(key.workload_id().as_str())
+            .unwrap(),
+        WorkloadProvisionSourceGeneration::new(1),
+        WorkloadProvisionSourceResourceVersion::new("fixture-v1").unwrap(),
+        executable.content_digest(),
+        NetworkProviderId::for_registration_key("fixture-attachment"),
+    )
+    .unwrap();
     WorkloadSagaIntent::new(
         DesiredWorkloadKind::Service,
         desired_state,
         WorkloadGeneration::new(1),
-        WorkloadExecutableIntent::new(
-            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-            format!(r#"{{"workload":"{}"}}"#, key.workload_id().as_str()),
-        )
-        .unwrap(),
+        executable,
+        source,
         WorkloadNetworkIntent::new(compiled_plan),
         activation,
         publication,
         WorkloadAdmissionEvidence::new(
             TenantIsolationDecisionId::try_from(format!("tid_{}", "a".repeat(64))).unwrap(),
             TenantWorkloadUid::try_from(format!("twu_{}", "b".repeat(64))).unwrap(),
-            Some(NodeIdentity::new("node-a").unwrap()),
+            NodeIdentity::new("node-a").unwrap(),
         ),
     )
     .unwrap()
 }
 
-fn advance_to(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
+fn advance_candidates_to(
+    record: &WorkloadSagaRecord,
+    phase: WorkloadSagaPhase,
+) -> Vec<WorkloadSagaRecord> {
     let intent = record.active_intent();
     let references = WorkloadEffectReferences::provision(intent, None).unwrap();
     let network = references.network().unwrap().clone();
@@ -1403,5 +1461,11 @@ fn advance_to(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> Workload
         });
     }
     let detail = WorkloadPhaseDetail::provision(phase, intent, references, observations).unwrap();
-    record.advance(phase, detail, None).unwrap()
+    crate::saga::test_support::provision_candidates(record, phase, detail)
+}
+
+fn advance_to(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
+    advance_candidates_to(record, phase)
+        .pop()
+        .expect("fixture provision edge should produce a candidate")
 }

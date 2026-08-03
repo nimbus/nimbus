@@ -4,17 +4,20 @@ use std::num::NonZeroU16;
 use nimbus_core::TenantId;
 use nimbus_network::{
     EndpointProtocol, IngressRouteId, ListenerId, NetworkAttachmentCapabilitySet,
-    NetworkCapabilityRequirements, NetworkCapabilitySelection, NetworkConditionKind,
+    NetworkAttachmentProviderRegistration, NetworkCapabilityBundle, NetworkCapabilityRequirements,
+    NetworkCapabilitySelection, NetworkCapabilitySelectionEvidence, NetworkConditionKind,
     NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkExternalDependency,
-    NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet, NetworkLifecycleCapabilitySet,
-    NetworkLifecycleFeature, NetworkManagementMode, NetworkPlan, NetworkPlanContentDigest,
-    NetworkPlanId, NetworkProviderId, NetworkReadinessRequirement, NetworkResourceGeneration,
-    NetworkSovereigntyRequirements, PortLeaseId, PublishedEndpointId,
+    NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
+    NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet, NetworkLifecycleFeature,
+    NetworkManagementMode, NetworkPlan, NetworkPlanContentDigest, NetworkPlanId, NetworkProviderId,
+    NetworkReadinessRequirement, NetworkResourceGeneration, NetworkSovereigntyCapabilities,
+    NetworkSovereigntyRequirements, NetworkTlsBehavior, PortLeaseId, PublishedEndpointId,
 };
 
 use super::{
     CompiledWorkloadNetworkPlan, WORKLOAD_NETWORK_PLAN_FORMAT_VERSION,
     WorkloadNetworkAttachmentBlueprint, WorkloadNetworkDependencyListenerBlueprint,
+    WorkloadNetworkEndpointSemantics, WorkloadNetworkForwardingBehavior,
     WorkloadNetworkListenerBlueprint, WorkloadNetworkPlanContent, WorkloadNetworkPlanError,
     WorkloadNetworkPlanIdentity, WorkloadNetworkPortRequestMode, WorkloadNetworkRouteBlueprint,
 };
@@ -38,6 +41,41 @@ fn selection() -> NetworkCapabilitySelection {
     )
 }
 
+fn selection_evidence() -> NetworkCapabilitySelectionEvidence {
+    NetworkCapabilityBundle::new(
+        NetworkAttachmentProviderRegistration::new(
+            selection().attachment_provider_id().clone(),
+            NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []),
+            [],
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+        ),
+        NetworkIngressProviderRegistration::new(
+            selection().ingress_provider_id().clone(),
+            NetworkEndpointCapabilitySet::new([], [], [], [], []),
+            NetworkIngressCapabilitySet::new([]),
+            NetworkForwardingCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+        ),
+    )
+    .selection_evidence()
+}
+
+fn forwarded_http() -> WorkloadNetworkEndpointSemantics {
+    WorkloadNetworkEndpointSemantics::new(
+        WorkloadNetworkForwardingBehavior::PortForwarded,
+        NetworkTlsBehavior::Disabled,
+    )
+}
+
+fn direct_cleartext() -> WorkloadNetworkEndpointSemantics {
+    WorkloadNetworkEndpointSemantics::new(
+        WorkloadNetworkForwardingBehavior::None,
+        NetworkTlsBehavior::Disabled,
+    )
+}
+
 fn sovereignty() -> NetworkSovereigntyRequirements {
     NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true)
 }
@@ -57,6 +95,7 @@ fn empty_content() -> WorkloadNetworkPlanContent {
     WorkloadNetworkPlanContent::new(
         identity(),
         requirements(sovereignty()),
+        None,
         None,
         None,
         [],
@@ -109,6 +148,7 @@ fn listener_with(
         EndpointProtocol::Http,
         desired_host_address,
         port_request,
+        forwarded_http(),
         Some(3000),
     )
     .expect("listener fixture should validate")
@@ -123,6 +163,7 @@ fn populated_content(
         identity.clone(),
         requirements(sovereignty()),
         Some(selection()),
+        Some(selection_evidence()),
         Some(
             WorkloadNetworkAttachmentBlueprint::new(&identity, "default")
                 .expect("attachment fixture should validate"),
@@ -177,7 +218,7 @@ fn assert_wire_plan_rejected(
 }
 
 #[test]
-fn empty_portable_plan_payload_round_trips() {
+fn resource_free_plan_has_no_selection_evidence() {
     let content = empty_content();
     let compiled = CompiledWorkloadNetworkPlan::from_content(content)
         .expect("matching content should derive its envelope");
@@ -195,20 +236,24 @@ fn empty_portable_plan_payload_round_trips() {
     assert!(compiled.content().attachment().is_none());
     assert!(compiled.content().routes().is_empty());
     assert!(compiled.content().listeners().is_empty());
+    assert!(compiled.content().capability_selection().is_none());
+    assert!(compiled.content().capability_selection_evidence().is_none());
     assert_eq!(
         String::from_utf8(compiled.content().canonical_bytes())
             .expect("canonical JSON should be UTF-8"),
-        r#"{"formatVersion":1,"identity":{"tenantId":"tenant-a","workloadIncarnationKey":"tenant-a/workload-a","generation":1},"capabilityRequirements":{"attachment":{"management_mode":"nimbus_host_managed","attachment_modes":[],"isolation_modes":[]},"endpoint":{"address_families":[],"bind_realms":[],"exposures":[],"protocols":[],"port_assignment_modes":[]},"ingress":{"features":[]},"forwarding":{"features":[]},"lifecycle":{"features":[]},"sovereignty":{"maximum_control_plane_locality":"local_only","allowed_external_dependencies":[],"offline_restart_required":true}},"routes":[],"listeners":[],"dependencyListeners":[],"activation":"prepare_only","publication":"withheld"}"#,
-        "the version-one empty content encoding is durable digest authority"
+        r#"{"formatVersion":2,"identity":{"tenantId":"tenant-a","workloadIncarnationKey":"tenant-a/workload-a","generation":1},"capabilityRequirements":{"attachment":{"management_mode":"nimbus_host_managed","attachment_modes":[],"isolation_modes":[]},"endpoint":{"address_families":[],"bind_realms":[],"exposures":[],"protocols":[],"port_assignment_modes":[]},"ingress":{"features":[],"tls_behaviors":[]},"forwarding":{"features":[]},"lifecycle":{"features":[]},"sovereignty":{"maximum_control_plane_locality":"local_only","allowed_external_dependencies":[],"offline_restart_required":true}},"routes":[],"listeners":[],"dependencyListeners":[],"activation":"prepare_only","publication":"withheld"}"#,
+        "the version-two empty content encoding is durable digest authority"
     );
 }
 
 #[test]
-fn attachment_and_listener_payload_round_trip_without_effect_authority() {
+fn connected_plan_requires_selection_evidence() {
     let content = populated_content([route("orders", "api")], [listener("api")]);
     let compiled = CompiledWorkloadNetworkPlan::from_content(content)
         .expect("matching populated content should derive its envelope");
     let value = serde_json::to_value(&compiled).expect("compiled plan should serialize");
+    assert!(compiled.content().capability_selection().is_some());
+    assert!(compiled.content().capability_selection_evidence().is_some());
     let content_fields = value["content"]
         .as_object()
         .expect("content should be an object")
@@ -229,6 +274,7 @@ fn attachment_and_listener_payload_round_trip_without_effect_authority() {
             "identity",
             "capabilityRequirements",
             "capabilitySelection",
+            "capabilitySelectionEvidence",
             "attachment",
             "routes",
             "listeners",
@@ -247,6 +293,7 @@ fn attachment_and_listener_payload_round_trip_without_effect_authority() {
             "protocol",
             "desiredHostAddress",
             "portRequest",
+            "endpointSemantics",
             "guestPort",
         ]
     );
@@ -292,6 +339,7 @@ fn duplicate_route_logical_and_stable_identities_fail_closed() {
         requirements(sovereignty()),
         None,
         None,
+        None,
         [first.clone(), duplicate_name],
         [],
         [],
@@ -317,6 +365,7 @@ fn duplicate_route_logical_and_stable_identities_fail_closed() {
     let error = WorkloadNetworkPlanContent::new(
         identity(),
         requirements(sovereignty()),
+        None,
         None,
         None,
         [first, duplicate_id],
@@ -346,6 +395,7 @@ fn duplicate_listener_logical_and_stable_identities_fail_closed() {
         EndpointProtocol::Tcp,
         IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         WorkloadNetworkPortRequestMode::ProviderAssigned,
+        direct_cleartext(),
         None,
     )
     .expect("individual listener should validate");
@@ -353,6 +403,7 @@ fn duplicate_listener_logical_and_stable_identities_fail_closed() {
         identity(),
         requirements(sovereignty()),
         Some(selection()),
+        Some(selection_evidence()),
         None,
         [],
         [first.clone(), duplicate_name],
@@ -374,6 +425,7 @@ fn duplicate_listener_logical_and_stable_identities_fail_closed() {
         EndpointProtocol::Tcp,
         IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         WorkloadNetworkPortRequestMode::ProviderAssigned,
+        direct_cleartext(),
         None,
     )
     .expect("individual listener should validate");
@@ -381,6 +433,7 @@ fn duplicate_listener_logical_and_stable_identities_fail_closed() {
         identity(),
         requirements(sovereignty()),
         Some(selection()),
+        Some(selection_evidence()),
         None,
         [],
         [first.clone(), duplicate_listener_id],
@@ -402,6 +455,7 @@ fn duplicate_listener_logical_and_stable_identities_fail_closed() {
         EndpointProtocol::Tcp,
         IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         WorkloadNetworkPortRequestMode::ProviderAssigned,
+        direct_cleartext(),
         None,
     )
     .expect("individual listener should validate");
@@ -409,6 +463,7 @@ fn duplicate_listener_logical_and_stable_identities_fail_closed() {
         identity(),
         requirements(sovereignty()),
         Some(selection()),
+        Some(selection_evidence()),
         None,
         [],
         [first, duplicate_endpoint_id],
@@ -437,6 +492,7 @@ fn crossed_port_lease_identity_fails_before_content_construction() {
         EndpointProtocol::Http,
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         WorkloadNetworkPortRequestMode::ProviderAssigned,
+        direct_cleartext(),
         None,
     )
     .expect_err("crossed lease identity should fail");
@@ -450,14 +506,16 @@ fn crossed_port_lease_identity_fails_before_content_construction() {
 #[test]
 fn strict_wire_rejects_unknown_versions_and_fields() {
     let content = populated_content([route("orders", "api")], [listener("api")]);
-    let mut unsupported = serde_json::to_value(&content).expect("content should serialize");
-    unsupported["formatVersion"] = serde_json::json!(2);
-    assert!(
-        serde_json::from_value::<WorkloadNetworkPlanContent>(unsupported)
-            .expect_err("unknown content version should fail")
-            .to_string()
-            .contains("unsupported")
-    );
+    for version in [0, 1, 3] {
+        let mut unsupported = serde_json::to_value(&content).expect("content should serialize");
+        unsupported["formatVersion"] = serde_json::json!(version);
+        assert!(
+            serde_json::from_value::<WorkloadNetworkPlanContent>(unsupported)
+                .expect_err("unknown content version should fail")
+                .to_string()
+                .contains("unsupported")
+        );
+    }
 
     let mut unknown_content_field =
         serde_json::to_value(&content).expect("content should serialize");
@@ -648,6 +706,7 @@ fn tenant_qualified_resource_ids_are_rederived_during_construction_and_decode() 
             base.identity().clone(),
             base.capability_requirements().clone(),
             base.capability_selection().cloned(),
+            base.capability_selection_evidence().cloned(),
             Some(crossed_attachment),
             base.routes().iter().cloned(),
             base.listeners().iter().cloned(),
@@ -673,6 +732,7 @@ fn tenant_qualified_resource_ids_are_rederived_during_construction_and_decode() 
             base.identity().clone(),
             base.capability_requirements().clone(),
             base.capability_selection().cloned(),
+            base.capability_selection_evidence().cloned(),
             base.attachment().cloned(),
             [crossed_route],
             base.listeners().iter().cloned(),
@@ -692,6 +752,7 @@ fn tenant_qualified_resource_ids_are_rederived_during_construction_and_decode() 
         EndpointProtocol::Http,
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         WorkloadNetworkPortRequestMode::ProviderAssigned,
+        forwarded_http(),
         Some(3000),
     )
     .expect("matched crossed listener and lease should be structurally valid");
@@ -700,6 +761,7 @@ fn tenant_qualified_resource_ids_are_rederived_during_construction_and_decode() 
             base.identity().clone(),
             base.capability_requirements().clone(),
             base.capability_selection().cloned(),
+            base.capability_selection_evidence().cloned(),
             base.attachment().cloned(),
             base.routes().iter().cloned(),
             [crossed_listener],
@@ -719,6 +781,7 @@ fn tenant_qualified_resource_ids_are_rederived_during_construction_and_decode() 
         EndpointProtocol::Http,
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         WorkloadNetworkPortRequestMode::ProviderAssigned,
+        forwarded_http(),
         Some(3000),
     )
     .expect("crossed endpoint should remain structurally valid");
@@ -727,6 +790,7 @@ fn tenant_qualified_resource_ids_are_rederived_during_construction_and_decode() 
             base.identity().clone(),
             base.capability_requirements().clone(),
             base.capability_selection().cloned(),
+            base.capability_selection_evidence().cloned(),
             base.attachment().cloned(),
             base.routes().iter().cloned(),
             [crossed_endpoint],
@@ -787,6 +851,7 @@ fn dependency_listener_is_exact_readiness_provenance() {
         identity.clone(),
         requirements(sovereignty()),
         Some(selection()),
+        Some(selection_evidence()),
         Some(
             WorkloadNetworkAttachmentBlueprint::new(&identity, "default")
                 .expect("attachment should validate"),
@@ -892,12 +957,16 @@ fn semantic_field_mutations_change_the_exact_canonical_bytes() {
             "/capabilityRequirements/endpoint/protocols",
             "/capabilityRequirements/forwarding/features",
             "/capabilityRequirements/ingress/features",
+            "/capabilityRequirements/ingress/tls_behaviors",
             "/capabilityRequirements/lifecycle/features",
             "/capabilityRequirements/sovereignty/allowed_external_dependencies",
             "/capabilityRequirements/sovereignty/maximum_control_plane_locality",
             "/capabilityRequirements/sovereignty/offline_restart_required",
             "/capabilitySelection/attachment_provider_id",
             "/capabilitySelection/ingress_provider_id",
+            "/capabilitySelectionEvidence/selection/attachment_provider_id",
+            "/capabilitySelectionEvidence/selection/ingress_provider_id",
+            "/capabilitySelectionEvidence/source_digest",
             "/dependencyListeners",
             "/formatVersion",
             "/identity/generation",
@@ -905,6 +974,8 @@ fn semantic_field_mutations_change_the_exact_canonical_bytes() {
             "/identity/workloadIncarnationKey",
             "/listeners/0/desiredHostAddress",
             "/listeners/0/endpointId",
+            "/listeners/0/endpointSemantics/forwarding",
+            "/listeners/0/endpointSemantics/tls",
             "/listeners/0/guestPort",
             "/listeners/0/listenerId",
             "/listeners/0/name",
@@ -973,6 +1044,7 @@ fn semantic_field_mutations_change_the_exact_canonical_bytes() {
             false,
         )),
         base.capability_selection().cloned(),
+        base.capability_selection_evidence().cloned(),
         base.attachment().cloned(),
         base.routes().iter().cloned(),
         base.listeners().iter().cloned(),
@@ -985,6 +1057,7 @@ fn semantic_field_mutations_change_the_exact_canonical_bytes() {
         base.identity().clone(),
         base.capability_requirements().clone(),
         base.capability_selection().cloned(),
+        base.capability_selection_evidence().cloned(),
         base.attachment().cloned(),
         base.routes().iter().cloned(),
         base.listeners().iter().cloned(),
@@ -1055,6 +1128,7 @@ fn required_strings_and_numeric_ports_fail_closed() {
             EndpointProtocol::Tcp,
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             WorkloadNetworkPortRequestMode::ProviderAssigned,
+            direct_cleartext(),
             None,
         ),
         Err(WorkloadNetworkPlanError::InvalidRequiredField { .. })

@@ -1,18 +1,24 @@
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use nimbus_core::{Document, TenantId, WorkloadId};
 use nimbus_engine::Engine;
 use nimbus_network::{
-    NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
-    NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
-    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkResourceGeneration,
-    NetworkSovereigntyRequirements,
+    EndpointProtocol, NetworkAddressFamily, NetworkAttachmentCapabilitySet,
+    NetworkAttachmentProviderRegistration, NetworkBindRealmKind, NetworkCapabilityBundle,
+    NetworkCapabilityRequirements, NetworkControlPlaneLocality, NetworkEndpointCapabilitySet,
+    NetworkExposure, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
+    NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet, NetworkManagementMode,
+    NetworkPortAssignmentMode, NetworkResourceGeneration, NetworkSovereigntyCapabilities,
+    NetworkSovereigntyRequirements, NetworkTlsBehavior, PortProtocol,
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
-    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
-    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadNetworkEndpointSemantics,
+    WorkloadNetworkForwardingBehavior, WorkloadNetworkIntent, WorkloadNetworkListenerBlueprint,
+    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadPhaseDetail,
+    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
+    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion,
     WorkloadPublicationIntent, WorkloadSagaKey, WorkloadSagaRecord,
 };
 
@@ -26,6 +32,7 @@ mod composition;
 mod durability;
 mod executable_durability;
 mod ingress;
+mod provision_fixture;
 mod recovery;
 mod store;
 mod tenant_enumeration;
@@ -61,15 +68,27 @@ fn initial_record_with_counters_and_seed(
         tenant_id.clone(),
         WorkloadId::new(format!("workload-{label}")).expect("fixture workload is valid"),
     );
+    let executable = nimbus_workloads::WorkloadExecutableIntent::new(
+        nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(r#"{{"fixture":"desired-{label}-{seed}"}}"#),
+    )
+    .expect("fixture executable is valid");
+    let source = WorkloadProvisionSourceEvidence::standalone_sandbox(
+        WorkloadProvisionSourceIdentity::standalone_sandbox(label, "fixture")
+            .expect("fixture source identity is valid"),
+        WorkloadProvisionSourceGeneration::new(generation),
+        WorkloadProvisionSourceResourceVersion::new(format!("fixture-{seed}"))
+            .expect("fixture source version is valid"),
+        executable.content_digest(),
+        nimbus_network::NetworkProviderId::for_registration_key("fixture-attachment"),
+    )
+    .expect("fixture source evidence is valid");
     let intent = nimbus_workloads::WorkloadSagaIntent::new(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         nimbus_workloads::WorkloadGeneration::new(generation),
-        nimbus_workloads::WorkloadExecutableIntent::new(
-            nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-            format!(r#"{{"fixture":"desired-{label}-{seed}"}}"#),
-        )
-        .expect("fixture executable is valid"),
+        executable,
+        source,
         WorkloadNetworkIntent::new(compiled_network_plan(
             &tenant_id,
             &format!("{label}-{seed}"),
@@ -86,11 +105,29 @@ fn initial_record_with_counters_and_seed(
             format!("twu_{}", "2".repeat(64))
                 .try_into()
                 .expect("fixture workload uid is valid"),
-            Some(NodeIdentity::new(format!("node-{label}")).expect("fixture node is valid")),
+            NodeIdentity::new(format!("node-{label}")).expect("fixture node is valid"),
         ),
     )
     .expect("fixture intent is valid");
     WorkloadSagaRecord::new(key, intent).expect("initial record is valid")
+}
+
+pub(super) fn provision_source(
+    executable: &nimbus_workloads::WorkloadExecutableIntent,
+    label: &str,
+    generation: u64,
+    attachment_provider_id: nimbus_network::NetworkProviderId,
+) -> WorkloadProvisionSourceEvidence {
+    WorkloadProvisionSourceEvidence::standalone_sandbox(
+        WorkloadProvisionSourceIdentity::standalone_sandbox(label, "fixture")
+            .expect("fixture source identity is valid"),
+        WorkloadProvisionSourceGeneration::new(generation),
+        WorkloadProvisionSourceResourceVersion::new(format!("fixture-{label}-{generation}"))
+            .expect("fixture source version is valid"),
+        executable.content_digest(),
+        attachment_provider_id,
+    )
+    .expect("fixture source evidence is valid")
 }
 
 pub(super) fn compiled_network_plan(
@@ -106,21 +143,86 @@ pub(super) fn compiled_network_plan(
         NetworkResourceGeneration::new(generation),
     )
     .expect("fixture network identity is valid");
+    let attachment =
+        NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []);
+    let endpoint = NetworkEndpointCapabilitySet::new(
+        [NetworkAddressFamily::Ipv4],
+        [NetworkBindRealmKind::Host],
+        [NetworkExposure::Loopback],
+        [PortProtocol::Tcp],
+        [NetworkPortAssignmentMode::ProviderAssigned],
+    );
+    let ingress = NetworkIngressCapabilitySet::new([]);
+    let forwarding = NetworkForwardingCapabilitySet::new([]);
+    let lifecycle = NetworkLifecycleCapabilitySet::new([]);
     let requirements = NetworkCapabilityRequirements::new(
-        NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []),
-        NetworkEndpointCapabilitySet::new([], [], [], [], []),
-        NetworkIngressCapabilitySet::new([]),
-        NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([]),
+        attachment.clone(),
+        endpoint.clone(),
+        ingress.clone(),
+        forwarding.clone(),
+        lifecycle.clone(),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     );
+    let (selection, selection_evidence, listeners) =
+        if publication == WorkloadPublicationIntent::PublishWhenReady {
+            let attachment_provider =
+                nimbus_network::NetworkProviderId::for_registration_key("fixture-attachment");
+            let ingress_provider =
+                nimbus_network::NetworkProviderId::for_registration_key("fixture-ingress");
+            let bundle = NetworkCapabilityBundle::new(
+                NetworkAttachmentProviderRegistration::new(
+                    attachment_provider,
+                    attachment,
+                    [NetworkAddressFamily::Ipv4],
+                    lifecycle.clone(),
+                    NetworkSovereigntyCapabilities::new(
+                        NetworkControlPlaneLocality::LocalOnly,
+                        [],
+                        true,
+                    ),
+                ),
+                NetworkIngressProviderRegistration::new(
+                    ingress_provider,
+                    endpoint,
+                    ingress,
+                    forwarding,
+                    lifecycle,
+                    NetworkSovereigntyCapabilities::new(
+                        NetworkControlPlaneLocality::LocalOnly,
+                        [],
+                        true,
+                    ),
+                ),
+            );
+            let listener = WorkloadNetworkListenerBlueprint::new(
+                &identity,
+                "api",
+                EndpointProtocol::Http,
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                nimbus_workloads::WorkloadNetworkPortRequestMode::ProviderAssigned,
+                WorkloadNetworkEndpointSemantics::new(
+                    WorkloadNetworkForwardingBehavior::None,
+                    NetworkTlsBehavior::Disabled,
+                ),
+                None,
+            )
+            .expect("fixture listener is valid");
+            (
+                Some(bundle.selection()),
+                Some(bundle.selection_evidence()),
+                vec![listener],
+            )
+        } else {
+            (None, None, Vec::new())
+        };
     let content = WorkloadNetworkPlanContent::new(
         identity,
         requirements,
-        None,
+        selection,
+        selection_evidence,
         None,
         [],
-        [],
+        listeners,
         [],
         activation,
         publication,
@@ -130,29 +232,7 @@ pub(super) fn compiled_network_plan(
 }
 
 fn valid_successor(current: &WorkloadSagaRecord) -> WorkloadSagaRecord {
-    let references = WorkloadEffectReferences::provision(current.active_intent(), None)
-        .expect("fixture references are valid");
-    let observation = WorkloadOwnerObservation::NetworkReserved {
-        reference: references
-            .network()
-            .expect("provision references contain network authority")
-            .clone(),
-        evidence: WorkloadOwnerEvidenceDigest::sha256("network-reserved"),
-    };
-    let detail = WorkloadPhaseDetail::provision(
-        nimbus_workloads::WorkloadSagaPhase::NetworkReserved,
-        current.active_intent(),
-        references,
-        vec![observation],
-    )
-    .expect("fixture phase detail is valid");
-    current
-        .advance(
-            nimbus_workloads::WorkloadSagaPhase::NetworkReserved,
-            detail,
-            None,
-        )
-        .expect("fixture successor is valid")
+    provision_fixture::first_proposed_candidate(current)
 }
 
 fn valid_competing_successor(current: &WorkloadSagaRecord) -> WorkloadSagaRecord {

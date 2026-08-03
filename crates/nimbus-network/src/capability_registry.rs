@@ -9,7 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
 
 use crate::{
     NetworkAddressFamily, NetworkAttachmentCapabilitySet, NetworkCapabilityMismatch,
@@ -17,6 +18,68 @@ use crate::{
     NetworkIngressCapabilitySet, NetworkLifecycleCapabilitySet, NetworkProviderId,
     NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
 };
+
+const CAPABILITY_SELECTION_EVIDENCE_DOMAIN: &[u8] =
+    b"nimbus.network.capability.selection.evidence.v1\0";
+
+/// SHA-256 digest of the exact source-owned reports behind one selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NetworkCapabilitySourceDigest([u8; 32]);
+
+impl NetworkCapabilitySourceDigest {
+    /// Construct from an already verified SHA-256 value.
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Return the raw SHA-256 value.
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl Display for NetworkCapabilitySourceDigest {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Serialize for NetworkCapabilitySourceDigest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for NetworkCapabilitySourceDigest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        if value.len() != 64
+            || value
+                .bytes()
+                .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+        {
+            return Err(serde::de::Error::custom(
+                "network capability source digest must be 64 lowercase hexadecimal characters",
+            ));
+        }
+        let mut bytes = [0_u8; 32];
+        for (index, output) in bytes.iter_mut().enumerate() {
+            let offset = index * 2;
+            *output = u8::from_str_radix(&value[offset..offset + 2], 16)
+                .map_err(serde::de::Error::custom)?;
+        }
+        Ok(Self(bytes))
+    }
+}
 
 /// Capability role owned by one provider registration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -196,6 +259,33 @@ impl Display for NetworkCapabilitySelection {
     }
 }
 
+/// Exact provider IDs plus authenticated source-owned registration evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkCapabilitySelectionEvidence {
+    selection: NetworkCapabilitySelection,
+    source_digest: NetworkCapabilitySourceDigest,
+}
+
+impl NetworkCapabilitySelectionEvidence {
+    /// Exact provider identities selected by the composition owner.
+    pub fn selection(&self) -> &NetworkCapabilitySelection {
+        &self.selection
+    }
+
+    /// Digest of the complete selected attachment and ingress reports.
+    pub const fn source_digest(&self) -> NetworkCapabilitySourceDigest {
+        self.source_digest
+    }
+}
+
+#[derive(Serialize)]
+struct NetworkCapabilitySelectionEvidencePayload<'a> {
+    selection: &'a NetworkCapabilitySelection,
+    attachment: &'a NetworkAttachmentProviderRegistration,
+    ingress: &'a NetworkIngressProviderRegistration,
+}
+
 /// One explicitly admitted compatible provider composition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -226,6 +316,28 @@ impl NetworkCapabilityBundle {
             self.attachment.provider_id.clone(),
             self.ingress.provider_id.clone(),
         )
+    }
+
+    /// Authenticate the exact selected provider IDs and source reports.
+    pub fn selection_evidence(&self) -> NetworkCapabilitySelectionEvidence {
+        let selection = self.selection();
+        let payload = NetworkCapabilitySelectionEvidencePayload {
+            selection: &selection,
+            attachment: &self.attachment,
+            ingress: &self.ingress,
+        };
+        let encoded = serde_json::to_vec(&payload)
+            .expect("closed network capability selection evidence always serializes");
+        let encoded_len = u64::try_from(encoded.len())
+            .expect("a serialized Rust value length fits u64 on supported targets");
+        let mut digest = Sha256::new();
+        digest.update(CAPABILITY_SELECTION_EVIDENCE_DOMAIN);
+        digest.update(encoded_len.to_be_bytes());
+        digest.update(encoded);
+        NetworkCapabilitySelectionEvidence {
+            selection,
+            source_digest: NetworkCapabilitySourceDigest(digest.finalize().into()),
+        }
     }
 
     /// Attachment-role registration.
@@ -759,6 +871,15 @@ fn ingress_mismatches(
         .difference(offered.ingress.features())
     {
         mismatches.push(NetworkCapabilityMismatch::IngressFeature {
+            required: *required,
+        });
+    }
+    for required in requirements
+        .ingress()
+        .tls_behaviors()
+        .difference(offered.ingress.tls_behaviors())
+    {
+        mismatches.push(NetworkCapabilityMismatch::TlsBehavior {
             required: *required,
         });
     }

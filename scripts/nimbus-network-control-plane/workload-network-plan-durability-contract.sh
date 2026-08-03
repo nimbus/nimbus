@@ -17,6 +17,7 @@ SAGA="crates/nimbus-workloads/src/saga.rs"
 SAGA_NETWORK="crates/nimbus-workloads/src/saga/network.rs"
 SAGA_STATE="crates/nimbus-workloads/src/saga/state.rs"
 COMPUTE_RECOVERY="crates/nimbus-compute/src/workload_saga/recovery.rs"
+PROVISION_DECISION="crates/nimbus-compute/src/workload_saga/provision_decision.rs"
 STORE_CODEC="crates/nimbus-server/src/workload_saga_store/codec.rs"
 STORE_SCHEMA="crates/nimbus-server/src/workload_saga_store/schema.rs"
 PROCESS_PROOF="crates/nimbus-server/src/workload_saga_store/tests/compiled_plan_durability.rs"
@@ -111,17 +112,17 @@ verify_v2_and_correlations() {
   state_source="$(source_without_comments "${SAGA_STATE}")"
   if [ "${NIMBUS_NETWORK_NNC62A_TEST_MUTATION:-}" = "wrong-version" ] ||
     ! printf '%s\n' "${saga_source}" |
-      rg -q 'WORKLOAD_SAGA_FORMAT_VERSION:[[:space:]]*u32[[:space:]]*=[[:space:]]*2'; then
-    add_error "workload saga format version is not the clean-breaking v2"
+      rg -q 'WORKLOAD_SAGA_FORMAT_VERSION:[[:space:]]*u32[[:space:]]*=[[:space:]]*3'; then
+    add_error "workload saga format version is not the current strict v3"
   else
     pass_check
   fi
   if ! printf '%s\n' "${state_source}" |
-    rg -q 'nimbus\.workloads\.saga\.transition\.v2'; then
-    add_error "transition identity does not use the v2 complete-payload domain"
+    rg -q 'nimbus\.workloads\.saga\.transition\.v3'; then
+    add_error "transition identity does not use the v3 complete-payload domain"
   elif printf '%s\n' "${state_source}" |
-    rg -q 'nimbus\.workloads\.saga\.transition\.v1'; then
-    add_error "production transition identity retains the v1 domain"
+    rg -q 'nimbus\.workloads\.saga\.transition\.v[12]'; then
+    add_error "production transition identity retains a pre-v3 domain"
   else
     pass_check
   fi
@@ -174,15 +175,19 @@ ${schema_source}"
 }
 
 verify_pure_action_and_process_proof() {
-  if ! require_nonempty_file "${COMPUTE_RECOVERY}" "pure workload saga recovery decision"; then
+  if ! require_nonempty_file "${COMPUTE_RECOVERY}" "pure workload saga recovery decision" ||
+    ! require_nonempty_file "${PROVISION_DECISION}" "pure workload provision decision"; then
     return
   fi
   recovery_source="$(source_without_comments "${COMPUTE_RECOVERY}")"
-  compact_recovery="$(printf '%s\n' "${recovery_source}" | tr '\n' ' ')"
+  provision_source="$(source_without_comments "${PROVISION_DECISION}")"
+  compact_decisions="$(
+    printf '%s\n%s\n' "${recovery_source}" "${provision_source}" | tr '\n' ' '
+  )"
   if [ "${NIMBUS_NETWORK_NNC62A_TEST_MUTATION:-}" = "missing-action-plan" ] ||
-    ! printf '%s\n' "${compact_recovery}" |
-      rg -q 'ReserveNetwork[[:space:]]*\{[^}]*reference:[^}]*plan:[[:space:]]*CompiledWorkloadNetworkPlan'; then
-    add_error "pure ReserveNetwork action does not carry exact compiled plan command material"
+    ! printf '%s\n' "${compact_decisions}" |
+      rg -q 'WorkloadProvisionDecision::plan\(record\).*WorkloadProvisionStep::ReserveNetwork.*network_plan_digest:[[:space:]]*intent\.network\(\)\.digest\(\)'; then
+    add_error "pure reserve attempt does not bind the exact durable compiled-plan digest"
   else
     pass_check
   fi
@@ -339,9 +344,9 @@ run_self_test() {
     case "${mutation}" in
       missing-carrier) expected='missing or empty workloads-owned compiled-plan carrier' ;;
       tuple-authority) expected='compiled-plan carrier retains caller-supplied tuple authority' ;;
-      wrong-version) expected='workload saga format version is not the clean-breaking v2' ;;
+      wrong-version) expected='workload saga format version is not the current strict v3' ;;
       physical-tuple) expected='physical codec/schema retains flattened network tuple authority' ;;
-      missing-action-plan) expected='pure ReserveNetwork action does not carry exact compiled plan command material' ;;
+      missing-action-plan) expected='pure reserve attempt does not bind the exact durable compiled-plan digest' ;;
       snapshot-handoff) expected='distinct-process proof permits snapshot/payload handoff' ;;
       effect-import) expected='distinct-process proof imports a network effect authority' ;;
       missing-completion-checkpoint) expected='NNC6.2a completion checkpoint is missing' ;;

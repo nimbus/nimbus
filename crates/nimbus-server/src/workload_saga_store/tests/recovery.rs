@@ -1,22 +1,19 @@
 use std::collections::BTreeSet;
 
 use nimbus_core::{TenantId, WorkloadId};
-use nimbus_network::PublishedEndpointId;
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WORKLOAD_SAGA_RECOVERY_ORDER,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
     WorkloadFailureEvidence, WorkloadGeneration, WorkloadInspectionRequirement,
-    WorkloadNetworkIntent, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
-    WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadPublicationReference,
-    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaIntent, WorkloadSagaIntentUpdate,
-    WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaRecoveryCursor,
-    WorkloadSagaStore, WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
+    WorkloadNetworkIntent, WorkloadOwnerEvidenceDigest, WorkloadPhaseDetail,
+    WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaIntent,
+    WorkloadSagaIntentUpdate, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadSagaRecoveryCursor, WorkloadSagaStore, WorkloadTerminalEvidenceDigest,
+    WorkloadTerminalObservation,
 };
-use sha2::{Digest, Sha256};
-use ulid::Ulid;
 
 use super::super::EngineWorkloadSagaStore;
-use super::{compiled_network_plan, engine};
+use super::{compiled_network_plan, engine, provision_fixture, provision_source};
 
 struct RecoveryFixtures {
     recoverable: Vec<Vec<WorkloadSagaRecord>>,
@@ -53,8 +50,8 @@ pub(super) const PROCESS_MATRIX_EXPECTATIONS: &[ProcessMatrixExpectation] = &[
     process_case(
         "process-network-attached",
         WorkloadSagaPhase::NetworkAttached,
-        WorkloadSagaPhase::WorkloadActivated,
-        "activate-workload",
+        WorkloadSagaPhase::NetworkAttached,
+        "inspect-activation-prerequisites",
     ),
     process_case(
         "process-workload-activated",
@@ -354,16 +351,19 @@ async fn recovery_cursor_does_not_repeat_a_saga_that_advances_between_pages() {
         .cloned()
         .expect("a full first page should carry a cursor");
 
-    let advanced = advance_provision(&records[0], WorkloadSagaPhase::NetworkReserved, None);
-    assert_eq!(
-        store
-            .compare_and_swap(
-                WorkloadSagaExpected::Revision(records[0].revision()),
-                advanced,
-            )
-            .await,
-        Ok(WorkloadSagaCommit::Applied)
-    );
+    let mut expected_revision = records[0].revision();
+    for candidate in provision_fixture::provision_candidates(&records[0]) {
+        assert_eq!(
+            store
+                .compare_and_swap(
+                    WorkloadSagaExpected::Revision(expected_revision),
+                    candidate.clone(),
+                )
+                .await,
+            Ok(WorkloadSagaCommit::Applied)
+        );
+        expected_revision = candidate.revision();
+    }
 
     let second = store
         .list_recoverable(WorkloadSagaPageRequest::new(Some(after), 2).unwrap())
@@ -527,151 +527,17 @@ fn provision_history(
         activation,
         publication,
     );
-    let publication_reference =
-        (publication == WorkloadPublicationIntent::PublishWhenReady).then(|| {
-            WorkloadPublicationReference::new([publication_endpoint_id(label)], &intent)
-                .expect("fixture publication reference is valid")
-        });
     let mut history =
         vec![WorkloadSagaRecord::new(key, intent).expect("fixture saga record should initialize")];
-
-    for phase in [
-        WorkloadSagaPhase::NetworkReserved,
-        WorkloadSagaPhase::WorkloadPrepared,
-        WorkloadSagaPhase::NetworkAttached,
-    ] {
-        history.push(advance_provision(
-            latest(&history),
-            phase,
-            publication_reference.as_ref(),
-        ));
-    }
-    if activation == WorkloadActivationIntent::PrepareOnly {
-        return history;
-    }
-
-    for phase in [
-        WorkloadSagaPhase::WorkloadActivated,
-        WorkloadSagaPhase::Ready,
-    ] {
-        history.push(advance_provision(
-            latest(&history),
-            phase,
-            publication_reference.as_ref(),
-        ));
-    }
-    if publication == WorkloadPublicationIntent::PublishWhenReady {
-        history.push(advance_provision(
-            latest(&history),
-            WorkloadSagaPhase::Published,
-            publication_reference.as_ref(),
-        ));
-    }
-    history.push(advance_provision(
-        latest(&history),
-        WorkloadSagaPhase::Observed,
-        publication_reference.as_ref(),
-    ));
-    history
-}
-
-fn advance_provision(
-    record: &WorkloadSagaRecord,
-    phase: WorkloadSagaPhase,
-    publication: Option<&WorkloadPublicationReference>,
-) -> WorkloadSagaRecord {
-    let publication = if record.active_intent().publication()
-        == WorkloadPublicationIntent::PublishWhenReady
-        && matches!(
-            phase,
-            WorkloadSagaPhase::Ready | WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed
-        ) {
-        publication.cloned()
+    let target = if activation == WorkloadActivationIntent::PrepareOnly {
+        WorkloadSagaPhase::NetworkAttached
     } else {
-        None
-    };
-    let references = WorkloadEffectReferences::provision(record.active_intent(), publication)
-        .expect("fixture provision references are valid");
-    let observations =
-        provision_observations(phase, &references, record.active_intent().publication());
-    let detail =
-        WorkloadPhaseDetail::provision(phase, record.active_intent(), references, observations)
-            .expect("fixture provision detail is valid");
-    record
-        .advance(phase, detail, None)
-        .expect("fixture provision transition is valid")
-}
-
-fn provision_observations(
-    phase: WorkloadSagaPhase,
-    references: &WorkloadEffectReferences,
-    publication: WorkloadPublicationIntent,
-) -> Vec<WorkloadOwnerObservation> {
-    let network = references
-        .network()
-        .expect("provision fixture has a network reference")
-        .clone();
-    let execution = references
-        .execution()
-        .expect("provision fixture has an execution reference")
-        .clone();
-    let rank = match phase {
-        WorkloadSagaPhase::NetworkReserved => 1,
-        WorkloadSagaPhase::WorkloadPrepared => 2,
-        WorkloadSagaPhase::NetworkAttached => 3,
-        WorkloadSagaPhase::WorkloadActivated => 4,
-        WorkloadSagaPhase::Ready => 5,
-        WorkloadSagaPhase::Published => 6,
         WorkloadSagaPhase::Observed
-            if publication == WorkloadPublicationIntent::PublishWhenReady =>
-        {
-            6
-        }
-        WorkloadSagaPhase::Observed => 5,
-        _ => panic!("fixture phase is not a provision phase"),
     };
-    let mut observations = Vec::new();
-    if rank >= 1 {
-        observations.push(WorkloadOwnerObservation::NetworkReserved {
-            reference: network.clone(),
-            evidence: evidence("network-reserved"),
-        });
+    while latest(&history).phase() != target {
+        provision_fixture::extend_confirmed_step(&mut history);
     }
-    if rank >= 2 {
-        observations.push(WorkloadOwnerObservation::ExecutionPrepared {
-            reference: execution.clone(),
-            evidence: evidence("execution-prepared"),
-        });
-    }
-    if rank >= 3 {
-        observations.push(WorkloadOwnerObservation::NetworkAttached {
-            reference: network.clone(),
-            evidence: evidence("network-attached"),
-        });
-    }
-    if rank >= 4 {
-        observations.push(WorkloadOwnerObservation::ExecutionActivated {
-            reference: execution.clone(),
-            evidence: evidence("execution-activated"),
-        });
-    }
-    if rank >= 5 {
-        observations.push(WorkloadOwnerObservation::Ready {
-            network,
-            execution,
-            evidence: evidence("ready"),
-        });
-    }
-    if rank >= 6 {
-        observations.push(WorkloadOwnerObservation::PublicationPresent {
-            reference: references
-                .publication()
-                .expect("published fixture has a publication reference")
-                .clone(),
-            evidence: evidence("publication-present"),
-        });
-    }
-    observations
+    history
 }
 
 fn teardown_history(label: &str) -> Vec<WorkloadSagaRecord> {
@@ -889,18 +755,26 @@ fn workload_intent(
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
 ) -> WorkloadSagaIntent {
+    let executable = nimbus_workloads::WorkloadExecutableIntent::new(
+        nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(
+            r#"{{"fixture":"{}-{generation}-{desired_state:?}"}}"#,
+            key.workload_id().as_str()
+        ),
+    )
+    .expect("fixture executable is valid");
+    let source = provision_source(
+        &executable,
+        key.workload_id().as_str(),
+        generation,
+        nimbus_network::NetworkProviderId::for_registration_key("fixture-attachment"),
+    );
     WorkloadSagaIntent::new(
         DesiredWorkloadKind::Sandbox,
         desired_state,
         WorkloadGeneration::new(generation),
-        nimbus_workloads::WorkloadExecutableIntent::new(
-            nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-            format!(
-                r#"{{"fixture":"{}-{generation}-{desired_state:?}"}}"#,
-                key.workload_id().as_str()
-            ),
-        )
-        .expect("fixture executable is valid"),
+        executable,
+        source,
         WorkloadNetworkIntent::new(compiled_network_plan(
             key.tenant_id(),
             key.workload_id().as_str(),
@@ -917,7 +791,7 @@ fn workload_intent(
             format!("twu_{}", "2".repeat(64))
                 .try_into()
                 .expect("fixture workload uid is valid"),
-            Some(NodeIdentity::new("node-recovery").expect("fixture node is valid")),
+            NodeIdentity::new("node-recovery").expect("fixture node is valid"),
         ),
     )
     .expect("fixture intent is valid")
@@ -925,18 +799,6 @@ fn workload_intent(
 
 fn evidence(label: &str) -> WorkloadOwnerEvidenceDigest {
     WorkloadOwnerEvidenceDigest::sha256(label)
-}
-
-fn publication_endpoint_id(label: &str) -> PublishedEndpointId {
-    let digest = Sha256::digest(label.as_bytes());
-    let mut identity = [0_u8; 16];
-    identity.copy_from_slice(&digest[..16]);
-    PublishedEndpointId::try_from(format!(
-        "{}_{}",
-        PublishedEndpointId::PREFIX,
-        Ulid::from(u128::from_be_bytes(identity))
-    ))
-    .expect("derived fixture endpoint identity is valid")
 }
 
 fn history_through_phase(

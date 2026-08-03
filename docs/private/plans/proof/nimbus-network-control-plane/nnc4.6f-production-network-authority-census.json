@@ -1085,7 +1085,7 @@
       "kind": "ingress-registration-construction",
       "symbol": "nimbus_owned_local_ingress_registration",
       "ordinal": 1,
-      "line": 37,
+      "line": 45,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"

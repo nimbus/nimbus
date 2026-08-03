@@ -4,7 +4,7 @@ use nimbus_core::{Document, DocumentId};
 use nimbus_workloads::{WorkloadSagaRecord, WorkloadSagaStoreError};
 use serde_json::{Map, Value, json};
 
-const REQUIRED_FIELDS: [&str; 18] = [
+const REQUIRED_FIELDS: [&str; 19] = [
     "formatVersion",
     "sagaId",
     "tenantId",
@@ -14,6 +14,7 @@ const REQUIRED_FIELDS: [&str; 18] = [
     "desiredGeneration",
     "desiredDigest",
     "executable",
+    "source",
     "sagaRevision",
     "phase",
     "recoveryEligible",
@@ -24,7 +25,7 @@ const REQUIRED_FIELDS: [&str; 18] = [
     "admission",
     "lastTransition",
 ];
-const OPTIONAL_FIELDS: [&str; 2] = ["successorIntent", "failure"];
+const OPTIONAL_FIELDS: [&str; 3] = ["successorIntent", "provisionDisposition", "failure"];
 
 pub(crate) fn encode_workload_saga_record(
     record: &WorkloadSagaRecord,
@@ -48,6 +49,7 @@ pub(crate) fn encode_workload_saga_record(
     copy(&mut fields, "desiredGeneration", active, "generation")?;
     copy(&mut fields, "desiredDigest", active, "desiredDigest")?;
     copy(&mut fields, "executable", active, "executable")?;
+    copy(&mut fields, "source", active, "source")?;
     copy(&mut fields, "sagaRevision", portable, "revision")?;
     copy(&mut fields, "phase", portable, "phase")?;
     fields.insert(
@@ -55,6 +57,12 @@ pub(crate) fn encode_workload_saga_record(
         Value::Bool(record.requires_recovery()),
     );
     copy(&mut fields, "phaseDetail", portable, "phaseDetail")?;
+    copy_optional(
+        &mut fields,
+        "provisionDisposition",
+        portable,
+        "provisionDisposition",
+    )?;
     fields.insert(
         "compiledNetworkPlan".to_owned(),
         Value::Object(network.clone()),
@@ -87,6 +95,7 @@ pub(crate) fn decode_workload_saga_record(
             "generation": required(fields, "desiredGeneration")?,
             "desiredDigest": required(fields, "desiredDigest")?,
             "executable": required(fields, "executable")?,
+            "source": required(fields, "source")?,
             "network": required(fields, "compiledNetworkPlan")?,
             "activation": required(fields, "activationIntent")?,
             "publication": required(fields, "publicationIntent")?,
@@ -96,6 +105,7 @@ pub(crate) fn decode_workload_saga_record(
         "revision": required(fields, "sagaRevision")?,
         "phase": required(fields, "phase")?,
         "phaseDetail": required(fields, "phaseDetail")?,
+        "provisionDisposition": fields.get("provisionDisposition").cloned(),
         "lastTransition": required(fields, "lastTransition")?,
         "failure": fields.get("failure").cloned(),
     });

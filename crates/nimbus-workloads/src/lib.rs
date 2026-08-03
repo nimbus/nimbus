@@ -17,6 +17,7 @@ pub use desired::{
 pub use network_plan::{
     CompiledWorkloadNetworkPlan, WORKLOAD_NETWORK_PLAN_FORMAT_VERSION,
     WorkloadNetworkAttachmentBlueprint, WorkloadNetworkDependencyListenerBlueprint,
+    WorkloadNetworkEndpointSemantics, WorkloadNetworkForwardingBehavior,
     WorkloadNetworkListenerBlueprint, WorkloadNetworkPlanContent, WorkloadNetworkPlanError,
     WorkloadNetworkPlanIdentity, WorkloadNetworkPortRequestMode, WorkloadNetworkRouteBlueprint,
 };
@@ -28,11 +29,17 @@ pub use saga::{
     WorkloadExecutableIntent, WorkloadExecutionId, WorkloadExecutionReference,
     WorkloadFailureEvidence, WorkloadGeneration, WorkloadInspectionRequirement,
     WorkloadNetworkIntent, WorkloadNetworkReference, WorkloadOwnerEvidenceDigest,
-    WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadProvisionDetail,
-    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadRecordedDetail,
-    WorkloadSagaError, WorkloadSagaId, WorkloadSagaIntent, WorkloadSagaIntentUpdate,
-    WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaRevision,
-    WorkloadSagaTransition, WorkloadSagaTransitionId, WorkloadTeardownDetail,
+    WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadProvisionAttempt,
+    WorkloadProvisionAttemptId, WorkloadProvisionAttemptInput, WorkloadProvisionDetail,
+    WorkloadProvisionDisposition, WorkloadProvisionEffectResult,
+    WorkloadProvisionPrerequisiteEvidence, WorkloadProvisionSourceDigest,
+    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
+    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceKind,
+    WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep, WorkloadProvisionSubjects,
+    WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadPublicationReference,
+    WorkloadRecordedDetail, WorkloadSagaError, WorkloadSagaId, WorkloadSagaIntent,
+    WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadSagaRevision, WorkloadSagaTransition, WorkloadSagaTransitionId, WorkloadTeardownDetail,
     WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
 pub use scheduling::{

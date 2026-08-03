@@ -39,7 +39,7 @@ fn direct_and_pep_required_plans_have_distinct_digests() {
     );
     assert_eq!(
         pep_required.digest().to_string(),
-        "9096bbe4268cffa767c2fddb16c78fcd72dd4e7b0b44bedff77c31c6ed8ba041",
+        "e3653495e8aa1fcb5a622ef24f7dbfa6bf0553455c4d56cfd7e511d49f4c00ed",
         "the PEP-required desired digest is a pinned wire contract"
     );
 }

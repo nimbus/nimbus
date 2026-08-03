@@ -1,43 +1,21 @@
 //! Pure recovery decisions derived from durable workload-saga records.
 
 use nimbus_workloads::{
-    CompiledWorkloadNetworkPlan, DesiredWorkloadState, WorkloadActivationIntent,
-    WorkloadEffectReferences, WorkloadExecutionReference, WorkloadGeneration,
+    DesiredWorkloadState, WorkloadEffectReferences, WorkloadExecutionReference, WorkloadGeneration,
     WorkloadInspectionRequirement, WorkloadNetworkReference, WorkloadPhaseDetail,
-    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaError, WorkloadSagaId,
-    WorkloadSagaIntent, WorkloadSagaKey, WorkloadSagaPageRequest, WorkloadSagaPhase,
-    WorkloadSagaRecord, WorkloadSagaRecoveryCursor, WorkloadSagaRevision, WorkloadSagaStoreError,
+    WorkloadPublicationReference, WorkloadSagaError, WorkloadSagaId, WorkloadSagaIntent,
+    WorkloadSagaKey, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadSagaRecoveryCursor, WorkloadSagaRevision, WorkloadSagaStoreError,
     WorkloadTerminalEvidenceDigest,
 };
 
-use super::WorkloadSagaCoordinator;
+use super::{WorkloadProvisionDecision, WorkloadSagaCoordinator};
 
 /// One provider-neutral operation required to recover a durable workload saga.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkloadSagaAction {
-    ReserveNetwork {
-        reference: WorkloadNetworkReference,
-        plan: CompiledWorkloadNetworkPlan,
-    },
-    PrepareWorkload {
-        reference: WorkloadExecutionReference,
-    },
-    AttachNetwork {
-        reference: WorkloadNetworkReference,
-    },
-    ActivateWorkload {
-        reference: WorkloadExecutionReference,
-    },
-    InspectReadiness {
-        network: WorkloadNetworkReference,
-        execution: WorkloadExecutionReference,
-    },
-    Publish {
-        reference: WorkloadPublicationReference,
-    },
-    ObservePublication {
-        reference: WorkloadPublicationReference,
-    },
+    /// The one pure provision reducer owns every provision-phase decision.
+    Provision(WorkloadProvisionDecision),
     WithdrawPublication {
         reference: WorkloadPublicationReference,
     },
@@ -57,7 +35,7 @@ pub enum WorkloadSagaAction {
         digest: WorkloadTerminalEvidenceDigest,
     },
     PromoteSuccessor {
-        intent: WorkloadSagaIntent,
+        intent: Box<WorkloadSagaIntent>,
     },
     InspectCleanup {
         last_safe_phase: WorkloadSagaPhase,
@@ -85,68 +63,10 @@ impl WorkloadSagaDecision {
         record.validate()?;
         let references = record.phase_detail().references();
         let (target_phase, action) = match record.phase() {
-            WorkloadSagaPhase::IntentCommitted => (
-                WorkloadSagaPhase::NetworkReserved,
-                WorkloadSagaAction::ReserveNetwork {
-                    reference: WorkloadNetworkReference::for_intent(record.active_intent()),
-                    plan: record.active_intent().network().compiled_plan().clone(),
-                },
-            ),
-            WorkloadSagaPhase::NetworkReserved => (
-                WorkloadSagaPhase::WorkloadPrepared,
-                WorkloadSagaAction::PrepareWorkload {
-                    reference: required_execution(&references)?,
-                },
-            ),
-            WorkloadSagaPhase::WorkloadPrepared => (
-                WorkloadSagaPhase::NetworkAttached,
-                WorkloadSagaAction::AttachNetwork {
-                    reference: required_network(&references)?,
-                },
-            ),
-            WorkloadSagaPhase::NetworkAttached
-                if record.active_intent().activation() == WorkloadActivationIntent::PrepareOnly =>
-            {
-                (
-                    WorkloadSagaPhase::NetworkAttached,
-                    WorkloadSagaAction::Quiescent,
-                )
-            }
-            WorkloadSagaPhase::NetworkAttached => (
-                WorkloadSagaPhase::WorkloadActivated,
-                WorkloadSagaAction::ActivateWorkload {
-                    reference: required_execution(&references)?,
-                },
-            ),
-            WorkloadSagaPhase::WorkloadActivated => (
-                WorkloadSagaPhase::Ready,
-                WorkloadSagaAction::InspectReadiness {
-                    network: required_network(&references)?,
-                    execution: required_execution(&references)?,
-                },
-            ),
-            WorkloadSagaPhase::Ready
-                if record.active_intent().publication() == WorkloadPublicationIntent::Withheld =>
-            {
-                (
-                    WorkloadSagaPhase::Observed,
-                    WorkloadSagaAction::AdvanceWithoutEffect,
-                )
-            }
-            WorkloadSagaPhase::Ready => (
-                WorkloadSagaPhase::Published,
-                WorkloadSagaAction::Publish {
-                    reference: required_publication(&references)?,
-                },
-            ),
-            WorkloadSagaPhase::Published => (
-                WorkloadSagaPhase::Observed,
-                WorkloadSagaAction::ObservePublication {
-                    reference: required_publication(&references)?,
-                },
-            ),
-            WorkloadSagaPhase::Observed => {
-                (WorkloadSagaPhase::Observed, WorkloadSagaAction::Quiescent)
+            phase if phase.is_provision() => {
+                let decision = WorkloadProvisionDecision::plan(record)?;
+                let target_phase = decision.target_phase(record.phase());
+                (target_phase, WorkloadSagaAction::Provision(decision))
             }
             WorkloadSagaPhase::WithdrawalCommitted => match references.publication() {
                 Some(reference) => (
@@ -232,7 +152,7 @@ impl WorkloadSagaDecision {
                     (
                         target_phase,
                         WorkloadSagaAction::PromoteSuccessor {
-                            intent: intent.clone(),
+                            intent: Box::new(intent.clone()),
                         },
                     )
                 }
@@ -252,6 +172,11 @@ impl WorkloadSagaDecision {
                         inspections: detail.inspections().to_vec(),
                     },
                 )
+            }
+            _ => {
+                return Err(WorkloadSagaError::InvalidTransition(
+                    "provision phase did not delegate to the provision reducer",
+                ));
             }
         };
 
@@ -333,39 +258,6 @@ impl WorkloadSagaCoordinator {
     }
 }
 
-fn required_network(
-    references: &WorkloadEffectReferences,
-) -> Result<WorkloadNetworkReference, WorkloadSagaError> {
-    references
-        .network()
-        .cloned()
-        .ok_or(WorkloadSagaError::InvalidEvidence(
-            "recovery action requires an exact network reference",
-        ))
-}
-
-fn required_execution(
-    references: &WorkloadEffectReferences,
-) -> Result<WorkloadExecutionReference, WorkloadSagaError> {
-    references
-        .execution()
-        .cloned()
-        .ok_or(WorkloadSagaError::InvalidEvidence(
-            "recovery action requires an exact execution reference",
-        ))
-}
-
-fn required_publication(
-    references: &WorkloadEffectReferences,
-) -> Result<WorkloadPublicationReference, WorkloadSagaError> {
-    references
-        .publication()
-        .cloned()
-        .ok_or(WorkloadSagaError::InvalidEvidence(
-            "recovery action requires an exact publication reference",
-        ))
-}
-
 #[cfg(test)]
 #[path = "recovery/tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -5,12 +5,12 @@ use super::super::codec::{decode_workload_saga_record, encode_workload_saga_reco
 use super::{document_for, initial_record, initial_record_with_counters};
 
 #[test]
-fn strict_codec_round_trips_one_exact_compiled_plan_and_max_counters() {
+fn provision_source_round_trips_through_physical_codec() {
     let record = initial_record_with_counters("codec-max", u64::MAX, u64::MAX);
     let fields = encode_workload_saga_record(&record).expect("record should encode");
 
-    assert_eq!(WORKLOAD_SAGA_FORMAT_VERSION, 2);
-    assert_eq!(fields.len(), 18);
+    assert_eq!(WORKLOAD_SAGA_FORMAT_VERSION, 3);
+    assert_eq!(fields.len(), 20);
     assert_eq!(
         fields.get("desiredGeneration"),
         Some(&json!(u64::MAX.to_string()))
@@ -33,6 +33,20 @@ fn strict_codec_round_trips_one_exact_compiled_plan_and_max_counters() {
         Some(
             &serde_json::to_value(record.active_intent().executable())
                 .expect("portable executable should encode")
+        )
+    );
+    assert_eq!(
+        fields.get("source"),
+        Some(
+            &serde_json::to_value(record.active_intent().source())
+                .expect("portable source should encode")
+        )
+    );
+    assert_eq!(
+        fields.get("provisionDisposition"),
+        Some(
+            &serde_json::to_value(record.provision_disposition())
+                .expect("portable provision disposition should encode")
         )
     );
     assert!(!fields.contains_key("successorIntent"));
@@ -90,7 +104,7 @@ fn strict_codec_rejects_unknown_crossed_and_noncanonical_record_fields() {
 fn strict_codec_rejects_missing_null_legacy_and_partial_compiled_plan_shapes() {
     let record = initial_record("codec-missing");
 
-    for required in ["phaseDetail", "executable", "compiledNetworkPlan"] {
+    for required in ["phaseDetail", "executable", "source", "compiledNetworkPlan"] {
         let mut missing = document_for(&record);
         missing.fields.remove(required);
         assert_eq!(
@@ -148,7 +162,7 @@ fn strict_codec_rejects_missing_null_legacy_and_partial_compiled_plan_shapes() {
         Err(WorkloadSagaStoreError::Corrupt)
     );
 
-    for optional in ["successorIntent", "failure"] {
+    for optional in ["successorIntent", "provisionDisposition", "failure"] {
         let mut null = document_for(&record);
         null.fields.insert(optional.to_owned(), Value::Null);
         assert_eq!(
@@ -220,7 +234,7 @@ fn strict_codec_rejects_crossed_and_unknown_compiled_plan_content() {
 #[test]
 fn strict_codec_rejects_legacy_unknown_saga_and_inner_plan_versions() {
     let record = initial_record("codec-versions");
-    for candidate in [1, 3] {
+    for candidate in [1, 2, 4] {
         let mut document = document_for(&record);
         document
             .fields
@@ -232,7 +246,7 @@ fn strict_codec_rejects_legacy_unknown_saga_and_inner_plan_versions() {
         );
     }
 
-    for candidate in [0, 2] {
+    for candidate in [0, 1, 3] {
         let mut document = document_for(&record);
         compiled_object_mut(&mut document.fields)
             .get_mut("content")
@@ -245,6 +259,21 @@ fn strict_codec_rejects_legacy_unknown_saga_and_inner_plan_versions() {
             "inner plan format version {candidate} must fail closed"
         );
     }
+}
+
+#[test]
+fn provision_disposition_round_trips_through_physical_codec() {
+    let record = initial_record("codec-provision-disposition");
+    let document = document_for(&record);
+
+    assert_eq!(
+        document.fields.get("provisionDisposition"),
+        Some(
+            &serde_json::to_value(record.provision_disposition())
+                .expect("portable provision disposition should encode")
+        )
+    );
+    assert_eq!(decode_workload_saga_record(&document), Ok(record));
 }
 
 fn compiled_object_mut(fields: &mut Map<String, Value>) -> &mut Map<String, Value> {

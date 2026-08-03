@@ -8,20 +8,20 @@ use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
     NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
     NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
-    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkResourceGeneration,
-    NetworkSovereigntyRequirements,
+    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkProviderId,
+    NetworkResourceGeneration, NetworkSovereigntyRequirements,
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
-    WorkloadExecutableEncoding, WorkloadExecutableIntent, WorkloadGeneration,
-    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
-    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
-    WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaError, WorkloadSagaExpected,
-    WorkloadSagaFuture, WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaKey,
-    WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
-    WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
-    WorkloadSagaTenantPageRequest,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadExecutableEncoding,
+    WorkloadExecutableIntent, WorkloadGeneration, WorkloadNetworkIntent,
+    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent, WorkloadSagaCommit,
+    WorkloadSagaError, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaIntent,
+    WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
+    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
+    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
 };
 use tokio::sync::Notify;
 
@@ -149,6 +149,7 @@ fn compiled_plan(
         requirements,
         None,
         None,
+        None,
         [],
         [],
         [],
@@ -172,15 +173,27 @@ fn intent(
     } else {
         WorkloadActivationIntent::PrepareOnly
     };
+    let executable = WorkloadExecutableIntent::new(
+        WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(r#"{{"fixtureSeed":{seed}}}"#),
+    )
+    .expect("fixture executable is valid");
+    let source = WorkloadProvisionSourceEvidence::standalone_sandbox(
+        WorkloadProvisionSourceIdentity::standalone_sandbox(label, label)
+            .expect("fixture source identity is valid"),
+        WorkloadProvisionSourceGeneration::new(generation),
+        WorkloadProvisionSourceResourceVersion::new(format!("fixture-{seed}"))
+            .expect("fixture source version is valid"),
+        executable.content_digest(),
+        NetworkProviderId::for_registration_key("fixture-attachment"),
+    )
+    .expect("fixture source evidence is valid");
     WorkloadSagaIntent::new(
         DesiredWorkloadKind::Sandbox,
         desired_state,
         WorkloadGeneration::new(generation),
-        WorkloadExecutableIntent::new(
-            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-            format!(r#"{{"fixtureSeed":{seed}}}"#),
-        )
-        .expect("fixture executable is valid"),
+        executable,
+        source,
         WorkloadNetworkIntent::new(compiled_plan(&tenant_id, label, generation, activation)),
         activation,
         WorkloadPublicationIntent::Withheld,
@@ -191,10 +204,7 @@ fn intent(
             format!("twu_{}", format!("{:02x}", seed.wrapping_add(1)).repeat(32))
                 .try_into()
                 .expect("fixture workload uid is valid"),
-            Some(
-                NodeIdentity::new(format!("node-{label}-{generation}"))
-                    .expect("fixture node is valid"),
-            ),
+            NodeIdentity::new(format!("node-{label}-{generation}")).expect("fixture node is valid"),
         ),
     )
     .expect("fixture intent is valid")
@@ -208,72 +218,14 @@ fn stopped_intent(label: &str, generation: u64, seed: u8) -> WorkloadSagaIntent 
     intent(label, generation, DesiredWorkloadState::Stopped, seed)
 }
 
-fn evidence(label: &str) -> WorkloadOwnerEvidenceDigest {
-    WorkloadOwnerEvidenceDigest::sha256(label)
-}
-
-fn provision_observations(
-    phase: WorkloadSagaPhase,
-    references: &WorkloadEffectReferences,
-) -> Vec<WorkloadOwnerObservation> {
-    let network = references.network().expect("network is retained").clone();
-    let execution = references
-        .execution()
-        .expect("execution is retained")
-        .clone();
-    let rank = match phase {
-        WorkloadSagaPhase::NetworkReserved => 1,
-        WorkloadSagaPhase::WorkloadPrepared => 2,
-        WorkloadSagaPhase::NetworkAttached => 3,
-        WorkloadSagaPhase::WorkloadActivated => 4,
-        WorkloadSagaPhase::Ready | WorkloadSagaPhase::Observed => 5,
-        _ => panic!("phase has no provision observations"),
-    };
-    let mut observations = Vec::new();
-    if rank >= 1 {
-        observations.push(WorkloadOwnerObservation::NetworkReserved {
-            reference: network.clone(),
-            evidence: evidence("network-reserved"),
-        });
-    }
-    if rank >= 2 {
-        observations.push(WorkloadOwnerObservation::ExecutionPrepared {
-            reference: execution.clone(),
-            evidence: evidence("execution-prepared"),
-        });
-    }
-    if rank >= 3 {
-        observations.push(WorkloadOwnerObservation::NetworkAttached {
-            reference: network.clone(),
-            evidence: evidence("network-attached"),
-        });
-    }
-    if rank >= 4 {
-        observations.push(WorkloadOwnerObservation::ExecutionActivated {
-            reference: execution.clone(),
-            evidence: evidence("execution-activated"),
-        });
-    }
-    if rank >= 5 {
-        observations.push(WorkloadOwnerObservation::Ready {
-            network,
-            execution,
-            evidence: evidence("ready"),
-        });
-    }
-    observations
-}
-
 fn advance_provision(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
-    let references = WorkloadEffectReferences::provision(record.active_intent(), None)
-        .expect("fixture provision references are valid");
-    let observations = provision_observations(phase, &references);
-    let detail =
-        WorkloadPhaseDetail::provision(phase, record.active_intent(), references, observations)
-            .expect("fixture phase detail is valid");
-    record
-        .advance(phase, detail, None)
-        .expect("fixture provision transition is valid")
+    let candidate = crate::workload_saga::test_support::confirmed_provision(record);
+    assert_eq!(
+        candidate.phase(),
+        phase,
+        "fixture should reach its target phase"
+    );
+    candidate
 }
 
 fn provision_record(label: &str, target: WorkloadSagaPhase) -> WorkloadSagaRecord {
@@ -347,8 +299,10 @@ async fn missing_intent_is_confirmed_before_decision() {
     );
     assert!(matches!(
         result.decision().action(),
-        WorkloadSagaAction::ReserveNetwork { plan, .. }
-            if plan == expected.active_intent().network().compiled_plan()
+        WorkloadSagaAction::Provision(crate::workload_saga::WorkloadProvisionDecision::Proposed(
+            proposed
+        )) if proposed.candidate().active_intent().network().compiled_plan()
+            == expected.active_intent().network().compiled_plan()
     ));
     assert_eq!(
         store.calls(),
@@ -413,7 +367,7 @@ async fn successor_withdraws_before_reservation() {
         assert_eq!(result.record().successor_intent(), Some(&successor));
         assert!(!matches!(
             result.decision().action(),
-            WorkloadSagaAction::ReserveNetwork { .. }
+            WorkloadSagaAction::Provision(_)
         ));
         assert_eq!(
             store.calls(),

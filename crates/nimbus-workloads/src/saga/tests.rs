@@ -77,6 +77,7 @@ fn compiled_network_plan(
         requirements,
         None,
         None,
+        None,
         [],
         [],
         [dependency],
@@ -97,6 +98,39 @@ fn intent_with(
     seed: u8,
 ) -> WorkloadSagaIntent {
     let tenant_id = tenant(tenant_label);
+    let executable = WorkloadExecutableIntent::new(
+        WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(r#"{{"fixtureSeed":{seed}}}"#),
+    )
+    .expect("fixture executable should validate");
+    let source_identity = if seed.is_multiple_of(2) {
+        WorkloadProvisionSourceIdentity::sandbox_backed_service(workload_label)
+            .expect("service source identity should validate")
+    } else {
+        WorkloadProvisionSourceIdentity::standalone_sandbox(workload_label, workload_label)
+            .expect("sandbox source identity should validate")
+    };
+    let source_version = WorkloadProvisionSourceResourceVersion::new(format!("fixture-{seed}"))
+        .expect("source version should validate");
+    let attachment_provider = NetworkProviderId::for_registration_key(&format!("provider-{seed}"));
+    let source = if seed.is_multiple_of(2) {
+        WorkloadProvisionSourceEvidence::sandbox_backed_service(
+            source_identity,
+            WorkloadProvisionSourceGeneration::new(generation),
+            source_version,
+            executable.content_digest(),
+            attachment_provider,
+        )
+    } else {
+        WorkloadProvisionSourceEvidence::standalone_sandbox(
+            source_identity,
+            WorkloadProvisionSourceGeneration::new(generation),
+            source_version,
+            executable.content_digest(),
+            attachment_provider,
+        )
+    }
+    .expect("source evidence should validate");
     WorkloadSagaIntent::new(
         if seed.is_multiple_of(2) {
             DesiredWorkloadKind::Service
@@ -105,11 +139,8 @@ fn intent_with(
         },
         desired_state,
         WorkloadGeneration::new(generation),
-        WorkloadExecutableIntent::new(
-            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-            format!(r#"{{"fixtureSeed":{seed}}}"#),
-        )
-        .expect("fixture executable should validate"),
+        executable,
+        source,
         WorkloadNetworkIntent::new(compiled_network_plan(
             &tenant_id,
             workload_label,
@@ -123,7 +154,7 @@ fn intent_with(
         WorkloadAdmissionEvidence::new(
             decision(seed),
             workload_uid(seed),
-            Some(NodeIdentity::new(format!("node-{seed}")).expect("node should validate")),
+            NodeIdentity::new(format!("node-{seed}")).expect("node should validate"),
         ),
     )
     .expect("fixture intent should validate")
@@ -205,7 +236,7 @@ fn provision_observations(
         WorkloadSagaPhase::Published => 6,
         WorkloadSagaPhase::Observed => {
             if publication == WorkloadPublicationIntent::PublishWhenReady {
-                6
+                7
             } else {
                 5
             }
@@ -253,6 +284,15 @@ fn provision_observations(
             evidence: evidence("publication-present"),
         });
     }
+    if rank >= 7 {
+        observations.push(WorkloadOwnerObservation::PublicationObserved {
+            reference: references
+                .publication()
+                .expect("observed fixture needs publication")
+                .clone(),
+            evidence: evidence("publication-observed"),
+        });
+    }
     observations
 }
 
@@ -272,13 +312,33 @@ fn advance_provision(
     phase: WorkloadSagaPhase,
     publication: Option<&WorkloadPublicationReference>,
 ) -> WorkloadSagaRecord {
-    record
-        .advance(
-            phase,
-            provision_detail(phase, record.active_intent(), publication),
-            None,
-        )
-        .expect("provision transition should validate")
+    let detail = provision_detail(phase, record.active_intent(), publication);
+    confirm_provision_fixture(record, phase, detail)
+}
+
+fn provision_attempt_fixture(
+    record: &WorkloadSagaRecord,
+    step: WorkloadProvisionStep,
+    target_phase: WorkloadSagaPhase,
+    subjects: WorkloadProvisionSubjects,
+    prerequisite: Option<WorkloadProvisionPrerequisiteEvidence>,
+) -> WorkloadProvisionAttempt {
+    super::test_support::provision_attempt(record, step, target_phase, subjects, prerequisite)
+}
+
+fn persist_attempt_fixture(
+    record: &WorkloadSagaRecord,
+    attempt: WorkloadProvisionAttempt,
+) -> WorkloadSagaRecord {
+    super::test_support::persist_attempt(record, attempt)
+}
+
+fn confirm_provision_fixture(
+    record: &WorkloadSagaRecord,
+    target_phase: WorkloadSagaPhase,
+    detail: WorkloadPhaseDetail,
+) -> WorkloadSagaRecord {
+    super::test_support::confirmed_provision(record, target_phase, detail)
 }
 
 fn record_at_ready(publication: WorkloadPublicationIntent) -> WorkloadSagaRecord {
@@ -437,6 +497,7 @@ struct RehashedTransitionPayload {
     active_intent: WorkloadSagaIntent,
     successor_intent: Option<WorkloadSagaIntent>,
     phase_detail: WorkloadPhaseDetail,
+    provision_disposition: Option<WorkloadProvisionDisposition>,
     failure: Option<WorkloadFailureEvidence>,
 }
 
@@ -457,12 +518,14 @@ fn rehash_encoded_record(record: &mut serde_json::Value) {
         active_intent: serde_json::from_value(record["activeIntent"].clone()).unwrap(),
         successor_intent: serde_json::from_value(record["successorIntent"].clone()).unwrap(),
         phase_detail: serde_json::from_value(record["phaseDetail"].clone()).unwrap(),
+        provision_disposition: serde_json::from_value(record["provisionDisposition"].clone())
+            .unwrap(),
         failure: serde_json::from_value(record["failure"].clone()).unwrap(),
     };
     let encoded_payload = serde_json::to_vec(&payload).unwrap();
     record["lastTransition"]["transitionId"] = json!(derive_id(
         WorkloadSagaTransitionId::PREFIX,
-        b"nimbus.workloads.saga.transition.v2",
+        b"nimbus.workloads.saga.transition.v3",
         &[std::str::from_utf8(&encoded_payload).unwrap()],
     ));
 }
@@ -789,15 +852,30 @@ fn provision_evidence_rejects_missing_extra_duplicate_crossed_and_out_of_order()
 fn established_publication_reference_cannot_change_between_phases() {
     let ready = record_at_ready(WorkloadPublicationIntent::PublishWhenReady);
     let replacement = publication_reference(ready.active_intent(), 100);
-    let error = ready
-        .advance(
+    let attempt = provision_attempt_fixture(
+        &ready,
+        WorkloadProvisionStep::Publish,
+        WorkloadSagaPhase::Published,
+        WorkloadProvisionSubjects::Publication(
+            ready
+                .phase_detail()
+                .references()
+                .publication()
+                .expect("ready fixture should retain publication")
+                .clone(),
+        ),
+        None,
+    );
+    let pending = persist_attempt_fixture(&ready, attempt);
+    let error = pending
+        .transition_provision_disposition(
             WorkloadSagaPhase::Published,
             provision_detail(
                 WorkloadSagaPhase::Published,
                 ready.active_intent(),
                 Some(&replacement),
             ),
-            None,
+            WorkloadProvisionDisposition::Ready,
         )
         .unwrap_err();
     assert!(matches!(error, WorkloadSagaError::InvalidEvidence(_)));
@@ -1109,11 +1187,44 @@ fn desired_digest_binds_complete_intent() {
         r#"{"fixture":"crossed-executable"}"#,
     )
     .expect("replacement executable should validate");
+    let replacement_source = match intent.source() {
+        WorkloadProvisionSourceEvidence::StandaloneSandbox { .. } => {
+            WorkloadProvisionSourceEvidence::standalone_sandbox(
+                intent.source().source_identity().clone(),
+                intent.source().source_generation(),
+                intent.source().resource_version().clone(),
+                replacement.content_digest(),
+                intent.source().attachment_provider_id().clone(),
+            )
+        }
+        WorkloadProvisionSourceEvidence::SandboxBackedService { .. } => {
+            WorkloadProvisionSourceEvidence::sandbox_backed_service(
+                intent.source().source_identity().clone(),
+                intent.source().source_generation(),
+                intent.source().resource_version().clone(),
+                replacement.content_digest(),
+                intent.source().attachment_provider_id().clone(),
+            )
+        }
+    }
+    .expect("replacement source evidence should validate");
+    let divergent = WorkloadSagaIntent::new(
+        intent.kind(),
+        intent.desired_state(),
+        intent.generation(),
+        replacement,
+        replacement_source,
+        intent.network().clone(),
+        intent.activation(),
+        intent.publication(),
+        intent.admission().clone(),
+    )
+    .expect("divergent complete desired intent should validate independently");
 
-    let mut crossed_executable = serde_json::to_value(&intent).unwrap();
-    crossed_executable["executable"] = serde_json::to_value(&replacement).unwrap();
+    let mut crossed_executable = serde_json::to_value(&divergent).unwrap();
+    crossed_executable["desiredDigest"] = json!(intent.desired_digest());
     let error = serde_json::from_value::<WorkloadSagaIntent>(crossed_executable)
-        .expect_err("crossed executable must invalidate the complete desired digest");
+        .expect_err("stale digest must reject a complete executable/source replacement");
     assert!(
         error
             .to_string()
@@ -1130,17 +1241,6 @@ fn desired_digest_binds_complete_intent() {
             .contains("workload desired digest does not match complete desired intent")
     );
 
-    let divergent = WorkloadSagaIntent::new(
-        intent.kind(),
-        intent.desired_state(),
-        intent.generation(),
-        replacement,
-        intent.network().clone(),
-        intent.activation(),
-        intent.publication(),
-        intent.admission().clone(),
-    )
-    .expect("divergent complete desired intent should validate independently");
     assert_ne!(divergent.desired_digest(), intent.desired_digest());
     let record = WorkloadSagaRecord::new(key("tenant-a", "workload-a"), intent).unwrap();
     assert!(matches!(
@@ -1428,8 +1528,21 @@ fn transition_id_is_exact_replay_stable_and_binds_semantic_payload() {
         }],
     )
     .unwrap();
-    let changed = current
-        .advance(WorkloadSagaPhase::NetworkReserved, changed_evidence, None)
+    let changed_attempt = provision_attempt_fixture(
+        &current,
+        WorkloadProvisionStep::ReserveNetwork,
+        WorkloadSagaPhase::NetworkReserved,
+        WorkloadProvisionSubjects::Network(WorkloadNetworkReference::for_intent(
+            current.active_intent(),
+        )),
+        None,
+    );
+    let changed = persist_attempt_fixture(&current, changed_attempt)
+        .transition_provision_disposition(
+            WorkloadSagaPhase::NetworkReserved,
+            changed_evidence,
+            WorkloadProvisionDisposition::Ready,
+        )
         .unwrap();
     assert_ne!(transition_id(&first), transition_id(&changed));
 
@@ -1542,8 +1655,12 @@ fn transition_id_binds_every_active_intent_network_and_revision_field() {
 
     let progressed = advance_provision(&base, WorkloadSagaPhase::NetworkReserved, None);
     let mut candidate = serde_json::to_value(&progressed).unwrap();
-    candidate["revision"] = json!("2");
-    candidate["lastTransition"]["resultingRevision"] = json!("2");
+    let crossed_revision = progressed
+        .revision()
+        .checked_next()
+        .expect("fixture revision should have room");
+    candidate["revision"] = json!(crossed_revision);
+    candidate["lastTransition"]["resultingRevision"] = json!(crossed_revision);
     reject(candidate);
 
     let stopped =
@@ -1680,6 +1797,7 @@ fn record_deserialization_rejects_forged_illegal_source_edge() {
         active_intent: &'a WorkloadSagaIntent,
         successor_intent: Option<&'a WorkloadSagaIntent>,
         phase_detail: &'a WorkloadPhaseDetail,
+        provision_disposition: Option<&'a WorkloadProvisionDisposition>,
         failure: Option<&'a WorkloadFailureEvidence>,
     }
 
@@ -1699,12 +1817,13 @@ fn record_deserialization_rejects_forged_illegal_source_edge() {
         active_intent: reserved.active_intent(),
         successor_intent: reserved.successor_intent(),
         phase_detail: reserved.phase_detail(),
+        provision_disposition: reserved.provision_disposition(),
         failure: reserved.failure(),
     };
     let encoded_payload = serde_json::to_vec(&payload).unwrap();
     let transition_id = derive_id(
         WorkloadSagaTransitionId::PREFIX,
-        b"nimbus.workloads.saga.transition.v2",
+        b"nimbus.workloads.saga.transition.v3",
         &[std::str::from_utf8(&encoded_payload).unwrap()],
     );
     let mut forged_record = serde_json::to_value(&reserved).unwrap();
@@ -1730,4 +1849,427 @@ fn failure_evidence_is_stable_bounded_and_cleanup_only() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn running_provision_record_requires_provision_disposition() {
+    let record = WorkloadSagaRecord::new(
+        key("tenant-a", "workload-a"),
+        running_intent(1, WorkloadPublicationIntent::Withheld),
+    )
+    .expect("running record should validate");
+    assert_eq!(
+        record.provision_disposition(),
+        Some(&WorkloadProvisionDisposition::Ready)
+    );
+
+    let mut encoded = serde_json::to_value(&record).expect("record should encode");
+    encoded
+        .as_object_mut()
+        .expect("record is an object")
+        .remove("provisionDisposition");
+    assert!(serde_json::from_value::<WorkloadSagaRecord>(encoded).is_err());
+}
+
+#[test]
+fn non_provision_record_has_no_provision_disposition() {
+    let record = WorkloadSagaRecord::new(key("tenant-a", "workload-a"), stopped_intent(1))
+        .expect("stopped record should validate");
+    assert!(record.provision_disposition().is_none());
+}
+
+#[test]
+fn effectful_provision_phase_cannot_bypass_persisted_attempt_protocol() {
+    let record = WorkloadSagaRecord::new(
+        key("tenant-a", "workload-a"),
+        running_intent(1, WorkloadPublicationIntent::Withheld),
+    )
+    .expect("running record should validate");
+    let detail = provision_detail(
+        WorkloadSagaPhase::NetworkReserved,
+        record.active_intent(),
+        None,
+    );
+
+    assert_eq!(
+        record
+            .advance(WorkloadSagaPhase::NetworkReserved, detail.clone(), None,)
+            .unwrap_err(),
+        WorkloadSagaError::InvalidTransition(
+            "effectful provision advance requires the exact persisted attempt protocol"
+        )
+    );
+    assert_eq!(
+        record
+            .transition_provision_disposition(
+                WorkloadSagaPhase::NetworkReserved,
+                detail.clone(),
+                WorkloadProvisionDisposition::Ready,
+            )
+            .unwrap_err(),
+        WorkloadSagaError::InvalidTransition("provision disposition transition is not legal")
+    );
+
+    let confirmed = super::test_support::confirmed_provision(
+        &record,
+        WorkloadSagaPhase::NetworkReserved,
+        detail,
+    );
+    assert_eq!(confirmed.phase(), WorkloadSagaPhase::NetworkReserved);
+    assert_eq!(
+        confirmed.provision_disposition(),
+        Some(&WorkloadProvisionDisposition::Ready)
+    );
+}
+
+#[test]
+fn activation_prerequisite_attempt_cannot_complete_activation() {
+    let mut attached = WorkloadSagaRecord::new(
+        key("tenant-a", "workload-a"),
+        running_intent(1, WorkloadPublicationIntent::Withheld),
+    )
+    .expect("running record should validate");
+    for phase in [
+        WorkloadSagaPhase::NetworkReserved,
+        WorkloadSagaPhase::WorkloadPrepared,
+        WorkloadSagaPhase::NetworkAttached,
+    ] {
+        attached = advance_provision(&attached, phase, None);
+    }
+    let network = WorkloadNetworkReference::for_intent(attached.active_intent());
+    let execution = WorkloadExecutionReference::for_intent(attached.active_intent());
+    let inspection = provision_attempt_fixture(
+        &attached,
+        WorkloadProvisionStep::InspectActivationPrerequisites,
+        WorkloadSagaPhase::NetworkAttached,
+        WorkloadProvisionSubjects::Readiness { network, execution },
+        None,
+    );
+    let pending = persist_attempt_fixture(&attached, inspection);
+
+    assert_eq!(
+        pending
+            .transition_provision_disposition(
+                WorkloadSagaPhase::WorkloadActivated,
+                provision_detail(
+                    WorkloadSagaPhase::WorkloadActivated,
+                    pending.active_intent(),
+                    None,
+                ),
+                WorkloadProvisionDisposition::Ready,
+            )
+            .unwrap_err(),
+        WorkloadSagaError::InvalidTransition("provision disposition transition is not legal")
+    );
+}
+
+#[test]
+fn activation_attempt_requires_retained_prerequisite_inspection() {
+    let mut attached = WorkloadSagaRecord::new(
+        key("tenant-a", "workload-a"),
+        running_intent(1, WorkloadPublicationIntent::Withheld),
+    )
+    .expect("running record should validate");
+    for phase in [
+        WorkloadSagaPhase::NetworkReserved,
+        WorkloadSagaPhase::WorkloadPrepared,
+        WorkloadSagaPhase::NetworkAttached,
+    ] {
+        attached = advance_provision(&attached, phase, None);
+    }
+    let network = WorkloadNetworkReference::for_intent(attached.active_intent());
+    let execution = WorkloadExecutionReference::for_intent(attached.active_intent());
+    let unpersisted_inspection = provision_attempt_fixture(
+        &attached,
+        WorkloadProvisionStep::InspectActivationPrerequisites,
+        WorkloadSagaPhase::NetworkAttached,
+        WorkloadProvisionSubjects::Readiness {
+            network: network.clone(),
+            execution: execution.clone(),
+        },
+        None,
+    );
+    let prerequisite = WorkloadProvisionPrerequisiteEvidence::new(
+        unpersisted_inspection.attempt_id().clone(),
+        WorkloadProvisionSuccessEvidence::ActivationPrerequisitesReady {
+            network,
+            execution: execution.clone(),
+            evidence: evidence("unpersisted-activation-prerequisite"),
+        },
+    )
+    .expect("unpersisted prerequisite remains structurally valid");
+    let activation = provision_attempt_fixture(
+        &attached,
+        WorkloadProvisionStep::ActivateWorkload,
+        WorkloadSagaPhase::WorkloadActivated,
+        WorkloadProvisionSubjects::Execution(execution),
+        Some(prerequisite),
+    );
+
+    assert_eq!(
+        attached
+            .transition_provision_disposition(
+                attached.phase(),
+                attached.phase_detail().clone(),
+                WorkloadProvisionDisposition::AttemptPending(activation),
+            )
+            .unwrap_err(),
+        WorkloadSagaError::InvalidTransition("provision disposition transition is not legal")
+    );
+}
+
+#[test]
+fn activation_prerequisite_subjects_must_match_retained_inspection() {
+    let mut attached = WorkloadSagaRecord::new(
+        key("tenant-a", "workload-a"),
+        running_intent(1, WorkloadPublicationIntent::Withheld),
+    )
+    .expect("running record should validate");
+    for phase in [
+        WorkloadSagaPhase::NetworkReserved,
+        WorkloadSagaPhase::WorkloadPrepared,
+        WorkloadSagaPhase::NetworkAttached,
+    ] {
+        attached = advance_provision(&attached, phase, None);
+    }
+    let network = WorkloadNetworkReference::for_intent(attached.active_intent());
+    let execution = WorkloadExecutionReference::for_intent(attached.active_intent());
+    let inspection = provision_attempt_fixture(
+        &attached,
+        WorkloadProvisionStep::InspectActivationPrerequisites,
+        WorkloadSagaPhase::NetworkAttached,
+        WorkloadProvisionSubjects::Readiness {
+            network: network.clone(),
+            execution: execution.clone(),
+        },
+        None,
+    );
+    let pending = persist_attempt_fixture(&attached, inspection.clone());
+    let crossed = running_intent(2, WorkloadPublicationIntent::Withheld);
+    let prerequisite = WorkloadProvisionPrerequisiteEvidence::new(
+        inspection.attempt_id().clone(),
+        WorkloadProvisionSuccessEvidence::ActivationPrerequisitesReady {
+            network: WorkloadNetworkReference::for_intent(&crossed),
+            execution: WorkloadExecutionReference::for_intent(&crossed),
+            evidence: evidence("crossed-activation-prerequisite"),
+        },
+    )
+    .expect("crossed fixture remains structurally typed");
+    let activation = provision_attempt_fixture(
+        &pending,
+        WorkloadProvisionStep::ActivateWorkload,
+        WorkloadSagaPhase::WorkloadActivated,
+        WorkloadProvisionSubjects::Execution(execution),
+        Some(prerequisite),
+    );
+
+    assert_eq!(
+        pending
+            .transition_provision_disposition(
+                pending.phase(),
+                pending.phase_detail().clone(),
+                WorkloadProvisionDisposition::AttemptPending(activation),
+            )
+            .unwrap_err(),
+        WorkloadSagaError::InvalidEvidence(
+            "activation prerequisite is crossed with durable lifecycle references"
+        )
+    );
+}
+
+#[test]
+fn promoted_generation_requires_exact_initial_provision_disposition() {
+    let active = record_at_ready(WorkloadPublicationIntent::Withheld);
+    let WorkloadSagaIntentUpdate::Transition(queued) = active
+        .apply_intent(running_intent(2, WorkloadPublicationIntent::Withheld))
+        .expect("higher generation should queue")
+    else {
+        panic!("higher generation should produce a transition");
+    };
+    let recorded = finish_teardown(&queued);
+    let promoted = recorded
+        .promote_successor()
+        .expect("canonical promotion should validate");
+    let intent = promoted.active_intent();
+    let forged_attempt = WorkloadProvisionAttempt::new(WorkloadProvisionAttemptInput {
+        key: promoted.key().clone(),
+        saga_id: promoted.saga_id().clone(),
+        issuing_revision: recorded.revision(),
+        generation: intent.generation(),
+        desired_digest: intent.desired_digest(),
+        required_node: intent.admission().assigned_node().clone(),
+        source_digest: intent.source().source_digest(),
+        network_plan_digest: intent.network().digest(),
+        selection_evidence: intent
+            .network()
+            .compiled_plan()
+            .content()
+            .capability_selection_evidence()
+            .cloned(),
+        source_phase: WorkloadSagaPhase::IntentCommitted,
+        target_phase: WorkloadSagaPhase::NetworkReserved,
+        step: WorkloadProvisionStep::ReserveNetwork,
+        subjects: WorkloadProvisionSubjects::Network(WorkloadNetworkReference::for_intent(intent)),
+        prerequisite: None,
+    })
+    .expect("forged attempt is internally correlated with the promoted generation");
+    let mut encoded = serde_json::to_value(&promoted).expect("promotion should encode");
+    encoded["provisionDisposition"] =
+        serde_json::to_value(WorkloadProvisionDisposition::AttemptPending(forged_attempt))
+            .expect("attempt disposition should encode");
+    rehash_encoded_record(&mut encoded);
+
+    assert!(
+        serde_json::from_value::<WorkloadSagaRecord>(encoded).is_err(),
+        "promotion must first persist exact initial readiness before issuing an attempt"
+    );
+}
+
+#[test]
+fn workload_kind_must_match_provision_source_variant() {
+    for (intent, crossed_kind) in [
+        (
+            intent_with(
+                "tenant-a",
+                "workload-a",
+                1,
+                DesiredWorkloadState::Running,
+                WorkloadActivationIntent::ActivateWhenAttached,
+                WorkloadPublicationIntent::Withheld,
+                1,
+            ),
+            DesiredWorkloadKind::Service,
+        ),
+        (
+            intent_with(
+                "tenant-a",
+                "workload-a",
+                2,
+                DesiredWorkloadState::Running,
+                WorkloadActivationIntent::ActivateWhenAttached,
+                WorkloadPublicationIntent::Withheld,
+                2,
+            ),
+            DesiredWorkloadKind::Sandbox,
+        ),
+    ] {
+        assert!(
+            WorkloadSagaIntent::new(
+                crossed_kind,
+                intent.desired_state(),
+                intent.generation(),
+                intent.executable().clone(),
+                intent.source().clone(),
+                intent.network().clone(),
+                intent.activation(),
+                intent.publication(),
+                intent.admission().clone(),
+            )
+            .is_err(),
+            "desired workload kind must match the closed provision source variant"
+        );
+    }
+}
+
+#[test]
+fn observed_publish_when_ready_requires_publication_observation() {
+    let ready = record_at_ready(WorkloadPublicationIntent::PublishWhenReady);
+    let publication = ready
+        .phase_detail()
+        .references()
+        .publication()
+        .expect("ready fixture should retain publication")
+        .clone();
+    let published = advance_provision(&ready, WorkloadSagaPhase::Published, Some(&publication));
+    let published_detail = published.phase_detail().clone();
+
+    assert!(
+        WorkloadPhaseDetail::provision(
+            WorkloadSagaPhase::Observed,
+            published.active_intent(),
+            published_detail.references(),
+            match published_detail {
+                WorkloadPhaseDetail::Provision(detail) => detail.observations().to_vec(),
+                _ => panic!("published fixture should carry provision detail"),
+            },
+        )
+        .is_err(),
+        "observed publication must add exact observation evidence"
+    );
+}
+
+#[test]
+fn provision_disposition_requires_exact_attempt_revision_history() {
+    fn reject_offset(record: &WorkloadSagaRecord, revision: u64) {
+        let mut encoded = serde_json::to_value(record).expect("record should encode");
+        encoded["revision"] = json!(revision.to_string());
+        encoded["lastTransition"]["resultingRevision"] = json!(revision.to_string());
+        rehash_encoded_record(&mut encoded);
+        let error = serde_json::from_value::<WorkloadSagaRecord>(encoded)
+            .expect_err("nonexact attempt history must fail closed");
+        assert!(error.to_string().contains(
+            "provision attempt issuing revision does not exactly bind disposition history"
+        ));
+    }
+
+    let initial = WorkloadSagaRecord::new(
+        key("tenant-a", "workload-a"),
+        running_intent(1, WorkloadPublicationIntent::Withheld),
+    )
+    .expect("running record should validate");
+    let detail = provision_detail(
+        WorkloadSagaPhase::NetworkReserved,
+        initial.active_intent(),
+        None,
+    );
+    let candidates = super::test_support::provision_candidates(
+        &initial,
+        WorkloadSagaPhase::NetworkReserved,
+        detail,
+    );
+    let pending = candidates
+        .first()
+        .expect("confirmed edge should first retain a pending attempt");
+    assert_eq!(pending.revision(), WorkloadSagaRevision::new(1));
+    reject_offset(pending, 2);
+
+    let attempt = pending
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::attempt)
+        .expect("pending record should retain its attempt")
+        .clone();
+    let inspection = pending
+        .transition_provision_disposition(
+            pending.phase(),
+            pending.phase_detail().clone(),
+            WorkloadProvisionDisposition::InspectionRequired(attempt.clone()),
+        )
+        .expect("inspection history should validate");
+    assert_eq!(inspection.revision(), WorkloadSagaRevision::new(2));
+    reject_offset(&inspection, 1);
+    reject_offset(&inspection, 3);
+
+    let failure = WorkloadFailureEvidence::new("provider_failed", evidence("provider-failed"))
+        .expect("failure evidence should validate");
+    let direct_failure = pending
+        .transition_provision_disposition(
+            pending.phase(),
+            pending.phase_detail().clone(),
+            WorkloadProvisionDisposition::DefiniteFailure {
+                attempt: attempt.clone(),
+                failure: failure.clone(),
+            },
+        )
+        .expect("direct failure history should validate");
+    let inspected_failure = inspection
+        .transition_provision_disposition(
+            inspection.phase(),
+            inspection.phase_detail().clone(),
+            WorkloadProvisionDisposition::DefiniteFailure { attempt, failure },
+        )
+        .expect("post-inspection failure history should validate");
+    assert_eq!(direct_failure.revision(), WorkloadSagaRevision::new(2));
+    assert_eq!(inspected_failure.revision(), WorkloadSagaRevision::new(3));
+    reject_offset(&direct_failure, 1);
+    reject_offset(&inspected_failure, 4);
 }

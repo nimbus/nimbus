@@ -12,9 +12,9 @@ use super::super::schema::{exact_table_schema, workload_saga_table, workload_sag
 use super::{document_for, engine, initial_record};
 
 #[test]
-fn exact_schema_has_twenty_fields_four_indexes_and_system_policy() {
+fn exact_schema_has_twenty_two_fields_four_indexes_and_system_policy() {
     let schema = exact_table_schema();
-    assert_eq!(schema.fields.len(), 20);
+    assert_eq!(schema.fields.len(), 22);
     assert_eq!(
         schema
             .fields
@@ -39,10 +39,12 @@ fn exact_schema_has_twenty_fields_four_indexes_and_system_policy() {
             ("desiredGeneration", true),
             ("desiredDigest", true),
             ("executable", true),
+            ("source", true),
             ("sagaRevision", true),
             ("phase", true),
             ("recoveryEligible", true),
             ("phaseDetail", true),
+            ("provisionDisposition", false),
             ("compiledNetworkPlan", true),
             ("activationIntent", true),
             ("publicationIntent", true),

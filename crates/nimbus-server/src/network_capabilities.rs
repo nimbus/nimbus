@@ -11,7 +11,7 @@ use nimbus_network::{
     NetworkEndpointCapabilitySet, NetworkExposure, NetworkForwardingCapabilitySet,
     NetworkIngressCapabilitySet, NetworkIngressFeature, NetworkIngressProviderRegistration,
     NetworkLifecycleCapabilitySet, NetworkLifecycleFeature, NetworkPortAssignmentMode,
-    NetworkProviderId, NetworkSovereigntyCapabilities, PortProtocol,
+    NetworkProviderId, NetworkSovereigntyCapabilities, NetworkTlsBehavior, PortProtocol,
 };
 
 use crate::listener_lease::SERVER_LISTENER_PROVIDER_KEY;
@@ -25,14 +25,22 @@ use crate::listener_lease::SERVER_LISTENER_PROVIDER_KEY;
 pub fn nimbus_owned_local_ingress_registration(
     tls_configured: bool,
 ) -> NetworkIngressProviderRegistration {
-    let mut ingress_features = BTreeSet::from([
+    let ingress_features = BTreeSet::from([
         NetworkIngressFeature::PathRouting,
         NetworkIngressFeature::WebSocket,
         NetworkIngressFeature::Streaming,
     ]);
-    if tls_configured {
-        ingress_features.insert(NetworkIngressFeature::TlsTermination);
-    }
+    // The registration describes the aggregate Nimbus-owned ingress surface:
+    // TLS terminates on the main HTTP listener while sibling wire listeners
+    // remain plain TCP.
+    let tls_behaviors = if tls_configured {
+        BTreeSet::from([
+            NetworkTlsBehavior::Disabled,
+            NetworkTlsBehavior::TerminateAtIngress,
+        ])
+    } else {
+        BTreeSet::from([NetworkTlsBehavior::Disabled])
+    };
 
     NetworkIngressProviderRegistration::new(
         NetworkProviderId::for_registration_key(SERVER_LISTENER_PROVIDER_KEY),
@@ -50,7 +58,7 @@ pub fn nimbus_owned_local_ingress_registration(
                 NetworkPortAssignmentMode::ProviderAssigned,
             ],
         ),
-        NetworkIngressCapabilitySet::new(ingress_features),
+        NetworkIngressCapabilitySet::new(ingress_features).with_tls_behaviors(tls_behaviors),
         NetworkForwardingCapabilitySet::new([]),
         NetworkLifecycleCapabilitySet::new([
             NetworkLifecycleFeature::DurableInspect,
@@ -60,3 +68,7 @@ pub fn nimbus_owned_local_ingress_registration(
         NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     )
 }
+
+#[cfg(test)]
+#[path = "network_capabilities/tests.rs"]
+mod tests;

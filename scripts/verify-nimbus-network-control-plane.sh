@@ -44,6 +44,7 @@ NNC62_WORKLOAD_NETWORK_PLAN_COMPILER_CONTRACT="scripts/nimbus-network-control-pl
 NNC62A_WORKLOAD_NETWORK_PLAN_DURABILITY_CONTRACT="scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh"
 NNC61E1_WORKLOAD_SAGA_INGRESS_CONTRACT="scripts/nimbus-network-control-plane/workload-saga-ingress-contract.sh"
 NNC63A_WORKLOAD_EXECUTABLE_CONTRACT="scripts/nimbus-network-control-plane/workload-executable-carrier-contract.sh"
+NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT="scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh"
 
 # shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
 . "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
@@ -881,7 +882,11 @@ switch (mutation) {
     replaceOne("compute.rs", "pub enum WorkloadSagaAction", "pub enum MissingWorkloadSagaAction");
     break;
   case "missing-action-row":
-    replaceOne("compute.rs", "WorkloadSagaAction::ObservePublication", "WorkloadSagaAction::OmittedPublicationObservation");
+    replaceOne(
+      "compute.rs",
+      "WorkloadSagaAction::Provision(decision)",
+      "WorkloadSagaAction::OmittedProvision(decision)",
+    );
     break;
   case "missing-cleanup-retention":
     replaceOne(
@@ -1021,7 +1026,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 31 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 32 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1808,11 +1813,27 @@ NODE
     sed -n '1,180p' "${temporary}/nnc63a-contract-self-test.out"
   fi
 
+  if [ ! -f "${NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT}" ]; then
+    printf 'SELFTEST FAIL NNCV032 workload provision decision helper is missing\n'
+    self_fail=$((self_fail + 1))
+  elif ! bash "${NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT}" --self-test \
+    >"${temporary}/nnc63b-contract-self-test.out" 2>&1; then
+    printf 'SELFTEST FAIL NNCV032 workload provision decision mutation suite failed\n'
+    sed -n '1,220p' "${temporary}/nnc63b-contract-self-test.out"
+    self_fail=$((self_fail + 1))
+  elif ! rg -q '^NNC6\.3b provision contract self-test: 36 passed, 0 failed$' \
+    "${temporary}/nnc63b-contract-self-test.out"; then
+    printf 'SELFTEST FAIL NNCV032 workload provision decision mutation count is not exact\n'
+    self_fail=$((self_fail + 1))
+  else
+    sed -n '1,220p' "${temporary}/nnc63b-contract-self-test.out"
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 241 passed, 0 failed\n'
+  printf 'self-test: 277 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -1938,6 +1959,24 @@ verify_nnc63a_workload_executable_carrier() {
   fi
 }
 
+verify_nnc63b_workload_provision_decision() {
+  if [ ! -f "${NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT}" ]; then
+    fail "NNCV032" "pure-workload-provision-decision" \
+      "missing ${NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT}"
+    return
+  fi
+
+  provision_error="$(
+    bash "${NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT}" --check 2>&1
+  )"
+  provision_contract_exit=$?
+  if [ "${provision_contract_exit}" -eq 0 ]; then
+    pass "NNCV032" "pure-workload-provision-decision"
+  else
+    fail "NNCV032" "pure-workload-provision-decision" "${provision_error}"
+  fi
+}
+
 printf 'Nimbus network control-plane static verifier\n'
 printf 'Repo: %s\n\n' "${REPO_ROOT}"
 
@@ -1973,6 +2012,7 @@ verify_nnc62_workload_network_plan_compiler
 verify_nnc62a_workload_network_plan_durability
 verify_nnc61e1_workload_saga_ingress
 verify_nnc63a_workload_executable_carrier
+verify_nnc63b_workload_provision_decision
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

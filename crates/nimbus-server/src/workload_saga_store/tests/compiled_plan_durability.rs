@@ -12,12 +12,12 @@ use nimbus_engine::Engine;
 use nimbus_network::{
     EndpointProtocol, NetworkAddressFamily, NetworkAttachmentCapabilitySet, NetworkAttachmentMode,
     NetworkBindRealmKind, NetworkCapabilityRequirements, NetworkCapabilitySelection,
-    NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkExposure,
-    NetworkForwardingCapabilitySet, NetworkForwardingFeature, NetworkIngressCapabilitySet,
-    NetworkIngressFeature, NetworkIsolationMode, NetworkLifecycleCapabilitySet,
-    NetworkLifecycleFeature, NetworkManagementMode, NetworkPlanContentDigest,
-    NetworkPortAssignmentMode, NetworkProviderId, NetworkResourceGeneration,
-    NetworkSovereigntyRequirements, PortProtocol,
+    NetworkCapabilitySelectionEvidence, NetworkControlPlaneLocality, NetworkEndpointCapabilitySet,
+    NetworkExposure, NetworkForwardingCapabilitySet, NetworkForwardingFeature,
+    NetworkIngressCapabilitySet, NetworkIngressFeature, NetworkIsolationMode,
+    NetworkLifecycleCapabilitySet, NetworkLifecycleFeature, NetworkManagementMode,
+    NetworkPlanContentDigest, NetworkPortAssignmentMode, NetworkProviderId,
+    NetworkResourceGeneration, NetworkSovereigntyRequirements, NetworkTlsBehavior, PortProtocol,
 };
 use nimbus_testing::{
     ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
@@ -26,15 +26,16 @@ use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadGeneration,
     WorkloadNetworkAttachmentBlueprint, WorkloadNetworkDependencyListenerBlueprint,
-    WorkloadNetworkIntent, WorkloadNetworkListenerBlueprint, WorkloadNetworkPlanContent,
-    WorkloadNetworkPlanIdentity, WorkloadNetworkPortRequestMode, WorkloadNetworkRouteBlueprint,
+    WorkloadNetworkEndpointSemantics, WorkloadNetworkForwardingBehavior, WorkloadNetworkIntent,
+    WorkloadNetworkListenerBlueprint, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
+    WorkloadNetworkPortRequestMode, WorkloadNetworkRouteBlueprint, WorkloadProvisionDisposition,
     WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaIntent,
     WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore,
 };
 use sha2::{Digest, Sha256};
 
 use super::super::EngineWorkloadSagaStore;
-use super::document_for;
+use super::{document_for, provision_source};
 
 const CHILD_TEST: &str =
     "workload_saga_store::tests::compiled_plan_durability::compiled_plan_durability_child";
@@ -46,7 +47,7 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_CHILD_DIAGNOSTIC_BYTES: usize = 4 * 1024;
 const PID_PREFIX: &str = "NIMBUS_NNC62A_PROCESS_ID";
 const FINGERPRINT_PREFIX: &str = "NIMBUS_NNC62A_COMPILED_PLAN_FINGERPRINT";
-const EXPECTED_OBSERVATION: &str = "compiled-plan-v1:wire-b1a787c3d77d5c9950b357fe39666c615cf9df401017f3f04f26fdeeb32949d9:content-5a5960b9432337197feaee84195f45a880c7e517eafc00ded9a2a6a9813d00c1:plan-99487c00a5e3ac79b15c9d4c80ec5ce5d1d35ca5a251b3b4b2a722b70cdcc6f6:a1:r1:l1:d1:q3";
+const EXPECTED_OBSERVATION: &str = "compiled-plan-v1:wire-d111446a4c0771bc898907c29b034bc71e4fcd4cc1b128a7f3c2024689cf15e7:content-ebb1107990fac278d146f6a05dacf1702c5e9547292e16a1d4d8676eef8377e2:plan-b8305c5b640d8af7aa4ed054709fe1de510dc4f1cd2fc0843a0bfdb8829eafdc:a1:r1:l1:d1:q3";
 const TENANT: &str = "tenant-nnc62a";
 const WORKLOAD: &str = "workload-nnc62a";
 const NETWORK_GENERATION: u64 = 7;
@@ -196,15 +197,28 @@ fn populated_record() -> (WorkloadSagaRecord, CompiledWorkloadNetworkPlan) {
     let compiled = populated_compiled_plan();
     let tenant_id = tenant_id();
     let key = workload_key();
+    let executable = nimbus_workloads::WorkloadExecutableIntent::new(
+        nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        r#"{"fixture":"nnc62a-fixed-desired-workload"}"#,
+    )
+    .expect("fixed executable should validate");
+    let source = provision_source(
+        &executable,
+        WORKLOAD,
+        NETWORK_GENERATION,
+        compiled
+            .content()
+            .capability_selection()
+            .expect("populated plan has exact selection")
+            .attachment_provider_id()
+            .clone(),
+    );
     let intent = WorkloadSagaIntent::new(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         WorkloadGeneration::new(NETWORK_GENERATION),
-        nimbus_workloads::WorkloadExecutableIntent::new(
-            nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-            r#"{"fixture":"nnc62a-fixed-desired-workload"}"#,
-        )
-        .expect("fixed executable should validate"),
+        executable,
+        source,
         WorkloadNetworkIntent::new(compiled.clone()),
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::PublishWhenReady,
@@ -215,7 +229,7 @@ fn populated_record() -> (WorkloadSagaRecord, CompiledWorkloadNetworkPlan) {
             format!("twu_{}", "2".repeat(64))
                 .try_into()
                 .expect("fixed workload uid should validate"),
-            Some(NodeIdentity::new("node-nnc62a").expect("fixed node id should validate")),
+            NodeIdentity::new("node-nnc62a").expect("fixed node id should validate"),
         ),
     )
     .expect("fixed workload intent should validate");
@@ -255,10 +269,10 @@ fn populated_compiled_plan() -> CompiledWorkloadNetworkPlan {
         ),
         NetworkIngressCapabilitySet::new([
             NetworkIngressFeature::HostRouting,
-            NetworkIngressFeature::TlsTermination,
             NetworkIngressFeature::WebSocket,
             NetworkIngressFeature::Streaming,
-        ]),
+        ])
+        .with_tls_behaviors([NetworkTlsBehavior::TerminateAtIngress]),
         NetworkForwardingCapabilitySet::new([
             NetworkForwardingFeature::PortForwarding,
             NetworkForwardingFeature::ConnectionDrain,
@@ -274,6 +288,12 @@ fn populated_compiled_plan() -> CompiledWorkloadNetworkPlan {
         NetworkProviderId::for_registration_key("nnc62a-host-attachment"),
         NetworkProviderId::for_registration_key("nnc62a-host-ingress"),
     );
+    let selection_evidence: NetworkCapabilitySelectionEvidence =
+        serde_json::from_value(serde_json::json!({
+            "selection": selection.clone(),
+            "source_digest": "ab".repeat(32),
+        }))
+        .expect("fixed capability evidence should validate");
     let attachment = WorkloadNetworkAttachmentBlueprint::new(&identity, "default")
         .expect("fixed attachment should validate");
     let route = WorkloadNetworkRouteBlueprint::new(
@@ -294,6 +314,10 @@ fn populated_compiled_plan() -> CompiledWorkloadNetworkPlan {
         WorkloadNetworkPortRequestMode::exact(
             NonZeroU16::new(32_443).expect("fixed listener port is non-zero"),
         ),
+        WorkloadNetworkEndpointSemantics::new(
+            WorkloadNetworkForwardingBehavior::PortForwarded,
+            NetworkTlsBehavior::TerminateAtIngress,
+        ),
         Some(8443),
     )
     .expect("fixed listener should validate");
@@ -307,6 +331,7 @@ fn populated_compiled_plan() -> CompiledWorkloadNetworkPlan {
         identity,
         requirements,
         Some(selection),
+        Some(selection_evidence),
         Some(attachment),
         [route],
         [listener],
@@ -355,17 +380,87 @@ async fn recover_compiled_plan(root: &Path) -> Result<String, String> {
         return Err("recovered saga is not unreserved IntentCommitted truth".to_owned());
     }
 
-    let expected = populated_compiled_plan();
+    let (expected_record, expected) = populated_record();
+    let recovered_intent = record.active_intent();
+    let expected_intent = expected_record.active_intent();
+    if recovered_intent != expected_intent
+        || recovered_intent.desired_digest() != expected_intent.desired_digest()
+        || recovered_intent.source() != expected_intent.source()
+        || recovered_intent.source().source_digest() != expected_intent.source().source_digest()
+        || recovered_intent.admission().assigned_node()
+            != expected_intent.admission().assigned_node()
+        || recovered_intent
+            .network()
+            .compiled_plan()
+            .content()
+            .capability_selection_evidence()
+            != expected_intent
+                .network()
+                .compiled_plan()
+                .content()
+                .capability_selection_evidence()
+    {
+        return Err(
+            "fresh Engine changed desired, source, node, selection, or digest evidence".to_owned(),
+        );
+    }
     let recovered = record.active_intent().network().compiled_plan();
     assert_exact_compiled_plan(recovered, &expected)?;
     let decision = WorkloadSagaDecision::for_record(&record)
         .map_err(|error| format!("recovery decision failed: {error}"))?;
-    let WorkloadSagaAction::ReserveNetwork { reference, plan } = decision.action() else {
+    let WorkloadSagaAction::Provision(
+        nimbus_compute::workload_saga::WorkloadProvisionDecision::Proposed(proposed),
+    ) = decision.action()
+    else {
         return Err(format!(
             "IntentCommitted recovery did not derive ReserveNetwork: {:?}",
             decision.action()
         ));
     };
+    let Some(WorkloadProvisionDisposition::AttemptPending(attempt)) =
+        proposed.candidate().provision_disposition()
+    else {
+        return Err("ReserveNetwork proposal omitted its exact pending attempt".to_owned());
+    };
+    let nimbus_workloads::WorkloadProvisionSubjects::Network(reference) = attempt.subjects() else {
+        return Err("ReserveNetwork attempt omitted its network subject".to_owned());
+    };
+    let nimbus_compute::workload_saga::WorkloadProvisionDecision::Proposed(expected_proposed) =
+        nimbus_compute::workload_saga::WorkloadProvisionDecision::plan(&expected_record)
+            .map_err(|error| format!("expected attempt derivation failed: {error}"))?
+    else {
+        return Err("expected record did not derive a ReserveNetwork proposal".to_owned());
+    };
+    let Some(WorkloadProvisionDisposition::AttemptPending(expected_attempt)) =
+        expected_proposed.candidate().provision_disposition()
+    else {
+        return Err("expected proposal omitted its pending attempt".to_owned());
+    };
+    if attempt != expected_attempt
+        || attempt.key() != record.key()
+        || attempt.saga_id() != record.saga_id()
+        || attempt.issuing_revision() != record.revision()
+        || attempt.generation() != recovered_intent.generation()
+        || attempt.desired_digest() != recovered_intent.desired_digest()
+        || attempt.required_node() != recovered_intent.admission().assigned_node()
+        || attempt.source_digest() != recovered_intent.source().source_digest()
+        || attempt.network_plan_digest() != recovered_intent.network().digest()
+        || attempt.selection_evidence()
+            != recovered_intent
+                .network()
+                .compiled_plan()
+                .content()
+                .capability_selection_evidence()
+    {
+        return Err(
+            "fresh Engine did not reconstruct the byte-exact provision-attempt fences".to_owned(),
+        );
+    }
+    let plan = proposed
+        .candidate()
+        .active_intent()
+        .network()
+        .compiled_plan();
     if plan != &expected {
         return Err("ReserveNetwork did not carry exact recovered compiled truth".to_owned());
     }

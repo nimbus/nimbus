@@ -1,21 +1,20 @@
 use std::collections::BTreeSet;
 
 use nimbus_core::{TenantId, WorkloadId};
-use nimbus_network::PublishedEndpointId;
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WorkloadActivationIntent,
     WorkloadAdmissionEvidence, WorkloadEffectReferences, WorkloadFailureEvidence,
     WorkloadGeneration, WorkloadInspectionRequirement, WorkloadNetworkIntent,
-    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
-    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaCommit,
-    WorkloadSagaExpected, WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaPhase,
-    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantCursor,
-    WorkloadSagaTenantPageRequest, WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
+    WorkloadOwnerEvidenceDigest, WorkloadPhaseDetail, WorkloadPublicationIntent,
+    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaIntent, WorkloadSagaIntentUpdate,
+    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
+    WorkloadSagaTenantCursor, WorkloadSagaTenantPageRequest, WorkloadTerminalEvidenceDigest,
+    WorkloadTerminalObservation,
 };
 
 use super::super::EngineWorkloadSagaStore;
 use super::super::tenant_enumeration::decode_tenant_page;
-use super::{compiled_network_plan, document_for, engine};
+use super::{compiled_network_plan, document_for, engine, provision_fixture, provision_source};
 
 #[tokio::test]
 async fn tenant_inventory_isolated_stably_ordered_bounded_indexed_and_durable_after_reopen() {
@@ -436,135 +435,16 @@ fn provision_history(
         activation,
         publication,
     );
-    let publication_reference =
-        (publication == WorkloadPublicationIntent::PublishWhenReady).then(|| {
-            WorkloadPublicationReference::new([PublishedEndpointId::generate()], &intent)
-                .expect("publication reference should validate")
-        });
     let mut history = vec![WorkloadSagaRecord::new(key, intent).expect("record should initialize")];
-    for phase in [
-        WorkloadSagaPhase::NetworkReserved,
-        WorkloadSagaPhase::WorkloadPrepared,
-        WorkloadSagaPhase::NetworkAttached,
-    ] {
-        let next = advance_provision(
-            history.last().unwrap(),
-            phase,
-            publication_reference.as_ref(),
-        );
-        history.push(next);
-    }
-    if activation == WorkloadActivationIntent::PrepareOnly {
-        return history;
-    }
-    for phase in [
-        WorkloadSagaPhase::WorkloadActivated,
-        WorkloadSagaPhase::Ready,
-    ] {
-        let next = advance_provision(
-            history.last().unwrap(),
-            phase,
-            publication_reference.as_ref(),
-        );
-        history.push(next);
-    }
-    if publication == WorkloadPublicationIntent::PublishWhenReady {
-        let next = advance_provision(
-            history.last().unwrap(),
-            WorkloadSagaPhase::Published,
-            publication_reference.as_ref(),
-        );
-        history.push(next);
-    }
-    let observed = advance_provision(
-        history.last().unwrap(),
-        WorkloadSagaPhase::Observed,
-        publication_reference.as_ref(),
-    );
-    history.push(observed);
-    history
-}
-
-fn advance_provision(
-    record: &WorkloadSagaRecord,
-    phase: WorkloadSagaPhase,
-    publication: Option<&WorkloadPublicationReference>,
-) -> WorkloadSagaRecord {
-    let publication = if record.active_intent().publication()
-        == WorkloadPublicationIntent::PublishWhenReady
-        && matches!(
-            phase,
-            WorkloadSagaPhase::Ready | WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed
-        ) {
-        publication.cloned()
+    let target = if activation == WorkloadActivationIntent::PrepareOnly {
+        WorkloadSagaPhase::NetworkAttached
     } else {
-        None
+        WorkloadSagaPhase::Observed
     };
-    let references = WorkloadEffectReferences::provision(record.active_intent(), publication)
-        .expect("provision references should validate");
-    let observations = provision_observations(phase, &references);
-    let detail =
-        WorkloadPhaseDetail::provision(phase, record.active_intent(), references, observations)
-            .expect("provision detail should validate");
-    record
-        .advance(phase, detail, None)
-        .expect("provision transition should validate")
-}
-
-fn provision_observations(
-    phase: WorkloadSagaPhase,
-    references: &WorkloadEffectReferences,
-) -> Vec<WorkloadOwnerObservation> {
-    let rank = match phase {
-        WorkloadSagaPhase::NetworkReserved => 1,
-        WorkloadSagaPhase::WorkloadPrepared => 2,
-        WorkloadSagaPhase::NetworkAttached => 3,
-        WorkloadSagaPhase::WorkloadActivated => 4,
-        WorkloadSagaPhase::Ready => 5,
-        WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed => 6,
-        _ => panic!("not a provision phase"),
-    };
-    let network = references.network().unwrap().clone();
-    let execution = references.execution().unwrap().clone();
-    let mut observations = Vec::new();
-    if rank >= 1 {
-        observations.push(WorkloadOwnerObservation::NetworkReserved {
-            reference: network.clone(),
-            evidence: evidence("network-reserved"),
-        });
+    while history.last().expect("history is nonempty").phase() != target {
+        provision_fixture::extend_confirmed_step(&mut history);
     }
-    if rank >= 2 {
-        observations.push(WorkloadOwnerObservation::ExecutionPrepared {
-            reference: execution.clone(),
-            evidence: evidence("execution-prepared"),
-        });
-    }
-    if rank >= 3 {
-        observations.push(WorkloadOwnerObservation::NetworkAttached {
-            reference: network.clone(),
-            evidence: evidence("network-attached"),
-        });
-    }
-    if rank >= 4 {
-        observations.push(WorkloadOwnerObservation::ExecutionActivated {
-            reference: execution.clone(),
-            evidence: evidence("execution-activated"),
-        });
-    }
-    if rank >= 5 {
-        observations.push(WorkloadOwnerObservation::Ready {
-            network,
-            execution,
-            evidence: evidence("ready"),
-        });
-    }
-    if rank >= 6 {
-        observations.push(WorkloadOwnerObservation::PublicationPresent {
-            reference: references.publication().unwrap().clone(),
-            evidence: evidence("publication-present"),
-        });
-    }
-    observations
+    history
 }
 
 fn advance_teardown(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
@@ -669,18 +549,26 @@ fn workload_intent(
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
 ) -> WorkloadSagaIntent {
+    let executable = nimbus_workloads::WorkloadExecutableIntent::new(
+        nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(
+            r#"{{"fixture":"{}-{generation}-{desired_state:?}"}}"#,
+            key.workload_id().as_str()
+        ),
+    )
+    .expect("fixture executable is valid");
+    let source = provision_source(
+        &executable,
+        key.workload_id().as_str(),
+        generation,
+        nimbus_network::NetworkProviderId::for_registration_key("fixture-attachment"),
+    );
     WorkloadSagaIntent::new(
         DesiredWorkloadKind::Sandbox,
         desired_state,
         WorkloadGeneration::new(generation),
-        nimbus_workloads::WorkloadExecutableIntent::new(
-            nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-            format!(
-                r#"{{"fixture":"{}-{generation}-{desired_state:?}"}}"#,
-                key.workload_id().as_str()
-            ),
-        )
-        .expect("fixture executable is valid"),
+        executable,
+        source,
         WorkloadNetworkIntent::new(compiled_network_plan(
             key.tenant_id(),
             key.workload_id().as_str(),
@@ -693,7 +581,7 @@ fn workload_intent(
         WorkloadAdmissionEvidence::new(
             format!("tid_{}", "1".repeat(64)).try_into().unwrap(),
             format!("twu_{}", "2".repeat(64)).try_into().unwrap(),
-            Some(NodeIdentity::new("node-tenant-enumeration").unwrap()),
+            NodeIdentity::new("node-tenant-enumeration").unwrap(),
         ),
     )
     .expect("intent should validate")

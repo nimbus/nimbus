@@ -14,6 +14,7 @@ RECOVERY_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1e-du
 RECOVERY_STORE_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_STORE_SOURCE:-crates/nimbus-workloads/src/store.rs}"
 RECOVERY_COMPUTE_ROOT_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_ROOT_SOURCE:-crates/nimbus-compute/src/workload_saga.rs}"
 RECOVERY_COMPUTE_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_SOURCE:-crates/nimbus-compute/src/workload_saga/recovery.rs}"
+RECOVERY_PROVISION_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_PROVISION_SOURCE:-crates/nimbus-compute/src/workload_saga/provision_decision.rs}"
 RECOVERY_TENANT_ADAPTER_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_TENANT_ADAPTER_SOURCE:-crates/nimbus-server/src/workload_saga_store/tenant_enumeration.rs}"
 RECOVERY_PROCESS_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_PROCESS_SOURCE:-crates/nimbus-server/src/workload_saga_store/tests/composition.rs}"
 RECOVERY_MATRIX_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_MATRIX_SOURCE:-crates/nimbus-server/src/workload_saga_store/tests/recovery.rs}"
@@ -479,6 +480,7 @@ verify_durable_store_contract() {
 
 verify_recovery_decision_contract() {
   require_file "${RECOVERY_PROOF}"
+  require_file "${RECOVERY_PROVISION_SOURCE}"
 
   if ! rg -q 'pub struct WorkloadSagaTenantCursor' "${RECOVERY_STORE_SOURCE}" ||
     ! rg -q 'key: WorkloadSagaKey' "${RECOVERY_STORE_SOURCE}" ||
@@ -495,7 +497,8 @@ verify_recovery_decision_contract() {
 
   if ! rg -q -F 'pub enum WorkloadSagaAction' "${RECOVERY_COMPUTE_SOURCE}" ||
     ! rg -q -F 'pub fn for_record' "${RECOVERY_COMPUTE_SOURCE}" ||
-    ! rg -q -F 'WorkloadSagaPhase::IntentCommitted' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'WorkloadSagaAction::Provision(decision)' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'WorkloadProvisionDecision::plan(record)?' "${RECOVERY_COMPUTE_SOURCE}" ||
     ! rg -q -F 'WorkloadSagaPhase::CleanupPending' "${RECOVERY_COMPUTE_SOURCE}" ||
     ! rg -q -F 'PromoteSuccessor' "${RECOVERY_COMPUTE_SOURCE}" ||
     ! rg -q -F 'retained_references: detail.retained_references().clone()' \
@@ -504,7 +507,8 @@ verify_recovery_decision_contract() {
   fi
 
   phase_count="$(
-    rg -o 'WorkloadSagaPhase::[A-Za-z]+' "${RECOVERY_COMPUTE_SOURCE}" |
+    rg -o 'WorkloadSagaPhase::[A-Za-z]+' \
+      "${RECOVERY_COMPUTE_SOURCE}" "${RECOVERY_PROVISION_SOURCE}" |
       sed 's/.*:://' |
       sort -u |
       wc -l |
@@ -514,9 +518,17 @@ verify_recovery_decision_contract() {
     add_error "compute workload-saga action phase count: expected 16, observed ${phase_count}"
   fi
 
+  for step in \
+    ReserveNetwork PrepareWorkload AttachNetwork \
+    InspectActivationPrerequisites ActivateWorkload \
+    InspectWorkloadReadiness Publish ObservePublication; do
+    if ! rg -q "WorkloadProvisionStep::${step}" "${RECOVERY_PROVISION_SOURCE}"; then
+      add_error "compute workload-saga provision matrix omits ${step}"
+    fi
+  done
+
   for action in \
-    ReserveNetwork PrepareWorkload AttachNetwork ActivateWorkload \
-    InspectReadiness Publish ObservePublication WithdrawPublication \
+    Provision WithdrawPublication \
     DrainWorkload StopWorkload DetachNetwork ReleaseNetwork \
     RecordTerminalEvidence PromoteSuccessor InspectCleanup \
     AdvanceWithoutEffect Quiescent; do
@@ -532,7 +544,7 @@ verify_recovery_decision_contract() {
   fi
 
   if rg -q 'compare_and_swap|commit_loaded|TcpListener|UdpSocket|SandboxBackend|ServiceManager|LocalNetworkManager|std::time|rand::' \
-      "${RECOVERY_COMPUTE_SOURCE}"; then
+      "${RECOVERY_COMPUTE_SOURCE}" "${RECOVERY_PROVISION_SOURCE}"; then
     add_error "pure compute recovery decision seam gained mutation, effect, or ambient-input authority"
   fi
 

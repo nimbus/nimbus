@@ -8,9 +8,13 @@ use nimbus_workloads::{
 };
 
 mod ingress;
+mod provision_decision;
 mod recovery;
 
 pub use ingress::{ConfirmedWorkloadSagaIntent, WorkloadSagaIngressDisposition};
+pub use provision_decision::{
+    ProposedWorkloadProvisionTransition, WorkloadProvisionDecision, WorkloadProvisionSymbolicAction,
+};
 pub use recovery::{WorkloadSagaAction, WorkloadSagaDecision, WorkloadSagaDecisionPage};
 
 /// Sole cross-domain writer of portable workload-saga transitions.
@@ -93,6 +97,9 @@ impl WorkloadSagaCoordinator {
         })
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_support;
 
 #[cfg(test)]
 #[path = "workload_saga/tests.rs"]

@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use crate::{DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadUid};
 
 /// Portable saga format understood by this crate.
-pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 2;
+pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 3;
 
 /// A rejected workload-saga value or transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,7 +219,7 @@ macro_rules! define_sha256_digest {
 
 define_sha256_digest!(
     WorkloadDesiredDigest,
-    b"nimbus.workloads.desired.digest.v2\0",
+    b"nimbus.workloads.desired.digest.v3\0",
     "workload desired digest must be 64 lowercase hexadecimal characters"
 );
 define_sha256_digest!(
@@ -385,14 +385,14 @@ pub enum WorkloadPublicationIntent {
 pub struct WorkloadAdmissionEvidence {
     decision_id: TenantIsolationDecisionId,
     workload_uid: TenantWorkloadUid,
-    assigned_node: Option<NodeIdentity>,
+    assigned_node: NodeIdentity,
 }
 
 impl WorkloadAdmissionEvidence {
     pub fn new(
         decision_id: TenantIsolationDecisionId,
         workload_uid: TenantWorkloadUid,
-        assigned_node: Option<NodeIdentity>,
+        assigned_node: NodeIdentity,
     ) -> Self {
         Self {
             decision_id,
@@ -409,8 +409,8 @@ impl WorkloadAdmissionEvidence {
         &self.workload_uid
     }
 
-    pub fn assigned_node(&self) -> Option<&NodeIdentity> {
-        self.assigned_node.as_ref()
+    pub fn assigned_node(&self) -> &NodeIdentity {
+        &self.assigned_node
     }
 }
 
@@ -423,6 +423,7 @@ pub struct WorkloadSagaIntent {
     generation: WorkloadGeneration,
     desired_digest: WorkloadDesiredDigest,
     executable: WorkloadExecutableIntent,
+    source: WorkloadProvisionSourceEvidence,
     network: WorkloadNetworkIntent,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -437,6 +438,7 @@ struct WorkloadSagaIntentWire {
     generation: WorkloadGeneration,
     desired_digest: WorkloadDesiredDigest,
     executable: WorkloadExecutableIntent,
+    source: WorkloadProvisionSourceEvidence,
     network: WorkloadNetworkIntent,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -455,6 +457,7 @@ impl<'de> Deserialize<'de> for WorkloadSagaIntent {
             wire.desired_state,
             wire.generation,
             wire.executable,
+            wire.source,
             wire.network,
             wire.activation,
             wire.publication,
@@ -477,17 +480,20 @@ impl WorkloadSagaIntent {
         desired_state: DesiredWorkloadState,
         generation: WorkloadGeneration,
         executable: WorkloadExecutableIntent,
+        source: WorkloadProvisionSourceEvidence,
         network: WorkloadNetworkIntent,
         activation: WorkloadActivationIntent,
         publication: WorkloadPublicationIntent,
         admission: WorkloadAdmissionEvidence,
     ) -> Result<Self, WorkloadSagaError> {
         executable.validate()?;
+        source.validate(executable.content_digest())?;
         let desired_digest = derive_desired_digest(
             kind,
             desired_state,
             generation,
             &executable,
+            &source,
             &network,
             activation,
             publication,
@@ -499,6 +505,7 @@ impl WorkloadSagaIntent {
             generation,
             desired_digest,
             executable,
+            source,
             network,
             activation,
             publication,
@@ -510,12 +517,19 @@ impl WorkloadSagaIntent {
 
     pub(super) fn validate(&self) -> Result<(), WorkloadSagaError> {
         self.executable.validate()?;
+        self.source.validate(self.executable.content_digest())?;
+        if self.kind != self.source.required_workload_kind() {
+            return Err(WorkloadSagaError::InvalidIntent(
+                "desired workload kind does not match provision source kind",
+            ));
+        }
         if self.desired_digest
             != derive_desired_digest(
                 self.kind,
                 self.desired_state,
                 self.generation,
                 &self.executable,
+                &self.source,
                 &self.network,
                 self.activation,
                 self.publication,
@@ -530,6 +544,33 @@ impl WorkloadSagaIntent {
             return Err(WorkloadSagaError::InvalidIntent(
                 "network generation must match workload generation",
             ));
+        }
+        match self
+            .network
+            .compiled_plan()
+            .content()
+            .capability_selection()
+        {
+            Some(selection)
+                if selection.attachment_provider_id() != self.source.attachment_provider_id() =>
+            {
+                return Err(WorkloadSagaError::InvalidIntent(
+                    "provision source attachment provider must match network selection",
+                ));
+            }
+            Some(_) => {}
+            None if self
+                .network
+                .compiled_plan()
+                .content()
+                .capability_selection_evidence()
+                .is_some() =>
+            {
+                return Err(WorkloadSagaError::InvalidIntent(
+                    "resource-free network intent cannot retain provider evidence",
+                ));
+            }
+            None => {}
         }
         if self.activation != self.network.compiled_plan().content().activation() {
             return Err(WorkloadSagaError::InvalidIntent(
@@ -572,6 +613,10 @@ impl WorkloadSagaIntent {
         &self.executable
     }
 
+    pub fn source(&self) -> &WorkloadProvisionSourceEvidence {
+        &self.source
+    }
+
     pub fn network(&self) -> &WorkloadNetworkIntent {
         &self.network
     }
@@ -596,6 +641,7 @@ struct WorkloadDesiredDigestPayload<'a> {
     desired_state: DesiredWorkloadState,
     generation: WorkloadGeneration,
     executable: &'a WorkloadExecutableIntent,
+    source: &'a WorkloadProvisionSourceEvidence,
     network: &'a WorkloadNetworkIntent,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -608,6 +654,7 @@ fn derive_desired_digest(
     desired_state: DesiredWorkloadState,
     generation: WorkloadGeneration,
     executable: &WorkloadExecutableIntent,
+    source: &WorkloadProvisionSourceEvidence,
     network: &WorkloadNetworkIntent,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -618,6 +665,7 @@ fn derive_desired_digest(
         desired_state,
         generation,
         executable,
+        source,
         network,
         activation,
         publication,
@@ -671,14 +719,10 @@ impl<'de> Deserialize<'de> for WorkloadExecutionReference {
 }
 
 impl WorkloadExecutionReference {
-    pub fn for_intent(intent: &WorkloadSagaIntent) -> Result<Self, WorkloadSagaError> {
-        let Some(node_identity) = intent.admission.assigned_node.clone() else {
-            return Err(WorkloadSagaError::InvalidEvidence(
-                "execution reference requires an admitted node identity",
-            ));
-        };
+    pub fn for_intent(intent: &WorkloadSagaIntent) -> Self {
+        let node_identity = intent.admission.assigned_node.clone();
         let workload_uid = intent.admission.workload_uid.clone();
-        Ok(Self {
+        Self {
             execution_id: WorkloadExecutionId::for_execution(
                 &workload_uid,
                 &node_identity,
@@ -688,7 +732,7 @@ impl WorkloadExecutionReference {
             node_identity,
             generation: intent.generation,
             desired_digest: intent.desired_digest,
-        })
+        }
     }
 
     pub fn workload_uid(&self) -> &TenantWorkloadUid {
@@ -728,7 +772,7 @@ impl WorkloadExecutionReference {
 
     fn validate_for(&self, intent: &WorkloadSagaIntent) -> Result<(), WorkloadSagaError> {
         self.validate_intrinsic()?;
-        let expected = Self::for_intent(intent)?;
+        let expected = Self::for_intent(intent);
         if self == &expected {
             Ok(())
         } else {
@@ -852,7 +896,7 @@ impl WorkloadEffectReferences {
     ) -> Result<Self, WorkloadSagaError> {
         Ok(Self {
             network: Some(WorkloadNetworkReference::for_intent(intent)),
-            execution: Some(WorkloadExecutionReference::for_intent(intent)?),
+            execution: Some(WorkloadExecutionReference::for_intent(intent)),
             publication,
         })
     }
@@ -1025,6 +1069,10 @@ pub enum WorkloadOwnerObservation {
         reference: WorkloadPublicationReference,
         evidence: WorkloadOwnerEvidenceDigest,
     },
+    PublicationObserved {
+        reference: WorkloadPublicationReference,
+        evidence: WorkloadOwnerEvidenceDigest,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1035,6 +1083,7 @@ enum OwnerObservationKind {
     ExecutionActivated,
     Ready,
     PublicationPresent,
+    PublicationObserved,
 }
 
 impl WorkloadOwnerObservation {
@@ -1046,6 +1095,7 @@ impl WorkloadOwnerObservation {
             Self::ExecutionActivated { .. } => OwnerObservationKind::ExecutionActivated,
             Self::Ready { .. } => OwnerObservationKind::Ready,
             Self::PublicationPresent { .. } => OwnerObservationKind::PublicationPresent,
+            Self::PublicationObserved { .. } => OwnerObservationKind::PublicationObserved,
         }
     }
 
@@ -1064,7 +1114,8 @@ impl WorkloadOwnerObservation {
                 references.network.as_ref() == Some(network)
                     && references.execution.as_ref() == Some(execution)
             }
-            Self::PublicationPresent { reference, .. } => {
+            Self::PublicationPresent { reference, .. }
+            | Self::PublicationObserved { reference, .. } => {
                 references.publication.as_ref() == Some(reference)
             }
         }
@@ -1425,15 +1476,27 @@ impl WorkloadFailureEvidence {
     }
 }
 mod executable;
+mod provision;
 mod state;
 
 mod network;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use executable::{
     MAX_WORKLOAD_EXECUTABLE_CONTENT_BYTES, WORKLOAD_EXECUTABLE_FORMAT_VERSION,
     WorkloadExecutableEncoding, WorkloadExecutableIntent,
 };
 pub use network::{WorkloadNetworkIntent, WorkloadNetworkReference};
+pub use provision::{
+    WorkloadProvisionAttempt, WorkloadProvisionAttemptId, WorkloadProvisionAttemptInput,
+    WorkloadProvisionDisposition, WorkloadProvisionEffectResult,
+    WorkloadProvisionPrerequisiteEvidence, WorkloadProvisionSourceDigest,
+    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
+    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceKind,
+    WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep, WorkloadProvisionSubjects,
+    WorkloadProvisionSuccessEvidence,
+};
 use state::validate_phase_detail;
 pub use state::{WorkloadSagaIntentUpdate, WorkloadSagaRecord, WorkloadSagaTransition};
 #[cfg(test)]

@@ -4,6 +4,7 @@
 //! tenant decision with one closed source shape and produces portable desired
 //! state. It does not persist, allocate, bind, start, inspect, or reconcile.
 
+use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::num::NonZeroU16;
 
@@ -14,13 +15,14 @@ use nimbus_network::{
     NetworkExposure, NetworkForwardingCapabilitySet, NetworkForwardingFeature,
     NetworkIngressCapabilitySet, NetworkIngressFeature, NetworkLifecycleCapabilitySet,
     NetworkLifecycleFeature, NetworkManagementMode, NetworkPortAssignmentMode, NetworkProviderId,
-    NetworkResourceGeneration, NetworkSovereigntyRequirements, PortProtocol,
+    NetworkResourceGeneration, NetworkSovereigntyRequirements, NetworkTlsBehavior, PortProtocol,
 };
 use nimbus_sandbox::{SandboxBackendKind, SandboxOwnerSpec, SandboxSpec};
 use nimbus_tenant::{TenantIsolationDecision, WorkloadKind};
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, TenantWorkloadSpec, WorkloadActivationIntent,
     WorkloadNetworkAttachmentBlueprint, WorkloadNetworkDependencyListenerBlueprint,
+    WorkloadNetworkEndpointSemantics, WorkloadNetworkForwardingBehavior,
     WorkloadNetworkListenerBlueprint, WorkloadNetworkPlanContent, WorkloadNetworkPlanError,
     WorkloadNetworkPlanIdentity, WorkloadNetworkPortRequestMode, WorkloadNetworkRouteBlueprint,
     WorkloadPublicationIntent,
@@ -57,6 +59,39 @@ impl<'source> AdmittedWorkloadNetworkSource<'source> {
             Self::Sandbox { sandbox_spec, .. }
             | Self::SandboxBackedService { sandbox_spec, .. } => Some(sandbox_spec),
         }
+    }
+}
+
+/// Explicit endpoint semantics correlated by one sandbox listener name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkloadNetworkEndpointSemanticsInput<'input> {
+    listener_name: &'input str,
+    forwarding: WorkloadNetworkForwardingBehavior,
+    tls: NetworkTlsBehavior,
+}
+
+impl<'input> WorkloadNetworkEndpointSemanticsInput<'input> {
+    /// Construct exact semantics for one source-owned listener name.
+    pub const fn new(
+        listener_name: &'input str,
+        forwarding: WorkloadNetworkForwardingBehavior,
+        tls: NetworkTlsBehavior,
+    ) -> Self {
+        Self {
+            listener_name,
+            forwarding,
+            tls,
+        }
+    }
+
+    /// Source-owned listener name.
+    pub const fn listener_name(&self) -> &'input str {
+        self.listener_name
+    }
+
+    /// Canonical portable semantics.
+    pub const fn semantics(&self) -> WorkloadNetworkEndpointSemantics {
+        WorkloadNetworkEndpointSemantics::new(self.forwarding, self.tls)
     }
 }
 
@@ -99,6 +134,8 @@ pub enum WorkloadNetworkPlanCompileError {
     EmptySourceHasRoutes,
     #[error("an explicit empty network source cannot select provider capabilities")]
     EmptySourceHasCapabilitySelection,
+    #[error("an explicit empty network source cannot carry endpoint semantics")]
+    EmptySourceHasEndpointSemantics,
     #[error("an attachment-bearing network source requires an exact capability selection")]
     MissingCapabilitySelection,
     #[error(
@@ -117,6 +154,18 @@ pub enum WorkloadNetworkPlanCompileError {
         listener_name: String,
         reserved: &'static str,
     },
+    #[error("duplicate endpoint semantics for listener `{listener_name}`")]
+    DuplicateEndpointSemantics { listener_name: String },
+    #[error("missing endpoint semantics for listener `{listener_name}`")]
+    MissingEndpointSemantics { listener_name: String },
+    #[error("unexpected endpoint semantics for listener `{listener_name}`")]
+    UnexpectedEndpointSemantics { listener_name: String },
+    #[error("forwarding behavior must match guest port shape")]
+    ForwardingBehaviorMismatch,
+    #[error("TLS behavior must match listener protocol")]
+    TlsBehaviorMismatch,
+    #[error("publish-when-ready requires at least one admitted listener")]
+    PublicationRequiresListener,
     #[error("network capability selection failed: {0}")]
     CapabilitySelection(#[from] NetworkCapabilitySelectionError),
     #[error("portable workload network plan is invalid: {0}")]
@@ -139,6 +188,7 @@ impl WorkloadNetworkPlanCompiler {
         capability_selection: Option<&NetworkCapabilitySelection>,
         capability_registry: &NetworkCapabilityRegistry,
         sovereignty_requirements: NetworkSovereigntyRequirements,
+        endpoint_semantics: &[WorkloadNetworkEndpointSemanticsInput<'_>],
         activation: WorkloadActivationIntent,
         publication: WorkloadPublicationIntent,
     ) -> Result<CompiledWorkloadNetworkPlan, WorkloadNetworkPlanCompileError> {
@@ -174,67 +224,87 @@ impl WorkloadNetworkPlanCompiler {
                     &plan_identity,
                     DEFAULT_ATTACHMENT_NAME,
                 )?;
-                let listeners = compile_listeners(&plan_identity, spec)?;
+                let listeners = compile_listeners(&plan_identity, spec, endpoint_semantics)?;
                 (Some(attachment), listeners, Some(projection))
             }
-            None => (None, Vec::new(), None),
-        };
-
-        let (selection, requirements, dependency_listeners) = match source_requirements {
             None => {
-                if !routes.is_empty() {
-                    return Err(WorkloadNetworkPlanCompileError::EmptySourceHasRoutes);
+                if !endpoint_semantics.is_empty() {
+                    return Err(WorkloadNetworkPlanCompileError::EmptySourceHasEndpointSemantics);
                 }
-                if capability_selection.is_some() {
-                    return Err(WorkloadNetworkPlanCompileError::EmptySourceHasCapabilitySelection);
-                }
-                (
-                    None,
-                    empty_requirements(sovereignty_requirements.clone()),
-                    Vec::new(),
-                )
-            }
-            Some(source_requirements) => {
-                let selection = capability_selection
-                    .ok_or(WorkloadNetworkPlanCompileError::MissingCapabilitySelection)?;
-                if selection.attachment_provider_id()
-                    != source_requirements.required_attachment_provider_id()
-                {
-                    return Err(
-                        WorkloadNetworkPlanCompileError::AttachmentProviderMismatch {
-                            required: source_requirements
-                                .required_attachment_provider_id()
-                                .clone(),
-                            selected: selection.attachment_provider_id().clone(),
-                        },
-                    );
-                }
-                let requirements = aggregate_requirements(
-                    source_requirements.capability_requirements(),
-                    &listeners,
-                    sovereignty_requirements.clone(),
-                )?;
-                capability_registry.select_exact(selection, &requirements)?;
-                let dependency_listeners = source_requirements
-                    .requires_pep_readiness()
-                    .then(|| {
-                        WorkloadNetworkDependencyListenerBlueprint::new(
-                            &plan_identity,
-                            EGRESS_PEP_LISTENER_NAME,
-                            source_requirements.pep_provider_id().clone(),
-                        )
-                    })
-                    .transpose()?
-                    .into_iter()
-                    .collect();
-                (Some(selection.clone()), requirements, dependency_listeners)
+                (None, Vec::new(), None)
             }
         };
+        if publication == WorkloadPublicationIntent::PublishWhenReady && listeners.is_empty() {
+            return Err(WorkloadNetworkPlanCompileError::PublicationRequiresListener);
+        }
+
+        let (selection, selection_evidence, requirements, dependency_listeners) =
+            match source_requirements {
+                None => {
+                    if !routes.is_empty() {
+                        return Err(WorkloadNetworkPlanCompileError::EmptySourceHasRoutes);
+                    }
+                    if capability_selection.is_some() {
+                        return Err(
+                            WorkloadNetworkPlanCompileError::EmptySourceHasCapabilitySelection,
+                        );
+                    }
+                    (
+                        None,
+                        None,
+                        empty_requirements(sovereignty_requirements.clone()),
+                        Vec::new(),
+                    )
+                }
+                Some(source_requirements) => {
+                    let selection = capability_selection
+                        .ok_or(WorkloadNetworkPlanCompileError::MissingCapabilitySelection)?;
+                    if selection.attachment_provider_id()
+                        != source_requirements.required_attachment_provider_id()
+                    {
+                        return Err(
+                            WorkloadNetworkPlanCompileError::AttachmentProviderMismatch {
+                                required: source_requirements
+                                    .required_attachment_provider_id()
+                                    .clone(),
+                                selected: selection.attachment_provider_id().clone(),
+                            },
+                        );
+                    }
+                    let requirements = aggregate_requirements(
+                        source_requirements.capability_requirements(),
+                        &listeners,
+                        sovereignty_requirements.clone(),
+                    )?;
+                    let selected_bundle =
+                        capability_registry.select_exact(selection, &requirements)?;
+                    let selection_evidence = selected_bundle.selection_evidence();
+                    let dependency_listeners = source_requirements
+                        .requires_pep_readiness()
+                        .then(|| {
+                            WorkloadNetworkDependencyListenerBlueprint::new(
+                                &plan_identity,
+                                EGRESS_PEP_LISTENER_NAME,
+                                source_requirements.pep_provider_id().clone(),
+                            )
+                        })
+                        .transpose()?
+                        .into_iter()
+                        .collect();
+                    (
+                        Some(selection.clone()),
+                        Some(selection_evidence),
+                        requirements,
+                        dependency_listeners,
+                    )
+                }
+            };
 
         let content = WorkloadNetworkPlanContent::new(
             plan_identity,
             requirements,
             selection,
+            selection_evidence,
             attachment,
             routes,
             listeners,
@@ -470,8 +540,24 @@ fn compile_routes(
 fn compile_listeners(
     identity: &WorkloadNetworkPlanIdentity,
     sandbox_spec: &SandboxSpec,
+    endpoint_semantics: &[WorkloadNetworkEndpointSemanticsInput<'_>],
 ) -> Result<Vec<WorkloadNetworkListenerBlueprint>, WorkloadNetworkPlanCompileError> {
-    sandbox_spec
+    let mut semantics_by_name = BTreeMap::new();
+    for semantics in endpoint_semantics {
+        validate_source_name(semantics.listener_name())?;
+        if semantics_by_name
+            .insert(semantics.listener_name(), semantics.semantics())
+            .is_some()
+        {
+            return Err(
+                WorkloadNetworkPlanCompileError::DuplicateEndpointSemantics {
+                    listener_name: semantics.listener_name().to_owned(),
+                },
+            );
+        }
+    }
+
+    let listeners = sandbox_spec
         .port_bindings
         .iter()
         .map(|binding| {
@@ -485,17 +571,53 @@ fn compile_listeners(
                 WorkloadNetworkPortRequestMode::ProviderAssigned,
                 WorkloadNetworkPortRequestMode::exact,
             );
+            let semantics = semantics_by_name
+                .remove(binding.name.as_str())
+                .ok_or_else(
+                    || WorkloadNetworkPlanCompileError::MissingEndpointSemantics {
+                        listener_name: binding.name.clone(),
+                    },
+                )?;
+            let forwarding_matches = matches!(
+                (semantics.forwarding(), Some(binding.guest_port)),
+                (WorkloadNetworkForwardingBehavior::PortForwarded, Some(_))
+            );
+            if !forwarding_matches {
+                return Err(WorkloadNetworkPlanCompileError::ForwardingBehaviorMismatch);
+            }
+            let tls_matches = matches!(
+                (binding.protocol, semantics.tls()),
+                (
+                    EndpointProtocol::Tcp | EndpointProtocol::Http,
+                    NetworkTlsBehavior::Disabled
+                ) | (
+                    EndpointProtocol::Https,
+                    NetworkTlsBehavior::Passthrough | NetworkTlsBehavior::TerminateAtIngress
+                )
+            );
+            if !tls_matches {
+                return Err(WorkloadNetworkPlanCompileError::TlsBehaviorMismatch);
+            }
             WorkloadNetworkListenerBlueprint::new(
                 identity,
                 &binding.name,
                 binding.protocol,
                 binding.host_address,
                 port_request,
+                semantics,
                 Some(binding.guest_port),
             )
             .map_err(Into::into)
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    if let Some(listener_name) = semantics_by_name.keys().next() {
+        return Err(
+            WorkloadNetworkPlanCompileError::UnexpectedEndpointSemantics {
+                listener_name: (*listener_name).to_owned(),
+            },
+        );
+    }
+    Ok(listeners)
 }
 
 fn aggregate_requirements(
@@ -510,6 +632,7 @@ fn aggregate_requirements(
     let mut protocols = source.endpoint().protocols().clone();
     let mut port_assignment_modes = source.endpoint().port_assignment_modes().clone();
     let mut ingress_features = source.ingress().features().clone();
+    let mut tls_behaviors = source.ingress().tls_behaviors().clone();
     let mut forwarding_features = source.forwarding().features().clone();
     let mut lifecycle_features = source.lifecycle().features().clone();
 
@@ -524,9 +647,12 @@ fn aggregate_requirements(
                 NetworkPortAssignmentMode::ProviderAssigned
             }
         });
-        if listener.guest_port().is_some() {
+        if listener.endpoint_semantics().forwarding()
+            == WorkloadNetworkForwardingBehavior::PortForwarded
+        {
             forwarding_features.insert(NetworkForwardingFeature::PortForwarding);
         }
+        tls_behaviors.insert(listener.endpoint_semantics().tls());
         match listener.protocol() {
             EndpointProtocol::Tcp => {}
             EndpointProtocol::Http => {
@@ -534,7 +660,6 @@ fn aggregate_requirements(
             }
             EndpointProtocol::Https => {
                 ingress_features.insert(NetworkIngressFeature::Streaming);
-                ingress_features.insert(NetworkIngressFeature::TlsTermination);
             }
         }
     }
@@ -553,7 +678,7 @@ fn aggregate_requirements(
             protocols,
             port_assignment_modes,
         ),
-        NetworkIngressCapabilitySet::new(ingress_features),
+        NetworkIngressCapabilitySet::new(ingress_features).with_tls_behaviors(tls_behaviors),
         NetworkForwardingCapabilitySet::new(forwarding_features),
         NetworkLifecycleCapabilitySet::new(lifecycle_features),
         sovereignty,

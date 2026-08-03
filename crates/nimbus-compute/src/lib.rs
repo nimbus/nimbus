@@ -24,4 +24,10 @@ pub mod services;
 pub mod state;
 pub mod workload_executable;
 pub mod workload_network_plan;
+pub mod workload_provision_composition;
 pub mod workload_saga;
+
+pub use workload_provision_composition::{
+    ComposedWorkloadProvision, WorkloadProvisionCompositionError,
+    WorkloadProvisionCompositionInput, WorkloadProvisionSourceSnapshot, compose_workload_provision,
+};

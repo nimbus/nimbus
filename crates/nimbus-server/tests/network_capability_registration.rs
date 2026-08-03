@@ -2,7 +2,7 @@ use nimbus_engine::Engine;
 use nimbus_network::{
     NetworkAddressFamily, NetworkBindRealmKind, NetworkControlPlaneLocality, NetworkExposure,
     NetworkForwardingFeature, NetworkIngressFeature, NetworkLifecycleFeature,
-    NetworkPortAssignmentMode, NetworkProviderId, PortProtocol,
+    NetworkPortAssignmentMode, NetworkProviderId, NetworkTlsBehavior, PortProtocol,
 };
 #[cfg(target_os = "linux")]
 use nimbus_network::{
@@ -154,9 +154,15 @@ fn tls_is_advertised_only_by_the_configured_local_ingress_instance() {
         registration.ingress().features(),
         &set([
             NetworkIngressFeature::PathRouting,
-            NetworkIngressFeature::TlsTermination,
             NetworkIngressFeature::WebSocket,
             NetworkIngressFeature::Streaming,
+        ])
+    );
+    assert_eq!(
+        registration.ingress().tls_behaviors(),
+        &set([
+            NetworkTlsBehavior::Disabled,
+            NetworkTlsBehavior::TerminateAtIngress,
         ])
     );
 }
@@ -208,7 +214,8 @@ fn real_container_and_krun_pairs_select_with_real_server_ingress() {
             NetworkIngressFeature::PathRouting,
             NetworkIngressFeature::WebSocket,
             NetworkIngressFeature::Streaming,
-        ]),
+        ])
+        .with_tls_behaviors([NetworkTlsBehavior::Disabled]),
         NetworkForwardingCapabilitySet::new([]),
         NetworkLifecycleCapabilitySet::new([
             NetworkLifecycleFeature::DurableInspect,

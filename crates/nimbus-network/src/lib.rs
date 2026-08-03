@@ -34,12 +34,13 @@ pub use capability::{
     NetworkForwardingCapabilitySet, NetworkForwardingFeature, NetworkIngressCapabilitySet,
     NetworkIngressFeature, NetworkIsolationMode, NetworkLifecycleCapabilitySet,
     NetworkLifecycleFeature, NetworkManagementMode, NetworkPortAssignmentMode,
-    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
+    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, NetworkTlsBehavior,
 };
 pub use capability_registry::{
     NetworkAttachmentProviderRegistration, NetworkCapabilityBundle,
     NetworkCapabilityProviderFailure, NetworkCapabilityRegistry, NetworkCapabilityRegistryError,
     NetworkCapabilityRole, NetworkCapabilitySelection, NetworkCapabilitySelectionError,
+    NetworkCapabilitySelectionEvidence, NetworkCapabilitySourceDigest,
     NetworkIngressProviderRegistration,
 };
 pub use endpoint::{EndpointProtocol, PublishedEndpoint};

@@ -10,7 +10,7 @@ use nimbus_network::{
     NetworkIngressFeature, NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet,
     NetworkLifecycleFeature, NetworkPlanUpdate, NetworkPortAssignmentMode, NetworkProviderId,
     NetworkResourceId, NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
-    PortProtocol,
+    NetworkTlsBehavior, PortProtocol,
 };
 use nimbus_sandbox::{
     SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
@@ -22,12 +22,13 @@ use nimbus_tenant::{
     WorkloadAttributes, WorkloadKind, WorkloadLocation,
 };
 use nimbus_workloads::{
-    CompiledWorkloadNetworkPlan, WorkloadActivationIntent, WorkloadPublicationIntent,
+    CompiledWorkloadNetworkPlan, WorkloadActivationIntent, WorkloadNetworkForwardingBehavior,
+    WorkloadPublicationIntent,
 };
 
 use super::{
-    AdmittedWorkloadNetworkSource, EGRESS_PEP_LISTENER_NAME, WorkloadNetworkPlanCompileError,
-    WorkloadNetworkPlanCompiler, require_sovereignty_refinement,
+    AdmittedWorkloadNetworkSource, EGRESS_PEP_LISTENER_NAME, WorkloadNetworkEndpointSemanticsInput,
+    WorkloadNetworkPlanCompileError, WorkloadNetworkPlanCompiler, require_sovereignty_refinement,
 };
 
 const TENANT: &str = "tenant-a";
@@ -51,6 +52,22 @@ fn sandbox_spec(
         SandboxProcessSpec::new(["/bin/true"]),
     )
     .with_port_bindings(bindings)
+}
+
+fn endpoint_semantics(spec: &SandboxSpec) -> Vec<WorkloadNetworkEndpointSemanticsInput<'_>> {
+    spec.port_bindings
+        .iter()
+        .map(|binding| {
+            WorkloadNetworkEndpointSemanticsInput::new(
+                &binding.name,
+                WorkloadNetworkForwardingBehavior::PortForwarded,
+                match binding.protocol {
+                    EndpointProtocol::Https => NetworkTlsBehavior::TerminateAtIngress,
+                    EndpointProtocol::Tcp | EndpointProtocol::Http => NetworkTlsBehavior::Disabled,
+                },
+            )
+        })
+        .collect()
 }
 
 fn admitted_decision(
@@ -124,7 +141,10 @@ fn ingress_registration(
                 NetworkPortAssignmentMode::ProviderAssigned,
             ],
         ),
-        NetworkIngressCapabilitySet::new(features),
+        NetworkIngressCapabilitySet::new(features).with_tls_behaviors(
+            std::iter::once(NetworkTlsBehavior::Disabled)
+                .chain(tls.then_some(NetworkTlsBehavior::TerminateAtIngress)),
+        ),
         NetworkForwardingCapabilitySet::new(
             forwarding.then_some(NetworkForwardingFeature::PortForwarding),
         ),
@@ -186,6 +206,11 @@ fn compile_standalone(
     selection: &NetworkCapabilitySelection,
     registry: &NetworkCapabilityRegistry,
 ) -> Result<CompiledWorkloadNetworkPlan, WorkloadNetworkPlanCompileError> {
+    let publication = if spec.port_bindings.is_empty() {
+        WorkloadPublicationIntent::Withheld
+    } else {
+        WorkloadPublicationIntent::PublishWhenReady
+    };
     WorkloadNetworkPlanCompiler.compile(
         decision,
         AdmittedWorkloadNetworkSource::Sandbox {
@@ -200,8 +225,9 @@ fn compile_standalone(
         Some(selection),
         registry,
         sovereignty(),
+        &endpoint_semantics(spec),
         WorkloadActivationIntent::ActivateWhenAttached,
-        WorkloadPublicationIntent::PublishWhenReady,
+        publication,
     )
 }
 
@@ -223,6 +249,7 @@ fn explicit_empty_plan_is_deterministic_and_resource_free() {
                 None,
                 &registry,
                 sovereignty(),
+                &[],
                 WorkloadActivationIntent::PrepareOnly,
                 WorkloadPublicationIntent::Withheld,
             )
@@ -250,6 +277,7 @@ fn explicit_empty_plan_is_deterministic_and_resource_free() {
             Some(&unexpected_selection),
             &registry,
             sovereignty(),
+            &[],
             WorkloadActivationIntent::PrepareOnly,
             WorkloadPublicationIntent::Withheld,
         ),
@@ -276,6 +304,7 @@ fn explicit_empty_plan_is_deterministic_and_resource_free() {
             None,
             &registry,
             sovereignty(),
+            &[],
             WorkloadActivationIntent::PrepareOnly,
             WorkloadPublicationIntent::Withheld,
         ),
@@ -355,9 +384,169 @@ fn sandbox_plan_retains_attachment_listeners_and_exact_readiness() {
             .plan()
             .requirements()
             .ingress()
-            .features()
-            .contains(&NetworkIngressFeature::TlsTermination)
+            .tls_behaviors()
+            .contains(&NetworkTlsBehavior::TerminateAtIngress)
     );
+}
+
+#[test]
+fn endpoint_semantics_reject_missing_extra_duplicate_and_crossed_names() {
+    let decision = standalone_decision(
+        TENANT,
+        "python",
+        "sandbox-semantics",
+        SandboxBackendKind::Container,
+        Some(GENERATION),
+        Some("node-a"),
+    );
+    let spec = sandbox_spec(
+        TENANT,
+        SandboxOwnerSpec::standalone_named("python"),
+        SandboxBackendKind::Container,
+        [SandboxPortBinding::new(
+            "http",
+            EndpointProtocol::Http,
+            18080,
+            8080,
+        )],
+    );
+    let (registry, selection) = registry_for(SandboxBackendKind::Container, false);
+    let valid = WorkloadNetworkEndpointSemanticsInput::new(
+        "http",
+        WorkloadNetworkForwardingBehavior::PortForwarded,
+        NetworkTlsBehavior::Disabled,
+    );
+    let extra = WorkloadNetworkEndpointSemanticsInput::new(
+        "other",
+        WorkloadNetworkForwardingBehavior::PortForwarded,
+        NetworkTlsBehavior::Disabled,
+    );
+    let compile = |semantics: &[WorkloadNetworkEndpointSemanticsInput<'_>]| {
+        WorkloadNetworkPlanCompiler.compile(
+            &decision,
+            AdmittedWorkloadNetworkSource::Sandbox {
+                stable_resource_id: "sandbox-semantics",
+                profile: "python",
+                generation: GENERATION,
+                sandbox_spec: &spec,
+            },
+            Some(&selection),
+            &registry,
+            sovereignty(),
+            semantics,
+            WorkloadActivationIntent::PrepareOnly,
+            WorkloadPublicationIntent::Withheld,
+        )
+    };
+
+    assert!(matches!(
+        compile(&[]),
+        Err(WorkloadNetworkPlanCompileError::MissingEndpointSemantics { .. })
+    ));
+    assert!(matches!(
+        compile(&[valid, valid]),
+        Err(WorkloadNetworkPlanCompileError::DuplicateEndpointSemantics { .. })
+    ));
+    assert!(matches!(
+        compile(&[valid, extra]),
+        Err(WorkloadNetworkPlanCompileError::UnexpectedEndpointSemantics { .. })
+    ));
+    assert!(matches!(
+        compile(&[extra]),
+        Err(WorkloadNetworkPlanCompileError::MissingEndpointSemantics { .. })
+    ));
+}
+
+#[test]
+fn crossed_forwarding_semantics_rejects_before_submission() {
+    let decision = standalone_decision(
+        TENANT,
+        "python",
+        "sandbox-forwarding",
+        SandboxBackendKind::Container,
+        Some(GENERATION),
+        Some("node-a"),
+    );
+    let spec = sandbox_spec(
+        TENANT,
+        SandboxOwnerSpec::standalone_named("python"),
+        SandboxBackendKind::Container,
+        [SandboxPortBinding::new(
+            "http",
+            EndpointProtocol::Http,
+            18080,
+            8080,
+        )],
+    );
+    let (registry, selection) = registry_for(SandboxBackendKind::Container, false);
+    assert!(matches!(
+        WorkloadNetworkPlanCompiler.compile(
+            &decision,
+            AdmittedWorkloadNetworkSource::Sandbox {
+                stable_resource_id: "sandbox-forwarding",
+                profile: "python",
+                generation: GENERATION,
+                sandbox_spec: &spec,
+            },
+            Some(&selection),
+            &registry,
+            sovereignty(),
+            &[WorkloadNetworkEndpointSemanticsInput::new(
+                "http",
+                WorkloadNetworkForwardingBehavior::None,
+                NetworkTlsBehavior::Disabled,
+            )],
+            WorkloadActivationIntent::PrepareOnly,
+            WorkloadPublicationIntent::Withheld,
+        ),
+        Err(WorkloadNetworkPlanCompileError::ForwardingBehaviorMismatch)
+    ));
+}
+
+#[test]
+fn crossed_tls_semantics_rejects_before_submission() {
+    let decision = standalone_decision(
+        TENANT,
+        "python",
+        "sandbox-tls",
+        SandboxBackendKind::Container,
+        Some(GENERATION),
+        Some("node-a"),
+    );
+    let spec = sandbox_spec(
+        TENANT,
+        SandboxOwnerSpec::standalone_named("python"),
+        SandboxBackendKind::Container,
+        [SandboxPortBinding::new(
+            "http",
+            EndpointProtocol::Http,
+            18080,
+            8080,
+        )],
+    );
+    let (registry, selection) = registry_for(SandboxBackendKind::Container, true);
+    assert!(matches!(
+        WorkloadNetworkPlanCompiler.compile(
+            &decision,
+            AdmittedWorkloadNetworkSource::Sandbox {
+                stable_resource_id: "sandbox-tls",
+                profile: "python",
+                generation: GENERATION,
+                sandbox_spec: &spec,
+            },
+            Some(&selection),
+            &registry,
+            sovereignty(),
+            &[WorkloadNetworkEndpointSemanticsInput::new(
+                "http",
+                WorkloadNetworkForwardingBehavior::PortForwarded,
+                NetworkTlsBehavior::TerminateAtIngress,
+            )],
+            WorkloadActivationIntent::PrepareOnly,
+            WorkloadPublicationIntent::Withheld,
+        ),
+        Err(WorkloadNetworkPlanCompileError::TlsBehaviorMismatch)
+    ));
 }
 
 #[test]
@@ -515,6 +704,7 @@ fn service_routes_remain_separate_from_published_listeners() {
             Some(&selection),
             &registry,
             sovereignty(),
+            &endpoint_semantics(&spec),
             WorkloadActivationIntent::ActivateWhenAttached,
             WorkloadPublicationIntent::PublishWhenReady,
         )
@@ -582,8 +772,9 @@ fn admitted_route_permutation_compiles_to_identical_payload() {
                 Some(&selection),
                 &registry,
                 sovereignty(),
+                &endpoint_semantics(&spec),
                 WorkloadActivationIntent::ActivateWhenAttached,
-                WorkloadPublicationIntent::PublishWhenReady,
+                WorkloadPublicationIntent::Withheld,
             )
             .expect("equivalent admitted route order should compile")
     };
@@ -647,8 +838,9 @@ fn admitted_route_address_and_port_changes_preserve_logical_resource_identity() 
                 Some(&selection),
                 &registry,
                 sovereignty(),
+                &endpoint_semantics(&spec),
                 WorkloadActivationIntent::ActivateWhenAttached,
-                WorkloadPublicationIntent::PublishWhenReady,
+                WorkloadPublicationIntent::Withheld,
             )
             .expect("valid admitted route should compile")
     };
@@ -712,6 +904,7 @@ fn source_correlation_fails_closed_before_capability_selection() {
             Some(&bogus_selection),
             &empty_registry,
             sovereignty(),
+            &endpoint_semantics(&crossed_tenant),
             WorkloadActivationIntent::PrepareOnly,
             WorkloadPublicationIntent::Withheld,
         )
@@ -752,6 +945,7 @@ fn missing_generation_node_and_crossed_source_fields_are_typed() {
             Some(&selection),
             &registry,
             sovereignty(),
+            &endpoint_semantics(&spec),
             WorkloadActivationIntent::PrepareOnly,
             WorkloadPublicationIntent::Withheld,
         ),
@@ -778,6 +972,7 @@ fn missing_generation_node_and_crossed_source_fields_are_typed() {
             Some(&selection),
             &registry,
             sovereignty(),
+            &endpoint_semantics(&spec),
             WorkloadActivationIntent::PrepareOnly,
             WorkloadPublicationIntent::Withheld,
         ),
@@ -809,6 +1004,7 @@ fn missing_generation_node_and_crossed_source_fields_are_typed() {
                 Some(&selection),
                 &registry,
                 sovereignty(),
+                &endpoint_semantics(&spec),
                 WorkloadActivationIntent::PrepareOnly,
                 WorkloadPublicationIntent::Withheld,
             )
@@ -851,6 +1047,7 @@ fn missing_generation_node_and_crossed_source_fields_are_typed() {
             Some(&selection),
             &registry,
             sovereignty(),
+            &endpoint_semantics(&service_owned),
             WorkloadActivationIntent::PrepareOnly,
             WorkloadPublicationIntent::Withheld,
         ),
@@ -875,6 +1072,7 @@ fn missing_generation_node_and_crossed_source_fields_are_typed() {
             Some(&selection),
             &registry,
             sovereignty(),
+            &endpoint_semantics(&krun_spec),
             WorkloadActivationIntent::PrepareOnly,
             WorkloadPublicationIntent::Withheld,
         ),
@@ -900,6 +1098,7 @@ fn missing_generation_node_and_crossed_source_fields_are_typed() {
             Some(&selection),
             &registry,
             sovereignty(),
+            &endpoint_semantics(&spec),
             WorkloadActivationIntent::PrepareOnly,
             WorkloadPublicationIntent::Withheld,
         ),
@@ -908,7 +1107,73 @@ fn missing_generation_node_and_crossed_source_fields_are_typed() {
 }
 
 #[test]
-fn exact_provider_selection_never_falls_back_or_substitutes_attachment_owner() {
+fn crossed_workload_generation_rejects_before_submission() {
+    let decision = standalone_decision(
+        TENANT,
+        "python",
+        "sandbox-generation",
+        SandboxBackendKind::Container,
+        Some(GENERATION),
+        Some("node-a"),
+    );
+    let spec = sandbox_spec(
+        TENANT,
+        SandboxOwnerSpec::standalone_named("python"),
+        SandboxBackendKind::Container,
+        [],
+    );
+    let (registry, selection) = registry_for(SandboxBackendKind::Container, false);
+
+    assert!(matches!(
+        WorkloadNetworkPlanCompiler.compile(
+            &decision,
+            AdmittedWorkloadNetworkSource::Sandbox {
+                stable_resource_id: "sandbox-generation",
+                profile: "python",
+                generation: GENERATION + 1,
+                sandbox_spec: &spec,
+            },
+            Some(&selection),
+            &registry,
+            sovereignty(),
+            &[],
+            WorkloadActivationIntent::PrepareOnly,
+            WorkloadPublicationIntent::Withheld,
+        ),
+        Err(WorkloadNetworkPlanCompileError::GenerationMismatch { .. })
+    ));
+}
+
+#[test]
+fn crossed_address_semantics_rejects_before_submission() {
+    let decision = standalone_decision(
+        TENANT,
+        "python",
+        "sandbox-address",
+        SandboxBackendKind::Container,
+        Some(GENERATION),
+        Some("node-a"),
+    );
+    let spec = sandbox_spec(
+        TENANT,
+        SandboxOwnerSpec::standalone_named("python"),
+        SandboxBackendKind::Container,
+        [
+            SandboxPortBinding::new("public", EndpointProtocol::Tcp, 18080, 8080)
+                .with_host_address(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10))),
+        ],
+    );
+    let (registry, selection) =
+        registry_for_capabilities(SandboxBackendKind::Container, false, true, false);
+
+    assert!(matches!(
+        compile_standalone(&decision, &spec, &selection, &registry),
+        Err(WorkloadNetworkPlanCompileError::CapabilitySelection(_))
+    ));
+}
+
+#[test]
+fn crossed_provider_selection_rejects_before_submission() {
     let decision = standalone_decision(
         TENANT,
         "python",
@@ -997,6 +1262,7 @@ fn exact_provider_selection_never_falls_back_or_substitutes_attachment_owner() {
             Some(&provider_managed),
             &registry,
             sovereignty(),
+            &endpoint_semantics(&https_spec),
             WorkloadActivationIntent::ActivateWhenAttached,
             WorkloadPublicationIntent::PublishWhenReady,
         )
@@ -1081,6 +1347,7 @@ fn every_compile_failure_precedes_store_lease_provider_manager_and_sandbox_effec
         None,
         &registry,
         sovereignty(),
+        &endpoint_semantics(&spec),
         WorkloadActivationIntent::PrepareOnly,
         WorkloadPublicationIntent::Withheld,
     );
@@ -1101,6 +1368,7 @@ fn every_compile_failure_precedes_store_lease_provider_manager_and_sandbox_effec
         Some(&selection),
         &registry,
         sovereignty(),
+        &endpoint_semantics(&crossed_tenant_spec),
         WorkloadActivationIntent::PrepareOnly,
         WorkloadPublicationIntent::Withheld,
     );
@@ -1130,6 +1398,7 @@ fn every_compile_failure_precedes_store_lease_provider_manager_and_sandbox_effec
             [NetworkExternalDependency::ExternalControlPlane],
             false,
         ),
+        &endpoint_semantics(&spec),
         WorkloadActivationIntent::PrepareOnly,
         WorkloadPublicationIntent::Withheld,
     );
@@ -1148,7 +1417,7 @@ fn every_compile_failure_precedes_store_lease_provider_manager_and_sandbox_effec
 }
 
 #[test]
-fn source_sovereignty_accepts_only_monotonic_refinement_and_reports_every_relaxation() {
+fn crossed_sovereignty_rejects_before_submission() {
     let source = NetworkSovereigntyRequirements::new(
         NetworkControlPlaneLocality::OperatorLocal,
         [
@@ -1218,6 +1487,7 @@ fn sovereignty_is_digest_bound_and_exact_selection_fails_closed() {
             Some(&local_selection),
             &local_registry,
             requirements,
+            &endpoint_semantics(&spec),
             WorkloadActivationIntent::ActivateWhenAttached,
             WorkloadPublicationIntent::Withheld,
         )
@@ -1275,6 +1545,7 @@ fn sovereignty_is_digest_bound_and_exact_selection_fails_closed() {
                 None,
                 &empty_registry,
                 requirements,
+                &[],
                 WorkloadActivationIntent::PrepareOnly,
                 WorkloadPublicationIntent::Withheld,
             )
@@ -1349,7 +1620,7 @@ fn reserved_pep_name_and_duplicate_listeners_fail_closed() {
     );
     assert!(matches!(
         compile_standalone(&decision, &duplicate, &selection, &registry),
-        Err(WorkloadNetworkPlanCompileError::PortablePlan(_))
+        Err(WorkloadNetworkPlanCompileError::DuplicateEndpointSemantics { .. })
     ));
 }
 
@@ -1392,8 +1663,9 @@ fn newer_generation_creates_a_new_workload_incarnation_and_exact_fence() {
             Some(&selection),
             &registry,
             sovereignty(),
+            &endpoint_semantics(&spec),
             WorkloadActivationIntent::ActivateWhenAttached,
-            WorkloadPublicationIntent::PublishWhenReady,
+            WorkloadPublicationIntent::Withheld,
         )
         .expect("next generation should compile");
 

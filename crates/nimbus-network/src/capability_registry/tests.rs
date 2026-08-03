@@ -583,3 +583,66 @@ fn canonical_registration_collections_deduplicate_and_sort() {
         &BTreeSet::from([NetworkAddressFamily::Ipv4, NetworkAddressFamily::Ipv6,])
     );
 }
+
+#[test]
+fn provider_report_digest_binds_complete_selected_reports() {
+    let baseline = bundle("attachment-a", "ingress-a");
+    let identical = bundle("attachment-a", "ingress-a");
+    let changed_attachment = NetworkCapabilityBundle::new(
+        attachment(
+            "attachment-a",
+            [NetworkAddressFamily::Ipv4, NetworkAddressFamily::Ipv6],
+            complete_lifecycle(),
+            true,
+        ),
+        ingress(
+            "ingress-a",
+            [NetworkAddressFamily::Ipv4],
+            complete_lifecycle(),
+            true,
+        ),
+    );
+    let changed_ingress = NetworkCapabilityBundle::new(
+        attachment(
+            "attachment-a",
+            [NetworkAddressFamily::Ipv4],
+            complete_lifecycle(),
+            true,
+        ),
+        ingress(
+            "ingress-a",
+            [NetworkAddressFamily::Ipv4, NetworkAddressFamily::Ipv6],
+            complete_lifecycle(),
+            true,
+        ),
+    );
+
+    let evidence = baseline.selection_evidence();
+    assert_eq!(evidence, identical.selection_evidence());
+    assert_eq!(evidence.selection(), &baseline.selection());
+    assert_ne!(
+        evidence.source_digest(),
+        changed_attachment.selection_evidence().source_digest(),
+        "attachment source evidence must participate in the digest"
+    );
+    assert_ne!(
+        evidence.source_digest(),
+        changed_ingress.selection_evidence().source_digest(),
+        "ingress source evidence must participate in the digest"
+    );
+
+    let encoded = serde_json::to_value(&evidence).expect("selection evidence should serialize");
+    assert_eq!(
+        encoded
+            .get("source_digest")
+            .and_then(serde_json::Value::as_str)
+            .expect("digest should use canonical string wire form")
+            .len(),
+        64
+    );
+    assert_eq!(
+        serde_json::from_value::<NetworkCapabilitySelectionEvidence>(encoded)
+            .expect("selection evidence should round trip"),
+        evidence
+    );
+}

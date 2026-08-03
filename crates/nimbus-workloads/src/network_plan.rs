@@ -9,17 +9,17 @@ use std::num::NonZeroU16;
 use nimbus_core::{TenantId, is_valid_dns_hostname};
 use nimbus_network::{
     EndpointProtocol, IngressRouteId, ListenerId, NetworkAttachmentId,
-    NetworkCapabilityRequirements, NetworkCapabilitySelection, NetworkConditionKind, NetworkPlan,
-    NetworkPlanContentDigest, NetworkPlanId, NetworkProviderId, NetworkReadinessRequirement,
-    NetworkReadinessRequirementError, NetworkResourceGeneration, NetworkSovereigntyRequirements,
-    PortLeaseId, PublishedEndpointId,
+    NetworkCapabilityRequirements, NetworkCapabilitySelection, NetworkCapabilitySelectionEvidence,
+    NetworkConditionKind, NetworkPlan, NetworkPlanContentDigest, NetworkPlanId, NetworkProviderId,
+    NetworkReadinessRequirement, NetworkReadinessRequirementError, NetworkResourceGeneration,
+    NetworkSovereigntyRequirements, NetworkTlsBehavior, PortLeaseId, PublishedEndpointId,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{WorkloadActivationIntent, WorkloadPublicationIntent};
 
 /// Portable compiled network-plan content format understood by this crate.
-pub const WORKLOAD_NETWORK_PLAN_FORMAT_VERSION: u32 = 1;
+pub const WORKLOAD_NETWORK_PLAN_FORMAT_VERSION: u32 = 2;
 
 /// A rejected portable workload network-plan value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +74,16 @@ pub enum WorkloadNetworkPlanError {
     DuplicatePortLeaseId { port_lease_id: PortLeaseId },
     /// A selected provider pair is required to derive resource readiness.
     MissingCapabilitySelectionForResources,
+    /// Selected source-report evidence is required for provider-owned resources.
+    MissingCapabilitySelectionEvidenceForResources,
+    /// A resource-free plan cannot claim that a provider pair was selected.
+    UnexpectedCapabilitySelectionForResourceFreePlan,
+    /// Selected provider IDs and their source-report evidence disagree.
+    CapabilitySelectionEvidenceMismatch,
+    /// Listener forwarding does not agree with its guest-port shape.
+    ForwardingBehaviorMismatch,
+    /// Listener TLS behavior does not agree with its application protocol.
+    TlsBehaviorMismatch,
     /// The mechanically derived readiness requirement set was invalid.
     InvalidReadinessRequirements(NetworkReadinessRequirementError),
     /// Serialized content uses an unsupported format version.
@@ -188,6 +198,21 @@ impl Display for WorkloadNetworkPlanError {
             ),
             Self::MissingCapabilitySelectionForResources => formatter
                 .write_str("workload network resources require an exact capability selection"),
+            Self::MissingCapabilitySelectionEvidenceForResources => formatter.write_str(
+                "workload network resources require exact capability selection evidence",
+            ),
+            Self::UnexpectedCapabilitySelectionForResourceFreePlan => formatter.write_str(
+                "a resource-free workload network plan cannot select provider capabilities",
+            ),
+            Self::CapabilitySelectionEvidenceMismatch => formatter.write_str(
+                "workload network capability selection does not match its source evidence",
+            ),
+            Self::ForwardingBehaviorMismatch => {
+                formatter.write_str("listener forwarding behavior must match guest port shape")
+            }
+            Self::TlsBehaviorMismatch => {
+                formatter.write_str("listener TLS behavior must match its application protocol")
+            }
             Self::InvalidReadinessRequirements(error) => {
                 write!(formatter, "workload network readiness is invalid: {error}")
             }
@@ -600,6 +625,44 @@ pub enum WorkloadNetworkPortRequestMode {
     ProviderAssigned,
 }
 
+/// Exact forwarding intent for one workload listener.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkloadNetworkForwardingBehavior {
+    /// The admitted endpoint needs no forwarding hop.
+    None,
+    /// The host-side listener forwards to the retained guest port.
+    PortForwarded,
+}
+
+/// Explicit forwarding and TLS semantics bound to one named listener.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct WorkloadNetworkEndpointSemantics {
+    forwarding: WorkloadNetworkForwardingBehavior,
+    tls: NetworkTlsBehavior,
+}
+
+impl WorkloadNetworkEndpointSemantics {
+    /// Construct exact endpoint semantics.
+    pub const fn new(
+        forwarding: WorkloadNetworkForwardingBehavior,
+        tls: NetworkTlsBehavior,
+    ) -> Self {
+        Self { forwarding, tls }
+    }
+
+    /// Admitted forwarding behavior.
+    pub const fn forwarding(self) -> WorkloadNetworkForwardingBehavior {
+        self.forwarding
+    }
+
+    /// Admitted TLS handling behavior.
+    pub const fn tls(self) -> NetworkTlsBehavior {
+        self.tls
+    }
+}
+
 impl WorkloadNetworkPortRequestMode {
     /// Construct exact non-zero port intent.
     pub const fn exact(port: NonZeroU16) -> Self {
@@ -626,6 +689,7 @@ pub struct WorkloadNetworkListenerBlueprint {
     protocol: EndpointProtocol,
     desired_host_address: IpAddr,
     port_request: WorkloadNetworkPortRequestMode,
+    endpoint_semantics: WorkloadNetworkEndpointSemantics,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     guest_port: Option<u16>,
 }
@@ -640,6 +704,7 @@ struct WorkloadNetworkListenerBlueprintWire {
     protocol: EndpointProtocol,
     desired_host_address: IpAddr,
     port_request: WorkloadNetworkPortRequestMode,
+    endpoint_semantics: WorkloadNetworkEndpointSemantics,
     #[serde(default)]
     guest_port: Option<u16>,
 }
@@ -652,11 +717,13 @@ impl WorkloadNetworkListenerBlueprint {
         protocol: EndpointProtocol,
         desired_host_address: IpAddr,
         port_request: WorkloadNetworkPortRequestMode,
+        endpoint_semantics: WorkloadNetworkEndpointSemantics,
         guest_port: Option<u16>,
     ) -> Result<Self, WorkloadNetworkPlanError> {
         let name = name.into();
         validate_required(&name, "listener.name")?;
         validate_optional_port(guest_port, "listener.guest_port")?;
+        validate_endpoint_semantics(protocol, endpoint_semantics, guest_port)?;
         let listener_id = identity.listener_id(&name);
         let endpoint_id = identity.endpoint_id(&name);
         let port_lease_id = PortLeaseId::for_listener(&listener_id);
@@ -668,6 +735,7 @@ impl WorkloadNetworkListenerBlueprint {
             protocol,
             desired_host_address,
             port_request,
+            endpoint_semantics,
             guest_port,
         })
     }
@@ -681,10 +749,12 @@ impl WorkloadNetworkListenerBlueprint {
         protocol: EndpointProtocol,
         desired_host_address: IpAddr,
         port_request: WorkloadNetworkPortRequestMode,
+        endpoint_semantics: WorkloadNetworkEndpointSemantics,
         guest_port: Option<u16>,
     ) -> Result<Self, WorkloadNetworkPlanError> {
         validate_required(&name, "listener.name")?;
         validate_optional_port(guest_port, "listener.guest_port")?;
+        validate_endpoint_semantics(protocol, endpoint_semantics, guest_port)?;
         let expected_lease_id = PortLeaseId::for_listener(&listener_id);
         if port_lease_id != expected_lease_id {
             return Err(WorkloadNetworkPlanError::PortLeaseIdentityMismatch {
@@ -700,6 +770,7 @@ impl WorkloadNetworkListenerBlueprint {
             protocol,
             desired_host_address,
             port_request,
+            endpoint_semantics,
             guest_port,
         })
     }
@@ -739,6 +810,11 @@ impl WorkloadNetworkListenerBlueprint {
         self.port_request
     }
 
+    /// Exact forwarding and TLS semantics for this listener.
+    pub const fn endpoint_semantics(&self) -> WorkloadNetworkEndpointSemantics {
+        self.endpoint_semantics
+    }
+
     /// Optional guest-side port correlation value.
     pub const fn guest_port(&self) -> Option<u16> {
         self.guest_port
@@ -755,9 +831,39 @@ impl WorkloadNetworkListenerBlueprintWire {
             self.protocol,
             self.desired_host_address,
             self.port_request,
+            self.endpoint_semantics,
             self.guest_port,
         )
     }
+}
+
+fn validate_endpoint_semantics(
+    protocol: EndpointProtocol,
+    endpoint_semantics: WorkloadNetworkEndpointSemantics,
+    guest_port: Option<u16>,
+) -> Result<(), WorkloadNetworkPlanError> {
+    let forwarding_matches = matches!(
+        (endpoint_semantics.forwarding(), guest_port),
+        (WorkloadNetworkForwardingBehavior::None, None)
+            | (WorkloadNetworkForwardingBehavior::PortForwarded, Some(_))
+    );
+    if !forwarding_matches {
+        return Err(WorkloadNetworkPlanError::ForwardingBehaviorMismatch);
+    }
+    let tls_matches = matches!(
+        (protocol, endpoint_semantics.tls()),
+        (
+            EndpointProtocol::Tcp | EndpointProtocol::Http,
+            NetworkTlsBehavior::Disabled
+        ) | (
+            EndpointProtocol::Https,
+            NetworkTlsBehavior::Passthrough | NetworkTlsBehavior::TerminateAtIngress
+        )
+    );
+    if !tls_matches {
+        return Err(WorkloadNetworkPlanError::TlsBehaviorMismatch);
+    }
+    Ok(())
 }
 
 /// One non-published listener whose readiness gates workload activation.
@@ -848,6 +954,8 @@ pub struct WorkloadNetworkPlanContent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     capability_selection: Option<NetworkCapabilitySelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    capability_selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     attachment: Option<WorkloadNetworkAttachmentBlueprint>,
     routes: Vec<WorkloadNetworkRouteBlueprint>,
     listeners: Vec<WorkloadNetworkListenerBlueprint>,
@@ -865,6 +973,8 @@ struct WorkloadNetworkPlanContentWire {
     #[serde(default)]
     capability_selection: Option<NetworkCapabilitySelection>,
     #[serde(default)]
+    capability_selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
+    #[serde(default)]
     attachment: Option<WorkloadNetworkAttachmentBlueprintWire>,
     routes: Vec<WorkloadNetworkRouteBlueprintWire>,
     listeners: Vec<WorkloadNetworkListenerBlueprintWire>,
@@ -880,6 +990,7 @@ impl WorkloadNetworkPlanContent {
         identity: WorkloadNetworkPlanIdentity,
         capability_requirements: NetworkCapabilityRequirements,
         capability_selection: Option<NetworkCapabilitySelection>,
+        capability_selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
         attachment: Option<WorkloadNetworkAttachmentBlueprint>,
         routes: impl IntoIterator<Item = WorkloadNetworkRouteBlueprint>,
         listeners: impl IntoIterator<Item = WorkloadNetworkListenerBlueprint>,
@@ -925,8 +1036,31 @@ impl WorkloadNetworkPlanContent {
                 });
             }
         }
-        if (attachment.is_some() || !listeners.is_empty()) && capability_selection.is_none() {
-            return Err(WorkloadNetworkPlanError::MissingCapabilitySelectionForResources);
+        let has_selected_resources =
+            attachment.is_some() || !routes.is_empty() || !listeners.is_empty();
+        match (
+            has_selected_resources,
+            capability_selection.as_ref(),
+            capability_selection_evidence.as_ref(),
+        ) {
+            (true, None, _) => {
+                return Err(WorkloadNetworkPlanError::MissingCapabilitySelectionForResources);
+            }
+            (true, Some(_), None) => {
+                return Err(
+                    WorkloadNetworkPlanError::MissingCapabilitySelectionEvidenceForResources,
+                );
+            }
+            (true, Some(selection), Some(evidence)) if evidence.selection() != selection => {
+                return Err(WorkloadNetworkPlanError::CapabilitySelectionEvidenceMismatch);
+            }
+            (false, None, None) => {}
+            (false, _, _) => {
+                return Err(
+                    WorkloadNetworkPlanError::UnexpectedCapabilitySelectionForResourceFreePlan,
+                );
+            }
+            (true, Some(_), Some(_)) => {}
         }
 
         Ok(Self {
@@ -934,6 +1068,7 @@ impl WorkloadNetworkPlanContent {
             identity,
             capability_requirements,
             capability_selection,
+            capability_selection_evidence,
             attachment,
             routes,
             listeners,
@@ -961,6 +1096,11 @@ impl WorkloadNetworkPlanContent {
     /// Exact provider registrations selected by the upper composition owner.
     pub fn capability_selection(&self) -> Option<&NetworkCapabilitySelection> {
         self.capability_selection.as_ref()
+    }
+
+    /// Authenticated source reports behind the exact selected providers.
+    pub fn capability_selection_evidence(&self) -> Option<&NetworkCapabilitySelectionEvidence> {
+        self.capability_selection_evidence.as_ref()
     }
 
     /// Explicit admitted sovereignty constraints.
@@ -1093,6 +1233,7 @@ impl<'de> Deserialize<'de> for WorkloadNetworkPlanContent {
             wire.identity,
             wire.capability_requirements,
             wire.capability_selection,
+            wire.capability_selection_evidence,
             attachment,
             routes,
             listeners,
@@ -1269,6 +1410,8 @@ struct SagaWorkloadNetworkPlanContentWire {
     #[serde(default)]
     capability_selection: Option<NetworkCapabilitySelection>,
     #[serde(default)]
+    capability_selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
+    #[serde(default)]
     attachment: Option<WorkloadNetworkAttachmentBlueprintWire>,
     routes: Vec<WorkloadNetworkRouteBlueprintWire>,
     listeners: Vec<WorkloadNetworkListenerBlueprintWire>,
@@ -1358,6 +1501,7 @@ where
         identity,
         wire.content.capability_requirements,
         wire.content.capability_selection,
+        wire.content.capability_selection_evidence,
         attachment,
         routes,
         listeners,

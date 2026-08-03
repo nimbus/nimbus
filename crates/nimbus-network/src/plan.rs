@@ -404,7 +404,7 @@ mod tests {
         let plan_digest = NetworkPlanDigest::for_content(content_digest, &test_requirements(), &[]);
         assert_eq!(
             plan_digest.to_string(),
-            "7faeb95f648631e78863a829113ddc7a23f4b949278e44f81c5fb5c033b39384"
+            "df64faa254284be2576efd68d7ecdf3d8d4f6f4d916fd6f3b833c8ff6a0e0b8e"
         );
         assert_eq!(
             serde_json::from_str::<NetworkPlanDigest>(

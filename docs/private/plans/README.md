@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.3a complete; NNC6.3b
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.3b complete; NNC6.4
   in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
@@ -173,9 +173,30 @@ extension-registry seam before the second concern edits `extensions.rs`.
   proof lint, scripts, format/diff, docs `108`, and site `17/17` are green. The
   sole narrow Sol/xhigh/fast review validated every executable correction and
   found one accepted P3 in stale staged-state wording at confidence `0.98`.
-  The ledger now matches the staged 30-path candidate and reviewed identity.
-  No further review is warranted. NNC6.3a is staged for its exact item commit;
-  NNC6.3b is dependency-ready and has no dirty path.
+  The ledger matched the reviewed 30-path candidate, and NNC6.3a is durable at
+  `ed0560b4e45f7ec571934624962de72d021a71a8`. No further NNC6.3a review is
+  warranted. NNC6.3b is complete under the frozen E1-E20 contract in
+  `proof/nimbus-network-control-plane/nnc6.3b-pure-provision-decision.md`.
+  It contains one exact composition constructor, an authenticated
+  provider-report digest, explicit forwarding/TLS semantics, a pre-effect
+  durable attempt, and a closed success/definite-failure/ambiguous reducer.
+  E1-E20 are green. NNCV032 passes `32/32` direct conditions and `36/36`
+  mutations, the live aggregate passes `33/33`, and the bounded retained-plus-
+  additive run passes `277/277`. Full affected suites pass network `239` plus
+  one ignore, workloads `125`, compute `147` plus one child-only ignore, and
+  server `645` plus 30 declared skips. Affected quality, dependency/path,
+  proof-lint, docs `108`, and site `17/17` gates pass. The exact candidate owns
+  55 allowlisted paths and changes no manifest, provider caller, or effect
+  owner. The one full Sol/xhigh/fast item review's eight accepted executable
+  findings are corrected and proven; its admission-digest claim is source-
+  rejected and its ledger placeholder is closed normally. The one permitted
+  narrow correction review found one real activation-prerequisite bypass,
+  which has exact `0/1` fail-before and corrected `1/1` proof; its constructor-
+  validation claim is source-rejected. Review cadence is exhausted. The final
+  pre-ledger executable patch SHA-256 is
+  `ff0551ba284866427b2a62fc147e94ab1695f68f1089f2238bb97f0c81be1de3`.
+  NNC6.4 is next and owns the atomic provider-command and provision-caller
+  replacement after the exact NNC6.3b item commit.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,

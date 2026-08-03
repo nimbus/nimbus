@@ -14,7 +14,9 @@ use crate::{
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
     WorkloadExecutableEncoding, WorkloadExecutableIntent, WorkloadGeneration,
     WorkloadNetworkDependencyListenerBlueprint, WorkloadNetworkPlanContent,
-    WorkloadNetworkPlanIdentity, WorkloadPhaseDetail, WorkloadPublicationIntent,
+    WorkloadNetworkPlanIdentity, WorkloadPhaseDetail, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent,
     WorkloadPublicationReference, WorkloadSagaError, WorkloadSagaIntentUpdate, WorkloadSagaKey,
     WorkloadSagaPhase, WorkloadSagaRecord,
 };
@@ -60,6 +62,7 @@ fn compiled_plan(
         requirements,
         None,
         None,
+        None,
         [],
         [],
         [dependency],
@@ -79,14 +82,23 @@ fn saga_intent(
     publication: WorkloadPublicationIntent,
     seed: u8,
 ) -> Result<WorkloadSagaIntent, WorkloadSagaError> {
+    let executable = WorkloadExecutableIntent::new(
+        WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(r#"{{"fixtureSeed":{seed}}}"#),
+    )?;
+    let source = WorkloadProvisionSourceEvidence::standalone_sandbox(
+        WorkloadProvisionSourceIdentity::standalone_sandbox(workload_label, workload_label)?,
+        WorkloadProvisionSourceGeneration::new(workload_generation),
+        WorkloadProvisionSourceResourceVersion::new(format!("fixture-{seed}"))?,
+        executable.content_digest(),
+        NetworkProviderId::for_registration_key(&format!("provider-{seed}")),
+    )?;
     WorkloadSagaIntent::new(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         WorkloadGeneration::new(workload_generation),
-        WorkloadExecutableIntent::new(
-            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-            format!(r#"{{"fixtureSeed":{seed}}}"#),
-        )?,
+        executable,
+        source,
         WorkloadNetworkIntent::new(compiled_plan(
             tenant_id,
             workload_label,
@@ -104,7 +116,7 @@ fn saga_intent(
             format!("twu_{}", digest_text(seed))
                 .try_into()
                 .expect("workload uid should validate"),
-            Some(NodeIdentity::new(format!("node-{seed}")).expect("node should validate")),
+            NodeIdentity::new(format!("node-{seed}")).expect("node should validate"),
         ),
     )
 }
@@ -280,19 +292,31 @@ fn saga_intent_rejects_activation_and_publication_crossings() {
         WorkloadAdmissionEvidence::new(
             TenantIsolationDecisionId::try_from(format!("tid_{}", digest_text(6))).unwrap(),
             TenantWorkloadUid::try_from(format!("twu_{}", digest_text(6))).unwrap(),
-            Some(NodeIdentity::new("node-correlation").unwrap()),
+            NodeIdentity::new("node-correlation").unwrap(),
         )
     };
+    let executable = WorkloadExecutableIntent::new(
+        WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        r#"{"fixture":"correlation"}"#,
+    )
+    .expect("fixture executable should validate");
+    let source = WorkloadProvisionSourceEvidence::standalone_sandbox(
+        WorkloadProvisionSourceIdentity::standalone_sandbox("workload-correlation", "profile")
+            .expect("source identity should validate"),
+        WorkloadProvisionSourceGeneration::new(11),
+        WorkloadProvisionSourceResourceVersion::new("fixture-correlation")
+            .expect("source version should validate"),
+        executable.content_digest(),
+        NetworkProviderId::for_registration_key("provider-correlation"),
+    )
+    .expect("source evidence should validate");
     let build = |activation, publication| {
         WorkloadSagaIntent::new(
             DesiredWorkloadKind::Sandbox,
             DesiredWorkloadState::Running,
             WorkloadGeneration::new(11),
-            WorkloadExecutableIntent::new(
-                WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-                r#"{"fixture":"correlation"}"#,
-            )
-            .expect("fixture executable should validate"),
+            executable.clone(),
+            source.clone(),
             WorkloadNetworkIntent::new(plan.clone()),
             activation,
             publication,
@@ -515,7 +539,7 @@ fn record_tenant_and_transition_identity_bind_complete_compiled_content() {
 }
 
 #[test]
-fn saga_v2_rejects_v1_and_future_record_versions() {
+fn saga_v3_rejects_older_and_future_record_versions() {
     let tenant_id = tenant("tenant-network-version");
     let intent = saga_intent(
         &tenant_id,
@@ -535,9 +559,9 @@ fn saga_v2_rejects_v1_and_future_record_versions() {
         intent,
     )
     .unwrap();
-    assert_eq!(record.format_version(), 2);
+    assert_eq!(record.format_version(), 3);
 
-    for version in [1, 3] {
+    for version in [1, 2, 4] {
         let mut wire = serde_json::to_value(&record).unwrap();
         wire["formatVersion"] = json!(version);
         assert!(serde_json::from_value::<WorkloadSagaRecord>(wire).is_err());

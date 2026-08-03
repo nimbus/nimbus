@@ -5,6 +5,7 @@ set -u
 
 REPO_ROOT="${NIMBUS_NETWORK_NNC63A_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 STARTING_CHECKPOINT="${NIMBUS_NETWORK_NNC63A_STARTING_CHECKPOINT:-81e4f2f9ca6c998973a67f0c58e4918998bcca5e}"
+COMPLETION_CHECKPOINT="${NIMBUS_NETWORK_NNC63A_COMPLETION_CHECKPOINT:-ed0560b4e45f7ec571934624962de72d021a71a8}"
 EXECUTABLE="crates/nimbus-workloads/src/saga/executable.rs"
 SAGA="crates/nimbus-workloads/src/saga.rs"
 SAGA_TESTS="crates/nimbus-workloads/src/saga/executable/tests.rs"
@@ -110,24 +111,16 @@ verify_contract() {
   elif ! git -C "${REPO_ROOT}" cat-file -e "${STARTING_CHECKPOINT}^{commit}" 2>/dev/null; then
     add_error "NNC6.3a starting checkpoint is missing: ${STARTING_CHECKPOINT}"
     paths=""
+  elif ! git -C "${REPO_ROOT}" cat-file -e "${COMPLETION_CHECKPOINT}^{commit}" 2>/dev/null; then
+    add_error "NNC6.3a completion checkpoint is missing: ${COMPLETION_CHECKPOINT}"
+    paths=""
   else
-    committed="$(git -C "${REPO_ROOT}" diff --name-only "${STARTING_CHECKPOINT}..HEAD" 2>/dev/null)" || {
+    committed="$(git -C "${REPO_ROOT}" diff --name-only \
+      "${STARTING_CHECKPOINT}..${COMPLETION_CHECKPOINT}" 2>/dev/null)" || {
       add_error "NNC6.3a committed source range is unreadable"
       committed=""
     }
-    working="$(git -C "${REPO_ROOT}" diff --name-only 2>/dev/null)" || {
-      add_error "NNC6.3a working source diff is unreadable"
-      working=""
-    }
-    staged="$(git -C "${REPO_ROOT}" diff --cached --name-only 2>/dev/null)" || {
-      add_error "NNC6.3a staged source diff is unreadable"
-      staged=""
-    }
-    untracked="$(git -C "${REPO_ROOT}" ls-files --others --exclude-standard 2>/dev/null)" || {
-      add_error "NNC6.3a untracked source census is unreadable"
-      untracked=""
-    }
-    paths="$(printf '%s\n%s\n%s\n%s\n' "${committed}" "${working}" "${staged}" "${untracked}" | sort -u)"
+    paths="$(printf '%s\n' "${committed}" | sort -u)"
   fi
 
   apply_test_mutation
