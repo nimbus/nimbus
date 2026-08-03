@@ -45,6 +45,7 @@ NNC62A_WORKLOAD_NETWORK_PLAN_DURABILITY_CONTRACT="scripts/nimbus-network-control
 NNC61E1_WORKLOAD_SAGA_INGRESS_CONTRACT="scripts/nimbus-network-control-plane/workload-saga-ingress-contract.sh"
 NNC63A_WORKLOAD_EXECUTABLE_CONTRACT="scripts/nimbus-network-control-plane/workload-executable-carrier-contract.sh"
 NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT="scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh"
+NNC64_WORKLOAD_PROVISION_DISPATCH_CONTRACT="scripts/nimbus-network-control-plane/workload-provision-dispatch-contract.sh"
 
 # shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
 . "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
@@ -950,6 +951,42 @@ run_self_test() {
   script="${REPO_ROOT}/scripts/verify-nimbus-network-control-plane.sh"
   self_fail=0
 
+  run_parallel_self_test_batch() {
+    launched_lanes=""
+    for lane_spec in "$@"; do
+      IFS='|' read -r lane_name lane_function missing_label <<<"${lane_spec}"
+      if ! declare -F "${lane_function}" >/dev/null 2>&1; then
+        printf 'SELFTEST FAIL %s contract helper is missing\n' "${missing_label}"
+        self_fail=$((self_fail + 1))
+        continue
+      fi
+      launched_lanes="${launched_lanes}${launched_lanes:+ }${lane_name}"
+      (
+        "${lane_function}" "${script}" "${temporary}"
+        lane_status=$?
+        printf '%d\n' "${lane_status}" >"${temporary}/${lane_name}.status"
+      ) >"${temporary}/${lane_name}.out" 2>&1 &
+    done
+
+    wait
+    for lane_name in ${launched_lanes}; do
+      if [ ! -f "${temporary}/${lane_name}.status" ]; then
+        printf 'SELFTEST FAIL %s lane did not record its result\n' "${lane_name}"
+        self_fail=$((self_fail + 1))
+        continue
+      fi
+      cat "${temporary}/${lane_name}.out"
+      lane_status="$(cat "${temporary}/${lane_name}.status")"
+      case "${lane_status}" in
+        '' | *[!0-9]*)
+          printf 'SELFTEST FAIL %s lane recorded an invalid result\n' "${lane_name}"
+          self_fail=$((self_fail + 1))
+          ;;
+        *) self_fail=$((self_fail + lane_status)) ;;
+      esac
+    done
+  }
+
   if NIMBUS_NETWORK_VERIFY_PLAN="${temporary}/missing-plan.md" \
     NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
     "${script}" >"${temporary}/missing-plan.out" 2>&1; then
@@ -1026,7 +1063,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 32 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 33 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1674,80 +1711,25 @@ NODE
     printf 'SELFTEST PASS sovereignty-tripwire mutation suite passes 70 tests\n'
   fi
 
-  if declare -F run_nnc52a_attachment_ordering_self_tests >/dev/null 2>&1; then
-    run_nnc52a_attachment_ordering_self_tests "${script}" "${temporary}" ||
-      self_fail=$((self_fail + $?))
-  else
-    printf 'SELFTEST FAIL attachment-ordering contract helper is missing\n'
-    self_fail=$((self_fail + 1))
-  fi
-
-  if declare -F run_nnc52d_startup_orphan_self_tests >/dev/null 2>&1; then
-    run_nnc52d_startup_orphan_self_tests "${script}" "${temporary}" ||
-      self_fail=$((self_fail + $?))
-  else
-    printf 'SELFTEST FAIL startup-orphan contract helper is missing\n'
-    self_fail=$((self_fail + 1))
-  fi
-
-  if declare -F run_nnc53_attachment_readiness_self_tests >/dev/null 2>&1; then
-    run_nnc53_attachment_readiness_self_tests "${script}" "${temporary}" ||
-      self_fail=$((self_fail + $?))
-  else
-    printf 'SELFTEST FAIL attachment-readiness contract helper is missing\n'
-    self_fail=$((self_fail + 1))
-  fi
-
-  if declare -F run_nnc54_attachment_crash_self_tests >/dev/null 2>&1; then
-    run_nnc54_attachment_crash_self_tests "${script}" "${temporary}" ||
-      self_fail=$((self_fail + $?))
-  else
-    printf 'SELFTEST FAIL attachment-crash contract helper is missing\n'
-    self_fail=$((self_fail + 1))
-  fi
-
-  if declare -F run_nnc54a_machine_forwarded_batch_self_tests >/dev/null 2>&1; then
-    run_nnc54a_machine_forwarded_batch_self_tests "${script}" "${temporary}" ||
-      self_fail=$((self_fail + $?))
-  else
-    printf 'SELFTEST FAIL machine-forwarded-batch contract helper is missing\n'
-    self_fail=$((self_fail + 1))
-  fi
-
-  if declare -F run_nnc55_effect_locality_self_tests >/dev/null 2>&1; then
-    run_nnc55_effect_locality_self_tests "${script}" "${temporary}" ||
-      self_fail=$((self_fail + $?))
-  else
-    printf 'SELFTEST FAIL effect-locality contract helper is missing\n'
-    self_fail=$((self_fail + 1))
-  fi
-
-  if declare -F run_nnc56_side_effect_free_inspection_self_tests >/dev/null 2>&1; then
-    run_nnc56_side_effect_free_inspection_self_tests "${script}" "${temporary}" ||
-      self_fail=$((self_fail + $?))
-  else
-    printf 'SELFTEST FAIL side-effect-free inspection contract helper is missing\n'
-    self_fail=$((self_fail + 1))
-  fi
-
-  if declare -F run_nnc61_compute_network_manager_self_tests >/dev/null 2>&1; then
-    run_nnc61_compute_network_manager_self_tests "${script}" "${temporary}" ||
-      self_fail=$((self_fail + $?))
-  else
-    printf 'SELFTEST FAIL compute-network-manager contract helper is missing\n'
-    self_fail=$((self_fail + 1))
-  fi
-
-  if declare -F run_nnc61a_compute_node_workload_coordinator_self_tests >/dev/null 2>&1; then
-    run_nnc61a_compute_node_workload_coordinator_self_tests "${script}" "${temporary}" ||
-      self_fail=$((self_fail + $?))
-  else
-    printf 'SELFTEST FAIL compute-node-workload-coordinator contract helper is missing\n'
-    self_fail=$((self_fail + 1))
-  fi
-
-  run_nnc61e_recovery_decision_self_tests "${script}" "${temporary}" ||
-    self_fail=$((self_fail + $?))
+  # Each lane invokes the same read-only aggregate child with disjoint
+  # mutation variables and output paths. Batches cap concurrent repository
+  # scans at two so the bind scanner retains enough process and memory headroom.
+  # The overlap does not change any exclusive failure assertion.
+  run_parallel_self_test_batch \
+    'nnc52a|run_nnc52a_attachment_ordering_self_tests|attachment-ordering' \
+    'nnc52d|run_nnc52d_startup_orphan_self_tests|startup-orphan'
+  run_parallel_self_test_batch \
+    'nnc53|run_nnc53_attachment_readiness_self_tests|attachment-readiness' \
+    'nnc54|run_nnc54_attachment_crash_self_tests|attachment-crash'
+  run_parallel_self_test_batch \
+    'nnc54a|run_nnc54a_machine_forwarded_batch_self_tests|machine-forwarded-batch' \
+    'nnc55|run_nnc55_effect_locality_self_tests|effect-locality'
+  run_parallel_self_test_batch \
+    'nnc56|run_nnc56_side_effect_free_inspection_self_tests|side-effect-free inspection' \
+    'nnc61|run_nnc61_compute_network_manager_self_tests|compute-network-manager'
+  run_parallel_self_test_batch \
+    'nnc61a|run_nnc61a_compute_node_workload_coordinator_self_tests|compute-node-workload-coordinator' \
+    'nnc61e|run_nnc61e_recovery_decision_self_tests|recovery-decision'
 
   if [ ! -f "${NNC62_WORKLOAD_NETWORK_PLAN_COMPILER_CONTRACT}" ]; then
     printf 'SELFTEST FAIL NNCV028 workload-network-plan compiler helper is missing\n'
@@ -1829,14 +1811,38 @@ NODE
     sed -n '1,220p' "${temporary}/nnc63b-contract-self-test.out"
   fi
 
+  if [ ! -f "${NNC64_WORKLOAD_PROVISION_DISPATCH_CONTRACT}" ]; then
+    printf 'SELFTEST FAIL NNCV033 workload provision dispatch helper is missing\n'
+    self_fail=$((self_fail + 1))
+  elif ! bash "${NNC64_WORKLOAD_PROVISION_DISPATCH_CONTRACT}" --self-test \
+    >"${temporary}/nnc64-contract-self-test.out" 2>&1; then
+    printf 'SELFTEST FAIL NNCV033 workload provision dispatch mutation suite failed\n'
+    sed -n '1,260p' "${temporary}/nnc64-contract-self-test.out"
+    self_fail=$((self_fail + 1))
+  elif ! rg -q '^NNC6\.4 provider dispatch contract self-test: 48 passed, 0 failed$' \
+    "${temporary}/nnc64-contract-self-test.out"; then
+    printf 'SELFTEST FAIL NNCV033 workload provision dispatch mutation count is not exact\n'
+    self_fail=$((self_fail + 1))
+  else
+    sed -n '1,260p' "${temporary}/nnc64-contract-self-test.out"
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 277 passed, 0 failed\n'
+  printf 'self-test: 325 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
+  # Retained verifier mutations assert one exclusive historical diagnostic.
+  # The aggregate mutation fixtures use green baselines for the historical
+  # NNCV032 contract and the intentionally red NNCV033 contract. Their
+  # concept-owned 36- and 48-mutation suites still run below.
+  NIMBUS_NETWORK_NNC63B_AGGREGATE_SELF_TEST_BASELINE=1
+  NIMBUS_NETWORK_NNC64_AGGREGATE_SELF_TEST_BASELINE=1
+  export NIMBUS_NETWORK_NNC63B_AGGREGATE_SELF_TEST_BASELINE
+  export NIMBUS_NETWORK_NNC64_AGGREGATE_SELF_TEST_BASELINE
   run_self_test
   exit 0
 fi
@@ -1960,6 +1966,10 @@ verify_nnc63a_workload_executable_carrier() {
 }
 
 verify_nnc63b_workload_provision_decision() {
+  if [ "${NIMBUS_NETWORK_NNC63B_AGGREGATE_SELF_TEST_BASELINE:-0}" = "1" ]; then
+    pass "NNCV032" "pure-workload-provision-decision"
+    return
+  fi
   if [ ! -f "${NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT}" ]; then
     fail "NNCV032" "pure-workload-provision-decision" \
       "missing ${NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT}"
@@ -1974,6 +1984,28 @@ verify_nnc63b_workload_provision_decision() {
     pass "NNCV032" "pure-workload-provision-decision"
   else
     fail "NNCV032" "pure-workload-provision-decision" "${provision_error}"
+  fi
+}
+
+verify_nnc64_workload_provision_dispatch() {
+  if [ "${NIMBUS_NETWORK_NNC64_AGGREGATE_SELF_TEST_BASELINE:-0}" = "1" ]; then
+    pass "NNCV033" "atomic-workload-provision-dispatch"
+    return
+  fi
+  if [ ! -f "${NNC64_WORKLOAD_PROVISION_DISPATCH_CONTRACT}" ]; then
+    fail "NNCV033" "atomic-workload-provision-dispatch" \
+      "missing ${NNC64_WORKLOAD_PROVISION_DISPATCH_CONTRACT}"
+    return
+  fi
+
+  dispatch_error="$(
+    bash "${NNC64_WORKLOAD_PROVISION_DISPATCH_CONTRACT}" --check 2>&1
+  )"
+  dispatch_contract_exit=$?
+  if [ "${dispatch_contract_exit}" -eq 0 ]; then
+    pass "NNCV033" "atomic-workload-provision-dispatch"
+  else
+    fail "NNCV033" "atomic-workload-provision-dispatch" "${dispatch_error}"
   fi
 }
 
@@ -2013,6 +2045,7 @@ verify_nnc62a_workload_network_plan_durability
 verify_nnc61e1_workload_saga_ingress
 verify_nnc63a_workload_executable_carrier
 verify_nnc63b_workload_provision_decision
+verify_nnc64_workload_provision_dispatch
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

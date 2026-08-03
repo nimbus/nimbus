@@ -195,9 +195,23 @@ extension-registry seam before the second concern edits `extensions.rs`.
   validation claim is source-rejected. Review cadence is exhausted. The final
   pre-ledger executable patch SHA-256 is
   `ff0551ba284866427b2a62fc147e94ab1695f68f1089f2238bb97f0c81be1de3`.
-  NNC6.4 is next and owns the atomic provider-command and provision-caller
-  replacement. NNC6.3b is durable at `c42c61fb2`. NNC6.4 starts with a
-  read-only source-derived caller/effect census before any product edit.
+  NNC6.4 owns the atomic provider-command and caller replacement. Its source
+  census is frozen in
+  `proof/nimbus-network-control-plane/nnc6.4-atomic-provision-caller-cutover.md`.
+  The census adds the hidden node executor and requires direct-winner dispatch
+  plus exact-absence retry.
+
+  Its closed provider target follows the actual authority. Network steps bind
+  exact Attachment or Ingress selection evidence. Workload steps bind a neutral
+  execution-provider identity. Resource-free network steps create no target or
+  command.
+
+  NNCV033 is the active expected-red checkpoint: self-test `48/48`, current
+  product `4/40`. NNCV032 reads completion commit `c42c61fb2` and stays green
+  at `32/32` plus `36/36`. The live aggregate is expected red at `33/34` with
+  only NNCV033 failing. Its bounded self-test passes `325/325`. Docs pass `108`
+  pages and site verification passes `17/17`. One atomic candidate replaces
+  and deletes every caller without temporary dual authority.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,

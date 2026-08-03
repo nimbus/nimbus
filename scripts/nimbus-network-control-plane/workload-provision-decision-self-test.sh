@@ -490,6 +490,7 @@ run_self_test() {
   failures=0
   baseline_output="${self_test_root}/baseline.out"
   if ! NIMBUS_NETWORK_NNC63B_ROOT="${fixture}" \
+    NIMBUS_NETWORK_NNC63B_COMPLETION_CHECKPOINT=WORKTREE \
     NIMBUS_NETWORK_NNC63B_TEST_CHANGED_PATHS="scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh" \
     bash "${fixture}/scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh" \
     >"${baseline_output}" 2>&1; then
@@ -550,6 +551,7 @@ run_self_test() {
       loose-attempt-revision-history) expected='exact provision-attempt revision history lacks validate_attempt_revision(record, disposition, attempt)?' ;;
     esac
     if NIMBUS_NETWORK_NNC63B_ROOT="${fixture}" \
+      NIMBUS_NETWORK_NNC63B_COMPLETION_CHECKPOINT=WORKTREE \
       NIMBUS_NETWORK_NNC63B_TEST_MUTATION="${mutation}" \
       NIMBUS_NETWORK_NNC63B_TEST_CHANGED_PATHS="scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh" \
       bash "${fixture}/scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh" \
@@ -589,6 +591,7 @@ run_self_test() {
         export -f git
         NIMBUS_NETWORK_NNC63B_ROOT="${fixture}" \
           NIMBUS_NETWORK_NNC63B_STARTING_CHECKPOINT=HEAD \
+          NIMBUS_NETWORK_NNC63B_COMPLETION_CHECKPOINT=WORKTREE \
           bash "${fixture}/scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh"
       ) >"${census_output}" 2>&1; then
         printf 'SELFTEST FAIL NNCV032 changed-path census command failure unexpectedly passed\n'

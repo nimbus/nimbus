@@ -8,6 +8,7 @@ SCRIPT_PATH="${REPO_ROOT}/scripts/nimbus-network-control-plane/workload-provisio
 SELF_TEST_SCRIPT="scripts/nimbus-network-control-plane/workload-provision-decision-self-test.sh"
 SELF_TEST_SCRIPT_PATH="${REPO_ROOT}/${SELF_TEST_SCRIPT}"
 STARTING_CHECKPOINT="${NIMBUS_NETWORK_NNC63B_STARTING_CHECKPOINT:-ed0560b4e45f7ec571934624962de72d021a71a8}"
+COMPLETION_CHECKPOINT="${NIMBUS_NETWORK_NNC63B_COMPLETION_CHECKPOINT:-c42c61fb2d97d037069f3b27b9055d6e58f11d1d}"
 
 NETWORK_CAPABILITY="crates/nimbus-network/src/capability.rs"
 NETWORK_CAPABILITY_TESTS="crates/nimbus-network/src/capability/tests.rs"
@@ -70,6 +71,31 @@ const path = process.argv[2];
 const source = fs.existsSync(path) ? fs.readFileSync(path, "utf8") : "";
 process.stdout.write(source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, ""));
 NODE
+}
+
+source_at_completion() {
+  path="$1"
+  if [ "${COMPLETION_CHECKPOINT}" = "WORKTREE" ]; then
+    source_without_comments "${REPO_ROOT}/${path}"
+    return
+  fi
+  if ! git -C "${REPO_ROOT}" cat-file -e "${COMPLETION_CHECKPOINT}^{commit}" 2>/dev/null; then
+    add_error "NNC6.3b completion checkpoint is missing: ${COMPLETION_CHECKPOINT}"
+    return
+  fi
+  if ! git -C "${REPO_ROOT}" cat-file -e "${COMPLETION_CHECKPOINT}:${path}" 2>/dev/null; then
+    add_error "NNC6.3b completion checkpoint lacks ${path}"
+    return
+  fi
+  git -C "${REPO_ROOT}" show "${COMPLETION_CHECKPOINT}:${path}" 2>/dev/null |
+    node -e '
+let source = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => { source += chunk; });
+process.stdin.on("end", () => {
+  process.stdout.write(source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, ""));
+});
+'
 }
 
 source_without_comments_or_strings() {
@@ -253,59 +279,78 @@ check_exact_variants() {
 }
 
 load_sources() {
-  network_capability_source="$(source_without_comments "${REPO_ROOT}/${NETWORK_CAPABILITY}")"
-  network_capability_tests_source="$(source_without_comments "${REPO_ROOT}/${NETWORK_CAPABILITY_TESTS}")"
-  network_registry_source="$(source_without_comments "${REPO_ROOT}/${NETWORK_REGISTRY}")"
-  network_lib_source="$(source_without_comments "${REPO_ROOT}/${NETWORK_LIB}")"
-  network_tests_source="$(source_without_comments "${REPO_ROOT}/${NETWORK_TESTS}")"
-  network_manifest_source="$(source_without_comments "${REPO_ROOT}/${NETWORK_MANIFEST}")"
-  workload_network_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_NETWORK}")"
-  workload_network_tests_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_NETWORK_TESTS}")"
-  workload_network_child_tests_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_NETWORK_CHILD_TESTS}")"
-  workload_saga_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_SAGA}")"
-  workload_saga_tests_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_SAGA_TESTS}")"
-  workload_provision_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_PROVISION}")"
-  workload_provision_tests_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_PROVISION_TESTS}")"
-  workload_state_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_STATE}")"
-  workload_test_support_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_TEST_SUPPORT}")"
-  workload_store_tests_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_STORE_TESTS}")"
-  workloads_lib_source="$(source_without_comments "${REPO_ROOT}/${WORKLOADS_LIB}")"
-  workloads_manifest_source="$(source_without_comments "${REPO_ROOT}/${WORKLOADS_MANIFEST}")"
-  compute_network_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_NETWORK}")"
-  compute_network_tests_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_NETWORK_TESTS}")"
-  compute_composition_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_COMPOSITION}")"
-  compute_composition_tests_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_COMPOSITION_TESTS}")"
-  compute_saga_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_SAGA}")"
-  compute_saga_tests_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_SAGA_TESTS}")"
-  compute_ingress_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_INGRESS}")"
-  compute_ingress_tests_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_INGRESS_TESTS}")"
-  compute_decision_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_DECISION}")"
-  compute_decision_tests_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_DECISION_TESTS}")"
-  compute_test_support_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_TEST_SUPPORT}")"
-  compute_recovery_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_RECOVERY}")"
-  compute_recovery_tests_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_RECOVERY_TESTS}")"
-  compute_lib_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_LIB}")"
-  server_capabilities_source="$(source_without_comments "${REPO_ROOT}/${SERVER_CAPABILITIES}")"
-  server_capabilities_tests_source="$(source_without_comments "${REPO_ROOT}/${SERVER_CAPABILITIES_TESTS}")"
-  server_codec_source="$(source_without_comments "${REPO_ROOT}/${SERVER_CODEC}")"
-  server_schema_source="$(source_without_comments "${REPO_ROOT}/${SERVER_SCHEMA}")"
-  server_codec_tests_source="$(source_without_comments "${REPO_ROOT}/${SERVER_CODEC_TESTS}")"
-  server_ingress_tests_source="$(source_without_comments "${REPO_ROOT}/${SERVER_INGRESS_TESTS}")"
-  owner_plan_source="$(source_without_comments "${REPO_ROOT}/${OWNER_PLAN}")"
-  owner_proof_source="$(source_without_comments "${REPO_ROOT}/${OWNER_PROOF}")"
+  network_capability_source="$(source_at_completion "${NETWORK_CAPABILITY}")"
+  network_capability_tests_source="$(source_at_completion "${NETWORK_CAPABILITY_TESTS}")"
+  network_registry_source="$(source_at_completion "${NETWORK_REGISTRY}")"
+  network_lib_source="$(source_at_completion "${NETWORK_LIB}")"
+  network_tests_source="$(source_at_completion "${NETWORK_TESTS}")"
+  network_manifest_source="$(source_at_completion "${NETWORK_MANIFEST}")"
+  workload_network_source="$(source_at_completion "${WORKLOAD_NETWORK}")"
+  workload_network_tests_source="$(source_at_completion "${WORKLOAD_NETWORK_TESTS}")"
+  workload_network_child_tests_source="$(source_at_completion "${WORKLOAD_NETWORK_CHILD_TESTS}")"
+  workload_saga_source="$(source_at_completion "${WORKLOAD_SAGA}")"
+  workload_saga_tests_source="$(source_at_completion "${WORKLOAD_SAGA_TESTS}")"
+  workload_provision_source="$(source_at_completion "${WORKLOAD_PROVISION}")"
+  workload_provision_tests_source="$(source_at_completion "${WORKLOAD_PROVISION_TESTS}")"
+  workload_state_source="$(source_at_completion "${WORKLOAD_STATE}")"
+  workload_test_support_source="$(source_at_completion "${WORKLOAD_TEST_SUPPORT}")"
+  workload_store_tests_source="$(source_at_completion "${WORKLOAD_STORE_TESTS}")"
+  workloads_lib_source="$(source_at_completion "${WORKLOADS_LIB}")"
+  workloads_manifest_source="$(source_at_completion "${WORKLOADS_MANIFEST}")"
+  compute_network_source="$(source_at_completion "${COMPUTE_NETWORK}")"
+  compute_network_tests_source="$(source_at_completion "${COMPUTE_NETWORK_TESTS}")"
+  compute_composition_source="$(source_at_completion "${COMPUTE_COMPOSITION}")"
+  compute_composition_tests_source="$(source_at_completion "${COMPUTE_COMPOSITION_TESTS}")"
+  compute_saga_source="$(source_at_completion "${COMPUTE_SAGA}")"
+  compute_saga_tests_source="$(source_at_completion "${COMPUTE_SAGA_TESTS}")"
+  compute_ingress_source="$(source_at_completion "${COMPUTE_INGRESS}")"
+  compute_ingress_tests_source="$(source_at_completion "${COMPUTE_INGRESS_TESTS}")"
+  compute_decision_source="$(source_at_completion "${COMPUTE_DECISION}")"
+  compute_decision_tests_source="$(source_at_completion "${COMPUTE_DECISION_TESTS}")"
+  compute_test_support_source="$(source_at_completion "${COMPUTE_TEST_SUPPORT}")"
+  compute_recovery_source="$(source_at_completion "${COMPUTE_RECOVERY}")"
+  compute_recovery_tests_source="$(source_at_completion "${COMPUTE_RECOVERY_TESTS}")"
+  compute_lib_source="$(source_at_completion "${COMPUTE_LIB}")"
+  server_capabilities_source="$(source_at_completion "${SERVER_CAPABILITIES}")"
+  server_capabilities_tests_source="$(source_at_completion "${SERVER_CAPABILITIES_TESTS}")"
+  server_codec_source="$(source_at_completion "${SERVER_CODEC}")"
+  server_schema_source="$(source_at_completion "${SERVER_SCHEMA}")"
+  server_codec_tests_source="$(source_at_completion "${SERVER_CODEC_TESTS}")"
+  server_ingress_tests_source="$(source_at_completion "${SERVER_INGRESS_TESTS}")"
+  owner_plan_source="$(source_at_completion "${OWNER_PLAN}")"
+  owner_proof_source="$(source_at_completion "${OWNER_PROOF}")"
 
-  authority_census="$(rg -n \
-    'pub[[:space:]]+(struct[[:space:]]+WorkloadSagaCoordinator|trait[[:space:]]+WorkloadSagaStore)' \
-    "${REPO_ROOT}/crates" -g '*.rs' 2>/dev/null || true)"
-  caller_census="$(rg -n 'compose_workload_provision[[:space:]]*\(' \
-    "${REPO_ROOT}/crates" -g '*.rs' 2>/dev/null |
-    rg -v '/tests([/.]|:)|workload_provision_composition\.rs:' || true)"
+  if [ "${COMPLETION_CHECKPOINT}" = "WORKTREE" ]; then
+    authority_census="$(rg -n \
+      'pub[[:space:]]+(struct[[:space:]]+WorkloadSagaCoordinator|trait[[:space:]]+WorkloadSagaStore)' \
+      "${REPO_ROOT}/crates" -g '*.rs' 2>/dev/null || true)"
+    caller_census="$(rg -n 'compose_workload_provision[[:space:]]*\(' \
+      "${REPO_ROOT}/crates" -g '*.rs' 2>/dev/null |
+      rg -v '/tests([/.]|:)|workload_provision_composition\.rs:' || true)"
+  else
+    authority_census="$(git -C "${REPO_ROOT}" grep -n -E \
+      'pub[[:space:]]+(struct[[:space:]]+WorkloadSagaCoordinator|trait[[:space:]]+WorkloadSagaStore)' \
+      "${COMPLETION_CHECKPOINT}" -- 'crates/**/*.rs' 2>/dev/null || true)"
+    caller_census="$(git -C "${REPO_ROOT}" grep -n -E \
+      'compose_workload_provision[[:space:]]*\(' "${COMPLETION_CHECKPOINT}" -- \
+      'crates/**/*.rs' 2>/dev/null |
+      rg -v '/tests([/.]|:)|workload_provision_composition\.rs:' || true)"
+  fi
 
   if [ -n "${NIMBUS_NETWORK_NNC63B_TEST_CHANGED_PATHS:-}" ]; then
     changed_paths="${NIMBUS_NETWORK_NNC63B_TEST_CHANGED_PATHS}"
   elif ! git -C "${REPO_ROOT}" cat-file -e "${STARTING_CHECKPOINT}^{commit}" 2>/dev/null; then
     add_error "NNC6.3b starting checkpoint is missing: ${STARTING_CHECKPOINT}"
     changed_paths=""
+  elif [ "${COMPLETION_CHECKPOINT}" != "WORKTREE" ]; then
+    if ! git -C "${REPO_ROOT}" cat-file -e "${COMPLETION_CHECKPOINT}^{commit}" 2>/dev/null; then
+      add_error "NNC6.3b completion checkpoint is missing: ${COMPLETION_CHECKPOINT}"
+      changed_paths=""
+    elif ! changed_paths="$(git -C "${REPO_ROOT}" diff --name-only \
+      "${STARTING_CHECKPOINT}..${COMPLETION_CHECKPOINT}" 2>/dev/null)"; then
+      add_error "NNC6.3b completion-path census failed"
+      changed_paths=""
+    fi
   else
     census_failed=0
     if ! committed="$(git -C "${REPO_ROOT}" diff --name-only "${STARTING_CHECKPOINT}..HEAD" 2>/dev/null)"; then
@@ -823,7 +868,12 @@ ${compute_decision_source}"
   fi
   for digest_path in "${NETWORK_PLAN_DIGEST_TESTS}" "${NETWORK_READINESS_DIGEST_TESTS}"; do
     if printf '%s\n' "${changed_paths}" | rg -q -x -F "${digest_path}"; then
-      if ! digest_diff="$(git -C "${REPO_ROOT}" diff "${STARTING_CHECKPOINT}" -- "${digest_path}" 2>/dev/null)"; then
+      if [ "${COMPLETION_CHECKPOINT}" = "WORKTREE" ]; then
+        digest_range="${STARTING_CHECKPOINT}"
+      else
+        digest_range="${STARTING_CHECKPOINT}..${COMPLETION_CHECKPOINT}"
+      fi
+      if ! digest_diff="$(git -C "${REPO_ROOT}" diff "${digest_range}" -- "${digest_path}" 2>/dev/null)"; then
         add_error "NNC6.3b digest-ripple census failed: ${digest_path}"
         continue
       fi
