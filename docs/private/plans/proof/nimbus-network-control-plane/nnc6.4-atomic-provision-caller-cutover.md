@@ -1,12 +1,14 @@
 # NNC6.4 Atomic Provision Caller Cutover
 
-Status: `in progress. product-free preparation checkpoint ready to commit`
+Status: `in progress. preparation durable; portable protocol in progress`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
 Activation commit: `76c920a12ed21eb8b81c1de088bcad52fd0d81e4`
 
 Dependency commit: `c42c61fb2d97d037069f3b27b9055d6e58f11d1d`
+
+Preparation commit: `eb6adfc5516ae1f7661ff04009ca2bf48c893295`
 
 ## Outcome
 
@@ -808,8 +810,8 @@ The item-level review remains prohibited until E1-E34 are green.
 | Checkpoint | State | Evidence | Next exact action |
 | --- | --- | --- | --- |
 | Source audit | `done` | Three read-only lanes changed zero paths. Current/target graphs, caller census, protocol gap, provider-target correction, complexity pockets, and deletion gates are frozen above. | Preserve the frozen census while product implementation proceeds. |
-| Expected-red contract | `done` | NNCV033 passes `48/48` mutations. Current product passes `4/40` direct groups and fails the exact 36 NNC6.4 implementation groups. NNCV032 passes `32/32` and `36/36` from its pinned completion tree. The live aggregate is expected red at `33/34`; its bounded self-test passes `325/325`. Docs pass `108`; site passes `17/17`. | Force-add the ignored proof, stage the exact product-free preparation paths, inspect the staged tree, and commit the checkpoint. |
-| Portable protocol | `todo` | E1-E10. | Add CAS provenance, dispatch claim/epoch, inspection, absence evidence, command fence, reducer, and strict state transitions. |
+| Expected-red contract | `done` | Commit `eb6adfc5516ae1f7661ff04009ca2bf48c893295` makes the source census and contract durable. NNCV033 passes `48/48` mutations. Current product passes `4/40` direct groups and fails the exact 36 NNC6.4 implementation groups. NNCV032 passes `32/32` and `36/36` from its pinned completion tree. The live aggregate is expected red at `33/34`; its bounded self-test passes `325/325`. Docs pass `108`; site passes `17/17`. | Preserve the exact expected-red behavior while implementation converges. |
+| Portable protocol | `in_progress` | E1-E10. Preparation commit `eb6adfc5516ae1f7661ff04009ca2bf48c893295` is the clean base. | Move the intact provision-state test group to its concept-owned child. Add CAS provenance, dispatch claim/epoch, inspection, absence evidence, command fence, reducer, and strict state transitions. |
 | Dispatcher and composition | `todo` | E11-E15. | Add exact registry, small capabilities, source/report freshness checks, managed ComputeState composition, and deterministic fakes. |
 | Provider phase split | `todo` | E13-E21. | Split Container/Krun attach from publish. add provider journals and server/forwarded/node substitutions. |
 | Caller cutover and deletions | `todo` | E22-E32. | Replace every inventoried caller and delete every coarse authority atomically. |
@@ -820,9 +822,9 @@ The item-level review remains prohibited until E1-E34 are green.
 ## Recovery Record
 
 This proof, the plan Recovery Header, and the checkpoint ledger preserve the
-source census and frozen contract. The dirty worktree preserves the verified
-preparation checkpoint until its commit. During implementation, append one row
-per meaningful checkpoint. Record the exact HEAD, dirty paths, last green
+source census and frozen contract at preparation commit
+`eb6adfc5516ae1f7661ff04009ca2bf48c893295`. During implementation, append one
+row per meaningful checkpoint. Record the exact HEAD, dirty paths, last green
 command/count, current red condition, finding dispositions, blocker, and next
 exact command.
 
