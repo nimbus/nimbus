@@ -63,6 +63,35 @@ run_self_test() {
     "restart-phase-not-recoverable|restart-contract/nested-state: same-generation restart state or attempt identity is incomplete"
     "explicit-consumes-automatic-count|restart-contract/schedule: durable count, deadline, or deterministic-clock behavior is incomplete"
     "r1-scope-broadening|restart-contract/paths: NNC6.4a changed a path outside the frozen allowlist"
+    "separate-explicit-reducer|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "stale-admission-revision|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "double-admission-winner|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "withdrawal-race-after-read|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "missing-command-transition-id|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
+    "missing-command-desired-digest|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
+    "missing-command-request-id|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
+    "crossed-command-result|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
+    "execute-on-confirmed-replay|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
+    "ambiguity-infers-absence|restart-contract/ambiguity: ambiguous restart effects do not inspect before exact-absence retry"
+    "absence-retry-changes-attempt|restart-contract/ambiguity: ambiguous restart effects do not inspect before exact-absence retry"
+    "absence-retry-reuses-dispatch-epoch|restart-contract/ambiguity: ambiguous restart effects do not inspect before exact-absence retry"
+    "absence-retry-skips-dispatch-epoch|restart-contract/ambiguity: ambiguous restart effects do not inspect before exact-absence retry"
+    "definite-failure-continues|restart-contract/ambiguity: ambiguous restart effects do not inspect before exact-absence retry"
+    "quiesce-before-publication-withdrawal|restart-contract/readiness: activation or callback fencing can bypass attachment and PEP readiness"
+    "restart-detach-releases-authority|restart-contract/readiness: activation or callback fencing can bypass attachment and PEP readiness"
+    "attachment-drops-attempt-fence|restart-contract/readiness: activation or callback fencing can bypass attachment and PEP readiness"
+    "pep-drops-attempt-fence|restart-contract/readiness: activation or callback fencing can bypass attachment and PEP readiness"
+    "publish-before-new-attempt-ready|restart-contract/readiness: activation or callback fencing can bypass attachment and PEP readiness"
+    "missing-container-restart-adapter|restart-contract/capabilities: small Container and Krun restart substitutions are incomplete"
+    "missing-krun-restart-adapter|restart-contract/capabilities: small Container and Krun restart substitutions are incomplete"
+    "restart-registry-first-available-fallback|restart-contract/capabilities: small Container and Krun restart substitutions are incomplete"
+    "duplicate-restart-capability-registration|restart-contract/capabilities: small Container and Krun restart substitutions are incomplete"
+    "unbounded-watch-page|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
+    "watch-busy-spin|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
+    "watch-uses-system-clock|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
+    "watch-effects-from-read-only-hint|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
+    "get-starts-restart-watch|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
+    "watch-cancellation-drops-durable-work|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
   )
 
   for entry in "${cases[@]}"; do
@@ -93,12 +122,12 @@ run_self_test() {
       "${passed}" "${failures}"
     return 1
   fi
-  if [ "${passed}" -ne 39 ]; then
-    printf 'NNC6.4a restart contract self-test: expected 39 mutations, observed %d\n' \
+  if [ "${passed}" -ne 68 ]; then
+    printf 'NNC6.4a restart contract self-test: expected 68 mutations, observed %d\n' \
       "${passed}"
     return 1
   fi
-  printf 'NNC6.4a restart contract self-test: 39 passed, 0 failed\n'
+  printf 'NNC6.4a restart contract self-test: 68 passed, 0 failed\n'
 }
 
 case "${1:-}" in

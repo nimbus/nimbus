@@ -1,6 +1,6 @@
 # NNC6.4a Fenced Restart Substitution Audit
 
-Status: `audit, R0, and R1 durable; R2-R4 expected red`
+Status: `audit, R0, and R1 durable; R2 fail-before frozen; R2-R4 product expected red`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -489,6 +489,16 @@ exists and the complete value is one end-to-end restart lifecycle.
 
 - Add compute reducer, command confirmation, dispatcher, registry, driver,
   deterministic clock, and restart watch.
+- Add record-owned claim, inspection, exact-absence retry, and correlated-result
+  transitions. Compute must not fabricate a portable claim whose constructor
+  is workloads-private.
+- Add one bounded, global, clock-free restart-candidate store query. It returns
+  every active restart. It also returns inactive observed/running candidates
+  with a non-`Never` policy. The compute watch applies due-time policy with its
+  injected clock.
+- Generalize the one sandbox provider-command journal with a monotonic restart
+  ordinal. Do not create a second journal or reuse workload/network generation
+  as the ordinal.
 - Promote restart-specific capability traits only after Container and Krun
   both implement them.
 - Use current owner-local ingress, attachment, PEP, runtime, and machine
@@ -647,8 +657,12 @@ paths are forbidden.
 | R1 strict-change posture | Nimbus is pre-launch. Format v4 is a direct strict replacement, with no v3 migration or compatibility shim. The temporary `WorkloadSagaIntent::new` default of `Never` exists only until R3 caller cutover and must be deleted or renamed before NNC6.4a completes. |
 | R1 modularity | `saga.rs` (`1,618` lines) and `saga/state.rs` (`1,627` lines) are concept-owned composition roots in the explicit 1,500-1,999-line reason band. Restart invariants and transitions live in the `restart` children (`657`, `20`, and `555` lines); store behavior lives in its `485`-line concept-owned test child. No handwritten R1 file reaches 2,000 lines. |
 | R1 durable checkpoint | Commit `d117ba369eaf5acc5ede9ec3edad32a11ddfbeb2`; staged tree `17f152b102a8ddf66d38d09535dc012161d592f1`; full patch SHA-256 `197410339314326a6ffe2827c14c12ef7b0a0ef6fa8fa9ed78c384837cbf547a`; executable and script patch SHA-256 `19ead57e9d0148691161645c6b2ef7886d682f5d44b91cb0351d8c6a4ab8ddeb`; `27` owned paths and zero unstaged paths. |
+| R2 substitution audit | The provision confirmation pattern is reusable, but R1 has no record-owned claim/result transition and no bounded global query for inactive automatic candidates. Container has dormant retained-reset mechanics; Krun's corresponding helpers are test-only. Both older launch helpers can publish before new-attempt readiness and cannot become the command adapter. The one provider journal must gain a same-generation restart ordinal because its current stream rejects a second attempt at the same workload generation. |
+| R2 capability boundary | Compute owns one normalized automatic/explicit reducer, confirmation, driver, bounded watch, and exact registry. Workloads owns claim/result transitions and the clock-free candidate page. Container and Krun earn small withdrawal, quiescence, preparation/attachment, activation, and readiness capabilities. No `SandboxBackend::restart`, god provider, service route, SDK method, machine transport, local scheduler deletion, or `nimbus-network` change enters R2. |
+| R2 fail-before checkpoint | The NNCV034 fixture now has `68/68` sole-diagnostic mutations. Tests are checked in their declared concept-owned files; the confirmed command is checked only in its exact module; R1 is frozen from `6d8961bd6d4da819b2524128cb398e22e0a9382f` through `d117ba369eaf5acc5ede9ec3edad32a11ddfbeb2`; and R2 is separately scoped from the R1 completion commit. The live contract exits `1` on exactly reducer, command, ambiguity, readiness, capabilities, service, watch, machine, scheduler, and behavior. Reducer, command, ambiguity, readiness, capabilities, and watch are R2 targets. Service, machine, scheduler, and behavior remain required R3/R4 red. |
+| R2 verifier modularity | `workload-restart-source-contract.mjs` is `1,680` lines in the explicit-reason band. It is one deep NNCV034 owner for the production scan, green fixture, and sole-diagnostic mutations. Keeping one lexical contract prevents parser and fixture drift. R3 must extract fixture data before any growth reaches `2,000` lines and must not add a second parser. |
 | Review cadence | No structured review ran for this partial audit. NNC6.4a receives one review only after A1-A20 are green and the complete item is candidate-frozen. |
-| Next action | Start R2 confirmed commands and provider adapters. Do not add a service route or SDK method before R3. |
+| Next action | Add record-owned command transitions and the bounded candidate page, then implement the compute reducer/confirmation/driver/watch and real Container/Krun substitutions. Do not add a service route or SDK method before R3. |
 
 ## Audit Acceptance Traceability
 
@@ -656,7 +670,7 @@ paths are forbidden.
 | --- | --- |
 | A1 | Frozen by the source census, evidence locations, and current call graphs. |
 | A2-A3 | R1 implements the closed portable vocabulary, nested same-generation state, and exact attempt-fenced execution and publication evidence. Final integration remains open. |
-| A4-A6 | R1 implements strict admission content, automatic/explicit count semantics, idempotent request validation, and CAS contention proof. R2 retains the sole compute writer, command confirmation, and live reducer integration. |
+| A4-A6 | R1 implements strict admission content, automatic/explicit count semantics, idempotent request validation, and CAS contention proof. R2 retains the sole compute writer, command confirmation, live reducer integration, and record-owned claim/result transitions. |
 | A7-A13 | R1 freezes legal phases, withdrawal vetoes, deadline/count durability, attempt fencing, and pure recovery decisions. R2-R3 retain provider choreography, retained-resource behavior, and obsolete provider-state deletion. |
-| A14-A17 | Service, watch, node, machine, cancellation, and recovery contracts are frozen; implementation is expected red. |
-| A18-A20 | R1 behavior and strict-store proofs are green at the portable seam. NNCV034 passes `39/39` mutations and the aggregate mutation suite passes `366/366`. Ten later-band groups remain expected red. Final behavior, live NNCV034, quality, and the one-review gate require R2-R4; no item-completion claim is made. |
+| A14-A17 | Service, watch, node, machine, cancellation, and recovery contracts are frozen. The R2 bounded candidate-query and watch contract is fail-before red; service and machine remain R3 red. |
+| A18-A20 | R1 behavior and strict-store proofs are green at the portable seam. The R1 NNCV034 baseline passes `39/39` mutations and the aggregate mutation suite passes `366/366`; the strengthened R2 fixture passes `68/68`. Ten later-band groups remain expected red. Final behavior, live NNCV034, quality, and the one-review gate require R2-R4; no item-completion claim is made. |

@@ -219,10 +219,15 @@ extension-registry seam before the second concern edits `extensions.rs`.
   history, exact execution-attempt fences, policy counts, deadlines, and pure
   recovery decisions. Pure behavior passes `17/17`; exact store behavior
   passes `9/9`; NNCV034 mutations pass `39/39`; and aggregate mutations pass
-  `366/366`. Nine NNCV034 groups are green. The ten R2-R4 groups remain the
-  intended expected-red set, so the live aggregate remains `34` passed and
-  `1` expected failure. R1 adds no provider effect, service route, SDK method,
-  or caller cutover. R2 now owns confirmed commands and provider adapters. No
+  `366/366`. The R2 seam audit strengthened NNCV034 to `68/68`
+  sole-diagnostic mutations, froze R1 and R2 path ranges separately, and kept
+  exactly the intended ten R2-R4 diagnostics red. It found two portable gaps
+  that R2 must close before provider effects: record-owned claim/result
+  transitions and one bounded, clock-free global restart-candidate query. R2
+  also generalizes the existing provider journal with a monotonic restart
+  ordinal and earns small Container/Krun capabilities. R1 adds no provider
+  effect, service route, SDK method, or caller cutover. Service/SDK, machine
+  transport, scheduler deletion, and full live convergence remain R3/R4. No
   structured review runs on this partial work.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
