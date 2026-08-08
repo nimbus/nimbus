@@ -206,10 +206,16 @@ extension-registry seam before the second concern edits `extensions.rs`.
   correction review. The proof records every finding disposition. The plan
   authorizes no further NNC6.4 review.
 
-  NNC6.4a is active. It starts with a read-only substitution audit of
-  Container, Krun, service, compute, node, inspection, exit, withdrawal, and
-  restart authority. Product edits start only after that audit freezes the
-  fail-before contract and exact path allowlist.
+  NNC6.4a is active. Its read-only substitution audit is complete at
+  `proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md`.
+  A1-A20 freeze one nested same-generation restart state, a separate
+  execution-attempt identity, compute-owned schedule/count/watch and command
+  authority, Container/Krun capability substitution, idempotent service/SDK
+  ingress, exact race/crash/recovery proofs, deletion gates, later-owner
+  boundaries, and the candidate path allowlist. Band R0 now owns NNCV034, its
+  fail-closed mutation suite, aggregate integration, and expected-red proof.
+  Product edits remain forbidden until that checkpoint is committed. No
+  structured review runs on this partial work.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
