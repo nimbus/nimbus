@@ -213,7 +213,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   authority, Container/Krun capability substitution, idempotent service/SDK
   ingress, exact race/crash/recovery proofs, deletion gates, later-owner
   boundaries, and the candidate path allowlist. Band R0 is durable at
-  `6d8961bd6d4da819b2524128cb398e22e0a9382f`. R1 is candidate-complete: the
+  `6d8961bd6d4da819b2524128cb398e22e0a9382f`. R1 is durable at
+  `d117ba369eaf5acc5ede9ec3edad32a11ddfbeb2`: the
   strict workloads-v4 record owns nested restart state, full admission
   history, exact execution-attempt fences, policy counts, deadlines, and pure
   recovery decisions. Pure behavior passes `17/17`; exact store behavior
@@ -221,7 +222,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   `366/366`. Nine NNCV034 groups are green. The ten R2-R4 groups remain the
   intended expected-red set, so the live aggregate remains `34` passed and
   `1` expected failure. R1 adds no provider effect, service route, SDK method,
-  or caller cutover. No structured review runs on this partial work.
+  or caller cutover. R2 now owns confirmed commands and provider adapters. No
+  structured review runs on this partial work.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,

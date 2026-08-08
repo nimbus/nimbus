@@ -1,6 +1,6 @@
 # NNC6.4a Fenced Restart Substitution Audit
 
-Status: `audit and R0 complete; R1 candidate-complete; R2-R4 expected red`
+Status: `audit, R0, and R1 durable; R2-R4 expected red`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -646,8 +646,9 @@ paths are forbidden.
 | R1 scheduling semantics | A future durable deadline remains discoverable because the active record still requires recovery, but the pure recovery decision returns `WaitingUntil`; this prevents early effects and busy retry. Automatic request identity is rederived from saga and inspection evidence. Explicit restarts do not consume the automatic-policy count. |
 | R1 strict-change posture | Nimbus is pre-launch. Format v4 is a direct strict replacement, with no v3 migration or compatibility shim. The temporary `WorkloadSagaIntent::new` default of `Never` exists only until R3 caller cutover and must be deleted or renamed before NNC6.4a completes. |
 | R1 modularity | `saga.rs` (`1,618` lines) and `saga/state.rs` (`1,627` lines) are concept-owned composition roots in the explicit 1,500-1,999-line reason band. Restart invariants and transitions live in the `restart` children (`657`, `20`, and `555` lines); store behavior lives in its `485`-line concept-owned test child. No handwritten R1 file reaches 2,000 lines. |
+| R1 durable checkpoint | Commit `d117ba369eaf5acc5ede9ec3edad32a11ddfbeb2`; staged tree `17f152b102a8ddf66d38d09535dc012161d592f1`; full patch SHA-256 `197410339314326a6ffe2827c14c12ef7b0a0ef6fa8fa9ed78c384837cbf547a`; executable and script patch SHA-256 `19ead57e9d0148691161645c6b2ef7886d682f5d44b91cb0351d8c6a4ab8ddeb`; `27` owned paths and zero unstaged paths. |
 | Review cadence | No structured review ran for this partial audit. NNC6.4a receives one review only after A1-A20 are green and the complete item is candidate-frozen. |
-| Next action | Commit the exact R1 checkpoint, then start R2 confirmed commands and provider adapters. Do not add a service route or SDK method before R3. |
+| Next action | Start R2 confirmed commands and provider adapters. Do not add a service route or SDK method before R3. |
 
 ## Audit Acceptance Traceability
 
