@@ -217,7 +217,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   aggregate has only the intended NNCV034 failure at `34` passed and `1`
   failed, and aggregate mutations pass `360/360`. One shared lexical scanner
   serves all source modes; no second Rust parser exists. Product source is
-  unchanged. After the exact R0 checkpoint commit, R1 owns portable state and
+  unchanged. R0 is durable at
+  `6d8961bd6d4da819b2524128cb398e22e0a9382f`. R1 now owns portable state and
   pure decisions only. No structured review runs on this partial work.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
