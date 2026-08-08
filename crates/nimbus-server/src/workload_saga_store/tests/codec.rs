@@ -10,7 +10,7 @@ fn provision_source_round_trips_through_physical_codec() {
     let fields = encode_workload_saga_record(&record).expect("record should encode");
 
     assert_eq!(WORKLOAD_SAGA_FORMAT_VERSION, 4);
-    assert_eq!(fields.len(), 22);
+    assert_eq!(fields.len(), 23);
     assert_eq!(
         fields.get("desiredGeneration"),
         Some(&json!(u64::MAX.to_string()))
@@ -28,6 +28,10 @@ fn provision_source_round_trips_through_physical_codec() {
         Some(&json!(u64::MAX.to_string()))
     );
     assert_eq!(fields.get("recoveryEligible"), Some(&Value::Bool(true)));
+    assert_eq!(
+        fields.get("restartWatchCandidate"),
+        Some(&Value::Bool(record.requires_restart_watch()))
+    );
     assert_eq!(
         fields.get("executable"),
         Some(
@@ -80,6 +84,7 @@ fn strict_codec_rejects_unknown_crossed_and_noncanonical_record_fields() {
         ("sagaRevision", json!("00")),
         ("desiredDigest", json!("ABC")),
         ("recoveryEligible", json!(false)),
+        ("restartWatchCandidate", json!(true)),
     ];
 
     for (field, value) in cases {

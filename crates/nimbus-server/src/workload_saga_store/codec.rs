@@ -4,7 +4,7 @@ use nimbus_core::{Document, DocumentId};
 use nimbus_workloads::{WorkloadSagaRecord, WorkloadSagaStoreError};
 use serde_json::{Map, Value, json};
 
-const REQUIRED_FIELDS: [&str; 21] = [
+const REQUIRED_FIELDS: [&str; 22] = [
     "formatVersion",
     "sagaId",
     "tenantId",
@@ -19,6 +19,7 @@ const REQUIRED_FIELDS: [&str; 21] = [
     "sagaRevision",
     "phase",
     "recoveryEligible",
+    "restartWatchCandidate",
     "phaseDetail",
     "restartState",
     "compiledNetworkPlan",
@@ -58,6 +59,10 @@ pub(crate) fn encode_workload_saga_record(
     fields.insert(
         "recoveryEligible".to_owned(),
         Value::Bool(record.requires_recovery()),
+    );
+    fields.insert(
+        "restartWatchCandidate".to_owned(),
+        Value::Bool(record.requires_restart_watch()),
     );
     copy(&mut fields, "phaseDetail", portable, "phaseDetail")?;
     copy(&mut fields, "restartState", portable, "restart")?;
@@ -124,7 +129,14 @@ pub(crate) fn decode_workload_saga_record(
         .get("recoveryEligible")
         .and_then(Value::as_bool)
         .ok_or(WorkloadSagaStoreError::Corrupt)?;
-    if document.id != expected_document_id || recovery_eligible != record.requires_recovery() {
+    let restart_watch_candidate = fields
+        .get("restartWatchCandidate")
+        .and_then(Value::as_bool)
+        .ok_or(WorkloadSagaStoreError::Corrupt)?;
+    if document.id != expected_document_id
+        || recovery_eligible != record.requires_recovery()
+        || restart_watch_candidate != record.requires_restart_watch()
+    {
         return Err(WorkloadSagaStoreError::Corrupt);
     }
     Ok(record)

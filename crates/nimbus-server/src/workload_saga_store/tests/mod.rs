@@ -36,6 +36,7 @@ mod provision_driver_process;
 mod provision_fixture;
 mod recovery;
 mod restart;
+mod restart_candidates;
 mod store;
 mod tenant_enumeration;
 

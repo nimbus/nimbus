@@ -12,13 +12,15 @@ use nimbus_core::{
 };
 use nimbus_engine::Engine;
 use nimbus_workloads::{
-    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey,
-    WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecord, WorkloadSagaStore,
-    WorkloadSagaStoreError, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    WorkloadRestartCandidatePage, WorkloadRestartCandidatePageRequest, WorkloadSagaCommit,
+    WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey, WorkloadSagaPage,
+    WorkloadSagaPageRequest, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
+    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
 };
 
 mod codec;
 mod recovery;
+mod restart_candidates;
 mod schema;
 mod tenant_enumeration;
 
@@ -83,6 +85,16 @@ impl WorkloadSagaStore for EngineWorkloadSagaStore {
         Box::pin(async move {
             self.prepare().await?;
             recovery::list_recoverable(&self.engine, request).await
+        })
+    }
+
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: WorkloadRestartCandidatePageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadRestartCandidatePage> {
+        Box::pin(async move {
+            self.prepare().await?;
+            restart_candidates::list_restart_candidates(&self.engine, request).await
         })
     }
 

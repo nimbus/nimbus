@@ -68,6 +68,7 @@ pub(crate) fn exact_table_schema() -> TableSchema {
             field("sagaRevision", FieldType::String, true),
             field("phase", FieldType::String, true),
             field("recoveryEligible", FieldType::Boolean, true),
+            field("restartWatchCandidate", FieldType::Boolean, true),
             field("phaseDetail", FieldType::Object, true),
             field("restartState", FieldType::Object, true),
             field("provisionDisposition", FieldType::Object, false),
@@ -82,6 +83,10 @@ pub(crate) fn exact_table_schema() -> TableSchema {
         indexes: vec![
             IndexDefinition::new("by_tenantId_and_workloadId", ["tenantId", "workloadId"]),
             IndexDefinition::new("by_recovery", ["recoveryEligible", "sagaId"]),
+            IndexDefinition::new(
+                "by_restartWatchCandidate_and_sagaId",
+                ["restartWatchCandidate", "sagaId"],
+            ),
             IndexDefinition::new("by_tenantId_and_phase", ["tenantId", "phase"]),
             IndexDefinition::new("by_desiredState_and_phase", ["desiredState", "phase"]),
         ],

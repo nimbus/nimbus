@@ -3,11 +3,11 @@ use std::sync::Arc;
 use nimbus_workloads::{
     WorkloadEffectReferences, WorkloadExecutionReference, WorkloadNetworkReference,
     WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
-    WorkloadRestartAdmissionInput, WorkloadRestartAdmissionUpdate, WorkloadRestartEpoch,
-    WorkloadRestartEvidenceDigest, WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPhase,
-    WorkloadRestartPolicy, WorkloadRestartRequestId, WorkloadRestartTrigger, WorkloadSagaCommit,
-    WorkloadSagaExpected, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
-    WorkloadSagaStore,
+    WorkloadRestartAdmissionInput, WorkloadRestartAdmissionUpdate, WorkloadRestartCommandClaim,
+    WorkloadRestartEffectResult, WorkloadRestartEpoch, WorkloadRestartEvidenceDigest,
+    WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy, WorkloadRestartRequestId,
+    WorkloadRestartTrigger, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaPageRequest,
+    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore,
 };
 use serde_json::{Value, json};
 
@@ -15,11 +15,14 @@ use super::super::EngineWorkloadSagaStore;
 use super::super::codec::{decode_workload_saga_record, encode_workload_saga_record};
 use super::{document_for, engine, initial_record, provision_fixture};
 
-fn observed_record(label: &str, policy: WorkloadRestartPolicy) -> WorkloadSagaRecord {
+pub(super) fn observed_record(label: &str, policy: WorkloadRestartPolicy) -> WorkloadSagaRecord {
     observed_history(label, policy).pop().unwrap()
 }
 
-fn observed_history(label: &str, policy: WorkloadRestartPolicy) -> Vec<WorkloadSagaRecord> {
+pub(super) fn observed_history(
+    label: &str,
+    policy: WorkloadRestartPolicy,
+) -> Vec<WorkloadSagaRecord> {
     let initial = initial_record(label);
     let intent = initial.active_intent();
     let intent = nimbus_workloads::WorkloadSagaIntent::new_with_restart_policy(
@@ -45,7 +48,10 @@ fn observed_history(label: &str, policy: WorkloadRestartPolicy) -> Vec<WorkloadS
     history
 }
 
-async fn persist_history(store: &EngineWorkloadSagaStore, history: &[WorkloadSagaRecord]) {
+pub(super) async fn persist_history(
+    store: &EngineWorkloadSagaStore,
+    history: &[WorkloadSagaRecord],
+) {
     for (index, record) in history.iter().enumerate() {
         let expected = if index == 0 {
             WorkloadSagaExpected::Missing
@@ -59,7 +65,7 @@ async fn persist_history(store: &EngineWorkloadSagaStore, history: &[WorkloadSag
     }
 }
 
-fn explicit_input(
+pub(super) fn explicit_input(
     record: &WorkloadSagaRecord,
     key: &str,
     not_before: u64,
@@ -89,13 +95,53 @@ fn automatic_input(record: &WorkloadSagaRecord, not_before: u64) -> WorkloadRest
     }
 }
 
-fn admit(record: &WorkloadSagaRecord, input: WorkloadRestartAdmissionInput) -> WorkloadSagaRecord {
+pub(super) fn admit(
+    record: &WorkloadSagaRecord,
+    input: WorkloadRestartAdmissionInput,
+) -> WorkloadSagaRecord {
     let WorkloadRestartAdmissionUpdate::Transition(candidate) =
         record.admit_restart(input).expect("restart should admit")
     else {
         panic!("new restart must create a transition");
     };
     *candidate
+}
+
+fn active_claim(record: &WorkloadSagaRecord) -> WorkloadRestartCommandClaim {
+    record
+        .restart_state()
+        .active()
+        .expect("restart should be active")
+        .disposition()
+        .claim()
+        .expect("restart command should be claimed")
+        .clone()
+}
+
+fn extend_successful_command(history: &mut Vec<WorkloadSagaRecord>, label: &str) {
+    let current = history.last().unwrap();
+    let request_id = current
+        .restart_state()
+        .active()
+        .unwrap()
+        .admission()
+        .request_id();
+    let claimed = current
+        .claim_restart_command(request_id)
+        .expect("restart command should claim");
+    let claim = active_claim(&claimed);
+    history.push(claimed.clone());
+    history.push(
+        claimed
+            .apply_restart_effect_result(
+                &claim,
+                WorkloadRestartEffectResult::Succeeded {
+                    evidence: WorkloadRestartEvidenceDigest::sha256(label),
+                },
+                None,
+            )
+            .expect("restart command should succeed"),
+    );
 }
 
 fn extend_restart_to_completion(history: &mut Vec<WorkloadSagaRecord>) {
@@ -107,16 +153,13 @@ fn extend_restart_to_completion(history: &mut Vec<WorkloadSagaRecord>) {
         .admission()
         .request_id()
         .clone();
-    for phase in [
-        WorkloadRestartPhase::PublicationWithdrawalPending,
-        WorkloadRestartPhase::ExecutionQuiescencePending,
-        WorkloadRestartPhase::Scheduled,
-    ] {
-        record = record
-            .advance_restart_phase(&request_id, phase)
-            .expect("restart phase should advance");
-        history.push(record.clone());
-    }
+    record = record
+        .advance_restart_without_effect(&request_id)
+        .expect("requested restart should enter withdrawal");
+    history.push(record);
+    extend_successful_command(history, "restart-withdrawn");
+    extend_successful_command(history, "restart-quiesced");
+    record = history.last().unwrap().clone();
     let due = record
         .restart_state()
         .active()
@@ -127,22 +170,30 @@ fn extend_restart_to_completion(history: &mut Vec<WorkloadSagaRecord>) {
         .advance_scheduled_restart(&request_id, due)
         .expect("due restart should advance");
     history.push(record.clone());
-    for phase in [
-        WorkloadRestartPhase::AttachmentPending,
-        WorkloadRestartPhase::ActivationPrerequisitePending,
-        WorkloadRestartPhase::ActivationPending,
-        WorkloadRestartPhase::ReadinessPending,
-        WorkloadRestartPhase::PublicationPending,
-        WorkloadRestartPhase::ObservationPending,
+    for label in [
+        "restart-prepared",
+        "restart-attached",
+        "restart-prerequisites",
+        "restart-activated",
+        "restart-ready",
     ] {
-        record = record
-            .advance_restart_phase(&request_id, phase)
-            .expect("restart phase should advance");
-        history.push(record.clone());
+        extend_successful_command(history, label);
     }
+    record = history
+        .last()
+        .unwrap()
+        .advance_restart_without_effect(&request_id)
+        .expect("withheld publication should advance without an ingress effect");
+    history.push(record.clone());
 
-    let intent = record.active_intent();
-    let restart_epoch = record
+    let claimed = record
+        .claim_restart_command(&request_id)
+        .expect("observation command should claim");
+    let claim = active_claim(&claimed);
+    history.push(claimed.clone());
+
+    let intent = claimed.active_intent();
+    let restart_epoch = claimed
         .restart_state()
         .active()
         .unwrap()
@@ -182,11 +233,13 @@ fn extend_restart_to_completion(history: &mut Vec<WorkloadSagaRecord>) {
     )
     .expect("new-attempt observed detail should validate");
     history.push(
-        record
-            .complete_restart(
-                &request_id,
-                observed_detail,
-                WorkloadRestartEvidenceDigest::sha256("restart-observed"),
+        claimed
+            .apply_restart_effect_result(
+                &claim,
+                WorkloadRestartEffectResult::Succeeded {
+                    evidence: WorkloadRestartEvidenceDigest::sha256("restart-observed"),
+                },
+                Some(observed_detail),
             )
             .expect("restart should complete"),
     );
@@ -197,7 +250,11 @@ fn restart_record_strict_codec_round_trip() {
     let record = observed_record("restart-codec", WorkloadRestartPolicy::Never);
     let candidate = admit(&record, explicit_input(&record, "codec", u64::MAX));
     let fields = encode_workload_saga_record(&candidate).expect("restart record should encode");
-    assert_eq!(fields.len(), 22);
+    assert_eq!(fields.len(), 23);
+    assert_eq!(
+        fields.get("restartWatchCandidate"),
+        Some(&Value::Bool(true))
+    );
     assert_eq!(
         fields.get("restartPolicy"),
         Some(&serde_json::to_value(candidate.active_intent().restart_policy()).unwrap())

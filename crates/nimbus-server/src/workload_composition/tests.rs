@@ -180,6 +180,14 @@ impl WorkloadSagaStore for InjectedSagaStore {
         Box::pin(async move { panic!("composition must not list recoverable workload sagas") })
     }
 
+    fn list_restart_candidates<'a>(
+        &'a self,
+        _request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
+    ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadRestartCandidatePage>
+    {
+        Box::pin(async move { panic!("composition must not list restart candidates") })
+    }
+
     fn list_for_tenant<'a>(
         &'a self,
         _tenant_id: &'a TenantId,

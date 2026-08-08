@@ -83,17 +83,58 @@ fn active_request_id(record: &WorkloadSagaRecord) -> WorkloadRestartRequestId {
         .clone()
 }
 
+fn active_claim(record: &WorkloadSagaRecord) -> WorkloadRestartCommandClaim {
+    record
+        .restart_state()
+        .active()
+        .expect("restart should be active")
+        .disposition()
+        .claim()
+        .expect("restart command should be claimed")
+        .clone()
+}
+
+fn pending_withdrawal_command(
+    policy: WorkloadRestartPolicy,
+    request_key: &str,
+) -> (WorkloadSagaRecord, WorkloadRestartCommandClaim) {
+    let record = observed_record(policy);
+    let admitted = admitted(&record, explicit_input(&record, request_key, 0));
+    let request_id = active_request_id(&admitted);
+    let withdrawal = admitted
+        .advance_restart_without_effect(&request_id)
+        .expect("requested restart should enter withdrawal");
+    let pending = withdrawal
+        .claim_restart_command(&request_id)
+        .expect("withdrawal command should claim");
+    let claim = active_claim(&pending);
+    (pending, claim)
+}
+
+fn succeed_current_command(record: WorkloadSagaRecord, label: &str) -> WorkloadSagaRecord {
+    let request_id = active_request_id(&record);
+    let claimed = record
+        .claim_restart_command(&request_id)
+        .expect("restart command should claim");
+    let claim = active_claim(&claimed);
+    claimed
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Succeeded {
+                evidence: WorkloadRestartEvidenceDigest::sha256(label),
+            },
+            None,
+        )
+        .expect("restart command should succeed")
+}
+
 fn advance_to_observation(mut record: WorkloadSagaRecord) -> WorkloadSagaRecord {
     let request_id = active_request_id(&record);
-    for phase in [
-        WorkloadRestartPhase::PublicationWithdrawalPending,
-        WorkloadRestartPhase::ExecutionQuiescencePending,
-        WorkloadRestartPhase::Scheduled,
-    ] {
-        record = record
-            .advance_restart_phase(&request_id, phase)
-            .expect("restart phase should advance");
-    }
+    record = record
+        .advance_restart_without_effect(&request_id)
+        .expect("requested restart should enter withdrawal");
+    record = succeed_current_command(record, "withdrawn");
+    record = succeed_current_command(record, "quiesced");
     let due = record
         .restart_state()
         .active()
@@ -103,19 +144,18 @@ fn advance_to_observation(mut record: WorkloadSagaRecord) -> WorkloadSagaRecord 
     record = record
         .advance_scheduled_restart(&request_id, due)
         .expect("due restart should advance");
-    for phase in [
-        WorkloadRestartPhase::AttachmentPending,
-        WorkloadRestartPhase::ActivationPrerequisitePending,
-        WorkloadRestartPhase::ActivationPending,
-        WorkloadRestartPhase::ReadinessPending,
-        WorkloadRestartPhase::PublicationPending,
-        WorkloadRestartPhase::ObservationPending,
+    for label in [
+        "prepared",
+        "attached",
+        "prerequisites",
+        "activated",
+        "ready",
     ] {
-        record = record
-            .advance_restart_phase(&request_id, phase)
-            .expect("restart phase should advance");
+        record = succeed_current_command(record, label);
     }
     record
+        .advance_restart_without_effect(&request_id)
+        .expect("withheld publication should advance without an ingress effect")
 }
 
 fn observed_detail_for_active_attempt(record: &WorkloadSagaRecord) -> WorkloadPhaseDetail {
@@ -162,11 +202,17 @@ fn observed_detail_for_active_attempt(record: &WorkloadSagaRecord) -> WorkloadPh
 
 fn complete(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
     let request_id = active_request_id(record);
-    record
-        .complete_restart(
-            &request_id,
-            observed_detail_for_active_attempt(record),
-            WorkloadRestartEvidenceDigest::sha256("restart-observed"),
+    let claimed = record
+        .claim_restart_command(&request_id)
+        .expect("observation command should claim");
+    let claim = active_claim(&claimed);
+    claimed
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Succeeded {
+                evidence: WorkloadRestartEvidenceDigest::sha256("restart-observed"),
+            },
+            Some(observed_detail_for_active_attempt(&claimed)),
         )
         .expect("restart should complete")
 }
@@ -336,20 +382,20 @@ fn restart_skipped_backward_and_crossed_transitions_fail_closed() {
     let request_id = active_request_id(&admitted);
     assert!(
         admitted
-            .advance_restart_phase(&request_id, WorkloadRestartPhase::Scheduled)
+            .advance_scheduled_restart(
+                &request_id,
+                WorkloadRestartNotBeforeUnixMillis::new(u64::MAX),
+            )
             .is_err()
     );
+    assert!(admitted.claim_restart_command(&request_id).is_err());
     let crossed = WorkloadRestartRequestId::for_explicit(
         admitted.saga_id(),
         admitted.active_intent().source().source_generation(),
         "crossed",
     )
     .unwrap();
-    assert!(
-        admitted
-            .advance_restart_phase(&crossed, WorkloadRestartPhase::PublicationWithdrawalPending)
-            .is_err()
-    );
+    assert!(admitted.advance_restart_without_effect(&crossed).is_err());
 }
 
 #[test]
@@ -359,14 +405,12 @@ fn restart_recovery_eligibility_is_exhaustive() {
     let mut active = admitted(&record, explicit_input(&record, "recovery", 100));
     assert!(active.requires_recovery());
     let request_id = active_request_id(&active);
-    for phase in [
-        WorkloadRestartPhase::PublicationWithdrawalPending,
-        WorkloadRestartPhase::ExecutionQuiescencePending,
-        WorkloadRestartPhase::Scheduled,
-    ] {
-        active = active.advance_restart_phase(&request_id, phase).unwrap();
-        assert!(active.requires_recovery());
-    }
+    active = active.advance_restart_without_effect(&request_id).unwrap();
+    assert!(active.requires_recovery());
+    active = succeed_current_command(active, "recovery-withdrawal");
+    assert!(active.requires_recovery());
+    active = succeed_current_command(active, "recovery-quiescence");
+    assert!(active.requires_recovery());
     assert_eq!(
         active.restart_recovery_decision(WorkloadRestartNotBeforeUnixMillis::new(99)),
         WorkloadRestartRecoveryDecision::WaitingUntil(WorkloadRestartNotBeforeUnixMillis::new(100))
@@ -452,13 +496,9 @@ fn deadline_survives_clock_rollback_without_early_admission() {
     let record = observed_record(WorkloadRestartPolicy::Always { max_restarts: 1 });
     let mut active = admitted(&record, explicit_input(&record, "clock", 100));
     let request_id = active_request_id(&active);
-    for phase in [
-        WorkloadRestartPhase::PublicationWithdrawalPending,
-        WorkloadRestartPhase::ExecutionQuiescencePending,
-        WorkloadRestartPhase::Scheduled,
-    ] {
-        active = active.advance_restart_phase(&request_id, phase).unwrap();
-    }
+    active = active.advance_restart_without_effect(&request_id).unwrap();
+    active = succeed_current_command(active, "clock-withdrawal");
+    active = succeed_current_command(active, "clock-quiescence");
     assert!(
         active
             .advance_scheduled_restart(&request_id, WorkloadRestartNotBeforeUnixMillis::new(99))
@@ -527,4 +567,265 @@ fn deadline_and_count_survive_strict_serialization_round_trip() {
             .not_before_unix_millis(),
         WorkloadRestartNotBeforeUnixMillis::new(987_654)
     );
+}
+
+#[test]
+fn restart_command_claim_binds_the_exact_pending_transition() {
+    let (pending, claim) = pending_withdrawal_command(
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+        "command-identity",
+    );
+    let active = pending.restart_state().active().unwrap();
+    assert_eq!(claim.request_id(), active.admission().request_id());
+    assert_eq!(claim.restart_epoch(), active.admission().restart_epoch());
+    assert_eq!(claim.attempt_id(), active.admission().attempt_id());
+    assert_eq!(claim.step(), WorkloadRestartStep::WithdrawPublication);
+    assert_eq!(claim.dispatch_epoch(), WorkloadRestartDispatchEpoch::new(0));
+    assert_eq!(
+        claim.issuing_revision().checked_next(),
+        Some(pending.revision())
+    );
+    assert!(matches!(
+        claim.authorization(),
+        WorkloadRestartDispatchAuthorization::Initial
+    ));
+
+    let request_id = active_request_id(&pending);
+    assert!(pending.claim_restart_command(&request_id).is_err());
+    assert!(pending.advance_restart_without_effect(&request_id).is_err());
+
+    let succeeded = pending
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Succeeded {
+                evidence: WorkloadRestartEvidenceDigest::sha256("withdrawal-success"),
+            },
+            None,
+        )
+        .expect("exact pending command should succeed");
+    let receipt = succeeded
+        .restart_state()
+        .active()
+        .unwrap()
+        .disposition()
+        .receipt()
+        .expect("phase advance should retain the exact success receipt");
+    assert_eq!(receipt.claim(), &claim);
+    assert_eq!(
+        receipt.result().evidence(),
+        WorkloadRestartEvidenceDigest::sha256("withdrawal-success")
+    );
+}
+
+#[test]
+fn restart_ambiguity_requires_exact_absence_before_same_attempt_retry() {
+    let (pending, claim) = pending_withdrawal_command(
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+        "ambiguous-command",
+    );
+    let inspection = pending
+        .restart_dispatch_to_inspection(&claim)
+        .expect("uncertain dispatch should require inspection");
+    let absence = WorkloadRestartAbsenceEvidence::for_inspection(
+        &inspection,
+        &claim,
+        WorkloadRestartEvidenceDigest::sha256("authenticated-absence"),
+    )
+    .expect("exact inspection should authenticate absence");
+    let retry = inspection
+        .restart_inspection_to_retry(&claim, absence.clone())
+        .expect("exact absence should authorize one retry");
+    let retry_claim = active_claim(&retry);
+    assert_eq!(retry_claim.request_id(), claim.request_id());
+    assert_eq!(retry_claim.restart_epoch(), claim.restart_epoch());
+    assert_eq!(retry_claim.attempt_id(), claim.attempt_id());
+    assert_eq!(retry_claim.step(), claim.step());
+    assert_eq!(
+        retry_claim.dispatch_epoch(),
+        claim.dispatch_epoch().checked_next().unwrap()
+    );
+    assert_eq!(retry_claim.issuing_revision(), inspection.revision());
+    assert!(matches!(
+        retry_claim.authorization(),
+        WorkloadRestartDispatchAuthorization::RetryAfterAbsence(retained)
+            if retained == &absence
+    ));
+
+    assert!(
+        retry
+            .apply_restart_effect_result(
+                &claim,
+                WorkloadRestartEffectResult::Succeeded {
+                    evidence: WorkloadRestartEvidenceDigest::sha256("stale-success"),
+                },
+                None,
+            )
+            .is_err()
+    );
+    assert!(
+        retry
+            .restart_inspection_to_retry(&retry_claim, absence.clone())
+            .is_err()
+    );
+    let next_inspection = retry
+        .restart_dispatch_to_inspection(&retry_claim)
+        .expect("retry ambiguity should return to inspection");
+    assert!(
+        WorkloadRestartAbsenceEvidence::for_inspection(
+            &next_inspection,
+            &claim,
+            WorkloadRestartEvidenceDigest::sha256("crossed-absence"),
+        )
+        .is_err()
+    );
+    assert!(
+        next_inspection
+            .restart_inspection_to_retry(&retry_claim, absence)
+            .is_err()
+    );
+}
+
+#[test]
+fn authenticated_absence_cannot_be_recorded_as_a_direct_effect_result() {
+    let (pending, claim) = pending_withdrawal_command(
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+        "absence-result",
+    );
+    assert!(
+        pending
+            .apply_restart_effect_result(
+                &claim,
+                WorkloadRestartEffectResult::AuthenticatedAbsent {
+                    evidence: WorkloadRestartEvidenceDigest::sha256("absence-result"),
+                },
+                None,
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn definite_restart_failure_is_terminal_for_the_active_command() {
+    let (pending, claim) = pending_withdrawal_command(
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+        "definite-failure",
+    );
+    let failed = pending
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Failed {
+                evidence: WorkloadRestartEvidenceDigest::sha256("definite-failure"),
+            },
+            None,
+        )
+        .expect("definite failure should persist");
+    assert!(matches!(
+        failed.restart_state().active().unwrap().disposition(),
+        WorkloadRestartDisposition::DefiniteFailure {
+            claim: retained,
+            result: WorkloadRestartEffectResult::Failed { .. },
+        } if retained == &claim
+    ));
+    let request_id = active_request_id(&failed);
+    assert!(failed.claim_restart_command(&request_id).is_err());
+    assert!(failed.advance_restart_without_effect(&request_id).is_err());
+    assert!(failed.restart_dispatch_to_inspection(&claim).is_err());
+    assert!(
+        failed
+            .apply_restart_effect_result(
+                &claim,
+                WorkloadRestartEffectResult::Succeeded {
+                    evidence: WorkloadRestartEvidenceDigest::sha256("late-success"),
+                },
+                None,
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn restart_command_wire_rejects_tampered_claim_authorization_and_receipt() {
+    let (pending, claim) = pending_withdrawal_command(
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+        "strict-command-wire",
+    );
+    let mut crossed_epoch = serde_json::to_value(&claim).unwrap();
+    crossed_epoch["dispatchEpoch"] = json!("1");
+    assert!(serde_json::from_value::<WorkloadRestartCommandClaim>(crossed_epoch).is_err());
+
+    let mut unknown_claim_field = serde_json::to_value(&claim).unwrap();
+    unknown_claim_field["unknown"] = json!(true);
+    assert!(serde_json::from_value::<WorkloadRestartCommandClaim>(unknown_claim_field).is_err());
+
+    let succeeded = pending
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Succeeded {
+                evidence: WorkloadRestartEvidenceDigest::sha256("strict-success"),
+            },
+            None,
+        )
+        .unwrap();
+    let receipt = succeeded
+        .restart_state()
+        .active()
+        .unwrap()
+        .disposition()
+        .receipt()
+        .unwrap();
+    let mut failed_receipt = serde_json::to_value(receipt).unwrap();
+    failed_receipt["result"] = json!({
+        "result": "failed",
+        "evidence": WorkloadRestartEvidenceDigest::sha256("forged-failure"),
+    });
+    assert!(serde_json::from_value::<WorkloadRestartCommandReceipt>(failed_receipt).is_err());
+
+    let mut succeeded_failure = json!({
+        "disposition": "definite_failure",
+        "claim": claim,
+        "result": {
+            "result": "succeeded",
+            "evidence": WorkloadRestartEvidenceDigest::sha256("forged-success"),
+        },
+    });
+    assert!(
+        serde_json::from_value::<WorkloadRestartDisposition>(succeeded_failure.clone()).is_err()
+    );
+    succeeded_failure["unknown"] = json!(true);
+    assert!(serde_json::from_value::<WorkloadRestartDisposition>(succeeded_failure).is_err());
+}
+
+#[test]
+fn restart_watch_candidate_predicate_is_clock_free_and_exhaustive() {
+    let eligible = observed_record(WorkloadRestartPolicy::Always { max_restarts: 2 });
+    assert!(eligible.requires_restart_watch());
+    assert!(!observed_record(WorkloadRestartPolicy::Never).requires_restart_watch());
+
+    let never = observed_record(WorkloadRestartPolicy::Never);
+    let active_never = admitted(&never, explicit_input(&never, "active-never", u64::MAX));
+    assert!(active_never.requires_restart_watch());
+
+    let WorkloadSagaIntentUpdate::Transition(withdrawal) = eligible
+        .apply_intent(stopped_intent(2))
+        .expect("successor should queue")
+    else {
+        panic!("successor should transition");
+    };
+    assert!(!withdrawal.requires_restart_watch());
+
+    let stopped = WorkloadSagaRecord::new(
+        key("tenant-a", "stopped-watch"),
+        intent_with_restart_policy(
+            "tenant-a",
+            "stopped-watch",
+            1,
+            DesiredWorkloadState::Stopped,
+            WorkloadActivationIntent::PrepareOnly,
+            WorkloadPublicationIntent::Withheld,
+            1,
+            WorkloadRestartPolicy::Always { max_restarts: 2 },
+        ),
+    )
+    .expect("stopped record should initialize");
+    assert!(!stopped.requires_restart_watch());
 }

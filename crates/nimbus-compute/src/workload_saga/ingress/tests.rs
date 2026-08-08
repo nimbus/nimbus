@@ -104,6 +104,16 @@ impl WorkloadSagaStore for ScriptedStore {
         Box::pin(async move { WorkloadSagaPage::new(&request, Vec::new(), false) })
     }
 
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
+    ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadRestartCandidatePage>
+    {
+        Box::pin(async move {
+            nimbus_workloads::WorkloadRestartCandidatePage::new(&request, Vec::new(), false)
+        })
+    }
+
     fn list_for_tenant<'a>(
         &'a self,
         tenant_id: &'a TenantId,
@@ -686,6 +696,16 @@ impl WorkloadSagaStore for PendingCasStore {
         request: WorkloadSagaPageRequest,
     ) -> WorkloadSagaFuture<'a, WorkloadSagaPage> {
         Box::pin(async move { WorkloadSagaPage::new(&request, Vec::new(), false) })
+    }
+
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
+    ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadRestartCandidatePage>
+    {
+        Box::pin(async move {
+            nimbus_workloads::WorkloadRestartCandidatePage::new(&request, Vec::new(), false)
+        })
     }
 
     fn list_for_tenant<'a>(

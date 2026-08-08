@@ -186,6 +186,133 @@ impl WorkloadSagaPage {
     }
 }
 
+/// Global, clock-free cursor for workload records that need restart watching.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkloadRestartCandidateCursor {
+    saga_id: WorkloadSagaId,
+}
+
+impl WorkloadRestartCandidateCursor {
+    pub fn new(saga_id: WorkloadSagaId) -> Self {
+        Self { saga_id }
+    }
+
+    pub fn for_record(record: &WorkloadSagaRecord) -> Result<Self, WorkloadSagaStoreError> {
+        if !record.requires_restart_watch() {
+            return Err(WorkloadSagaStoreError::InvalidTransition(
+                WorkloadSagaError::InvalidTransition(
+                    "restart candidate cursor cannot name an ineligible record",
+                ),
+            ));
+        }
+        Ok(Self::new(record.saga_id().clone()))
+    }
+
+    pub fn saga_id(&self) -> &WorkloadSagaId {
+        &self.saga_id
+    }
+
+    fn order_key(&self) -> &WorkloadSagaId {
+        &self.saga_id
+    }
+}
+
+/// Bounded request for one global restart-watch sweep page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkloadRestartCandidatePageRequest {
+    after: Option<WorkloadRestartCandidateCursor>,
+    limit: u16,
+}
+
+impl WorkloadRestartCandidatePageRequest {
+    pub fn new(
+        after: Option<WorkloadRestartCandidateCursor>,
+        limit: u16,
+    ) -> Result<Self, WorkloadSagaStoreError> {
+        if limit == 0 || limit > MAX_WORKLOAD_SAGA_PAGE_SIZE {
+            return Err(WorkloadSagaStoreError::InvalidTransition(
+                WorkloadSagaError::InvalidCounter(
+                    "workload restart candidate limit must be between 1 and 256",
+                ),
+            ));
+        }
+        Ok(Self { after, limit })
+    }
+
+    pub fn after(&self) -> Option<&WorkloadRestartCandidateCursor> {
+        self.after.as_ref()
+    }
+
+    pub fn limit(&self) -> u16 {
+        self.limit
+    }
+}
+
+/// Validated global restart-watch page ordered by stable saga identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkloadRestartCandidatePage {
+    records: Vec<WorkloadSagaRecord>,
+    next_cursor: Option<WorkloadRestartCandidateCursor>,
+}
+
+impl WorkloadRestartCandidatePage {
+    pub fn new(
+        request: &WorkloadRestartCandidatePageRequest,
+        records: Vec<WorkloadSagaRecord>,
+        has_more: bool,
+    ) -> Result<Self, WorkloadSagaStoreError> {
+        if records.len() > usize::from(request.limit) {
+            return Err(WorkloadSagaStoreError::InvalidTransition(
+                WorkloadSagaError::InvalidEvidence(
+                    "workload restart candidate page exceeds its requested limit",
+                ),
+            ));
+        }
+        if has_more && records.len() != usize::from(request.limit) {
+            return Err(WorkloadSagaStoreError::InvalidTransition(
+                WorkloadSagaError::InvalidEvidence(
+                    "workload restart candidate page claiming more records must fill its requested limit",
+                ),
+            ));
+        }
+
+        let mut previous = request.after.clone();
+        for record in &records {
+            record.validate()?;
+            let cursor = WorkloadRestartCandidateCursor::for_record(record)?;
+            if previous
+                .as_ref()
+                .is_some_and(|previous| cursor.order_key() <= previous.order_key())
+            {
+                return Err(WorkloadSagaStoreError::InvalidTransition(
+                    WorkloadSagaError::InvalidEvidence(
+                        "workload restart candidate page is duplicated, identity-unsorted, or cursor-regressing",
+                    ),
+                ));
+            }
+            previous = Some(cursor);
+        }
+
+        let next_cursor = if has_more { previous } else { None };
+        Ok(Self {
+            records,
+            next_cursor,
+        })
+    }
+
+    pub fn records(&self) -> &[WorkloadSagaRecord] {
+        &self.records
+    }
+
+    pub fn next_cursor(&self) -> Option<&WorkloadRestartCandidateCursor> {
+        self.next_cursor.as_ref()
+    }
+
+    pub fn into_records(self) -> Vec<WorkloadSagaRecord> {
+        self.records
+    }
+}
+
 /// Immutable tenant-inventory cursor keyed by logical workload identity.
 ///
 /// Tenant cursors are intentionally distinct from recovery cursors: tenant
@@ -367,6 +494,11 @@ pub trait WorkloadSagaStore: Send + Sync + 'static {
         &'a self,
         request: WorkloadSagaPageRequest,
     ) -> WorkloadSagaFuture<'a, WorkloadSagaPage>;
+
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: WorkloadRestartCandidatePageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadRestartCandidatePage>;
 
     fn list_for_tenant<'a>(
         &'a self,

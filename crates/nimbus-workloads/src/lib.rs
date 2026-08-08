@@ -41,8 +41,9 @@ pub use saga::{
     WorkloadProvisionSourceIdentity, WorkloadProvisionSourceKind,
     WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep, WorkloadProvisionSubjects,
     WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadPublicationReference,
-    WorkloadRecordedDetail, WorkloadRestartAdmission, WorkloadRestartAdmissionInput,
-    WorkloadRestartAdmissionUpdate, WorkloadRestartCommandClaim, WorkloadRestartCommandId,
+    WorkloadRecordedDetail, WorkloadRestartAbsenceEvidence, WorkloadRestartAdmission,
+    WorkloadRestartAdmissionInput, WorkloadRestartAdmissionUpdate, WorkloadRestartCommandClaim,
+    WorkloadRestartCommandId, WorkloadRestartCommandReceipt, WorkloadRestartDispatchAuthorization,
     WorkloadRestartDispatchEpoch, WorkloadRestartDisposition, WorkloadRestartEffectResult,
     WorkloadRestartEpoch, WorkloadRestartEvidenceDigest, WorkloadRestartHistory,
     WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPhase, WorkloadRestartPolicy,
@@ -56,9 +57,10 @@ pub use scheduling::{
     NodeCapacity, PlacementPlan, SchedulingExplanation, WorkloadPlacementEngine, WorkloadScheduler,
 };
 pub use store::{
-    MAX_WORKLOAD_SAGA_PAGE_SIZE, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
-    WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecoveryCursor, WorkloadSagaStore,
-    WorkloadSagaStoreError, WorkloadSagaTenantCursor, WorkloadSagaTenantPage,
+    MAX_WORKLOAD_SAGA_PAGE_SIZE, WorkloadRestartCandidateCursor, WorkloadRestartCandidatePage,
+    WorkloadRestartCandidatePageRequest, WorkloadSagaCommit, WorkloadSagaExpected,
+    WorkloadSagaFuture, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecoveryCursor,
+    WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantCursor, WorkloadSagaTenantPage,
     WorkloadSagaTenantPageRequest,
 };
 pub use tenant::{

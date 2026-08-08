@@ -12,9 +12,9 @@ use super::super::schema::{exact_table_schema, workload_saga_table, workload_sag
 use super::{document_for, engine, initial_record};
 
 #[test]
-fn exact_schema_has_twenty_four_fields_four_indexes_and_system_policy() {
+fn exact_schema_has_twenty_five_fields_five_indexes_and_system_policy() {
     let schema = exact_table_schema();
-    assert_eq!(schema.fields.len(), 24);
+    assert_eq!(schema.fields.len(), 25);
     assert_eq!(
         schema
             .fields
@@ -44,6 +44,7 @@ fn exact_schema_has_twenty_four_fields_four_indexes_and_system_policy() {
             ("sagaRevision", true),
             ("phase", true),
             ("recoveryEligible", true),
+            ("restartWatchCandidate", true),
             ("phaseDetail", true),
             ("restartState", true),
             ("provisionDisposition", false),
@@ -70,6 +71,10 @@ fn exact_schema_has_twenty_four_fields_four_indexes_and_system_policy() {
             (
                 "by_recovery",
                 &["recoveryEligible".to_owned(), "sagaId".to_owned()][..]
+            ),
+            (
+                "by_restartWatchCandidate_and_sagaId",
+                &["restartWatchCandidate".to_owned(), "sagaId".to_owned()][..]
             ),
             (
                 "by_tenantId_and_phase",

@@ -180,9 +180,129 @@ pub enum WorkloadRestartStep {
     ObservePublication,
 }
 
-/// Durable command claim identity. This value is not provider authority by itself.
+/// Proof that inspection found no effect for one exact restart dispatch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct WorkloadRestartAbsenceEvidence {
+    request_id: WorkloadRestartRequestId,
+    restart_epoch: WorkloadRestartEpoch,
+    attempt_id: WorkloadExecutionAttemptId,
+    step: WorkloadRestartStep,
+    dispatch_epoch: WorkloadRestartDispatchEpoch,
+    confirmed_revision: WorkloadSagaRevision,
+    transition_id: WorkloadSagaTransitionId,
+    evidence: WorkloadRestartEvidenceDigest,
+}
+
+impl WorkloadRestartAbsenceEvidence {
+    /// Bind a read-only absence observation to the exact inspection state.
+    pub fn for_inspection(
+        record: &WorkloadSagaRecord,
+        claim: &WorkloadRestartCommandClaim,
+        evidence: WorkloadRestartEvidenceDigest,
+    ) -> Result<Self, WorkloadSagaError> {
+        let retained = record
+            .restart_state()
+            .active()
+            .and_then(|active| active.disposition().claim());
+        if !matches!(
+            record
+                .restart_state()
+                .active()
+                .map(ActiveWorkloadRestart::disposition),
+            Some(WorkloadRestartDisposition::InspectionRequired { .. })
+        ) || retained != Some(claim)
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart absence requires the exact durable inspection state",
+            ));
+        }
+        Ok(Self {
+            request_id: claim.request_id.clone(),
+            restart_epoch: claim.restart_epoch,
+            attempt_id: claim.attempt_id.clone(),
+            step: claim.step,
+            dispatch_epoch: claim.dispatch_epoch,
+            confirmed_revision: record.revision(),
+            transition_id: record.last_transition().transition_id().clone(),
+            evidence,
+        })
+    }
+
+    pub fn request_id(&self) -> &WorkloadRestartRequestId {
+        &self.request_id
+    }
+
+    pub const fn restart_epoch(&self) -> WorkloadRestartEpoch {
+        self.restart_epoch
+    }
+
+    pub fn attempt_id(&self) -> &WorkloadExecutionAttemptId {
+        &self.attempt_id
+    }
+
+    pub const fn step(&self) -> WorkloadRestartStep {
+        self.step
+    }
+
+    pub const fn dispatch_epoch(&self) -> WorkloadRestartDispatchEpoch {
+        self.dispatch_epoch
+    }
+
+    pub const fn confirmed_revision(&self) -> WorkloadSagaRevision {
+        self.confirmed_revision
+    }
+
+    pub fn transition_id(&self) -> &WorkloadSagaTransitionId {
+        &self.transition_id
+    }
+
+    pub const fn evidence(&self) -> WorkloadRestartEvidenceDigest {
+        self.evidence
+    }
+
+    fn matches_claim(&self, claim: &WorkloadRestartCommandClaim) -> bool {
+        self.request_id == claim.request_id
+            && self.restart_epoch == claim.restart_epoch
+            && self.attempt_id == claim.attempt_id
+            && self.step == claim.step
+            && self.dispatch_epoch == claim.dispatch_epoch
+    }
+
+    pub(super) fn matches_inspection(
+        &self,
+        record: &WorkloadSagaRecord,
+        claim: &WorkloadRestartCommandClaim,
+    ) -> bool {
+        self.matches_claim(claim)
+            && self.confirmed_revision == record.revision()
+            && self.transition_id == *record.last_transition().transition_id()
+            && record.restart_state().active().is_some_and(|active| {
+                matches!(
+                    active.disposition(),
+                    WorkloadRestartDisposition::InspectionRequired { claim: retained }
+                        if retained == claim
+                )
+            })
+    }
+}
+
+/// Why a durable restart dispatch may execute at its epoch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "authorization",
+    content = "evidence",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum WorkloadRestartDispatchAuthorization {
+    Initial,
+    RetryAfterAbsence(WorkloadRestartAbsenceEvidence),
+}
+
+/// Durable command claim identity. This value is not provider authority by itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkloadRestartCommandClaim {
     command_id: WorkloadRestartCommandId,
     request_id: WorkloadRestartRequestId,
@@ -191,33 +311,91 @@ pub struct WorkloadRestartCommandClaim {
     step: WorkloadRestartStep,
     dispatch_epoch: WorkloadRestartDispatchEpoch,
     issuing_revision: WorkloadSagaRevision,
+    authorization: WorkloadRestartDispatchAuthorization,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct WorkloadRestartCommandClaimWire {
+    command_id: WorkloadRestartCommandId,
+    request_id: WorkloadRestartRequestId,
+    restart_epoch: WorkloadRestartEpoch,
+    attempt_id: WorkloadExecutionAttemptId,
+    step: WorkloadRestartStep,
+    dispatch_epoch: WorkloadRestartDispatchEpoch,
+    issuing_revision: WorkloadSagaRevision,
+    authorization: WorkloadRestartDispatchAuthorization,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkloadRestartCommandIdentityPayload<'a> {
+    request_id: &'a WorkloadRestartRequestId,
+    restart_epoch: WorkloadRestartEpoch,
+    attempt_id: &'a WorkloadExecutionAttemptId,
+    step: WorkloadRestartStep,
+    dispatch_epoch: WorkloadRestartDispatchEpoch,
+    issuing_revision: WorkloadSagaRevision,
+    authorization: &'a WorkloadRestartDispatchAuthorization,
+}
+
+impl<'de> Deserialize<'de> for WorkloadRestartCommandClaim {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = WorkloadRestartCommandClaimWire::deserialize(deserializer)?;
+        let expected_id = wire.command_id;
+        let claim = Self::new(
+            wire.request_id,
+            wire.restart_epoch,
+            wire.attempt_id,
+            wire.step,
+            wire.dispatch_epoch,
+            wire.issuing_revision,
+            wire.authorization,
+        )
+        .map_err(serde::de::Error::custom)?;
+        if claim.command_id != expected_id {
+            return Err(serde::de::Error::custom(
+                "restart command id does not bind its complete claim",
+            ));
+        }
+        Ok(claim)
+    }
 }
 
 impl WorkloadRestartCommandClaim {
-    pub(crate) fn new(
+    fn new(
         request_id: WorkloadRestartRequestId,
         restart_epoch: WorkloadRestartEpoch,
         attempt_id: WorkloadExecutionAttemptId,
         step: WorkloadRestartStep,
         dispatch_epoch: WorkloadRestartDispatchEpoch,
         issuing_revision: WorkloadSagaRevision,
-    ) -> Self {
-        let restart_epoch_text = restart_epoch.to_string();
-        let dispatch_epoch_text = dispatch_epoch.to_string();
-        let issuing_revision_text = issuing_revision.to_string();
+        authorization: WorkloadRestartDispatchAuthorization,
+    ) -> Result<Self, WorkloadSagaError> {
+        let encoded = serde_json::to_vec(&WorkloadRestartCommandIdentityPayload {
+            request_id: &request_id,
+            restart_epoch,
+            attempt_id: &attempt_id,
+            step,
+            dispatch_epoch,
+            issuing_revision,
+            authorization: &authorization,
+        })
+        .map_err(|_| {
+            WorkloadSagaError::InvalidEvidence("restart command claim cannot be encoded")
+        })?;
+        let canonical = std::str::from_utf8(&encoded).map_err(|_| {
+            WorkloadSagaError::InvalidEvidence("restart command claim is not UTF-8")
+        })?;
         let command_id = WorkloadRestartCommandId(derive_id(
             WorkloadRestartCommandId::PREFIX,
-            b"nimbus.workloads.restart.command.id.v1",
-            &[
-                request_id.as_str(),
-                &restart_epoch_text,
-                attempt_id.as_str(),
-                restart_step_name(step),
-                &dispatch_epoch_text,
-                &issuing_revision_text,
-            ],
+            b"nimbus.workloads.restart.command.id.v2",
+            &[canonical],
         ));
-        Self {
+        let claim = Self {
             command_id,
             request_id,
             restart_epoch,
@@ -225,7 +403,56 @@ impl WorkloadRestartCommandClaim {
             step,
             dispatch_epoch,
             issuing_revision,
+            authorization,
+        };
+        claim.validate()?;
+        Ok(claim)
+    }
+
+    pub(super) fn initial(
+        request_id: WorkloadRestartRequestId,
+        restart_epoch: WorkloadRestartEpoch,
+        attempt_id: WorkloadExecutionAttemptId,
+        step: WorkloadRestartStep,
+        issuing_revision: WorkloadSagaRevision,
+    ) -> Result<Self, WorkloadSagaError> {
+        Self::new(
+            request_id,
+            restart_epoch,
+            attempt_id,
+            step,
+            WorkloadRestartDispatchEpoch::new(0),
+            issuing_revision,
+            WorkloadRestartDispatchAuthorization::Initial,
+        )
+    }
+
+    pub(super) fn retry_after_absence(
+        previous: &Self,
+        issuing_revision: WorkloadSagaRevision,
+        absence: WorkloadRestartAbsenceEvidence,
+    ) -> Result<Self, WorkloadSagaError> {
+        if !absence.matches_claim(previous) || absence.confirmed_revision != issuing_revision {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart retry requires exact absence at the current revision",
+            ));
         }
+        let dispatch_epoch =
+            previous
+                .dispatch_epoch
+                .checked_next()
+                .ok_or(WorkloadSagaError::InvalidCounter(
+                    "workload restart dispatch epoch overflow",
+                ))?;
+        Self::new(
+            previous.request_id.clone(),
+            previous.restart_epoch,
+            previous.attempt_id.clone(),
+            previous.step,
+            dispatch_epoch,
+            issuing_revision,
+            WorkloadRestartDispatchAuthorization::RetryAfterAbsence(absence),
+        )
     }
 
     pub fn command_id(&self) -> &WorkloadRestartCommandId {
@@ -256,37 +483,34 @@ impl WorkloadRestartCommandClaim {
         self.issuing_revision
     }
 
+    pub fn authorization(&self) -> &WorkloadRestartDispatchAuthorization {
+        &self.authorization
+    }
+
     pub(super) fn validate(&self) -> Result<(), WorkloadSagaError> {
-        if self.command_id
-            != Self::new(
-                self.request_id.clone(),
-                self.restart_epoch,
-                self.attempt_id.clone(),
-                self.step,
-                self.dispatch_epoch,
-                self.issuing_revision,
-            )
-            .command_id
-        {
-            return Err(WorkloadSagaError::InvalidIdentity(
-                "restart command id does not bind its complete claim",
-            ));
+        match &self.authorization {
+            WorkloadRestartDispatchAuthorization::Initial => {
+                if self.dispatch_epoch != WorkloadRestartDispatchEpoch::new(0) {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "initial restart dispatch must use epoch zero",
+                    ));
+                }
+            }
+            WorkloadRestartDispatchAuthorization::RetryAfterAbsence(absence) => {
+                if absence.request_id != self.request_id
+                    || absence.restart_epoch != self.restart_epoch
+                    || absence.attempt_id != self.attempt_id
+                    || absence.step != self.step
+                    || absence.dispatch_epoch.checked_next() != Some(self.dispatch_epoch)
+                    || absence.confirmed_revision != self.issuing_revision
+                {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "restart retry is not authorized by exact prior absence",
+                    ));
+                }
+            }
         }
         Ok(())
-    }
-}
-
-fn restart_step_name(step: WorkloadRestartStep) -> &'static str {
-    match step {
-        WorkloadRestartStep::WithdrawPublication => "withdraw_publication",
-        WorkloadRestartStep::QuiesceExecution => "quiesce_execution",
-        WorkloadRestartStep::PrepareExecution => "prepare_execution",
-        WorkloadRestartStep::AttachNetwork => "attach_network",
-        WorkloadRestartStep::InspectActivationPrerequisites => "inspect_activation_prerequisites",
-        WorkloadRestartStep::ActivateExecution => "activate_execution",
-        WorkloadRestartStep::InspectReadiness => "inspect_readiness",
-        WorkloadRestartStep::Publish => "publish",
-        WorkloadRestartStep::ObservePublication => "observe_publication",
     }
 }
 
@@ -310,8 +534,85 @@ pub enum WorkloadRestartEffectResult {
     },
 }
 
+impl WorkloadRestartEffectResult {
+    pub const fn evidence(&self) -> WorkloadRestartEvidenceDigest {
+        match self {
+            Self::Succeeded { evidence }
+            | Self::AuthenticatedAbsent { evidence }
+            | Self::Failed { evidence } => *evidence,
+        }
+    }
+
+    pub const fn is_succeeded(&self) -> bool {
+        matches!(self, Self::Succeeded { .. })
+    }
+
+    pub const fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+}
+
+/// Exact successful command evidence retained at the target restart phase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct WorkloadRestartCommandReceipt {
+    claim: WorkloadRestartCommandClaim,
+    result: WorkloadRestartEffectResult,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct WorkloadRestartCommandReceiptWire {
+    claim: WorkloadRestartCommandClaim,
+    result: WorkloadRestartEffectResult,
+}
+
+impl<'de> Deserialize<'de> for WorkloadRestartCommandReceipt {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = WorkloadRestartCommandReceiptWire::deserialize(deserializer)?;
+        let receipt = Self {
+            claim: wire.claim,
+            result: wire.result,
+        };
+        receipt.validate().map_err(serde::de::Error::custom)?;
+        Ok(receipt)
+    }
+}
+
+impl WorkloadRestartCommandReceipt {
+    pub(super) fn succeeded(
+        claim: WorkloadRestartCommandClaim,
+        result: WorkloadRestartEffectResult,
+    ) -> Result<Self, WorkloadSagaError> {
+        let receipt = Self { claim, result };
+        receipt.validate()?;
+        Ok(receipt)
+    }
+
+    pub fn claim(&self) -> &WorkloadRestartCommandClaim {
+        &self.claim
+    }
+
+    pub fn result(&self) -> &WorkloadRestartEffectResult {
+        &self.result
+    }
+
+    fn validate(&self) -> Result<(), WorkloadSagaError> {
+        self.claim.validate()?;
+        if !self.result.is_succeeded() {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart command receipt must retain exact success evidence",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Closed command disposition for the active restart phase.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(
     tag = "disposition",
     rename_all = "snake_case",
@@ -319,7 +620,9 @@ pub enum WorkloadRestartEffectResult {
     deny_unknown_fields
 )]
 pub enum WorkloadRestartDisposition {
-    Ready,
+    Ready {
+        receipt: Option<WorkloadRestartCommandReceipt>,
+    },
     DispatchPending {
         claim: WorkloadRestartCommandClaim,
     },
@@ -327,23 +630,104 @@ pub enum WorkloadRestartDisposition {
         claim: WorkloadRestartCommandClaim,
     },
     DefiniteFailure {
-        claim: Option<WorkloadRestartCommandClaim>,
+        claim: WorkloadRestartCommandClaim,
         result: WorkloadRestartEffectResult,
     },
 }
 
+#[derive(Deserialize)]
+#[serde(
+    tag = "disposition",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum WorkloadRestartDispositionWire {
+    Ready {
+        receipt: Option<WorkloadRestartCommandReceipt>,
+    },
+    DispatchPending {
+        claim: WorkloadRestartCommandClaim,
+    },
+    InspectionRequired {
+        claim: WorkloadRestartCommandClaim,
+    },
+    DefiniteFailure {
+        claim: WorkloadRestartCommandClaim,
+        result: WorkloadRestartEffectResult,
+    },
+}
+
+impl<'de> Deserialize<'de> for WorkloadRestartDisposition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = WorkloadRestartDispositionWire::deserialize(deserializer)?;
+        let disposition = match wire {
+            WorkloadRestartDispositionWire::Ready { receipt } => Self::Ready { receipt },
+            WorkloadRestartDispositionWire::DispatchPending { claim } => {
+                Self::DispatchPending { claim }
+            }
+            WorkloadRestartDispositionWire::InspectionRequired { claim } => {
+                Self::InspectionRequired { claim }
+            }
+            WorkloadRestartDispositionWire::DefiniteFailure { claim, result } => {
+                Self::DefiniteFailure { claim, result }
+            }
+        };
+        disposition.validate().map_err(serde::de::Error::custom)?;
+        Ok(disposition)
+    }
+}
+
 impl WorkloadRestartDisposition {
+    pub(super) const fn initial_ready() -> Self {
+        Self::Ready { receipt: None }
+    }
+
+    pub const fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready { .. })
+    }
+
+    pub fn receipt(&self) -> Option<&WorkloadRestartCommandReceipt> {
+        match self {
+            Self::Ready { receipt } => receipt.as_ref(),
+            Self::DispatchPending { .. }
+            | Self::InspectionRequired { .. }
+            | Self::DefiniteFailure { .. } => None,
+        }
+    }
+
+    pub fn claim(&self) -> Option<&WorkloadRestartCommandClaim> {
+        match self {
+            Self::Ready { receipt } => receipt.as_ref().map(WorkloadRestartCommandReceipt::claim),
+            Self::DispatchPending { claim }
+            | Self::InspectionRequired { claim }
+            | Self::DefiniteFailure { claim, .. } => Some(claim),
+        }
+    }
+
     pub(super) fn validate(&self) -> Result<(), WorkloadSagaError> {
         match self {
-            Self::Ready => Ok(()),
+            Self::Ready { receipt } => {
+                if let Some(receipt) = receipt {
+                    receipt.validate()?;
+                }
+                Ok(())
+            }
             Self::DispatchPending { claim } | Self::InspectionRequired { claim } => {
                 claim.validate()
             }
-            Self::DefiniteFailure { claim, .. } => {
-                if let Some(claim) = claim {
-                    claim.validate()?;
+            Self::DefiniteFailure { claim, result } => {
+                claim.validate()?;
+                if result.is_failed() {
+                    Ok(())
+                } else {
+                    Err(WorkloadSagaError::InvalidEvidence(
+                        "definite restart failure must retain failed effect evidence",
+                    ))
                 }
-                Ok(())
             }
         }
     }
@@ -515,7 +899,7 @@ impl ActiveWorkloadRestart {
         Self {
             phase: WorkloadRestartPhase::Requested,
             admission,
-            disposition: WorkloadRestartDisposition::Ready,
+            disposition: WorkloadRestartDisposition::initial_ready(),
         }
     }
 

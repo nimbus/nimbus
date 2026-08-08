@@ -436,6 +436,14 @@ impl WorkloadSagaStore for PreCommitCrashStore {
         self.inner.list_recoverable(request)
     }
 
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
+    ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadRestartCandidatePage>
+    {
+        self.inner.list_restart_candidates(request)
+    }
+
     fn list_for_tenant<'a>(
         &'a self,
         tenant_id: &'a TenantId,

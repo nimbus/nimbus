@@ -863,6 +863,16 @@ impl WorkloadSagaStore for DecisionStore {
         })
     }
 
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
+    ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadRestartCandidatePage>
+    {
+        Box::pin(async move {
+            nimbus_workloads::WorkloadRestartCandidatePage::new(&request, Vec::new(), false)
+        })
+    }
+
     fn list_for_tenant<'a>(
         &'a self,
         _tenant_id: &'a TenantId,

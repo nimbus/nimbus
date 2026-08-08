@@ -670,6 +670,17 @@ mod tests {
             })
         }
 
+        fn list_restart_candidates<'a>(
+            &'a self,
+            _request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
+        ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadRestartCandidatePage>
+        {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+            })
+        }
+
         fn list_for_tenant<'a>(
             &'a self,
             _tenant_id: &'a nimbus_core::TenantId,

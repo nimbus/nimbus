@@ -1604,12 +1604,14 @@ pub use provision::{
 };
 pub use restart::{
     ActiveWorkloadRestart, WorkloadExecutionAttemptId, WorkloadInspectionVersion,
-    WorkloadRestartAdmission, WorkloadRestartAdmissionInput, WorkloadRestartAdmissionUpdate,
-    WorkloadRestartCommandClaim, WorkloadRestartCommandId, WorkloadRestartDispatchEpoch,
-    WorkloadRestartDisposition, WorkloadRestartEffectResult, WorkloadRestartEpoch,
-    WorkloadRestartEvidenceDigest, WorkloadRestartHistory, WorkloadRestartNotBeforeUnixMillis,
-    WorkloadRestartPhase, WorkloadRestartPolicy, WorkloadRestartRecoveryDecision,
-    WorkloadRestartRequestId, WorkloadRestartState, WorkloadRestartStep, WorkloadRestartTrigger,
+    WorkloadRestartAbsenceEvidence, WorkloadRestartAdmission, WorkloadRestartAdmissionInput,
+    WorkloadRestartAdmissionUpdate, WorkloadRestartCommandClaim, WorkloadRestartCommandId,
+    WorkloadRestartCommandReceipt, WorkloadRestartDispatchAuthorization,
+    WorkloadRestartDispatchEpoch, WorkloadRestartDisposition, WorkloadRestartEffectResult,
+    WorkloadRestartEpoch, WorkloadRestartEvidenceDigest, WorkloadRestartHistory,
+    WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPhase, WorkloadRestartPolicy,
+    WorkloadRestartRecoveryDecision, WorkloadRestartRequestId, WorkloadRestartState,
+    WorkloadRestartStep, WorkloadRestartTrigger,
 };
 use state::validate_phase_detail;
 pub use state::{WorkloadSagaIntentUpdate, WorkloadSagaRecord, WorkloadSagaTransition};

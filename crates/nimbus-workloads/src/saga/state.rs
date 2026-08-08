@@ -852,7 +852,8 @@ impl WorkloadSagaRecord {
             && let Some(active) = &restart.active
         {
             if active.phase() != WorkloadRestartPhase::Requested
-                || active.disposition() != &WorkloadRestartDisposition::Ready
+                || !active.disposition().is_ready()
+                || active.disposition().receipt().is_some()
             {
                 return Err(WorkloadSagaError::InvalidTransition(
                     "issued restart work must be fenced or inspected before successor withdrawal",

@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, RwLock};
 
+// Ownership reason: this shared store-conformance matrix keeps the two
+// reference adapters on one contract. Restart-candidate concept tests live in
+// a child module so this explicit-reason file does not become their owner.
+
 use futures::executor::block_on;
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
@@ -133,6 +137,16 @@ impl WorkloadSagaStore for MutexMapStore {
         })
     }
 
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: WorkloadRestartCandidatePageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadRestartCandidatePage> {
+        Box::pin(async move {
+            let state = self.state.lock().expect("mutex map store lock");
+            build_restart_candidate_page(&request, state.records.values().cloned().collect())
+        })
+    }
+
     fn list_for_tenant<'a>(
         &'a self,
         tenant_id: &'a TenantId,
@@ -228,6 +242,16 @@ impl WorkloadSagaStore for RwLockAppendLogStore {
         Box::pin(async move {
             let state = self.state.read().expect("append log store read lock");
             build_recovery_page(&request, state.latest_records())
+        })
+    }
+
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: WorkloadRestartCandidatePageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadRestartCandidatePage> {
+        Box::pin(async move {
+            let state = self.state.read().expect("append log store read lock");
+            build_restart_candidate_page(&request, state.latest_records())
         })
     }
 
@@ -359,6 +383,21 @@ fn build_recovery_page(
     let has_more = records.len() > usize::from(request.limit());
     records.truncate(usize::from(request.limit()));
     WorkloadSagaPage::new(request, records, has_more)
+}
+
+fn build_restart_candidate_page(
+    request: &WorkloadRestartCandidatePageRequest,
+    mut records: Vec<WorkloadSagaRecord>,
+) -> Result<WorkloadRestartCandidatePage, WorkloadSagaStoreError> {
+    records.retain(WorkloadSagaRecord::requires_restart_watch);
+    records.sort_by(|left, right| left.saga_id().cmp(right.saga_id()));
+    if let Some(after) = request.after() {
+        records.retain(|record| record.saga_id() > after.saga_id());
+    }
+    records.truncate(usize::from(request.limit()).saturating_add(1));
+    let has_more = records.len() > usize::from(request.limit());
+    records.truncate(usize::from(request.limit()));
+    WorkloadRestartCandidatePage::new(request, records, has_more)
 }
 
 fn build_tenant_page(
@@ -1521,3 +1560,6 @@ fn advance_to(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> Workload
         .pop()
         .expect("fixture provision edge should produce a candidate")
 }
+
+#[path = "tests/restart_candidates.rs"]
+mod restart_candidates;
