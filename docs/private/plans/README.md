@@ -256,7 +256,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   format/diff/syntax, and NNCV034 `71/71` pass. R3 verifier extraction
   is durable at `e1c57ce9eba823b8dc7d0a5a4ab02d58fe4c0030`: the `1,527`-line
   production contract and `471`-line fixture sibling reuse one scanner, and
-  R2/R3 now have separate frozen path ranges. The R3 service/SDK candidate now
+  R2/R3 now have separate frozen path ranges. R3 service/SDK is durable at
+  `99930529633e02f027ae17adaa8d7379a73af37b` and
   routes authorized explicit restart through one compute submitter and the
   existing retained supervisor. Exact completed replay, source-generation
   rejection, provider convergence, and zero coarse stop calls pass. Full
