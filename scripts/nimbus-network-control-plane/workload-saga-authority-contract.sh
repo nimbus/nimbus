@@ -318,7 +318,7 @@ verify_durable_store_contract() {
 
   require_source_text \
     crates/nimbus-server/src/workload_saga_store.rs \
-    'pub(crate) struct EngineWorkloadSagaStore' \
+    'pub struct EngineWorkloadSagaStore' \
     "server-owned durable saga adapter"
   require_source_text \
     crates/nimbus-server/src/workload_saga_store.rs \
@@ -336,6 +336,18 @@ verify_durable_store_contract() {
     crates/nimbus-server/src/workload_saga_store.rs \
     'commit()' \
     "single Engine commit point"
+  require_source_text \
+    crates/nimbus-server/src/lib.rs \
+    'pub use workload_saga_store::EngineWorkloadSagaStore;' \
+    "public server-owned durable saga adapter"
+  require_source_text \
+    crates/nimbus-cli/src/compose/lifecycle.rs \
+    'EngineWorkloadSagaStore::new(Arc::clone(&engine))' \
+    "Compose durable saga-store adapter"
+  require_source_text \
+    crates/nimbus-cli/src/compose/provision.rs \
+    'composition.into_foreground_runtime(saga_store)' \
+    "Compose compute-owned foreground coordinator handoff"
 
   require_source_text \
     crates/nimbus-server/src/workload_saga_store/schema.rs \
@@ -417,9 +429,20 @@ verify_durable_store_contract() {
     'workload_saga_coordinator: Option<Arc<WorkloadSagaCoordinator>>' \
     "retained sole workload-saga coordinator"
   require_source_text \
-    crates/nimbus-compute/src/workload_saga.rs \
-    'resolve_ambiguous_commit' \
-    "fresh-read ambiguity resolver"
+    crates/nimbus-compute/src/workload_saga/provision_dispatch.rs \
+    'resolve_ambiguous_confirmation' \
+    "fresh-read provision ambiguity resolver"
+  require_exact_count \
+    "ambiguous provision fresh-read count" 1 \
+    'self\.store\.load\(next\.key\(\)\)\.await\?' \
+    crates/nimbus-compute/src/workload_saga/provision_dispatch.rs
+  for ambiguity_outcome in \
+    ConfirmedAfterAmbiguity UnresolvedAmbiguity Conflict; do
+    require_source_text \
+      crates/nimbus-compute/src/workload_saga/provision_dispatch.rs \
+      "WorkloadSagaConfirmation::${ambiguity_outcome}" \
+      "closed ambiguous provision outcome ${ambiguity_outcome}"
+  done
 
   require_exact_count \
     "product saga-store implementation count" 1 \

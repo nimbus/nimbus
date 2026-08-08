@@ -212,6 +212,7 @@ fn setup_operation_claim_blocks_release_and_replacement_during_provider_effect()
         &ipam_authority,
         &layout,
         &sandbox,
+        &current.attachment_id,
         &current.reservation_claim,
         current.provider_kind(),
     )
@@ -299,6 +300,7 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
         &ipam_authority,
         &layout,
         &sandbox,
+        &current.attachment_id,
         &current.reservation_claim,
         current.provider_kind(),
     )
@@ -327,6 +329,7 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
         &ipam_authority,
         &layout,
         &sandbox,
+        &current.attachment_id,
         &current.reservation_claim,
         current.provider_kind(),
     )
@@ -385,6 +388,7 @@ fn reopened_prepared_setup_reuses_exact_attempt_once() {
         &ipam_authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &config.reservation_claim,
         config.provider_kind(),
     )
@@ -584,6 +588,7 @@ fn projection_retry_does_not_rerun_confirmed_netavark_teardown() {
         &ipam_authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &config.reservation_claim,
         config.provider_kind(),
     )
@@ -603,6 +608,7 @@ fn projection_retry_does_not_rerun_confirmed_netavark_teardown() {
         &ipam_authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &config.reservation_claim,
         config.provider_kind(),
     )

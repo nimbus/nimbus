@@ -240,12 +240,12 @@ fn machine_status_detects_reachable_machine_api_socket() {
                         "name": "buildah",
                         "present": true,
                         "resolved_path": "/usr/bin/buildah",
-                        "required_for_operations": ["service-sandboxes.build-start"]
+                        "required_for_operations": ["workload-provision.phase"]
                     }
                 ],
                 "operation_statuses": [
                     {
-                        "name": "service-sandboxes.build-start",
+                        "name": "workload-provision.phase",
                         "available": false,
                         "blockers": ["guest machine API does not yet expose service lifecycle operations"]
                     }

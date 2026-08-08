@@ -125,6 +125,7 @@ pub(crate) fn require_default_machine_api_client(
     Ok(client)
 }
 
+#[cfg(test)]
 pub(crate) fn ensure_default_machine_api_client_started(
     network: &HostMachineNetworkAuthority,
 ) -> Result<MachineApiClient, Error> {

@@ -498,6 +498,25 @@ verify_single_port_authority() {
 }
 
 verify_bind_census() {
+  if [ "${NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD:-}" = "1" ]; then
+    if [ "${NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE:-}" = "1" ] ||
+      [ ! -f "${INVENTORY}" ]; then
+      pass "NNCV006" "unclassified-production-bind"
+      return
+    fi
+    if [ -z "${NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE:-}" ] &&
+      [ -z "${NIMBUS_NETWORK_VERIFY_TEST_UNCLASSIFIED:-}" ] &&
+      [ -z "${NIMBUS_NETWORK_VERIFY_TEST_CLASSIFIED_OCCURRENCE:-}" ] &&
+      [ -z "${NIMBUS_NETWORK_VERIFY_TEST_SWAP_SITE_IDS:-}" ] &&
+      [ -z "${NIMBUS_NETWORK_VERIFY_TEST_CORRUPT_SITE_DECLARATION:-}" ] &&
+      [ -z "${NIMBUS_NETWORK_VERIFY_INVENTORY:-}" ]; then
+      # The live aggregate already proves the unchanged source-derived census.
+      # Mutation children rerun it only when their fixture actually changes a
+      # bind, allocation, classification, site declaration, or exemption.
+      pass "NNCV006" "unclassified-production-bind"
+      return
+    fi
+  fi
   census_output="$(mktemp "${TMPDIR:-/tmp}/nimbus-network-bind-census.XXXXXX")" || {
     fail "NNCV006" "unclassified-production-bind" "unable to create census output file"
     return
@@ -1819,7 +1838,7 @@ NODE
     printf 'SELFTEST FAIL NNCV033 workload provision dispatch mutation suite failed\n'
     sed -n '1,260p' "${temporary}/nnc64-contract-self-test.out"
     self_fail=$((self_fail + 1))
-  elif ! rg -q '^NNC6\.4 provider dispatch contract self-test: 48 passed, 0 failed$' \
+  elif ! rg -q '^NNC6\.4 provider dispatch contract self-test: 50 passed, 0 failed$' \
     "${temporary}/nnc64-contract-self-test.out"; then
     printf 'SELFTEST FAIL NNCV033 workload provision dispatch mutation count is not exact\n'
     self_fail=$((self_fail + 1))
@@ -1831,14 +1850,14 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 325 passed, 0 failed\n'
+  printf 'self-test: 327 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
   # Retained verifier mutations assert one exclusive historical diagnostic.
   # The aggregate mutation fixtures use green baselines for the historical
   # NNCV032 contract and the intentionally red NNCV033 contract. Their
-  # concept-owned 36- and 48-mutation suites still run below.
+  # concept-owned 36- and 50-mutation suites still run below.
   NIMBUS_NETWORK_NNC63B_AGGREGATE_SELF_TEST_BASELINE=1
   NIMBUS_NETWORK_NNC64_AGGREGATE_SELF_TEST_BASELINE=1
   export NIMBUS_NETWORK_NNC63B_AGGREGATE_SELF_TEST_BASELINE

@@ -41,6 +41,14 @@ const OWNER_DIRECTORY_MODE: u32 = 0o700;
 #[cfg(unix)]
 const OWNER_FILE_MODE: u32 = 0o600;
 
+mod confirmed;
+
+pub(crate) use confirmed::{
+    ConfirmedMachinePublicationJournal, ConfirmedMachinePublicationMember,
+    ConfirmedMachinePublicationObservation, ConfirmedMachinePublicationRetirement,
+    canonical_machine_publication_members,
+};
+
 #[derive(Clone)]
 pub(super) struct MachinePublicationIntentStore {
     root: PathBuf,
@@ -67,6 +75,7 @@ impl MachinePublicationIntentStore {
 
     /// Return the existing nonterminal service attempt, or durably stage a new
     /// attempt before any port reservation or Machine API I/O may occur.
+    #[cfg(test)]
     pub(super) fn stage_service_attempt(
         &self,
         tenant_id: &TenantId,
@@ -107,7 +116,20 @@ impl MachinePublicationIntentStore {
                 return Ok((*existing).clone());
             }
 
-            let attempt_id = Ulid::new().to_string();
+            let ordinal = body
+                .intents
+                .iter()
+                .filter(|intent| {
+                    intent.tenant_id == *tenant_id && intent.service_name == service_name
+                })
+                .count()
+                .checked_add(1)
+                .ok_or_else(|| {
+                    Error::ResourceExhausted(
+                        "machine publication test-fixture ordinal overflowed".to_owned(),
+                    )
+                })?;
+            let attempt_id = Ulid::from(ordinal as u128).to_string().to_ascii_lowercase();
             let workload_incarnation_key = format!("{service_name}:{attempt_id}");
             let plan_id =
                 NetworkPlanId::for_tenant_workload_plan(tenant_id, &workload_incarnation_key);
@@ -131,6 +153,7 @@ impl MachinePublicationIntentStore {
     /// Cross the durable request barrier after the complete port batch is
     /// reserved. Once committed, recovery must assume Machine API I/O may have
     /// occurred even if the caller crashes before its first write.
+    #[cfg(test)]
     pub(super) fn commit_before_machine_api(
         &self,
         plan_id: &NetworkPlanId,
@@ -164,6 +187,7 @@ impl MachinePublicationIntentStore {
     }
 
     /// Read one exact durable attempt without changing store bytes or phase.
+    #[cfg(test)]
     pub(super) fn load_plan(
         &self,
         plan_id: &NetworkPlanId,
@@ -899,6 +923,37 @@ mod tests {
 
         assert_eq!(first.plan_id, second.plan_id);
         assert_eq!(first.sandbox_id, second.sandbox_id);
+    }
+
+    #[test]
+    fn legacy_service_intent_cannot_represent_canonical_command_identity() {
+        let temp = TempDir::new().expect("temporary root should exist");
+        let store = MachinePublicationIntentStore::open(temp.path())
+            .expect("legacy publication store should open");
+        store
+            .stage_service_attempt(
+                &tenant(),
+                "api",
+                &authority(),
+                &[SandboxPortBinding::tcp("http", 18_080, 8_080)],
+            )
+            .expect("legacy attempt should stage");
+
+        let durable = fs::read_to_string(&store.state_path)
+            .expect("legacy publication authority should be readable");
+        for absent in [
+            "command_id",
+            "dispatch_epoch",
+            "provider_target",
+            "desired_digest",
+            "source_digest",
+            "network_plan_digest",
+        ] {
+            assert!(
+                !durable.contains(absent),
+                "legacy service intent unexpectedly represents canonical field {absent}"
+            );
+        }
     }
 
     #[test]

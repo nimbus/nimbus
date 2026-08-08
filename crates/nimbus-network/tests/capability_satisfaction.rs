@@ -6,8 +6,9 @@ use nimbus_network::{
     NetworkCapabilityRegistry, NetworkCapabilityRequirements, NetworkCapabilityRole,
     NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet,
     NetworkIngressCapabilitySet, NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet,
-    NetworkManagementMode, NetworkPlan, NetworkPlanContentDigest, NetworkPlanId, NetworkProviderId,
-    NetworkResourceGeneration, NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
+    NetworkLifecycleRequirements, NetworkManagementMode, NetworkPlan, NetworkPlanContentDigest,
+    NetworkPlanId, NetworkProviderId, NetworkResourceGeneration, NetworkSovereigntyCapabilities,
+    NetworkSovereigntyRequirements,
 };
 
 fn empty_requirements() -> NetworkCapabilityRequirements {
@@ -26,7 +27,10 @@ fn empty_requirements() -> NetworkCapabilityRequirements {
         ),
         NetworkIngressCapabilitySet::new(BTreeSet::new()),
         NetworkForwardingCapabilitySet::new(BTreeSet::new()),
-        NetworkLifecycleCapabilitySet::new(BTreeSet::new()),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new(BTreeSet::new()),
+            NetworkLifecycleCapabilitySet::new(BTreeSet::new()),
+        ),
         NetworkSovereigntyRequirements::new(
             NetworkControlPlaneLocality::ThirdParty,
             BTreeSet::new(),

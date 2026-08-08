@@ -112,11 +112,16 @@ pub(crate) struct PreparedMachinePortProxy {
 pub(crate) struct PreparedMachinePortProxyBatch {
     proxies: Vec<PreparedMachinePortProxy>,
     bind_authority: OciPortBindLifetimeBatch,
+    planned_rebind: bool,
 }
 
 impl PreparedMachinePortProxyBatch {
     pub(crate) fn bind_authority(&self) -> &OciPortBindLifetimeBatch {
         &self.bind_authority
+    }
+
+    pub(crate) fn is_planned_rebind(&self) -> bool {
+        self.planned_rebind
     }
 
     pub(crate) fn into_parts(self) -> (Vec<PreparedMachinePortProxy>, OciPortBindLifetimeBatch) {
@@ -315,12 +320,25 @@ impl PreparedMachinePortProxy {
             route,
             release_authority,
         } = preparation;
-        port_lease_coordinator.require_binding_leases(
-            tenant_id,
-            sandbox_id,
-            std::slice::from_ref(binding),
-            std::slice::from_ref(port_lease),
-        )?;
+        match release_authority {
+            MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { plan_members, .. } => {
+                port_lease_coordinator.require_planned_machine_binding_leases(
+                    tenant_id,
+                    std::slice::from_ref(binding),
+                    std::slice::from_ref(port_lease),
+                    plan_members,
+                )?;
+            }
+            MachinePortPreparationReleaseAuthority::Retain
+            | MachinePortPreparationReleaseAuthority::FreshLaunch(_) => {
+                port_lease_coordinator.require_binding_leases(
+                    tenant_id,
+                    sandbox_id,
+                    std::slice::from_ref(binding),
+                    std::slice::from_ref(port_lease),
+                )?;
+            }
+        }
         let MachinePortProxyRoute {
             guest_listener_addr,
             target_addr,
@@ -335,11 +353,9 @@ impl PreparedMachinePortProxy {
                         guest_listener_addr, target_addr, binding.host_address, binding.host_port
                     ),
                 };
-                if matches!(
-                    release_authority,
-                    MachinePortPreparationReleaseAuthority::FreshLaunch(_)
-                ) && let Err(record_error) = port_lease_coordinator
-                    .record_machine_proxy_bind_failure_with_lifetime(
+                if release_authority.records_local_bind_failure()
+                    && let Err(record_error) = release_authority.record_bind_failure(
+                        port_lease_coordinator,
                         port_lease,
                         &bind_claim,
                         guest_listener_addr,
@@ -365,11 +381,9 @@ impl PreparedMachinePortProxy {
                     guest_listener_addr
                 ),
             };
-            if matches!(
-                release_authority,
-                MachinePortPreparationReleaseAuthority::FreshLaunch(_)
-            ) && let Err(record_error) = port_lease_coordinator
-                .record_machine_proxy_bind_failure_with_lifetime(
+            if release_authority.records_local_bind_failure()
+                && let Err(record_error) = release_authority.record_bind_failure(
+                    port_lease_coordinator,
                     port_lease,
                     &bind_claim,
                     guest_listener_addr,
@@ -516,6 +530,10 @@ pub(crate) fn panicking_machine_port_proxy_for_test(bind_addr: SocketAddr) -> Ma
 pub(crate) enum MachinePortPreparationReleaseAuthority<'a> {
     Retain,
     FreshLaunch(&'a NetworkReservationClaim),
+    FreshPlannedLaunch {
+        reservation_claim: &'a NetworkReservationClaim,
+        plan_members: &'a [PortLeaseRequest],
+    },
 }
 
 impl<'a> MachinePortPreparationReleaseAuthority<'a> {
@@ -523,6 +541,46 @@ impl<'a> MachinePortPreparationReleaseAuthority<'a> {
         match self {
             Self::Retain => None,
             Self::FreshLaunch(claim) => Some(claim),
+            Self::FreshPlannedLaunch {
+                reservation_claim, ..
+            } => Some(reservation_claim),
+        }
+    }
+
+    fn plan_members(self) -> Option<&'a [PortLeaseRequest]> {
+        match self {
+            Self::FreshPlannedLaunch { plan_members, .. } => Some(plan_members),
+            Self::Retain | Self::FreshLaunch(_) => None,
+        }
+    }
+
+    fn records_local_bind_failure(self) -> bool {
+        matches!(self, Self::FreshLaunch(_))
+    }
+
+    fn compensates_legacy_batch(self) -> bool {
+        matches!(self, Self::FreshLaunch(_))
+    }
+
+    fn record_bind_failure(
+        self,
+        coordinator: &OciPortLeaseCoordinator,
+        request: &PortLeaseRequest,
+        claim: &PortBindClaim,
+        attempted_addr: SocketAddr,
+        error_kind: io::ErrorKind,
+        lifetime: &PortLeaseLifetimeGuard,
+    ) -> Result<()> {
+        match self {
+            Self::Retain => Ok(()),
+            Self::FreshLaunch(_) => coordinator.record_machine_proxy_bind_failure_with_lifetime(
+                request,
+                claim,
+                attempted_addr,
+                error_kind,
+                lifetime,
+            ),
+            Self::FreshPlannedLaunch { .. } => Ok(()),
         }
     }
 }
@@ -562,17 +620,28 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
     port_lease_coordinator: &OciPortLeaseCoordinator,
     release_authority: MachinePortPreparationReleaseAuthority<'_>,
 ) -> Result<PreparedMachinePortProxyBatch> {
-    port_lease_coordinator.require_binding_leases(
-        tenant_id,
-        sandbox_id,
-        port_bindings,
-        port_leases,
-    )?;
+    if let Some(plan_members) = release_authority.plan_members() {
+        port_lease_coordinator.require_planned_machine_binding_leases(
+            tenant_id,
+            port_bindings,
+            port_leases,
+            plan_members,
+        )?;
+    } else {
+        port_lease_coordinator.require_binding_leases(
+            tenant_id,
+            sandbox_id,
+            port_bindings,
+            port_leases,
+        )?;
+    }
     let routes = match machine_port_proxy_routes(assigned_ips, port_bindings) {
         Ok(routes) => routes,
         Err(error) => {
             return Err(
-                if let Some(reservation_claim) = release_authority.reservation_claim() {
+                if release_authority.compensates_legacy_batch()
+                    && let Some(reservation_claim) = release_authority.reservation_claim()
+                {
                     port_lease_coordinator.compensate_failed_never_bound_requests(
                         port_leases,
                         reservation_claim,
@@ -585,54 +654,122 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
             );
         }
     };
-    let bind_authority = match port_lease_coordinator.claim_machine_bindings_with_lifetimes(
-        tenant_id,
-        sandbox_id,
-        port_bindings,
-        port_leases,
-    ) {
-        Ok(authority) => authority,
-        Err(claim_error) if release_authority == MachinePortPreparationReleaseAuthority::Retain => {
-            let (expected_bindings, recoveries) = port_lease_coordinator
-                .recover_machine_bindings_after_owner_death(
+    let claim_result = match release_authority {
+        MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+            reservation_claim,
+            plan_members,
+        } => port_lease_coordinator.claim_planned_machine_bindings_with_lifetimes(
+            tenant_id,
+            port_bindings,
+            port_leases,
+            plan_members,
+            reservation_claim,
+        ),
+        MachinePortPreparationReleaseAuthority::Retain
+        | MachinePortPreparationReleaseAuthority::FreshLaunch(_) => port_lease_coordinator
+            .claim_machine_bindings_with_lifetimes(
+                tenant_id,
+                sandbox_id,
+                port_bindings,
+                port_leases,
+            ),
+    };
+    let (bind_authority, planned_rebind) = match claim_result {
+        Ok(authority) => (authority, false),
+        Err(claim_error)
+            if matches!(
+                release_authority,
+                MachinePortPreparationReleaseAuthority::Retain
+                    | MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { .. }
+            ) =>
+        {
+            let recovered = match release_authority {
+                MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                    plan_members, ..
+                } => port_lease_coordinator.recover_planned_machine_bindings_after_owner_death(
                     tenant_id,
-                    sandbox_id,
                     port_bindings,
                     port_leases,
-                )
-                .map_err(|recovery_error| SandboxError::OperationFailed {
+                    plan_members,
+                ),
+                MachinePortPreparationReleaseAuthority::Retain => port_lease_coordinator
+                    .recover_machine_bindings_after_owner_death(
+                        tenant_id,
+                        sandbox_id,
+                        port_bindings,
+                        port_leases,
+                    ),
+                MachinePortPreparationReleaseAuthority::FreshLaunch(_) => {
+                    unreachable!("fresh legacy launches do not enter dead-owner recovery")
+                }
+            };
+            let (expected_bindings, recoveries) =
+                recovered.map_err(|recovery_error| SandboxError::OperationFailed {
                     message: format!(
                         "{claim_error}; exact dead-owner local-listener recovery also failed: \
                          {recovery_error}"
                     ),
                 })?;
-            port_lease_coordinator
-                .prepare_recovered_machine_bindings_for_rebind(
+            match release_authority {
+                MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                    plan_members, ..
+                } => port_lease_coordinator.prepare_recovered_planned_machine_bindings_for_rebind(
+                    plan_members,
                     port_leases,
                     &expected_bindings,
                     &recoveries,
-                )
-                .map_err(|rebind_error| SandboxError::OperationFailed {
-                    message: format!(
-                        "{claim_error}; dead local-listener owner was acquired, but exact rebind \
-                         preparation failed: {rebind_error}"
+                ),
+                MachinePortPreparationReleaseAuthority::Retain => port_lease_coordinator
+                    .prepare_recovered_machine_bindings_for_rebind(
+                        port_leases,
+                        &expected_bindings,
+                        &recoveries,
                     ),
-                })?;
+                MachinePortPreparationReleaseAuthority::FreshLaunch(_) => {
+                    unreachable!("fresh legacy launches do not enter dead-owner recovery")
+                }
+            }
+            .map_err(|rebind_error| SandboxError::OperationFailed {
+                message: format!(
+                    "{claim_error}; dead local-listener owner was acquired, but exact rebind \
+                         preparation failed: {rebind_error}"
+                ),
+            })?;
             drop(recoveries);
-            port_lease_coordinator
-                .claim_machine_bindings_with_lifetimes(
+            let retry = match release_authority {
+                MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                    plan_members, ..
+                } => port_lease_coordinator.claim_rebind_planned_machine_bindings_with_lifetimes(
                     tenant_id,
-                    sandbox_id,
                     port_bindings,
                     port_leases,
-                )
-                .map_err(|retry_error| SandboxError::OperationFailed {
-                    message: format!(
-                        "{claim_error}; exact dead-owner local-listener recovery completed, but \
+                    plan_members,
+                ),
+                MachinePortPreparationReleaseAuthority::Retain => port_lease_coordinator
+                    .claim_machine_bindings_with_lifetimes(
+                        tenant_id,
+                        sandbox_id,
+                        port_bindings,
+                        port_leases,
+                    ),
+                MachinePortPreparationReleaseAuthority::FreshLaunch(_) => {
+                    unreachable!("fresh legacy launches do not enter dead-owner recovery")
+                }
+            };
+            let retry = retry.map_err(|retry_error| SandboxError::OperationFailed {
+                message: format!(
+                    "{claim_error}; exact dead-owner local-listener recovery completed, but \
                          canonical route rebuild could not claim the retained generation: \
                          {retry_error}"
-                    ),
-                })?
+                ),
+            })?;
+            (
+                retry,
+                matches!(
+                    release_authority,
+                    MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { .. }
+                ),
+            )
         }
         Err(error) => return Err(error),
     };
@@ -662,11 +799,39 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
                 // when bind lost to an external owner; the authority accepts
                 // that no-effect evidence while retiring Reserved siblings.
                 drop(proxies);
-                let error = match port_lease_coordinator
-                    .abandon_machine_bind_claims_with_lifetimes_without_effect(
-                        port_leases,
-                        &bind_authority,
-                    ) {
+                let abandon = if planned_rebind
+                    && let MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                        plan_members,
+                        ..
+                    } = release_authority
+                {
+                    port_lease_coordinator
+                        .abandon_rebind_planned_machine_bind_claims_with_lifetimes_without_effect(
+                            port_bindings,
+                            plan_members,
+                            port_leases,
+                            &bind_authority,
+                        )
+                } else if let MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                    reservation_claim,
+                    plan_members,
+                } = release_authority
+                {
+                    port_lease_coordinator
+                        .abandon_planned_machine_bind_claims_with_lifetimes_without_effect(
+                            plan_members,
+                            port_leases,
+                            &bind_authority,
+                            reservation_claim,
+                        )
+                } else {
+                    port_lease_coordinator
+                        .abandon_machine_bind_claims_with_lifetimes_without_effect(
+                            port_leases,
+                            &bind_authority,
+                        )
+                };
+                let error = match abandon {
                     Ok(()) => error,
                     Err(abandon_error) => SandboxError::OperationFailed {
                         message: format!(
@@ -676,7 +841,9 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
                     },
                 };
                 return Err(
-                    if let Some(reservation_claim) = release_authority.reservation_claim() {
+                    if release_authority.compensates_legacy_batch()
+                        && let Some(reservation_claim) = release_authority.reservation_claim()
+                    {
                         port_lease_coordinator.compensate_failed_never_bound_requests(
                             port_leases,
                             reservation_claim,
@@ -693,6 +860,7 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
     Ok(PreparedMachinePortProxyBatch {
         proxies,
         bind_authority,
+        planned_rebind,
     })
 }
 
@@ -734,6 +902,7 @@ pub(crate) fn start_machine_port_proxies(
         port_leases,
         port_lease_coordinator,
         prepared,
+        MachinePortPreparationReleaseAuthority::Retain,
     )
     .map_err(|failure| {
         let (error, mut running, _bind_authority) = failure.into_parts();
@@ -751,7 +920,9 @@ pub(crate) fn start_machine_port_proxies_with_recovery(
     port_leases: &[PortLeaseRequest],
     port_lease_coordinator: &OciPortLeaseCoordinator,
     prepared: PreparedMachinePortProxyBatch,
+    release_authority: MachinePortPreparationReleaseAuthority<'_>,
 ) -> std::result::Result<RunningMachinePortProxyBatch, MachinePortProxyStartFailure> {
+    let planned_rebind = prepared.is_planned_rebind();
     if prepared.proxies.len() != port_bindings.len() {
         return Err(MachinePortProxyStartFailure {
             error: SandboxError::OperationFailed {
@@ -765,18 +936,60 @@ pub(crate) fn start_machine_port_proxies_with_recovery(
             bind_authority: prepared.bind_authority,
         });
     }
-    if let Err(error) = port_lease_coordinator.require_active_machine_bindings_with_lifetimes(
-        tenant_id,
-        sandbox_id,
-        port_bindings,
-        port_leases,
-        &prepared.bind_authority,
-    ) {
+    let active = match release_authority {
+        MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { plan_members, .. } => {
+            port_lease_coordinator.require_active_planned_machine_bindings_with_lifetimes(
+                tenant_id,
+                port_bindings,
+                port_leases,
+                plan_members,
+                &prepared.bind_authority,
+            )
+        }
+        MachinePortPreparationReleaseAuthority::Retain
+        | MachinePortPreparationReleaseAuthority::FreshLaunch(_) => port_lease_coordinator
+            .require_active_machine_bindings_with_lifetimes(
+                tenant_id,
+                sandbox_id,
+                port_bindings,
+                port_leases,
+                &prepared.bind_authority,
+            ),
+    };
+    if let Err(error) = active {
         let (proxies, bind_authority) = prepared.into_parts();
         drop(proxies);
-        let error = match port_lease_coordinator
-            .abandon_machine_bind_claims_with_lifetimes_without_effect(port_leases, &bind_authority)
+        let abandon = if planned_rebind
+            && let MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                plan_members, ..
+            } = release_authority
         {
+            port_lease_coordinator
+                .abandon_rebind_planned_machine_bind_claims_with_lifetimes_without_effect(
+                    port_bindings,
+                    plan_members,
+                    port_leases,
+                    &bind_authority,
+                )
+        } else if let MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+            reservation_claim,
+            plan_members,
+        } = release_authority
+        {
+            port_lease_coordinator
+                .abandon_planned_machine_bind_claims_with_lifetimes_without_effect(
+                    plan_members,
+                    port_leases,
+                    &bind_authority,
+                    reservation_claim,
+                )
+        } else {
+            port_lease_coordinator.abandon_machine_bind_claims_with_lifetimes_without_effect(
+                port_leases,
+                &bind_authority,
+            )
+        };
+        let error = match abandon {
             Ok(()) => error,
             Err(abandon_error) => SandboxError::OperationFailed {
                 message: format!(

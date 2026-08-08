@@ -1,5 +1,7 @@
 use super::*;
 
+pub(super) use super::provision_support::provision_krun;
+
 pub(super) fn smoke_backend_config(
     bundle_root: PathBuf,
     state_root: PathBuf,
@@ -241,11 +243,11 @@ pub(super) fn wait_for_status(
 ) -> nimbus_sandbox::SandboxHandle {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Some(handle) = block_on(backend.inspect(id))
+        if let Some(inspection) = block_on(backend.inspect(id))
             .expect("inspect should succeed")
-            .filter(|h| h.status == expected)
+            .filter(|inspection| inspection.handle.status == expected)
         {
-            return handle;
+            return inspection.handle;
         }
         thread::sleep(Duration::from_millis(250));
     }

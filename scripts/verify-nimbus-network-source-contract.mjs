@@ -934,12 +934,22 @@ function verifySideEffectFreeSandboxInspection() {
         "fn discard_assessment(inspection: SandboxInspection) -> SandboxInspection { SandboxInspection::provider_reported(inspection.handle) }",
       );
     } else if (mutation === "cleanup-retained-eviction") {
-      replaceIn(
+      const retirement = requiredSource(
         servicesSources,
-        "crates/nimbus-services/src/manager/handles.rs",
-        "&& inspection.cleanup == SandboxCleanupObservation::Finalized",
-        "",
+        "crates/nimbus-services/src/manager/retirement.rs",
       );
+      const retainedCleanup =
+        "inspection.cleanup != SandboxCleanupObservation::Finalized";
+      if (!retirement.source.includes(retainedCleanup)) {
+        errors.push(
+          "inspection self-test mutation target missing: retained cleanup evidence",
+        );
+      } else {
+        retirement.source = retirement.source.replaceAll(
+          retainedCleanup,
+          "false",
+        );
+      }
     } else if (mutation === "fabricated-forwarded-candidate") {
       replaceIn(
         cliSources,
@@ -1132,14 +1142,30 @@ function verifySideEffectFreeSandboxInspection() {
     cliSources,
     "crates/nimbus-cli/src/machine/api/service_workloads.rs",
   ).source;
+  const guestInspect = functionBody(guestFacade, "inspect");
+  const guestProjection = functionBody(guestFacade, "project_live_lifecycle");
   if (
-    !/\bbase\s*\.\s*with_provider_projection_evidence\s*\(/.test(guestFacade) ||
     !/\bMachineApiServiceFuture\s*<\s*'a\s*,\s*Option\s*<\s*SandboxInspection\s*>\s*>/.test(
       guestFacade,
+    ) ||
+    !/self\s*\.\s*bundle_materializer\s*\.\s*inspect\s*\(\s*id\s*\)\s*\.\s*await\s*\.\s*map_err\s*\(\s*sandbox_error_to_http_error\s*\)\s*\?/s.test(
+      guestFacade,
+    ) ||
+    !/self\s*\.\s*lifecycle_backend\s*\.\s*inspect\s*\(\s*execution_id\s*\)\s*\.\s*await/s.test(
+      guestFacade,
+    ) ||
+    !/Ok\s*\(\s*Some\s*\(\s*project_live_lifecycle\s*\(\s*base\s*,\s*observed_phase\s*,\s*&provider_evidence\s*,?\s*\)\s*\)\s*\)/s.test(
+      guestFacade,
+    ) ||
+    /\b(?:provider_reported|with_provider_projection(?:_evidence)?)\s*\(/.test(
+      guestInspect,
+    ) ||
+    !/base\s*\.\s*with_provider_projection_evidence\s*\(\s*handle\s*,\s*execution\s*,\s*restart\s*,\s*cleanup\s*,\s*provider_evidence\s*\)/s.test(
+      guestProjection,
     )
   ) {
     errors.push(
-      "guest-node inspection must preserve and extend typed evidence",
+      "guest-node inspection must pass through complete backend evidence without fabrication",
     );
   }
 
@@ -1147,63 +1173,66 @@ function verifySideEffectFreeSandboxInspection() {
     servicesSources,
     "crates/nimbus-services/src/manager/handles.rs",
   ).source;
-  const serviceActivation = requiredSource(
-    servicesSources,
-    "crates/nimbus-services/src/manager/activation.rs",
-  ).source;
-  const serviceDefinitions = requiredSource(
-    servicesSources,
-    "crates/nimbus-services/src/manager/definitions.rs",
-  ).source;
   const serviceSandboxes = requiredSource(
     servicesSources,
     "crates/nimbus-services/src/manager/sandboxes.rs",
+  ).source;
+  const serviceRegistry = requiredSource(
+    servicesSources,
+    "crates/nimbus-services/src/manager/registry.rs",
+  ).source;
+  const serviceRetirement = requiredSource(
+    servicesSources,
+    "crates/nimbus-services/src/manager/retirement.rs",
   ).source;
   const composeLifecycle = requiredSource(
     cliSources,
     "crates/nimbus-cli/src/compose/lifecycle.rs",
   ).source;
-  const computeServices = requiredSource(
+  const computeProjection = requiredSource(
     computeSources,
-    "crates/nimbus-compute/src/services.rs",
-  ).source;
-  const computeSandboxes = requiredSource(
-    computeSources,
-    "crates/nimbus-compute/src/sandboxes.rs",
+    "crates/nimbus-compute/src/workload_projection.rs",
   ).source;
   if (
-    !/\brefresh_inspection_async\b/.test(serviceHandles) ||
-    !/Result\s*<\s*Option\s*<\s*SandboxInspection\s*>/.test(serviceHandles) ||
-    !/\bvalidate_service_inspection_identity\s*\(/.test(serviceHandles) ||
-    !/\bpub\s+async\s+fn\s+inspect_service_lifecycle_for_context_async\s*\([^)]*\)\s*->\s*Result\s*<\s*Option\s*<\s*SandboxInspection\s*>\s*,\s*Error\s*>/s.test(
+    fs.existsSync("crates/nimbus-services/src/manager/activation.rs") ||
+    fs.existsSync("crates/nimbus-services/src/manager/service_start.rs") ||
+    !/\bproject_service_definition_execution_observation\s*\(/.test(
       serviceHandles,
     ) ||
-    !/\bpub\s+async\s+fn\s+inspect_sandbox_resource_async\s*\([^)]*\)\s*->\s*Result\s*<\s*Option\s*<\s*\(\s*SandboxResource\s*,\s*(?:nimbus_sandbox::)?SandboxInspection\s*\)\s*>\s*,\s*Error\s*>/s.test(
+    !/\bproject_sandbox_resource_execution_observation\s*\(/.test(
       serviceSandboxes,
     ) ||
-    /\bSandboxInspection\s*::\s*provider_reported\s*\(/.test(serviceHandles) ||
-    !/inspection\s*\.\s*cleanup\s*==\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
-      serviceHandles,
+    !/impl\s+RuntimeServiceRegistry\s+for\s+ServiceManager[\s\S]*?service_definition_observation_for_tenant\s*\(/.test(
+      serviceRegistry,
     ) ||
-    !/cleanup_is_final/.test(serviceActivation) ||
-    !/inspection\s*\.\s*cleanup\s*!=\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
-      serviceDefinitions,
+    /\b(?:start|activate|provision|inspect)_[A-Za-z0-9_]*\s*\(/.test(
+      serviceRegistry,
+    ) ||
+    !/\binspect_service_for_retirement\s*\(/.test(serviceRetirement) ||
+    !/Result\s*<\s*Option\s*<\s*SandboxInspection\s*>/.test(
+      serviceRetirement,
     ) ||
     !/inspection\s*\.\s*cleanup\s*!=\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
-      serviceSandboxes,
+      serviceRetirement,
     ) ||
     !/inspection\s*\.\s*cleanup\s*==\s*nimbus_sandbox\s*::\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
       composeLifecycle,
     ) ||
-    !/\binspect_service_lifecycle_for_context_async\s*\(/.test(
-      computeServices,
+    !/WorkloadProviderObservation\s*<\s*SandboxInspection\s*>/.test(
+      computeProjection,
     ) ||
-    !/\(resource\s*,\s*_inspection\)/.test(computeSandboxes) ||
-    !/\bvalidate_sandbox_inspection_identity\s*\(/.test(serviceSandboxes) ||
-    !/\bvalidate_compose_inspection_identity\s*\(/.test(composeLifecycle)
+    !/\bvalidate_execution_observation\s*\(\s*record\s*,\s*inspection\s*\)/.test(
+      computeProjection,
+    ) ||
+    !/fn\s+validate_execution_observation[\s\S]*?let\s+handle\s*=\s*inspection\.handle[\s\S]*?handle\.tenant_id[\s\S]*?handle\.id[\s\S]*?handle\.name[\s\S]*?handle\.backend/s.test(
+      computeProjection,
+    ) ||
+    /\bSandboxInspection\s*::\s*provider_reported\s*\(/.test(
+      servicesSources.map((entry) => entry.source).join("\n"),
+    )
   ) {
     errors.push(
-      "services, compute, and Compose must retain typed cleanup-pending inspection evidence",
+      "services must remain desired/projection owners while compute validates complete inspection and retirement retains cleanup evidence",
     );
   }
 
@@ -1222,9 +1251,8 @@ function verifySideEffectFreeSandboxInspection() {
     /\.\s*launch_manifest\s*\(/g,
     only(
       "crates/nimbus-sandbox/src/backends/container/runtime/direct_execution.rs",
-      "crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs",
     ),
-    2,
+    1,
   );
   const containerLaunchBody = functionBody(
     requiredSource(
@@ -1233,20 +1261,21 @@ function verifySideEffectFreeSandboxInspection() {
     ).source,
     "execute_start_after_preflight_with_cleanup",
   );
-  const krunLaunchBody = functionBody(
+  const krunProvisionBody = functionBody(
     requiredSource(
       sandboxSources,
-      "crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs",
+      "crates/nimbus-sandbox/src/backends/krun/vm/provision.rs",
     ).source,
-    "execute_start_after_preflight",
+    "activate_provision_workload",
   );
   if (
     [...containerLaunchBody.matchAll(/\.\s*launch_manifest\s*\(/g)].length !==
       1 ||
-    [...krunLaunchBody.matchAll(/\.\s*launch_manifest\s*\(/g)].length !== 1
+    !/spawn_creator_and_wait_for_runtime\s*\(/.test(krunProvisionBody) ||
+    !/persist_effect_barrier\s*\(/.test(krunProvisionBody)
   ) {
     errors.push(
-      "launch_manifest calls must remain inside the two explicit start command bodies",
+      "container and Krun activation must remain inside their explicit provider-owned command bodies",
     );
   }
 
@@ -1323,12 +1352,12 @@ function verifyComputeNetworkManagerInjection() {
         "",
       );
     } else if (mutation === "copied-capability-registry") {
-      const state = requiredSource(
+      replaceIn(
         computeSources,
         "crates/nimbus-compute/src/state.rs",
+        "let provider_reports = network_manager.capability_registry().clone();",
+        'let provider_reports = LocalNetworkManager::open("copied", todo!()).unwrap().capability_registry().clone();',
       );
-      state.source +=
-        "\nfn copied_registry(manager: &LocalNetworkManager) { let _ = manager.capability_registry().clone(); }\n";
     } else if (mutation === "hidden-prepared-manager") {
       replaceIn(
         cliSources,
@@ -1338,56 +1367,46 @@ function verifyComputeNetworkManagerInjection() {
       );
     } else if (mutation === "authority-only-start") {
       replaceIn(
-        cliSources,
-        "crates/nimbus-cli/src/start/boot.rs",
-        "ServeOptions::new(engine.clone(), prepared_network.manager())",
-        "ServeOptions::new(engine.clone(), prepared_network.authority())",
+        serverSources,
+        "crates/nimbus-server/src/workload_composition.rs",
+        "network_manager: Arc<LocalNetworkManager>,",
+        "network_authority: LocalNetworkAuthority,",
       );
     } else if (mutation === "authority-only-serve") {
       replaceIn(
         serverSources,
         "crates/nimbus-server/src/construction.rs",
-        "network_manager: Arc<LocalNetworkManager>",
-        "network_authority: LocalNetworkAuthority",
+        "let network_manager = composition.network_manager();",
+        "let network_authority = composition.network_manager().authority();",
       );
     } else if (mutation === "manager-less-router") {
       replaceIn(
         serverSources,
         "crates/nimbus-server/src/router.rs",
-        "pub fn new(engine: Arc<Engine>, network_manager: Arc<LocalNetworkManager>)",
-        "pub fn new(engine: Arc<Engine>)",
+        "pub fn managed(composition: ServerWorkloadComposition)",
+        "pub fn managed()",
       );
     } else if (mutation === "missing-router-build-handoff") {
       replaceIn(
         serverSources,
         "crates/nimbus-server/src/router.rs",
-        "network_manager,\n            deployment: DeploymentConfig {",
-        "network_manager: None,\n            deployment: DeploymentConfig {",
+        "AppStateConfig {\n            workload,",
+        "AppStateConfig {\n            workload: ServerWorkloadProfile::protocol_only(engine),",
       );
     } else if (mutation === "protocol-service-bypass") {
       replaceIn(
         serverSources,
-        "crates/nimbus-server/src/router.rs",
-        "self.require_network_manager(",
-        "bypassed_network_manager_guard(",
+        "crates/nimbus-server/src/state.rs",
+        "workload.authenticate_node_services(&node_services);",
+        "bypassed_workload_profile_authentication(&node_services);",
       );
     } else if (mutation === "protocol-machine-bypass") {
-      const router = requiredSource(
+      replaceIn(
         serverSources,
         "crates/nimbus-server/src/router.rs",
+        'self.require_managed("machine lifecycle manager");',
+        'bypassed_managed_profile_guard("machine lifecycle manager");',
       );
-      const target = "self.require_network_manager(";
-      const index = router.source.lastIndexOf(target);
-      if (index < 0) {
-        errors.push(
-          "compute-manager self-test mutation target missing: machine network-manager guard",
-        );
-      } else {
-        router.source =
-          router.source.slice(0, index) +
-          "bypassed_network_manager_guard(" +
-          router.source.slice(index + target.length);
-      }
     } else if (mutation === "parallel-compute-manager") {
       const state = requiredSource(
         computeSources,
@@ -1440,8 +1459,14 @@ function verifyComputeNetworkManagerInjection() {
       "ComputeState must return the retained manager Arc without reconstruction",
     );
   }
-  if (/capability_registry\s*\(\s*\)\s*\.\s*clone\s*\(/.test(computeState)) {
-    errors.push("ComputeState must not copy the manager capability registry");
+  if (
+    !/let\s+provider_reports\s*=\s*network_manager\.capability_registry\(\)\.clone\(\);[\s\S]*?WorkloadProvisioner\s*::\s*new\s*\([\s\S]*?provider_reports\s*,/s.test(
+      computeState,
+    )
+  ) {
+    errors.push(
+      "ComputeState must pass the exact immutable manager report snapshot to its sole provisioner",
+    );
   }
   if (
     !/ComputeWorkloadComposition\s*::\s*ProtocolOnly\s*=>\s*\{[\s\S]*?Self\s*::\s*require_protocol_only_node_services\s*\(\s*&node_services\s*\)/s.test(
@@ -1465,9 +1490,9 @@ function verifyComputeNetworkManagerInjection() {
       /\bpub\s*\(\s*crate\s*\)\s+fn\s+manager\s*\(\s*&self\s*\)\s*->\s*Arc\s*<\s*LocalNetworkManager\s*>/g,
     ),
   ];
-  if (managerAccessors.length < 2) {
+  if (managerAccessors.length !== 1) {
     errors.push(
-      "frozen and prepared CLI composition must expose the retained manager Arc",
+      `the frozen CLI composition must expose exactly one retained manager Arc, found ${managerAccessors.length}`,
     );
   }
   const startBoot = requiredSource(
@@ -1475,15 +1500,18 @@ function verifyComputeNetworkManagerInjection() {
     "crates/nimbus-cli/src/start/boot.rs",
   ).source;
   if (
-    !/ServeOptions\s*::\s*new\s*\(\s*engine\.clone\(\)\s*,\s*prepared_network\.manager\(\)\s*\)/s.test(
+    !/prepared_network\s*\.\s*prepare_server_workload_profile\s*\(\s*\)/.test(
       startBoot,
     ) ||
-    /ServeOptions\s*::\s*new\s*\([^;]*prepared_network\.authority\(\)/s.test(
+    !/prepared_server_profile\s*\.\s*complete\s*\(\s*engine\.clone\(\)\s*\)/s.test(
+      startBoot,
+    ) ||
+    /ServeOptions\s*::\s*(?:new|managed)\s*\([^;]*prepared_network\.authority\(\)/s.test(
       startBoot,
     )
   ) {
     errors.push(
-      "CLI start must inject the prepared manager rather than an authority-only view",
+      "CLI start must preserve the complete prepared workload profile into server composition",
     );
   }
 
@@ -1491,19 +1519,32 @@ function verifyComputeNetworkManagerInjection() {
     serverSources,
     "crates/nimbus-server/src/construction.rs",
   ).source;
+  const serverComposition = requiredSource(
+    serverSources,
+    "crates/nimbus-server/src/workload_composition.rs",
+  ).source;
   if (
-    !/\bpub\s+fn\s+new\s*\(\s*engine\s*:\s*Arc\s*<\s*Engine\s*>\s*,\s*network_manager\s*:\s*Arc\s*<\s*LocalNetworkManager\s*>\s*\)/s.test(
+    !/pub\s+struct\s+ServerWorkloadComposition\s*\{[^}]*network_manager\s*:\s*Arc\s*<\s*LocalNetworkManager\s*>/s.test(
+      serverComposition,
+    ) ||
+    !/pub\s+fn\s+new\s*<[^>]+>\s*\([\s\S]*?network_manager\s*:\s*Arc\s*<\s*LocalNetworkManager\s*>[\s\S]*?capability_selection\s*:\s*NetworkCapabilitySelection[\s\S]*?providers\s*:\s*ServerWorkloadProviders/s.test(
+      serverComposition,
+    ) ||
+    !/let\s+provider_reports\s*=\s*network_manager\.capability_registry\(\);[\s\S]*?provider_reports\s*\.\s*select_exact_sovereignty\s*\(\s*&capability_selection\s*,\s*&sovereignty\s*\)/s.test(
+      serverComposition,
+    ) ||
+    !/pub\s+fn\s+managed\s*\(\s*composition\s*:\s*ServerWorkloadComposition\s*\)[\s\S]*?let\s+network_manager\s*=\s*composition\.network_manager\(\);/s.test(
       serverConstruction,
     ) ||
     !/ServerListenerLeaseAuthority\s*::\s*new\s*\(\s*network_manager\.authority\(\)\s*\)/s.test(
       serverConstruction,
     ) ||
-    !/RouterOptions\s*::\s*new\s*\(\s*engine\s*,\s*network_manager\s*\)/s.test(
+    !/RouterOptions\s*::\s*managed\s*\(\s*composition\s*\)/s.test(
       serverConstruction,
     )
   ) {
     errors.push(
-      "ServeOptions must derive listeners and compute from one manager Arc",
+      "server workload composition must authenticate exact reports and derive listener and compute authority from one manager Arc",
     );
   }
 
@@ -1512,21 +1553,17 @@ function verifyComputeNetworkManagerInjection() {
     "crates/nimbus-server/src/router.rs",
   ).source;
   if (
-    !/\bnetwork_manager\s*:\s*Option\s*<\s*Arc\s*<\s*LocalNetworkManager\s*>\s*>/.test(
-      serverRouter,
-    ) ||
-    !/\bpub\s+fn\s+new\s*\(\s*engine\s*:\s*Arc\s*<\s*Engine\s*>\s*,\s*network_manager\s*:\s*Arc\s*<\s*LocalNetworkManager\s*>\s*\)/s.test(
+    !/\bworkload\s*:\s*ServerWorkloadProfile/.test(serverRouter) ||
+    !/\bpub\s+fn\s+managed\s*\(\s*composition\s*:\s*ServerWorkloadComposition\s*\)[\s\S]*?ServerWorkloadProfile\s*::\s*managed\s*\(\s*composition\s*\)/s.test(
       serverRouter,
     ) ||
     !/\bpub\s+fn\s+protocol_only\s*\(\s*engine\s*:\s*Arc\s*<\s*Engine\s*>\s*\)/s.test(
       serverRouter,
     ) ||
-    [...serverRouter.matchAll(/self\.require_network_manager\s*\(/g)].length !==
-      2 ||
-    !/fn\s+require_network_manager\s*\([^)]*\)\s*\{[^}]*network_manager\.is_some\(\)/s.test(
+    !/with_machine_lifecycle_manager[\s\S]*?self\.require_managed\s*\(/s.test(
       serverRouter,
     ) ||
-    !/fn\s+into_state[\s\S]*?AppState\s*::\s*from_config\s*\(\s*AppStateConfig\s*\{[\s\S]*?\bnetwork_manager\s*,/.test(
+    !/fn\s+into_state[\s\S]*?AppState\s*::\s*from_config\s*\(\s*AppStateConfig\s*\{[\s\S]*?\bworkload\s*,/.test(
       serverRouter,
     ) ||
     !/pub\s*\(\s*crate\s*\)\s+fn\s+build\s*\(\s*self\s*\)[\s\S]*?self\.into_state\(\)/.test(
@@ -1543,18 +1580,22 @@ function verifyComputeNetworkManagerInjection() {
     "crates/nimbus-server/src/state.rs",
   ).source;
   if (
-    !/\bnetwork_manager\s*:\s*Option\s*<\s*Arc\s*<\s*LocalNetworkManager\s*>\s*>/.test(
-      serverState,
-    ) ||
-    !/match\s+network_manager\s*\{[\s\S]*?Some\s*\(\s*network_manager\s*\)[\s\S]*?ComputeWorkloadComposition\s*::\s*Managed\s*\{[\s\S]*?network_manager[\s\S]*?saga_store[\s\S]*?None\s*=>\s*ComputeWorkloadComposition\s*::\s*ProtocolOnly/s.test(
+    !/\bworkload\s*:\s*ServerWorkloadProfile/.test(serverState) ||
+    !/workload\.authenticate_node_services\s*\(\s*&node_services\s*\);[\s\S]*?workload\.into_compute\s*\(\s*\)/s.test(
       serverState,
     ) ||
     !/ComputeStateConfig\s*\{[^}]*\bworkload_composition\s*,/s.test(
       serverState,
+    ) ||
+    !/enum\s+ServerWorkloadProfile[\s\S]*?ProtocolOnly[\s\S]*?Managed\s*\(\s*Box\s*<\s*ServerWorkloadComposition\s*>\s*\)/s.test(
+      serverComposition,
+    ) ||
+    !/fn\s+into_compute[\s\S]*?ProtocolOnly[\s\S]*?ComputeWorkloadComposition\s*::\s*ProtocolOnly[\s\S]*?Managed[\s\S]*?into_managed_compute/s.test(
+      serverComposition,
     )
   ) {
     errors.push(
-      "AppState must preserve the manager and saga store as explicit compute composition",
+      "AppState must authenticate and consume the explicit server profile into compute",
     );
   }
 
@@ -1649,18 +1690,21 @@ function verifyComputeNodeWorkloadCoordinator() {
     } else if (mutation === "direct-cli-reconcile") {
       requiredSource(
         cliSources,
-        "crates/nimbus-cli/src/node_workload_executor.rs",
-      ).source += "\nfn bypass(node_agent: NodeAgent<(), ()>) { node_agent.reconcile_assignment(todo!()); }\n";
+        "crates/nimbus-cli/src/workload_boot.rs",
+      ).source +=
+        "\nfn bypass(node_agent: NodeAgent<(), ()>) { node_agent.reconcile_assignment(todo!()); }\n";
     } else if (mutation === "direct-guest-reconcile") {
       requiredSource(
         cliSources,
         "crates/nimbus-cli/src/machine/api/service_workloads.rs",
-      ).source += "\nfn bypass(node_agent: NodeAgent<(), ()>) { node_agent.reconcile_assignments([]); }\n";
+      ).source +=
+        "\nfn bypass(node_agent: NodeAgent<(), ()>) { node_agent.reconcile_assignments([]); }\n";
     } else if (mutation === "direct-guest-inspect") {
       requiredSource(
         cliSources,
         "crates/nimbus-cli/src/machine/api/service_workloads.rs",
-      ).source += "\nfn bypass(node_agent: NodeAgent<(), ()>) { node_agent.reconciler().backend().inspect(todo!()); }\n";
+      ).source +=
+        "\nfn bypass(node_agent: NodeAgent<(), ()>) { node_agent.reconciler().backend().inspect(todo!()); }\n";
     } else if (mutation === "runner-provider-restart") {
       replaceIn(
         nodeSources,
@@ -1708,7 +1752,9 @@ function verifyComputeNodeWorkloadCoordinator() {
         "crates/nimbus-server/src/lib.rs",
       ).source += "\npub enum WorkloadSagaCoordinator { Duplicate }\n";
     } else if (mutation) {
-      errors.push(`unknown compute-node-coordinator self-test mutation: ${mutation}`);
+      errors.push(
+        `unknown compute-node-coordinator self-test mutation: ${mutation}`,
+      );
     }
   }
 
@@ -1768,7 +1814,9 @@ function verifyComputeNodeWorkloadCoordinator() {
     /\bstruct\s+(?!NodeWorkloadCoordinator\b)(?!WorkloadSagaCoordinator\b)[A-Za-z0-9_]*(?:NodeWorkload|Saga|Reconcile)[A-Za-z0-9_]*Coordinator\b/,
   );
   if (coordinatorDefinitions) {
-    errors.push(`second production workload coordinator exists: ${coordinatorDefinitions}`);
+    errors.push(
+      `second production workload coordinator exists: ${coordinatorDefinitions}`,
+    );
   }
   const sagaCoordinatorOwners = productionSources.flatMap((entry) =>
     [
@@ -1810,32 +1858,33 @@ function verifyComputeNodeWorkloadCoordinator() {
     );
   }
 
-  const nodeExecutor = requiredSource(
-    cliSources,
-    "crates/nimbus-cli/src/node_workload_executor.rs",
-  ).source;
   const guestService = requiredSource(
     cliSources,
     "crates/nimbus-cli/src/machine/api/service_workloads.rs",
   ).source;
   if (
-    !/NodeWorkloadCoordinator\s*::\s*new\s*\(/.test(nodeExecutor) ||
-    !/\.reconcile_assignment\s*\(/.test(nodeExecutor) ||
-    /\bNodeWorkloadReconciler\b|node_agent\s*\.\s*reconcile_assignments?\s*\(/.test(
-      nodeExecutor,
+    fs.existsSync("crates/nimbus-cli/src/node_workload_executor.rs") ||
+    firstMatch(
+      cliSources,
+      /\b(?:mod|use\s+crate::)\s*node_workload_executor\b|\bNodeAgent\b[\s\S]{0,200}?\.\s*reconcile_assignments?\s*\(/,
     )
   ) {
-    errors.push("standalone node executor must route reconciliation through compute");
+    errors.push(
+      "the deleted standalone node executor or a direct CLI NodeAgent reconciliation bypass remains",
+    );
   }
   if (
-    !/NodeWorkloadCoordinator/.test(guestService) ||
-    !/\.reconcile_assignments\s*\(/.test(guestService) ||
-    !/\.inspect_assignment\s*\(/.test(guestService) ||
-    /node_agent\s*\.\s*reconcile_assignments?\s*\(|\.reconciler\s*\(\s*\)\s*\.\s*backend\s*\(\s*\)/.test(
+    !/fn\s+provision_phase\s*<'a>[\s\S]*?Box\s*::\s*pin\s*\(\s*provision\s*::\s*dispatch\s*\(\s*self\s*,\s*command\s*,\s*forwarder_authority\s*\)\s*\)/s.test(
       guestService,
-    )
+    ) ||
+    /\b(?:WorkloadSaga(?:Store|Coordinator)?|NodeWorkloadCoordinator|NodeAgent|NodeWorkloadReconciler)\b|node_agent\s*\.\s*reconcile_assignments?\s*\(|\.reconciler\s*\(\s*\)\s*\.\s*backend\s*\(\s*\)/.test(
+      guestService,
+    ) ||
+    /fn\s+start\s*<'a>/.test(guestService)
   ) {
-    errors.push("guest Machine API must route reconcile and inspect through compute");
+    errors.push(
+      "guest Machine API must remain an exact provision-phase sink without admission, saga, retry, or coarse-start authority",
+    );
   }
 
   const hostLifecycle = requiredSource(
@@ -1854,7 +1903,9 @@ function verifyComputeNodeWorkloadCoordinator() {
     ) ||
     /HostRestartPolicy\s*::\s*(?:OnFailure|Always)/.test(runnerBody)
   ) {
-    errors.push("RunnerSpec must disable provider-owned tenant-workload restart");
+    errors.push(
+      "RunnerSpec must disable provider-owned tenant-workload restart",
+    );
   }
   if (
     !/restart_properties\.len\(\)\s*<=\s*1/.test(restartFenceBody) ||

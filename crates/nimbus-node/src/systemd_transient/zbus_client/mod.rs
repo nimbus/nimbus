@@ -25,6 +25,7 @@ use super::{
     SystemdTransientCapabilities, SystemdUnitStatus,
 };
 use crate::HostLifecycleFuture;
+use crate::host_lifecycle::HostActivationFence;
 
 mod error;
 mod properties;
@@ -295,10 +296,16 @@ impl SystemdDbusClient for ZbusSystemdClient {
                 .await
                 .map_err(map_zbus)?;
             let main_pid = service.main_pid().await.map_err(map_zbus)?;
+            let activation_fence = HostActivationFence::from_log_extra_fields(
+                &service.log_extra_fields().await.map_err(map_zbus)?,
+            )?;
             let mut status =
                 SystemdUnitStatus::new(execution_id, unit_name, active_state, sub_state)?;
             if main_pid != 0 {
                 status = status.with_main_pid(main_pid);
+            }
+            if let Some(activation_fence) = activation_fence {
+                status = status.with_activation_fence(activation_fence);
             }
             Ok(status)
         })

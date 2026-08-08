@@ -22,7 +22,19 @@ impl ContainerSandboxBackend {
         }
         match manifest.launch_reservation_claim.as_ref() {
             Some(reservation_claim) => {
-                match self.release_reserved_launch(manifest, reservation_claim) {
+                // A missing config proves placement never returned. The
+                // placement seam compensates an ambiguous reserve attempt with
+                // its exact caller-supplied attachment ID before returning an
+                // error, so only the claim-scoped port batch remains here.
+                // Once placement returns, `network_config` is installed before
+                // any later fallible reservation and drives exact compensation.
+                let release = if manifest.network_config.is_some() {
+                    self.release_reserved_launch(manifest, reservation_claim)
+                } else {
+                    self.port_lease_coordinator_for_manifest(manifest)?
+                        .release_never_bound_launch_claim(reservation_claim)
+                };
+                match release {
                     Ok(()) => reservation_released = true,
                     Err(error) => errors.push(error.to_string()),
                 }
@@ -62,7 +74,13 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         if let Some(reservation_claim) = manifest.launch_reservation_claim.as_ref() {
-            match self.release_reserved_launch(manifest, reservation_claim) {
+            let release = if manifest.network_config.is_some() {
+                self.release_reserved_launch(manifest, reservation_claim)
+            } else {
+                self.port_lease_coordinator_for_manifest(manifest)?
+                    .release_never_bound_launch_claim(reservation_claim)
+            };
+            match release {
                 Ok(()) => manifest.launch_reservation_claim = None,
                 Err(error) => errors.push(error.to_string()),
             }
@@ -129,18 +147,12 @@ impl ContainerSandboxBackend {
                         .cleanup_rootfs_session(&session.session_name)
                 }
                 ContainerLaunchArtifact::Rootfs(rootfs) => {
-                    if rootfs.rootfs_path.exists() {
-                        std::fs::remove_dir_all(&rootfs.rootfs_path).map_err(|error| {
-                            SandboxError::OperationFailed {
-                                message: format!(
-                                    "failed to remove materialized rootfs {}: {error}",
-                                    rootfs.rootfs_path.display()
-                                ),
-                            }
-                        })
-                    } else {
-                        Ok(())
-                    }
+                    OciImageMaterializer::for_tenant_sandbox(
+                        &manifest.runner_config.workload_state_root,
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                    )
+                    .remove_owned_artifact(&manifest.handle.id, rootfs)
                 }
             };
             if let Err(error) = cleanup {

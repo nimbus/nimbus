@@ -620,21 +620,29 @@ function validateStartAndKvOrdering() {
     const activatedPolicy = startBoot.indexOf(
       "let activated_listener = if command.systemd_socket_activation",
     );
-    const forwardedManager = startBoot.indexOf(
-      "if prepared_network.requires_forwarded_service_manager()",
+    const preparedProfile = startBoot.indexOf(
+      "let prepared_server_profile = prepared_network.prepare_server_workload_profile()?",
     );
+    const retainedAuthority = startBoot.indexOf(
+      "let prepared_network_authority = prepared_network.authority();",
+    );
+    const completedProfile = startBoot.indexOf(".complete(engine.clone())?");
     const machineLifecycle = startBoot.indexOf(
-      "let machine_lifecycle_manager =",
+      "crate::machine::host_machine_lifecycle_manager(prepared_network_authority)?",
     );
     if (
       activatedPolicy < 0 ||
-      forwardedManager < 0 ||
+      preparedProfile < 0 ||
+      retainedAuthority < 0 ||
+      completedProfile < 0 ||
       machineLifecycle < 0 ||
-      activatedPolicy > forwardedManager ||
+      retainedAuthority > preparedProfile ||
+      preparedProfile > completedProfile ||
+      completedProfile > activatedPolicy ||
       activatedPolicy > machineLifecycle
     ) {
       errors.push(
-        "activated systemd bind policy must precede forwarded-service and machine-lifecycle effects",
+        "effect-free workload-profile completion must precede activated bind policy, which must precede machine-lifecycle effects",
       );
     }
     const schedulerShutdown = startBoot.indexOf(

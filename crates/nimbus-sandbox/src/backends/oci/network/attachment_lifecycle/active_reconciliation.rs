@@ -297,10 +297,8 @@ impl OciAttachmentLifecycle<'_> {
         after_provider_setup(&assigned_ips)?;
         observer.checkpoint(AttachmentAttachPhase::BackendPublicationComplete)?;
         observer.checkpoint(AttachmentAttachPhase::LifetimeRegistered)?;
-        self.allocator.acquire(
-            context.tenant_id,
-            &default_network_attachment_id(context.sandbox_id),
-        )?;
+        self.allocator
+            .acquire(context.tenant_id, &context.config.attachment_id)?;
         observer.checkpoint(AttachmentAttachPhase::AttachmentConfirmed)?;
         Ok(assigned_ips)
     }

@@ -4,9 +4,10 @@
 //! filesystem, provider, mutable-authority, cleanup, release, or reuse
 //! capability.
 
-use nimbus_network::{
-    NetworkAttachmentReservationState, NetworkResourcePhase, NetworkResourceVersion,
-};
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
+use nimbus_network::{NetworkAttachmentReservationState, NetworkResourcePhase};
 
 use super::{
     OciAllocatorEvidenceSource, OciArtifactKind, OciArtifactObservation,
@@ -17,9 +18,8 @@ use crate::backends::capabilities::{
     SandboxAttachmentRegistrationKind, host_managed_attachment_provider_id,
 };
 use crate::backends::oci::network::attachment_lifecycle::{
-    AttachmentBackendKind, oci_attachment_plan, oci_attachment_provider_handle,
+    AttachmentBackendKind, oci_attachment_provider_handle_for_identity,
 };
-use crate::backends::oci::network::default_network_attachment_id;
 use crate::backends::oci::network::dto::NetavarkProviderOperation;
 use crate::backends::oci::network::ipam::OciIpamEvidenceLifecycle;
 use crate::backends::oci::network::provider_locator::OciAttachmentProviderKind;
@@ -191,6 +191,23 @@ pub(in crate::backends::oci::network) fn classify_oci_orphan_evidence<'a>(
     }
 }
 
+/// Override an unmatched manifest only when the container manifest owner has
+/// already authenticated it as the exact claim-only desired reservation
+/// published before any network authority or provider effect began.
+///
+/// The classifier deliberately receives only exact paths. It cannot parse
+/// container manifests, activate resources, or infer authority from a
+/// `SandboxId`; the manifest owner retains those responsibilities.
+pub(in crate::backends::oci::network) fn classify_retained_desired_manifest(
+    artifact: &OciArtifactObservation,
+    retained_desired_manifests: &BTreeSet<PathBuf>,
+) -> Option<OciOrphanDisposition> {
+    (artifact.kind() == OciArtifactKind::Manifest
+        && matches!(artifact.state(), OciArtifactObservationState::Present)
+        && retained_desired_manifests.contains(artifact.path()))
+    .then_some(OciOrphanDisposition::Adopt)
+}
+
 fn classify_candidate(candidate: &OciOrphanEvidenceCandidate) -> OciOrphanDisposition {
     let Some(desired) = candidate.desired() else {
         return classify_reserved_pre_effect_without_desired(candidate);
@@ -221,23 +238,7 @@ fn classify_candidate(candidate: &OciOrphanEvidenceCandidate) -> OciOrphanDispos
     {
         return quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence);
     }
-    if default_network_attachment_id(provider.sandbox_id()) != *candidate.attachment_id() {
-        return quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence);
-    }
     let backend = attachment_backend_kind(provider.provider_kind());
-    let expected_plan = oci_attachment_plan(candidate.tenant_id(), provider.sandbox_id(), backend);
-    let expected_version = NetworkResourceVersion::for_plan(
-        &expected_plan,
-        candidate.attachment_id().clone().into(),
-        association.lease_epoch(),
-    );
-    if desired
-        .resource()
-        .authenticate_version(&expected_version)
-        .is_err()
-    {
-        return quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence);
-    }
 
     if candidate
         .allocator()
@@ -265,14 +266,16 @@ fn classify_candidate(candidate: &OciOrphanEvidenceCandidate) -> OciOrphanDispos
     ) {
         return quarantine(OciOrphanQuarantineReason::DesiredPhaseNotAdoptable);
     }
-    let expected_provider_handle =
-        match oci_attachment_provider_handle(candidate.tenant_id(), provider.sandbox_id(), backend)
-        {
-            Ok(provider_handle) => provider_handle,
-            Err(_) => {
-                return quarantine(OciOrphanQuarantineReason::DesiredProviderHandleMismatch);
-            }
-        };
+    let expected_provider_handle = match oci_attachment_provider_handle_for_identity(
+        desired.resource().version().plan_id(),
+        candidate.attachment_id(),
+        backend,
+    ) {
+        Ok(provider_handle) => provider_handle,
+        Err(_) => {
+            return quarantine(OciOrphanQuarantineReason::DesiredProviderHandleMismatch);
+        }
+    };
     match desired.resource().provider_handle() {
         Some(provider_handle) if provider_handle != &expected_provider_handle => {
             return quarantine(OciOrphanQuarantineReason::DesiredProviderHandleMismatch);
@@ -401,7 +404,6 @@ fn classify_reserved_pre_effect_without_desired(
     }
     if provider.tenant_id() != candidate.tenant_id()
         || provider.attachment_id() != candidate.attachment_id()
-        || default_network_attachment_id(provider.sandbox_id()) != *candidate.attachment_id()
     {
         return quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence);
     }

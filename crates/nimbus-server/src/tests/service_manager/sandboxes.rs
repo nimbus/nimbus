@@ -6,16 +6,16 @@ async fn principal_class_sandbox_route_policy_allows_operator_cross_tenant_and_a
     let (local_server_security, token) = local_server_security(temp.path());
     let audit_log_path = local_server_security.paths().audit_log_path.clone();
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_local_server_security(local_server_security)
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_local_server_security(local_server_security)
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -46,16 +46,16 @@ async fn sandbox_resource_routes_are_id_addressed_and_do_not_publish_services() 
     let temp = tempfile::tempdir().expect("tempdir should create");
     let (local_server_security, token) = local_server_security(temp.path());
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_local_server_security(local_server_security)
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_local_server_security(local_server_security)
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -141,16 +141,16 @@ async fn sandbox_resource_routes_are_id_addressed_and_do_not_publish_services() 
 async fn sandbox_routes_enforce_owner_authority_and_backend_admission() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -162,7 +162,14 @@ async fn sandbox_routes_enforce_owner_authority_and_backend_admission() {
         .send()
         .await
         .expect("service-owned sandbox create should send");
-    assert_eq!(service_owned.status(), StatusCode::BAD_REQUEST);
+    if service_owned.status() != StatusCode::BAD_REQUEST {
+        let status = service_owned.status();
+        let body = service_owned
+            .text()
+            .await
+            .expect("service-owned sandbox rejection should read");
+        panic!("service-owned sandbox create returned {status}: {body}");
+    }
     assert_eq!(backend.image_starts.load(Ordering::SeqCst), 0);
 
     let mut wrong_backend_body = sandbox_create_body("tenanta", "task");
@@ -175,7 +182,14 @@ async fn sandbox_routes_enforce_owner_authority_and_backend_admission() {
         .send()
         .await
         .expect("wrong-backend sandbox create should send");
-    assert_eq!(wrong_backend.status(), StatusCode::BAD_REQUEST);
+    if wrong_backend.status() != StatusCode::BAD_REQUEST {
+        let status = wrong_backend.status();
+        let body = wrong_backend
+            .text()
+            .await
+            .expect("wrong-backend sandbox rejection should read");
+        panic!("wrong-backend sandbox create returned {status}: {body}");
+    }
     assert_eq!(
         backend.image_starts.load(Ordering::SeqCst),
         0,
@@ -263,16 +277,16 @@ async fn sandbox_routes_enforce_owner_authority_and_backend_admission() {
 async fn sandbox_routes_reject_public_host_path_roots_before_launch() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -280,10 +294,13 @@ async fn sandbox_routes_reject_public_host_path_roots_before_launch() {
         .client()
         .post(server.http_url("/api/tenants/tenanta/sandboxes"))
         .bearer_auth("tenant-a-sandbox")
-        .json(&sandbox_create_body_with_spec(sandbox_rootfs_spec_body(
-            "tenanta",
-            json!({ "kind": "standalone", "displayName": "task" }),
-        )))
+        .json(&sandbox_create_body_with_spec(
+            "sandbox-tenanta-task",
+            sandbox_rootfs_spec_body(
+                "tenanta",
+                json!({ "kind": "standalone", "displayName": "task" }),
+            ),
+        ))
         .send()
         .await
         .expect("rootfs sandbox create should send");
@@ -297,10 +314,13 @@ async fn sandbox_routes_reject_public_host_path_roots_before_launch() {
         .client()
         .post(server.http_url("/api/tenants/tenanta/sandboxes"))
         .bearer_auth("tenant-a-sandbox")
-        .json(&sandbox_create_body_with_spec(sandbox_build_spec_body(
-            "tenanta",
-            json!({ "kind": "standalone", "displayName": "task" }),
-        )))
+        .json(&sandbox_create_body_with_spec(
+            "sandbox-tenanta-task",
+            sandbox_build_spec_body(
+                "tenanta",
+                json!({ "kind": "standalone", "displayName": "task" }),
+            ),
+        ))
         .send()
         .await
         .expect("build sandbox create should send");
@@ -320,36 +340,35 @@ async fn sandbox_routes_reject_public_host_path_roots_before_launch() {
 async fn sandbox_routes_mask_cross_tenant_sandbox_ids_as_not_found() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let manager = service_manager(backend.clone());
-    let tenant_id = TenantId::new("tenanta").expect("tenant id should parse");
-    let sandbox = manager
-        .create_sandbox_resource_for_context_async(
-            &crate::tenant::TenantIsolationContext::system(
-                tenant_id.clone(),
-                "sandbox.resource.create",
-            ),
-            "worker",
-            standalone_sandbox_spec(&tenant_id, "task"),
-            BTreeMap::new(),
-        )
-        .await
-        .expect("tenant A sandbox should create");
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(manager)
+        managed_router_config(engine.clone(), manager, backend.clone())
             .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
             .without_deploy_admin_token()
             .build(),
     )
     .await;
+    let create = server
+        .client()
+        .post(server.http_url("/api/tenants/tenanta/sandboxes"))
+        .bearer_auth("tenant-a-sandbox")
+        .json(&sandbox_create_body("tenanta", "task"))
+        .send()
+        .await
+        .expect("tenant A sandbox create should send");
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let sandbox_id = create
+        .json::<Value>()
+        .await
+        .expect("tenant A sandbox create should parse")["metadata"]["id"]
+        .as_str()
+        .expect("sandbox id should be a string")
+        .to_owned();
 
     let cross_tenant_get = server
         .client()
-        .get(server.http_url(&format!("/api/tenants/tenantb/sandboxes/{}", sandbox.id)))
+        .get(server.http_url(&format!("/api/tenants/tenantb/sandboxes/{sandbox_id}")))
         .bearer_auth("tenant-b-sandbox")
         .send()
         .await
@@ -358,10 +377,7 @@ async fn sandbox_routes_mask_cross_tenant_sandbox_ids_as_not_found() {
 
     let cross_tenant_stop = server
         .client()
-        .post(server.http_url(&format!(
-            "/api/tenants/tenantb/sandboxes/{}/stop",
-            sandbox.id
-        )))
+        .post(server.http_url(&format!("/api/tenants/tenantb/sandboxes/{sandbox_id}/stop")))
         .bearer_auth("tenant-b-sandbox")
         .send()
         .await

@@ -18,6 +18,7 @@ pub(crate) fn provision_attempt(
         desired_digest: intent.desired_digest(),
         required_node: intent.admission().assigned_node().clone(),
         source_digest: intent.source().source_digest(),
+        execution_provider_id: intent.source().execution_provider_id().clone(),
         network_plan_digest: intent.network().digest(),
         selection_evidence: intent
             .network()
@@ -38,13 +39,18 @@ pub(crate) fn persist_attempt(
     record: &WorkloadSagaRecord,
     attempt: WorkloadProvisionAttempt,
 ) -> WorkloadSagaRecord {
-    record
-        .transition_provision_disposition(
-            record.phase(),
-            record.phase_detail().clone(),
-            WorkloadProvisionDisposition::AttemptPending(attempt),
-        )
-        .expect("fixture attempt should persist before completion")
+    let provider_target = WorkloadProvisionProviderTarget::for_attempt(&attempt)
+        .expect("fixture provider target should validate")
+        .expect("effectful fixture attempt requires a provider target");
+    if attempt.step() == WorkloadProvisionStep::ActivateWorkload {
+        record
+            .dispatch_to_activation(attempt, provider_target)
+            .expect("fixture activation claim should follow prerequisite inspection")
+    } else {
+        record
+            .ready_to_initial_dispatch(attempt, provider_target)
+            .expect("fixture attempt should persist before completion")
+    }
 }
 
 pub(crate) fn provision_candidates(
@@ -58,11 +64,7 @@ pub(crate) fn provision_candidates(
     {
         return vec![
             record
-                .transition_provision_disposition(
-                    target_phase,
-                    detail,
-                    WorkloadProvisionDisposition::Ready,
-                )
+                .advance(target_phase, detail, None)
                 .expect("withheld publication should observe without an effect"),
         ];
     }
@@ -102,11 +104,7 @@ pub(crate) fn provision_candidates(
         );
         let activation_pending = persist_attempt(&inspection_pending, activation);
         let completed = activation_pending
-            .transition_provision_disposition(
-                target_phase,
-                detail,
-                WorkloadProvisionDisposition::Ready,
-            )
+            .dispatch_to_success(target_phase, detail)
             .expect("confirmed activation fixture should complete");
         return vec![inspection_pending, activation_pending, completed];
     }
@@ -153,9 +151,19 @@ pub(crate) fn provision_candidates(
         edge => panic!("unsupported confirmed provision fixture edge {edge:?}"),
     };
     let attempt = provision_attempt(record, step, target_phase, subjects, None);
+    if WorkloadProvisionProviderTarget::for_attempt(&attempt)
+        .expect("fixture provider target should validate")
+        .is_none()
+    {
+        return vec![
+            record
+                .record_resource_free_network_step(step, target_phase, detail)
+                .expect("resource-free network fixture should complete without a command"),
+        ];
+    }
     let pending = persist_attempt(record, attempt);
     let completed = pending
-        .transition_provision_disposition(target_phase, detail, WorkloadProvisionDisposition::Ready)
+        .dispatch_to_success(target_phase, detail)
         .expect("confirmed provision fixture should complete");
     vec![pending, completed]
 }

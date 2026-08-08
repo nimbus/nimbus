@@ -16,42 +16,32 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use nimbus::{
-    Error, SandboxBackendKind, SandboxError, SandboxOciImageSource, SandboxRootSpec, SandboxSpec,
-    SandboxStatus, TenantId,
-};
-use nimbus_node::{NodeAgent, SystemdTransientUnitBackend};
-#[cfg(test)]
-use nimbus_sandbox::backends::container::ContainerSandboxBackend;
+use nimbus::{Error, SandboxBackendKind, SandboxError, SandboxStatus, TenantId};
+use nimbus_node::SystemdTransientUnitBackend;
 use nimbus_sandbox::backends::container::{
     ContainerSandboxBackendConfig, ContainerSandboxStateView, OciMachinePortForwarderConfig,
 };
 use nimbus_workloads::NodeIdentity;
 use serde::Deserialize;
 
-use crate::node_workload_executor::JsonlStatusWriter;
-
 use super::{MachineApiCommand, MachineRootLayout};
 use nimbus_machine::MachineForwarderAuthority;
 use nimbus_machine::api::{
     MACHINE_API_BOOTC_ROLLBACK_OPERATION, MACHINE_API_BOOTC_STATUS_OPERATION,
     MACHINE_API_BOOTC_SWITCH_OPERATION, MACHINE_API_BOOTC_UPGRADE_OPERATION,
-    MACHINE_API_BUILD_START_OPERATION, MACHINE_API_IMAGE_START_OPERATION,
     MACHINE_API_INSPECT_CURRENT_OPERATION, MACHINE_API_INSPECT_OPERATION,
     MACHINE_API_LIST_OPERATION, MACHINE_API_LOGS_OPERATION, MACHINE_API_PS_OPERATION,
-    MACHINE_API_ROLE, MACHINE_API_STOP_OPERATION, MachineApiBinaryStatus,
-    MachineApiBootcOperationResponse, MachineApiBootcRollbackRequest,
+    MACHINE_API_ROLE, MACHINE_API_STOP_OPERATION, MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION,
+    MachineApiBinaryStatus, MachineApiBootcOperationResponse, MachineApiBootcRollbackRequest,
     MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest, MachineApiBootcUpgradeRequest,
     MachineApiCapabilityResponse, MachineApiErrorResponse, MachineApiHealthResponse,
     MachineApiOperationStatus, MachineApiServiceExecutionDriver, MachineApiServiceExecutionMode,
     MachineApiServiceProcessRow, MachineApiServiceProcessSnapshot,
-    MachineApiServiceProcessSnapshotResponse, MachineApiServiceSandboxBuildStartRequest,
-    MachineApiServiceSandboxDetails, MachineApiServiceSandboxImageStartRequest,
+    MachineApiServiceProcessSnapshotResponse, MachineApiServiceSandboxDetails,
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLogPaths,
-    MachineApiServiceSandboxLookupResponse, MachineApiServiceSandboxStartResponse,
-    MachineApiServiceSandboxStopRequest, MachineApiServiceSandboxStopResponse,
-    MachineApiServiceSandboxSummary, PROTOCOL_VERSION,
+    MachineApiServiceSandboxLookupResponse, MachineApiServiceSandboxStopRequest,
+    MachineApiServiceSandboxStopResponse, MachineApiServiceSandboxSummary, PROTOCOL_VERSION,
 };
 
 mod binaries;
@@ -78,8 +68,8 @@ use self::routes::machine_api_router;
 pub(crate) use self::service_workloads::{GuestNodeWorkloadService, MachineApiNodeWorkloadFacade};
 #[cfg(test)]
 pub(crate) use self::service_workloads::{
-    machine_api_node_workload_facade_from_container_backend,
     machine_api_node_workload_facade_from_sandbox_backend,
+    machine_api_node_workload_facade_from_sandbox_backend_with_absence,
 };
 
 const MACHINE_API_OPERATION_BLOCKER: &str =
@@ -146,7 +136,6 @@ pub(super) async fn run_machine_api_command(
         GuestMachineNetworkComposition::claim(&control_data_dir, container_config)?;
     let (listener, listen_mode) = resolve_machine_api_listener(&command)?;
     let bundle_materializer = network_composition.backend();
-    let status_writer = JsonlStatusWriter::new(control_data_dir.join("node-agent/status.jsonl"));
     #[cfg(target_os = "linux")]
     let node_lifecycle_backend =
         SystemdTransientUnitBackend::linux_systemd_default()
@@ -160,9 +149,9 @@ pub(super) async fn run_machine_api_command(
     let node_lifecycle_backend = SystemdTransientUnitBackend::unavailable(
         "machine API service workloads require a Linux guest systemd manager",
     );
-    let node_agent = NodeAgent::new(node_id, node_lifecycle_backend, status_writer);
     let service_workloads = Arc::new(GuestNodeWorkloadService::new(
-        node_agent,
+        node_id,
+        node_lifecycle_backend,
         bundle_materializer,
         container_root.join("state"),
     ));
@@ -221,83 +210,6 @@ fn require_forwarder_authority(
             status: StatusCode::CONFLICT,
             message: error.to_string(),
         })
-}
-
-fn require_image_start_root(spec: &SandboxSpec) -> Result<(), MachineApiHttpError> {
-    require_service_sandbox_start_spec(MACHINE_API_IMAGE_START_OPERATION, spec)?;
-    if matches!(
-        &spec.root,
-        SandboxRootSpec::OciImage(image)
-            if matches!(&image.source, SandboxOciImageSource::Reference(_))
-    ) {
-        return Ok(());
-    }
-
-    Err(machine_api_start_root_error(
-        MACHINE_API_IMAGE_START_OPERATION,
-        "OCI image reference",
-        spec,
-    ))
-}
-
-fn require_build_start_root(spec: &SandboxSpec) -> Result<(), MachineApiHttpError> {
-    require_service_sandbox_start_spec(MACHINE_API_BUILD_START_OPERATION, spec)?;
-    if matches!(
-        &spec.root,
-        SandboxRootSpec::OciImage(image)
-            if matches!(&image.source, SandboxOciImageSource::Build(_))
-    ) {
-        return Ok(());
-    }
-
-    Err(machine_api_start_root_error(
-        MACHINE_API_BUILD_START_OPERATION,
-        "OCI image build",
-        spec,
-    ))
-}
-
-fn require_service_sandbox_start_spec(
-    operation: &str,
-    spec: &SandboxSpec,
-) -> Result<(), MachineApiHttpError> {
-    if spec.service_name().is_some() {
-        return Ok(());
-    }
-
-    Err(MachineApiHttpError {
-        status: StatusCode::BAD_REQUEST,
-        message: format!(
-            "{operation} requires service-owned sandbox metadata; received {:?} for sandbox {}",
-            spec.owner,
-            spec.display_name()
-        ),
-    })
-}
-
-fn machine_api_start_root_error(
-    operation: &str,
-    expected_root: &str,
-    spec: &SandboxSpec,
-) -> MachineApiHttpError {
-    MachineApiHttpError {
-        status: StatusCode::BAD_REQUEST,
-        message: format!(
-            "{operation} requires {expected_root}; received {} for sandbox {}",
-            sandbox_root_kind(&spec.root),
-            spec.display_name()
-        ),
-    }
-}
-
-fn sandbox_root_kind(root: &SandboxRootSpec) -> &'static str {
-    match root {
-        SandboxRootSpec::Rootfs(_) => "rootfs",
-        SandboxRootSpec::OciImage(image) => match &image.source {
-            SandboxOciImageSource::Reference(_) => "OCI image reference",
-            SandboxOciImageSource::Build(_) => "OCI image build",
-        },
-    }
 }
 
 fn sandbox_error_to_http_error(error: SandboxError) -> MachineApiHttpError {

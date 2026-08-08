@@ -9,7 +9,6 @@ use nimbus_compute::config::deployment::DeploymentConfig;
 use nimbus_compute::config::node_services::NodeServicesConfig;
 use nimbus_compute::config::runtime::RuntimeGovernorConfig;
 use nimbus_engine::Engine;
-use nimbus_network::LocalNetworkManager;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostPressureSource,
     RuntimeHostResourceBudget, RuntimeLimits, RuntimeScalingPlanSet,
@@ -34,9 +33,12 @@ use crate::local_server::{
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::state::{AppState, AppStateConfig};
 use crate::tenant::TenantIsolationMode;
+use crate::workload_composition::{ServerWorkloadComposition, ServerWorkloadProfile};
 use crate::{http, ws};
 use nimbus_auth::ApplicationAuthVerifier;
-use nimbus_services::{ServiceInstanceCatalog, ServiceManager};
+use nimbus_services::ServiceInstanceCatalog;
+#[cfg(test)]
+use nimbus_services::ServiceManager;
 
 mod cors;
 
@@ -48,8 +50,7 @@ pub(crate) use cors::{is_allowed_local_cors_origin, is_configured_cors_origin};
 
 /// Canonical public option bundle for building a Nimbus HTTP/WebSocket router.
 pub struct RouterOptions {
-    engine: Arc<Engine>,
-    network_manager: Option<Arc<LocalNetworkManager>>,
+    workload: ServerWorkloadProfile,
     deployment: DeploymentConfig,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -58,11 +59,17 @@ pub struct RouterOptions {
 }
 
 impl RouterOptions {
-    /// Build a workload-capable router under one process network manager.
-    pub fn new(engine: Arc<Engine>, network_manager: Arc<LocalNetworkManager>) -> Self {
-        let mut options = Self::protocol_only(engine);
-        options.network_manager = Some(network_manager);
-        options
+    /// Build a workload-capable router from one complete validated realm.
+    pub fn managed(composition: ServerWorkloadComposition) -> Self {
+        let service_manager = composition.service_manager();
+        Self {
+            workload: ServerWorkloadProfile::managed(composition),
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: NodeServicesConfig::default().with_service_manager(service_manager),
+            transport: TransportConfig::default(),
+            runtime: RuntimeGovernorConfig::default(),
+        }
     }
 
     /// Build an explicitly protocol-only router with no workload lifecycle.
@@ -70,8 +77,7 @@ impl RouterOptions {
     /// This profile cannot install a service or machine lifecycle manager.
     pub fn protocol_only(engine: Arc<Engine>) -> Self {
         Self {
-            engine,
-            network_manager: None,
+            workload: ServerWorkloadProfile::protocol_only(engine),
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: NodeServicesConfig::default(),
@@ -158,17 +164,11 @@ impl RouterOptions {
         self
     }
 
-    pub fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
-        self.require_network_manager("service manager");
-        self.node_services = self.node_services.with_service_manager(service_manager);
-        self
-    }
-
     pub fn with_machine_lifecycle_manager(
         mut self,
         machine_lifecycle_manager: Arc<dyn MachineLifecycleManager>,
     ) -> Self {
-        self.require_network_manager("machine lifecycle manager");
+        self.require_managed("machine lifecycle manager");
         self.node_services = self
             .node_services
             .with_machine_lifecycle_manager(machine_lifecycle_manager);
@@ -248,7 +248,7 @@ impl RouterOptions {
     }
 
     pub(crate) fn engine(&self) -> Arc<Engine> {
-        Arc::clone(&self.engine)
+        self.workload.engine()
     }
 
     pub(crate) fn has_system_convex_registry(&self) -> bool {
@@ -256,8 +256,7 @@ impl RouterOptions {
     }
 
     pub(crate) fn into_build_config(self) -> RouterBuildConfig {
-        let mut config = RouterBuildConfig::core(self.engine);
-        config.network_manager = self.network_manager;
+        let mut config = RouterBuildConfig::from_workload(self.workload);
         config.deployment = self.deployment;
         config
             .control_plane
@@ -268,18 +267,17 @@ impl RouterOptions {
         config
     }
 
-    fn require_network_manager(&self, component: &str) {
+    fn require_managed(&self, component: &str) {
         assert!(
-            self.network_manager.is_some(),
-            "{component} requires RouterOptions::new with the shared LocalNetworkManager; \
+            self.workload.is_managed(),
+            "{component} requires RouterOptions::managed with a complete workload composition; \
              protocol-only construction cannot own workload lifecycle"
         );
     }
 }
 
 pub(crate) struct RouterBuildConfig {
-    engine: Arc<Engine>,
-    network_manager: Option<Arc<LocalNetworkManager>>,
+    workload: ServerWorkloadProfile,
     deployment: DeploymentConfig,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -293,39 +291,15 @@ struct PreparedRouterState {
     cors_allowed_origins: Vec<String>,
 }
 
-#[cfg(test)]
-struct TestNetworkManagerFixture {
-    _root: tempfile::TempDir,
-    manager: Arc<LocalNetworkManager>,
-}
-
-#[cfg(test)]
-pub(crate) fn shared_test_network_manager() -> Arc<LocalNetworkManager> {
-    static FIXTURE: std::sync::OnceLock<TestNetworkManagerFixture> = std::sync::OnceLock::new();
-    Arc::clone(
-        &FIXTURE
-            .get_or_init(|| {
-                let root = tempfile::tempdir().expect("shared network fixture root should build");
-                let manager = LocalNetworkManager::open(
-                    root.path().join("network"),
-                    nimbus_network::NetworkCapabilityRegistry::new([])
-                        .expect("empty test registry should validate"),
-                )
-                .expect("shared test network manager should build");
-                TestNetworkManagerFixture {
-                    _root: root,
-                    manager,
-                }
-            })
-            .manager,
-    )
-}
-
 impl RouterBuildConfig {
+    #[cfg(test)]
     pub(crate) fn core(engine: Arc<Engine>) -> Self {
+        Self::from_workload(ServerWorkloadProfile::protocol_only(engine))
+    }
+
+    fn from_workload(workload: ServerWorkloadProfile) -> Self {
         Self {
-            engine,
-            network_manager: None,
+            workload,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::build_default(),
             node_services: NodeServicesConfig::default(),
@@ -481,20 +455,10 @@ impl RouterBuildConfig {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
-        self.network_manager
-            .get_or_insert_with(shared_test_network_manager);
-        self.node_services = self.node_services.with_service_manager(service_manager);
-        self
-    }
-
-    #[cfg(test)]
     pub(crate) fn with_machine_lifecycle_manager(
         mut self,
         machine_lifecycle_manager: Arc<dyn MachineLifecycleManager>,
     ) -> Self {
-        self.network_manager
-            .get_or_insert_with(shared_test_network_manager);
         self.node_services = self
             .node_services
             .with_machine_lifecycle_manager(machine_lifecycle_manager);
@@ -502,16 +466,16 @@ impl RouterBuildConfig {
     }
 
     pub(crate) async fn prepare_system_tenant(&self) -> nimbus_core::Result<()> {
-        nimbus_system::prepare_system_tenant_async(&self.engine, self.transport.listen_addr())
-            .await?;
-        if self.network_manager.is_some() {
-            crate::workload_saga_store::prepare_for_server(&self.engine).await?;
+        let engine = self.workload.engine();
+        nimbus_system::prepare_system_tenant_async(&engine, self.transport.listen_addr()).await?;
+        if self.workload.is_managed() {
+            crate::workload_saga_store::prepare_for_server(&engine).await?;
         }
         if let Some(registry) = self.deployment.convex_registry.as_ref() {
             let summary = registry.deploy_summary();
             let input =
                 nimbus_compute::deploy::convex_system_deployment_record_input(&summary, "startup");
-            nimbus_system::record_deployment_state_async(&self.engine, &input).await?;
+            nimbus_system::record_deployment_state_async(&engine, &input).await?;
         }
         let Some(listen_addr) = self.transport.listen_addr() else {
             return Ok(());
@@ -521,7 +485,7 @@ impl RouterBuildConfig {
             || self.deployment.system_convex_registry.is_some()
         {
             nimbus_system::record_listener_state_async(
-                &self.engine,
+                &engine,
                 "convex",
                 "websocket",
                 &listen_addr.to_string(),
@@ -533,7 +497,7 @@ impl RouterBuildConfig {
         }
         if self.deployment.firebase_config.is_some() {
             nimbus_system::record_listener_state_async(
-                &self.engine,
+                &engine,
                 "firebase",
                 "http+websocket",
                 &listen_addr.to_string(),
@@ -545,7 +509,7 @@ impl RouterBuildConfig {
         }
         if self.deployment.cloud_functions_registry.is_some() {
             nimbus_system::record_listener_state_async(
-                &self.engine,
+                &engine,
                 "cloud-functions",
                 "http",
                 &listen_addr.to_string(),
@@ -557,7 +521,7 @@ impl RouterBuildConfig {
         }
         if self.deployment.cloudflare_config.is_some() {
             nimbus_system::record_listener_state_async(
-                &self.engine,
+                &engine,
                 "cloudflare",
                 "http",
                 &listen_addr.to_string(),
@@ -572,14 +536,14 @@ impl RouterBuildConfig {
 
     fn into_state(self) -> PreparedRouterState {
         let RouterBuildConfig {
-            engine,
-            network_manager,
+            workload,
             deployment,
             control_plane,
             node_services,
             transport,
             runtime,
         } = self;
+        let engine = workload.engine();
         let system_state_engine = engine.clone();
         nimbus_system::install_table_projection_observer(&engine);
         let node_services = node_services.resolve(system_state_engine);
@@ -601,8 +565,7 @@ impl RouterBuildConfig {
             cloud_functions_registry.is_some() || control_plane.deploy_admin_token().is_some();
         let cors_allowed_origins = transport.cors_allowed_origins().to_owned();
         let state = Arc::new(AppState::from_config(AppStateConfig {
-            engine,
-            network_manager,
+            workload,
             deployment: DeploymentConfig {
                 convex_registry,
                 system_convex_registry,
@@ -895,10 +858,6 @@ fn build_service_control_router() -> Router<Arc<AppState>> {
             "/api/tenants/{tenant_id}/services/{service_name}/stop",
             post(http::stop_service),
         )
-        .route(
-            "/api/tenants/{tenant_id}/services/{service_name}/restart",
-            post(http::restart_service),
-        )
 }
 
 fn build_deploy_router() -> Router<Arc<AppState>> {
@@ -1008,8 +967,7 @@ mod network_manager_tests {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     use nimbus_sandbox::{
-        SandboxBackend, SandboxBackendKind, SandboxFuture, SandboxHandle, SandboxId,
-        SandboxInspection, SandboxSpec,
+        SandboxBackend, SandboxBackendKind, SandboxFuture, SandboxId, SandboxInspection,
     };
     use nimbus_services::EmptyServiceDefinitionCatalog;
 
@@ -1020,10 +978,6 @@ mod network_manager_tests {
     impl SandboxBackend for EffectForbiddenSandboxBackend {
         fn kind(&self) -> SandboxBackendKind {
             SandboxBackendKind::Krun
-        }
-
-        fn start(&self, _spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-            panic!("protocol-only refusal must happen before sandbox effects")
         }
 
         fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
@@ -1079,40 +1033,7 @@ mod network_manager_tests {
     }
 
     #[test]
-    fn managed_router_preserves_one_manager_arc_through_compute_state() {
-        let root = tempfile::tempdir().expect("fixture root should build");
-        let manager = shared_test_network_manager();
-        let engine =
-            Arc::new(Engine::new(root.path().join("engine")).expect("engine should initialize"));
-        let options = RouterOptions::new(Arc::clone(&engine), Arc::clone(&manager));
-        assert!(Arc::ptr_eq(
-            options
-                .network_manager
-                .as_ref()
-                .expect("managed router should retain its manager"),
-            &manager
-        ));
-        let build = options.into_build_config();
-        assert!(Arc::ptr_eq(
-            build
-                .network_manager
-                .as_ref()
-                .expect("build config should retain its manager"),
-            &manager
-        ));
-        let state = app_state_from_build(build);
-        let compute_manager = state
-            .network_manager()
-            .expect("compute state should retain its manager");
-        assert!(Arc::ptr_eq(&compute_manager, &manager));
-        assert!(std::ptr::eq(
-            compute_manager.capability_registry(),
-            manager.capability_registry()
-        ));
-    }
-
-    #[test]
-    fn protocol_only_router_refuses_both_workload_manager_families() {
+    fn protocol_only_state_refuses_uncomposed_workload_manager_families() {
         let root = tempfile::tempdir().expect("fixture root should build");
         let engine = Arc::new(Engine::new(root.path()).expect("engine should initialize"));
         let protocol_state = app_state_from_build(
@@ -1124,18 +1045,9 @@ mod network_manager_tests {
             Arc::new(EmptyServiceDefinitionCatalog),
             Arc::new(EffectForbiddenSandboxBackend),
         ));
-        let service_refusal = catch_unwind(AssertUnwindSafe(|| {
-            RouterOptions::protocol_only(Arc::clone(&engine))
-                .with_service_manager(Arc::clone(&service_manager));
-        }));
-        assert!(
-            service_refusal.is_err(),
-            "protocol-only service-manager builder must refuse before installation"
-        );
         let service_state_refusal = catch_unwind(AssertUnwindSafe(|| {
             AppState::from_config(AppStateConfig {
-                engine: Arc::clone(&engine),
-                network_manager: None,
+                workload: ServerWorkloadProfile::protocol_only(Arc::clone(&engine)),
                 deployment: DeploymentConfig::default(),
                 control_plane: ControlPlaneConfig::router_options_default(),
                 node_services: NodeServicesConfig::default().with_service_manager(service_manager),
@@ -1160,8 +1072,7 @@ mod network_manager_tests {
         );
         let machine_state_refusal = catch_unwind(AssertUnwindSafe(|| {
             AppState::from_config(AppStateConfig {
-                engine,
-                network_manager: None,
+                workload: ServerWorkloadProfile::protocol_only(engine),
                 deployment: DeploymentConfig::default(),
                 control_plane: ControlPlaneConfig::router_options_default(),
                 node_services: NodeServicesConfig::default()

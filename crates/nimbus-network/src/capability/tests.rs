@@ -315,6 +315,7 @@ fn lifecycle_feature_has_positive_and_named_negative_proof() {
     let mut requirements = requirements();
     requirements
         .lifecycle
+        .attachment
         .features
         .insert(NetworkLifecycleFeature::Reconcile);
     let mut supported = provider();
@@ -439,11 +440,17 @@ fn full_requirement_set_satisfies_with_a_strict_provider_superset() {
             NetworkForwardingFeature::PortForwarding,
             NetworkForwardingFeature::ConnectionDrain,
         ]),
-        NetworkLifecycleCapabilitySet::new([
-            NetworkLifecycleFeature::DurableInspect,
-            NetworkLifecycleFeature::Reconcile,
-            NetworkLifecycleFeature::Delete,
-        ]),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([
+                NetworkLifecycleFeature::DurableInspect,
+                NetworkLifecycleFeature::Reconcile,
+                NetworkLifecycleFeature::Delete,
+            ]),
+            NetworkLifecycleCapabilitySet::new([
+                NetworkLifecycleFeature::DurableInspect,
+                NetworkLifecycleFeature::Reconcile,
+            ]),
+        ),
         NetworkSovereigntyRequirements::new(
             NetworkControlPlaneLocality::OperatorLocal,
             [
@@ -531,7 +538,10 @@ fn complete_mismatch_vector_has_fixed_dimension_order() {
         ),
         NetworkIngressCapabilitySet::new([NetworkIngressFeature::TlsTermination]),
         NetworkForwardingCapabilitySet::new([NetworkForwardingFeature::ConnectionDrain]),
-        NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::Reconcile]),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::Reconcile]),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     );
     let mut unsupported = provider();
@@ -587,7 +597,10 @@ fn reordered_duplicate_facts_and_alternatives_are_byte_stable() {
         NetworkEndpointCapabilitySet::new([], [], [], [], []),
         NetworkIngressCapabilitySet::new([]),
         NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([]),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::ThirdParty, [], false),
     );
     let second_requirements = NetworkCapabilityRequirements::new(
@@ -602,7 +615,10 @@ fn reordered_duplicate_facts_and_alternatives_are_byte_stable() {
         NetworkEndpointCapabilitySet::new([], [], [], [], []),
         NetworkIngressCapabilitySet::new([]),
         NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([]),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::ThirdParty, [], false),
     );
     assert_eq!(first_requirements, second_requirements);

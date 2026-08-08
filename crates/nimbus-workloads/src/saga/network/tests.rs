@@ -9,6 +9,7 @@ use nimbus_tenant::TenantIsolationDecisionId;
 use serde_json::json;
 
 use super::*;
+use crate::WorkloadExecutionProviderId;
 use crate::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadUid,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
@@ -48,7 +49,10 @@ fn compiled_plan(
         NetworkEndpointCapabilitySet::new([], [], [], [], []),
         NetworkIngressCapabilitySet::new([]),
         NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([]),
+        nimbus_network::NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     );
     let dependency = WorkloadNetworkDependencyListenerBlueprint::new(
@@ -92,6 +96,7 @@ fn saga_intent(
         WorkloadProvisionSourceResourceVersion::new(format!("fixture-{seed}"))?,
         executable.content_digest(),
         NetworkProviderId::for_registration_key(&format!("provider-{seed}")),
+        WorkloadExecutionProviderId::for_registration_key(&format!("execution-{seed}")),
     )?;
     WorkloadSagaIntent::new(
         DesiredWorkloadKind::Sandbox,
@@ -308,6 +313,7 @@ fn saga_intent_rejects_activation_and_publication_crossings() {
             .expect("source version should validate"),
         executable.content_digest(),
         NetworkProviderId::for_registration_key("provider-correlation"),
+        WorkloadExecutionProviderId::for_registration_key("execution-correlation"),
     )
     .expect("source evidence should validate");
     let build = |activation, publication| {

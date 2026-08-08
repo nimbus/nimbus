@@ -19,15 +19,17 @@ use nimbus_convex::{ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig}
 use nimbus_engine::Engine;
 use nimbus_firebase::FirebaseConfig;
 use nimbus_license::LicenseState;
-use nimbus_network::LocalNetworkManager;
+use nimbus_network::{
+    LocalNetworkManager, NetworkCapabilitySelection, NetworkSovereigntyRequirements,
+};
 use nimbus_operator::{LocalServerAuditEvent, LocalServerSecurityState};
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, HostCallCancellation, RuntimeAdaptiveControllerSettings,
     RuntimeHostResourceBudget, RuntimeScalingPlanSet,
 };
-use nimbus_services::{RuntimeServiceRegistry, ServiceManager};
+use nimbus_services::{RuntimeServiceRegistry, ServiceManager, TenantServiceRetirement};
 use nimbus_tenant::TenantIsolationMode;
-use nimbus_workloads::WorkloadSagaStore;
+use nimbus_workloads::{NodeIdentity, WorkloadSagaStore};
 use tempfile::TempDir;
 use tracing::warn;
 
@@ -39,7 +41,11 @@ use crate::config::runtime::RuntimeGovernorConfig;
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::node_workloads::NodeWorkloadCoordinator;
 use crate::runtime_manager::RuntimeManager;
-use crate::workload_saga::WorkloadSagaCoordinator;
+use crate::workload_projection::WorkloadProjectionSink;
+use crate::workload_provisioner::WorkloadProvisioner;
+use crate::workload_saga::{
+    WorkloadProvisionCapabilityRegistry, WorkloadProvisionSourceAuthority, WorkloadSagaCoordinator,
+};
 
 /// Explicit workload-lifecycle capabilities available to a compute state.
 pub enum ComputeWorkloadComposition {
@@ -48,7 +54,13 @@ pub enum ComputeWorkloadComposition {
     /// Workload-capable serving over one network manager and durable saga store.
     Managed {
         network_manager: Arc<LocalNetworkManager>,
+        local_node: NodeIdentity,
+        capability_selection: NetworkCapabilitySelection,
+        sovereignty: NetworkSovereigntyRequirements,
         saga_store: Arc<dyn WorkloadSagaStore>,
+        source_authority: Arc<dyn WorkloadProvisionSourceAuthority>,
+        provision_capabilities: Box<WorkloadProvisionCapabilityRegistry>,
+        projection_sink: Arc<dyn WorkloadProjectionSink>,
     },
 }
 
@@ -67,6 +79,7 @@ pub struct ComputeState {
     pub active_deployment: Arc<ActiveDeployment>,
     network_manager: Option<Arc<LocalNetworkManager>>,
     workload_saga_coordinator: Option<Arc<WorkloadSagaCoordinator>>,
+    workload_provisioner: Option<Arc<WorkloadProvisioner>>,
     system_convex_registry: Option<Arc<ConvexRegistry>>,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -84,19 +97,44 @@ impl ComputeState {
             node_services,
             runtime,
         } = config;
-        let (network_manager, workload_saga_coordinator) = match workload_composition {
-            ComputeWorkloadComposition::ProtocolOnly => {
-                Self::require_protocol_only_node_services(&node_services);
-                (None, None)
-            }
-            ComputeWorkloadComposition::Managed {
-                network_manager,
-                saga_store,
-            } => (
-                Some(network_manager),
-                Some(Arc::new(WorkloadSagaCoordinator::new(saga_store))),
-            ),
-        };
+        let (network_manager, workload_saga_coordinator, workload_provisioner) =
+            match workload_composition {
+                ComputeWorkloadComposition::ProtocolOnly => {
+                    Self::require_protocol_only_node_services(&node_services);
+                    (None, None, None)
+                }
+                ComputeWorkloadComposition::Managed {
+                    network_manager,
+                    local_node,
+                    capability_selection,
+                    sovereignty,
+                    saga_store,
+                    source_authority,
+                    provision_capabilities,
+                    projection_sink,
+                } => {
+                    assert!(
+                        node_services.tenant_service_retirement().is_some(),
+                        "managed workload composition requires an exact tenant-retirement owner"
+                    );
+                    let coordinator = Arc::new(WorkloadSagaCoordinator::new(saga_store));
+                    let provider_reports = network_manager.capability_registry().clone();
+                    let provisioner = Arc::new(WorkloadProvisioner::new(
+                        local_node,
+                        provider_reports,
+                        capability_selection,
+                        sovereignty,
+                        Arc::clone(&coordinator),
+                        source_authority,
+                        *provision_capabilities,
+                        projection_sink,
+                    )
+                    .expect(
+                        "managed workload composition requires an exact provider-report selection",
+                    ));
+                    (Some(network_manager), Some(coordinator), Some(provisioner))
+                }
+            };
         let node_services = node_services.resolve(engine.clone());
         let runtime_manager = RuntimeManager::new(engine.clone(), runtime.clone());
         let DeploymentConfig {
@@ -137,6 +175,7 @@ impl ComputeState {
             active_deployment: Arc::new(ActiveDeployment::new(active_deployment)),
             network_manager,
             workload_saga_coordinator,
+            workload_provisioner,
             system_convex_registry,
             control_plane,
             node_services,
@@ -153,8 +192,9 @@ impl ComputeState {
     /// state was built for workload-capable serving.
     ///
     /// Protocol-only routers deliberately return `None`. The returned Arc is
-    /// the injected manager itself; compute never reopens its store or copies
-    /// its immutable capability registry.
+    /// the injected manager itself. Compute never reopens or reconstructs its
+    /// store and never reselects providers; it snapshots the manager's exact
+    /// immutable reports only when constructing the sole provisioner.
     pub fn network_manager(&self) -> Option<Arc<LocalNetworkManager>> {
         self.network_manager.clone()
     }
@@ -165,9 +205,15 @@ impl ComputeState {
         self.workload_saga_coordinator.clone()
     }
 
+    /// The sole product-level workload provision authority for this realm.
+    pub fn workload_provisioner(&self) -> Option<Arc<WorkloadProvisioner>> {
+        self.workload_provisioner.clone()
+    }
+
     fn require_protocol_only_node_services(node_services: &NodeServicesConfig) {
         assert!(
             node_services.service_manager().is_none()
+                && node_services.tenant_service_retirement().is_none()
                 && node_services.machine_lifecycle_manager().is_none()
                 && node_services.node_workload_coordinator().is_none(),
             "service and machine workload lifecycle requires managed workload composition"
@@ -176,6 +222,10 @@ impl ComputeState {
 
     pub fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
         self.node_services.runtime_service_registry()
+    }
+
+    pub fn tenant_service_retirement(&self) -> Option<Arc<dyn TenantServiceRetirement>> {
+        self.node_services.tenant_service_retirement()
     }
 
     pub fn runtime_manager(&self) -> Arc<RuntimeManager> {
@@ -272,9 +322,9 @@ impl ComputeState {
             .runtime_manager
             .retire_tenant_deletion(&deletion)
             .await?;
-        self.runtime_service_registry()
-            .teardown_tenant_async(&tenant_id)
-            .await?;
+        if let Some(retirement) = self.tenant_service_retirement() {
+            retirement.retire_tenant_async(&tenant_id).await?;
+        }
         self.engine.finish_tenant_delete_async(deletion).await?;
         self.runtime_manager.forget_retired_owner(&owner_id);
         Ok(())
@@ -484,6 +534,11 @@ mod tests {
 
     use super::*;
 
+    fn managed_network_manager_test_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
     #[derive(Default)]
     struct EffectForbiddenNodeCapability {
         calls: AtomicUsize,
@@ -492,6 +547,93 @@ mod tests {
     #[derive(Default)]
     struct EffectForbiddenWorkloadSagaStore {
         calls: AtomicUsize,
+    }
+
+    #[derive(Default)]
+    struct EffectForbiddenSourceAuthority {
+        calls: AtomicUsize,
+    }
+
+    #[derive(Default)]
+    struct EffectForbiddenProjectionSink {
+        calls: AtomicUsize,
+    }
+
+    impl crate::workload_projection::WorkloadProjectionSink for EffectForbiddenProjectionSink {
+        fn project<'a>(
+            &'a self,
+            _projection: &'a crate::workload_projection::WorkloadObservedProjection,
+        ) -> crate::workload_projection::WorkloadProjectionSinkFuture<'a> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                panic!("effect-forbidden projection sink must not be called")
+            })
+        }
+    }
+
+    impl WorkloadProvisionSourceAuthority for EffectForbiddenSourceAuthority {
+        fn current_source<'a>(
+            &'a self,
+            _key: &'a nimbus_workloads::WorkloadSagaKey,
+            _identity: &'a nimbus_workloads::WorkloadProvisionSourceIdentity,
+        ) -> crate::workload_saga::WorkloadProvisionSourceFuture<'a> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(crate::workload_saga::WorkloadProvisionSourceAuthorityError::Unavailable)
+            })
+        }
+    }
+
+    fn effect_free_provider_realm() -> (
+        nimbus_network::NetworkCapabilityRegistry,
+        nimbus_network::NetworkCapabilitySelection,
+    ) {
+        let requirements = nimbus_sandbox::sandbox_network_plan_requirements(
+            nimbus_sandbox::SandboxBackendKind::Krun,
+        );
+        let ingress_provider =
+            nimbus_network::NetworkProviderId::for_registration_key("state-fixture-ingress");
+        let lifecycle = nimbus_network::NetworkLifecycleCapabilitySet::new([]);
+        let attachment = nimbus_network::NetworkAttachmentProviderRegistration::new(
+            requirements.required_attachment_provider_id().clone(),
+            requirements.capability_requirements().attachment().clone(),
+            [nimbus_network::NetworkAddressFamily::Ipv4],
+            lifecycle.clone(),
+            nimbus_network::NetworkSovereigntyCapabilities::new(
+                nimbus_network::NetworkControlPlaneLocality::LocalOnly,
+                [],
+                true,
+            ),
+        );
+        let ingress = nimbus_network::NetworkIngressProviderRegistration::new(
+            ingress_provider.clone(),
+            nimbus_network::NetworkEndpointCapabilitySet::new(
+                [nimbus_network::NetworkAddressFamily::Ipv4],
+                [nimbus_network::NetworkBindRealmKind::Host],
+                [nimbus_network::NetworkExposure::Loopback],
+                [nimbus_network::PortProtocol::Tcp],
+                [nimbus_network::NetworkPortAssignmentMode::ProviderAssigned],
+            ),
+            nimbus_network::NetworkIngressCapabilitySet::new([]),
+            nimbus_network::NetworkForwardingCapabilitySet::new([]),
+            lifecycle,
+            nimbus_network::NetworkSovereigntyCapabilities::new(
+                nimbus_network::NetworkControlPlaneLocality::LocalOnly,
+                [],
+                true,
+            ),
+        );
+        let selection = nimbus_network::NetworkCapabilitySelection::new(
+            requirements.required_attachment_provider_id().clone(),
+            ingress_provider,
+        );
+        (
+            nimbus_network::NetworkCapabilityRegistry::new([
+                nimbus_network::NetworkCapabilityBundle::new(attachment, ingress),
+            ])
+            .expect("effect-free provider reports should validate"),
+            selection,
+        )
     }
 
     impl WorkloadSagaStore for EffectForbiddenWorkloadSagaStore {
@@ -727,11 +869,13 @@ mod tests {
         ) -> Result<Option<InvocationServiceBinding>, nimbus_core::Error> {
             Ok(None)
         }
+    }
 
-        fn teardown_tenant_async<'a>(
+    impl TenantServiceRetirement for FailFirstTenantTeardown {
+        fn retire_tenant_async<'a>(
             &'a self,
             _tenant_id: &'a nimbus_core::TenantId,
-        ) -> nimbus_services::RuntimeServiceTeardownFuture<'a> {
+        ) -> nimbus_services::TenantServiceRetirementFuture<'a> {
             Box::pin(async move {
                 if self.attempts.fetch_add(1, Ordering::AcqRel) == 0 {
                     Err(nimbus_core::Error::Internal(
@@ -746,17 +890,42 @@ mod tests {
 
     #[tokio::test]
     async fn partial_tenant_delete_stays_fenced_and_retries_to_completion() {
+        let _network_manager_guard = managed_network_manager_test_lock().lock().await;
         let temp = tempdir().expect("service tempdir should build");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let teardown = Arc::new(FailFirstTenantTeardown {
             attempts: AtomicUsize::new(0),
         });
+        let (provider_reports, capability_selection) = effect_free_provider_realm();
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
-            workload_composition: ComputeWorkloadComposition::ProtocolOnly,
+            workload_composition: ComputeWorkloadComposition::Managed {
+                network_manager: LocalNetworkManager::open(
+                    temp.path().join("network"),
+                    provider_reports,
+                )
+                .expect("network manager should build"),
+                local_node: crate::embedded_local_node_identity(),
+                capability_selection,
+                sovereignty: nimbus_network::NetworkSovereigntyRequirements::new(
+                    nimbus_network::NetworkControlPlaneLocality::LocalOnly,
+                    [],
+                    true,
+                ),
+                saga_store: Arc::new(EffectForbiddenWorkloadSagaStore::default()),
+                source_authority: Arc::new(EffectForbiddenSourceAuthority::default()),
+                provision_capabilities: Box::new(
+                    WorkloadProvisionCapabilityRegistry::new([], [], [])
+                        .expect("empty provision registry should validate"),
+                ),
+                projection_sink: Arc::new(EffectForbiddenProjectionSink::default()),
+            },
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
-            node_services: NodeServicesConfig::from_runtime_service_registry(teardown.clone()),
+            node_services: NodeServicesConfig::from_runtime_service_registry_and_retirement(
+                teardown.clone(),
+                teardown.clone(),
+            ),
             runtime: RuntimeGovernorConfig::default(),
         });
         let tenant_id =
@@ -904,14 +1073,13 @@ mod tests {
 
     #[tokio::test]
     async fn compute_state_retains_the_exact_managed_workload_composition() {
+        let _network_manager_guard = managed_network_manager_test_lock().lock().await;
         let temp = tempdir().expect("service tempdir should build");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
-        let manager = LocalNetworkManager::open(
-            temp.path().join("network"),
-            nimbus_network::NetworkCapabilityRegistry::new([])
-                .expect("empty registry should fail closed"),
-        )
-        .expect("network manager should build");
+        let (provider_reports, capability_selection) = effect_free_provider_realm();
+        let manager =
+            LocalNetworkManager::open(temp.path().join("network"), provider_reports.clone())
+                .expect("network manager should build");
         assert!(
             !manager.authority_path().exists(),
             "an empty manager should not materialize durable authority"
@@ -919,16 +1087,37 @@ mod tests {
         let capability = Arc::new(EffectForbiddenNodeCapability::default());
         let coordinator = Arc::new(NodeWorkloadCoordinator::new(capability.clone()));
         let saga_store = Arc::new(EffectForbiddenWorkloadSagaStore::default());
+        let source_authority = Arc::new(EffectForbiddenSourceAuthority::default());
+        let projection_sink = Arc::new(EffectForbiddenProjectionSink::default());
+        let retirement = Arc::new(FailFirstTenantTeardown {
+            attempts: AtomicUsize::new(0),
+        });
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
             workload_composition: ComputeWorkloadComposition::Managed {
                 network_manager: Arc::clone(&manager),
+                local_node: crate::embedded_local_node_identity(),
+                capability_selection,
+                sovereignty: nimbus_network::NetworkSovereigntyRequirements::new(
+                    nimbus_network::NetworkControlPlaneLocality::LocalOnly,
+                    [],
+                    true,
+                ),
                 saga_store: saga_store.clone(),
+                source_authority: source_authority.clone(),
+                provision_capabilities: Box::new(
+                    WorkloadProvisionCapabilityRegistry::new([], [], [])
+                        .expect("empty provision registry should fail closed"),
+                ),
+                projection_sink: projection_sink.clone(),
             },
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
-            node_services: empty_node_services()
-                .with_node_workload_coordinator(Arc::clone(&coordinator)),
+            node_services: NodeServicesConfig::from_runtime_service_registry_and_retirement(
+                empty_node_services().runtime_service_registry(),
+                retirement,
+            )
+            .with_node_workload_coordinator(Arc::clone(&coordinator)),
             runtime: RuntimeGovernorConfig::default(),
         });
 
@@ -941,7 +1130,7 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &manager));
         assert!(Arc::ptr_eq(&second, &manager));
         assert!(Arc::ptr_eq(&first, &second));
-        assert_eq!(first.capability_registry().selections().count(), 0);
+        assert_eq!(first.capability_registry().selections().count(), 1);
         let injected_coordinator = state
             .node_workload_coordinator()
             .expect("managed compute state should expose its node coordinator");
@@ -956,6 +1145,18 @@ mod tests {
             &first_saga_coordinator,
             &second_saga_coordinator
         ));
+        let first_provisioner = state
+            .workload_provisioner()
+            .expect("managed compute state should expose its provisioner");
+        let second_provisioner = state
+            .workload_provisioner()
+            .expect("managed compute state should retain one provisioner");
+        assert!(Arc::ptr_eq(&first_provisioner, &second_provisioner));
+        assert_eq!(
+            first_provisioner.local_node(),
+            &crate::embedded_local_node_identity()
+        );
+        assert_eq!(first_provisioner.provider_reports().selections().count(), 1);
         let saga_key = nimbus_workloads::WorkloadSagaKey::new(
             nimbus_core::TenantId::new("managed-composition").expect("fixture tenant is valid"),
             nimbus_core::WorkloadId::new("managed-composition").expect("fixture workload is valid"),
@@ -965,6 +1166,8 @@ mod tests {
             Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
         );
         assert_eq!(saga_store.calls.load(Ordering::Acquire), 1);
+        assert_eq!(source_authority.calls.load(Ordering::Acquire), 0);
+        assert_eq!(projection_sink.calls.load(Ordering::Acquire), 0);
         assert_eq!(capability.calls.load(Ordering::Acquire), 0);
         assert!(
             !manager.authority_path().exists(),
@@ -1010,5 +1213,7 @@ mod tests {
         assert!(state.node_workload_coordinator().is_none());
         assert!(state.network_manager().is_none());
         assert!(state.workload_saga_coordinator().is_none());
+        assert!(state.workload_provisioner().is_none());
+        assert!(state.resource_provisioner().is_err());
     }
 }

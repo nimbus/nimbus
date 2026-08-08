@@ -1,4 +1,3 @@
-use nimbus_engine::Engine;
 use nimbus_network::{
     NetworkAddressFamily, NetworkBindRealmKind, NetworkControlPlaneLocality, NetworkExposure,
     NetworkForwardingFeature, NetworkIngressFeature, NetworkLifecycleFeature,
@@ -9,7 +8,8 @@ use nimbus_network::{
     NetworkAttachmentCapabilitySet, NetworkAttachmentMode, NetworkCapabilityBundle,
     NetworkCapabilityRegistry, NetworkCapabilityRequirements, NetworkEndpointCapabilitySet,
     NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet, NetworkIsolationMode,
-    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkSovereigntyRequirements,
+    NetworkLifecycleCapabilitySet, NetworkLifecycleRequirements, NetworkManagementMode,
+    NetworkSovereigntyRequirements,
 };
 #[cfg(target_os = "linux")]
 use nimbus_sandbox::backends::container::{
@@ -17,8 +17,7 @@ use nimbus_sandbox::backends::container::{
 };
 #[cfg(target_os = "linux")]
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
-use nimbus_server::{ServeOptions, TlsConfig, nimbus_owned_local_ingress_registration};
-use nimbus_testing::EngineFixture;
+use nimbus_server::nimbus_owned_workload_ingress_registration;
 #[cfg(target_os = "linux")]
 use tempfile::tempdir;
 
@@ -27,16 +26,8 @@ fn set<T: Ord, const N: usize>(values: [T; N]) -> std::collections::BTreeSet<T> 
 }
 
 #[test]
-fn local_ingress_registration_reuses_listener_identity_and_is_conservative() {
-    let fixture = EngineFixture::new(|path| Engine::new(path));
-    let registration = ServeOptions::reconstruct_direct(fixture.engine())
-        .expect("test server network authority should reconstruct once")
-        .nimbus_owned_local_ingress_registration();
-    assert_eq!(
-        registration,
-        nimbus_owned_local_ingress_registration(false),
-        "ServeOptions must delegate to the same effect-free server-owned capability source"
-    );
+fn workload_ingress_registration_reuses_listener_identity_and_is_conservative() {
+    let registration = nimbus_owned_workload_ingress_registration();
 
     assert_eq!(
         registration.provider_id(),
@@ -71,11 +62,7 @@ fn local_ingress_registration_reuses_listener_identity_and_is_conservative() {
     );
     assert_eq!(
         registration.ingress().features(),
-        &set([
-            NetworkIngressFeature::PathRouting,
-            NetworkIngressFeature::WebSocket,
-            NetworkIngressFeature::Streaming,
-        ])
+        &set::<NetworkIngressFeature, 0>([])
     );
     assert!(
         !registration
@@ -89,12 +76,9 @@ fn local_ingress_registration_reuses_listener_identity_and_is_conservative() {
             .features()
             .contains(&NetworkIngressFeature::HostRouting)
     );
-    assert!(registration.forwarding().features().is_empty());
-    assert!(
-        !registration
-            .forwarding()
-            .features()
-            .contains(&NetworkForwardingFeature::PortForwarding)
+    assert_eq!(
+        registration.forwarding().features(),
+        &set([NetworkForwardingFeature::PortForwarding])
     );
     assert!(
         !registration
@@ -107,7 +91,6 @@ fn local_ingress_registration_reuses_listener_identity_and_is_conservative() {
         &set([
             NetworkLifecycleFeature::DurableInspect,
             NetworkLifecycleFeature::Reconcile,
-            NetworkLifecycleFeature::Delete,
         ])
     );
     assert_eq!(
@@ -143,26 +126,18 @@ fn local_ingress_registration_reuses_listener_identity_and_is_conservative() {
 }
 
 #[test]
-fn tls_is_advertised_only_by_the_configured_local_ingress_instance() {
-    let fixture = EngineFixture::new(|path| Engine::new(path));
-    let registration = ServeOptions::reconstruct_direct(fixture.engine())
-        .expect("test server network authority should reconstruct once")
-        .with_tls(TlsConfig::new("local-cert.pem", "local-key.pem"))
-        .nimbus_owned_local_ingress_registration();
+fn workload_ingress_registration_does_not_claim_tls_termination() {
+    let registration = nimbus_owned_workload_ingress_registration();
 
     assert_eq!(
         registration.ingress().features(),
-        &set([
-            NetworkIngressFeature::PathRouting,
-            NetworkIngressFeature::WebSocket,
-            NetworkIngressFeature::Streaming,
-        ])
+        &set::<NetworkIngressFeature, 0>([])
     );
     assert_eq!(
         registration.ingress().tls_behaviors(),
         &set([
             NetworkTlsBehavior::Disabled,
-            NetworkTlsBehavior::TerminateAtIngress,
+            NetworkTlsBehavior::Passthrough,
         ])
     );
 }
@@ -183,10 +158,7 @@ fn real_container_and_krun_pairs_select_with_real_server_ingress() {
     let krun = KrunSandboxBackend::new(krun_config)
         .host_managed_attachment_registration()
         .expect("real krun Execute composition should register on Linux");
-    let fixture = EngineFixture::new(|path| Engine::new(path));
-    let ingress = ServeOptions::reconstruct_direct(fixture.engine())
-        .expect("test server network authority should reconstruct once")
-        .nimbus_owned_local_ingress_registration();
+    let ingress = nimbus_owned_workload_ingress_registration();
 
     let container_bundle = NetworkCapabilityBundle::new(container, ingress.clone());
     let krun_bundle = NetworkCapabilityBundle::new(krun, ingress);
@@ -210,18 +182,19 @@ fn real_container_and_krun_pairs_select_with_real_server_ingress() {
             [PortProtocol::Tcp],
             [NetworkPortAssignmentMode::ProviderAssigned],
         ),
-        NetworkIngressCapabilitySet::new([
-            NetworkIngressFeature::PathRouting,
-            NetworkIngressFeature::WebSocket,
-            NetworkIngressFeature::Streaming,
-        ])
-        .with_tls_behaviors([NetworkTlsBehavior::Disabled]),
-        NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([
-            NetworkLifecycleFeature::DurableInspect,
-            NetworkLifecycleFeature::Reconcile,
-            NetworkLifecycleFeature::Delete,
-        ]),
+        NetworkIngressCapabilitySet::new([]).with_tls_behaviors([NetworkTlsBehavior::Disabled]),
+        NetworkForwardingCapabilitySet::new([NetworkForwardingFeature::PortForwarding]),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([
+                NetworkLifecycleFeature::DurableInspect,
+                NetworkLifecycleFeature::Reconcile,
+                NetworkLifecycleFeature::Delete,
+            ]),
+            NetworkLifecycleCapabilitySet::new([
+                NetworkLifecycleFeature::DurableInspect,
+                NetworkLifecycleFeature::Reconcile,
+            ]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     );
 

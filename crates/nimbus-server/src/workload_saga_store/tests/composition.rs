@@ -44,7 +44,7 @@ const RECOVERY_MATRIX_WRITE_MODE: &str = "write";
 const RECOVERY_MATRIX_READ_MODE: &str = "recover";
 const RECOVERY_MATRIX_BOUNDARY: &str = "workload-saga.phase-matrix-durable";
 const RECOVERY_MATRIX_OBSERVATION: &str =
-    "matrix-30-ce399409245e3a983faded0d3ce0270c92572cc132b7a09d95039d207f9c98a0";
+    "matrix-30-ef6ae486407c530e8e37aec6950291c9a6e098efd20b8e979709cd9318cf3098";
 const RECOVERY_MATRIX_TIMEOUT: Duration = Duration::from_secs(20);
 const RECOVERY_MATRIX_PID_PREFIX: &str = "NIMBUS_NNC61E_PROCESS_ID";
 
@@ -602,58 +602,13 @@ async fn bounded_child_wait_terminates_and_reaps_stalled_child() {
 }
 
 #[tokio::test]
-async fn managed_server_state_retains_one_manager_and_engine_saga_coordinator() {
-    let root = tempfile::tempdir().expect("fixture root should build");
-    let engine = engine(&root);
-    let manager = crate::router::shared_test_network_manager();
-    let state = AppState::from_config(AppStateConfig {
-        engine: Arc::clone(&engine),
-        network_manager: Some(Arc::clone(&manager)),
-        deployment: DeploymentConfig::default(),
-        control_plane: ControlPlaneConfig::router_options_default(),
-        node_services: NodeServicesConfig::default(),
-        transport: TransportConfig::default(),
-        runtime: RuntimeGovernorConfig::default(),
-    });
-
-    let retained_manager = state
-        .network_manager()
-        .expect("managed server state should retain its network manager");
-    assert!(Arc::ptr_eq(&retained_manager, &manager));
-    let first_coordinator = state
-        .workload_saga_coordinator()
-        .expect("managed server state should own a saga coordinator");
-    let second_coordinator = state
-        .workload_saga_coordinator()
-        .expect("managed server state should retain one saga coordinator");
-    assert!(Arc::ptr_eq(&first_coordinator, &second_coordinator));
-    assert!(
-        !manager.authority_path().exists(),
-        "composition must not create network lifecycle state"
-    );
-
-    let missing = initial_record("managed-composition");
-    assert_eq!(first_coordinator.load(missing.key()).await, Ok(None));
-    engine
-        .get_table_schema_async(
-            workload_saga_tenant().unwrap(),
-            workload_saga_table().unwrap(),
-        )
-        .await
-        .expect("managed coordinator use should prepare the private saga table");
-    assert!(
-        !manager.authority_path().exists(),
-        "saga-store use must not create network lifecycle state"
-    );
-}
-
-#[tokio::test]
 async fn protocol_only_server_state_owns_no_workload_authority_or_saga_schema() {
     let root = tempfile::tempdir().expect("fixture root should build");
     let engine = engine(&root);
     let state = AppState::from_config(AppStateConfig {
-        engine: Arc::clone(&engine),
-        network_manager: None,
+        workload: crate::workload_composition::ServerWorkloadProfile::protocol_only(Arc::clone(
+            &engine,
+        )),
         deployment: DeploymentConfig::default(),
         control_plane: ControlPlaneConfig::router_options_default(),
         node_services: NodeServicesConfig::default(),

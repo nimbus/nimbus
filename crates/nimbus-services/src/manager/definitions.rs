@@ -1,9 +1,6 @@
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 use nimbus_core::{Error, TenantId};
-use nimbus_sandbox::{SandboxCleanupObservation, SandboxStatus};
-use nimbus_tenant::TenantVolumePolicyDecision;
 use url::Url;
 
 use crate::{
@@ -14,7 +11,7 @@ use crate::{
 use super::ServiceManager;
 use super::clock::{next_version, now_millis};
 use super::session_channels::close_session_channels;
-use super::types::{ServiceManagerState, TenantServiceKey, sandbox_backend_error};
+use super::types::{ServiceManagerState, TenantServiceKey};
 
 const SUPPORTED_BUILT_IN_PROVIDERS: &[&str] = &[
     "loadBalancer",
@@ -22,13 +19,6 @@ const SUPPORTED_BUILT_IN_PROVIDERS: &[&str] = &[
     "browser",
     "modelGateway",
 ];
-
-/// The resolved inputs for activating one tenant's service: which backend to
-/// start and the tenant's volume policy to enforce against the sandbox spec.
-pub(super) struct ServiceActivationPlan {
-    pub(super) backend: ServiceBackend,
-    pub(super) volume_policy: TenantVolumePolicyDecision,
-}
 
 impl ServiceManager {
     pub fn service_definition_for_tenant(
@@ -48,24 +38,13 @@ impl ServiceManager {
             return Some(definition);
         }
         self.service_definitions
-            .service_backend_for_tenant(tenant_id, service_name)
-            .map(|backend| {
-                ServiceDefinition::static_catalog(tenant_id.clone(), service_name, backend)
-            })
+            .service_definition_for_tenant(tenant_id, service_name)
     }
 
     pub fn service_definitions_for_tenant(&self, tenant_id: &TenantId) -> Vec<ServiceDefinition> {
         let mut definitions = self
             .service_definitions
-            .service_backends_for_tenant(tenant_id)
-            .into_iter()
-            .map(|(name, backend)| {
-                (
-                    name.clone(),
-                    ServiceDefinition::static_catalog(tenant_id.clone(), name, backend),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
+            .service_definitions_for_tenant(tenant_id);
 
         for definition in self
             .state
@@ -94,7 +73,7 @@ impl ServiceManager {
 
         if self
             .service_definitions
-            .service_backend_for_tenant(tenant_id, service_name)
+            .service_definition_for_tenant(tenant_id, service_name)
             .is_some()
         {
             return Err(Error::AlreadyExists(format!(
@@ -139,7 +118,7 @@ impl ServiceManager {
         let key = TenantServiceKey::new(tenant_id, service_name);
         if self
             .service_definitions
-            .service_backend_for_tenant(tenant_id, service_name)
+            .service_definition_for_tenant(tenant_id, service_name)
             .is_some()
         {
             return Err(Error::conflict(format!(
@@ -162,7 +141,9 @@ impl ServiceManager {
                 current.generation
             )));
         }
-        if state.activations_in_progress.contains(&key) || state.handles.contains_key(&key) {
+        if state.definition_mutations_in_progress.contains(&key)
+            || state.service_definition_observations.contains_key(&key)
+        {
             return Err(Error::conflict(format!(
                 "service `{service_name}` for tenant `{tenant_id}` has an active backend; stop the service before updating its definition"
             )));
@@ -189,7 +170,7 @@ impl ServiceManager {
         let key = TenantServiceKey::new(tenant_id, service_name);
         if self
             .service_definitions
-            .service_backend_for_tenant(tenant_id, service_name)
+            .service_definition_for_tenant(tenant_id, service_name)
             .is_some()
         {
             return Err(Error::conflict(format!(
@@ -217,14 +198,31 @@ impl ServiceManager {
             )));
         }
 
-        self.claim_service_definition_delete(&key, force).await?;
+        let _claim = self.claim_definition_mutation_guard(&key, force).await?;
+        self.delete_service_definition_claimed_async(
+            tenant_id,
+            service_name,
+            expected_generation,
+            force,
+            &key,
+        )
+        .await
+    }
 
+    async fn delete_service_definition_claimed_async(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+        expected_generation: u64,
+        force: bool,
+        key: &TenantServiceKey,
+    ) -> Result<ServiceDefinition, Error> {
         let post_claim_precondition = {
             let state = self
                 .state
                 .lock()
                 .expect("manager lock should not be poisoned");
-            if let Some(current) = state.definitions.get(&key) {
+            if let Some(current) = state.definitions.get(key) {
                 if current.source != ServiceDefinitionSource::Dynamic {
                     Err(Error::conflict(format!(
                         "service `{service_name}` for tenant `{tenant_id}` is static and cannot be deleted through dynamic service definition routes"
@@ -243,10 +241,7 @@ impl ServiceManager {
                 )))
             }
         };
-        if let Err(error) = post_claim_precondition {
-            self.release_activation(&key);
-            return Err(error);
-        }
+        post_claim_precondition?;
 
         if !force {
             let live_session_count = {
@@ -257,71 +252,30 @@ impl ServiceManager {
                 open_service_session_ids(&state, tenant_id, service_name).len()
             };
             if live_session_count > 0 {
-                self.release_activation(&key);
                 return Err(Error::conflict(format!(
                     "service `{service_name}` for tenant `{tenant_id}` has {live_session_count} open session(s); close sessions first or pass an authorized force delete policy",
                 )));
             }
         }
 
-        let refreshed = match self.refresh_inspection_async(&key).await {
-            Ok(inspection) => inspection,
-            Err(error) => {
-                self.release_activation(&key);
-                return Err(error);
-            }
-        };
-        if let Some(inspection) = refreshed.as_ref() {
-            let handle = &inspection.handle;
-            let running = !matches!(
-                handle.status,
-                SandboxStatus::Stopped | SandboxStatus::Stopping | SandboxStatus::Failed
-            );
-            if running && !force {
-                self.release_activation(&key);
-                return Err(Error::conflict(format!(
-                    "service `{service_name}` for tenant `{tenant_id}` is running; stop it first or pass an authorized force delete policy"
-                )));
-            }
-            if running || inspection.cleanup != SandboxCleanupObservation::Finalized {
-                self.sandbox_backend
-                    .stop(&handle.id)
-                    .await
-                    .map_err(|error| {
-                        self.release_activation(&key);
-                        sandbox_backend_error(&key, "force delete stop", &error)
-                    })?;
-                let mut stopped_handle = handle.clone();
-                stopped_handle.status = SandboxStatus::Stopped;
-                stopped_handle.published_endpoints.clear();
-                if let Err(error) = self.record_service_handle(&key, &stopped_handle).await {
-                    self.release_activation(&key);
-                    return Err(error);
-                }
-            }
-        }
+        self.retire_service_for_definition_delete(key, force)
+            .await?;
 
         let mut state = self
             .state
             .lock()
             .expect("manager lock should not be poisoned");
-        let Some(current) = state.definitions.get(&key).cloned() else {
-            state.activations_in_progress.remove(&key);
-            self.activation_notify.notify_waiters();
+        let Some(current) = state.definitions.get(key).cloned() else {
             return Err(Error::NotFound(format!(
                 "service `{service_name}` for tenant `{tenant_id}` was not found"
             )));
         };
         if current.source != ServiceDefinitionSource::Dynamic {
-            state.activations_in_progress.remove(&key);
-            self.activation_notify.notify_waiters();
             return Err(Error::conflict(format!(
                 "service `{service_name}` for tenant `{tenant_id}` is static and cannot be deleted through dynamic service definition routes"
             )));
         }
         if current.generation != expected_generation {
-            state.activations_in_progress.remove(&key);
-            self.activation_notify.notify_waiters();
             return Err(Error::PreconditionFailed(format!(
                 "service `{service_name}` for tenant `{tenant_id}` has generation {}, but delete expected generation {expected_generation}",
                 current.generation
@@ -329,16 +283,13 @@ impl ServiceManager {
         }
         let live_session_ids = open_service_session_ids(&state, tenant_id, service_name);
         if !live_session_ids.is_empty() && !force {
-            state.activations_in_progress.remove(&key);
-            self.activation_notify.notify_waiters();
             return Err(Error::conflict(format!(
                 "service `{service_name}` for tenant `{tenant_id}` has {} open session(s); close sessions first or pass an authorized force delete policy",
                 live_session_ids.len()
             )));
         }
-        state.handles.remove(&key);
-        state.activations_in_progress.remove(&key);
-        let removed = state.definitions.remove(&key).ok_or_else(|| {
+        state.service_definition_observations.remove(key);
+        let removed = state.definitions.remove(key).ok_or_else(|| {
             Error::NotFound(format!(
                 "service `{service_name}` for tenant `{tenant_id}` was not found"
             ))
@@ -346,91 +297,7 @@ impl ServiceManager {
         if force {
             close_open_service_sessions(&mut state, &live_session_ids, "service_force_deleted");
         }
-        self.activation_notify.notify_waiters();
         Ok(removed)
-    }
-
-    pub(super) fn service_backend_for_tenant(
-        &self,
-        tenant_id: &TenantId,
-        service_name: &str,
-    ) -> Option<ServiceBackend> {
-        self.service_activation_for_tenant(tenant_id, service_name)
-            .map(|definition| definition.backend)
-    }
-
-    pub(super) fn service_activation_for_tenant(
-        &self,
-        tenant_id: &TenantId,
-        service_name: &str,
-    ) -> Option<ServiceActivationPlan> {
-        let key = TenantServiceKey::new(tenant_id, service_name);
-        if let Some(definition) = self
-            .state
-            .lock()
-            .expect("manager lock should not be poisoned")
-            .definitions
-            .get(&key)
-            .cloned()
-        {
-            return Some(ServiceActivationPlan {
-                backend: definition.backend,
-                volume_policy: TenantVolumePolicyDecision::default(),
-            });
-        }
-
-        let backend = self
-            .service_definitions
-            .service_backend_for_tenant(tenant_id, service_name)?;
-        let volume_policy = self
-            .service_definitions
-            .service_volume_policy_for_tenant(tenant_id, service_name);
-        Some(ServiceActivationPlan {
-            backend,
-            volume_policy,
-        })
-    }
-
-    async fn claim_service_definition_delete(
-        &self,
-        key: &TenantServiceKey,
-        force: bool,
-    ) -> Result<(), Error> {
-        let deadline = Instant::now() + self.activation_timeout;
-        loop {
-            let notified = self.activation_notify.notified();
-            {
-                let mut state = self
-                    .state
-                    .lock()
-                    .expect("manager lock should not be poisoned");
-                if state.activations_in_progress.insert(key.clone()) {
-                    return Ok(());
-                }
-                if !force {
-                    return Err(Error::conflict(format!(
-                        "service `{}` for tenant `{}` has an activation in progress; retry after the service reaches a stable lifecycle state",
-                        key.service_name, key.tenant_id
-                    )));
-                }
-            }
-            self.notify_activation_wait_observer();
-
-            let now = Instant::now();
-            if now >= deadline {
-                return Err(Error::ResourceExhausted(format!(
-                    "force delete for service `{}` for tenant `{}` could not acquire the service lifecycle slot before {:?}",
-                    key.service_name, key.tenant_id, self.activation_timeout
-                )));
-            }
-            let remaining = deadline.saturating_duration_since(now);
-            if tokio::time::timeout(remaining, notified).await.is_err() {
-                return Err(Error::ResourceExhausted(format!(
-                    "force delete for service `{}` for tenant `{}` timed out waiting for activation to settle",
-                    key.service_name, key.tenant_id
-                )));
-            }
-        }
     }
 }
 

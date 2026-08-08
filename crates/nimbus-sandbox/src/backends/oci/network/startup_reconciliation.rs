@@ -4,7 +4,8 @@
 //! exact, fenced quarantine transitions. It deliberately has no provider,
 //! artifact-removal, release, finalization, or capacity-reuse capability.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use nimbus_network::{
     DurableNetworkAttachmentState, LocalNetworkAttachmentAuthority,
@@ -14,7 +15,8 @@ use nimbus_network::{
 
 use super::orphan_evidence::{
     OciEvidenceUnknown, OciOrphanDisposition, OciOrphanEvidenceCandidate,
-    OciOrphanQuarantineReason, classify_oci_orphan_evidence, collect_oci_orphan_evidence,
+    OciOrphanQuarantineReason, classify_oci_orphan_evidence, classify_retained_desired_manifest,
+    collect_oci_orphan_evidence,
 };
 use super::{OciIpamAuthority, OciSegmentAllocator};
 use crate::error::{Result, SandboxError};
@@ -31,6 +33,28 @@ pub(crate) fn reconcile_startup_network_state(
     attachments: &LocalNetworkAttachmentAuthority,
     ipam: &OciIpamAuthority,
     allocator: &OciSegmentAllocator,
+) -> Result<()> {
+    reconcile_startup_network_state_with_retained_desired_manifests(
+        workload_state_root,
+        attachments,
+        ipam,
+        allocator,
+        &BTreeSet::new(),
+    )
+}
+
+/// Reconcile network authority while retaining a strict set of claim-only
+/// desired manifests authenticated by the container manifest owner.
+///
+/// Retention is read-only and applies only to an otherwise-unmatched manifest
+/// path. Any attachment, provider, allocator, namespace, status, or unknown
+/// evidence keeps the normal classifier and quarantine behavior.
+pub(crate) fn reconcile_startup_network_state_with_retained_desired_manifests(
+    workload_state_root: &Path,
+    attachments: &LocalNetworkAttachmentAuthority,
+    ipam: &OciIpamAuthority,
+    allocator: &OciSegmentAllocator,
+    retained_desired_manifests: &BTreeSet<PathBuf>,
 ) -> Result<()> {
     let report = collect_oci_orphan_evidence(workload_state_root, attachments, ipam, allocator)?;
     let classifications = classify_oci_orphan_evidence(&report);
@@ -73,6 +97,15 @@ pub(crate) fn reconcile_startup_network_state(
     }
 
     for classification in classifications.unmatched_artifact_classifications() {
+        if matches!(
+            classify_retained_desired_manifest(
+                classification.evidence(),
+                retained_desired_manifests,
+            ),
+            Some(OciOrphanDisposition::Adopt)
+        ) {
+            continue;
+        }
         let OciOrphanDisposition::Quarantine(reason) = classification.disposition() else {
             continue;
         };

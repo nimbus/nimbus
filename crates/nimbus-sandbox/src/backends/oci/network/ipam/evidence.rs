@@ -10,8 +10,8 @@ use nimbus_core::TenantId;
 use nimbus_network::{NetworkAttachmentId, NetworkReservationClaim, NetworkSegmentId};
 
 use super::OciIpamAuthority;
+use super::authenticate_ipam_allocation_identity;
 use super::provider_operation::validate_netavark_provider_operation_evidence;
-use crate::backends::oci::network::default_network_attachment_id;
 use crate::backends::oci::network::dto::{IpamAllocation, NetavarkProviderOperation};
 use crate::backends::oci::network::provider_locator::{
     OciArtifactRealmId, OciAttachmentProviderKind, OciAttachmentProviderLocator,
@@ -199,18 +199,17 @@ fn validate_evidence(
                 tenant_id.as_str()
             ))
         })?;
+    authenticate_ipam_allocation_identity(tenant_id, &attachment_id, &allocation).map_err(
+        |error| {
+            corrupt_ipam_evidence(format!(
+                "tenant {} attachment {} failed immutable allocation identity authentication: \
+                 {error}",
+                tenant_id.as_str(),
+                attachment_id.as_str()
+            ))
+        },
+    )?;
     allocation.provider_locator.validate()?;
-    let expected_attachment =
-        default_network_attachment_id(allocation.provider_locator.sandbox_id());
-    if attachment_id != expected_attachment {
-        return Err(corrupt_ipam_evidence(format!(
-            "tenant {} IPAM key {} does not match locator sandbox {} derived attachment {}",
-            tenant_id.as_str(),
-            attachment_id.as_str(),
-            allocation.provider_locator.sandbox_id().as_str(),
-            expected_attachment.as_str()
-        )));
-    }
     let segment_id = allocation
         .segment_id
         .parse::<NetworkSegmentId>()

@@ -1,0 +1,948 @@
+//! Server-owned deferred ingress publication for private sandbox attachments.
+//!
+//! The compute dispatcher supplies exact fenced commands. Sandbox providers
+//! expose only authenticated private routes. This module owns the real host
+//! TCP listeners and transparent byte forwarding; it does not terminate TLS,
+//! resolve service names, decide tenant policy, or mutate attachment state.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{self, Read, Write};
+use std::net::{Shutdown, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+use nimbus_compute::workload_saga::provision_provider::{
+    ProviderProvisionEffectObservation, ProviderProvisionPhaseAdapter,
+};
+use nimbus_compute::workload_saga::{
+    ConfirmedWorkloadProvisionCommand, IngressPublicationCapability,
+    IngressPublicationInspectionCapability, WorkloadProvisionCapabilityFuture,
+    validate_sandbox_provision_command,
+};
+use nimbus_compute::{
+    WorkloadIngressBindingWitness, WorkloadIngressObservationCapability,
+    WorkloadIngressObservationFuture, WorkloadIngressObservationRequest,
+    WorkloadObservedIngressEndpoint, WorkloadProviderObservation,
+};
+use nimbus_network::{
+    ListenerId, LocalNetworkAuthority, NetworkCapabilityRole, NetworkPlanDigest, NetworkPlanId,
+    NetworkResourceGeneration, NetworkResourceId, PortBindRealm, PortLeaseAccounting, PortLeaseId,
+    PortProtocol, PublishedEndpointId,
+};
+use nimbus_sandbox::backends::container::ContainerSandboxBackend;
+use nimbus_sandbox::backends::krun::KrunSandboxBackend;
+use nimbus_sandbox::{
+    ProviderProvisionJournalError, SandboxBackendKind, SandboxError, SandboxProvisionIngressRoute,
+    SandboxProvisionIngressTargetObservation, SandboxProvisionIngressTargets,
+    SandboxProvisionNetworkPlan,
+};
+use nimbus_workloads::{WorkloadProvisionProviderTarget, WorkloadPublicationIntent};
+
+use crate::listener_lease::{ActiveServerListenerLease, ServerListenerLeaseAuthority};
+use crate::network_capabilities::nimbus_owned_local_ingress_provider_id;
+
+const SERVER_INGRESS_JOURNAL_NAMESPACE: &str = "server-workload-ingress";
+const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(10);
+const CONNECTION_IO_TIMEOUT: Duration = Duration::from_millis(100);
+const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
+const DEFAULT_MAX_ACTIVE_CONNECTIONS: usize = 128;
+
+/// Effect-free private-route source implemented by concrete sandbox owners.
+pub trait LocalSandboxIngressTargetSource: Send + Sync {
+    fn backend_kind(&self) -> SandboxBackendKind;
+
+    fn inspect_targets(
+        &self,
+        sandbox_id: &nimbus_sandbox::SandboxId,
+        network_plan: &SandboxProvisionNetworkPlan,
+    ) -> Result<SandboxProvisionIngressTargetObservation, SandboxError>;
+}
+
+impl LocalSandboxIngressTargetSource for ContainerSandboxBackend {
+    fn backend_kind(&self) -> SandboxBackendKind {
+        SandboxBackendKind::Container
+    }
+
+    fn inspect_targets(
+        &self,
+        sandbox_id: &nimbus_sandbox::SandboxId,
+        network_plan: &SandboxProvisionNetworkPlan,
+    ) -> Result<SandboxProvisionIngressTargetObservation, SandboxError> {
+        self.inspect_provision_server_ingress_targets(sandbox_id, network_plan)
+    }
+}
+
+impl LocalSandboxIngressTargetSource for KrunSandboxBackend {
+    fn backend_kind(&self) -> SandboxBackendKind {
+        SandboxBackendKind::Krun
+    }
+
+    fn inspect_targets(
+        &self,
+        sandbox_id: &nimbus_sandbox::SandboxId,
+        network_plan: &SandboxProvisionNetworkPlan,
+    ) -> Result<SandboxProvisionIngressTargetObservation, SandboxError> {
+        self.inspect_provision_server_ingress_targets(sandbox_id, network_plan)
+    }
+}
+
+/// Real server-owned publication capability for local Container or Krun work.
+pub struct ServerIngressPublicationAdapter {
+    source: Arc<dyn LocalSandboxIngressTargetSource>,
+    phases: ProviderProvisionPhaseAdapter,
+    listeners: ServerListenerLeaseAuthority,
+    running: Mutex<BTreeMap<PublicationKey, RunningIngressBatch>>,
+}
+
+impl ServerIngressPublicationAdapter {
+    pub fn new<Source>(
+        source: Arc<Source>,
+        network_authority: LocalNetworkAuthority,
+    ) -> Result<Self, ProviderProvisionJournalError>
+    where
+        Source: LocalSandboxIngressTargetSource + 'static,
+    {
+        let journal = nimbus_sandbox::ProviderProvisionAttemptJournal::open(
+            network_authority.state_root(),
+            SERVER_INGRESS_JOURNAL_NAMESPACE,
+        )?;
+        Ok(Self {
+            source,
+            phases: ProviderProvisionPhaseAdapter::new(journal),
+            listeners: ServerListenerLeaseAuthority::new(network_authority),
+            running: Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    fn validate(
+        &self,
+        command: &ConfirmedWorkloadProvisionCommand,
+    ) -> Result<ValidatedPublication, ProviderProvisionEffectObservation> {
+        match command.provider_target() {
+            WorkloadProvisionProviderTarget::Network {
+                role: NetworkCapabilityRole::Ingress,
+                provider_id,
+                ..
+            } if provider_id == &nimbus_owned_local_ingress_provider_id() => {}
+            _ => {
+                return Err(definite_failure(
+                    "server_ingress_provider_mismatch",
+                    "publication command does not target Nimbus-owned local ingress",
+                ));
+            }
+        }
+        let validated = validate_sandbox_provision_command(command, self.source.backend_kind())?;
+        Ok(ValidatedPublication {
+            key: PublicationKey {
+                saga_id: command.saga_id().as_str().to_owned(),
+                attempt_id: command.attempt_id().as_str().to_owned(),
+                execution_id: validated.sandbox_id().as_str().to_owned(),
+                generation: command.generation().as_u64(),
+                network_plan_digest: command.network_plan_digest().to_string(),
+            },
+            sandbox_id: validated.sandbox_id().clone(),
+            network_plan: validated.network_plan().clone(),
+        })
+    }
+
+    fn publish(&self, validated: &ValidatedPublication) -> ProviderProvisionEffectObservation {
+        let source = self.inspect_source(validated);
+        let mut running = match self.running.lock() {
+            Ok(running) => running,
+            Err(_) => {
+                return ambiguous("server ingress registry lock is poisoned");
+            }
+        };
+        if let Some(existing) = running.get(&validated.key) {
+            return classify_existing_publication(existing, &validated.key.execution_id, source);
+        }
+        let targets = match source {
+            Ok(targets) => targets,
+            Err(observation) => return observation,
+        };
+        let batch = match RunningIngressBatch::start(
+            &self.listeners,
+            &validated.key.execution_id,
+            &targets,
+        ) {
+            Ok(batch) => batch,
+            Err(error) => return bind_error(error),
+        };
+        let evidence = batch.evidence();
+        running.insert(validated.key.clone(), batch);
+        succeeded(evidence)
+    }
+
+    fn inspect(
+        &self,
+        validated: &ValidatedPublication,
+        allow_absence: bool,
+    ) -> ProviderProvisionEffectObservation {
+        let source = self.inspect_source(validated);
+        self.inspect_with_source(&validated.key, source, allow_absence)
+    }
+
+    fn inspect_with_source(
+        &self,
+        key: &PublicationKey,
+        source: Result<SandboxProvisionIngressTargets, ProviderProvisionEffectObservation>,
+        allow_absence: bool,
+    ) -> ProviderProvisionEffectObservation {
+        let running = match self.running.lock() {
+            Ok(running) => running,
+            Err(_) => return ambiguous("server ingress registry lock is poisoned"),
+        };
+        match (running.get(key), source) {
+            (Some(batch), Ok(targets))
+                if batch.matches(&key.execution_id, &targets) && batch.is_healthy() =>
+            {
+                succeeded(batch.evidence())
+            }
+            (
+                Some(batch),
+                Err(
+                    ProviderProvisionEffectObservation::Absent { .. }
+                    | ProviderProvisionEffectObservation::InProgress { .. },
+                ),
+            ) if batch.is_healthy() => succeeded(batch.evidence()),
+            (Some(_), _) => ambiguous("server ingress worker state is unhealthy or crossed"),
+            (None, Ok(targets)) if allow_absence => ProviderProvisionEffectObservation::Absent {
+                evidence: source_evidence("server_ingress_absent", &targets),
+            },
+            (None, Ok(targets)) => ProviderProvisionEffectObservation::InProgress {
+                evidence: source_evidence("server_ingress_not_observed", &targets),
+            },
+            (None, Err(observation)) => observation,
+        }
+    }
+
+    fn inspect_source(
+        &self,
+        validated: &ValidatedPublication,
+    ) -> Result<SandboxProvisionIngressTargets, ProviderProvisionEffectObservation> {
+        match self
+            .source
+            .inspect_targets(&validated.sandbox_id, &validated.network_plan)
+        {
+            Ok(SandboxProvisionIngressTargetObservation::Ready { targets, .. }) => Ok(targets),
+            Ok(SandboxProvisionIngressTargetObservation::Absent { evidence }) => {
+                Err(ProviderProvisionEffectObservation::Absent { evidence })
+            }
+            Ok(SandboxProvisionIngressTargetObservation::InProgress { evidence }) => {
+                Err(ProviderProvisionEffectObservation::InProgress { evidence })
+            }
+            Err(SandboxError::InvalidSpec { message }) => {
+                Err(definite_failure("server_ingress_target_rejected", message))
+            }
+            Err(error) => Err(ambiguous(error.to_string())),
+        }
+    }
+}
+
+fn classify_existing_publication(
+    existing: &RunningIngressBatch,
+    execution_id: &str,
+    source: Result<SandboxProvisionIngressTargets, ProviderProvisionEffectObservation>,
+) -> ProviderProvisionEffectObservation {
+    if !existing.is_healthy() {
+        return ambiguous("server ingress worker state is unhealthy");
+    }
+    match source {
+        Ok(targets) if existing.matches(execution_id, &targets) => succeeded(existing.evidence()),
+        Ok(_) => definite_failure(
+            "server_ingress_replay_mismatch",
+            "the exact publication attempt is associated with different private-route authority",
+        ),
+        Err(
+            ProviderProvisionEffectObservation::Absent { .. }
+            | ProviderProvisionEffectObservation::InProgress { .. },
+        ) => succeeded(existing.evidence()),
+        Err(observation @ ProviderProvisionEffectObservation::Ambiguous { .. })
+        | Err(observation @ ProviderProvisionEffectObservation::DefiniteFailure { .. }) => {
+            observation
+        }
+        Err(ProviderProvisionEffectObservation::Succeeded { .. }) => {
+            ambiguous("server ingress source returned an invalid nested success observation")
+        }
+    }
+}
+
+impl IngressPublicationCapability for ServerIngressPublicationAdapter {
+    fn execute<'a>(
+        &'a self,
+        command: &'a ConfirmedWorkloadProvisionCommand,
+    ) -> WorkloadProvisionCapabilityFuture<'a> {
+        Box::pin(async move {
+            let validated = self.validate(command);
+            self.phases.execute(command, || match validated {
+                Ok(validated) => self.publish(&validated),
+                Err(error) => error,
+            })
+        })
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        command: &'a ConfirmedWorkloadProvisionCommand,
+    ) -> WorkloadProvisionCapabilityFuture<'a> {
+        Box::pin(async move {
+            let validated = self.validate(command);
+            self.phases.inspect_live(command, || match validated {
+                Ok(validated) => self.inspect(&validated, true),
+                Err(error) => error,
+            })
+        })
+    }
+}
+
+impl IngressPublicationInspectionCapability for ServerIngressPublicationAdapter {
+    fn inspect<'a>(
+        &'a self,
+        command: &'a ConfirmedWorkloadProvisionCommand,
+    ) -> WorkloadProvisionCapabilityFuture<'a> {
+        Box::pin(async move {
+            let validated = self.validate(command);
+            self.phases.inspect_live(command, || match validated {
+                Ok(validated) => self.inspect(&validated, false),
+                Err(error) => error,
+            })
+        })
+    }
+}
+
+impl WorkloadIngressObservationCapability for ServerIngressPublicationAdapter {
+    fn observe<'a>(
+        &'a self,
+        request: &'a WorkloadIngressObservationRequest,
+    ) -> WorkloadIngressObservationFuture<'a> {
+        Box::pin(async move {
+            let Some(query) = LiveIngressObservationQuery::authenticate(request) else {
+                return WorkloadProviderObservation::Ambiguous;
+            };
+            self.observe_live_publication(&query)
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LiveIngressListenerExpectation {
+    endpoint_id: PublishedEndpointId,
+    listener_id: ListenerId,
+    port_lease_id: PortLeaseId,
+    desired_host_address: std::net::IpAddr,
+}
+
+/// Exact immutable comparison input authenticated from compute's request.
+///
+/// Tests construct this closed view directly because the public compute
+/// request intentionally has no caller-visible constructor. Production always
+/// enters through [`LiveIngressObservationQuery::authenticate`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LiveIngressObservationQuery {
+    saga_id: String,
+    execution_id: String,
+    tenant_id: nimbus_core::TenantId,
+    plan_id: NetworkPlanId,
+    plan_digest: NetworkPlanDigest,
+    generation: NetworkResourceGeneration,
+    listeners: BTreeMap<ListenerId, LiveIngressListenerExpectation>,
+}
+
+impl LiveIngressObservationQuery {
+    fn authenticate(request: &WorkloadIngressObservationRequest) -> Option<Self> {
+        let plan = request.compiled_plan();
+        let content = plan.content();
+        let publication = request.publication();
+        let network = publication.network();
+        let identity = content.identity();
+        if content.publication() != WorkloadPublicationIntent::PublishWhenReady
+            || request.key().tenant_id() != identity.tenant_id()
+            || request.execution().generation().as_u64() != identity.generation().as_u64()
+            || network.plan_id() != plan.plan().plan_id()
+            || network.digest() != plan.plan().digest()
+            || network.generation() != identity.generation()
+            || plan.plan().generation() != identity.generation()
+            || content.capability_selection().is_none_or(|selection| {
+                selection.ingress_provider_id() != &nimbus_owned_local_ingress_provider_id()
+            })
+        {
+            return None;
+        }
+
+        let expected_endpoint_ids = publication
+            .endpoints()
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if expected_endpoint_ids.is_empty()
+            || expected_endpoint_ids.len() != publication.endpoints().len()
+            || expected_endpoint_ids.len() != content.listeners().len()
+        {
+            return None;
+        }
+        let mut listeners = BTreeMap::new();
+        for listener in content.listeners() {
+            if !expected_endpoint_ids.contains(listener.endpoint_id())
+                || listeners
+                    .insert(
+                        listener.listener_id().clone(),
+                        LiveIngressListenerExpectation {
+                            endpoint_id: listener.endpoint_id().clone(),
+                            listener_id: listener.listener_id().clone(),
+                            port_lease_id: listener.port_lease_id().clone(),
+                            desired_host_address: listener.desired_host_address(),
+                        },
+                    )
+                    .is_some()
+            {
+                return None;
+            }
+        }
+        Some(Self {
+            saga_id: request.key().saga_id().as_str().to_owned(),
+            execution_id: request.execution().execution_id().as_str().to_owned(),
+            tenant_id: request.key().tenant_id().clone(),
+            plan_id: plan.plan().plan_id().clone(),
+            plan_digest: plan.plan().digest(),
+            generation: identity.generation(),
+            listeners,
+        })
+    }
+}
+
+impl ServerIngressPublicationAdapter {
+    /// Observe only the server-owned in-memory listener batch. This method has
+    /// no path to source inspection, phase journals, durable lease mutation,
+    /// repair, restart, bind, or target reconstruction.
+    fn observe_live_publication(
+        &self,
+        query: &LiveIngressObservationQuery,
+    ) -> WorkloadProviderObservation<Vec<WorkloadObservedIngressEndpoint>> {
+        let running = match self.running.lock() {
+            Ok(running) => running,
+            Err(_) => return WorkloadProviderObservation::Ambiguous,
+        };
+        let same_saga = running
+            .iter()
+            .filter(|(key, _)| key.saga_id == query.saga_id)
+            .collect::<Vec<_>>();
+        if same_saga.is_empty() {
+            return WorkloadProviderObservation::InProgress;
+        }
+        let mut matches = same_saga.iter().copied().filter(|(key, _)| {
+            key.execution_id == query.execution_id
+                && key.generation == query.generation.as_u64()
+                && key.network_plan_digest == query.plan_digest.to_string()
+        });
+        let Some((_, batch)) = matches.next() else {
+            return WorkloadProviderObservation::Ambiguous;
+        };
+        if same_saga.len() != 1 || matches.next().is_some() || !batch.is_healthy() {
+            return WorkloadProviderObservation::Ambiguous;
+        }
+        match batch.observed_endpoints(query) {
+            Some(endpoints) => WorkloadProviderObservation::Present(endpoints),
+            None => WorkloadProviderObservation::Ambiguous,
+        }
+    }
+}
+
+struct ValidatedPublication {
+    key: PublicationKey,
+    sandbox_id: nimbus_sandbox::SandboxId,
+    network_plan: SandboxProvisionNetworkPlan,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct PublicationKey {
+    saga_id: String,
+    attempt_id: String,
+    execution_id: String,
+    generation: u64,
+    network_plan_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExpectedRoute {
+    listener_id: nimbus_network::ListenerId,
+    request: nimbus_network::PortLeaseRequest,
+    upstream: SocketAddr,
+}
+
+impl From<&SandboxProvisionIngressRoute> for ExpectedRoute {
+    fn from(route: &SandboxProvisionIngressRoute) -> Self {
+        Self {
+            listener_id: route.listener_id().clone(),
+            request: route.port_lease().clone(),
+            upstream: route.upstream(),
+        }
+    }
+}
+
+struct RunningIngressBatch {
+    execution_id: String,
+    tenant_id: nimbus_core::TenantId,
+    plan_id: nimbus_network::NetworkPlanId,
+    generation: nimbus_network::NetworkResourceGeneration,
+    attachment_id: nimbus_network::NetworkAttachmentId,
+    routes: Vec<RunningIngressRoute>,
+}
+
+impl RunningIngressBatch {
+    fn start(
+        authority: &ServerListenerLeaseAuthority,
+        execution_id: &str,
+        targets: &SandboxProvisionIngressTargets,
+    ) -> io::Result<Self> {
+        let ingress_requests = targets
+            .routes()
+            .iter()
+            .map(|target| target.port_lease().clone())
+            .collect::<Vec<_>>();
+        let plan_members = authority.authenticate_workload_ingress_plan(
+            targets.plan_id(),
+            targets.tenant_id(),
+            targets.generation(),
+            &ingress_requests,
+            targets.reservation_claim(),
+        )?;
+        let mut routes = Vec::with_capacity(targets.routes().len());
+        for target in targets.routes() {
+            let expected = ExpectedRoute::from(target);
+            let prepared = authority.prepare_workload_ingress(
+                Some(&plan_members),
+                expected.request.clone(),
+                targets.reservation_claim(),
+            )?;
+            let bind_addr = prepared.bind_addr()?;
+            let listener = match std::net::TcpListener::bind(bind_addr) {
+                Ok(listener) => listener,
+                Err(error) => return Err(prepared.record_bind_failure(error)?.into_error()),
+            };
+            let adopted = prepared.adopt_std(listener)?;
+            routes.push(RunningIngressRoute::start(
+                expected,
+                adopted,
+                DEFAULT_MAX_ACTIVE_CONNECTIONS,
+            )?);
+        }
+        Ok(Self {
+            execution_id: execution_id.to_owned(),
+            tenant_id: targets.tenant_id().clone(),
+            plan_id: targets.plan_id().clone(),
+            generation: targets.generation(),
+            attachment_id: targets.attachment_id().clone(),
+            routes,
+        })
+    }
+
+    fn matches(&self, execution_id: &str, targets: &SandboxProvisionIngressTargets) -> bool {
+        self.execution_id == execution_id
+            && self.tenant_id == *targets.tenant_id()
+            && self.plan_id == *targets.plan_id()
+            && self.generation == targets.generation()
+            && self.attachment_id == *targets.attachment_id()
+            && self.routes.len() == targets.routes().len()
+            && self
+                .routes
+                .iter()
+                .zip(targets.routes())
+                .all(|(running, target)| running.expected == ExpectedRoute::from(target))
+    }
+
+    fn is_healthy(&self) -> bool {
+        self.routes.iter().all(RunningIngressRoute::is_healthy)
+    }
+
+    fn evidence(&self) -> Vec<u8> {
+        let routes = self
+            .routes
+            .iter()
+            .map(|route| {
+                format!(
+                    "{}|{}|{}|{}",
+                    route.expected.listener_id,
+                    route.expected.request.lease_id(),
+                    route.bound_addr,
+                    route.expected.upstream
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        format!(
+            "tenant={};plan={};generation={};attachment={};routes={routes}",
+            self.tenant_id,
+            self.plan_id,
+            self.generation.as_u64(),
+            self.attachment_id
+        )
+        .into_bytes()
+    }
+
+    fn observed_endpoints(
+        &self,
+        query: &LiveIngressObservationQuery,
+    ) -> Option<Vec<WorkloadObservedIngressEndpoint>> {
+        if self.tenant_id != query.tenant_id
+            || self.execution_id != query.execution_id
+            || self.plan_id != query.plan_id
+            || self.generation != query.generation
+            || self.routes.len() != query.listeners.len()
+        {
+            return None;
+        }
+        let mut seen = BTreeSet::new();
+        let mut endpoints = Vec::with_capacity(self.routes.len());
+        for route in &self.routes {
+            let expected = query.listeners.get(&route.expected.listener_id)?;
+            if !seen.insert(route.expected.listener_id.clone())
+                || expected.listener_id != route.expected.listener_id
+            {
+                return None;
+            }
+            let evidence = route.lease.as_ref()?.observation_evidence()?;
+            let request = evidence.request();
+            if request != &route.expected.request
+                || request.lease_id() != &expected.port_lease_id
+                || request.owner_id() != &NetworkResourceId::from(expected.listener_id.clone())
+                || request.plan_id() != Some(&query.plan_id)
+                || request.tenant_id() != Some(&query.tenant_id)
+                || request.generation() != query.generation
+                || request.accounting() != PortLeaseAccounting::TenantPublished
+                || request.publication().host_address() != Some(expected.desired_host_address)
+                || request.binding().protocol() != PortProtocol::Tcp
+                || request.binding().realm() != &PortBindRealm::Host
+                || route.bound_addr.port() == 0
+                || route.bound_addr.ip().is_unspecified()
+                || evidence.bound_endpoint().protocol() != PortProtocol::Tcp
+                || evidence.bound_endpoint().realm() != &PortBindRealm::Host
+                || evidence.bound_endpoint().port().get() != route.bound_addr.port()
+                || evidence.bound_endpoint().target().specific_address()
+                    != Some(route.bound_addr.ip())
+            {
+                return None;
+            }
+            endpoints.push(WorkloadObservedIngressEndpoint::new(
+                expected.endpoint_id.clone(),
+                route.bound_addr,
+                WorkloadIngressBindingWitness::new(
+                    query.plan_id.clone(),
+                    query.plan_digest,
+                    query.generation,
+                    expected.listener_id.clone(),
+                    expected.port_lease_id.clone(),
+                    evidence.lifetime(),
+                    evidence.lifetime(),
+                    evidence.bound_endpoint().clone(),
+                    evidence.provenance(),
+                ),
+            ));
+        }
+        if seen.len() != query.listeners.len() {
+            return None;
+        }
+        endpoints.sort_by(|left, right| left.endpoint_id().cmp(right.endpoint_id()));
+        Some(endpoints)
+    }
+}
+
+struct RunningIngressRoute {
+    expected: ExpectedRoute,
+    bound_addr: SocketAddr,
+    stop: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+    #[cfg(test)]
+    active_connections: Arc<AtomicUsize>,
+    #[cfg(test)]
+    peak_connections: Arc<AtomicUsize>,
+    #[cfg(test)]
+    rejected_connections: Arc<AtomicUsize>,
+    worker: Option<JoinHandle<()>>,
+    lease: Option<ActiveServerListenerLease>,
+}
+
+impl RunningIngressRoute {
+    fn start(
+        expected: ExpectedRoute,
+        listener: crate::PreboundServerListener,
+        max_active_connections: usize,
+    ) -> io::Result<Self> {
+        if max_active_connections == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "workload ingress connection limit must be greater than zero",
+            ));
+        }
+        let bound_addr = listener.local_addr()?;
+        let (listener, lease, _) = listener.into_std_parts();
+        if let Err(error) = listener.set_nonblocking(true) {
+            drop(listener);
+            return match lease.settle_after_confirmed_local_close() {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(io::Error::new(
+                    error.kind(),
+                    format!("{error}; failed to settle listener: {cleanup}"),
+                )),
+            };
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let failed = Arc::new(AtomicBool::new(false));
+        let active_connections = Arc::new(AtomicUsize::new(0));
+        let peak_connections = Arc::new(AtomicUsize::new(0));
+        let rejected_connections = Arc::new(AtomicUsize::new(0));
+        let worker_stop = Arc::clone(&stop);
+        let worker_failed = Arc::clone(&failed);
+        let worker_active = Arc::clone(&active_connections);
+        let worker_peak = Arc::clone(&peak_connections);
+        let worker_rejected = Arc::clone(&rejected_connections);
+        let upstream = expected.upstream;
+        let name = format!("nimbus-ingress-{}", expected.listener_id);
+        let worker = thread::Builder::new().name(name).spawn(move || {
+            let mut connections = Vec::new();
+            while !worker_stop.load(Ordering::Acquire) {
+                if reap_finished_connections(&mut connections) {
+                    worker_failed.store(true, Ordering::Release);
+                }
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let Some(permit) = ConnectionPermit::try_acquire(
+                            Arc::clone(&worker_active),
+                            Arc::clone(&worker_peak),
+                            max_active_connections,
+                        ) else {
+                            worker_rejected.fetch_add(1, Ordering::AcqRel);
+                            drop(stream);
+                            continue;
+                        };
+                        let connection_stop = Arc::clone(&worker_stop);
+                        match thread::Builder::new()
+                            .name("nimbus-ingress-connection".to_owned())
+                            .spawn(move || {
+                                let _permit = permit;
+                                proxy_connection(stream, upstream, &connection_stop);
+                            }) {
+                            Ok(connection) => connections.push(connection),
+                            Err(_) => {
+                                worker_failed.store(true, Ordering::Release);
+                                break;
+                            }
+                        }
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(ACCEPT_RETRY_DELAY);
+                    }
+                    Err(_) => {
+                        worker_failed.store(true, Ordering::Release);
+                        break;
+                    }
+                }
+            }
+            for connection in connections {
+                if connection.join().is_err() {
+                    worker_failed.store(true, Ordering::Release);
+                }
+            }
+        })?;
+        Ok(Self {
+            expected,
+            bound_addr,
+            stop,
+            failed,
+            #[cfg(test)]
+            active_connections,
+            #[cfg(test)]
+            peak_connections,
+            #[cfg(test)]
+            rejected_connections,
+            worker: Some(worker),
+            lease: Some(lease),
+        })
+    }
+
+    fn is_healthy(&self) -> bool {
+        !self.failed.load(Ordering::Acquire)
+            && self
+                .worker
+                .as_ref()
+                .is_some_and(|worker| !worker.is_finished())
+            && self.lease.is_some()
+    }
+
+    fn stop_and_settle(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+        if let Some(lease) = self.lease.take()
+            && let Err(error) = lease.settle_after_confirmed_local_close()
+        {
+            tracing::error!(%error, "failed to settle workload ingress listener");
+        }
+    }
+}
+
+struct ConnectionPermit {
+    active: Arc<AtomicUsize>,
+}
+
+impl ConnectionPermit {
+    fn try_acquire(active: Arc<AtomicUsize>, peak: Arc<AtomicUsize>, limit: usize) -> Option<Self> {
+        let observed = active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < limit).then_some(count + 1)
+            })
+            .ok()?;
+        let current = observed + 1;
+        peak.fetch_max(current, Ordering::AcqRel);
+        Some(Self { active })
+    }
+}
+
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Join completed route-owned workers before removing their handles.
+///
+/// Each outer worker owns and joins its one bidirectional-copy child, so this
+/// route-level vector is the transitive ownership root for every thread that
+/// can touch the listener lease.
+fn reap_finished_connections(connections: &mut Vec<JoinHandle<()>>) -> bool {
+    let mut panicked = false;
+    let mut index = 0;
+    while index < connections.len() {
+        if connections[index].is_finished() {
+            let connection = connections.swap_remove(index);
+            panicked |= connection.join().is_err();
+        } else {
+            index += 1;
+        }
+    }
+    panicked
+}
+
+impl Drop for RunningIngressRoute {
+    fn drop(&mut self) {
+        self.stop_and_settle();
+    }
+}
+
+fn proxy_connection(inbound: std::net::TcpStream, upstream: SocketAddr, stop: &Arc<AtomicBool>) {
+    let Ok(outbound) = std::net::TcpStream::connect_timeout(&upstream, UPSTREAM_CONNECT_TIMEOUT)
+    else {
+        return;
+    };
+    for stream in [&inbound, &outbound] {
+        let _ = stream.set_read_timeout(Some(CONNECTION_IO_TIMEOUT));
+        let _ = stream.set_write_timeout(Some(CONNECTION_IO_TIMEOUT));
+    }
+    let (Ok(inbound_read), Ok(outbound_write)) = (inbound.try_clone(), outbound.try_clone()) else {
+        return;
+    };
+    // This child is never detached: its route-owned outer worker blocks on
+    // `join` before returning, and listener settlement joins that outer worker.
+    let request_stop = Arc::clone(stop);
+    let forward = thread::spawn(move || {
+        copy_until_stopped(inbound_read, outbound_write, &request_stop);
+    });
+    copy_until_stopped(outbound, inbound, stop);
+    let _ = forward.join();
+}
+
+fn copy_until_stopped(
+    mut reader: std::net::TcpStream,
+    mut writer: std::net::TcpStream,
+    stop: &AtomicBool,
+) {
+    let mut buffer = [0_u8; 16 * 1024];
+    while !stop.load(Ordering::Acquire) {
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => {
+                if !write_all_until_stopped(&mut writer, &buffer[..count], stop) {
+                    break;
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(_) => break,
+        }
+    }
+    let _ = writer.shutdown(Shutdown::Write);
+}
+
+fn write_all_until_stopped(
+    writer: &mut std::net::TcpStream,
+    bytes: &[u8],
+    stop: &AtomicBool,
+) -> bool {
+    let mut offset = 0;
+    while offset < bytes.len() && !stop.load(Ordering::Acquire) {
+        match writer.write(&bytes[offset..]) {
+            Ok(0) => return false,
+            Ok(count) => offset += count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(_) => return false,
+        }
+    }
+    offset == bytes.len()
+}
+
+fn source_evidence(label: &str, targets: &SandboxProvisionIngressTargets) -> Vec<u8> {
+    format!(
+        "{label}:{}:{}:{}:{}",
+        targets.tenant_id(),
+        targets.plan_id(),
+        targets.generation().as_u64(),
+        targets.attachment_id()
+    )
+    .into_bytes()
+}
+
+fn succeeded(evidence: Vec<u8>) -> ProviderProvisionEffectObservation {
+    ProviderProvisionEffectObservation::Succeeded { evidence }
+}
+
+fn ambiguous(evidence: impl Into<Vec<u8>>) -> ProviderProvisionEffectObservation {
+    ProviderProvisionEffectObservation::Ambiguous {
+        evidence: evidence.into(),
+    }
+}
+
+fn definite_failure(
+    code: &str,
+    evidence: impl Into<Vec<u8>>,
+) -> ProviderProvisionEffectObservation {
+    ProviderProvisionEffectObservation::DefiniteFailure {
+        code: code.to_owned(),
+        evidence: evidence.into(),
+    }
+}
+
+fn bind_error(error: io::Error) -> ProviderProvisionEffectObservation {
+    match error.kind() {
+        io::ErrorKind::AddrInUse
+        | io::ErrorKind::PermissionDenied
+        | io::ErrorKind::AddrNotAvailable
+        | io::ErrorKind::InvalidInput
+        | io::ErrorKind::NotFound => {
+            definite_failure("server_ingress_bind_rejected", error.to_string())
+        }
+        _ => ambiguous(error.to_string()),
+    }
+}
+
+#[cfg(test)]
+#[path = "workload_ingress/tests.rs"]
+mod tests;

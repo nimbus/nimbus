@@ -40,7 +40,6 @@ use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_explicit_compose_selection,
 };
-use crate::compose::load_forwarded_service_manager_for_selection_with_isolation_mode;
 use crate::deploy::resolve_deploy_app_dir;
 use crate::dirs;
 use crate::function_scaling::{
@@ -199,7 +198,7 @@ async fn run_start_command_inner(
             "resolved compose workload-control boot plan"
         );
     }
-    let source_ingress = nimbus_server::nimbus_owned_local_ingress_registration(tls_enabled);
+    let source_ingress = nimbus_server::nimbus_owned_workload_ingress_registration();
     let prepared_network = match network {
         StartNetworkComposition::Staged(staged) => PreparedLocalNetworkComposition::prepare(
             staged,
@@ -218,6 +217,12 @@ async fn run_start_command_inner(
             *prepared
         }
     };
+    // Resolve the workload profile before Engine construction or any listener
+    // effect. A forwarded-machine profile retains its exact effect-free source
+    // here and activates that source only after the caller constructs Engine.
+    let prepared_network_authority = prepared_network.authority();
+    let prepared_server_profile = prepared_network.prepare_server_workload_profile()?;
+    let managed_workload_profile = prepared_server_profile.is_managed();
     let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
     let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
     if !command.systemd_socket_activation {
@@ -256,7 +261,8 @@ async fn run_start_command_inner(
                         bindings.bind(&silo, verifier.clone())
                     })
             });
-    let mut serve_options = ServeOptions::new(engine.clone(), prepared_network.manager())
+    let mut serve_options = prepared_server_profile
+        .complete(engine.clone())?
         .with_license(license_state)
         .with_runtime_host_resource_budget(runtime_host_resource_budget)
         .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)
@@ -272,9 +278,6 @@ async fn run_start_command_inner(
     if let Some(registry) = cloud_functions_registry {
         serve_options = serve_options.with_cloud_functions_registry(registry);
     }
-    if let Some(manager) = prepared_network.local_service_manager() {
-        serve_options = serve_options.with_service_manager(manager);
-    }
     if let Some(token) = command.deploy_admin_token.clone() {
         serve_options = serve_options.with_deploy_admin_token(token);
     }
@@ -286,16 +289,9 @@ async fn run_start_command_inner(
     }
     serve_options = adapter_enablement.clone().apply_to(serve_options);
 
-    prepared_network.validate_start_context(
-        compose_selection.as_ref(),
-        &compose_control_data_dir,
-        command.tenant_isolation_mode,
-        &serve_options.nimbus_owned_local_ingress_registration(),
-    )?;
-
-    // Validate the actual inherited bind before any forwarded-machine or
-    // machine-lifecycle construction. Forwarded service-manager construction
-    // may start a VM, so a refused public systemd socket must fail first.
+    // Validate the actual inherited bind before machine-lifecycle
+    // construction, so a refused public systemd socket fails before any
+    // machine-owned provider is consulted.
     let activated_listener = if command.systemd_socket_activation {
         let listener = activated_systemd_listener()?;
         let activated_host = listener.local_addr()?.ip().to_string();
@@ -312,22 +308,11 @@ async fn run_start_command_inner(
         None
     };
 
-    // Forwarded-machine service composition is a separate provider realm.
-    // It is intentionally constructed only after the host-local registry has
-    // frozen empty, so machine startup cannot be mistaken for local evidence.
-    if prepared_network.requires_forwarded_service_manager()
-        && let Some(manager) = load_service_manager(
-            compose_selection.as_ref(),
-            &compose_control_data_dir,
-            command.tenant_isolation_mode,
-            &crate::machine::HostMachineNetworkAuthority::injected(prepared_network.authority()),
-        )?
-    {
-        serve_options = serve_options.with_service_manager(manager);
+    if managed_workload_profile {
+        let machine_lifecycle_manager =
+            crate::machine::host_machine_lifecycle_manager(prepared_network_authority)?;
+        serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
     }
-    let machine_lifecycle_manager =
-        crate::machine::host_machine_lifecycle_manager(prepared_network.authority())?;
-    serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
 
     let listener = match activated_listener {
         Some(listener) => serve_options.adopt_external_main_listener(listener)?,
@@ -558,25 +543,6 @@ pub(crate) fn resolve_optional_compose_selection(
     let explicit_compose_files = command.compose_file.as_slice();
     resolve_explicit_compose_selection(explicit_compose_files, &cwd)
         .map_err(|error| Error::InvalidInput(error.to_string()))
-}
-
-pub(super) fn load_service_manager(
-    compose_selection: Option<&ResolvedComposeSelection>,
-    compose_control_data_dir: &std::path::Path,
-    tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
-    network: &crate::machine::HostMachineNetworkAuthority,
-) -> Result<Option<Arc<nimbus::ServiceManager>>, Error> {
-    compose_selection
-        .map(|selection| {
-            load_forwarded_service_manager_for_selection_with_isolation_mode(
-                selection,
-                compose_control_data_dir,
-                tenant_isolation_mode,
-                network,
-            )
-        })
-        .transpose()
-        .map(|manager| manager.map(Arc::new))
 }
 
 fn emit_start_info(message: impl AsRef<str>) {
@@ -1129,7 +1095,7 @@ mod listener_tests {
             None,
             &root.path().join("control"),
             nimbus_tenant::TenantIsolationMode::LocalDevelopment,
-            nimbus_server::nimbus_owned_local_ingress_registration(false),
+            nimbus_server::nimbus_owned_workload_ingress_registration(),
         )
         .expect("source composition should freeze empty");
         let command = StartCommand {
@@ -1155,6 +1121,79 @@ mod listener_tests {
         );
         std::net::TcpListener::bind(actual_addr)
             .expect("rejected dev handoff must close and settle its held listener");
+    }
+
+    #[test]
+    fn listener_tls_does_not_change_workload_ingress_provider_evidence() {
+        let plain_listener_evidence = nimbus_server::nimbus_owned_workload_ingress_registration();
+        let _listener_tls = nimbus_server::TlsConfig::new("fixture-cert.pem", "fixture-key.pem");
+        let tls_listener_evidence = nimbus_server::nimbus_owned_workload_ingress_registration();
+
+        assert_eq!(plain_listener_evidence, tls_listener_evidence);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn crossed_prepared_source_fails_before_engine_or_listener_effects() {
+        std::thread::Builder::new()
+            .name("crossed-prepared-start-source".to_owned())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(crossed_prepared_source_case)
+            .expect("crossed-source test thread should start")
+            .join()
+            .expect("crossed-source test thread should not panic");
+    }
+
+    fn crossed_prepared_source_case() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("crossed-source test runtime should build")
+            .block_on(crossed_prepared_source_case_async());
+    }
+
+    async fn crossed_prepared_source_case_async() {
+        let root = tempfile::tempdir().expect("fixture root should exist");
+        let network_path = root.path().join("source-node");
+        let source_control = root.path().join("source-control");
+        let requested_control = root.path().join("requested-control");
+        let engine_data = root.path().join("engine-data");
+        let network_root = nimbus_operator::LocalNodeNetworkRoot::resolve_for_current_platform(
+            Some(&network_path),
+        )
+        .expect("source node root should resolve");
+        let staged = StagedLocalNetworkComposition::claim(&network_root)
+            .expect("source manager should claim");
+        let prepared_network = PreparedLocalNetworkComposition::prepare(
+            staged,
+            None,
+            &source_control,
+            nimbus_tenant::TenantIsolationMode::LocalDevelopment,
+            nimbus_server::nimbus_owned_workload_ingress_registration(),
+        )
+        .expect("source composition should freeze empty");
+        let command = StartCommand {
+            data_dir: Some(engine_data.clone()),
+            control_data_dir: Some(requested_control),
+            network_state_dir: Some(network_path),
+            tenant_provider: Some(crate::start::CliTenantProvider::Sqlite),
+            tenant_isolation_mode: nimbus_tenant::TenantIsolationMode::LocalDevelopment,
+            ..StartCommand::default()
+        };
+
+        let error = run_start_command_with_prepared_network(command, prepared_network)
+            .await
+            .expect_err("a crossed prepared source must fail before startup effects");
+        assert!(
+            error
+                .to_string()
+                .contains("control-data root changed after capability freeze"),
+            "typed source mismatch should remain actionable: {error}"
+        );
+        assert!(
+            !engine_data.exists(),
+            "source validation must precede Engine persistence effects"
+        );
     }
 
     #[tokio::test]

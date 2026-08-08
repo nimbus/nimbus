@@ -2,6 +2,7 @@ use super::*;
 use crate::manager::session_channels::{
     SessionChannelAuditKind, SessionChannelHalfState, SessionChannelKey,
 };
+use crate::manager::sessions::{SessionCommitGate, validate_session_commit_gate};
 use nimbus_workloads::{
     DesiredWorkload, WorkloadChannelDescriptor, WorkloadExecutionStatus, WorkloadExecutor,
 };
@@ -45,15 +46,32 @@ async fn open_session_rejects_not_ready_sandbox_targets() {
         }),
         backend,
     );
-    let sandbox = manager
-        .create_sandbox_resource_for_context_async(
-            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
-            "worker",
-            standalone_resource_spec(&tenant_id, "task"),
-            BTreeMap::new(),
+    let sandbox = reserve_standalone_source(
+        &manager,
+        &tenant_id,
+        "stable-resource",
+        "worker",
+        standalone_resource_spec(&tenant_id, "task"),
+        BTreeMap::new(),
+    );
+    let handle = SandboxHandle::new(
+        tenant_id.clone(),
+        SandboxId::new("execution-stable-resource"),
+        "task",
+        SandboxBackendKind::Krun,
+        SandboxStatus::Starting,
+        Vec::new(),
+    );
+    manager
+        .project_sandbox_resource_execution_observation(
+            &tenant_id,
+            &sandbox.id,
+            sandbox.generation,
+            &sandbox.resource_version,
+            handle.id.as_str(),
+            handle.clone(),
         )
-        .await
-        .expect("standalone sandbox should start in a non-ready state");
+        .expect("non-ready sandbox observation should project");
 
     let error = manager
         .open_session_async(
@@ -76,6 +94,112 @@ async fn open_session_rejects_not_ready_sandbox_targets() {
     assert!(
         manager.list_sessions_for_tenant(&tenant_id).is_empty(),
         "rejected not-ready sandbox session must not create a session resource"
+    );
+}
+
+#[test]
+fn session_commit_revalidates_exact_sandbox_source_and_observation() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(1));
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        backend.clone(),
+    );
+    let source = reserve_standalone_source(
+        &manager,
+        &tenant_id,
+        "stable-resource",
+        "worker",
+        standalone_resource_spec(&tenant_id, "task"),
+        BTreeMap::new(),
+    );
+    let ready = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Ready);
+    manager
+        .project_sandbox_resource_execution_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            &source.resource_version,
+            ready.id.as_str(),
+            ready.clone(),
+        )
+        .expect("exact ready sandbox should project");
+    let gate = SessionCommitGate::Sandbox {
+        id: source.id.clone(),
+        generation: source.generation,
+        resource_version: source.resource_version.clone(),
+        expected_observation: ready,
+    };
+
+    {
+        let state = manager
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        validate_session_commit_gate(&state, &tenant_id, &gate)
+            .expect("unchanged exact snapshot should pass commit validation");
+    }
+    {
+        let mut state = manager
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        state
+            .sandbox_resource_observations
+            .get_mut(&super::super::types::TenantSandboxResourceKey::new(
+                &tenant_id, &source.id,
+            ))
+            .expect("projected observation should remain")
+            .handle
+            .status = SandboxStatus::Stopped;
+        assert!(
+            validate_session_commit_gate(&state, &tenant_id, &gate).is_err(),
+            "a stale ready snapshot must not authorize session commit"
+        );
+    }
+}
+
+#[test]
+fn session_commit_revalidates_dynamic_service_resource_version() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        Arc::new(StubSandboxBackend::new(1)),
+    );
+    let definition = manager
+        .create_service_definition(
+            &tenant_id,
+            "browser",
+            ServiceBackend::built_in("browser"),
+            BTreeMap::new(),
+        )
+        .expect("dynamic service definition should create");
+    let gate = SessionCommitGate::Service {
+        name: definition.name.clone(),
+        generation: definition.generation,
+        resource_version: definition.resource_version.clone(),
+        source: definition.source,
+        expected_observation: None,
+    };
+    let mut state = manager
+        .state
+        .lock()
+        .expect("manager lock should not be poisoned");
+    state
+        .definitions
+        .get_mut(&super::super::types::TenantServiceKey::new(
+            &tenant_id,
+            &definition.name,
+        ))
+        .expect("dynamic definition should remain")
+        .resource_version = "svcdef-crossed-version".to_owned();
+    assert!(
+        validate_session_commit_gate(&state, &tenant_id, &gate).is_err(),
+        "commit must reject a same-generation source-version race"
     );
 }
 

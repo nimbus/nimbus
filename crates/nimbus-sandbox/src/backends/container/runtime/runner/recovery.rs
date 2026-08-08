@@ -207,15 +207,10 @@ pub(in crate::backends::container::runtime) fn reconcile_runner_effects_started(
                         ),
                     }
                 })?;
+                let attachment_id = manifest.require_network_config()?.attachment_id.clone();
                 backend
                     .segment_allocator
-                    .adopt_reserved_attachment(
-                        &manifest.spec.tenant_id,
-                        &crate::backends::oci::network::default_network_attachment_id(
-                            &manifest.handle.id,
-                        ),
-                        claim,
-                    )
+                    .adopt_reserved_attachment(&manifest.spec.tenant_id, &attachment_id, claim)
                     .map_err(|adoption_error| SandboxError::OperationFailed {
                         message: format!(
                             "container runner no-effect cleanup for {} did not converge: \

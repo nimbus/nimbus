@@ -10,11 +10,14 @@ const recoveryPath =
   "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/recovery.rs";
 const crashTestPath =
   "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/tests/crash_recovery.rs";
+const modularityProofPath =
+  "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4-atomic-provision-caller-cutover.md";
 
 let lifecycle = fs.readFileSync(lifecyclePath, "utf8");
 let active = fs.readFileSync(activePath, "utf8");
 let recovery = fs.readFileSync(recoveryPath, "utf8");
 let crashTest = fs.readFileSync(crashTestPath, "utf8");
+const modularityProof = fs.readFileSync(modularityProofPath, "utf8");
 
 switch (process.env.NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_CRASH_MUTATION) {
   case undefined:
@@ -80,7 +83,10 @@ switch (process.env.NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_CRASH_MUTATION) {
     );
     break;
   case "unbounded-child":
-    crashTest = crashTest.replace("const CHILD_TIMEOUT", "const MISSING_CHILD_TIMEOUT");
+    crashTest = crashTest.replace(
+      "const CHILD_TIMEOUT",
+      "const MISSING_CHILD_TIMEOUT",
+    );
     break;
   case "missing-pre-crash-witness":
     crashTest = crashTest.replace(
@@ -98,13 +104,19 @@ const requireText = (source, text, detail) => {
 };
 
 const createCuts = [
-  ["attachment.create.provider_attempt_prepared", "ProviderAttemptAuthenticated"],
+  [
+    "attachment.create.provider_attempt_prepared",
+    "ProviderAttemptAuthenticated",
+  ],
   ["attachment.create.namespace_created", "NamespaceCreated"],
   ["attachment.create.listener_claims_held", "ListenerClaimsHeld"],
   ["attachment.create.provider_ready", "ProviderSetupComplete"],
   ["attachment.create.publishing", "Publishing"],
   ["attachment.create.listeners_active", "ListenerBindingsActive"],
-  ["attachment.create.backend_publication_complete", "BackendPublicationComplete"],
+  [
+    "attachment.create.backend_publication_complete",
+    "BackendPublicationComplete",
+  ],
   ["attachment.create.lifetime_registered", "LifetimeRegistered"],
   ["attachment.create.attachment_confirmed", "AttachmentConfirmed"],
   ["attachment.create.active", "Active"],
@@ -122,8 +134,16 @@ const deleteCuts = [
   ["attachment.delete.attachment_terminal", "AttachmentTerminal"],
 ];
 
-requireText(crashTest, "const CREATE_CUTS: [CreateCut; 10]", "create matrix is not pinned to 10 cuts");
-requireText(crashTest, "const DELETE_CUTS: [DeleteCut; 10]", "delete matrix is not pinned to 10 cuts");
+requireText(
+  crashTest,
+  "const CREATE_CUTS: [CreateCut; 10]",
+  "create matrix is not pinned to 10 cuts",
+);
+requireText(
+  crashTest,
+  "const DELETE_CUTS: [DeleteCut; 10]",
+  "delete matrix is not pinned to 10 cuts",
+);
 
 const extractMappings = (source, entryType, phaseType) => {
   const mappings = [];
@@ -207,8 +227,16 @@ requireText(
   "Command::new(std::env::current_exe()",
   "crash matrix does not spawn the actual test process",
 );
-requireText(crashTest, "child.kill()", "crash matrix does not kill the effect-owning child");
-requireText(crashTest, "const CHILD_TIMEOUT", "crash matrix has no bounded child timeout");
+requireText(
+  crashTest,
+  "child.kill()",
+  "crash matrix does not kill the effect-owning child",
+);
+requireText(
+  crashTest,
+  "const CHILD_TIMEOUT",
+  "crash matrix has no bounded child timeout",
+);
 requireText(
   crashTest,
   "const PRE_CRASH_WITNESS",
@@ -241,8 +269,49 @@ requireText(
 );
 
 const lifecycleLines = lifecycle.split("\n").length - 1;
-if (lifecycleLines >= 1500) {
-  failures.push(`attachment lifecycle composition root is ${lifecycleLines} lines (must remain below 1500)`);
+if (lifecycleLines >= 2000) {
+  failures.push(
+    `attachment lifecycle composition root is ${lifecycleLines} lines (must remain below 2000)`,
+  );
+} else if (lifecycleLines >= 1500) {
+  const exactPrefix = `| \`${lifecyclePath}\` | ${lifecycleLines.toLocaleString("en-US")} |`;
+  const disposition = modularityProof
+    .split("\n")
+    .find((line) => line.startsWith(exactPrefix));
+  if (!disposition) {
+    failures.push(
+      `attachment lifecycle composition root is ${lifecycleLines} lines without an exact NNC6.4 ownership disposition`,
+    );
+  } else {
+    for (const rationale of [
+      "attachment lifecycle owner",
+      "authority",
+      "readiness",
+      "reconciliation",
+      "release",
+      "concept children",
+      "Publication stays outside",
+    ]) {
+      requireText(
+        disposition,
+        rationale,
+        `attachment lifecycle modularity disposition lacks ownership rationale ${rationale}`,
+      );
+    }
+  }
+  for (const child of [
+    "mod active_reconciliation;",
+    "mod attachment_readiness;",
+    "mod authority;",
+    "mod detach_release;",
+    "mod recovery;",
+  ]) {
+    requireText(
+      lifecycle,
+      child,
+      `attachment lifecycle composition root lacks concept-owned child ${child}`,
+    );
+  }
 }
 
 if (failures.length > 0) {

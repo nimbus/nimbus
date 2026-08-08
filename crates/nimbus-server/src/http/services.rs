@@ -292,21 +292,6 @@ pub(crate) async fn stop_service(
     .await
 }
 
-pub(crate) async fn restart_service(
-    State(state): State<Arc<AppState>>,
-    Path((tenant_id, service_name)): Path<(String, String)>,
-    headers: HeaderMap,
-) -> Result<Json<ServiceResourceResponse>, AppError> {
-    service_lifecycle_route(
-        state,
-        headers,
-        tenant_id,
-        service_name,
-        ServiceLifecycleVerb::Restart,
-    )
-    .await
-}
-
 async fn service_lifecycle_route(
     state: Arc<AppState>,
     headers: HeaderMap,

@@ -469,6 +469,7 @@ fn acquire_runner_execution_ownership(
 /// under one OS lock gives concurrent inspect/stop paths an unambiguous crash
 /// boundary: no decision means no effect has started; `EffectsStarted` means
 /// provider inspection is required before retry.
+#[cfg(test)]
 pub(super) fn persist_direct_execution_ownership(
     backend: &ContainerSandboxBackend,
     manifest: &mut ContainerSandboxManifest,
@@ -1598,6 +1599,7 @@ pub(super) fn converge_runner_effects_started_with(
     .map_err(|error| super::effect_fence::diagnose_exhaustion(manifest, error))
 }
 
+#[cfg(test)]
 pub(super) fn converge_runner_lifecycle_ownership(
     manifest: &ContainerSandboxManifest,
     handoff: &RunnerHandoffGuard,

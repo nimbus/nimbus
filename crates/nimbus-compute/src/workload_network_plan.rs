@@ -13,9 +13,10 @@ use nimbus_network::{
     NetworkCapabilityDimension, NetworkCapabilityRegistry, NetworkCapabilityRequirements,
     NetworkCapabilitySelection, NetworkCapabilitySelectionError, NetworkEndpointCapabilitySet,
     NetworkExposure, NetworkForwardingCapabilitySet, NetworkForwardingFeature,
-    NetworkIngressCapabilitySet, NetworkIngressFeature, NetworkLifecycleCapabilitySet,
-    NetworkLifecycleFeature, NetworkManagementMode, NetworkPortAssignmentMode, NetworkProviderId,
-    NetworkResourceGeneration, NetworkSovereigntyRequirements, NetworkTlsBehavior, PortProtocol,
+    NetworkIngressCapabilitySet, NetworkLifecycleCapabilitySet, NetworkLifecycleFeature,
+    NetworkLifecycleRequirements, NetworkManagementMode, NetworkPortAssignmentMode,
+    NetworkProviderId, NetworkResourceGeneration, NetworkSovereigntyRequirements,
+    NetworkTlsBehavior, PortProtocol,
 };
 use nimbus_sandbox::{SandboxBackendKind, SandboxOwnerSpec, SandboxSpec};
 use nimbus_tenant::{TenantIsolationDecision, WorkloadKind};
@@ -30,7 +31,7 @@ use nimbus_workloads::{
 use thiserror::Error;
 
 const DEFAULT_ATTACHMENT_NAME: &str = "default";
-const EGRESS_PEP_LISTENER_NAME: &str = "nimbus-internal-egress-pep";
+const EGRESS_PEP_LISTENER_NAME: &str = "egress-pep";
 
 /// Closed admitted source shapes accepted by [`WorkloadNetworkPlanCompiler`].
 #[derive(Debug, Clone, Copy)]
@@ -284,7 +285,7 @@ impl WorkloadNetworkPlanCompiler {
                         .then(|| {
                             WorkloadNetworkDependencyListenerBlueprint::new(
                                 &plan_identity,
-                                EGRESS_PEP_LISTENER_NAME,
+                                source_requirements.pep_listener_name(),
                                 source_requirements.pep_provider_id().clone(),
                             )
                         })
@@ -631,10 +632,11 @@ fn aggregate_requirements(
     let mut exposures = source.endpoint().exposures().clone();
     let mut protocols = source.endpoint().protocols().clone();
     let mut port_assignment_modes = source.endpoint().port_assignment_modes().clone();
-    let mut ingress_features = source.ingress().features().clone();
+    let ingress_features = source.ingress().features().clone();
     let mut tls_behaviors = source.ingress().tls_behaviors().clone();
     let mut forwarding_features = source.forwarding().features().clone();
-    let mut lifecycle_features = source.lifecycle().features().clone();
+    let mut attachment_lifecycle_features = source.lifecycle().attachment().features().clone();
+    let mut ingress_lifecycle_features = source.lifecycle().ingress().features().clone();
 
     for listener in listeners {
         address_families.insert(address_family(listener.desired_host_address()));
@@ -653,20 +655,15 @@ fn aggregate_requirements(
             forwarding_features.insert(NetworkForwardingFeature::PortForwarding);
         }
         tls_behaviors.insert(listener.endpoint_semantics().tls());
-        match listener.protocol() {
-            EndpointProtocol::Tcp => {}
-            EndpointProtocol::Http => {
-                ingress_features.insert(NetworkIngressFeature::Streaming);
-            }
-            EndpointProtocol::Https => {
-                ingress_features.insert(NetworkIngressFeature::Streaming);
-            }
-        }
     }
-    lifecycle_features.extend([
+    attachment_lifecycle_features.extend([
         NetworkLifecycleFeature::DurableInspect,
         NetworkLifecycleFeature::Reconcile,
         NetworkLifecycleFeature::Delete,
+    ]);
+    ingress_lifecycle_features.extend([
+        NetworkLifecycleFeature::DurableInspect,
+        NetworkLifecycleFeature::Reconcile,
     ]);
 
     Ok(NetworkCapabilityRequirements::new(
@@ -680,7 +677,10 @@ fn aggregate_requirements(
         ),
         NetworkIngressCapabilitySet::new(ingress_features).with_tls_behaviors(tls_behaviors),
         NetworkForwardingCapabilitySet::new(forwarding_features),
-        NetworkLifecycleCapabilitySet::new(lifecycle_features),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new(attachment_lifecycle_features),
+            NetworkLifecycleCapabilitySet::new(ingress_lifecycle_features),
+        ),
         sovereignty,
     ))
 }
@@ -716,7 +716,10 @@ fn empty_requirements(
         NetworkEndpointCapabilitySet::new([], [], [], [], []),
         NetworkIngressCapabilitySet::new([]),
         NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([]),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
         sovereignty,
     )
 }

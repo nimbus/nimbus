@@ -33,8 +33,9 @@ pub(crate) use attachment_lifecycle::{
     AttachmentAttachAuthority, AttachmentAuxiliaryDisposition, AttachmentBackendKind,
     AttachmentDetachFailure, AttachmentDetachFailureStage, AttachmentTeardownMode,
     OciAttachmentAdapter, OciAttachmentAuxiliaryListener, OciAttachmentBaseReadinessState,
-    OciAttachmentInput, OciAttachmentLifecycle, OciAttachmentReadinessState,
-    OciHostManagedAttachmentBackend, OciMachineForwardedAttachmentBackend, oci_attachment_plan,
+    OciAttachmentInput, OciAttachmentLifecycle, OciAttachmentProviderPaths,
+    OciAttachmentReadinessState, OciHostManagedAttachmentBackend,
+    OciMachineForwardedAttachmentBackend, oci_attachment_plan,
 };
 #[cfg(test)]
 pub(crate) use egress_pin::FixedOciEgressPinProvider;
@@ -69,7 +70,7 @@ pub(crate) use netavark::{
 };
 #[cfg(test)]
 pub(crate) use netavark::{setup_container_network, teardown_container_network};
-pub(crate) use placement::{OciPlacementProvider, place_sandbox_on_block};
+pub(crate) use placement::{OciPlacementAuthority, OciPlacementProvider, place_sandbox_on_block};
 pub(crate) use process::{
     MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,
     MachinePortProxyCleanupDisposition, MachinePortProxyCleanupState, MachinePortProxyEntries,
@@ -88,14 +89,17 @@ pub(crate) use proxy::{
 };
 pub(crate) use realization::OciSegmentRealization;
 pub(crate) use reaper::{
-    ReservedNetworkLaunchAuthority, compensate_reserved_network_launch_after_ports,
-    quarantine_network_segment_hold, release_network_segment_hold,
-    release_reserved_network_launch_after_ports,
+    ReservedNetworkLaunchAuthority, ReservedNetworkLaunchIdentity,
+    compensate_reserved_network_launch_after_ports, quarantine_network_segment_hold,
+    release_network_segment_hold, release_reserved_network_launch_after_ports,
 };
 #[cfg(test)]
 pub(crate) use segment::SingleNodeSegmentAllocator;
 pub(crate) use segment::{ConfiguredSegmentAllocator, DEFAULT_TENANT_PREFIX};
-pub(crate) use startup_reconciliation::reconcile_startup_network_state;
+pub(crate) use startup_reconciliation::{
+    reconcile_startup_network_state,
+    reconcile_startup_network_state_with_retained_desired_manifests,
+};
 #[cfg(test)]
 pub(crate) use test_support::{
     RecordingSegmentAllocator, SegmentAllocatorOperation, direct_test_ipam_authority,
@@ -173,11 +177,11 @@ mod tests {
         OciMachinePortForwarderConfig, OciNetavarkOperation, OciNetworkConfig,
         OciNetworkDirectEgress, OciNetworkLayout, allocate_container_ips,
         authenticate_container_network_generation, build_bridge_network, build_netavark_request,
-        deallocate_container_ips_after_confirmed_detach, direct_test_ipam_authority,
-        load_container_ips, machine_forward_remote, machine_port_proxy_guest_listener_addr,
-        netavark_path_env, netavark_port_bindings, parse_ipv4_subnet_and_gateway,
-        prepare_machine_port_proxies, render_netavark_failure, setup_container_network,
-        start_machine_port_proxies, teardown_container_network,
+        deallocate_container_ips_after_confirmed_detach, default_network_attachment_id,
+        direct_test_ipam_authority, load_container_ips, machine_forward_remote,
+        machine_port_proxy_guest_listener_addr, netavark_path_env, netavark_port_bindings,
+        parse_ipv4_subnet_and_gateway, prepare_machine_port_proxies, render_netavark_failure,
+        setup_container_network, start_machine_port_proxies, teardown_container_network,
     };
     use crate::backend::SandboxBackendKind;
     use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
@@ -205,6 +209,13 @@ mod tests {
         name: &'a str,
     ) -> OciNetavarkOperation<'a> {
         OciNetavarkOperation::new(layout, config, sandbox_id, name, name, &[], None)
+    }
+
+    fn network_config_for(sandbox_id: &SandboxId) -> OciNetworkConfig {
+        OciNetworkConfig {
+            attachment_id: default_network_attachment_id(sandbox_id),
+            ..OciNetworkConfig::default()
+        }
     }
 
     #[test]
@@ -698,7 +709,7 @@ mod tests {
             .expect("network layout should exist");
         let config = OciNetworkConfig {
             netavark_path: "/usr/bin/false".into(),
-            ..OciNetworkConfig::default()
+            ..network_config_for(&sandbox_id)
         };
         allocate_container_ips(&ipam_authority, &layout, &config, &sandbox_id)
             .expect("placement should reserve IPAM before Netavark setup");
@@ -727,7 +738,7 @@ mod tests {
             .expect("network layout should exist");
         let config = OciNetworkConfig {
             netavark_path: "/usr/bin/true".into(),
-            ..OciNetworkConfig::default()
+            ..network_config_for(&sandbox_id)
         };
         let assigned = allocate_container_ips(&ipam_authority, &layout, &config, &sandbox_id)
             .expect("placement should reserve IPAM before provider cleanup");
@@ -768,6 +779,7 @@ mod tests {
             &ipam_authority,
             &layout,
             &sandbox_id,
+            &config.attachment_id,
             &config.reservation_claim,
             config.provider_kind(),
         )
@@ -806,7 +818,7 @@ mod tests {
             .expect("network layout should exist");
         let config = OciNetworkConfig {
             netavark_path: "/usr/bin/true".into(),
-            ..OciNetworkConfig::default()
+            ..network_config_for(&sandbox_id)
         };
         let assigned = allocate_container_ips(&ipam_authority, &layout, &config, &sandbox_id)
             .expect("placement should reserve IPAM before provider cleanup");
@@ -856,7 +868,7 @@ mod tests {
         layout
             .ensure_directories()
             .expect("network layout should exist");
-        let config = OciNetworkConfig::default();
+        let config = network_config_for(&sandbox_id);
         let assigned = allocate_container_ips(&ipam_authority, &layout, &config, &sandbox_id)
             .expect("placement should reserve exact stable-segment IPAM");
         fs::write(&layout.netns_path, b"netns").expect("netns marker should exist");
@@ -907,13 +919,14 @@ mod tests {
         layout
             .ensure_directories()
             .expect("network layout should exist");
-        let stale = OciNetworkConfig::default();
+        let stale = network_config_for(&sandbox_id);
         allocate_container_ips(&ipam_authority, &layout, &stale, &sandbox_id)
             .expect("first generation should reserve IPAM");
         deallocate_container_ips_after_confirmed_detach(
             &ipam_authority,
             &layout,
             &sandbox_id,
+            &stale.attachment_id,
             &stale.reservation_claim,
             stale.provider_kind(),
         )
@@ -1056,16 +1069,17 @@ mod tests {
     #[test]
     fn allocate_container_ips_reserves_and_loads_podman_style_static_ips() {
         let temp_dir = tempdir().expect("temp dir should create");
-        let config = OciNetworkConfig::default();
         let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
         let first_id = crate::instance::SandboxId::new("db-01");
         let second_id = crate::instance::SandboxId::new("db-02");
+        let config = network_config_for(&first_id);
+        let second_config = network_config_for(&second_id);
         let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &first_id);
         let ipam_authority = direct_test_ipam_authority(&layout);
 
         let first = allocate_container_ips(&ipam_authority, &layout, &config, &first_id)
             .expect("first allocation should succeed");
-        let second = allocate_container_ips(&ipam_authority, &layout, &config, &second_id)
+        let second = allocate_container_ips(&ipam_authority, &layout, &second_config, &second_id)
             .expect("second allocation should succeed");
 
         assert_eq!(
@@ -1086,19 +1100,23 @@ mod tests {
     #[test]
     fn allocate_container_ips_uses_only_container_slot_in_smallest_bridge_subnet() {
         let temp_dir = tempdir().expect("temp dir should create");
-        let config = OciNetworkConfig {
-            network_subnet: "10.0.0.0/30".to_owned(),
-            ..OciNetworkConfig::default()
-        };
         let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
         let first_id = crate::instance::SandboxId::new("db-01");
         let second_id = crate::instance::SandboxId::new("db-02");
+        let first_config = OciNetworkConfig {
+            network_subnet: "10.0.0.0/30".to_owned(),
+            ..network_config_for(&first_id)
+        };
         let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &first_id);
         let ipam_authority = direct_test_ipam_authority(&layout);
 
-        let first = allocate_container_ips(&ipam_authority, &layout, &config, &first_id)
+        let first = allocate_container_ips(&ipam_authority, &layout, &first_config, &first_id)
             .expect("single allocatable container address should succeed");
-        let second = allocate_container_ips(&ipam_authority, &layout, &config, &second_id)
+        let second_config = OciNetworkConfig {
+            network_subnet: "10.0.0.0/30".to_owned(),
+            ..network_config_for(&second_id)
+        };
+        let second = allocate_container_ips(&ipam_authority, &layout, &second_config, &second_id)
             .expect_err("gateway plus one container should exhaust a /30 subnet");
 
         assert_eq!(
@@ -1133,7 +1151,7 @@ mod tests {
         // the shared per-tenant cursor at .2.
         let block0 = OciNetworkConfig {
             network_subnet: "10.0.0.0/30".to_owned(),
-            ..OciNetworkConfig::default()
+            ..network_config_for(&first_id)
         };
         let first = allocate_container_ips(&ipam_authority, &layout, &block0, &first_id)
             .expect("block 0 host");
@@ -1144,7 +1162,7 @@ mod tests {
         // host .6, never .3 (block 0's broadcast, below block 1).
         let block1 = OciNetworkConfig {
             network_subnet: "10.0.0.4/30".to_owned(),
-            ..OciNetworkConfig::default()
+            ..network_config_for(&second_id)
         };
         let second = allocate_container_ips(&ipam_authority, &layout, &block1, &second_id)
             .expect("block 1 host");
@@ -1177,9 +1195,9 @@ mod tests {
     #[test]
     fn deallocate_container_ips_removes_persisted_assignment() {
         let temp_dir = tempdir().expect("temp dir should create");
-        let config = OciNetworkConfig::default();
         let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
         let sandbox_id = crate::instance::SandboxId::new("db-01");
+        let config = network_config_for(&sandbox_id);
         let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &sandbox_id);
         let ipam_authority = direct_test_ipam_authority(&layout);
 
@@ -1191,6 +1209,7 @@ mod tests {
             &ipam_authority,
             &layout,
             &sandbox_id,
+            &config.attachment_id,
             &config.reservation_claim,
             config.provider_kind(),
         )

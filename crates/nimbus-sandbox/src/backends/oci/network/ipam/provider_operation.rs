@@ -15,7 +15,6 @@ use sha2::{Digest, Sha256};
 use ulid::Ulid;
 
 use super::{OciIpamAuthority, read_ipam_state, validate_ipam_generation, with_ipam_state};
-use crate::backends::oci::network::default_network_attachment_id;
 use crate::backends::oci::network::dto::{IpamAllocation, IpamState, NetavarkProviderOperation};
 use crate::backends::oci::network::layout::{OciNetworkConfig, OciNetworkLayout};
 use crate::backends::oci::network::provider_locator::OciAttachmentProviderLocator;
@@ -125,7 +124,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_setup(
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<(Vec<Ipv4Addr>, NetavarkSetupClaim)> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
+    let attachment_id = config.attachment_id.clone();
     with_ipam_state(authority, layout, |state| {
         let allocation = state
             .allocations
@@ -180,7 +179,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_setup_execution(
     sandbox_id: &SandboxId,
     claim: &NetavarkSetupClaim,
 ) -> Result<Vec<Ipv4Addr>> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
+    let attachment_id = config.attachment_id.clone();
     validate_setup_claim_identity(claim, &attachment_id, &config.reservation_claim)?;
     with_ipam_state(authority, layout, |state| {
         let allocation = exact_live_allocation_for_setup_claim(state, layout, claim)?;
@@ -220,7 +219,7 @@ pub(in crate::backends::oci::network) fn inspect_netavark_provider_operation(
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<NetavarkProviderOperation> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
+    let attachment_id = config.attachment_id.clone();
     let state = read_ipam_state(authority, layout)?;
     let allocation = state
         .allocations
@@ -274,7 +273,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown(
     sandbox_id: &SandboxId,
     setup_claim: Option<&NetavarkSetupClaim>,
 ) -> Result<NetavarkTeardownPlan> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
+    let attachment_id = config.attachment_id.clone();
     if let Some(claim) = setup_claim {
         validate_setup_claim_identity(claim, &attachment_id, &config.reservation_claim)?;
     }
@@ -831,18 +830,6 @@ fn netavark_operation_generation(
             ),
         });
     }
-    let expected_attachment =
-        default_network_attachment_id(allocation.provider_locator.sandbox_id());
-    if &expected_attachment != attachment_id {
-        return Err(SandboxError::OperationFailed {
-            message: format!(
-                "OCI Netavark generation binding for attachment {} does not match provider locator sandbox {} derived attachment {}",
-                attachment_id.as_str(),
-                allocation.provider_locator.sandbox_id().as_str(),
-                expected_attachment.as_str()
-            ),
-        });
-    }
     let segment_id =
         allocation
             .segment_id
@@ -930,12 +917,8 @@ fn authenticate_claim_layout(
     operation: &str,
 ) -> Result<()> {
     let locator = &generation.provider_locator;
-    let expected_attachment = default_network_attachment_id(locator.sandbox_id());
     let authenticates_root = locator.authenticates_workload_root(&layout.workload_state_root)?;
-    if locator.tenant_id() == &layout.tenant_id
-        && generation.attachment_id == expected_attachment
-        && authenticates_root
-    {
+    if locator.tenant_id() == &layout.tenant_id && authenticates_root {
         return Ok(());
     }
     Err(SandboxError::OperationFailed {

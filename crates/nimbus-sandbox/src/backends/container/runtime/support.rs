@@ -13,6 +13,7 @@ use crate::backends::oci::buildah::{
 use crate::backends::oci::materializer::MaterializedImageRootfs;
 use crate::backends::oci::network::OciMachinePortForwarderConfig;
 pub(super) use crate::instance::{SandboxId, SandboxStatus};
+pub(super) use crate::provision::test_support::sandbox_provision_network_plan_fixture as sample_provision_network_plan;
 pub(super) use crate::spec::{
     SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
     SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
@@ -90,6 +91,19 @@ pub(super) fn sample_plan_only_backend(root: &std::path::Path) -> ContainerSandb
         start_mode: ContainerStartMode::PlanOnly,
         ..ContainerSandboxBackendConfig::under_root(root)
     })
+}
+
+/// Drive the two non-effectful PlanOnly provision phases in tests without
+/// recreating the deleted production coarse-start authority.
+pub(super) fn reserve_and_prepare_plan_only_fixture(
+    backend: &ContainerSandboxBackend,
+    spec: SandboxSpec,
+    label: &str,
+) -> Result<SandboxHandle> {
+    let sandbox_id = SandboxId::new(format!("plan-only-{label}"));
+    let network_plan = sample_provision_network_plan(&spec, &sandbox_id, label);
+    backend.reserve_provision_network(spec, sandbox_id.clone(), network_plan)?;
+    backend.prepare_provision_workload(&sandbox_id)
 }
 
 pub(super) fn mark_runtime_absent_for_cleanup(manifest: &mut ContainerSandboxManifest) {

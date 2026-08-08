@@ -3,17 +3,47 @@
 use std::sync::Arc;
 
 use nimbus_workloads::{
-    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaKey, WorkloadSagaPage,
-    WorkloadSagaPageRequest, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
+    WorkloadSagaCommit, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
+    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
 };
 
 mod ingress;
 mod provision_decision;
+mod provision_dispatch;
+mod provision_dispatcher;
+mod provision_driver;
+pub mod provision_provider;
+mod provision_sandbox;
 mod recovery;
 
 pub use ingress::{ConfirmedWorkloadSagaIntent, WorkloadSagaIngressDisposition};
+pub use nimbus_workloads::{WorkloadProvisionCommandId, WorkloadProvisionCommandMode};
 pub use provision_decision::{
     ProposedWorkloadProvisionTransition, WorkloadProvisionDecision, WorkloadProvisionSymbolicAction,
+};
+pub use provision_dispatch::{
+    ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadProvisionTransition,
+    WorkloadProvisionCommandResult, WorkloadSagaConfirmation, reduce_command_result,
+};
+pub use provision_dispatcher::{
+    IngressProvisionCapabilities, IngressPublicationCapability,
+    IngressPublicationInspectionCapability, NetworkAttachmentCapability,
+    NetworkAttachmentProvisionCapabilities, NetworkReservationCapability,
+    WorkloadActivationCapability, WorkloadActivationPrerequisiteCapability,
+    WorkloadExecutionProvisionCapabilities, WorkloadPreparationCapability,
+    WorkloadProjectionCapabilityError, WorkloadProvisionCapabilityFuture,
+    WorkloadProvisionCapabilityRegistry, WorkloadProvisionCapabilityRegistryError,
+    WorkloadProvisionDispatchError, WorkloadProvisionDispatcher, WorkloadProvisionSourceAuthority,
+    WorkloadProvisionSourceAuthorityError, WorkloadProvisionSourceFuture,
+    WorkloadReadinessCapability,
+};
+pub use provision_driver::{
+    WorkloadProvisionDriver, WorkloadProvisionRun, WorkloadProvisionRunDisposition,
+    WorkloadProvisionRunError,
+};
+pub use provision_sandbox::{
+    ContainerProvisionAdapter, KrunProvisionAdapter, ValidatedSandboxProvisionCommand,
+    sandbox_execution_provider_id, validate_sandbox_provision_command,
 };
 pub use recovery::{WorkloadSagaAction, WorkloadSagaDecision, WorkloadSagaDecisionPage};
 
@@ -39,29 +69,14 @@ impl WorkloadSagaCoordinator {
         loaded: Option<&WorkloadSagaRecord>,
         next: WorkloadSagaRecord,
     ) -> Result<WorkloadSagaCommit, WorkloadSagaStoreError> {
-        let expected = match loaded {
-            Some(current) => {
-                current.validate_successor(&next)?;
-                WorkloadSagaExpected::Revision(current.revision())
+        match self.confirm_transition(loaded, next).await? {
+            WorkloadSagaConfirmation::AppliedByThisCall
+            | WorkloadSagaConfirmation::ConfirmedAfterAmbiguity => Ok(WorkloadSagaCommit::Applied),
+            WorkloadSagaConfirmation::ConfirmedReplay => Ok(WorkloadSagaCommit::Unchanged),
+            WorkloadSagaConfirmation::Conflict { expected, observed } => {
+                Err(WorkloadSagaStoreError::Conflict { expected, observed })
             }
-            None => {
-                next.validate()?;
-                if next.revision().as_u64() != 0 || next.last_transition().source_phase().is_some()
-                {
-                    return Err(WorkloadSagaStoreError::InvalidTransition(
-                        nimbus_workloads::WorkloadSagaError::InvalidTransition(
-                            "missing-store creation requires the initial revision",
-                        ),
-                    ));
-                }
-                WorkloadSagaExpected::Missing
-            }
-        };
-        match self.store.compare_and_swap(expected, next.clone()).await {
-            Err(WorkloadSagaStoreError::Ambiguous) => {
-                self.resolve_ambiguous_commit(loaded, expected, &next).await
-            }
-            result => result,
+            WorkloadSagaConfirmation::UnresolvedAmbiguity => Err(WorkloadSagaStoreError::Ambiguous),
         }
     }
 
@@ -70,31 +85,6 @@ impl WorkloadSagaCoordinator {
         request: WorkloadSagaPageRequest,
     ) -> Result<WorkloadSagaPage, WorkloadSagaStoreError> {
         self.store.list_recoverable(request).await
-    }
-
-    async fn resolve_ambiguous_commit(
-        &self,
-        loaded: Option<&WorkloadSagaRecord>,
-        expected: WorkloadSagaExpected,
-        next: &WorkloadSagaRecord,
-    ) -> Result<WorkloadSagaCommit, WorkloadSagaStoreError> {
-        let observed = self.store.load(next.key()).await?;
-        if observed
-            .as_ref()
-            .is_some_and(|record| record.key() != next.key())
-        {
-            return Err(WorkloadSagaStoreError::Corrupt);
-        }
-        if observed.as_ref() == Some(next) {
-            return Ok(WorkloadSagaCommit::Applied);
-        }
-        if observed.is_none() || observed.as_ref() == loaded {
-            return Err(WorkloadSagaStoreError::Ambiguous);
-        }
-        Err(WorkloadSagaStoreError::Conflict {
-            expected,
-            observed: observed.as_ref().map(WorkloadSagaRecord::revision),
-        })
     }
 }
 

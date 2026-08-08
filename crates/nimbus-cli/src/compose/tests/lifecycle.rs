@@ -1,5 +1,321 @@
 use super::*;
-use crate::compose::lifecycle::resolve_live_service_handle;
+use crate::compose::lifecycle::{
+    ComposeForegroundOwner, ComposeProvisionFuture, ComposeServiceProvision,
+    provision_compose_service,
+};
+use nimbus_compute::workload_saga::{
+    ConfirmedWorkloadProvisionCommand, IngressPublicationCapability,
+    IngressPublicationInspectionCapability, NetworkAttachmentCapability,
+    NetworkReservationCapability, WorkloadActivationCapability,
+    WorkloadActivationPrerequisiteCapability, WorkloadPreparationCapability,
+    WorkloadProvisionCapabilityFuture, WorkloadReadinessCapability,
+};
+use nimbus_compute::{
+    SandboxServiceProvisionSnapshot, WorkloadExecutionObservationCapability,
+    WorkloadIngressObservationCapability,
+};
+use nimbus_network::{
+    LocalNetworkManager, NetworkAddressFamily, NetworkAttachmentProviderRegistration,
+    NetworkCapabilityBundle, NetworkCapabilityRegistry, NetworkCapabilitySelection,
+    NetworkControlPlaneLocality, NetworkLifecycleCapabilitySet, NetworkLifecycleFeature,
+    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
+};
+use nimbus_server::{ServerWorkloadComposition, ServerWorkloadProviders};
+use nimbus_services::{
+    EmptyServiceDefinitionCatalog, ServiceDefinition, ServiceDefinitionObservation, ServiceManager,
+};
+use nimbus_tenant::TenantIsolationContext;
+use nimbus_workloads::{NodeIdentity, WorkloadExecutionProviderId};
+
+struct ForegroundAttachmentProvider;
+
+macro_rules! foreground_effect_capability {
+    ($provider:ty, $capability:ident) => {
+        impl $capability for $provider {
+            fn execute<'a>(
+                &'a self,
+                _command: &'a ConfirmedWorkloadProvisionCommand,
+            ) -> WorkloadProvisionCapabilityFuture<'a> {
+                panic!("foreground ownership construction must not execute provider effects")
+            }
+
+            fn inspect<'a>(
+                &'a self,
+                _command: &'a ConfirmedWorkloadProvisionCommand,
+            ) -> WorkloadProvisionCapabilityFuture<'a> {
+                panic!("foreground ownership construction must not inspect provider effects")
+            }
+        }
+    };
+}
+
+foreground_effect_capability!(ForegroundAttachmentProvider, NetworkReservationCapability);
+foreground_effect_capability!(ForegroundAttachmentProvider, NetworkAttachmentCapability);
+
+struct ForegroundExecutionProvider;
+
+foreground_effect_capability!(ForegroundExecutionProvider, WorkloadPreparationCapability);
+foreground_effect_capability!(ForegroundExecutionProvider, WorkloadActivationCapability);
+
+impl WorkloadActivationPrerequisiteCapability for ForegroundExecutionProvider {
+    fn inspect<'a>(
+        &'a self,
+        _command: &'a ConfirmedWorkloadProvisionCommand,
+    ) -> WorkloadProvisionCapabilityFuture<'a> {
+        panic!("foreground ownership construction must not inspect activation prerequisites")
+    }
+}
+
+impl WorkloadReadinessCapability for ForegroundExecutionProvider {
+    fn inspect<'a>(
+        &'a self,
+        _command: &'a ConfirmedWorkloadProvisionCommand,
+    ) -> WorkloadProvisionCapabilityFuture<'a> {
+        panic!("foreground ownership construction must not inspect workload readiness")
+    }
+}
+
+impl WorkloadExecutionObservationCapability for ForegroundExecutionProvider {
+    fn observe<'a>(
+        &'a self,
+        _request: &'a nimbus_compute::WorkloadExecutionObservationRequest,
+    ) -> nimbus_compute::WorkloadExecutionObservationFuture<'a> {
+        panic!("foreground ownership construction must not observe workload execution")
+    }
+}
+
+struct ForegroundIngressProvider {
+    _listener: std::net::TcpListener,
+}
+
+foreground_effect_capability!(ForegroundIngressProvider, IngressPublicationCapability);
+
+impl IngressPublicationInspectionCapability for ForegroundIngressProvider {
+    fn inspect<'a>(
+        &'a self,
+        _command: &'a ConfirmedWorkloadProvisionCommand,
+    ) -> WorkloadProvisionCapabilityFuture<'a> {
+        panic!("foreground ownership construction must not inspect ingress publication")
+    }
+}
+
+impl WorkloadIngressObservationCapability for ForegroundIngressProvider {
+    fn observe<'a>(
+        &'a self,
+        _request: &'a nimbus_compute::WorkloadIngressObservationRequest,
+    ) -> nimbus_compute::WorkloadIngressObservationFuture<'a> {
+        panic!("foreground ownership construction must not observe ingress publication")
+    }
+}
+
+struct RecordingComposeProvision {
+    definition: ServiceDefinition,
+    provisioned_observation: ServiceDefinitionObservation,
+    observed: Mutex<Option<ServiceDefinitionObservation>>,
+    calls: Mutex<usize>,
+}
+
+impl RecordingComposeProvision {
+    fn new(backend: SandboxBackendKind) -> Self {
+        let tenant = TenantId::new("svc-demo").expect("tenant should parse");
+        let mut spec = sample_spec(&tenant, "db");
+        spec.backend = backend;
+        let definition =
+            ServiceDefinition::static_catalog(tenant.clone(), "db", ServiceBackend::sandbox(spec));
+        let observation = ServiceDefinitionObservation {
+            tenant_id: tenant.clone(),
+            name: "db".to_owned(),
+            observed_generation: definition.generation,
+            handle: SandboxHandle::new(
+                tenant,
+                SandboxId::new(format!("db-{backend:?}")),
+                "db",
+                backend,
+                SandboxStatus::Ready,
+                Vec::new(),
+            ),
+            observed_at_millis: 1,
+        };
+        Self {
+            definition,
+            provisioned_observation: observation,
+            observed: Mutex::new(None),
+            calls: Mutex::new(0),
+        }
+    }
+}
+
+impl ComposeServiceProvision for RecordingComposeProvision {
+    fn definition(&self, tenant_id: &TenantId, service_name: &str) -> Option<ServiceDefinition> {
+        (&self.definition.tenant_id == tenant_id && self.definition.name == service_name)
+            .then(|| self.definition.clone())
+    }
+
+    fn observation(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+    ) -> Option<ServiceDefinitionObservation> {
+        (&self.definition.tenant_id == tenant_id && self.definition.name == service_name)
+            .then(|| self.observed.lock().expect("observation lock").clone())
+            .flatten()
+    }
+
+    fn provision<'a>(
+        &'a self,
+        _context: &'a TenantIsolationContext,
+        _service_name: &'a str,
+    ) -> ComposeProvisionFuture<'a> {
+        *self.calls.lock().expect("call counter lock") += 1;
+        let observation = self.provisioned_observation.clone();
+        *self.observed.lock().expect("observation lock") = Some(observation.clone());
+        let snapshot = SandboxServiceProvisionSnapshot {
+            definition: self.definition.clone(),
+            observation: Some(observation),
+        };
+        Box::pin(async move { Ok(snapshot) })
+    }
+}
+
+#[tokio::test]
+async fn compose_local_and_forwarded_use_compute_dispatch() {
+    for backend in [SandboxBackendKind::Krun, SandboxBackendKind::Container] {
+        let provision = RecordingComposeProvision::new(backend);
+        let tenant = provision.definition.tenant_id.clone();
+        let context = TenantIsolationContext::system(tenant, "compose-caller-test");
+
+        let started = provision_compose_service(&provision, &context, "db")
+            .await
+            .expect("both provider realms should dispatch through the compute facade");
+        let replayed = provision_compose_service(&provision, &context, "db")
+            .await
+            .expect("exact observed projection should replay without another dispatch");
+
+        assert_eq!(started.action, ServiceLifecycleAction::Started);
+        assert_eq!(replayed.action, ServiceLifecycleAction::AlreadyRunning);
+        assert_eq!(replayed.status, SandboxStatus::Ready);
+        assert_eq!(
+            *provision.calls.lock().expect("call counter lock"),
+            1,
+            "both provider realms must dispatch exactly once and then adopt exact projection"
+        );
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn foreground_compose_owner_retains_listener_rejects_second_realm_and_settles_before_return()
+{
+    let engine_root = TempDir::new().expect("Engine root should exist");
+    let network_root = TempDir::new().expect("network root should exist");
+    let engine = Arc::new(
+        nimbus::Engine::new(engine_root.path()).expect("foreground Engine should initialize"),
+    );
+    let requirements = nimbus_sandbox::sandbox_network_plan_requirements(SandboxBackendKind::Krun);
+    let attachment_provider_id = requirements.required_attachment_provider_id().clone();
+    let ingress_registration = nimbus_server::nimbus_owned_workload_ingress_registration();
+    let ingress_provider_id = ingress_registration.provider_id().clone();
+    let attachment_registration = NetworkAttachmentProviderRegistration::new(
+        attachment_provider_id.clone(),
+        requirements.capability_requirements().attachment().clone(),
+        [NetworkAddressFamily::Ipv4],
+        NetworkLifecycleCapabilitySet::new([
+            NetworkLifecycleFeature::DurableInspect,
+            NetworkLifecycleFeature::Reconcile,
+            NetworkLifecycleFeature::Delete,
+        ]),
+        NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+    );
+    let selection = NetworkCapabilitySelection::new(
+        attachment_provider_id.clone(),
+        ingress_provider_id.clone(),
+    );
+    let registry = NetworkCapabilityRegistry::new([NetworkCapabilityBundle::new(
+        attachment_registration,
+        ingress_registration,
+    )])
+    .expect("foreground provider reports should validate");
+    let manager = LocalNetworkManager::bootstrap(network_root.path())
+        .expect("foreground process should claim its network realm")
+        .freeze(registry);
+    let services = Arc::new(ServiceManager::new(
+        Arc::new(EmptyServiceDefinitionCatalog),
+        Arc::new(StubBackend::default()),
+    ));
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .expect("process-bound foreground listener should bind");
+    let published_addr = listener
+        .local_addr()
+        .expect("foreground listener address should resolve");
+    let ingress = Arc::new(ForegroundIngressProvider {
+        _listener: listener,
+    });
+    let ingress_lifetime = Arc::downgrade(&ingress);
+    let composition = ServerWorkloadComposition::new(
+        Arc::clone(&engine),
+        Arc::clone(&manager),
+        Arc::clone(&services),
+        NodeIdentity::new("compose-foreground-node").expect("node identity should validate"),
+        selection,
+        NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+        ServerWorkloadProviders::new(
+            attachment_provider_id,
+            Arc::new(ForegroundAttachmentProvider),
+            WorkloadExecutionProviderId::for_registration_key("compose-foreground-execution"),
+            Arc::new(ForegroundExecutionProvider),
+            ingress_provider_id,
+            Arc::clone(&ingress),
+        ),
+    )
+    .expect("complete foreground composition should validate");
+    let owner = ComposeForegroundOwner::open_composition_for_test(Arc::clone(&engine), composition);
+    let cancellation = owner.cancellation();
+    drop(ingress);
+    drop(manager);
+    drop(services);
+
+    let live_connection =
+        std::net::TcpStream::connect_timeout(&published_addr, std::time::Duration::from_secs(1))
+            .expect(
+                "the process-bound endpoint must remain connectable while Compose owns the runtime",
+            );
+    drop(live_connection);
+    assert!(
+        ingress_lifetime.upgrade().is_some(),
+        "the Compose owner must retain the exact ingress provider"
+    );
+    let duplicate = LocalNetworkManager::bootstrap(network_root.path())
+        .expect_err("a second foreground owner must not claim the live process realm");
+    assert!(
+        matches!(
+            duplicate,
+            nimbus_network::LocalNetworkManagerError::DuplicateProcessComposition { .. }
+        ),
+        "the second owner must fail with typed duplicate-authority evidence: {duplicate}"
+    );
+
+    owner.shutdown(&engine).await;
+
+    assert!(
+        cancellation.is_cancelled(),
+        "foreground shutdown must cancel retained provision waiters"
+    );
+    assert!(
+        ingress_lifetime.upgrade().is_none(),
+        "the ingress provider must be dropped before foreground shutdown returns"
+    );
+    std::net::TcpStream::connect_timeout(&published_addr, std::time::Duration::from_millis(250))
+        .expect_err("the process-bound endpoint must be withdrawn before shutdown returns");
+
+    let reopened_network = LocalNetworkManager::bootstrap(network_root.path())
+        .expect("the settled network realm should be reopenable")
+        .freeze(NetworkCapabilityRegistry::new([]).expect("empty registry should validate"));
+    drop(reopened_network);
+    drop(engine);
+    let reopened_engine =
+        nimbus::Engine::new(engine_root.path()).expect("the canonical Engine store should reopen");
+    reopened_engine.quiesce().await;
+}
 
 #[test]
 fn resolve_service_down_targets_deduplicates_manifest_history_per_service_identity() {
@@ -60,103 +376,6 @@ fn resolve_service_down_targets_deduplicates_manifest_history_per_service_identi
             ("cache", "cache-01aaa", SandboxStatus::Stopped),
             ("db", "db-01bbb", SandboxStatus::Ready),
         ]
-    );
-}
-
-#[tokio::test]
-async fn start_service_launch_starts_image_launches_and_validates_identity() {
-    let tenant = TenantId::new("svc-demo").expect("tenant should parse");
-    let backend = StubBackend::default();
-    let service_name = "db";
-    let mut spec = sample_spec(&tenant, service_name);
-    spec.root = SandboxRootSpec::oci_image_reference("busybox:latest");
-    let service_backend = ServiceBackend::sandbox(spec);
-
-    let handle = start_service_launch(&backend, &tenant, service_name, service_backend)
-        .await
-        .expect("launch should start");
-
-    assert_eq!(handle.name, "db");
-    assert_eq!(
-        backend
-            .started_services
-            .lock()
-            .expect("started services lock should hold")
-            .as_slice(),
-        &["db".to_owned()]
-    );
-}
-
-#[tokio::test]
-async fn resolve_live_service_preserves_terminal_looking_retained_authority() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let workload_root = temp_dir.path().join("workloads");
-    let tenant = TenantId::new("svc-demo").expect("tenant should parse");
-    let sandbox_id = SandboxId::new("db-retained-authority");
-    write_manifest(
-        &workload_root,
-        sandbox_id.as_str(),
-        tenant.as_str(),
-        "db",
-        SandboxStatus::Stopped,
-    );
-    let state_view = KrunSandboxStateView::new(workload_root);
-    let stopped = stub_handle(&tenant, &sandbox_id, "db", SandboxStatus::Stopped);
-    let backend = StubBackend::with_handles([stopped.clone()]);
-    backend.report_inspection(nimbus_sandbox::SandboxInspection::provider_reported(
-        stopped.clone(),
-    ));
-
-    let resolved = resolve_live_service_handle(&state_view, &backend, &tenant, "db")
-        .await
-        .expect("retained evidence should resolve without replacement");
-
-    assert_eq!(
-        resolved,
-        Some(stopped),
-        "terminal-looking retained evidence must block a replacement start"
-    );
-    assert!(
-        backend
-            .started_services
-            .lock()
-            .expect("started services lock should hold")
-            .is_empty(),
-        "observation cannot activate a replacement workload"
-    );
-}
-
-#[tokio::test]
-async fn resolve_live_service_blocks_replacement_when_inspection_is_unavailable() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let workload_root = temp_dir.path().join("workloads");
-    let tenant = TenantId::new("svc-demo").expect("tenant should parse");
-    let sandbox_id = SandboxId::new("db-ambiguous-inspection");
-    write_manifest(
-        &workload_root,
-        sandbox_id.as_str(),
-        tenant.as_str(),
-        "db",
-        SandboxStatus::Stopped,
-    );
-    let state_view = KrunSandboxStateView::new(workload_root);
-    let backend = StubBackend::default();
-
-    let error = resolve_live_service_handle(&state_view, &backend, &tenant, "db")
-        .await
-        .expect_err("missing inspection evidence must not authorize replacement");
-
-    assert!(
-        error.to_string().contains("cleanup finality"),
-        "the ambiguity must name the missing finality evidence: {error}"
-    );
-    assert!(
-        backend
-            .started_services
-            .lock()
-            .expect("started services lock should hold")
-            .is_empty(),
-        "ambiguous inspection must stop compose before a replacement start"
     );
 }
 
@@ -315,7 +534,7 @@ async fn stop_service_target_rejects_crossed_identity_before_lifecycle_effects()
 }
 
 #[tokio::test]
-async fn compose_lifecycle_localizes_sandbox_backend_lifecycle_calls() {
+async fn compose_down_localizes_only_explicit_retirement_calls() {
     let tenant = TenantId::new("svc-demo").expect("tenant should parse");
     let sandbox_id = SandboxId::new("db-01aaa");
     let backend = StubBackend::with_handles([stub_handle(
@@ -324,14 +543,6 @@ async fn compose_lifecycle_localizes_sandbox_backend_lifecycle_calls() {
         "db",
         SandboxStatus::Ready,
     )]);
-    let mut spec = sample_spec(&tenant, "db");
-    spec.root = SandboxRootSpec::oci_image_reference("busybox:latest");
-
-    let started = start_service_launch(&backend, &tenant, "db", ServiceBackend::sandbox(spec))
-        .await
-        .expect("localized lifecycle should start service");
-    assert_eq!(started.name, "db");
-
     let stopped = stop_service_target(
         &backend,
         &tenant,
@@ -342,6 +553,6 @@ async fn compose_lifecycle_localizes_sandbox_backend_lifecycle_calls() {
         },
     )
     .await
-    .expect("localized lifecycle should stop service");
+    .expect("explicit Compose down should retire the selected service");
     assert_eq!(stopped.action, ServiceLifecycleAction::Stopped);
 }

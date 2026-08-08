@@ -17,7 +17,7 @@ impl KrunSandboxBackend {
         synchronize_handle_status(manifest, SandboxStatus::Stopping);
         self.persist_effect_barrier(manifest, "adopting krun stop intent")?;
 
-        let attachment_id = default_network_attachment_id(&manifest.handle.id);
+        let attachment_id = manifest.require_network_config()?.attachment_id.clone();
         let observed = self.segment_allocator.inspect_attachment_reservation(
             &manifest.spec.tenant_id,
             &attachment_id,

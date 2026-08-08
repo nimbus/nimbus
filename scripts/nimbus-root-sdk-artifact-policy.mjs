@@ -19,6 +19,8 @@ export const NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS = [
   "sessions.create",
   "sessions.renew",
   "sessions.extend",
+  "restart(input",
+  "services.restart",
   "async request(path",
   "async resolveRestClient",
 ];
@@ -26,7 +28,6 @@ export const NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS = [
 export const NIMBUS_ROOT_SDK_METHOD_FRAGMENTS = [
   "start(input",
   "stop(input",
-  "restart(input",
   "get(selector",
   "wait(input",
   "open(input",
@@ -47,7 +48,6 @@ export const NIMBUS_ROOT_SDK_CONTROL_PLANE_ROUTE_FRAGMENTS = [
   "services.list",
   "services.start",
   "services.stop",
-  "services.restart",
   "sandboxes.create",
   "sandboxes.get",
   "sandboxes.list",
@@ -76,7 +76,8 @@ export function assertNimbusRootSdkArtifactText(
   artifact,
   options = {},
 ) {
-  const runtime = options.runtime ?? isNimbusRootSdkRuntimeArtifact(artifactPath);
+  const runtime =
+    options.runtime ?? isNimbusRootSdkRuntimeArtifact(artifactPath);
   const errors = [];
 
   for (const fragment of NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS) {

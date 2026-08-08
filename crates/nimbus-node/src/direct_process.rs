@@ -2,14 +2,15 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use nimbus_core::{Error, Result};
+use nimbus_workloads::{WorkloadExecutionReference, WorkloadProvisionDispatchClaim};
 use serde::Serialize;
 
 use super::{
     HostBackendObservedState, HostLifecycleBackend, HostLifecycleBackendKind, HostLifecycleFuture,
     HostLifecyclePlan, HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason,
-    LocalEnforcementBinding, TenantWorkloadLifecycleEvidence, TenantWorkloadStatus,
-    WorkloadExecutionId,
+    LocalEnforcementBinding, TenantWorkloadLifecycleEvidence, WorkloadExecutionId,
 };
+use crate::host_lifecycle::HostProviderPlan;
 
 #[derive(Debug, Clone, Default)]
 pub struct DirectProcessBackend {
@@ -40,6 +41,81 @@ impl DirectProcessBackend {
         let record = state.record(execution_id)?;
         Ok(record.evidence.clone())
     }
+
+    fn activate_provider_exact(&self, plan: HostProviderPlan) -> Result<HostLifecycleStatus> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("direct process backend lock should not be poisoned");
+        if let Some(existing) = state.records.get(plan.execution_id()) {
+            if existing.plan == plan {
+                return Ok(existing.status.clone());
+            }
+            return Err(Error::PermissionDenied(format!(
+                "direct process activation for {} is crossed with the retained provider fence",
+                plan.execution_id().as_str()
+            )));
+        }
+        let process_id = state.allocate_process_id();
+        let lifecycle_evidence = TenantWorkloadLifecycleEvidence::from_provider_plan(
+            &plan,
+            HostLifecycleStatusReason::Running,
+        )
+        .with_process_id(process_id);
+        let status =
+            HostLifecycleStatus::from_provider_state(&plan, HostBackendObservedState::Running)
+                .with_lifecycle_evidence(lifecycle_evidence);
+        let evidence = DirectProcessEvidence::from_plan(&plan, process_id);
+        let logs = vec![
+            format!("direct-process:{}:validated", plan.execution_id().as_str()),
+            format!(
+                "direct-process:{}:started:{}",
+                plan.execution_id().as_str(),
+                process_id
+            ),
+        ];
+        state.records.insert(
+            plan.execution_id().clone(),
+            DirectProcessRecord {
+                plan,
+                status: status.clone(),
+                process_id,
+                logs,
+                evidence,
+            },
+        );
+        Ok(status)
+    }
+
+    fn inspect_provider(&self, plan: &HostProviderPlan) -> Result<HostLifecycleStatus> {
+        let state = self
+            .state
+            .lock()
+            .expect("direct process backend lock should not be poisoned");
+        let record = state.record(plan.execution_id())?;
+        if &record.plan != plan {
+            return Err(Error::PermissionDenied(format!(
+                "direct process inspection for {} is crossed with the retained provider fence",
+                plan.execution_id().as_str()
+            )));
+        }
+        Ok(record.status.clone())
+    }
+
+    fn inspect_lifecycle(&self, plan: &HostLifecyclePlan) -> Result<HostLifecycleStatus> {
+        let state = self
+            .state
+            .lock()
+            .expect("direct process backend lock should not be poisoned");
+        let record = state.record(plan.execution_id())?;
+        if !record.plan.matches_lifecycle_projection(plan) {
+            return Err(Error::PermissionDenied(format!(
+                "direct process inspection for {} is crossed with the retained lifecycle projection",
+                plan.execution_id().as_str()
+            )));
+        }
+        Ok(record.status.clone())
+    }
 }
 
 impl HostLifecycleBackend for DirectProcessBackend {
@@ -58,48 +134,6 @@ impl HostLifecycleBackend for DirectProcessBackend {
         Ok(plan)
     }
 
-    fn start<'a>(
-        &'a self,
-        plan: HostLifecyclePlan,
-    ) -> HostLifecycleFuture<'a, TenantWorkloadStatus> {
-        let state = Arc::clone(&self.state);
-        Box::pin(async move {
-            let mut state = state
-                .lock()
-                .expect("direct process backend lock should not be poisoned");
-            let process_id = state.allocate_process_id();
-            let lifecycle_evidence = TenantWorkloadLifecycleEvidence::from_plan(
-                &plan,
-                HostLifecycleStatusReason::Running,
-            )
-            .with_process_id(process_id);
-            let status =
-                HostLifecycleStatus::from_backend_state(&plan, HostBackendObservedState::Running)
-                    .with_lifecycle_evidence(lifecycle_evidence);
-            let workload_status = status.to_workload_status(&plan)?;
-            let evidence = DirectProcessEvidence::from_plan(&plan, process_id);
-            let logs = vec![
-                format!("direct-process:{}:validated", plan.execution_id().as_str()),
-                format!(
-                    "direct-process:{}:started:{}",
-                    plan.execution_id().as_str(),
-                    process_id
-                ),
-            ];
-            state.records.insert(
-                plan.execution_id().clone(),
-                DirectProcessRecord {
-                    plan,
-                    status,
-                    process_id,
-                    logs,
-                    evidence,
-                },
-            );
-            Ok(workload_status)
-        })
-    }
-
     fn stop<'a>(
         &'a self,
         execution_id: WorkloadExecutionId,
@@ -110,7 +144,7 @@ impl HostLifecycleBackend for DirectProcessBackend {
                 .lock()
                 .expect("direct process backend lock should not be poisoned");
             let record = state.record_mut(&execution_id)?;
-            let status = HostLifecycleStatus::from_backend_state(
+            let status = HostLifecycleStatus::from_provider_state(
                 &record.plan,
                 HostBackendObservedState::Stopped,
             );
@@ -136,6 +170,49 @@ impl HostLifecycleBackend for DirectProcessBackend {
             Ok(state.record(&execution_id)?.status.clone())
         })
     }
+
+    fn inspect_exact<'a>(
+        &'a self,
+        plan: HostLifecyclePlan,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move { self.inspect_lifecycle(&plan) })
+    }
+
+    fn activate_exact<'a>(
+        &'a self,
+        execution: WorkloadExecutionReference,
+        claim: WorkloadProvisionDispatchClaim,
+        request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            let plan = HostProviderPlan::from_execution(&execution, &claim, request)?;
+            if plan.backend() != HostLifecycleBackendKind::DirectProcess {
+                return Err(Error::InvalidInput(
+                    "DirectProcessBackend exact activation requires a direct_process request"
+                        .to_owned(),
+                ));
+            }
+            self.activate_provider_exact(plan)
+        })
+    }
+
+    fn inspect_activation<'a>(
+        &'a self,
+        execution: WorkloadExecutionReference,
+        claim: WorkloadProvisionDispatchClaim,
+        request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            let plan = HostProviderPlan::from_execution(&execution, &claim, request)?;
+            if plan.backend() != HostLifecycleBackendKind::DirectProcess {
+                return Err(Error::InvalidInput(
+                    "DirectProcessBackend exact inspection requires a direct_process request"
+                        .to_owned(),
+                ));
+            }
+            self.inspect_provider(&plan)
+        })
+    }
 }
 
 #[derive(Debug, Default)]
@@ -154,9 +231,9 @@ impl DirectProcessState {
         self.records.get(execution_id).ok_or_else(|| {
             // A missing workload is `NotFound`, not `InvalidInput`: the request
             // was well-formed, the unit simply does not exist yet. The
-            // reconciler relies on this distinction to start an absent workload
-            // (NotFound) while propagating a genuine inspect fault
-            // (InvalidInput) instead of masking it with a redundant start.
+            // coordinator relies on this distinction to authorize a same-attempt
+            // retry only after exact absence, while crossed observations remain
+            // hard failures.
             Error::NotFound(format!(
                 "direct process backend has no workload {}",
                 execution_id.as_str()
@@ -179,7 +256,7 @@ impl DirectProcessState {
 
 #[derive(Debug, Clone)]
 struct DirectProcessRecord {
-    plan: HostLifecyclePlan,
+    plan: HostProviderPlan,
     status: HostLifecycleStatus,
     process_id: u64,
     logs: Vec<String>,
@@ -196,7 +273,7 @@ pub struct DirectProcessEvidence {
 }
 
 impl DirectProcessEvidence {
-    fn from_plan(plan: &HostLifecyclePlan, process_id: u64) -> Self {
+    fn from_plan(plan: &HostProviderPlan, process_id: u64) -> Self {
         Self {
             process_id,
             execution_id: plan.execution_id().clone(),
@@ -232,6 +309,7 @@ mod tests {
     use nimbus_testing::AdmittedDecisionScenario;
 
     use super::*;
+    use crate::host_lifecycle::test_support::activation_command_for_plan;
     use crate::{
         HostExecutable, HostLifecycleProperty, HostLifecyclePropertySet, HostLifecycleStatusReason,
         HostRestartPolicy, RuntimePoolTrustClass, TenantWorkloadPhase,
@@ -262,7 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_process_backend_starts_inspects_and_stops_workloads() {
+    async fn direct_process_backend_activates_inspects_and_stops_workloads() {
         let backend = DirectProcessBackend::new();
         let binding = binding();
         let plan = backend
@@ -270,16 +348,17 @@ mod tests {
             .expect("direct process plan should validate from binding");
         let execution_id = plan.execution_id().clone();
 
-        let started = backend
-            .start(plan)
+        let (execution, claim) = activation_command_for_plan(&plan, 0x01);
+        let activated = backend
+            .activate_exact(execution.clone(), claim.clone(), request())
             .await
-            .expect("direct process start should succeed");
-        assert_eq!(started.phase(), TenantWorkloadPhase::Running);
+            .expect("direct process exact activation should succeed");
+        assert_eq!(activated.phase(), TenantWorkloadPhase::Running);
 
         let inspected = backend
-            .inspect(execution_id.clone())
+            .inspect_activation(execution, claim, request())
             .await
-            .expect("started workload should inspect");
+            .expect("exactly activated workload should inspect");
         assert_eq!(inspected.reason(), HostLifecycleStatusReason::Running);
 
         let stopped = backend
@@ -296,6 +375,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn direct_process_inspect_exact_accepts_retained_fenced_activation() {
+        let backend = DirectProcessBackend::new();
+        let binding = binding();
+        let plan = backend
+            .validate(&binding, request())
+            .expect("direct process plan should validate");
+        let (execution, claim) = activation_command_for_plan(&plan, 0x7a);
+        backend
+            .activate_exact(execution, claim, request())
+            .await
+            .expect("exact activation should retain its dispatch fence");
+
+        let inspected = backend
+            .inspect_exact(plan.clone())
+            .await
+            .expect("lifecycle inspection should match without reproducing the dispatch fence");
+        assert_eq!(inspected.reason(), HostLifecycleStatusReason::Running);
+
+        let crossed_request = HostLifecycleRequest::new(
+            HostLifecycleBackendKind::DirectProcess,
+            HostExecutable::trusted("/bin/nimbus-direct-crossed")
+                .expect("crossed executable should parse"),
+        )
+        .with_args(["--crossed"])
+        .expect("crossed args should parse")
+        .with_trust_class(RuntimePoolTrustClass::SingleTenant);
+        let crossed_plan = backend
+            .validate(&binding, crossed_request)
+            .expect("crossed lifecycle plan should validate structurally");
+        let error = backend
+            .inspect_exact(crossed_plan)
+            .await
+            .expect_err("crossed lifecycle inputs must not observe the retained effect");
+        assert!(error.to_string().contains("crossed"));
+    }
+
+    #[tokio::test]
     async fn direct_process_backend_emits_deterministic_logs_and_evidence() {
         let backend = DirectProcessBackend::new();
         let binding = binding();
@@ -303,10 +419,11 @@ mod tests {
             .validate(&binding, request())
             .expect("direct process plan should validate");
         let execution_id = plan.execution_id().clone();
+        let (execution, claim) = activation_command_for_plan(&plan, 0x02);
         backend
-            .start(plan)
+            .activate_exact(execution, claim, request())
             .await
-            .expect("direct process start should succeed");
+            .expect("direct process exact activation should succeed");
 
         let evidence = backend
             .evidence(&execution_id)
@@ -329,6 +446,110 @@ mod tests {
                 format!("direct-process:{}:validated", execution_id.as_str()),
                 format!("direct-process:{}:started:10001", execution_id.as_str()),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_process_exact_replay_adopts_the_original_process() {
+        let backend = DirectProcessBackend::new();
+        let binding = binding();
+        let plan = backend
+            .validate(&binding, request())
+            .expect("direct process plan should validate");
+        let execution_id = plan.execution_id().clone();
+
+        let (execution, claim) = activation_command_for_plan(&plan, 0x03);
+        backend
+            .activate_exact(execution.clone(), claim.clone(), request())
+            .await
+            .expect("first direct process exact activation should succeed");
+        let first = backend
+            .evidence(&execution_id)
+            .expect("first process evidence should exist");
+
+        backend
+            .activate_exact(execution, claim, request())
+            .await
+            .expect("exact direct process replay should adopt");
+        let replay = backend
+            .evidence(&execution_id)
+            .expect("replayed process evidence should exist");
+
+        assert_eq!(
+            replay, first,
+            "exact replay must not allocate a new process"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_process_crossed_fence_fails_before_process_allocation() {
+        let backend = DirectProcessBackend::new();
+        let binding = binding();
+        let base = backend
+            .validate(&binding, request())
+            .expect("direct process plan should validate");
+        let execution_id = base.execution_id().clone();
+        let (first_execution, first_claim) = activation_command_for_plan(&base, 0x11);
+        let (crossed_execution, crossed_claim) = activation_command_for_plan(&base, 0x22);
+
+        backend
+            .activate_exact(first_execution, first_claim, request())
+            .await
+            .expect("first exact activation should succeed");
+        let error = backend
+            .activate_exact(crossed_execution.clone(), crossed_claim.clone(), request())
+            .await
+            .expect_err("crossed activation must fail closed");
+        assert!(error.to_string().contains("crossed"));
+        assert_eq!(
+            backend
+                .evidence(&execution_id)
+                .expect("original evidence should remain")
+                .process_id(),
+            10_001,
+            "a crossed fence must not allocate another process"
+        );
+        let inspect_error = backend
+            .inspect_activation(crossed_execution, crossed_claim, request())
+            .await
+            .expect_err("crossed exact inspection must fail closed");
+        assert!(inspect_error.to_string().contains("crossed"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_equal_direct_process_activation_creates_one_process() {
+        let backend = DirectProcessBackend::new();
+        let binding = binding();
+        let plan = backend
+            .validate(&binding, request())
+            .expect("direct process plan should validate");
+        let execution_id = plan.execution_id().clone();
+        let (execution, claim) = activation_command_for_plan(&plan, 0x33);
+
+        let (left, right) = tokio::join!(
+            backend.activate_exact(execution.clone(), claim.clone(), request()),
+            backend.activate_exact(execution, claim, request()),
+        );
+        let left = left.expect("first concurrent activation should succeed");
+        let right = right.expect("equal concurrent activation should adopt");
+
+        assert_eq!(left, right);
+        assert_eq!(
+            backend
+                .evidence(&execution_id)
+                .expect("one process evidence should remain")
+                .process_id(),
+            10_001
+        );
+        assert_eq!(
+            backend
+                .logs(&execution_id)
+                .expect("one process log should remain")
+                .iter()
+                .filter(|line| line.contains(":started:"))
+                .count(),
+            1,
+            "equal concurrent activation must create one physical effect"
         );
     }
 
@@ -365,7 +586,7 @@ mod tests {
             .expect_err("unknown workload inspect should fail closed");
         assert!(
             matches!(error, Error::NotFound(_)),
-            "missing workload must be NotFound (not InvalidInput) so the reconciler starts it: {error:?}"
+            "missing workload must be NotFound so the coordinator can distinguish exact absence: {error:?}"
         );
         assert!(
             error

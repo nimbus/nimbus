@@ -72,15 +72,23 @@ fn startup_reconciliation_failure_fences_direct_initial_launch_before_effects() 
 #[test]
 fn startup_reconciliation_failure_allows_exact_plan_only_status_cleanup() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let rootfs_path = temp_dir.path().join("plan-only-startup-fence-rootfs");
+    let mut backend = sample_plan_only_backend(temp_dir.path());
+    let spec = sample_spec();
+    let sandbox_id = SandboxId::new("plan-only-startup-fence");
+    let artifact_path = crate::artifact_paths::rootfs_root(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    )
+    .join(sandbox_id.as_str());
+    let rootfs_path = artifact_path.join("rootfs");
     std::fs::create_dir_all(&rootfs_path).expect("rootfs fixture should create");
     let sentinel = rootfs_path.join("sentinel");
     std::fs::write(&sentinel, b"owned-rootfs").expect("rootfs sentinel should persist");
-    let mut backend = sample_plan_only_backend(temp_dir.path());
     let mut manifest = backend
         .plan_start_with_id(
-            &sample_spec(),
-            &SandboxId::new("plan-only-startup-fence"),
+            &spec,
+            &sandbox_id,
             None,
             Some(sample_rootfs_artifact(rootfs_path)),
         )

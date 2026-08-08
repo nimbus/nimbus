@@ -16,5 +16,7 @@ mod network_process_composition;
 mod planning;
 #[path = "tests/preselected_identity.rs"]
 mod preselected_identity;
+#[path = "tests/provision_phases.rs"]
+mod provision_phases;
 #[path = "support.rs"]
 mod support;

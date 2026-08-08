@@ -109,6 +109,10 @@ pub(super) struct IpamAllocation {
     pub(super) segment_id: String,
     pub(super) reservation_claim: NetworkReservationClaim,
     pub(super) provider_locator: OciAttachmentProviderLocator,
+    /// Domain-separated fence over the immutable allocation/provider identity.
+    /// Provider phase and observed IPs evolve independently; neither may
+    /// substitute the tenant-qualified attachment owner or launch claim.
+    pub(super) identity_digest: String,
     pub(super) ips: Vec<String>,
     pub(super) provider_operation: NetavarkProviderOperation,
 }

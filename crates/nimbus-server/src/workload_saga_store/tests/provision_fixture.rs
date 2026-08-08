@@ -4,8 +4,71 @@ use nimbus_compute::workload_saga::{WorkloadProvisionDecision, WorkloadProvision
 use nimbus_workloads::{
     WorkloadOwnerEvidenceDigest, WorkloadProvisionAttempt, WorkloadProvisionDisposition,
     WorkloadProvisionEffectResult, WorkloadProvisionStep, WorkloadProvisionSubjects,
-    WorkloadProvisionSuccessEvidence, WorkloadSagaRecord,
+    WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadSagaPhase,
+    WorkloadSagaRecord,
 };
+
+fn assert_closed_fixture_action(
+    source: &WorkloadSagaRecord,
+    candidate: &WorkloadSagaRecord,
+    action: Option<WorkloadProvisionSymbolicAction>,
+) {
+    match action {
+        Some(WorkloadProvisionSymbolicAction::StartExactAttempt) => assert!(
+            matches!(
+                candidate.provision_disposition(),
+                Some(WorkloadProvisionDisposition::DispatchPending(_))
+            ),
+            "a start action must pair with one exact pending dispatch claim"
+        ),
+        Some(WorkloadProvisionSymbolicAction::InspectExactAttempt) => {
+            panic!("a deterministic success fixture must not enter ambiguous inspection")
+        }
+        None => {
+            assert_eq!(
+                candidate.provision_disposition(),
+                Some(&WorkloadProvisionDisposition::Ready),
+                "an action-free completion must carry exact ready disposition"
+            );
+            if let Some(
+                WorkloadProvisionDisposition::DispatchPending(claim)
+                | WorkloadProvisionDisposition::InspectionRequired(claim),
+            ) = source.provision_disposition()
+            {
+                assert_eq!(
+                    candidate.phase(),
+                    claim.attempt().target_phase(),
+                    "a confirmed provider result must advance to its exact attempted target"
+                );
+                return;
+            }
+            let resource_free_network_step = source
+                .active_intent()
+                .network()
+                .compiled_plan()
+                .content()
+                .capability_selection_evidence()
+                .is_none()
+                && matches!(
+                    (source.phase(), candidate.phase()),
+                    (
+                        WorkloadSagaPhase::IntentCommitted,
+                        WorkloadSagaPhase::NetworkReserved
+                    ) | (
+                        WorkloadSagaPhase::WorkloadPrepared,
+                        WorkloadSagaPhase::NetworkAttached
+                    )
+                );
+            let withheld_observation = source.phase() == WorkloadSagaPhase::Ready
+                && candidate.phase() == WorkloadSagaPhase::Observed
+                && source.active_intent().publication() == WorkloadPublicationIntent::Withheld;
+            assert!(
+                resource_free_network_step || withheld_observation,
+                "an action-free planned transition must be resource-free reserve/attach or withheld Ready-to-Observed"
+            );
+        }
+    }
+}
 
 fn success_for(attempt: &WorkloadProvisionAttempt) -> WorkloadProvisionSuccessEvidence {
     let evidence = WorkloadOwnerEvidenceDigest::sha256(format!("{:?}", attempt.step()));
@@ -75,16 +138,17 @@ pub(super) fn provision_candidates(record: &WorkloadSagaRecord) -> Vec<WorkloadS
     else {
         panic!("fixture phase should produce a provision proposal");
     };
-    assert!(
-        proposed.action_after_confirmation().is_some()
-            || proposed.candidate().phase() == nimbus_workloads::WorkloadSagaPhase::Observed,
-        "only the withheld Ready-to-Observed edge may omit a symbolic action"
+    assert_closed_fixture_action(
+        record,
+        proposed.candidate(),
+        proposed.action_after_confirmation(),
     );
     let mut candidate = proposed.into_candidate();
     let mut candidates = vec![candidate.clone()];
-    while let Some(WorkloadProvisionDisposition::AttemptPending(attempt)) =
+    while let Some(WorkloadProvisionDisposition::DispatchPending(claim)) =
         candidate.provision_disposition()
     {
+        let attempt = claim.attempt();
         let result = WorkloadProvisionEffectResult::Succeeded {
             attempt_id: attempt.attempt_id().clone(),
             evidence: success_for(attempt),
@@ -95,10 +159,10 @@ pub(super) fn provision_candidates(record: &WorkloadSagaRecord) -> Vec<WorkloadS
         else {
             panic!("fixture success should produce a durable candidate");
         };
-        assert_ne!(
+        assert_closed_fixture_action(
+            &candidate,
+            proposed.candidate(),
             proposed.action_after_confirmation(),
-            Some(WorkloadProvisionSymbolicAction::InspectExactAttempt),
-            "a deterministic success fixture must not enter ambiguous inspection"
         );
         candidate = proposed.into_candidate();
         candidates.push(candidate.clone());

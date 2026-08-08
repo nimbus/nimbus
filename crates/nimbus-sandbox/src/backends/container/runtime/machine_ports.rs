@@ -21,13 +21,15 @@ use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
 
+use super::ContainerStartMode;
 use super::{ContainerSandboxBackend, ContainerSandboxManifest};
 
 fn partial_start_cleanup_disposition(
     release_authority: MachinePortPreparationReleaseAuthority<'_>,
 ) -> MachinePortProxyCleanupDisposition {
     match release_authority {
-        MachinePortPreparationReleaseAuthority::FreshLaunch(_) => {
+        MachinePortPreparationReleaseAuthority::FreshLaunch(_)
+        | MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { .. } => {
             MachinePortProxyCleanupDisposition::Release
         }
         MachinePortPreparationReleaseAuthority::Retain => {
@@ -92,6 +94,8 @@ impl ContainerSandboxBackend {
             })?;
         let durable_receipts = self.exposed_machine_port_receipts(&manifest.handle.id)?;
         let manager = self.port_lease_coordinator_for_manifest(manifest)?;
+        let planned_members = (manifest.start_mode == ContainerStartMode::PlanOnly)
+            .then(|| Self::provision_port_plan_witness(manifest));
         self.machine_port_proxies.inspect_current_publication(
             MachineForwardedPublicationInspection {
                 tenant_id: &manifest.spec.tenant_id,
@@ -102,6 +106,7 @@ impl ContainerSandboxBackend {
                 durable_receipts: &durable_receipts,
                 forwarder,
                 port_leases: &manager,
+                planned_members: planned_members.as_deref(),
             },
         )
     }
@@ -265,13 +270,26 @@ impl ContainerSandboxBackend {
                     });
                 }
             };
-            manager.require_active_machine_bindings_with_lifetimes(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-                live_authority,
-            )?;
+            match release_authority {
+                MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                    plan_members, ..
+                } => manager.require_active_planned_machine_bindings_with_lifetimes(
+                    &manifest.spec.tenant_id,
+                    &manifest.spec.port_bindings,
+                    &manifest.port_leases,
+                    plan_members,
+                    live_authority,
+                )?,
+                MachinePortPreparationReleaseAuthority::Retain
+                | MachinePortPreparationReleaseAuthority::FreshLaunch(_) => manager
+                    .require_active_machine_bindings_with_lifetimes(
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                        &manifest.spec.port_bindings,
+                        &manifest.port_leases,
+                        live_authority,
+                    )?,
+            };
             after_active_validation
                 .take()
                 .expect("validation observer runs exactly once")();
@@ -303,15 +321,41 @@ impl ContainerSandboxBackend {
             &manager,
             release_authority,
         )?;
+        let planned_rebind = prepared.is_planned_rebind();
         let activation_result = before_activation()
-            .and_then(|()| {
-                manager.activate_machine_bindings_with_lifetimes(
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                    &manifest.spec.port_bindings,
-                    &manifest.port_leases,
-                    prepared.bind_authority(),
-                )
+            .and_then(|()| match release_authority {
+                MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                    plan_members,
+                    reservation_claim,
+                } => {
+                    if planned_rebind {
+                        manager.activate_rebind_planned_machine_bindings_with_lifetimes(
+                            &manifest.spec.tenant_id,
+                            &manifest.spec.port_bindings,
+                            &manifest.port_leases,
+                            plan_members,
+                            prepared.bind_authority(),
+                        )
+                    } else {
+                        manager.activate_planned_machine_bindings_with_lifetimes(
+                            &manifest.spec.tenant_id,
+                            &manifest.spec.port_bindings,
+                            &manifest.port_leases,
+                            plan_members,
+                            reservation_claim,
+                            prepared.bind_authority(),
+                        )
+                    }
+                }
+                MachinePortPreparationReleaseAuthority::Retain
+                | MachinePortPreparationReleaseAuthority::FreshLaunch(_) => manager
+                    .activate_machine_bindings_with_lifetimes(
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                        &manifest.spec.port_bindings,
+                        &manifest.port_leases,
+                        prepared.bind_authority(),
+                    ),
             })
             .and_then(|bindings| {
                 after_activation()?;
@@ -325,23 +369,62 @@ impl ContainerSandboxBackend {
                 // external publication has started yet.
                 let (prepared_proxies, bind_authority) = prepared.into_parts();
                 drop(prepared_proxies);
-                let compensation_result = match manager
-                    .abandon_machine_bind_claims_with_lifetimes_without_effect(
-                        &manifest.port_leases,
-                        &bind_authority,
-                    ) {
+                let abandon = match release_authority {
+                    MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                        reservation_claim,
+                        plan_members,
+                    } => {
+                        if planned_rebind {
+                            manager.abandon_rebind_planned_machine_bind_claims_with_lifetimes_without_effect(
+                                &manifest.spec.port_bindings,
+                                plan_members,
+                                &manifest.port_leases,
+                                &bind_authority,
+                            )
+                        } else {
+                            manager
+                                .abandon_planned_machine_bind_claims_with_lifetimes_without_effect(
+                                    plan_members,
+                                    &manifest.port_leases,
+                                    &bind_authority,
+                                    reservation_claim,
+                                )
+                        }
+                    }
+                    MachinePortPreparationReleaseAuthority::Retain
+                    | MachinePortPreparationReleaseAuthority::FreshLaunch(_) => manager
+                        .abandon_machine_bind_claims_with_lifetimes_without_effect(
+                            &manifest.port_leases,
+                            &bind_authority,
+                        ),
+                };
+                let compensation_result = match abandon {
                     Ok(()) => Ok(()),
                     Err(abandon_error) => {
                         // A store acknowledgement can be lost after the atomic
                         // activation commit. Inspect the exact durable binding
                         // set rather than treating the error as proof that the
                         // claims remain Reserved.
-                        match manager.require_active_machine_bindings(
-                            &manifest.spec.tenant_id,
-                            &manifest.handle.id,
-                            &manifest.spec.port_bindings,
-                            &manifest.port_leases,
-                        ) {
+                        let active = match release_authority {
+                            MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                                plan_members,
+                                ..
+                            } => manager.require_active_planned_machine_bindings(
+                                &manifest.spec.tenant_id,
+                                &manifest.spec.port_bindings,
+                                &manifest.port_leases,
+                                plan_members,
+                            ),
+                            MachinePortPreparationReleaseAuthority::Retain
+                            | MachinePortPreparationReleaseAuthority::FreshLaunch(_) => manager
+                                .require_active_machine_bindings(
+                                    &manifest.spec.tenant_id,
+                                    &manifest.handle.id,
+                                    &manifest.spec.port_bindings,
+                                    &manifest.port_leases,
+                                ),
+                        };
+                        match active {
                             Ok(active_bindings) => manager
                                 .prepare_machine_bindings_for_rebind_with_lifetimes(
                                     &manifest.port_leases,
@@ -382,6 +465,7 @@ impl ContainerSandboxBackend {
             &manifest.port_leases,
             &manager,
             prepared,
+            release_authority,
         ) {
             Ok(running) => running.into_parts(),
             Err(failure) => {

@@ -15,6 +15,7 @@ use crate::backends::capabilities::{
 };
 use crate::backends::oci::network::attachment_lifecycle::{
     AttachmentBackendKind, oci_attachment_plan, oci_attachment_provider_handle,
+    oci_attachment_provider_handle_for_identity,
 };
 use crate::backends::oci::network::default_network_attachment_id;
 use crate::backends::oci::network::dto::{IpamState, NetavarkProviderOperation};
@@ -340,7 +341,7 @@ fn dispositions<Evidence>(
         .collect()
 }
 
-fn reserve_substituted_desired(
+fn ready_desired_for_plan(
     fixture: &EvidenceFixture,
     suffix: &str,
     plan: &NetworkPlan,
@@ -360,7 +361,7 @@ fn reserve_substituted_desired(
         )
         .expect("current desired authority should inspect")
         .expect("current desired record should exist");
-    authority
+    let mut desired = authority
         .reserve(
             &fixture.tenant_id,
             current.selected_provider_id().clone(),
@@ -371,7 +372,40 @@ fn reserve_substituted_desired(
                 .clone(),
             current.association().clone(),
         )
-        .expect("substituted desired record should be internally valid")
+        .expect("alternate compiler-selected desired record should be internally valid");
+    let (_, provisioning) = authority
+        .apply_transition(
+            &fixture.tenant_id,
+            &NetworkStateTransition::new(
+                desired.resource().version().clone(),
+                NetworkResourcePhase::Provisioning,
+                NetworkTransitionEvidence::Progress,
+            ),
+        )
+        .expect("alternate desired record should enter provisioning");
+    desired = provisioning;
+    let handle = oci_attachment_provider_handle_for_identity(
+        plan.plan_id(),
+        desired
+            .attachment_id()
+            .expect("alternate attachment identity should validate"),
+        AttachmentBackendKind::Container,
+    )
+    .expect("alternate compiler-selected provider handle should validate");
+    let (_, with_handle) = authority
+        .record_provider_handle(&fixture.tenant_id, desired.resource().version(), handle)
+        .expect("alternate desired state should adopt its exact provider handle");
+    let (_, ready) = authority
+        .apply_transition(
+            &fixture.tenant_id,
+            &NetworkStateTransition::new(
+                with_handle.resource().version().clone(),
+                NetworkResourcePhase::Ready,
+                NetworkTransitionEvidence::Progress,
+            ),
+        )
+        .expect("alternate desired record should become ready");
+    ready
 }
 
 #[test]
@@ -1017,7 +1051,7 @@ fn missing_provider_handle_is_allowed_only_while_provisioning() {
 }
 
 #[test]
-fn desired_plan_id_generation_and_digest_must_match_the_live_plan_compiler() {
+fn recovery_adopts_the_authenticated_desired_plan_without_sandbox_recompilation() {
     let (fixture, report) = ready_report("desired-version-substitution", false);
     let expected = oci_attachment_plan(
         &fixture.tenant_id,
@@ -1061,15 +1095,13 @@ fn desired_plan_id_generation_and_digest_must_match_the_live_plan_compiler() {
 
     for (suffix, substituted_plan) in substitutions {
         let mut substituted = report.clone();
-        only_candidate(&mut substituted).desired = Some(reserve_substituted_desired(
-            &fixture,
-            suffix,
-            &substituted_plan,
-        ));
+        only_candidate(&mut substituted).desired =
+            Some(ready_desired_for_plan(&fixture, suffix, &substituted_plan));
         assert_eq!(
             candidate_disposition(&substituted),
-            quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence),
-            "{suffix} substitution must fail before adoption"
+            OciOrphanDisposition::Adopt,
+            "{suffix} is already-authenticated desired identity and must not be replaced by a \
+             sandbox-derived recovery compiler"
         );
     }
 }

@@ -26,6 +26,7 @@ impl ContainerSandboxBackend {
         self.execute_start_after_preflight_with_cleanup(manifest, ensure_linux_host("container"))
     }
 
+    #[cfg(test)]
     pub(super) fn execute_direct_start(
         &self,
         manifest: &mut ContainerSandboxManifest,

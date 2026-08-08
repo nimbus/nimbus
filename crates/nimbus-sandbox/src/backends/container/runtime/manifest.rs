@@ -1,6 +1,6 @@
 //! Container runtime manifest and launch DTOs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
@@ -21,6 +21,7 @@ use crate::backends::oci::network::{
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::instance::{SandboxHandle, SandboxStatus};
+use crate::provision::SandboxProvisionNetworkPlan;
 use crate::spec::{SandboxPortBinding, SandboxSpec};
 
 use super::ContainerSandboxBackend;
@@ -33,6 +34,92 @@ pub(super) use publication::{
     MANIFEST_PUBLICATION_LOCK_FILE, MANIFEST_PUBLICATION_STAGE_FILE,
     establish_durable_manifest_directory_chain_with, publish_with_directory_sync,
 };
+
+/// Read and authenticate the one manifest shape that may exist before any
+/// network authority is durable: an exact compiler plan plus reservation
+/// claim, with no placed attachment, listener lease, bundle, or provider
+/// effect. Startup network reconciliation may retain only these paths.
+pub(super) fn retained_reservation_pending_manifest_paths(
+    config: &ContainerSandboxBackendConfig,
+) -> Result<BTreeSet<PathBuf>> {
+    let container_state_dirs = crate::artifact_paths::all_container_state_dirs(
+        &config.workload_state_root,
+    )
+    .map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "failed to enumerate reservation-pending manifests under {}: {error}",
+            config.workload_state_root.display()
+        ),
+    })?;
+    let mut retained = BTreeSet::new();
+    for state_dir in container_state_dirs {
+        let path = state_dir.join("manifest.json");
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to read startup container manifest {}: {error}",
+                        path.display()
+                    ),
+                });
+            }
+        };
+        let manifest: ContainerSandboxManifest =
+            serde_json::from_slice(&bytes).map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "startup container manifest {} is structurally untrusted: {error}",
+                    path.display()
+                ),
+            })?;
+        super::provider_context::validate_manifest_execution_context_for_config(config, &manifest)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "startup container manifest {} crossed its execution context: {error}",
+                    path.display()
+                ),
+            })?;
+
+        let (Some(plan), Some(_claim)) = (
+            manifest.provision_network_plan.as_ref(),
+            manifest.launch_reservation_claim.as_ref(),
+        ) else {
+            continue;
+        };
+        if manifest.provision_prepared || manifest.network_config.is_some() {
+            continue;
+        }
+        let exact_claim_only_shape = manifest.launch_artifact.is_none()
+            && manifest.egress_proxy.is_none()
+            && manifest.port_leases.is_empty()
+            && manifest.creator_handoff == ContainerCreatorHandoffState::NotSpawned
+            && manifest.runner_handoff_id.is_none()
+            && !manifest.network_cleanup_complete
+            && !manifest.shutdown_requested
+            && manifest.status == SandboxStatus::Starting
+            && manifest.handle.status == SandboxStatus::Starting
+            && manifest.lifecycle_coordinator == ContainerLifecycleCoordinator::DirectBackend
+            && manifest.start_mode == config.start_mode
+            && plan.tenant_id() == &manifest.spec.tenant_id
+            && plan.generation() == plan.network_plan().generation()
+            && plan.bindings() == manifest.spec.port_bindings
+            && manifest.conmon_layout.manifest_path == path
+            && !manifest.bundle_layout.config_path.exists()
+            && !manifest.network_layout.netns_path.exists()
+            && !manifest.network_layout.status_path.exists();
+        if !exact_claim_only_shape {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "startup container manifest {} carries a crossed or effect-bearing reservation-pending shape",
+                    path.display()
+                ),
+            });
+        }
+        retained.insert(path);
+    }
+    Ok(retained)
+}
 
 impl ContainerSandboxBackend {
     pub(super) fn read_manifest(&self, id: &SandboxId) -> Result<Option<ContainerSandboxManifest>> {
@@ -167,6 +254,7 @@ impl ContainerSandboxBackend {
                 &self.ipam_authority,
                 &manifest.network_layout,
                 &manifest.handle.id,
+                &network_config.attachment_id,
                 &network_config.reservation_claim,
                 network_config.provider_kind(),
             )?;
@@ -184,11 +272,18 @@ pub(crate) struct ContainerStartPlan {
 pub(super) struct ContainerSandboxManifest {
     pub(super) handle: SandboxHandle,
     pub(super) spec: SandboxSpec,
+    /// Durable phase marker separating reservation from workload artifact
+    /// materialization. Legacy coarse starts publish this as `true`.
+    pub(super) provision_prepared: bool,
     pub(super) image_metadata: ContainerImageMetadata,
     pub(super) launch_artifact: Option<ContainerLaunchArtifact>,
     pub(super) bundle_layout: ContainerBundleLayout,
     pub(super) conmon_layout: OciConmonLayout,
     pub(super) network_layout: OciNetworkLayout,
+    /// Complete compiler-issued desired network plan persisted before any
+    /// reservation effect. A claim-only crash can resume only when the caller
+    /// presents this exact plan again.
+    pub(super) provision_network_plan: Option<SandboxProvisionNetworkPlan>,
     /// Exact placed network config for a launch that owns an attachment.
     ///
     /// `None` is either the authority-free PlanOnly state or the durable

@@ -26,7 +26,11 @@ fn krun_backend_smoke_boots_http_service_and_survives_backend_restart() {
     ]);
     let spec = spec.with_port_binding(http_binding(host_port, guest_port));
 
-    let handle = block_on(backend.start(spec)).expect("krun backend should start the sandbox");
+    let provisioned = provision_krun(&backend, &state_root, spec, true)
+        .expect("krun backend should provision the sandbox through every lifecycle phase");
+    assert!(!provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let _ingress = provisioned.ingress;
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(15));
@@ -41,7 +45,7 @@ fn krun_backend_smoke_boots_http_service_and_survives_backend_restart() {
         .expect("inspect should succeed after constructing a new backend instance")
         .expect("manifest-backed sandbox should still be discoverable");
     assert_eq!(
-        restarted_handle.status,
+        restarted_handle.handle.status,
         SandboxStatus::Ready,
         "a fresh backend instance should recover the running sandbox from disk-backed state"
     );
@@ -67,7 +71,7 @@ fn krun_backend_smoke_boots_http_service_and_survives_backend_restart() {
         .expect("inspect should succeed after stop")
         .expect("stopped sandbox should still have a manifest");
     assert_eq!(
-        stopped_handle.status,
+        stopped_handle.handle.status,
         SandboxStatus::Stopped,
         "a deliberate backend stop should be reported as stopped even if SIGKILL was required"
     );
@@ -112,7 +116,11 @@ fn krun_backend_m3_restart_policy_restarts_failed_vm() {
         .with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 1 })
         .with_port_binding(http_binding(host_port, guest_port));
 
-    let handle = block_on(backend.start(spec)).expect("restart-policy sandbox should start");
+    let provisioned = provision_krun(&backend, &state_root, spec, true)
+        .expect("restart-policy sandbox should provision through every lifecycle phase");
+    assert!(!provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let _ingress = provisioned.ingress;
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
@@ -189,7 +197,11 @@ fn krun_backend_m3_restart_backoff_delays_repeated_restarts() {
         .with_port_binding(http_binding(host_port, guest_port));
 
     let start_elapsed = Instant::now();
-    let handle = block_on(backend.start(spec)).expect("restart-backoff sandbox should start");
+    let provisioned = provision_krun(&backend, &state_root, spec, true)
+        .expect("restart-backoff sandbox should provision through every lifecycle phase");
+    assert!(!provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let _ingress = provisioned.ingress;
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(45));

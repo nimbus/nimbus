@@ -15,10 +15,10 @@ use nimbus_machine::api::{
     MACHINE_API_BOOTC_ROLLBACK_PATH, MACHINE_API_BOOTC_STATUS_PATH, MACHINE_API_BOOTC_SWITCH_PATH,
     MACHINE_API_BOOTC_UPGRADE_PATH, MACHINE_API_CAPABILITIES_PATH,
     MACHINE_API_CURRENT_SERVICE_SANDBOX_PATH, MACHINE_API_HEALTH_PATH,
-    MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH, MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
     MACHINE_API_SERVICE_SANDBOX_LOGS_PATH, MACHINE_API_SERVICE_SANDBOX_PATH,
     MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH, MACHINE_API_SERVICE_SANDBOX_STOP_PATH,
-    MACHINE_API_SERVICE_SANDBOXES_PATH,
+    MACHINE_API_SERVICE_SANDBOXES_PATH, MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH,
+    MachineApiWorkloadProvisionPhaseRequest, MachineApiWorkloadProvisionPhaseResponse,
 };
 
 pub(super) fn machine_api_router(state: MachineApiState) -> Router {
@@ -39,12 +39,8 @@ pub(super) fn machine_api_router(state: MachineApiState) -> Router {
             post(machine_api_bootc_rollback),
         )
         .route(
-            MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
-            post(machine_api_start_image_service_sandbox),
-        )
-        .route(
-            MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH,
-            post(machine_api_start_build_service_sandbox),
+            MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH,
+            post(machine_api_workload_provision_phase),
         )
         .route(
             MACHINE_API_SERVICE_SANDBOXES_PATH,
@@ -73,6 +69,28 @@ pub(super) fn machine_api_router(state: MachineApiState) -> Router {
         .with_state(state)
 }
 
+async fn machine_api_workload_provision_phase(
+    State(state): State<MachineApiState>,
+    Json(request): Json<MachineApiWorkloadProvisionPhaseRequest>,
+) -> Result<Json<MachineApiWorkloadProvisionPhaseResponse>, MachineApiHttpError> {
+    // Authentication deliberately precedes facade lookup and every guest
+    // provider call. A stale or foreign parent cannot probe or mutate guest
+    // workload state merely by presenting an internally consistent command.
+    require_forwarder_authority(&state, request.forwarder_authority())?;
+    let workloads = require_service_workloads(&state)?;
+    let observation = workloads
+        .provision_phase(request.command(), request.forwarder_authority())
+        .await?;
+    let response = MachineApiWorkloadProvisionPhaseResponse::for_request(&request, observation)
+        .map_err(|error| MachineApiHttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!(
+                "machine API workload provision response violated its exact wire contract: {error}"
+            ),
+        })?;
+    Ok(Json(response))
+}
+
 async fn machine_api_healthz(
     State(state): State<MachineApiState>,
 ) -> axum::Json<MachineApiHealthResponse> {
@@ -89,66 +107,6 @@ async fn machine_api_capabilities(
     State(state): State<MachineApiState>,
 ) -> axum::Json<MachineApiCapabilityResponse> {
     axum::Json(machine_api_capability_response(&state))
-}
-
-async fn machine_api_start_image_service_sandbox(
-    State(state): State<MachineApiState>,
-    Json(request): Json<MachineApiServiceSandboxImageStartRequest>,
-) -> Result<Json<MachineApiServiceSandboxStartResponse>, MachineApiHttpError> {
-    require_forwarder_authority(&state, &request.forwarder_authority)?;
-    require_parent_network_plan_sandbox_id(&request.sandbox_id)?;
-    require_image_start_root(&request.spec)?;
-    let workloads = require_service_workloads(&state)?;
-    let handle = workloads
-        .start(request.sandbox_id.clone(), request.spec)
-        .await?;
-    if handle.id != request.sandbox_id {
-        return Err(MachineApiHttpError {
-            status: StatusCode::CONFLICT,
-            message: format!(
-                "machine API prepared sandbox {} instead of requested identity {}",
-                handle.id, request.sandbox_id
-            ),
-        });
-    }
-    let publication_evidence = workloads
-        .exposed_machine_port_receipts(&request.sandbox_id)
-        .await?;
-    Ok(Json(MachineApiServiceSandboxStartResponse {
-        handle,
-        forwarder_authority: request.forwarder_authority,
-        publication_evidence,
-    }))
-}
-
-async fn machine_api_start_build_service_sandbox(
-    State(state): State<MachineApiState>,
-    Json(request): Json<MachineApiServiceSandboxBuildStartRequest>,
-) -> Result<Json<MachineApiServiceSandboxStartResponse>, MachineApiHttpError> {
-    require_forwarder_authority(&state, &request.forwarder_authority)?;
-    require_parent_network_plan_sandbox_id(&request.sandbox_id)?;
-    require_build_start_root(&request.spec)?;
-    let workloads = require_service_workloads(&state)?;
-    let handle = workloads
-        .start(request.sandbox_id.clone(), request.spec)
-        .await?;
-    if handle.id != request.sandbox_id {
-        return Err(MachineApiHttpError {
-            status: StatusCode::CONFLICT,
-            message: format!(
-                "machine API prepared sandbox {} instead of requested identity {}",
-                handle.id, request.sandbox_id
-            ),
-        });
-    }
-    let publication_evidence = workloads
-        .exposed_machine_port_receipts(&request.sandbox_id)
-        .await?;
-    Ok(Json(MachineApiServiceSandboxStartResponse {
-        handle,
-        forwarder_authority: request.forwarder_authority,
-        publication_evidence,
-    }))
 }
 
 async fn machine_api_inspect_service_sandbox(
@@ -347,28 +305,4 @@ async fn machine_api_stop_service_sandbox(
         forwarder_authority: request.forwarder_authority,
         confirmed_absent_evidence: absence.receipts,
     }))
-}
-
-fn require_parent_network_plan_sandbox_id(
-    sandbox_id: &nimbus::SandboxId,
-) -> Result<nimbus_network::NetworkPlanId, MachineApiHttpError> {
-    let encoded = sandbox_id
-        .as_str()
-        .strip_prefix("machine-api:")
-        .ok_or_else(|| MachineApiHttpError {
-            status: StatusCode::BAD_REQUEST,
-            message: format!(
-                "machine API service sandbox identity must be parent-issued as \
-                 machine-api:<NetworkPlanId>; received {sandbox_id}"
-            ),
-        })?;
-    encoded
-        .parse::<nimbus_network::NetworkPlanId>()
-        .map_err(|error| MachineApiHttpError {
-            status: StatusCode::BAD_REQUEST,
-            message: format!(
-                "machine API service sandbox identity {sandbox_id} does not contain a valid \
-                 parent-issued NetworkPlanId: {error}"
-            ),
-        })
 }

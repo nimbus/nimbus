@@ -270,7 +270,7 @@ fn authenticate_status_projection(
     setup_attempt: &nimbus_network::NetworkProviderHandle,
     assigned_ips: &[Ipv4Addr],
 ) -> std::result::Result<(), String> {
-    let attachment_id = super::default_network_attachment_id(context.sandbox_id);
+    let attachment_id = context.config.attachment_id.clone();
     if projection.schema_version != NetavarkStatusProjection::SCHEMA_VERSION
         || &projection.tenant_id != context.tenant_id
         || projection.attachment_id != attachment_id

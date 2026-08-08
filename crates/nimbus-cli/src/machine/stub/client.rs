@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use nimbus::{Error, SandboxId, SandboxSpec, TenantId};
+use nimbus::{Error, SandboxId, TenantId};
 use nimbus_sandbox::SandboxInspection;
 
 use nimbus_machine::MachineForwarderAuthority;
 use nimbus_machine::api::{
     MachineApiCapabilityResponse, MachineApiHealthResponse, MachineApiServiceProcessSnapshot,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
-    MachineApiServiceSandboxStartResponse, MachineApiServiceSandboxStopResponse,
-    MachineApiServiceSandboxSummary,
+    MachineApiServiceSandboxStopResponse, MachineApiServiceSandboxSummary,
+    MachineApiWorkloadProvisionCommandEnvelope, MachineApiWorkloadProvisionPhaseResponse,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,24 +47,11 @@ impl MachineApiClient {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 
-    // realized by WIN2: the unix twin (`backend.rs`) forwards through these
-    // methods; the non-unix stub backend (`stub/backend.rs`) returns a canned
-    // error without dispatching through `client`, so these stay unused here.
     #[allow(dead_code)]
-    pub(crate) fn start_service_sandbox_from_image(
+    pub(crate) fn provision_workload_phase(
         &self,
-        _sandbox_id: SandboxId,
-        _spec: SandboxSpec,
-    ) -> Result<MachineApiServiceSandboxStartResponse, Error> {
-        Err(unsupported_machine_api_client_error(&self.socket_path))
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn start_service_sandbox_from_build(
-        &self,
-        _sandbox_id: SandboxId,
-        _spec: SandboxSpec,
-    ) -> Result<MachineApiServiceSandboxStartResponse, Error> {
+        _command: MachineApiWorkloadProvisionCommandEnvelope,
+    ) -> Result<MachineApiWorkloadProvisionPhaseResponse, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 
@@ -79,9 +66,7 @@ impl MachineApiClient {
     #[allow(dead_code)]
     pub(crate) fn stop_service_sandbox(
         &self,
-        _tenant_id: &TenantId,
         _sandbox_id: &SandboxId,
-        _expected_bindings: &[nimbus::SandboxPortBinding],
     ) -> Result<MachineApiServiceSandboxStopResponse, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }

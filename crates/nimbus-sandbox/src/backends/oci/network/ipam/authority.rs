@@ -300,6 +300,7 @@ mod tests {
             &authority,
             &aliased_layout,
             &sandbox,
+            &config.attachment_id,
             &config.reservation_claim,
             config.provider_kind(),
         )

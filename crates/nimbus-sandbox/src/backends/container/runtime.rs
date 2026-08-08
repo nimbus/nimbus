@@ -1,3 +1,4 @@
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ mod manifest;
 mod network_composition;
 mod network_launch;
 mod provider_context;
+mod provision;
 #[cfg(test)]
 mod restart;
 mod runner;
@@ -72,6 +74,7 @@ use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::backends::readiness_probe::ReadinessProbeProvider;
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
+use crate::provision::SandboxProvisionNetworkPlan;
 use crate::spec::{SandboxOciImageSource, SandboxRootSpec, SandboxSpec};
 use nimbus_egress::EgressPolicy;
 
@@ -132,6 +135,14 @@ enum RunnerHandoffFailure {
 pub struct PreparedContainerServiceWorkload {
     pub handle: SandboxHandle,
     pub bundle_dir: PathBuf,
+}
+
+struct ContainerStartPlanningOptions<'a> {
+    launch_defaults: Option<&'a OciImageLaunchDefaults>,
+    launch_artifact: Option<ContainerLaunchArtifact>,
+    provision_network_plan: Option<&'a SandboxProvisionNetworkPlan>,
+    reserve_execute_network: bool,
+    prepare_bundle: bool,
 }
 
 fn combine_launch_failure(
@@ -231,11 +242,6 @@ impl ContainerSandboxBackend {
             self.config.workload_state_root.clone(),
             self.config.resource_quota_policy.clone(),
         )
-    }
-
-    fn start_sync(&self, spec: SandboxSpec) -> Result<SandboxHandle> {
-        let launch_plan = self.plan_start(&spec)?;
-        self.finish_start(launch_plan)
     }
 
     pub fn prepare_plan_only_service_workload(
@@ -497,6 +503,7 @@ impl ContainerSandboxBackend {
             &launch_plan.manifest.spec.tenant_id,
             &launch_plan.manifest.network_layout,
             &launch_plan.manifest.handle.id,
+            &default_network_attachment_id(&launch_plan.manifest.handle.id),
             &reservation_claim,
         )?;
         launch_plan.manifest.network_config = Some(network_config.clone());
@@ -570,31 +577,72 @@ impl ContainerSandboxBackend {
             .bundle_layout
             .bundle_dir
             .join(RUNNER_MANIFEST_POINTER_FILE);
-        std::fs::write(
-            &pointer_path,
-            format!("{}\n", manifest.conmon_layout.manifest_path.display()),
-        )
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to write container runner manifest pointer {}: {error}",
-                pointer_path.display()
-            ),
-        })
-    }
-
-    fn finish_start(&self, launch_plan: ContainerStartPlan) -> Result<SandboxHandle> {
-        let mut manifest = launch_plan.manifest;
-        match self.config.start_mode {
-            ContainerStartMode::PlanOnly => {
-                manifest.last_exit_code = None;
-                manifest.restart_count = 0;
-                manifest.next_restart_at_millis = None;
-                manifest.shutdown_requested = false;
-                self.write_manifest(&manifest)?;
-                Ok(manifest.handle)
+        let expected = format!("{}\n", manifest.conmon_layout.manifest_path.display());
+        match std::fs::symlink_metadata(&pointer_path) {
+            Ok(metadata) if !metadata.file_type().is_file() => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container runner manifest pointer {} is not a regular file",
+                        pointer_path.display()
+                    ),
+                });
             }
-            ContainerStartMode::Execute => self.execute_direct_start(&mut manifest),
+            Ok(_) => {
+                let current = std::fs::read_to_string(&pointer_path).map_err(|error| {
+                    SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to read container runner manifest pointer {}: {error}",
+                            pointer_path.display()
+                        ),
+                    }
+                })?;
+                if current == expected {
+                    return Ok(());
+                }
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container runner manifest pointer {} names a different durable manifest; replacement remains fenced",
+                        pointer_path.display()
+                    ),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to inspect container runner manifest pointer {}: {error}",
+                        pointer_path.display()
+                    ),
+                });
+            }
         }
+        let mut pointer = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&pointer_path)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to create container runner manifest pointer {}: {error}",
+                    pointer_path.display()
+                ),
+            })?;
+        pointer
+            .write_all(expected.as_bytes())
+            .and_then(|()| pointer.sync_all())
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to durably write container runner manifest pointer {}: {error}",
+                    pointer_path.display()
+                ),
+            })?;
+        std::fs::File::open(&manifest.bundle_layout.bundle_dir)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "runner manifest pointer {} reached its commit point but the bundle-directory sync failed: {error}",
+                    pointer_path.display()
+                ),
+            })
     }
 
     fn stop_sync(&self, id: &SandboxId) -> Result<()> {
@@ -692,6 +740,7 @@ impl ContainerSandboxBackend {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn plan_start(&self, spec: &SandboxSpec) -> Result<ContainerStartPlan> {
         let sandbox_id = next_sandbox_id(spec.display_name());
         self.plan_start_for_id(spec, &sandbox_id)
@@ -702,14 +751,40 @@ impl ContainerSandboxBackend {
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
     ) -> Result<ContainerStartPlan> {
+        self.plan_start_for_id_with_network_reservation(spec, sandbox_id, true, true)
+    }
+
+    fn plan_start_for_id_with_network_reservation(
+        &self,
+        spec: &SandboxSpec,
+        sandbox_id: &SandboxId,
+        reserve_execute_network: bool,
+        prepare_bundle: bool,
+    ) -> Result<ContainerStartPlan> {
         self.ensure_startup_reconciliation_ready()?;
         match &spec.root {
-            SandboxRootSpec::Rootfs(_) => self.plan_start_with_id(spec, sandbox_id, None, None),
+            SandboxRootSpec::Rootfs(_) => self.plan_start_with_id_with_network_reservation(
+                spec,
+                sandbox_id,
+                ContainerStartPlanningOptions {
+                    launch_defaults: None,
+                    launch_artifact: None,
+                    provision_network_plan: None,
+                    reserve_execute_network,
+                    prepare_bundle,
+                },
+            ),
             SandboxRootSpec::OciImage(image) => {
                 self.resource_quota_manager().ensure_launch_quota(spec)?;
                 let prepared_launch =
                     self.prepare_oci_image_start(spec, sandbox_id, &image.source)?;
-                self.plan_start_with_materialized_image(spec, sandbox_id, prepared_launch)
+                self.plan_start_with_materialized_image(
+                    spec,
+                    sandbox_id,
+                    prepared_launch,
+                    reserve_execute_network,
+                    prepare_bundle,
+                )
             }
         }
     }
@@ -719,15 +794,23 @@ impl ContainerSandboxBackend {
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         prepared_launch: PreparedMaterializedImageLaunch,
+        reserve_execute_network: bool,
+        prepare_bundle: bool,
     ) -> Result<ContainerStartPlan> {
-        self.plan_start_with_id(
+        self.plan_start_with_id_with_network_reservation(
             spec,
             sandbox_id,
-            Some(&prepared_launch.launch_defaults),
-            Some(ContainerLaunchArtifact::Rootfs(prepared_launch.artifact)),
+            ContainerStartPlanningOptions {
+                launch_defaults: Some(&prepared_launch.launch_defaults),
+                launch_artifact: Some(ContainerLaunchArtifact::Rootfs(prepared_launch.artifact)),
+                provision_network_plan: None,
+                reserve_execute_network,
+                prepare_bundle,
+            },
         )
     }
 
+    #[cfg(test)]
     fn plan_start_with_id(
         &self,
         spec: &SandboxSpec,
@@ -735,6 +818,32 @@ impl ContainerSandboxBackend {
         launch_defaults: Option<&OciImageLaunchDefaults>,
         launch_artifact: Option<ContainerLaunchArtifact>,
     ) -> Result<ContainerStartPlan> {
+        self.plan_start_with_id_with_network_reservation(
+            spec,
+            sandbox_id,
+            ContainerStartPlanningOptions {
+                launch_defaults,
+                launch_artifact,
+                provision_network_plan: None,
+                reserve_execute_network: true,
+                prepare_bundle: true,
+            },
+        )
+    }
+
+    fn plan_start_with_id_with_network_reservation(
+        &self,
+        spec: &SandboxSpec,
+        sandbox_id: &SandboxId,
+        options: ContainerStartPlanningOptions<'_>,
+    ) -> Result<ContainerStartPlan> {
+        let ContainerStartPlanningOptions {
+            launch_defaults,
+            launch_artifact,
+            provision_network_plan,
+            reserve_execute_network,
+            prepare_bundle,
+        } = options;
         self.ensure_startup_reconciliation_ready()?;
         if spec.backend != SandboxBackendKind::Container {
             return Err(SandboxError::InvalidSpec {
@@ -751,7 +860,9 @@ impl ContainerSandboxBackend {
             .ensure_launch_quota(&resolved_spec)?;
         let manager = self.port_lease_coordinator();
         let requested_port_bindings = resolved_spec.port_bindings.clone();
-        if self.config.start_mode == ContainerStartMode::PlanOnly {
+        if self.config.start_mode == ContainerStartMode::PlanOnly
+            && provision_network_plan.is_none()
+        {
             // Preview is a pure admission/rendering step. Run it before
             // resolving the tenant segment so a rejected plan cannot create a
             // durable allocation for a workload that acquired no attachment.
@@ -824,11 +935,13 @@ impl ContainerSandboxBackend {
             manifest: ContainerSandboxManifest {
                 handle,
                 spec: resolved_spec,
+                provision_prepared: prepare_bundle,
                 image_metadata: resolved_launch.image_metadata,
                 launch_artifact,
                 bundle_layout,
                 conmon_layout,
                 network_layout,
+                provision_network_plan: provision_network_plan.cloned(),
                 network_config: None,
                 network_cleanup_complete: false,
                 creator_handoff: ContainerCreatorHandoffState::NotSpawned,
@@ -851,77 +964,12 @@ impl ContainerSandboxBackend {
             },
         };
 
-        if self.config.start_mode == ContainerStartMode::Execute {
-            let reservation_claim = match self.begin_launch_reservation(&mut plan.manifest) {
-                Ok(claim) => claim,
-                Err(error) => {
-                    let cleanup = self
-                        .release_unstarted_launch_artifacts(&mut plan.manifest)
-                        .err();
-                    return Err(self.persist_failed_initial_launch(
-                        &mut plan.manifest,
-                        error,
-                        cleanup,
-                    ));
-                }
-            };
-            let planning_result = (|| -> Result<()> {
-                // Block-aware placement (MTN6) starts only after the exact
-                // coordinator claim is durable in the canonical manifest.
-                let network_config = self.place_sandbox_config(
-                    &plan.manifest.spec.tenant_id,
-                    &plan.manifest.network_layout,
-                    sandbox_id,
-                    &reservation_claim,
-                )?;
-                let internal_listener = egress_listener_reservation(&network_config)?;
-                let mut reservations = manager.reserve_launch_ports_for_sandbox(
-                    SandboxLaunchPortPlan::new(
-                        &plan.manifest.spec.tenant_id,
-                        sandbox_id,
-                        &plan.manifest.spec.port_bindings,
-                        &plan.manifest.image_metadata.exposed_ports,
-                    )
-                    .with_internal_listener(internal_listener),
-                    &reservation_claim,
-                )?;
-                let internal = reservations.internal_listener.clone().ok_or_else(|| {
-                    SandboxError::OperationFailed {
-                        message:
-                            "container launch reservation omitted the required egress listener"
-                                .to_owned(),
-                    }
-                })?;
-                let egress_proxy = egress_proxy_assignment(&network_config, internal)?;
-                plan.manifest.spec.port_bindings = reservations.published_bindings.clone();
-                plan.manifest.port_leases = reservations.published_leases.clone();
-                plan.manifest.network_config = Some(network_config);
-                plan.manifest.egress_proxy = Some(egress_proxy);
-                let status = plan.manifest.status;
-                synchronize_handle_status(&mut plan.manifest, status);
-                write_bundle_config(
-                    &plan.manifest.bundle_layout,
-                    &hostname_for(&plan.manifest.spec),
-                    &plan.manifest.spec,
-                    plan.manifest.image_metadata.user.as_deref(),
-                    Some(plan.manifest.network_layout.netns_path.as_path()),
-                    &container_bundle_options(
-                        &self.config.workload_state_root,
-                        &plan.manifest.spec,
-                        sandbox_id,
-                        plan.manifest.egress_proxy.as_ref(),
-                    )?,
-                )?;
-                self.write_manifest(&plan.manifest)?;
-                reservations.confirm_manifest_published()
-            })();
-            if let Err(error) = planning_result {
-                let cleanup = self
-                    .release_unstarted_launch_artifacts(&mut plan.manifest)
-                    .err();
-                return Err(self.persist_failed_initial_launch(&mut plan.manifest, error, cleanup));
-            }
-        } else {
+        if reserve_execute_network
+            && (self.config.start_mode == ContainerStartMode::Execute
+                || provision_network_plan.is_some())
+        {
+            self.reserve_execute_launch_network(&mut plan.manifest, provision_network_plan)?;
+        } else if prepare_bundle {
             write_bundle_config(
                 &plan.manifest.bundle_layout,
                 &hostname_for(&plan.manifest.spec),
@@ -935,8 +983,151 @@ impl ContainerSandboxBackend {
                     None,
                 )?,
             )?;
+            if self.config.start_mode == ContainerStartMode::Execute {
+                self.write_manifest(&plan.manifest)?;
+            }
+        } else if self.config.start_mode == ContainerStartMode::Execute {
+            self.write_manifest(&plan.manifest)?;
         }
         Ok(plan)
+    }
+
+    fn reserve_execute_launch_network(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+        provision_network_plan: Option<&SandboxProvisionNetworkPlan>,
+    ) -> Result<()> {
+        let reservation_claim = match self.begin_launch_reservation(manifest) {
+            Ok(claim) => claim,
+            Err(error) => {
+                let cleanup = self.release_unstarted_launch_artifacts(manifest).err();
+                return Err(self.persist_failed_initial_launch(manifest, error, cleanup));
+            }
+        };
+        self.complete_execute_launch_network_reservation(
+            manifest,
+            provision_network_plan,
+            &reservation_claim,
+        )
+    }
+
+    fn resume_execute_launch_network_reservation(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+        provision_network_plan: &SandboxProvisionNetworkPlan,
+        reservation_claim: &nimbus_network::NetworkReservationClaim,
+    ) -> Result<()> {
+        if manifest.launch_reservation_claim.as_ref() != Some(reservation_claim)
+            || manifest.provision_network_plan.as_ref() != Some(provision_network_plan)
+            || manifest.network_config.is_some()
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container provision reservation retry for {} crossed its exact durable desired plan or reservation phase",
+                    manifest.handle.id
+                ),
+            });
+        }
+        self.complete_execute_launch_network_reservation(
+            manifest,
+            Some(provision_network_plan),
+            reservation_claim,
+        )
+    }
+
+    fn complete_execute_launch_network_reservation(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+        provision_network_plan: Option<&SandboxProvisionNetworkPlan>,
+        reservation_claim: &nimbus_network::NetworkReservationClaim,
+    ) -> Result<()> {
+        let manager = self.port_lease_coordinator();
+        let sandbox_id = manifest.handle.id.clone();
+        let planning_result = (|| -> Result<()> {
+            // Placement begins only after the exact provider reservation claim
+            // is durable in the canonical manifest.
+            let attachment_id = provision_network_plan.map_or_else(
+                || default_network_attachment_id(&sandbox_id),
+                |plan| plan.attachment_id().clone(),
+            );
+            let mut network_config = self.place_sandbox_config(
+                &manifest.spec.tenant_id,
+                &manifest.network_layout,
+                &sandbox_id,
+                &attachment_id,
+                reservation_claim,
+            )?;
+            network_config.network_plan =
+                provision_network_plan.map(|plan| plan.network_plan().clone());
+            #[cfg(test)]
+            if network_config.network_plan.is_none() {
+                network_config.network_plan = Some(
+                    crate::provision::test_support::legacy_start_attachment_network_plan_fixture(
+                        &manifest.spec,
+                        &sandbox_id,
+                        "container-coarse-start",
+                    ),
+                );
+            }
+            // Placement has returned with an exact attachment hold. Publish
+            // that identity into the in-memory compensation authority before
+            // any later reservation can fail; the outer failure path must not
+            // fall back to a workload-derived attachment after a compiler-
+            // supplied ID has acquired durable state.
+            manifest.network_config = Some(network_config.clone());
+            let internal_listener = egress_listener_reservation(&network_config)?;
+            let mut reservations = match provision_network_plan {
+                Some(plan) => manager.reserve_exact_provision_ports(
+                    plan,
+                    Some(internal_listener),
+                    reservation_claim,
+                )?,
+                None => manager.reserve_launch_ports_for_sandbox(
+                    SandboxLaunchPortPlan::new(
+                        &manifest.spec.tenant_id,
+                        &sandbox_id,
+                        &manifest.spec.port_bindings,
+                        &manifest.image_metadata.exposed_ports,
+                    )
+                    .with_internal_listener(internal_listener),
+                    reservation_claim,
+                )?,
+            };
+            let internal = reservations.internal_listener.clone().ok_or_else(|| {
+                SandboxError::OperationFailed {
+                    message: "container launch reservation omitted the required egress listener"
+                        .to_owned(),
+                }
+            })?;
+            let egress_proxy = egress_proxy_assignment(&network_config, internal)?;
+            manifest.spec.port_bindings = reservations.published_bindings.clone();
+            manifest.port_leases = reservations.published_leases.clone();
+            manifest.egress_proxy = Some(egress_proxy);
+            let status = manifest.status;
+            synchronize_handle_status(manifest, status);
+            if manifest.provision_prepared {
+                write_bundle_config(
+                    &manifest.bundle_layout,
+                    &hostname_for(&manifest.spec),
+                    &manifest.spec,
+                    manifest.image_metadata.user.as_deref(),
+                    Some(manifest.network_layout.netns_path.as_path()),
+                    &container_bundle_options(
+                        &self.config.workload_state_root,
+                        &manifest.spec,
+                        &sandbox_id,
+                        manifest.egress_proxy.as_ref(),
+                    )?,
+                )?;
+            }
+            self.write_manifest(manifest)?;
+            reservations.confirm_manifest_published()
+        })();
+        if let Err(error) = planning_result {
+            let cleanup = self.release_unstarted_launch_artifacts(manifest).err();
+            return Err(self.persist_failed_initial_launch(manifest, error, cleanup));
+        }
+        Ok(())
     }
 
     fn launch_manifest(
@@ -963,6 +1154,7 @@ impl ContainerSandboxBackend {
             None
         };
         if let Some(reservation_claim) = reservation_claim.as_ref() {
+            let attachment_id = manifest.require_network_config()?.attachment_id.clone();
             let mut launch_batch = manifest.port_leases.clone();
             if let Some(egress_proxy) = manifest.egress_proxy.as_ref() {
                 launch_batch.push(egress_proxy.port_lease.clone());
@@ -975,19 +1167,21 @@ impl ContainerSandboxBackend {
                     &manifest.network_layout,
                     &manifest.spec.tenant_id,
                     &manifest.handle.id,
+                    &attachment_id,
                     reservation_claim,
                     error,
                 ));
             }
             if let Err(error) = self.segment_allocator.adopt_reserved_attachment(
                 &manifest.spec.tenant_id,
-                &default_network_attachment_id(&manifest.handle.id),
+                &attachment_id,
                 reservation_claim,
             ) {
                 return Err(self.compensate_reserved_launch(
                     &manifest.network_layout,
                     &manifest.spec.tenant_id,
                     &manifest.handle.id,
+                    &attachment_id,
                     reservation_claim,
                     error,
                 ));
@@ -1018,7 +1212,12 @@ impl ContainerSandboxBackend {
             AttachmentAttachAuthority::RestartRetained,
             AttachmentAttachAuthority::FreshLaunch,
         );
-        self.configure_network(manifest, attachment_authority, listener_release_authority)?;
+        self.configure_network(
+            manifest,
+            attachment_authority,
+            listener_release_authority,
+            true,
+        )?;
         self.ensure_egress_proxy_running_with_release_authority(
             manifest,
             match reservation_claim.as_ref() {
@@ -1168,6 +1367,7 @@ impl ContainerSandboxBackend {
         manifest: &ContainerSandboxManifest,
         attachment_authority: AttachmentAttachAuthority<'_>,
         listener_release_authority: MachinePortPreparationReleaseAuthority<'_>,
+        publish_ingress: bool,
     ) -> Result<()> {
         let network_config = manifest.require_network_config()?.clone();
         self.validate_manifest_execution_context(manifest)?;
@@ -1177,26 +1377,30 @@ impl ContainerSandboxBackend {
         let ports = self.port_lease_coordinator_for_manifest(manifest)?;
         let hostname = hostname_for(&manifest.spec);
         let lifecycle = self.attachment_lifecycle(&ports);
-        self.attachment_adapter(manifest, &network_config, &hostname, machine_port_forwarder)
-            .attach(&lifecycle, attachment_authority, |assigned_ips| {
-                // The shared host-managed lifecycle deliberately leaves the
-                // sandbox-specific PEP fence and machine publication adapters
-                // at this composition boundary.
-                if let Some(proxy) = manifest.egress_proxy.as_ref() {
-                    self.egress_pin_provider
-                        .apply(&manifest.network_layout, proxy)?;
-                }
-                if machine_port_forwarder.is_some() {
-                    self.ensure_machine_port_proxies_running_with_publication(
-                        &manifest.handle.id,
-                        assigned_ips,
-                        manifest,
-                        listener_release_authority,
-                        || self.converge_exposed_machine_port_publication(manifest),
-                    )?;
-                }
-                Ok(())
-            })?;
+        let adapter = if publish_ingress {
+            self.attachment_adapter(manifest, &network_config, &hostname, machine_port_forwarder)
+        } else {
+            self.non_routable_attachment_adapter(manifest, &network_config, &hostname)
+        };
+        adapter.attach(&lifecycle, attachment_authority, |assigned_ips| {
+            // The shared host-managed lifecycle deliberately leaves the
+            // sandbox-specific PEP fence and machine publication adapters
+            // at this composition boundary.
+            if let Some(proxy) = manifest.egress_proxy.as_ref() {
+                self.egress_pin_provider
+                    .apply(&manifest.network_layout, proxy)?;
+            }
+            if publish_ingress && machine_port_forwarder.is_some() {
+                self.ensure_machine_port_proxies_running_with_publication(
+                    &manifest.handle.id,
+                    assigned_ips,
+                    manifest,
+                    listener_release_authority,
+                    || self.converge_exposed_machine_port_publication(manifest),
+                )?;
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -1341,11 +1545,6 @@ fn egress_trust_anchor_mount_options() -> Vec<String> {
 impl SandboxBackend for ContainerSandboxBackend {
     fn kind(&self) -> SandboxBackendKind {
         SandboxBackendKind::Container
-    }
-
-    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_sync(spec) })
     }
 
     fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<crate::SandboxInspection>> {

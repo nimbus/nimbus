@@ -1,18 +1,26 @@
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
+use std::sync::Arc;
 
-use nimbus::{Error, SandboxBackend, SandboxHandle, SandboxStatus, ServiceBackend, TenantId};
-use nimbus_sandbox::backends::krun::KrunSandboxStateView;
+use nimbus::{Engine, Error, SandboxBackend, SandboxHandle, SandboxStatus, TenantId};
+use nimbus_compute::{
+    ComputeResourceProvisioner, SandboxServiceProvisionSnapshot, WorkloadProvisionCancellation,
+};
+use nimbus_server::{EngineWorkloadSagaStore, ServerForegroundWorkloadRuntime};
+use nimbus_services::{ServiceDefinition, ServiceDefinitionObservation};
+use nimbus_tenant::TenantIsolationContext;
+use nimbus_workloads::WorkloadSagaStore;
 use serde::Serialize;
 
 use crate::compose::discovery::ResolvedComposeSelection;
 use crate::machine::{HostMachineNetworkAuthority, MachineApiClient};
 
+use super::provision::PreparedComposeProvision;
 use super::{
-    ComposeDownCommand, ComposeUpCommand, LocalKrunExecutionSurface,
-    load_service_definition_catalog_for_execution_platform, lookup_current_remote_service_details,
-    requested_service_names, resolve_remote_service_down_targets, resolve_service_down_targets,
-    resolve_service_execution_surface, validate_forwarded_machine_api_backend,
-    validate_forwarded_machine_api_operations,
+    ComposeDownCommand, ComposeUpCommand, LocalKrunExecutionSurface, requested_service_names,
+    resolve_remote_service_down_targets, resolve_service_down_targets,
+    resolve_service_execution_surface, validate_forwarded_machine_api_operations,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -80,14 +88,108 @@ impl ServiceLifecycleTarget {
     }
 }
 
+/// Foreground owner for one exact Compose workload realm.
+pub(super) struct ComposeForegroundOwner {
+    runtime: ServerForegroundWorkloadRuntime,
+    cancellation: WorkloadProvisionCancellation,
+}
+
+impl ComposeForegroundOwner {
+    pub(super) fn open(
+        engine: Arc<Engine>,
+        prepared: PreparedComposeProvision,
+    ) -> Result<Self, Error> {
+        let saga_store: Arc<dyn WorkloadSagaStore> =
+            Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
+        let runtime = prepared.activate(engine, saga_store)?;
+        Ok(Self {
+            runtime,
+            cancellation: WorkloadProvisionCancellation::default(),
+        })
+    }
+
+    pub(super) fn cancellation(&self) -> WorkloadProvisionCancellation {
+        self.cancellation.clone()
+    }
+
+    /// Settle process-bound ownership before the foreground command returns.
+    pub(super) async fn shutdown(self, engine: &Engine) {
+        self.cancellation.cancel();
+        drop(self);
+        engine.quiesce().await;
+    }
+
+    #[cfg(test)]
+    pub(super) fn open_composition_for_test(
+        engine: Arc<Engine>,
+        composition: nimbus_server::ServerWorkloadComposition,
+    ) -> Self {
+        let saga_store: Arc<dyn WorkloadSagaStore> =
+            Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
+        Self {
+            runtime: composition.into_foreground_runtime(saga_store),
+            cancellation: WorkloadProvisionCancellation::default(),
+        }
+    }
+}
+
+pub(super) type ComposeProvisionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<SandboxServiceProvisionSnapshot, Error>> + Send + 'a>>;
+
+pub(super) trait ComposeServiceProvision {
+    fn definition(&self, tenant_id: &TenantId, service_name: &str) -> Option<ServiceDefinition>;
+
+    fn observation(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+    ) -> Option<ServiceDefinitionObservation>;
+
+    fn provision<'a>(
+        &'a self,
+        context: &'a TenantIsolationContext,
+        service_name: &'a str,
+    ) -> ComposeProvisionFuture<'a>;
+}
+
+impl ComposeServiceProvision for ComposeForegroundOwner {
+    fn definition(&self, tenant_id: &TenantId, service_name: &str) -> Option<ServiceDefinition> {
+        self.runtime
+            .service_manager()
+            .service_definition_for_tenant(tenant_id, service_name)
+    }
+
+    fn observation(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+    ) -> Option<ServiceDefinitionObservation> {
+        self.runtime
+            .service_manager()
+            .service_definition_observation_for_tenant(tenant_id, service_name)
+    }
+
+    fn provision<'a>(
+        &'a self,
+        context: &'a TenantIsolationContext,
+        service_name: &'a str,
+    ) -> ComposeProvisionFuture<'a> {
+        let resource_provisioner: &'a ComputeResourceProvisioner =
+            self.runtime.resource_provisioner();
+        Box::pin(async move {
+            resource_provisioner
+                .provision_sandbox_service(context, service_name, &self.cancellation)
+                .await
+                .map_err(|error| Error::Internal(error.to_string()))
+        })
+    }
+}
+
 pub(super) async fn service_up_outcomes_for_selection(
     command: &ComposeUpCommand,
     selection: &ResolvedComposeSelection,
     control_data_dir: &Path,
-    host_platform: super::ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-    local_krun: Option<LocalKrunExecutionSurface>,
-    network: Option<&HostMachineNetworkAuthority>,
+    provision: &impl ComposeServiceProvision,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
     let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -95,102 +197,91 @@ pub(super) async fn service_up_outcomes_for_selection(
         .clone()
         .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
     let service_names = requested_service_names(&context, command.service.as_deref())?;
-    let service_catalog =
-        load_service_definition_catalog_for_execution_platform(selection, host_platform)?;
-
-    match resolve_service_execution_surface(
-        &context,
-        command.service.as_deref(),
-        "compose up",
-        host_platform,
-        machine_api_client,
-        local_krun,
-        network,
-    )? {
-        super::ServiceExecutionSurface::Krun {
-            state_view,
-            backend,
-        } => {
-            let mut outcomes = Vec::new();
-            for service_name in service_names {
-                if let Some(handle) = resolve_live_service_handle(
-                    &state_view,
-                    backend.as_ref(),
-                    &tenant,
-                    &service_name,
-                )
-                .await?
-                {
-                    outcomes.push(ServiceLifecycleOutcome::from_handle(
-                        ServiceLifecycleAction::AlreadyRunning,
-                        &tenant,
-                        &service_name,
-                        handle,
-                    ));
-                    continue;
-                }
-
-                let launch = service_catalog
-                    .service_backend_for_tenant(&tenant, &service_name)
-                    .ok_or_else(|| {
-                        Error::InvalidInput(format!(
-                            "service {} is not declared in compose project {}",
-                            service_name, context.control_plane.project_name
-                        ))
-                    })?;
-                let handle =
-                    start_service_launch(backend.as_ref(), &tenant, &service_name, launch).await?;
-                outcomes.push(ServiceLifecycleOutcome::from_handle(
-                    ServiceLifecycleAction::Started,
-                    &tenant,
-                    &service_name,
-                    handle,
-                ));
-            }
-            Ok(outcomes)
-        }
-        super::ServiceExecutionSurface::ForwardedContainer { client, backend } => {
-            validate_forwarded_machine_api_backend(&context, &client)?;
-            let mut outcomes = Vec::new();
-            for service_name in service_names {
-                if let Some(details) = lookup_current_remote_service_details(
-                    &context,
-                    &client,
-                    &tenant,
-                    &service_name,
-                    "resolve persisted sandbox state",
-                )? && is_active_status(details.summary.status)
-                {
-                    outcomes.push(ServiceLifecycleOutcome {
-                        action: ServiceLifecycleAction::AlreadyRunning,
-                        tenant_id: details.summary.tenant_id,
-                        service_name: details.summary.service_name,
-                        sandbox_id: details.summary.sandbox_id,
-                        status: details.summary.status,
-                    });
-                    continue;
-                }
-
-                let launch = service_catalog
-                    .service_backend_for_tenant(&tenant, &service_name)
-                    .ok_or_else(|| {
-                        Error::InvalidInput(format!(
-                            "service {} is not declared in compose project {}",
-                            service_name, context.control_plane.project_name
-                        ))
-                    })?;
-                let handle =
-                    start_service_launch(backend.as_ref(), &tenant, &service_name, launch).await?;
-                outcomes.push(ServiceLifecycleOutcome::from_handle(
-                    ServiceLifecycleAction::Started,
-                    &tenant,
-                    &service_name,
-                    handle,
-                ));
-            }
-            Ok(outcomes)
-        }
+    let tenant_context = TenantIsolationContext::system(tenant.clone(), "compose-up");
+    let mut outcomes = Vec::with_capacity(service_names.len());
+    for service_name in service_names {
+        outcomes.push(provision_compose_service(provision, &tenant_context, &service_name).await?);
     }
+    Ok(outcomes)
+}
+
+pub(super) async fn provision_compose_service(
+    provision: &impl ComposeServiceProvision,
+    context: &TenantIsolationContext,
+    service_name: &str,
+) -> Result<ServiceLifecycleOutcome, Error> {
+    let tenant_id = context.tenant_id();
+    let definition = provision
+        .definition(tenant_id, service_name)
+        .ok_or_else(|| {
+            Error::InvalidInput(format!(
+                "service {service_name} is not declared for tenant {tenant_id}"
+            ))
+        })?;
+    if let Some(observation) = provision.observation(tenant_id, service_name)
+        && observation.observed_generation == definition.generation
+    {
+        validate_service_observation(&definition, &observation)?;
+        if matches!(
+            observation.handle.status,
+            SandboxStatus::Starting | SandboxStatus::Ready | SandboxStatus::NotReady
+        ) {
+            return Ok(ServiceLifecycleOutcome::from_handle(
+                ServiceLifecycleAction::AlreadyRunning,
+                tenant_id,
+                service_name,
+                observation.handle,
+            ));
+        }
+        return Err(Error::PreconditionFailed(format!(
+            "compose service {service_name} for tenant {tenant_id} generation {} retains terminal or stopping status {:?}; restart is not a provision action",
+            definition.generation, observation.handle.status
+        )));
+    }
+
+    let snapshot = provision.provision(context, service_name).await?;
+    if snapshot.definition != definition {
+        return Err(Error::PreconditionFailed(format!(
+            "compose service {service_name} for tenant {tenant_id} changed while provisioning"
+        )));
+    }
+    let observation = snapshot.observation.ok_or_else(|| {
+        Error::PreconditionFailed(format!(
+            "compose service {service_name} for tenant {tenant_id} was accepted but has no exact observed projection"
+        ))
+    })?;
+    validate_service_observation(&definition, &observation)?;
+    Ok(ServiceLifecycleOutcome::from_handle(
+        ServiceLifecycleAction::Started,
+        tenant_id,
+        service_name,
+        observation.handle,
+    ))
+}
+
+fn validate_service_observation(
+    definition: &ServiceDefinition,
+    observation: &ServiceDefinitionObservation,
+) -> Result<(), Error> {
+    let Some(spec) = definition.backend.sandbox_spec() else {
+        return Err(Error::InvalidInput(format!(
+            "compose service {} for tenant {} is not sandbox-backed",
+            definition.name, definition.tenant_id
+        )));
+    };
+    if observation.tenant_id != definition.tenant_id
+        || observation.name != definition.name
+        || observation.observed_generation != definition.generation
+        || observation.handle.tenant_id != definition.tenant_id
+        || observation.handle.name != definition.name
+        || observation.handle.backend != spec.backend
+    {
+        return Err(Error::PreconditionFailed(format!(
+            "compose service {} for tenant {} rejected crossed observed projection",
+            definition.name, definition.tenant_id
+        )));
+    }
+    Ok(())
 }
 
 pub(super) async fn service_down_outcomes_for_selection(
@@ -267,46 +358,6 @@ pub(super) async fn service_down_outcomes_for_selection(
     }
 }
 
-pub(super) async fn start_service_launch(
-    backend: &dyn SandboxBackend,
-    tenant: &TenantId,
-    service_name: &str,
-    service_backend: ServiceBackend,
-) -> Result<SandboxHandle, Error> {
-    let backend_kind = service_backend.kind();
-    let Some(spec) = service_backend.into_sandbox_spec() else {
-        return Err(Error::InvalidInput(format!(
-            "compose service {service_name} for tenant {tenant} lowered to a {backend_kind} backend, but compose lifecycle can only start sandbox-backed services"
-        )));
-    };
-    if spec.service_name() != Some(service_name) {
-        return Err(Error::InvalidInput(format!(
-            "service definition catalog returned sandbox owner {:?} for requested service {}",
-            spec.owner, service_name
-        )));
-    }
-    if &spec.tenant_id != tenant {
-        return Err(Error::InvalidInput(format!(
-            "service definition catalog returned tenant {} for requested tenant {}",
-            spec.tenant_id, tenant
-        )));
-    }
-    if spec.backend != backend.kind() {
-        return Err(Error::InvalidInput(format!(
-            "sandbox-backed service {} for tenant {} requested backend {:?}, but the configured backend is {:?}",
-            service_name,
-            tenant,
-            spec.backend,
-            backend.kind()
-        )));
-    }
-
-    backend
-        .start(spec)
-        .await
-        .map_err(|error| backend_operation_error("start", tenant, service_name, error))
-}
-
 pub(super) async fn stop_service_target(
     backend: &dyn SandboxBackend,
     tenant: &TenantId,
@@ -370,57 +421,6 @@ pub(super) async fn stop_service_target(
         sandbox_id: target.sandbox_id,
         status,
     })
-}
-
-pub(super) async fn resolve_live_service_handle(
-    state_view: &KrunSandboxStateView,
-    backend: &dyn SandboxBackend,
-    tenant: &TenantId,
-    service_name: &str,
-) -> Result<Option<SandboxHandle>, Error> {
-    let Some(details) = state_view
-        .inspect_service(tenant, service_name)
-        .map_err(|error| {
-            super::render_state_lookup_error("resolve persisted sandbox state", error)
-        })?
-    else {
-        return Ok(None);
-    };
-
-    let refreshed = backend
-        .inspect(&details.summary.sandbox_id)
-        .await
-        .map_err(|error| backend_operation_error("inspect", tenant, service_name, error))?;
-    if let Some(inspection) = refreshed.as_ref() {
-        validate_compose_inspection_identity(
-            backend,
-            tenant,
-            service_name,
-            &details.summary.sandbox_id,
-            inspection,
-        )?;
-    }
-
-    match refreshed {
-        Some(inspection)
-            if inspection.cleanup != nimbus_sandbox::SandboxCleanupObservation::Finalized =>
-        {
-            Ok(Some(inspection.handle))
-        }
-        Some(inspection) if is_active_status(inspection.handle.status) => {
-            Err(Error::Internal(format!(
-                "sandbox backend returned cleanup-final inspection with active status {:?} for \
-                 compose service {service_name} tenant {tenant}",
-                inspection.handle.status
-            )))
-        }
-        Some(_) => Ok(None),
-        None => Err(Error::Internal(format!(
-            "sandbox backend returned no inspection evidence for persisted compose service \
-             {service_name} tenant {tenant}; cleanup finality is unknown and replacement \
-             remains fenced"
-        ))),
-    }
 }
 
 fn validate_compose_inspection_identity(

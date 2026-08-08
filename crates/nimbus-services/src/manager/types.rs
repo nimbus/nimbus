@@ -1,9 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nimbus_core::{Error, TenantId};
-use nimbus_sandbox::{SandboxError, SandboxHandle};
+use nimbus_sandbox::SandboxError;
 
-use crate::{SandboxResource, ServiceDefinition, SessionResource};
+use crate::{
+    SandboxResourceObservation, SandboxResourceSource, ServiceDefinition,
+    ServiceDefinitionObservation, SessionResource,
+};
 
 use super::session_channels::{SessionChannelKey, SessionChannelState};
 
@@ -22,22 +25,39 @@ impl TenantServiceKey {
     }
 }
 
-#[derive(Default)]
-pub(super) struct ServiceManagerState {
-    pub(super) handles: BTreeMap<TenantServiceKey, SandboxHandle>,
-    pub(super) definitions: BTreeMap<TenantServiceKey, ServiceDefinition>,
-    pub(super) sandbox_resources: BTreeMap<String, SandboxResource>,
-    pub(super) sessions: BTreeMap<String, SessionResource>,
-    pub(super) session_channels: BTreeMap<SessionChannelKey, SessionChannelState>,
-    pub(super) activations_in_progress: BTreeSet<TenantServiceKey>,
-    pub(super) next_definition_version: u64,
-    pub(super) next_sandbox_resource_version: u64,
-    pub(super) next_session_version: u64,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct TenantSandboxResourceKey {
+    pub(super) tenant_id: TenantId,
+    pub(super) resource_id: String,
 }
 
-pub(super) enum ActivationClaim {
-    Claimed,
-    AlreadyActive,
+impl TenantSandboxResourceKey {
+    pub(super) fn new(tenant_id: &TenantId, resource_id: &str) -> Self {
+        Self {
+            tenant_id: tenant_id.clone(),
+            resource_id: resource_id.to_owned(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct ServiceManagerState {
+    pub(super) service_definition_observations:
+        BTreeMap<TenantServiceKey, ServiceDefinitionObservation>,
+    pub(super) definitions: BTreeMap<TenantServiceKey, ServiceDefinition>,
+    pub(super) sandbox_resource_sources: BTreeMap<TenantSandboxResourceKey, SandboxResourceSource>,
+    pub(super) sandbox_resource_observations:
+        BTreeMap<TenantSandboxResourceKey, SandboxResourceObservation>,
+    pub(super) sessions: BTreeMap<String, SessionResource>,
+    pub(super) session_channels: BTreeMap<SessionChannelKey, SessionChannelState>,
+    /// Dynamic-definition mutations currently spanning an async retirement.
+    ///
+    /// This gate cannot authorize provision or provider start. It only keeps
+    /// update/delete/session snapshots from crossing an in-flight definition
+    /// deletion while that deletion retires an already-observed sandbox.
+    pub(super) definition_mutations_in_progress: BTreeSet<TenantServiceKey>,
+    pub(super) next_definition_version: u64,
+    pub(super) next_session_version: u64,
 }
 
 pub(super) fn sandbox_backend_error(

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use nimbus_engine::Engine;
-use nimbus_network::LocalNetworkManager;
+use nimbus_network::LocalNetworkAuthority;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget,
     RuntimeLimits, RuntimeScalingPlanSet,
@@ -27,8 +27,8 @@ use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::router::{RouterBuildConfig, RouterOptions};
 use crate::tenant::TenantIsolationMode;
 use crate::tls::TlsConfig;
+use crate::workload_composition::ServerWorkloadComposition;
 use nimbus_services::ServiceInstanceCatalog;
-use nimbus_services::ServiceManager;
 
 /// Canonical public option bundle for serving Nimbus on a listener.
 pub struct ServeOptions {
@@ -40,14 +40,37 @@ pub struct ServeOptions {
 }
 
 impl ServeOptions {
-    /// Construct workload-capable server options under one process manager.
-    pub fn new(engine: Arc<Engine>, network_manager: Arc<LocalNetworkManager>) -> Self {
+    /// Construct workload-capable server options from one complete realm.
+    pub fn managed(composition: ServerWorkloadComposition) -> Self {
+        let network_manager = composition.network_manager();
         let listener_leases = ServerListenerLeaseAuthority::new(network_manager.authority());
         Self {
-            router_options: RouterOptions::new(engine, network_manager),
+            router_options: RouterOptions::managed(composition),
             wire_adapters: Vec::new(),
             tls_config: None,
             listener_leases,
+            prebound_wire_listeners: None,
+        }
+    }
+
+    /// Construct an explicitly protocol-only server on an already-claimed
+    /// local network authority.
+    ///
+    /// This is the production counterpart to [`Self::reconstruct_direct`]
+    /// for callers that staged one process-wide network composition before
+    /// deciding whether workloads were present. It reuses that exact
+    /// authority for main and pre-bound sibling listeners, but does not expose
+    /// the frozen capability registry to compute or install workload lifecycle
+    /// managers.
+    pub fn protocol_only_with_authority(
+        engine: Arc<Engine>,
+        network_authority: LocalNetworkAuthority,
+    ) -> Self {
+        Self {
+            router_options: RouterOptions::protocol_only(engine),
+            wire_adapters: Vec::new(),
+            tls_config: None,
+            listener_leases: ServerListenerLeaseAuthority::new(network_authority),
             prebound_wire_listeners: None,
         }
     }
@@ -56,8 +79,7 @@ impl ServeOptions {
     ///
     /// This protocol-only embedder/test seam does not claim process-manager
     /// composition and cannot install workload lifecycle managers. Production
-    /// workload composition should inject an [`Arc<LocalNetworkManager>`]
-    /// through [`Self::new`].
+    /// workload composition should use [`Self::managed`].
     pub fn reconstruct_direct(engine: Arc<Engine>) -> std::io::Result<Self> {
         let state_root = engine.data_dir().to_path_buf();
         Self::reconstruct_direct_at(engine, state_root)
@@ -67,7 +89,7 @@ impl ServeOptions {
     /// independent of engine persistence.
     ///
     /// This is a protocol-only direct embedder/test seam. Production workload
-    /// composition should inject the manager through [`Self::new`].
+    /// composition should use [`Self::managed`].
     pub fn reconstruct_direct_at(
         engine: Arc<Engine>,
         state_root: impl AsRef<std::path::Path>,
@@ -81,16 +103,6 @@ impl ServeOptions {
             listener_leases,
             prebound_wire_listeners: None,
         })
-    }
-
-    /// Report the closed capability facts of Nimbus-owned local ingress.
-    ///
-    /// This value describes the existing composition only. Constructing it
-    /// performs no socket, TLS, certificate, or readiness effect.
-    pub fn nimbus_owned_local_ingress_registration(
-        &self,
-    ) -> nimbus_network::NetworkIngressProviderRegistration {
-        crate::nimbus_owned_local_ingress_registration(self.tls_config.is_some())
     }
 
     /// Authenticate one externally owned main-listener provider incarnation.
@@ -242,10 +254,6 @@ impl ServeOptions {
         service_instances: Arc<dyn ServiceInstanceCatalog>,
     ) -> Self {
         self.with_router_options(|options| options.with_service_instance_catalog(service_instances))
-    }
-
-    pub fn with_service_manager(self, service_manager: Arc<ServiceManager>) -> Self {
-        self.with_router_options(|options| options.with_service_manager(service_manager))
     }
 
     pub fn with_machine_lifecycle_manager(
@@ -719,13 +727,16 @@ fn append_cleanup_error(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::net::SocketAddr;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use nimbus_network::{LocalPortLeaseAuthority, PortLeasePhase};
+    use nimbus_network::{
+        LocalNetworkManager, LocalPortLeaseAuthority, NetworkCapabilityRegistry, PortLeasePhase,
+    };
     use nimbus_testing::EngineFixture;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::task::AbortHandle;
@@ -742,6 +753,69 @@ mod tests {
     fn direct_prebound(state_root: &Path) -> PreboundServerListeners {
         PreboundServerListeners::reconstruct_direct(state_root)
             .expect("test prebound network authority should reconstruct once")
+    }
+
+    fn filesystem_snapshot(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+        fn visit(root: &Path, current: &Path, snapshot: &mut BTreeMap<PathBuf, Option<Vec<u8>>>) {
+            let mut entries = std::fs::read_dir(current)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", current.display()))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap_or_else(|error| {
+                    panic!("failed to enumerate {}: {error}", current.display())
+                });
+            entries.sort_by_key(|entry| entry.path());
+            for entry in entries {
+                let path = entry.path();
+                let relative = path
+                    .strip_prefix(root)
+                    .expect("snapshot entry should stay below its root")
+                    .to_path_buf();
+                if path.is_dir() {
+                    snapshot.insert(relative, None);
+                    visit(root, &path, snapshot);
+                } else {
+                    snapshot.insert(
+                        relative,
+                        Some(std::fs::read(&path).unwrap_or_else(|error| {
+                            panic!("failed to read snapshot file {}: {error}", path.display())
+                        })),
+                    );
+                }
+            }
+        }
+
+        let mut snapshot = BTreeMap::new();
+        if root.is_dir() {
+            visit(root, root, &mut snapshot);
+        }
+        snapshot
+    }
+
+    #[test]
+    fn protocol_only_with_authority_reuses_engine_and_network_claim_without_effects() {
+        let network_root = tempfile::tempdir().expect("network root should build");
+        let engine_root = tempfile::tempdir().expect("engine root should build");
+        let manager = LocalNetworkManager::bootstrap(network_root.path())
+            .expect("network manager should claim once")
+            .freeze(NetworkCapabilityRegistry::new([]).expect("empty registry should validate"));
+        let authority = manager.authority();
+        let prebound = PreboundServerListeners::new(authority.clone());
+        let engine = Arc::new(Engine::new(engine_root.path()).expect("engine should initialize"));
+        let before = filesystem_snapshot(network_root.path());
+
+        let options =
+            ServeOptions::protocol_only_with_authority(Arc::clone(&engine), authority.clone())
+                .with_prebound_listener_authority(&prebound)
+                .expect("the exact prepared authority should authenticate");
+
+        assert!(Arc::ptr_eq(&options.router_options.engine(), &engine));
+        assert_eq!(manager.capability_registry().selections().count(), 0);
+        assert_eq!(authority.authority_path(), manager.authority_path());
+        assert_eq!(filesystem_snapshot(network_root.path()), before);
+        drop(options);
+        drop(prebound);
+        drop(authority);
+        drop(manager);
     }
 
     struct ProbeAdapter {

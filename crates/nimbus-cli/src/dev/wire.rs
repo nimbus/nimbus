@@ -430,9 +430,20 @@ mod tests {
     fn manager_derived_dev_bundle_and_main_share_one_primitive_authority() {
         let root = tempfile::tempdir().expect("fixture root");
         let node_root = root.path().join("node");
-        let bootstrap = nimbus_network::LocalNetworkManager::bootstrap(&node_root)
-            .expect("node manager should claim");
-        let authority = bootstrap.authority();
+        let resolved_root =
+            nimbus_operator::LocalNodeNetworkRoot::resolve_for_current_platform(Some(&node_root))
+                .expect("node root should resolve");
+        let prepared_network =
+            crate::network_composition::PreparedLocalNetworkComposition::prepare(
+                crate::network_composition::StagedLocalNetworkComposition::claim(&resolved_root)
+                    .expect("node manager should claim"),
+                None,
+                &root.path().join("control"),
+                nimbus_tenant::TenantIsolationMode::LocalDevelopment,
+                nimbus_server::nimbus_owned_workload_ingress_registration(),
+            )
+            .expect("protocol-only dev composition should freeze");
+        let authority = prepared_network.authority();
         let prepared = resolve_wire_plan(
             surfaces(true, true, true),
             &root.path().join("dev"),
@@ -451,11 +462,11 @@ mod tests {
             nimbus::Engine::new(root.path().join("engine"))
                 .expect("fixture engine should initialize"),
         );
-        let manager = bootstrap.freeze(
-            nimbus_network::NetworkCapabilityRegistry::new([])
-                .expect("empty test registry should validate"),
-        );
-        let options = nimbus_server::ServeOptions::new(engine, manager)
+        let options = prepared_network
+            .prepare_server_workload_profile()
+            .expect("protocol-only dev profile should prepare from the frozen source")
+            .complete(engine)
+            .expect("protocol-only dev profile should complete with the caller engine")
             .with_prebound_listener_authority(&prepared.listeners)
             .expect("main and every sibling must share manager provenance and primitive authority");
         let requested_main = "127.0.0.1:0"

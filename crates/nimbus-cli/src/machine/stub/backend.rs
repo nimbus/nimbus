@@ -1,6 +1,4 @@
-use nimbus::{
-    Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxHandle, SandboxId, SandboxSpec,
-};
+use nimbus::{Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxId};
 use nimbus_sandbox::{SandboxFuture, SandboxInspection};
 
 use super::client::MachineApiClient;
@@ -33,14 +31,6 @@ impl ForwardedMachineApiSandboxBackend {
 impl SandboxBackend for ForwardedMachineApiSandboxBackend {
     fn kind(&self) -> SandboxBackendKind {
         SandboxBackendKind::Container
-    }
-
-    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-        let message = format!(
-            "forwarded machine API backend cannot start service sandbox {} on this host",
-            spec.display_name()
-        );
-        Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
     }
 
     fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {

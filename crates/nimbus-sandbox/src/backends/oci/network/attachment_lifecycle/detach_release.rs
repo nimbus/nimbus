@@ -56,6 +56,7 @@ impl OciAttachmentLifecycle<'_> {
             self.ipam,
             context.layout,
             context.sandbox_id,
+            &context.config.attachment_id,
             &context.config.reservation_claim,
             context.config.provider_kind(),
         ) {
@@ -66,7 +67,7 @@ impl OciAttachmentLifecycle<'_> {
         let release_errors = release_network_segment_hold(
             self.allocator,
             context.tenant_id,
-            context.sandbox_id,
+            &context.config.attachment_id,
             &context.config.reservation_claim,
         );
         if release_errors.is_empty() {

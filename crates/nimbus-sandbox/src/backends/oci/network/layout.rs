@@ -5,9 +5,9 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
 use nimbus_core::TenantId;
-use nimbus_network::NetworkReservationClaim;
 #[cfg(test)]
 use nimbus_network::NetworkSegmentId;
+use nimbus_network::{NetworkAttachmentId, NetworkPlan, NetworkReservationClaim};
 use serde::{Deserialize, Serialize};
 
 use crate::artifact_paths;
@@ -95,6 +95,14 @@ impl OciNetworkLayout {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OciNetworkConfig {
+    /// Exact compiler-selected attachment identity. Provider realization must
+    /// never replace this with a `SandboxId`-derived authority key.
+    pub attachment_id: NetworkAttachmentId,
+    /// Exact upper-compiled desired plan for provision-saga launches.
+    /// Legacy coarse callers are deleted by NNC6.4's E30 gate, after which
+    /// this transitional optionality becomes a required field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_plan: Option<NetworkPlan>,
     pub netavark_path: PathBuf,
     pub aardvark_dns_path: PathBuf,
     pub network_name: String,
@@ -157,6 +165,8 @@ pub(super) fn default_network_id() -> String {
 impl Default for OciNetworkConfig {
     fn default() -> Self {
         Self {
+            attachment_id: NetworkAttachmentId::generate(),
+            network_plan: None,
             netavark_path: PathBuf::from(DEFAULT_NETAVARK_BINARY),
             aardvark_dns_path: PathBuf::from(DEFAULT_AARDVARK_DNS_BINARY),
             network_name: DEFAULT_NETWORK_NAME.to_owned(),

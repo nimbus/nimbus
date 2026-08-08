@@ -86,7 +86,10 @@ fn requirements(sovereignty: NetworkSovereigntyRequirements) -> NetworkCapabilit
         NetworkEndpointCapabilitySet::new([], [], [], [], []),
         NetworkIngressCapabilitySet::new([]),
         NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([]),
+        nimbus_network::NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
         sovereignty,
     )
 }
@@ -241,7 +244,7 @@ fn resource_free_plan_has_no_selection_evidence() {
     assert_eq!(
         String::from_utf8(compiled.content().canonical_bytes())
             .expect("canonical JSON should be UTF-8"),
-        r#"{"formatVersion":2,"identity":{"tenantId":"tenant-a","workloadIncarnationKey":"tenant-a/workload-a","generation":1},"capabilityRequirements":{"attachment":{"management_mode":"nimbus_host_managed","attachment_modes":[],"isolation_modes":[]},"endpoint":{"address_families":[],"bind_realms":[],"exposures":[],"protocols":[],"port_assignment_modes":[]},"ingress":{"features":[],"tls_behaviors":[]},"forwarding":{"features":[]},"lifecycle":{"features":[]},"sovereignty":{"maximum_control_plane_locality":"local_only","allowed_external_dependencies":[],"offline_restart_required":true}},"routes":[],"listeners":[],"dependencyListeners":[],"activation":"prepare_only","publication":"withheld"}"#,
+        r#"{"formatVersion":2,"identity":{"tenantId":"tenant-a","workloadIncarnationKey":"tenant-a/workload-a","generation":1},"capabilityRequirements":{"attachment":{"management_mode":"nimbus_host_managed","attachment_modes":[],"isolation_modes":[]},"endpoint":{"address_families":[],"bind_realms":[],"exposures":[],"protocols":[],"port_assignment_modes":[]},"ingress":{"features":[],"tls_behaviors":[]},"forwarding":{"features":[]},"lifecycle":{"attachment":{"features":[]},"ingress":{"features":[]}},"sovereignty":{"maximum_control_plane_locality":"local_only","allowed_external_dependencies":[],"offline_restart_required":true}},"routes":[],"listeners":[],"dependencyListeners":[],"activation":"prepare_only","publication":"withheld"}"#,
         "the version-two empty content encoding is durable digest authority"
     );
 }
@@ -632,7 +635,10 @@ fn complete_envelope_is_rederived_on_construction_and_deserialization() {
         exact.requirements().endpoint().clone(),
         exact.requirements().ingress().clone(),
         exact.requirements().forwarding().clone(),
-        NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::DurableInspect]),
+        nimbus_network::NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::DurableInspect]),
+            exact.requirements().lifecycle().ingress().clone(),
+        ),
         exact.requirements().sovereignty().clone(),
     );
     let crossed_capabilities = plan_with(
@@ -958,7 +964,8 @@ fn semantic_field_mutations_change_the_exact_canonical_bytes() {
             "/capabilityRequirements/forwarding/features",
             "/capabilityRequirements/ingress/features",
             "/capabilityRequirements/ingress/tls_behaviors",
-            "/capabilityRequirements/lifecycle/features",
+            "/capabilityRequirements/lifecycle/attachment/features",
+            "/capabilityRequirements/lifecycle/ingress/features",
             "/capabilityRequirements/sovereignty/allowed_external_dependencies",
             "/capabilityRequirements/sovereignty/maximum_control_plane_locality",
             "/capabilityRequirements/sovereignty/offline_restart_required",

@@ -141,7 +141,10 @@ fn compiled_plan(
         NetworkEndpointCapabilitySet::new([], [], [], [], []),
         NetworkIngressCapabilitySet::new([]),
         NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([]),
+        nimbus_network::NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     );
     let content = WorkloadNetworkPlanContent::new(
@@ -186,6 +189,7 @@ fn intent(
             .expect("fixture source version is valid"),
         executable.content_digest(),
         NetworkProviderId::for_registration_key("fixture-attachment"),
+        nimbus_workloads::WorkloadExecutionProviderId::for_registration_key("fixture-execution"),
     )
     .expect("fixture source evidence is valid");
     WorkloadSagaIntent::new(

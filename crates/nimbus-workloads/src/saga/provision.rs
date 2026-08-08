@@ -4,6 +4,15 @@ use nimbus_network::{NetworkCapabilitySelectionEvidence, NetworkPlanDigest, Netw
 
 use super::*;
 
+mod dispatch;
+
+pub use dispatch::{
+    WorkloadProvisionAbsenceEvidence, WorkloadProvisionCommandId, WorkloadProvisionCommandMode,
+    WorkloadProvisionDispatchAuthorization, WorkloadProvisionDispatchClaim,
+    WorkloadProvisionDispatchEpoch, WorkloadProvisionInspectionResult,
+    WorkloadProvisionProviderTarget,
+};
+
 define_decimal_counter!(
     WorkloadProvisionSourceGeneration,
     "workload provision source generation must be canonical unsigned decimal text"
@@ -14,6 +23,18 @@ define_sha256_digest!(
     "workload provision source digest must be 64 lowercase hexadecimal characters"
 );
 define_derived_id!(WorkloadProvisionAttemptId, "wpa");
+define_derived_id!(WorkloadExecutionProviderId, "wep");
+
+impl WorkloadExecutionProviderId {
+    /// Derive a stable execution-provider identity from its registration key.
+    pub fn for_registration_key(registration_key: &str) -> Self {
+        Self(derive_id(
+            Self::PREFIX,
+            b"nimbus.workloads.execution.provider.id.v1",
+            &[registration_key],
+        ))
+    }
+}
 
 /// Closed source family authenticated for one provision intent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +197,7 @@ struct WorkloadProvisionSourceDigestPayload<'a> {
     resource_version: &'a WorkloadProvisionSourceResourceVersion,
     executable_content_digest: WorkloadExecutableContentDigest,
     attachment_provider_id: &'a NetworkProviderId,
+    execution_provider_id: &'a WorkloadExecutionProviderId,
 }
 
 /// Durable authenticated snapshot of the executable source owner.
@@ -194,6 +216,7 @@ pub enum WorkloadProvisionSourceEvidence {
         resource_version: WorkloadProvisionSourceResourceVersion,
         source_digest: WorkloadProvisionSourceDigest,
         attachment_provider_id: NetworkProviderId,
+        execution_provider_id: WorkloadExecutionProviderId,
     },
     /// One service definition whose executable source is a sandbox.
     SandboxBackedService {
@@ -202,6 +225,7 @@ pub enum WorkloadProvisionSourceEvidence {
         resource_version: WorkloadProvisionSourceResourceVersion,
         source_digest: WorkloadProvisionSourceDigest,
         attachment_provider_id: NetworkProviderId,
+        execution_provider_id: WorkloadExecutionProviderId,
     },
 }
 
@@ -213,6 +237,7 @@ impl WorkloadProvisionSourceEvidence {
         resource_version: WorkloadProvisionSourceResourceVersion,
         executable_content_digest: WorkloadExecutableContentDigest,
         attachment_provider_id: NetworkProviderId,
+        execution_provider_id: WorkloadExecutionProviderId,
     ) -> Result<Self, WorkloadSagaError> {
         if source_identity.kind() != WorkloadProvisionSourceKind::StandaloneSandbox {
             return Err(WorkloadSagaError::InvalidIntent(
@@ -225,6 +250,7 @@ impl WorkloadProvisionSourceEvidence {
             &resource_version,
             executable_content_digest,
             &attachment_provider_id,
+            &execution_provider_id,
         )?;
         Ok(Self::StandaloneSandbox {
             source_identity,
@@ -232,6 +258,7 @@ impl WorkloadProvisionSourceEvidence {
             resource_version,
             source_digest,
             attachment_provider_id,
+            execution_provider_id,
         })
     }
 
@@ -242,6 +269,7 @@ impl WorkloadProvisionSourceEvidence {
         resource_version: WorkloadProvisionSourceResourceVersion,
         executable_content_digest: WorkloadExecutableContentDigest,
         attachment_provider_id: NetworkProviderId,
+        execution_provider_id: WorkloadExecutionProviderId,
     ) -> Result<Self, WorkloadSagaError> {
         if source_identity.kind() != WorkloadProvisionSourceKind::SandboxBackedService {
             return Err(WorkloadSagaError::InvalidIntent(
@@ -254,6 +282,7 @@ impl WorkloadProvisionSourceEvidence {
             &resource_version,
             executable_content_digest,
             &attachment_provider_id,
+            &execution_provider_id,
         )?;
         Ok(Self::SandboxBackedService {
             source_identity,
@@ -261,6 +290,7 @@ impl WorkloadProvisionSourceEvidence {
             resource_version,
             source_digest,
             attachment_provider_id,
+            execution_provider_id,
         })
     }
 
@@ -284,6 +314,7 @@ impl WorkloadProvisionSourceEvidence {
             self.resource_version(),
             executable_content_digest,
             self.attachment_provider_id(),
+            self.execution_provider_id(),
         )?;
         if self.source_digest() != expected {
             return Err(WorkloadSagaError::InvalidDigest(
@@ -291,6 +322,15 @@ impl WorkloadProvisionSourceEvidence {
             ));
         }
         Ok(())
+    }
+
+    /// Authenticate exact executable bytes against this source-owned snapshot.
+    pub fn authenticate_executable(
+        &self,
+        executable: &WorkloadExecutableIntent,
+    ) -> Result<(), WorkloadSagaError> {
+        executable.validate()?;
+        self.validate(executable.content_digest())
     }
 
     /// Stable logical source identity.
@@ -351,6 +391,20 @@ impl WorkloadProvisionSourceEvidence {
         }
     }
 
+    /// Exact execution provider required by the source owner.
+    pub fn execution_provider_id(&self) -> &WorkloadExecutionProviderId {
+        match self {
+            Self::StandaloneSandbox {
+                execution_provider_id,
+                ..
+            }
+            | Self::SandboxBackedService {
+                execution_provider_id,
+                ..
+            } => execution_provider_id,
+        }
+    }
+
     pub(super) const fn required_workload_kind(&self) -> DesiredWorkloadKind {
         match self {
             Self::StandaloneSandbox { .. } => DesiredWorkloadKind::Sandbox,
@@ -365,6 +419,7 @@ fn derive_source_digest(
     resource_version: &WorkloadProvisionSourceResourceVersion,
     executable_content_digest: WorkloadExecutableContentDigest,
     attachment_provider_id: &NetworkProviderId,
+    execution_provider_id: &WorkloadExecutionProviderId,
 ) -> Result<WorkloadProvisionSourceDigest, WorkloadSagaError> {
     let payload = WorkloadProvisionSourceDigestPayload {
         source_identity,
@@ -372,6 +427,7 @@ fn derive_source_digest(
         resource_version,
         executable_content_digest,
         attachment_provider_id,
+        execution_provider_id,
     };
     let encoded = serde_json::to_vec(&payload).map_err(|_| {
         WorkloadSagaError::InvalidIntent("provision source evidence cannot be encoded")
@@ -518,6 +574,7 @@ pub struct WorkloadProvisionAttemptInput {
     pub desired_digest: WorkloadDesiredDigest,
     pub required_node: NodeIdentity,
     pub source_digest: WorkloadProvisionSourceDigest,
+    pub execution_provider_id: WorkloadExecutionProviderId,
     pub network_plan_digest: NetworkPlanDigest,
     pub selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
     pub source_phase: WorkloadSagaPhase,
@@ -537,6 +594,7 @@ struct WorkloadProvisionAttemptIdentityPayload<'a> {
     desired_digest: WorkloadDesiredDigest,
     required_node: &'a NodeIdentity,
     source_digest: WorkloadProvisionSourceDigest,
+    execution_provider_id: &'a WorkloadExecutionProviderId,
     network_plan_digest: NetworkPlanDigest,
     selection_evidence: &'a Option<NetworkCapabilitySelectionEvidence>,
     source_phase: WorkloadSagaPhase,
@@ -558,6 +616,7 @@ pub struct WorkloadProvisionAttempt {
     desired_digest: WorkloadDesiredDigest,
     required_node: NodeIdentity,
     source_digest: WorkloadProvisionSourceDigest,
+    execution_provider_id: WorkloadExecutionProviderId,
     network_plan_digest: NetworkPlanDigest,
     selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
     source_phase: WorkloadSagaPhase,
@@ -578,6 +637,7 @@ struct WorkloadProvisionAttemptWire {
     desired_digest: WorkloadDesiredDigest,
     required_node: NodeIdentity,
     source_digest: WorkloadProvisionSourceDigest,
+    execution_provider_id: WorkloadExecutionProviderId,
     network_plan_digest: NetworkPlanDigest,
     selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
     source_phase: WorkloadSagaPhase,
@@ -602,6 +662,7 @@ impl<'de> Deserialize<'de> for WorkloadProvisionAttempt {
             desired_digest: wire.desired_digest,
             required_node: wire.required_node,
             source_digest: wire.source_digest,
+            execution_provider_id: wire.execution_provider_id,
             network_plan_digest: wire.network_plan_digest,
             selection_evidence: wire.selection_evidence,
             source_phase: wire.source_phase,
@@ -632,6 +693,7 @@ impl WorkloadProvisionAttempt {
             desired_digest: input.desired_digest,
             required_node: &input.required_node,
             source_digest: input.source_digest,
+            execution_provider_id: &input.execution_provider_id,
             network_plan_digest: input.network_plan_digest,
             selection_evidence: &input.selection_evidence,
             source_phase: input.source_phase,
@@ -656,6 +718,7 @@ impl WorkloadProvisionAttempt {
             desired_digest: input.desired_digest,
             required_node: input.required_node,
             source_digest: input.source_digest,
+            execution_provider_id: input.execution_provider_id,
             network_plan_digest: input.network_plan_digest,
             selection_evidence: input.selection_evidence,
             source_phase: input.source_phase,
@@ -696,6 +759,10 @@ impl WorkloadProvisionAttempt {
 
     pub const fn source_digest(&self) -> WorkloadProvisionSourceDigest {
         self.source_digest
+    }
+
+    pub fn execution_provider_id(&self) -> &WorkloadExecutionProviderId {
+        &self.execution_provider_id
     }
 
     pub const fn network_plan_digest(&self) -> NetworkPlanDigest {
@@ -836,10 +903,10 @@ pub enum WorkloadProvisionEffectResult {
 )]
 pub enum WorkloadProvisionDisposition {
     Ready,
-    AttemptPending(WorkloadProvisionAttempt),
-    InspectionRequired(WorkloadProvisionAttempt),
+    DispatchPending(WorkloadProvisionDispatchClaim),
+    InspectionRequired(WorkloadProvisionDispatchClaim),
     DefiniteFailure {
-        attempt: WorkloadProvisionAttempt,
+        claim: WorkloadProvisionDispatchClaim,
         failure: WorkloadFailureEvidence,
     },
 }
@@ -847,11 +914,16 @@ pub enum WorkloadProvisionDisposition {
 impl WorkloadProvisionDisposition {
     /// Exact attempt retained by a non-ready disposition.
     pub fn attempt(&self) -> Option<&WorkloadProvisionAttempt> {
+        self.claim().map(WorkloadProvisionDispatchClaim::attempt)
+    }
+
+    /// Exact durable dispatch claim retained by a non-ready disposition.
+    pub fn claim(&self) -> Option<&WorkloadProvisionDispatchClaim> {
         match self {
             Self::Ready => None,
-            Self::AttemptPending(attempt)
-            | Self::InspectionRequired(attempt)
-            | Self::DefiniteFailure { attempt, .. } => Some(attempt),
+            Self::DispatchPending(claim)
+            | Self::InspectionRequired(claim)
+            | Self::DefiniteFailure { claim, .. } => Some(claim),
         }
     }
 

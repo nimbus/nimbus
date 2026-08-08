@@ -31,7 +31,7 @@ fn nnc5_2b_ipam_persists_reversible_provider_locator_before_effects() {
         serde_json::from_slice(&fs::read(authority_path).expect("authority should read"))
             .expect("authority should parse");
     let allocation = &envelope["body"]["records"]["tenant-ipam/tenant-original"]["allocations"]
-        [default_network_attachment_id(&sandbox).as_str()];
+        [config.attachment_id.as_str()];
     let locator = &allocation["provider_locator"];
 
     assert_eq!(
@@ -78,7 +78,7 @@ fn nnc5_2b_locator_replay_reopen_and_substitution_are_exact_and_byte_stable() {
 
     let reopened = OciIpamAuthority::reconstruct_for_direct_test(&layout)
         .expect("fresh authority handle should reopen");
-    let attachment_id = default_network_attachment_id(&sandbox);
+    let attachment_id = config.attachment_id.clone();
     let original_evidence = authority
         .get_attachment_provider_evidence(&layout.tenant_id, &attachment_id)
         .expect("original evidence should inspect")
@@ -192,6 +192,7 @@ fn terminal_ipam_release_rejects_a_substituted_artifact_realm_without_mutation()
         &authority,
         &foreign_layout,
         &sandbox,
+        &config.attachment_id,
         &config.reservation_claim,
         config.provider_kind(),
     )
@@ -262,6 +263,7 @@ fn terminal_ipam_transition_replay_and_retirement_authenticate_realm_and_backend
                 &authority,
                 candidate_layout,
                 &sandbox,
+                &config.attachment_id,
                 &config.reservation_claim,
                 candidate_kind,
             )
@@ -281,6 +283,7 @@ fn terminal_ipam_transition_replay_and_retirement_authenticate_realm_and_backend
             &authority,
             &layout,
             &sandbox,
+            &config.attachment_id,
             &config.reservation_claim,
             config.provider_kind(),
         )
@@ -299,6 +302,7 @@ fn terminal_ipam_transition_replay_and_retirement_authenticate_realm_and_backend
                 &authority,
                 candidate_layout,
                 &sandbox,
+                &config.attachment_id,
                 &config.reservation_claim,
                 candidate_kind,
             )
@@ -311,6 +315,7 @@ fn terminal_ipam_transition_replay_and_retirement_authenticate_realm_and_backend
                 &authority,
                 candidate_layout,
                 &sandbox,
+                &config.attachment_id,
                 &config.reservation_claim,
                 candidate_kind,
             )
@@ -331,6 +336,7 @@ fn terminal_ipam_transition_replay_and_retirement_authenticate_realm_and_backend
                 &authority,
                 &layout,
                 &sandbox,
+                &config.attachment_id,
                 &config.reservation_claim,
                 config.provider_kind(),
             )
@@ -427,6 +433,7 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
         &authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &first_claim,
         config.provider_kind(),
     )
@@ -454,6 +461,7 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
         &authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &first_claim,
         config.provider_kind(),
     )
@@ -466,6 +474,7 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
         &authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &first_claim,
         config.provider_kind(),
     )
@@ -491,6 +500,7 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
         &authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &second_claim,
         replacement_config.provider_kind(),
     )
@@ -520,6 +530,7 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
         &authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &first_claim,
         config.provider_kind(),
     )
@@ -531,6 +542,7 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
             &authority,
             &layout,
             &sandbox,
+            &config.attachment_id,
             &first_claim,
             config.provider_kind(),
         )
@@ -547,6 +559,7 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
             &authority,
             &layout,
             &sandbox,
+            &config.attachment_id,
             &second_claim,
             replacement_config.provider_kind(),
         )
@@ -572,6 +585,7 @@ fn newer_never_realized_claim_supersedes_older_terminal_generation() {
         &authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &first_claim,
         config.provider_kind(),
     )
@@ -581,6 +595,7 @@ fn newer_never_realized_claim_supersedes_older_terminal_generation() {
         &authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &second_claim,
         config.provider_kind(),
     )
@@ -595,6 +610,7 @@ fn newer_never_realized_claim_supersedes_older_terminal_generation() {
         &authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &second_claim,
         config.provider_kind(),
     )
@@ -627,6 +643,7 @@ fn completed_unique_attachment_churn_does_not_accumulate_terminal_ipam() {
             &authority,
             &layout,
             &sandbox,
+            &config.attachment_id,
             &claim,
             config.provider_kind(),
         )
@@ -636,6 +653,7 @@ fn completed_unique_attachment_churn_does_not_accumulate_terminal_ipam() {
                 &authority,
                 &layout,
                 &sandbox,
+                &config.attachment_id,
                 &claim,
                 config.provider_kind(),
             )
@@ -681,6 +699,7 @@ fn startup_reconciliation_retires_only_terminal_manifest_ipam_evidence() {
         &authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &claim,
         config.provider_kind(),
     )
@@ -745,6 +764,7 @@ fn startup_reconciliation_retains_ipam_until_explicit_network_cleanup_finality()
         &authority,
         &layout,
         &sandbox,
+        &config.attachment_id,
         &claim,
         config.provider_kind(),
     )
@@ -814,6 +834,7 @@ fn startup_reconciliation_rejects_cross_root_manifest_without_mutation() {
         &foreign_authority,
         &foreign_layout,
         &sandbox,
+        &config.attachment_id,
         &claim,
         config.provider_kind(),
     )
@@ -904,6 +925,7 @@ fn existing_ipam_requires_the_exact_reservation_claim() {
 #[test]
 fn ipam_load_is_byte_stable() {
     let (_dir, layout, authority, mut config, sandbox) = fixture();
+    config.attachment_id = default_network_attachment_id(&sandbox);
     let claim = test_reservation_claim("read-only-load");
     config.reservation_claim = claim.clone();
     let allocation = allocate_container_ips_on_first_available(

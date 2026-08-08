@@ -75,7 +75,7 @@ fn compiled_plan(
         endpoint.clone(),
         ingress.clone(),
         forwarding.clone(),
-        lifecycle.clone(),
+        nimbus_network::NetworkLifecycleRequirements::new(lifecycle.clone(), lifecycle.clone()),
         sovereignty,
     );
     let (selection, selection_evidence, listeners) =
@@ -167,6 +167,7 @@ fn intent(
             .expect("fixture source version is valid"),
         executable.content_digest(),
         NetworkProviderId::for_registration_key("fixture-attachment"),
+        nimbus_workloads::WorkloadExecutionProviderId::for_registration_key("fixture-execution"),
     )
     .expect("fixture source evidence is valid");
     WorkloadSagaIntent::new(
@@ -701,7 +702,7 @@ fn intent_committed_decision_carries_exact_compiled_network_plan() {
         "complete-reservation",
         WorkloadSagaPhase::IntentCommitted,
         WorkloadActivationIntent::ActivateWhenAttached,
-        WorkloadPublicationIntent::Withheld,
+        WorkloadPublicationIntent::PublishWhenReady,
     );
     let decision = WorkloadSagaDecision::for_record(&record).expect("record is valid");
     let WorkloadSagaAction::Provision(super::super::WorkloadProvisionDecision::Proposed(proposed)) =
@@ -709,11 +710,12 @@ fn intent_committed_decision_carries_exact_compiled_network_plan() {
     else {
         panic!("IntentCommitted must produce one complete pure reservation value");
     };
-    let Some(nimbus_workloads::WorkloadProvisionDisposition::AttemptPending(attempt)) =
+    let Some(nimbus_workloads::WorkloadProvisionDisposition::DispatchPending(claim)) =
         proposed.candidate().provision_disposition()
     else {
-        panic!("reservation proposal must retain the exact pending attempt");
+        panic!("reservation proposal must retain the exact pending dispatch claim");
     };
+    let attempt = claim.attempt();
     let nimbus_workloads::WorkloadProvisionSubjects::Network(reference) = attempt.subjects() else {
         panic!("reservation attempt must carry its network subject");
     };

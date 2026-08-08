@@ -14,6 +14,9 @@ use crate::{
 
 const PORT: u16 = 44_081;
 
+#[path = "tests/recovery_fencing.rs"]
+mod recovery_fencing;
+
 #[test]
 fn reserve_and_claim_plan_batch_preserves_order_and_is_provider_managed_only() {
     let root = tempfile::tempdir().expect("state root should exist");
@@ -359,6 +362,371 @@ fn activation_rejects_a_plan_subset_without_mutation() {
         }
             if rejected == &plan_id()
     ));
+    assert_eq!(authority_bytes(root.path()), bytes_before);
+}
+
+#[test]
+fn planned_member_lifecycle_authenticates_complete_witness_without_mutating_sibling() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    let authority = LocalPortLeaseAuthority::open(root.path()).expect("authority should open");
+    let members = [
+        planned_request_for("alpha", PORT),
+        planned_request_for("beta", PORT + 1),
+    ];
+    let launch_claim = reservation_claim("planned-member-launch");
+    authority
+        .reserve_batch_for_coordinator(members.to_vec(), &launch_claim)
+        .expect("complete planned launch should reserve");
+
+    let claim = bind_claim("alpha");
+    let lifetime = authority
+        .claim_bind_plan_member_with_lifetime(
+            &members,
+            &members[0],
+            &launch_claim,
+            claim.clone(),
+            PortLeaseEffectScope::ProcessBound,
+        )
+        .expect("exact member should claim under the complete witness");
+    let sibling_after_claim = authority
+        .inspect(members[1].lease_id())
+        .expect("sibling should inspect")
+        .expect("sibling should remain durable");
+    assert_eq!(sibling_after_claim.phase(), PortLeasePhase::Reserved);
+    assert!(sibling_after_claim.bind_claim().is_none());
+    assert_eq!(sibling_after_claim.reservation_claim(), Some(&launch_claim));
+
+    authority
+        .adopt_claimed_and_activate_plan_member_with_lifetime(
+            &members,
+            &members[0],
+            &launch_claim,
+            &claim,
+            binding("alpha", PORT),
+            &lifetime,
+        )
+        .expect("exact member should activate independently");
+    let active = authority
+        .inspect(members[0].lease_id())
+        .expect("active member should inspect")
+        .expect("active member should remain durable");
+    assert_eq!(active.phase(), PortLeasePhase::Active);
+    assert_eq!(active.adoption_claim(), Some(&claim));
+    let sibling = authority
+        .inspect(members[1].lease_id())
+        .expect("sibling should inspect")
+        .expect("sibling should remain durable");
+    assert_eq!(sibling.phase(), PortLeasePhase::Reserved);
+    assert!(sibling.bind_claim().is_none());
+    assert!(sibling.binding().is_none());
+    assert_eq!(sibling.reservation_claim(), Some(&launch_claim));
+}
+
+#[test]
+fn planned_member_claim_rejects_crossed_witness_or_claim_without_mutation() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    let authority = LocalPortLeaseAuthority::open(root.path()).expect("authority should open");
+    let members = [
+        planned_request_for("alpha", PORT),
+        planned_request_for("beta", PORT + 1),
+    ];
+    let launch_claim = reservation_claim("planned-member-launch");
+    authority
+        .reserve_batch_for_coordinator(members.to_vec(), &launch_claim)
+        .expect("complete planned launch should reserve");
+    let before = authority_bytes(root.path());
+
+    let omitted = members[..1].to_vec();
+    let extra = [
+        members[0].clone(),
+        members[1].clone(),
+        planned_request_for("gamma", PORT + 2),
+    ];
+    let duplicate = [members[0].clone(), members[0].clone(), members[1].clone()];
+    for witness in [&omitted[..], &extra[..], &duplicate[..]] {
+        let error = authority
+            .claim_bind_plan_member_with_lifetime(
+                witness,
+                &members[0],
+                &launch_claim,
+                bind_claim("alpha"),
+                PortLeaseEffectScope::ProcessBound,
+            )
+            .expect_err("crossed plan witness must fail before mutation");
+        assert!(
+            matches!(
+                &error,
+                PortLeaseError::PlanMembershipConflict { .. }
+                    | PortLeaseError::IdentityConflict { .. }
+            ),
+            "crossed witness returned unexpected error: {error:?}"
+        );
+        assert_eq!(authority_bytes(root.path()), before);
+    }
+
+    let wrong_claim = reservation_claim("crossed-launch");
+    authority
+        .claim_bind_plan_member_with_lifetime(
+            &members,
+            &members[0],
+            &wrong_claim,
+            bind_claim("alpha"),
+            PortLeaseEffectScope::ProcessBound,
+        )
+        .expect_err("crossed launch claim must fail before mutation");
+    assert_eq!(authority_bytes(root.path()), before);
+    for member in &members {
+        let record = authority
+            .inspect(member.lease_id())
+            .expect("member should inspect")
+            .expect("member should remain durable");
+        assert_eq!(record.phase(), PortLeasePhase::Reserved);
+        assert!(record.bind_claim().is_none());
+        assert!(record.active_lifetime().is_none());
+    }
+}
+
+#[test]
+fn planned_subset_lifecycle_is_atomic_and_preserves_active_sibling() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    let authority = LocalPortLeaseAuthority::open(root.path()).expect("authority should open");
+    let members = [
+        planned_request_for("alpha", PORT),
+        planned_request_for("beta", PORT + 1),
+        planned_request_for("gamma", PORT + 2),
+    ];
+    let launch_claim = reservation_claim("planned-subset-launch");
+    authority
+        .reserve_batch_for_coordinator(members.to_vec(), &launch_claim)
+        .expect("complete planned launch should reserve");
+
+    let sibling_claim = bind_claim("gamma");
+    let sibling_lifetime = authority
+        .claim_bind_plan_member_with_lifetime(
+            &members,
+            &members[2],
+            &launch_claim,
+            sibling_claim.clone(),
+            PortLeaseEffectScope::ProviderManaged,
+        )
+        .expect("independent sibling provider should claim its member");
+    authority
+        .adopt_claimed_and_activate_plan_member_with_lifetime(
+            &members,
+            &members[2],
+            &launch_claim,
+            &sibling_claim,
+            binding("gamma", PORT + 2),
+            &sibling_lifetime,
+        )
+        .expect("independent sibling provider should activate");
+    let sibling_before = authority
+        .inspect(members[2].lease_id())
+        .expect("sibling should inspect")
+        .expect("sibling should remain durable");
+
+    let subset_claims = [
+        (members[0].clone(), bind_claim("alpha")),
+        (members[1].clone(), bind_claim("beta")),
+    ];
+    let subset_lifetimes = authority
+        .claim_bind_plan_members_with_lifetimes(
+            &members,
+            &subset_claims,
+            &launch_claim,
+            PortLeaseEffectScope::ProviderManaged,
+        )
+        .expect("published subset should claim atomically under complete witness");
+    assert_eq!(
+        authority
+            .inspect(members[2].lease_id())
+            .expect("sibling should inspect")
+            .expect("sibling should remain durable"),
+        sibling_before
+    );
+
+    let subset_bindings = [
+        (
+            members[0].clone(),
+            subset_claims[0].1.clone(),
+            binding("alpha", PORT),
+        ),
+        (
+            members[1].clone(),
+            subset_claims[1].1.clone(),
+            binding("beta", PORT + 1),
+        ),
+    ];
+    authority
+        .adopt_claimed_and_activate_plan_members_with_lifetimes(
+            &members,
+            &subset_bindings,
+            &launch_claim,
+            &subset_lifetimes,
+        )
+        .expect("published subset should activate atomically under complete witness");
+    for member in &members[..2] {
+        assert_eq!(
+            authority
+                .inspect(member.lease_id())
+                .expect("published member should inspect")
+                .expect("published member should remain durable")
+                .phase(),
+            PortLeasePhase::Active
+        );
+    }
+    assert_eq!(
+        authority
+            .inspect(members[2].lease_id())
+            .expect("sibling should inspect")
+            .expect("sibling should remain durable"),
+        sibling_before
+    );
+}
+
+#[test]
+fn dead_plan_member_recovery_preserves_reserved_siblings_and_replays_exactly() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    let authority = LocalPortLeaseAuthority::open(root.path()).expect("authority should open");
+    let members = [
+        planned_request_for("alpha", PORT),
+        planned_request_for("beta", PORT + 1),
+        planned_request_for("gamma", PORT + 2),
+    ];
+    let launch_claim = reservation_claim("mixed-recovery-launch");
+    authority
+        .reserve_batch_for_coordinator(members.to_vec(), &launch_claim)
+        .expect("complete mixed-state plan should reserve");
+    let claim = bind_claim("alpha");
+    let lifetime = authority
+        .claim_bind_plan_member_with_lifetime(
+            &members,
+            &members[0],
+            &launch_claim,
+            claim.clone(),
+            PortLeaseEffectScope::ProviderManaged,
+        )
+        .expect("active member should claim under the complete plan");
+    authority
+        .adopt_claimed_and_activate_plan_member_with_lifetime(
+            &members,
+            &members[0],
+            &launch_claim,
+            &claim,
+            binding("alpha", PORT),
+            &lifetime,
+        )
+        .expect("active member should adopt independently");
+    drop(lifetime);
+    let records_before = authority.list().expect("mixed-state plan should list");
+    let bytes_before = authority_bytes(root.path());
+
+    let recovered = authority
+        .recover_dead_plan_members(&members, std::slice::from_ref(&members[0]))
+        .expect("dead active member should recover beside reserved siblings");
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].request(), &members[0]);
+    let live_error = authority
+        .recover_dead_plan_members(&members, std::slice::from_ref(&members[0]))
+        .expect_err("held recovery authority must fence a second owner");
+    assert!(matches!(
+        live_error,
+        PortLeaseError::LifetimeOwnerLive { ref lease_id }
+            if lease_id == members[0].lease_id()
+    ));
+    assert_eq!(
+        authority.list().expect("plan should remain unchanged"),
+        records_before
+    );
+    assert_eq!(authority_bytes(root.path()), bytes_before);
+
+    drop(recovered);
+    let replay = authority
+        .recover_dead_plan_members(&members, std::slice::from_ref(&members[0]))
+        .expect("released recovery authority should replay exactly");
+    assert_eq!(replay[0].request(), &members[0]);
+    assert_eq!(
+        authority.list().expect("plan should remain unchanged"),
+        records_before
+    );
+    assert_eq!(authority_bytes(root.path()), bytes_before);
+}
+
+#[test]
+fn dead_plan_subset_recovery_is_atomic_when_any_requested_owner_is_live() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    let authority = LocalPortLeaseAuthority::open(root.path()).expect("authority should open");
+    let members = [
+        planned_request_for("alpha", PORT),
+        planned_request_for("beta", PORT + 1),
+        planned_request_for("gamma", PORT + 2),
+    ];
+    let launch_claim = reservation_claim("subset-recovery-launch");
+    authority
+        .reserve_batch_for_coordinator(members.to_vec(), &launch_claim)
+        .expect("complete subset plan should reserve");
+    let claims = [
+        (members[0].clone(), bind_claim("alpha")),
+        (members[1].clone(), bind_claim("beta")),
+    ];
+    let mut lifetimes = authority
+        .claim_bind_plan_members_with_lifetimes(
+            &members,
+            &claims,
+            &launch_claim,
+            PortLeaseEffectScope::ProviderManaged,
+        )
+        .expect("active subset should claim atomically");
+    let bindings = [
+        (
+            members[0].clone(),
+            claims[0].1.clone(),
+            binding("alpha", PORT),
+        ),
+        (
+            members[1].clone(),
+            claims[1].1.clone(),
+            binding("beta", PORT + 1),
+        ),
+    ];
+    authority
+        .adopt_claimed_and_activate_plan_members_with_lifetimes(
+            &members,
+            &bindings,
+            &launch_claim,
+            &lifetimes,
+        )
+        .expect("active subset should adopt atomically");
+    let live_beta = lifetimes.pop().expect("beta lifetime should exist");
+    drop(lifetimes.pop().expect("alpha lifetime should exist"));
+    let active_subset = [members[1].clone(), members[0].clone()];
+    let bytes_before = authority_bytes(root.path());
+
+    let error = authority
+        .recover_dead_plan_members(&members, &active_subset)
+        .expect_err("one live owner must reject the whole recovery subset");
+    assert!(matches!(
+        error,
+        PortLeaseError::LifetimeOwnerLive { ref lease_id }
+            if lease_id == members[1].lease_id()
+    ));
+    assert_eq!(authority_bytes(root.path()), bytes_before);
+    let alpha = authority
+        .recover_dead_plan_members(&members, std::slice::from_ref(&members[0]))
+        .expect("failed batch must release an earlier acquired stable lock");
+    drop(alpha);
+
+    drop(live_beta);
+    let recovered = authority
+        .recover_dead_plan_members(&members, &active_subset)
+        .expect("every dead active member should recover in caller order");
+    assert_eq!(
+        recovered
+            .iter()
+            .map(PortLeaseRecoveryGuard::request)
+            .collect::<Vec<_>>(),
+        active_subset.iter().collect::<Vec<_>>()
+    );
     assert_eq!(authority_bytes(root.path()), bytes_before);
 }
 
@@ -1114,6 +1482,10 @@ fn provider_handle(resource: String) -> NetworkProviderHandle {
         .expect("fixture provider ID should parse");
     NetworkProviderHandle::new(provider_id, resource)
         .expect("fixture provider handle should validate")
+}
+
+fn reservation_claim(resource: &str) -> NetworkReservationClaim {
+    NetworkReservationClaim::new(provider_handle(resource.to_owned()))
 }
 
 fn nonzero_port(value: u16) -> NonZeroU16 {

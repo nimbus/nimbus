@@ -537,6 +537,37 @@ impl NetworkLifecycleCapabilitySet {
     }
 }
 
+/// Durable lifecycle requirements assigned to each capability role.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkLifecycleRequirements {
+    attachment: NetworkLifecycleCapabilitySet,
+    ingress: NetworkLifecycleCapabilitySet,
+}
+
+impl NetworkLifecycleRequirements {
+    /// Construct explicit attachment and ingress lifecycle requirements.
+    pub fn new(
+        attachment: NetworkLifecycleCapabilitySet,
+        ingress: NetworkLifecycleCapabilitySet,
+    ) -> Self {
+        Self {
+            attachment,
+            ingress,
+        }
+    }
+
+    /// Lifecycle requirements for the attachment provider.
+    pub fn attachment(&self) -> &NetworkLifecycleCapabilitySet {
+        &self.attachment
+    }
+
+    /// Lifecycle requirements for the ingress provider.
+    pub fn ingress(&self) -> &NetworkLifecycleCapabilitySet {
+        &self.ingress
+    }
+}
+
 /// Sovereignty constraints admitted into one network plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -623,7 +654,7 @@ pub struct NetworkCapabilityRequirements {
     endpoint: NetworkEndpointCapabilitySet,
     ingress: NetworkIngressCapabilitySet,
     forwarding: NetworkForwardingCapabilitySet,
-    lifecycle: NetworkLifecycleCapabilitySet,
+    lifecycle: NetworkLifecycleRequirements,
     sovereignty: NetworkSovereigntyRequirements,
 }
 
@@ -634,7 +665,7 @@ impl NetworkCapabilityRequirements {
         endpoint: NetworkEndpointCapabilitySet,
         ingress: NetworkIngressCapabilitySet,
         forwarding: NetworkForwardingCapabilitySet,
-        lifecycle: NetworkLifecycleCapabilitySet,
+        lifecycle: NetworkLifecycleRequirements,
         sovereignty: NetworkSovereigntyRequirements,
     ) -> Self {
         Self {
@@ -668,7 +699,7 @@ impl NetworkCapabilityRequirements {
     }
 
     /// Durable lifecycle requirements.
-    pub fn lifecycle(&self) -> &NetworkLifecycleCapabilitySet {
+    pub fn lifecycle(&self) -> &NetworkLifecycleRequirements {
         &self.lifecycle
     }
 
@@ -827,11 +858,14 @@ impl NetworkProviderCapabilities {
                 required: *required,
             });
         }
-        for required in requirements
+        let required_lifecycle: BTreeSet<_> = requirements
             .lifecycle
+            .attachment
             .features
-            .difference(&self.lifecycle.features)
-        {
+            .union(&requirements.lifecycle.ingress.features)
+            .copied()
+            .collect();
+        for required in required_lifecycle.difference(&self.lifecycle.features) {
             mismatches.push(NetworkCapabilityMismatch::LifecycleFeature {
                 required: *required,
             });
@@ -1080,7 +1114,10 @@ pub(crate) fn test_requirements_with_management(
         NetworkEndpointCapabilitySet::new([], [], [], [], []),
         NetworkIngressCapabilitySet::new([]),
         NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([]),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::ThirdParty, [], false),
     )
 }

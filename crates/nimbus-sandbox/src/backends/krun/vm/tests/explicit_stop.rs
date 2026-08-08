@@ -283,6 +283,7 @@ fn terminal_ipam_retirement_failure_is_not_manifest_acknowledgement_loss() {
         &backend.ipam_authority,
         &terminal.network_layout,
         &sandbox_id,
+        &network_config.attachment_id,
         &network_config.reservation_claim,
         network_config.provider_kind(),
     )

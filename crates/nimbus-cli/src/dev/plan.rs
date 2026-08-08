@@ -154,7 +154,7 @@ fn resolve_dev_plan_inner(
                 compose_selection.as_ref(),
                 &data_dir,
                 nimbus_tenant::TenantIsolationMode::LocalDevelopment,
-                nimbus_server::nimbus_owned_local_ingress_registration(false),
+                nimbus_server::nimbus_owned_workload_ingress_registration(),
             )
             .map_err(|error| io::Error::other(error.to_string()))
         })

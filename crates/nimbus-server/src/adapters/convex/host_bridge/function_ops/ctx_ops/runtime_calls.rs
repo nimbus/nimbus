@@ -1,6 +1,10 @@
 use super::*;
 use nimbus_bridge::capabilities::RuntimeServiceCapabilityHost;
+use nimbus_compute::WorkloadProvisionCancellation;
 use nimbus_runtime::{RuntimeSyncNestedCallPayload, RuntimeSyncResolveCalleeLanePayload};
+
+#[cfg(test)]
+mod read_only_tests;
 
 impl ConvexHostBridge {
     pub(in crate::adapters::convex) async fn invoke_ctx_service_lookup_async_cancellable(
@@ -19,14 +23,41 @@ impl ConvexHostBridge {
             Ok(service_access) => service_access,
             Err(error) => return encode_runtime_core_result(Err(error)),
         };
-        let response = self
-            .runtime_service_registry()
-            .ensure_service_binding_for_decision_async(&service_access, cancellation.clone())
-            .await
-            .and_then(|binding| {
-                serde_json::to_value(binding)
-                    .map_err(|error| Error::Serialization(error.to_string()))
-            });
+        let response = async {
+            let service_provision = self.service_provision_scope().ok_or_else(|| {
+                Error::PermissionDenied(
+                    "runtime service provisioning capability is unavailable for this invocation"
+                        .to_owned(),
+                )
+            })?;
+            service_access.ensure_tenant_matches(
+                service_provision.context().tenant_id(),
+                "Convex service provisioning context",
+            )?;
+
+            let provision_cancellation = WorkloadProvisionCancellation::default();
+            let provision = service_provision.port().provision_sandbox_service(
+                service_provision.context(),
+                &service_access,
+                &provision_cancellation,
+            );
+            tokio::pin!(provision);
+            let provision_result = tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => {
+                    provision_cancellation.cancel();
+                    provision.await
+                }
+                result = &mut provision => result,
+            };
+            provision_result?;
+            self.runtime_service_registry()
+                .resolve_service_binding_for_decision(&service_access)
+        }
+        .await
+        .and_then(|binding| {
+            serde_json::to_value(binding).map_err(|error| Error::Serialization(error.to_string()))
+        });
         encode_runtime_core_result(response)
     }
 

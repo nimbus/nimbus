@@ -10,7 +10,7 @@ use nimbus_proxy::{
 };
 
 use crate::backends::oci::port_lease::{
-    ExpectedListenerAuthority, OciPortProvider, require_active_listener_binding,
+    ExpectedListenerAuthority, OciPortProvider, provider_binding, require_active_listener_binding,
 };
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -119,13 +119,44 @@ impl EgressProxyRegistry {
         if snapshot.local_addr != expected_addr {
             return Ok(Err(EgressReadinessFailure::ListenerAddressMismatch));
         }
-        let record = match require_active_listener_binding(
-            self.port_authority()?,
-            ExpectedListenerAuthority::egress_pep(tenant_id, id, expected_addr)?,
-            &assignment.port_lease,
-            expected_addr,
-            OciPortProvider::EgressPep,
-        ) {
+        let authority_record = match artifacts.plan_members.as_deref() {
+            Some(plan_members) => self
+                .port_authority()?
+                .inspect_plan_member(plan_members, &assignment.port_lease)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "planned egress PEP lease {} rejected its stored membership witness: {error}",
+                        assignment.port_lease.lease_id()
+                    ),
+                })
+                .and_then(|record| {
+                    let expected = provider_binding(
+                        &assignment.port_lease,
+                        expected_addr,
+                        OciPortProvider::EgressPep,
+                    )?;
+                    if record.phase() == nimbus_network::PortLeasePhase::Active
+                        && record.binding() == Some(&expected)
+                    {
+                        Ok(record)
+                    } else {
+                        Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "planned egress PEP lease {} lacks its exact Active provider binding",
+                                assignment.port_lease.lease_id()
+                            ),
+                        })
+                    }
+                }),
+            None => require_active_listener_binding(
+                self.port_authority()?,
+                ExpectedListenerAuthority::egress_pep(tenant_id, id, expected_addr)?,
+                &assignment.port_lease,
+                expected_addr,
+                OciPortProvider::EgressPep,
+            ),
+        };
+        let record = match authority_record {
             Ok(record) => record,
             Err(error) => {
                 return Ok(Err(EgressReadinessFailure::ListenerAuthorityRejected(

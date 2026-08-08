@@ -2,29 +2,24 @@ use std::sync::Arc;
 
 use axum::response::{IntoResponse, Response};
 use nimbus_core::Error;
-use nimbus_engine::Engine;
-use nimbus_network::LocalNetworkManager;
-use nimbus_workloads::WorkloadSagaStore;
 
 use crate::config::transport::TransportConfig;
 use crate::error_envelope::StructuredHttpError;
 use crate::local_server::LocalServerPolicyError;
 use crate::system::VersionCheck;
+use crate::workload_composition::ServerWorkloadProfile;
 
 pub(crate) use nimbus_compute::config::control_plane::ControlPlaneConfig;
 pub(crate) use nimbus_compute::config::deployment::DeploymentConfig;
 pub(crate) use nimbus_compute::config::node_services::NodeServicesConfig;
 pub(crate) use nimbus_compute::config::runtime::RuntimeGovernorConfig;
 pub(crate) use nimbus_compute::state::{
-    ComputeError, ComputeState, ComputeStateConfig, ComputeWorkloadComposition, DeploymentState,
-    RequestCancellationGuard, record_authenticated_usage,
+    ComputeError, ComputeState, ComputeStateConfig, DeploymentState, RequestCancellationGuard,
+    record_authenticated_usage,
 };
 
-use crate::workload_saga_store::EngineWorkloadSagaStore;
-
 pub(crate) struct AppStateConfig {
-    pub(crate) engine: Arc<Engine>,
-    pub(crate) network_manager: Option<Arc<LocalNetworkManager>>,
+    pub(crate) workload: ServerWorkloadProfile,
     pub(crate) deployment: DeploymentConfig,
     pub(crate) control_plane: ControlPlaneConfig,
     pub(crate) node_services: NodeServicesConfig,
@@ -59,25 +54,15 @@ impl std::ops::Deref for AppState {
 impl AppState {
     pub(crate) fn from_config(config: AppStateConfig) -> Self {
         let AppStateConfig {
-            engine,
-            network_manager,
+            workload,
             deployment,
             control_plane,
             node_services,
             transport,
             runtime,
         } = config;
-        let workload_composition = match network_manager {
-            Some(network_manager) => {
-                let saga_store: Arc<dyn WorkloadSagaStore> =
-                    Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
-                ComputeWorkloadComposition::Managed {
-                    network_manager,
-                    saga_store,
-                }
-            }
-            None => ComputeWorkloadComposition::ProtocolOnly,
-        };
+        workload.authenticate_node_services(&node_services);
+        let (engine, workload_composition) = workload.into_compute();
         let compute = ComputeState::from_config(ComputeStateConfig {
             engine,
             workload_composition,

@@ -12,10 +12,11 @@ use nimbus_sandbox::SandboxSpec;
 use nimbus_tenant::TenantIsolationDecision;
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadSpec,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadGeneration, WorkloadNetworkIntent,
-    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
-    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion,
-    WorkloadPublicationIntent, WorkloadSagaIntent, WorkloadSagaKey,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadExecutionProviderId,
+    WorkloadGeneration, WorkloadNetworkIntent, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent, WorkloadSagaIntent,
+    WorkloadSagaKey,
 };
 use thiserror::Error;
 
@@ -75,6 +76,7 @@ pub struct WorkloadProvisionCompositionInput<'input> {
     pub decision: &'input TenantIsolationDecision,
     pub local_node: &'input NodeIdentity,
     pub source: WorkloadProvisionSourceSnapshot<'input>,
+    pub execution_provider_id: &'input WorkloadExecutionProviderId,
     pub capability_selection: &'input NetworkCapabilitySelection,
     pub capability_registry: &'input NetworkCapabilityRegistry,
     pub sovereignty: NetworkSovereigntyRequirements,
@@ -200,6 +202,7 @@ pub fn compose_workload_provision(
             resource_version.clone(),
             executable.content_digest(),
             input.capability_selection.attachment_provider_id().clone(),
+            input.execution_provider_id.clone(),
         )?,
         WorkloadProvisionSourceSnapshot::SandboxBackedService {
             service_name,
@@ -212,6 +215,7 @@ pub fn compose_workload_provision(
             resource_version.clone(),
             executable.content_digest(),
             input.capability_selection.attachment_provider_id().clone(),
+            input.execution_provider_id.clone(),
         )?,
     };
 

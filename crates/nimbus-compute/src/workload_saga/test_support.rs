@@ -78,9 +78,10 @@ pub(crate) fn provision_candidates(record: &WorkloadSagaRecord) -> Vec<WorkloadS
     };
     let mut candidate = proposed.into_candidate();
     let mut candidates = vec![candidate.clone()];
-    while let Some(WorkloadProvisionDisposition::AttemptPending(attempt)) =
+    while let Some(WorkloadProvisionDisposition::DispatchPending(claim)) =
         candidate.provision_disposition()
     {
+        let attempt = claim.attempt();
         let result = WorkloadProvisionEffectResult::Succeeded {
             attempt_id: attempt.attempt_id().clone(),
             evidence: success_for(attempt),

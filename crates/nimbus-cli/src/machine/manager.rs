@@ -220,12 +220,55 @@ pub(super) fn start_machine(
     start_machine_with_lifecycle(&network.lifecycle_handle()?, paths, config, state)
 }
 
+pub(super) fn next_machine_forwarder_authority(
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+) -> Result<nimbus_machine::MachineForwarderAuthority, Error> {
+    self::launch::next_machine_forwarder_authority(config, state)
+}
+
+/// Start only if the caller's already-prepared forwarder authority is still
+/// the exact next authority for this locked config and state.
+///
+/// The first check precedes opening the lifecycle publication store. The
+/// lifecycle implementation checks again before image/bootstrap preparation
+/// and verifies the built launch plan before any provider process starts.
+pub(super) fn start_machine_with_expected_forwarder_authority(
+    network: &super::network_composition::HostMachineNetworkAuthority,
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+    expected: &nimbus_machine::MachineForwarderAuthority,
+) -> Result<(), Error> {
+    authenticate_expected_forwarder_authority(config, state, expected)?;
+    start_machine_with_lifecycle_and_expected(
+        &network.lifecycle_handle()?,
+        paths,
+        config,
+        state,
+        Some(expected),
+    )
+}
+
 pub(super) fn start_machine_with_lifecycle(
     network: &super::network_composition::MachineNetworkLifecycleHandle,
     paths: &MachinePaths,
     config: &mut MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
+    start_machine_with_lifecycle_and_expected(network, paths, config, state, None)
+}
+
+fn start_machine_with_lifecycle_and_expected(
+    network: &super::network_composition::MachineNetworkLifecycleHandle,
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+    expected: Option<&nimbus_machine::MachineForwarderAuthority>,
+) -> Result<(), Error> {
+    if let Some(expected) = expected {
+        authenticate_expected_forwarder_authority(config, state, expected)?;
+    }
     emit_machine_progress(format!("Starting machine \"{}\"", config.name));
     ensure_machine_can_start(paths, config, state)?;
     super::publication_authority::ensure_no_fenced_machine_publications(
@@ -240,6 +283,17 @@ pub(super) fn start_machine_with_lifecycle(
     cleanup_runtime_artifacts(paths)?;
     let port_authority = network.port_leases();
     let launch_plan = MachineLaunchPlan::build(&port_authority, paths, config, state)?;
+    if let Some(expected) = expected
+        && launch_plan.runtime().forwarder_authority != *expected
+    {
+        return Err(with_pre_provider_lease_cleanup(
+            &launch_plan,
+            Error::conflict(format!(
+                "machine '{}' launch authority changed after exact preparation",
+                config.name
+            )),
+        ));
+    }
 
     state.lifecycle = MachineLifecycle::Starting;
     state.manager = MachineManagerState::Launching;
@@ -405,6 +459,17 @@ pub(super) fn start_machine_with_lifecycle(
     state.last_error = None;
     write_json_file(&paths.state_path, state)?;
     Ok(())
+}
+
+fn authenticate_expected_forwarder_authority(
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+    expected: &nimbus_machine::MachineForwarderAuthority,
+) -> Result<(), Error> {
+    let current = self::launch::next_machine_forwarder_authority(config, state)?;
+    current
+        .authenticate(expected)
+        .map_err(|error| Error::PreconditionFailed(error.to_string()))
 }
 
 fn with_pre_provider_lease_cleanup(launch_plan: &MachineLaunchPlan, primary: Error) -> Error {

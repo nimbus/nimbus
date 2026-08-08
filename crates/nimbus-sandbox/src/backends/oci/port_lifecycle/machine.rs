@@ -18,7 +18,87 @@ pub(crate) fn machine_port_proxy_guest_listener_addr(binding: &SandboxPortBindin
     SocketAddr::from((Ipv4Addr::UNSPECIFIED, binding.host_port))
 }
 
+/// Compiler-selected endpoint represented by the forwarded-machine lease.
+///
+/// The guest wildcard socket is a provider-local transport hop. The portable
+/// planned lease describes the externally selected bind target that the
+/// machine-forwarding owner publishes, while publication intent independently
+/// preserves the exact desired host address.
+fn planned_machine_forwarded_binding_addr(
+    request: &PortLeaseRequest,
+    binding: &SandboxPortBinding,
+) -> SocketAddr {
+    let address = request
+        .binding()
+        .target()
+        .specific_address()
+        .unwrap_or_else(|| match request.binding().target().family() {
+            Some(nimbus_network::PortAddressFamily::Ipv4) => Ipv4Addr::UNSPECIFIED.into(),
+            Some(nimbus_network::PortAddressFamily::Ipv6) => std::net::Ipv6Addr::UNSPECIFIED.into(),
+            None => canonical_socket_ip(binding.host_address),
+        });
+    SocketAddr::new(address, binding.host_port)
+}
+
 impl OciPortLeaseCoordinator {
+    /// Authenticate the exact compiler-planned publication subset without
+    /// deriving listener identity or resource fences from the sandbox ID.
+    pub(crate) fn require_planned_machine_binding_leases(
+        &self,
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        plan_members: &[PortLeaseRequest],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        if bindings.len() != leases.len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox has {} planned machine bindings but {} durable port leases",
+                    bindings.len(),
+                    leases.len()
+                ),
+            });
+        }
+        for (binding, request) in bindings.iter().zip(leases) {
+            let record = self
+                .authority()?
+                .inspect_plan_member(plan_members, request)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "planned machine listener {} failed complete-plan authentication: {error}",
+                        request.lease_id()
+                    ),
+                })?;
+            let expected_port = std::num::NonZeroU16::new(binding.host_port).ok_or_else(|| {
+                SandboxError::InvalidSpec {
+                    message: format!(
+                        "sandbox port binding {:?} must use a non-zero host port",
+                        binding.name
+                    ),
+                }
+            })?;
+            let (_, exposure) = published_scope(binding.host_address)?;
+            let exact_scope = request.tenant_id() == Some(tenant_id)
+                && request.accounting() == PortLeaseAccounting::TenantPublished
+                && request.publication().host_address()
+                    == Some(canonical_socket_ip(binding.host_address))
+                && request.binding().protocol() == PortProtocol::Tcp
+                && request.binding().realm() == &PortBindRealm::Host
+                && request.binding().exposure() == exposure
+                && record.reserved_port() == Some(expected_port);
+            if !exact_scope {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "planned machine listener {} diverges from the compiler-selected tenant, publication, protocol, realm, exposure, or port",
+                        request.lease_id()
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn activate_machine_bindings(
         &self,
@@ -111,6 +191,95 @@ impl OciPortLeaseCoordinator {
         .collect()
     }
 
+    pub(crate) fn activate_planned_machine_bindings_with_lifetimes(
+        &self,
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        plan_members: &[PortLeaseRequest],
+        reservation_claim: &NetworkReservationClaim,
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<Vec<PortLeaseBinding>> {
+        self.require_planned_machine_binding_leases(tenant_id, bindings, leases, plan_members)?;
+        for request in leases {
+            require_current_bind_authority(self.authority()?, request)?;
+        }
+        let actual_addrs = bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| planned_machine_forwarded_binding_addr(request, binding))
+            .collect::<Vec<_>>();
+        adopt_claimed_and_activate_plan_members_with_lifetimes(
+            self.authority()?,
+            plan_members,
+            leases,
+            batch,
+            &actual_addrs,
+            OciPortProvider::MachinePortProxy,
+            reservation_claim,
+        )
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "planned machine publication activation rejected compiler targets {:?} and provider bindings {:?}: {error}",
+                leases
+                    .iter()
+                    .map(|request| request.binding().target())
+                    .collect::<Vec<_>>(),
+                actual_addrs
+            ),
+        })?
+        .into_iter()
+        .map(|record| {
+            record
+                .binding()
+                .cloned()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "activated planned machine port lease {} lost exact provider binding evidence",
+                        record.request().lease_id()
+                    ),
+                })
+        })
+        .collect()
+    }
+
+    pub(crate) fn activate_rebind_planned_machine_bindings_with_lifetimes(
+        &self,
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        plan_members: &[PortLeaseRequest],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<Vec<PortLeaseBinding>> {
+        self.require_planned_machine_binding_leases(tenant_id, bindings, leases, plan_members)?;
+        let actual_addrs = bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| planned_machine_forwarded_binding_addr(request, binding))
+            .collect::<Vec<_>>();
+        adopt_claimed_and_activate_rebind_plan_members_with_lifetimes(
+            self.authority()?,
+            plan_members,
+            leases,
+            &actual_addrs,
+            OciPortProvider::MachinePortProxy,
+            batch,
+        )?
+        .into_iter()
+        .map(|record| {
+            record
+                .binding()
+                .cloned()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "rebound planned machine port lease {} lost exact provider binding evidence",
+                        record.request().lease_id()
+                    ),
+                })
+        })
+        .collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn claim_machine_bindings(
         &self,
@@ -145,6 +314,48 @@ impl OciPortLeaseCoordinator {
             leases,
             OciPortProvider::MachinePortProxy,
             reservation_claim.as_ref(),
+            PortLeaseEffectScope::ProviderManaged,
+        )
+    }
+
+    pub(crate) fn claim_planned_machine_bindings_with_lifetimes(
+        &self,
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        plan_members: &[PortLeaseRequest],
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<OciPortBindLifetimeBatch> {
+        self.require_planned_machine_binding_leases(tenant_id, bindings, leases, plan_members)?;
+        claim_bind_plan_members_attempts_with_lifetimes(
+            self.authority()?,
+            plan_members,
+            leases,
+            OciPortProvider::MachinePortProxy,
+            reservation_claim,
+            PortLeaseEffectScope::ProviderManaged,
+        )
+    }
+
+    pub(crate) fn claim_rebind_planned_machine_bindings_with_lifetimes(
+        &self,
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        plan_members: &[PortLeaseRequest],
+    ) -> Result<OciPortBindLifetimeBatch> {
+        self.require_planned_machine_binding_leases(tenant_id, bindings, leases, plan_members)?;
+        let actual_addrs = bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| planned_machine_forwarded_binding_addr(request, binding))
+            .collect::<Vec<_>>();
+        claim_rebind_plan_members_attempts_with_lifetimes(
+            self.authority()?,
+            plan_members,
+            leases,
+            &actual_addrs,
+            OciPortProvider::MachinePortProxy,
             PortLeaseEffectScope::ProviderManaged,
         )
     }
@@ -192,6 +403,58 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
+    pub(crate) fn abandon_planned_machine_bind_claims_with_lifetimes_without_effect(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        leases: &[PortLeaseRequest],
+        batch: &OciPortBindLifetimeBatch,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<()> {
+        self.require_published_bind_claim_batch(
+            PublishedListenerProvider::MachinePortProxy,
+            OciPortProvider::MachinePortProxy,
+            leases,
+            batch.claims(),
+        )?;
+        abandon_bind_plan_members_attempts_with_lifetimes_without_effect(
+            self.authority()?,
+            plan_members,
+            leases,
+            batch,
+            reservation_claim,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn abandon_rebind_planned_machine_bind_claims_with_lifetimes_without_effect(
+        &self,
+        bindings: &[SandboxPortBinding],
+        plan_members: &[PortLeaseRequest],
+        leases: &[PortLeaseRequest],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<()> {
+        self.require_published_bind_claim_batch(
+            PublishedListenerProvider::MachinePortProxy,
+            OciPortProvider::MachinePortProxy,
+            leases,
+            batch.claims(),
+        )?;
+        let actual_addrs = bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| planned_machine_forwarded_binding_addr(request, binding))
+            .collect::<Vec<_>>();
+        abandon_rebind_plan_members_attempts_with_lifetimes_without_effect(
+            self.authority()?,
+            plan_members,
+            leases,
+            &actual_addrs,
+            OciPortProvider::MachinePortProxy,
+            batch,
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn require_active_machine_bindings(
         &self,
         tenant_id: &TenantId,
@@ -216,6 +479,36 @@ impl OciPortLeaseCoordinator {
                 .ok_or_else(|| SandboxError::OperationFailed {
                     message: format!(
                         "active machine port lease {} lost exact provider binding evidence",
+                        request.lease_id()
+                    ),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn require_active_planned_machine_bindings(
+        &self,
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        plan_members: &[PortLeaseRequest],
+    ) -> Result<Vec<PortLeaseBinding>> {
+        self.require_planned_machine_binding_leases(tenant_id, bindings, leases, plan_members)?;
+        leases
+            .iter()
+            .zip(bindings)
+            .map(|(request, binding)| {
+                require_active_provider_binding(
+                    self.authority()?,
+                    request,
+                    planned_machine_forwarded_binding_addr(request, binding),
+                    OciPortProvider::MachinePortProxy,
+                )?
+                .binding()
+                .cloned()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "active planned machine port lease {} lost exact provider binding evidence",
                         request.lease_id()
                     ),
                 })
@@ -264,6 +557,59 @@ impl OciPortLeaseCoordinator {
             }
         }
         Ok(active)
+    }
+
+    pub(crate) fn require_active_planned_machine_bindings_with_lifetimes(
+        &self,
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        plan_members: &[PortLeaseRequest],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<Vec<PortLeaseBinding>> {
+        self.require_planned_machine_binding_leases(tenant_id, bindings, leases, plan_members)?;
+        if leases.len() != batch.lifetimes().len() || leases.len() != batch.claims().len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox has {} planned machine listener leases but {} live process lifetimes and {} bind claims",
+                    leases.len(),
+                    batch.lifetimes().len(),
+                    batch.claims().len()
+                ),
+            });
+        }
+        leases
+            .iter()
+            .zip(bindings)
+            .zip(batch.lifetimes())
+            .map(|((request, binding), lifetime)| {
+                let record = require_active_provider_binding(
+                    self.authority()?,
+                    request,
+                    planned_machine_forwarded_binding_addr(request, binding),
+                    OciPortProvider::MachinePortProxy,
+                )?;
+                if lifetime.request() != request
+                    || record.active_lifetime() != Some(lifetime.lifetime())
+                {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "planned machine port lease {} is not owned by the retained live process lifetime",
+                            request.lease_id()
+                        ),
+                    });
+                }
+                record
+                    .binding()
+                    .cloned()
+                    .ok_or_else(|| SandboxError::OperationFailed {
+                        message: format!(
+                            "active planned machine port lease {} lost exact provider binding evidence",
+                            request.lease_id()
+                        ),
+                    })
+            })
+            .collect()
     }
 
     pub(crate) fn require_releasable_machine_bindings(
@@ -438,6 +784,63 @@ impl OciPortLeaseCoordinator {
             .collect::<Result<Vec<_>>>()?;
         let recoveries =
             recover_provider_managed_batch_after_owner_death(self.authority()?, leases)?;
+        Ok((expected, recoveries))
+    }
+
+    pub(crate) fn prepare_recovered_planned_machine_bindings_for_rebind(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        leases: &[PortLeaseRequest],
+        expected_bindings: &[PortLeaseBinding],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        prepare_provider_managed_plan_members_after_confirmed_stop(
+            self.authority()?,
+            plan_members,
+            leases,
+            expected_bindings,
+            recoveries,
+        )?;
+        Ok(())
+    }
+
+    /// Acquire exact dead-owner authority for one compiler-planned publication
+    /// subset without falling back to sandbox-derived listener identity or the
+    /// guest wildcard transport address.
+    pub(crate) fn recover_planned_machine_bindings_after_owner_death(
+        &self,
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        plan_members: &[PortLeaseRequest],
+    ) -> Result<(Vec<PortLeaseBinding>, Vec<PortLeaseRecoveryGuard>)> {
+        self.require_planned_machine_binding_leases(tenant_id, bindings, leases, plan_members)?;
+        let expected = bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| {
+                require_provider_recovery_binding(
+                    self.authority()?,
+                    request,
+                    planned_machine_forwarded_binding_addr(request, binding),
+                    OciPortProvider::MachinePortProxy,
+                )?
+                .binding()
+                .cloned()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "recoverable planned machine port lease {} lost exact compiler binding evidence",
+                        request.lease_id()
+                    ),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let recoveries = recover_provider_managed_plan_members_after_owner_death(
+            self.authority()?,
+            plan_members,
+            leases,
+        )?;
         Ok((expected, recoveries))
     }
 

@@ -16,17 +16,18 @@ pub use catalog::{
     DurableObjectInstance, DurableObjectInstanceKey, DurableObjectNamespace,
     DurableObjectNamespaceError, DurableObjectStorageHandle, EmptyServiceDefinitionCatalog,
     EmptyServiceInstanceCatalog, ExternalAuthPolicy, ExternalServiceSpec, HealthCheckPolicy,
-    SandboxResource, ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog,
+    SandboxResource, SandboxResourceObservation, SandboxResourceSnapshot, SandboxResourceSource,
+    ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog, ServiceDefinitionObservation,
     ServiceDefinitionSource, ServiceInstanceCatalog, SessionLifecycleState, SessionResource,
     SessionTarget, SessionTargetSnapshot,
 };
 pub use manager::{
-    LocalBuildAdmission, NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter,
-    ServiceManager,
+    LocalBuildAdmission, NoopServiceEvidenceWriter, SandboxServiceProvisionSource,
+    ServiceEvidenceFuture, ServiceEvidenceWriter, ServiceManager, StandaloneSandboxProvisionSource,
+    TenantServiceRetirement, TenantServiceRetirementFuture,
 };
 pub use registry::{
-    RuntimeServiceBindingFuture, RuntimeServiceRegistry, RuntimeServiceTeardownFuture,
-    ServiceInstanceBindingRegistry, service_binding_from_handle,
+    RuntimeServiceRegistry, ServiceInstanceBindingRegistry, service_binding_from_handle,
 };
 pub use sandbox_templates::{
     ComposeSandboxTemplateService, DeployMode, EffectiveSandboxTemplatePolicy, LeasedSandbox,

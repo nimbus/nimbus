@@ -7,12 +7,14 @@ struct VolumeServiceDefinitionCatalog {
 }
 
 impl ServiceDefinitionCatalog for VolumeServiceDefinitionCatalog {
-    fn service_backend_for_tenant(
+    fn service_definition_for_tenant(
         &self,
-        _tenant_id: &TenantId,
+        tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<ServiceBackend> {
-        self.launches.get(service_name).cloned()
+    ) -> Option<ServiceDefinition> {
+        self.launches.get(service_name).cloned().map(|backend| {
+            ServiceDefinition::static_catalog(tenant_id.clone(), service_name, backend)
+        })
     }
 
     fn service_volume_policy_for_tenant(
@@ -27,29 +29,8 @@ impl ServiceDefinitionCatalog for VolumeServiceDefinitionCatalog {
     }
 }
 
-#[derive(Default)]
-struct RecordingServiceEvidenceWriter {
-    handles: Mutex<Vec<SandboxHandle>>,
-}
-
-impl ServiceEvidenceWriter for RecordingServiceEvidenceWriter {
-    fn record_service_handle<'a>(
-        &'a self,
-        _tenant_id: &'a TenantId,
-        handle: &'a SandboxHandle,
-    ) -> ServiceEvidenceFuture<'a> {
-        Box::pin(async move {
-            self.handles
-                .lock()
-                .expect("recorded handles lock should not be poisoned")
-                .push(handle.clone());
-            Ok(())
-        })
-    }
-}
-
-#[tokio::test]
-async fn start_service_for_decision_rejects_service_volume_without_catalog_policy() {
+#[test]
+fn service_source_validation_rejects_volume_without_catalog_policy_before_provider_io() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(1));
     let manager = ServiceManager::new(
@@ -64,31 +45,29 @@ async fn start_service_for_decision_rejects_service_volume_without_catalog_polic
         }),
         backend.clone(),
     );
-    let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-    let decision = manager
-        .service_lifecycle_decision(&isolation, "db")
-        .expect("db service activation decision should build");
+    let prepared = manager
+        .prepare_sandbox_service_provision_source(&tenant_id, "db")
+        .expect("complete source should prepare before admission validation");
+    let decision = TenantIsolationContext::system(tenant_id.clone(), "service.provision")
+        .with_deployment_generation(prepared.definition().generation)
+        .admit_decision(prepared.policy_input().clone())
+        .expect("policy input should form an admitted decision");
 
     let error = manager
-        .start_service_for_decision_async(&decision, "db", HostCallCancellation::default())
-        .await
-        .expect_err("service volume should require catalog volume admission");
-
+        .validate_sandbox_service_provision_decision(&decision, &prepared)
+        .expect_err("undeclared service volume must reject");
     assert!(
         error
             .to_string()
-            .contains("did not authorize volume `data`"),
-        "volume admission should fail closed against the catalog policy: {error}"
+            .contains("did not authorize volume `data`")
     );
-    assert_eq!(
-        backend.image_starts.load(Ordering::SeqCst),
-        0,
-        "unadmitted service volume must fail before sandbox start"
-    );
+    assert_eq!(backend.image_starts.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.inspect_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 0);
 }
 
-#[tokio::test]
-async fn start_service_for_decision_accepts_declared_service_tenant_volume() {
+#[test]
+fn service_source_validation_accepts_declared_volume_without_starting_provider() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(1));
     let manager = ServiceManager::new(
@@ -106,21 +85,63 @@ async fn start_service_for_decision_accepts_declared_service_tenant_volume() {
             )]),
         }),
         backend.clone(),
-    )
-    .with_activation_poll_interval(Duration::from_millis(1))
-    .with_activation_timeout(Duration::from_secs(1));
-    let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
-    let decision = manager
-        .service_lifecycle_decision(&isolation, "db")
-        .expect("db service activation decision should build");
+    );
+    let prepared = manager
+        .prepare_sandbox_service_provision_source(&tenant_id, "db")
+        .expect("sandbox service source should prepare");
+    let decision = TenantIsolationContext::system(tenant_id.clone(), "service.provision")
+        .with_deployment_generation(prepared.definition().generation)
+        .admit_decision(prepared.policy_input().clone())
+        .expect("declared volume policy should admit");
 
     manager
-        .start_service_for_decision_async(&decision, "db", HostCallCancellation::default())
-        .await
-        .expect("declared service volume should pass service-definition admission")
-        .expect("handle should be returned");
+        .validate_sandbox_service_provision_decision(&decision, &prepared)
+        .expect("exact declared volume should validate");
+    assert_eq!(backend.image_starts.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.inspect_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 0);
+}
 
-    assert_eq!(backend.image_starts.load(Ordering::SeqCst), 1);
+#[test]
+fn sandbox_only_service_preparation_rejects_declared_non_sandbox_backends_without_mutation() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(1));
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::from([
+                ("browser".to_owned(), ServiceBackend::built_in("browser")),
+                (
+                    "api".to_owned(),
+                    ServiceBackend::external(
+                        "https://api.example.com",
+                        ExternalAuthPolicy::None,
+                        HealthCheckPolicy::Http {
+                            path: "/health".to_owned(),
+                        },
+                    ),
+                ),
+            ]),
+        }),
+        backend.clone(),
+    );
+
+    for name in ["browser", "api"] {
+        assert!(
+            manager
+                .prepare_sandbox_service_provision_source(&tenant_id, name)
+                .is_err(),
+            "{name} must remain declared without sandbox coercion"
+        );
+        assert!(manager.service_declared_for_tenant(&tenant_id, name));
+        assert_eq!(
+            RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, name)
+                .expect("declared read should remain valid"),
+            None
+        );
+    }
+    assert_eq!(backend.image_starts.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.inspect_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -132,7 +153,6 @@ fn create_service_definition_rejects_dynamic_tenant_volume_mounts() {
         }),
         Arc::new(StubSandboxBackend::new(1)),
     );
-
     let error = manager
         .create_service_definition(
             &tenant_id,
@@ -144,12 +164,10 @@ fn create_service_definition_rejects_dynamic_tenant_volume_mounts() {
             BTreeMap::new(),
         )
         .expect_err("dynamic service definitions must not self-authorize tenant volumes");
-
     assert!(
         error
             .to_string()
-            .contains("cannot declare tenant volume mounts"),
-        "dynamic volume admission error should be explicit: {error}"
+            .contains("cannot declare tenant volume mounts")
     );
 }
 
@@ -162,7 +180,6 @@ fn create_service_definition_rejects_malformed_external_endpoint() {
         }),
         Arc::new(StubSandboxBackend::new(1)),
     );
-
     let error = manager
         .create_service_definition(
             &tenant_id,
@@ -177,23 +194,24 @@ fn create_service_definition_rejects_malformed_external_endpoint() {
             BTreeMap::new(),
         )
         .expect_err("external endpoint without a host must be rejected");
-
     assert!(
         error
             .to_string()
-            .contains("absolute http(s) URL with a host"),
-        "malformed URL error should describe the endpoint contract: {error}"
+            .contains("absolute http(s) URL with a host")
     );
 }
 
 #[tokio::test]
-async fn open_service_session_rejects_in_flight_definition_delete() {
+async fn session_and_delete_serialize_on_definition_mutation_only() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-    let manager = ServiceManager::new(
-        Arc::new(StubServiceDefinitionCatalog {
-            launches: BTreeMap::new(),
-        }),
-        Arc::new(StubSandboxBackend::new(1)),
+    let manager = Arc::new(
+        ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::new(),
+            }),
+            Arc::new(StubSandboxBackend::new(1)),
+        )
+        .with_definition_mutation_timeout(Duration::from_secs(1)),
     );
     manager
         .create_service_definition(
@@ -202,16 +220,16 @@ async fn open_service_session_rejects_in_flight_definition_delete() {
             ServiceBackend::built_in("browser"),
             BTreeMap::new(),
         )
-        .expect("dynamic browser service definition should create");
+        .expect("dynamic browser definition should create");
     let key = TenantServiceKey::new(&tenant_id, "browser");
     manager
         .state
         .lock()
         .expect("manager lock should not be poisoned")
-        .activations_in_progress
-        .insert(key);
+        .definition_mutations_in_progress
+        .insert(key.clone());
 
-    let error = manager
+    let session_error = manager
         .open_session_async(
             &tenant_id,
             SessionTarget::Service {
@@ -221,133 +239,81 @@ async fn open_service_session_rejects_in_flight_definition_delete() {
             Some(60_000),
         )
         .await
-        .expect_err("session open must not race a service definition delete");
+        .expect_err("session open must not cross definition deletion");
+    assert!(session_error.to_string().contains("definition mutation"));
+    let delete_error = manager
+        .delete_service_definition_async(&tenant_id, "browser", 1, false)
+        .await
+        .expect_err("non-force delete must reject an occupied definition gate");
+    assert!(delete_error.to_string().contains("definition mutation"));
 
-    assert!(
-        error
-            .to_string()
-            .contains("lifecycle operation in progress"),
-        "session open should fail closed while service lifecycle slot is held: {error}"
-    );
-    assert!(
-        manager.list_sessions_for_tenant(&tenant_id).is_empty(),
-        "rejected service session must not leave a session resource"
-    );
+    manager.release_definition_mutation(&key);
+    manager
+        .delete_service_definition_async(&tenant_id, "browser", 1, false)
+        .await
+        .expect("delete should complete after the definition-only gate releases");
 }
 
 #[tokio::test]
-async fn delete_service_definition_serializes_with_in_flight_activation() {
+async fn cancelling_definition_mutation_owner_releases_the_exact_gate() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-    let backend = Arc::new(StubSandboxBackend::new(1));
-    let manager = Arc::new(
-        ServiceManager::new(
-            Arc::new(StubServiceDefinitionCatalog {
-                launches: BTreeMap::new(),
-            }),
-            backend.clone(),
-        )
-        .with_activation_poll_interval(Duration::from_millis(1))
-        .with_activation_timeout(Duration::from_secs(1)),
-    );
-    let evidence = Arc::new(RecordingServiceEvidenceWriter::default());
-    manager.set_service_evidence_writer_arc(evidence.clone());
-    manager
-        .create_service_definition(
-            &tenant_id,
-            "worker",
-            image_service_backend("worker", "registry.example.com/worker:latest"),
-            BTreeMap::new(),
-        )
-        .expect("dynamic service definition should create");
-    let key = TenantServiceKey::new(&tenant_id, "worker");
-    manager
-        .state
-        .lock()
-        .expect("manager lock should not be poisoned")
-        .activations_in_progress
-        .insert(key.clone());
-    let delete_waiting = Arc::new(Notify::new());
-    manager.set_activation_wait_observer(delete_waiting.clone());
-
-    let non_force = manager
-        .delete_service_definition_async(&tenant_id, "worker", 1, false)
+    let manager = Arc::new(ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        Arc::new(StubSandboxBackend::new(1)),
+    ));
+    let key = TenantServiceKey::new(&tenant_id, "browser");
+    let claimed = Arc::new(Notify::new());
+    let task_manager = Arc::clone(&manager);
+    let task_key = key.clone();
+    let task_claimed = Arc::clone(&claimed);
+    let mutation = tokio::spawn(async move {
+        let _claim = task_manager
+            .claim_definition_mutation_guard(&task_key, false)
+            .await
+            .expect("the first exact mutation claim should succeed");
+        task_claimed.notify_one();
+        std::future::pending::<()>().await;
+    });
+    tokio::time::timeout(Duration::from_secs(1), claimed.notified())
         .await
-        .expect_err("non-force delete must reject in-flight activation");
-    assert!(
-        matches!(&non_force, Error::Conflict { message, .. } if message.contains("activation in progress")),
-        "non-force delete should fail closed on activation race, got {non_force:?}"
-    );
+        .expect("the mutation task should acquire its exact gate before timeout");
     assert!(
         manager
-            .service_definition_for_tenant(&tenant_id, "worker")
-            .is_some(),
-        "conflicted delete must preserve the service definition"
-    );
-
-    let manager_for_delete = manager.clone();
-    let tenant_for_delete = tenant_id.clone();
-    let force_delete = tokio::spawn(async move {
-        manager_for_delete
-            .delete_service_definition_async(&tenant_for_delete, "worker", 1, true)
-            .await
-    });
-    tokio::time::timeout(Duration::from_secs(1), delete_waiting.notified())
-        .await
-        .expect("force delete should reach the lifecycle-slot wait");
-    assert!(
-        !force_delete.is_finished(),
-        "force delete should wait while the lifecycle slot is still held"
-    );
-
-    let handle = backend.sandbox_handle(&tenant_id, "worker", SandboxStatus::Ready);
-    backend
-        .handles
-        .lock()
-        .expect("backend lock should not be poisoned")
-        .insert(handle.id.as_str().to_owned(), handle.clone());
-    {
-        let mut state = manager
             .state
             .lock()
-            .expect("manager lock should not be poisoned");
-        state.handles.insert(key.clone(), handle);
-        state.activations_in_progress.remove(&key);
-    }
-    manager.activation_notify.notify_waiters();
+            .expect("manager lock should not be poisoned")
+            .definition_mutations_in_progress
+            .contains(&key)
+    );
 
-    let removed = force_delete
-        .await
-        .expect("force delete task should join")
-        .expect("force delete should complete after activation settles");
-    assert_eq!(removed.name, "worker");
-    assert_eq!(
-        backend.stop_calls.load(Ordering::SeqCst),
-        1,
-        "force delete must stop the backend that became active while waiting"
+    mutation.abort();
+    assert!(
+        mutation
+            .await
+            .expect_err("aborted mutation should be cancelled")
+            .is_cancelled(),
+        "fixture cancellation should exercise future-drop cleanup"
     );
     assert!(
-        evidence
-            .handles
+        !manager
+            .state
             .lock()
-            .expect("recorded handles lock should not be poisoned")
-            .iter()
-            .any(|handle| {
-                handle.name == "worker"
-                    && handle.status == SandboxStatus::Stopped
-                    && handle.published_endpoints.is_empty()
-            }),
-        "force delete must record a stopped handle with endpoints cleared"
+            .expect("manager lock should not be poisoned")
+            .definition_mutations_in_progress
+            .contains(&key),
+        "dropping an async mutation owner must not strand the serialization gate"
     );
-    assert!(
-        manager
-            .service_definition_for_tenant(&tenant_id, "worker")
-            .is_none(),
-        "force delete should remove the definition only after coordinating with activation"
-    );
+    manager
+        .claim_definition_mutation(&key, false)
+        .await
+        .expect("a later exact mutation should acquire the released gate");
+    manager.release_definition_mutation(&key);
 }
 
 #[tokio::test]
-async fn delete_service_definition_converges_retained_cleanup_before_removal() {
+async fn definition_delete_retires_only_the_canonical_observation() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(usize::MAX));
     let manager = ServiceManager::new(
@@ -355,52 +321,46 @@ async fn delete_service_definition_converges_retained_cleanup_before_removal() {
             launches: BTreeMap::new(),
         }),
         backend.clone(),
-    )
-    .with_activation_poll_interval(Duration::from_millis(1))
-    .with_activation_timeout(Duration::from_secs(1));
-    manager
+    );
+    let definition = manager
         .create_service_definition(
             &tenant_id,
             "worker",
             image_service_backend("worker", "registry.example.com/worker:latest"),
             BTreeMap::new(),
         )
-        .expect("dynamic service definition should create");
-    let key = TenantServiceKey::new(&tenant_id, "worker");
+        .expect("definition should create");
     let handle = backend.sandbox_handle(&tenant_id, "worker", SandboxStatus::Stopping);
-    backend
-        .handles
-        .lock()
-        .expect("backend lock should not be poisoned")
-        .insert(handle.id.as_str().to_owned(), handle.clone());
     manager
-        .state
-        .lock()
-        .expect("manager state should not be poisoned")
-        .handles
-        .insert(key, handle.clone());
+        .project_service_definition_execution_observation(
+            &tenant_id,
+            "worker",
+            definition.generation,
+            &definition.resource_version,
+            handle.id.as_str(),
+            handle.clone(),
+        )
+        .expect("canonical observation should project");
     backend.report_inspection(retained_stopping_inspection(handle));
 
-    let removed = manager
-        .delete_service_definition_async(&tenant_id, "worker", 1, false)
+    manager
+        .delete_service_definition_async(&tenant_id, "worker", definition.generation, false)
         .await
-        .expect("delete should explicitly converge retained cleanup before removal");
-
-    assert_eq!(removed.name, "worker");
-    assert_eq!(
-        backend.stop_calls.load(Ordering::SeqCst),
-        1,
-        "a Stopping projection is not cleanup finality and cannot skip backend teardown"
-    );
+        .expect("retained cleanup should converge before deletion");
+    assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 1);
     assert!(
         manager
             .service_definition_for_tenant(&tenant_id, "worker")
             .is_none()
     );
+    assert_eq!(
+        manager.service_definition_observation_for_tenant(&tenant_id, "worker"),
+        None
+    );
 }
 
 #[tokio::test]
-async fn force_delete_revalidates_generation_before_stopping_backend() {
+async fn force_delete_revalidates_generation_before_retirement_effect() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(1));
     let manager = Arc::new(
@@ -410,95 +370,74 @@ async fn force_delete_revalidates_generation_before_stopping_backend() {
             }),
             backend.clone(),
         )
-        .with_activation_poll_interval(Duration::from_millis(1))
-        .with_activation_timeout(Duration::from_secs(1)),
+        .with_definition_mutation_timeout(Duration::from_secs(1)),
     );
-    let evidence = Arc::new(RecordingServiceEvidenceWriter::default());
-    manager.set_service_evidence_writer_arc(evidence.clone());
-    manager
+    let definition = manager
         .create_service_definition(
             &tenant_id,
             "worker",
             image_service_backend("worker", "registry.example.com/worker:latest"),
             BTreeMap::new(),
         )
-        .expect("dynamic service definition should create");
+        .expect("definition should create");
+    let handle = backend.sandbox_handle(&tenant_id, "worker", SandboxStatus::Ready);
+    manager
+        .project_service_definition_execution_observation(
+            &tenant_id,
+            "worker",
+            definition.generation,
+            &definition.resource_version,
+            handle.id.as_str(),
+            handle.clone(),
+        )
+        .expect("canonical observation should project");
     let key = TenantServiceKey::new(&tenant_id, "worker");
     manager
         .state
         .lock()
         .expect("manager lock should not be poisoned")
-        .activations_in_progress
+        .definition_mutations_in_progress
         .insert(key.clone());
-    let delete_waiting = Arc::new(Notify::new());
-    manager.set_activation_wait_observer(delete_waiting.clone());
+    let waiting = Arc::new(Notify::new());
+    manager.set_definition_mutation_wait_observer(waiting.clone());
 
     let manager_for_delete = manager.clone();
     let tenant_for_delete = tenant_id.clone();
-    let force_delete = tokio::spawn(async move {
+    let deletion = tokio::spawn(async move {
         manager_for_delete
             .delete_service_definition_async(&tenant_for_delete, "worker", 1, true)
             .await
     });
-    tokio::time::timeout(Duration::from_secs(1), delete_waiting.notified())
+    tokio::time::timeout(Duration::from_secs(1), waiting.notified())
         .await
-        .expect("force delete should reach the lifecycle-slot wait");
-
-    let handle = backend.sandbox_handle(&tenant_id, "worker", SandboxStatus::Ready);
-    backend
-        .handles
-        .lock()
-        .expect("backend lock should not be poisoned")
-        .insert(handle.id.as_str().to_owned(), handle.clone());
+        .expect("force delete should wait on the definition gate");
     {
         let mut state = manager
             .state
             .lock()
             .expect("manager lock should not be poisoned");
-        let definition = state
+        let current = state
             .definitions
             .get_mut(&key)
-            .expect("dynamic definition should still be present");
-        definition.generation = 2;
-        definition.resource_version = "svcdef-v2-race".to_owned();
-        definition.updated_at_millis = definition.updated_at_millis.saturating_add(1);
-        state.handles.insert(key.clone(), handle);
-        state.activations_in_progress.remove(&key);
+            .expect("definition should remain while gate is occupied");
+        current.generation = 2;
+        current.resource_version = "svcdef-v2-race".to_owned();
+        state.definition_mutations_in_progress.remove(&key);
     }
-    manager.activation_notify.notify_waiters();
+    manager.definition_mutation_notify.notify_waiters();
 
-    let error = force_delete
+    let error = deletion
         .await
-        .expect("force delete task should join")
-        .expect_err("generation race must fail before stopping the backend");
-    assert!(
-        matches!(&error, Error::PreconditionFailed(message) if message.contains("generation 2") && message.contains("expected generation 1")),
-        "force delete should report the raced generation without stopping: {error:?}"
-    );
+        .expect("delete task should join")
+        .expect_err("generation race must reject before retirement");
+    assert!(matches!(error, Error::PreconditionFailed(_)));
+    assert_eq!(backend.inspect_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 0);
     assert_eq!(
-        backend.stop_calls.load(Ordering::SeqCst),
-        0,
-        "force delete must re-check generation before the irreversible backend stop"
+        manager
+            .service_definition_for_tenant(&tenant_id, "worker")
+            .expect("raced definition should remain")
+            .generation,
+        2
     );
-    let definition = manager
-        .service_definition_for_tenant(&tenant_id, "worker")
-        .expect("generation-raced definition should remain");
-    assert_eq!(definition.generation, 2);
-    assert!(
-        evidence
-            .handles
-            .lock()
-            .expect("recorded handles lock should not be poisoned")
-            .is_empty(),
-        "generation-raced force delete must not record a stopped handle"
-    );
-    let cached_handle = manager
-        .state
-        .lock()
-        .expect("manager lock should not be poisoned")
-        .handles
-        .get(&key)
-        .cloned()
-        .expect("cached running handle should remain for the updated definition");
-    assert_eq!(cached_handle.status, SandboxStatus::Ready);
 }

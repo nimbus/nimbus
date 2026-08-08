@@ -124,10 +124,13 @@ fn terminal_manifest_publication_rejects_a_retained_port_lease() {
         crate::backends::oci::network::ReservedNetworkLaunchAuthority::new(
             backend.segment_allocator.as_ref(),
             &backend.ipam_authority,
-            &manifest.network_layout,
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &network_config.reservation_claim,
+            crate::backends::oci::network::ReservedNetworkLaunchIdentity::new(
+                &manifest.network_layout,
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &network_config.attachment_id,
+                &network_config.reservation_claim,
+            ),
             network_config.provider_kind(),
         ),
         Ok(()),

@@ -13,6 +13,8 @@ const DEFAULT_GUEST_HELPER_BINARY_DIRS: &[&str] = &[
     "/usr/lib/podman",
 ];
 
+/// Canonical operator-facing order: OS lifecycle, image materialization,
+/// process monitor/runtime, then network helpers.
 pub(super) const STANDARD_CONTAINER_BINARY_REQUIREMENTS: &[MachineApiBinaryRequirement] = &[
     MachineApiBinaryRequirement {
         name: "bootc",
@@ -24,32 +26,24 @@ pub(super) const STANDARD_CONTAINER_BINARY_REQUIREMENTS: &[MachineApiBinaryRequi
         ],
     },
     MachineApiBinaryRequirement {
+        name: "buildah",
+        required_for_operations: &[MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION],
+    },
+    MachineApiBinaryRequirement {
         name: "conmon",
-        required_for_operations: &[
-            MACHINE_API_IMAGE_START_OPERATION,
-            MACHINE_API_BUILD_START_OPERATION,
-        ],
+        required_for_operations: &[MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION],
     },
     MachineApiBinaryRequirement {
         name: "crun",
-        required_for_operations: &[
-            MACHINE_API_IMAGE_START_OPERATION,
-            MACHINE_API_BUILD_START_OPERATION,
-        ],
+        required_for_operations: &[MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION],
     },
     MachineApiBinaryRequirement {
         name: "netavark",
-        required_for_operations: &[
-            MACHINE_API_IMAGE_START_OPERATION,
-            MACHINE_API_BUILD_START_OPERATION,
-        ],
+        required_for_operations: &[MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION],
     },
     MachineApiBinaryRequirement {
         name: "aardvark-dns",
-        required_for_operations: &[
-            MACHINE_API_IMAGE_START_OPERATION,
-            MACHINE_API_BUILD_START_OPERATION,
-        ],
+        required_for_operations: &[MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION],
     },
 ];
 

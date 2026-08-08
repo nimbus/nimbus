@@ -9,19 +9,51 @@
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    NetworkReservationClaim, NetworkSegmentFinalizeOutcome, NetworkSegmentQuarantineOutcome,
-    NetworkSegmentReleaseOutcome,
+    NetworkAttachmentId, NetworkReservationClaim, NetworkSegmentFinalizeOutcome,
+    NetworkSegmentQuarantineOutcome, NetworkSegmentReleaseOutcome,
 };
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
 use super::{
-    OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization, default_network_attachment_id,
-    ipam::OciIpamAuthority, provider_locator::OciAttachmentProviderKind,
+    OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization, ipam::OciIpamAuthority,
+    provider_locator::OciAttachmentProviderKind,
 };
 
 /// Exact retained authorities and identities for one never-realized launch.
+#[derive(Clone, Copy)]
+pub(crate) struct ReservedNetworkLaunchIdentity<'a> {
+    layout: &'a OciNetworkLayout,
+    tenant_id: &'a TenantId,
+    sandbox_id: &'a SandboxId,
+    attachment_id: &'a NetworkAttachmentId,
+    reservation_claim: &'a NetworkReservationClaim,
+}
+
+impl<'a> ReservedNetworkLaunchIdentity<'a> {
+    pub(crate) fn new(
+        layout: &'a OciNetworkLayout,
+        tenant_id: &'a TenantId,
+        sandbox_id: &'a SandboxId,
+        attachment_id: &'a NetworkAttachmentId,
+        reservation_claim: &'a NetworkReservationClaim,
+    ) -> Self {
+        Self {
+            layout,
+            tenant_id,
+            sandbox_id,
+            attachment_id,
+            reservation_claim,
+        }
+    }
+
+    pub(crate) fn reservation_claim(self) -> &'a NetworkReservationClaim {
+        self.reservation_claim
+    }
+}
+
+/// Portable authority plus the exact launch identity needed for compensation.
 #[derive(Clone, Copy)]
 pub(crate) struct ReservedNetworkLaunchAuthority<'a> {
     allocator: &'a OciSegmentAllocator,
@@ -29,6 +61,7 @@ pub(crate) struct ReservedNetworkLaunchAuthority<'a> {
     layout: &'a OciNetworkLayout,
     tenant_id: &'a TenantId,
     sandbox_id: &'a SandboxId,
+    attachment_id: &'a NetworkAttachmentId,
     reservation_claim: &'a NetworkReservationClaim,
     provider_kind: OciAttachmentProviderKind,
 }
@@ -37,19 +70,17 @@ impl<'a> ReservedNetworkLaunchAuthority<'a> {
     pub(crate) fn new(
         allocator: &'a OciSegmentAllocator,
         ipam_authority: &'a OciIpamAuthority,
-        layout: &'a OciNetworkLayout,
-        tenant_id: &'a TenantId,
-        sandbox_id: &'a SandboxId,
-        reservation_claim: &'a NetworkReservationClaim,
+        identity: ReservedNetworkLaunchIdentity<'a>,
         provider_kind: OciAttachmentProviderKind,
     ) -> Self {
         Self {
             allocator,
             ipam_authority,
-            layout,
-            tenant_id,
-            sandbox_id,
-            reservation_claim,
+            layout: identity.layout,
+            tenant_id: identity.tenant_id,
+            sandbox_id: identity.sandbox_id,
+            attachment_id: identity.attachment_id,
+            reservation_claim: identity.reservation_claim,
             provider_kind,
         }
     }
@@ -69,14 +100,10 @@ pub(crate) fn reap_bridge_interface(interface: &str) -> Result<()> {
 pub(crate) fn quarantine_network_segment_hold(
     allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
-    sandbox_id: &SandboxId,
+    attachment_id: &NetworkAttachmentId,
     adoption_receipt: &NetworkReservationClaim,
 ) -> Result<NetworkSegmentQuarantineOutcome> {
-    allocator.quarantine(
-        tenant_id,
-        &default_network_attachment_id(sandbox_id),
-        Some(adoption_receipt),
-    )
+    allocator.quarantine(tenant_id, attachment_id, Some(adoption_receipt))
 }
 
 /// Drop one quarantined sandbox hold after provider/netns deletion, reap every
@@ -85,13 +112,13 @@ pub(crate) fn quarantine_network_segment_hold(
 pub(crate) fn release_network_segment_hold(
     allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
-    sandbox_id: &SandboxId,
+    attachment_id: &NetworkAttachmentId,
     adoption_receipt: &NetworkReservationClaim,
 ) -> Vec<SandboxError> {
     release_network_segment_hold_with(
         allocator,
         tenant_id,
-        sandbox_id,
+        attachment_id,
         Some(adoption_receipt),
         |segment| reap_bridge_interface(segment.network_interface()),
     )
@@ -186,7 +213,7 @@ fn release_reserved_network_launch_without_effect(
         .allocator
         .release_reserved_attachment_without_effect(
             authority.tenant_id,
-            &default_network_attachment_id(authority.sandbox_id),
+            authority.attachment_id,
             authority.reservation_claim,
         ) {
         Ok(
@@ -204,6 +231,7 @@ fn release_reserved_network_launch_without_effect(
                 authority.ipam_authority,
                 authority.layout,
                 authority.sandbox_id,
+                authority.attachment_id,
                 authority.reservation_claim,
                 authority.provider_kind,
             )
@@ -217,6 +245,7 @@ fn release_reserved_network_launch_without_effect(
         authority.ipam_authority,
         authority.layout,
         authority.sandbox_id,
+        authority.attachment_id,
         authority.reservation_claim,
         authority.provider_kind,
     ) {
@@ -226,7 +255,7 @@ fn release_reserved_network_launch_without_effect(
         .allocator
         .finalize_reserved_attachment_without_effect(
             authority.tenant_id,
-            &default_network_attachment_id(authority.sandbox_id),
+            authority.attachment_id,
             authority.reservation_claim,
         ) {
         Ok(NetworkSegmentReleaseOutcome::CleanupPending(cleanup)) => cleanup,
@@ -237,6 +266,7 @@ fn release_reserved_network_launch_without_effect(
                 authority.ipam_authority,
                 authority.layout,
                 authority.sandbox_id,
+                authority.attachment_id,
                 authority.reservation_claim,
                 authority.provider_kind,
             )
@@ -261,6 +291,7 @@ fn release_reserved_network_launch_without_effect(
             authority.ipam_authority,
             authority.layout,
             authority.sandbox_id,
+            authority.attachment_id,
             authority.reservation_claim,
             authority.provider_kind,
         )
@@ -274,15 +305,14 @@ fn release_reserved_network_launch_without_effect(
 fn release_network_segment_hold_with(
     allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
-    sandbox_id: &SandboxId,
+    attachment_id: &NetworkAttachmentId,
     adoption_receipt: Option<&NetworkReservationClaim>,
     mut reap: impl FnMut(&OciSegmentRealization) -> Result<()>,
 ) -> Vec<SandboxError> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
-    if let Err(error) = allocator.quarantine(tenant_id, &attachment_id, adoption_receipt) {
+    if let Err(error) = allocator.quarantine(tenant_id, attachment_id, adoption_receipt) {
         return vec![error];
     }
-    let cleanup = match allocator.release(tenant_id, &attachment_id, adoption_receipt) {
+    let cleanup = match allocator.release(tenant_id, attachment_id, adoption_receipt) {
         Ok(NetworkSegmentReleaseOutcome::CleanupPending(cleanup)) => cleanup,
         Ok(NetworkSegmentReleaseOutcome::StillLive) => return Vec::new(),
         Ok(NetworkSegmentReleaseOutcome::AlreadyReleased) => return Vec::new(),

@@ -12,9 +12,11 @@ use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 use crate::compose::discovery::ResolvedComposeSelection;
 #[cfg(test)]
 use crate::machine::HostMachineNetworkComposition;
+#[cfg(test)]
+use crate::machine::ensure_default_machine_api_client_started;
 use crate::machine::{
     ForwardedMachineApiSandboxBackend, HostMachineNetworkAuthority, MachineApiClient,
-    ensure_default_machine_api_client_started, require_default_machine_api_client,
+    require_default_machine_api_client,
 };
 use crate::network_composition::StagedLocalNetworkComposition;
 
@@ -180,54 +182,7 @@ pub(super) fn load_host_backed_service_manager_for_platform_selection_with_admis
     Ok(ServiceManager::new(catalog, backend).with_local_build_admission(local_build_admission))
 }
 
-pub(crate) fn load_forwarded_service_manager_for_selection_with_isolation_mode(
-    selection: &ResolvedComposeSelection,
-    control_data_dir: &Path,
-    tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
-    network: &HostMachineNetworkAuthority,
-) -> Result<ServiceManager, Error> {
-    let host_platform = ServiceHostPlatform::current();
-    let admission_mode = match tenant_isolation_mode {
-        nimbus_tenant::TenantIsolationMode::LocalDevelopment => {
-            file::ComposeAdmissionMode::LocalDevelopment
-        }
-        nimbus_tenant::TenantIsolationMode::Production => file::ComposeAdmissionMode::Production,
-    };
-    let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
-    let backend = required_effective_project_backend(
-        &context,
-        None,
-        "load a forwarded compose-backed sandbox manager",
-        host_platform,
-    )?;
-    if backend != SandboxBackendKind::Container {
-        return Err(Error::Internal(format!(
-            "compose project {} selected local krun after the local network composition froze",
-            context.control_plane.project_name
-        )));
-    }
-    let catalog = load_service_definition_catalog_for_execution_platform_with_admission(
-        selection,
-        host_platform,
-        admission_mode,
-    )?;
-    let machine_api_client =
-        should_auto_start_default_machine_for_host_loader(&context, host_platform)?
-            .then(|| ensure_default_machine_api_client_started(network))
-            .transpose()?;
-    let backend = load_forwarded_machine_api_backend(
-        &context,
-        host_platform,
-        machine_api_client,
-        Some(network),
-    )?;
-    let local_build_admission = match admission_mode {
-        file::ComposeAdmissionMode::LocalDevelopment => LocalBuildAdmission::Allowed,
-        file::ComposeAdmissionMode::Production => LocalBuildAdmission::Denied,
-    };
-    Ok(ServiceManager::new(catalog, backend).with_local_build_admission(local_build_admission))
-}
-
+#[cfg(test)]
 pub(super) fn should_auto_start_default_machine_for_host_loader(
     context: &ComposeProjectContext,
     host_platform: ServiceHostPlatform,
@@ -436,17 +391,6 @@ pub(super) fn required_project_backend(
     }
 }
 
-pub(super) fn load_service_definition_catalog_for_execution_platform(
-    selection: &ResolvedComposeSelection,
-    host_platform: ServiceHostPlatform,
-) -> Result<Arc<dyn ServiceDefinitionCatalog>, Error> {
-    load_service_definition_catalog_for_execution_platform_with_admission(
-        selection,
-        host_platform,
-        file::ComposeAdmissionMode::LocalDevelopment,
-    )
-}
-
 pub(super) fn load_service_definition_catalog_for_execution_platform_with_admission(
     selection: &ResolvedComposeSelection,
     host_platform: ServiceHostPlatform,
@@ -495,7 +439,7 @@ fn service_declares_backend(service: &file::ComposeServicePlan) -> bool {
         .is_some()
 }
 
-fn required_effective_project_backend(
+pub(super) fn required_effective_project_backend(
     context: &ComposeProjectContext,
     requested_service: Option<&str>,
     operation: &str,
@@ -579,6 +523,7 @@ pub(super) fn load_host_backed_project_backend(
     }
 }
 
+#[cfg(test)]
 pub(super) fn load_forwarded_machine_api_backend(
     context: &ComposeProjectContext,
     host_platform: ServiceHostPlatform,
@@ -635,6 +580,7 @@ pub(super) fn load_forwarded_machine_api_backend(
     }
 }
 
+#[cfg(test)]
 pub(super) fn validate_forwarded_machine_api_backend(
     context: &ComposeProjectContext,
     client: &MachineApiClient,

@@ -7,17 +7,16 @@
 //! both OCI-family backends so the placement policy is defined once.
 
 use nimbus_core::TenantId;
+use nimbus_network::{NetworkAttachmentId, NetworkReservationClaim, NetworkSegmentGrowth};
 #[cfg(test)]
 use nimbus_network::{NetworkLeaseEpoch, NetworkProviderHandle, NetworkProviderId};
-use nimbus_network::{NetworkReservationClaim, NetworkSegmentGrowth};
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
 use super::{
     OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization,
-    default_network_attachment_id,
-    ipam::{OciIpamAuthority, allocate_container_ips_on_first_available},
+    ipam::{OciIpamAuthority, allocate_container_ips_on_first_available_for_attachment},
     provider_locator::OciAttachmentProviderKind,
 };
 
@@ -30,6 +29,24 @@ use super::{
 pub(crate) struct OciPlacementProvider<F> {
     kind: OciAttachmentProviderKind,
     build_config: F,
+}
+
+/// Exact compiler-selected attachment and launch claim used by placement.
+pub(crate) struct OciPlacementAuthority<'a> {
+    attachment_id: &'a NetworkAttachmentId,
+    reservation_claim: &'a NetworkReservationClaim,
+}
+
+impl<'a> OciPlacementAuthority<'a> {
+    pub(crate) fn new(
+        attachment_id: &'a NetworkAttachmentId,
+        reservation_claim: &'a NetworkReservationClaim,
+    ) -> Self {
+        Self {
+            attachment_id,
+            reservation_claim,
+        }
+    }
 }
 
 impl<F> OciPlacementProvider<F>
@@ -58,15 +75,18 @@ pub(crate) fn place_sandbox_on_block<F>(
     tenant: &TenantId,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
-    reservation_claim: &NetworkReservationClaim,
+    authority: OciPlacementAuthority<'_>,
     provider: OciPlacementProvider<F>,
 ) -> Result<OciNetworkConfig>
 where
     F: Fn(&OciSegmentRealization, &NetworkReservationClaim) -> OciNetworkConfig,
 {
-    let attachment_id = default_network_attachment_id(sandbox_id);
+    let OciPlacementAuthority {
+        attachment_id,
+        reservation_claim,
+    } = authority;
     let placement = (|| {
-        allocator.reserve_attachment_for_coordinator(tenant, &attachment_id, reservation_claim)?;
+        allocator.reserve_attachment_for_coordinator(tenant, attachment_id, reservation_claim)?;
         loop {
             let segments = allocator.segments_for(tenant)?;
             let observed_block_count = segments.len();
@@ -87,6 +107,18 @@ where
             }
             if configs
                 .iter()
+                .any(|config| &config.attachment_id != attachment_id)
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "OCI placement config attachment identity diverged from the authoritative \
+                         compiler-selected attachment {attachment_id} for sandbox {sandbox_id} \
+                         before IPAM"
+                    ),
+                });
+            }
+            if configs
+                .iter()
                 .any(|config| config.provider_kind() != provider.kind)
             {
                 return Err(SandboxError::OperationFailed {
@@ -96,11 +128,12 @@ where
                     ),
                 });
             }
-            match allocate_container_ips_on_first_available(
+            match allocate_container_ips_on_first_available_for_attachment(
                 ipam_authority,
                 layout,
                 &configs,
                 sandbox_id,
+                attachment_id,
                 reservation_claim,
             ) {
                 Ok(allocation) => {
@@ -114,7 +147,7 @@ where
                     )?;
                     let bound = allocator.bind_reserved_attachment_to_segment(
                         tenant,
-                        &attachment_id,
+                        attachment_id,
                         &allocation.segment_id,
                         reservation_claim,
                     )?;
@@ -147,10 +180,13 @@ where
             super::reaper::ReservedNetworkLaunchAuthority::new(
                 allocator,
                 ipam_authority,
-                layout,
-                tenant,
-                sandbox_id,
-                reservation_claim,
+                super::reaper::ReservedNetworkLaunchIdentity::new(
+                    layout,
+                    tenant,
+                    sandbox_id,
+                    attachment_id,
+                    reservation_claim,
+                ),
                 provider.kind,
             ),
             error,
@@ -163,7 +199,8 @@ mod tests {
     use super::*;
     use crate::backends::oci::network::{
         OciIpamAuthority, OciSegmentAllocator, RecordingSegmentAllocator,
-        SegmentAllocatorOperation, SingleNodeSegmentAllocator, direct_test_ipam_authority,
+        SegmentAllocatorOperation, SingleNodeSegmentAllocator, default_network_attachment_id,
+        direct_test_ipam_authority,
     };
     use nimbus_network::NetworkSegmentAllocator;
     use proptest::prelude::*;
@@ -211,14 +248,23 @@ mod tests {
         sandbox_id: &SandboxId,
         build_config: impl Fn(&OciSegmentRealization, &NetworkReservationClaim) -> OciNetworkConfig,
     ) -> Result<OciNetworkConfig> {
+        let attachment_id = default_network_attachment_id(sandbox_id);
+        let config_attachment_id = attachment_id.clone();
         super::place_sandbox_on_block(
             allocator,
             ipam_authority,
             tenant,
             layout,
             sandbox_id,
-            &reservation_claim(sandbox_id.as_str()),
-            OciPlacementProvider::new(OciAttachmentProviderKind::Container, build_config),
+            OciPlacementAuthority::new(&attachment_id, &reservation_claim(sandbox_id.as_str())),
+            OciPlacementProvider::new(
+                OciAttachmentProviderKind::Container,
+                move |segment, reservation_claim| {
+                    let mut config = build_config(segment, reservation_claim);
+                    config.attachment_id = config_attachment_id.clone();
+                    config
+                },
+            ),
         )
     }
 
@@ -244,6 +290,7 @@ mod tests {
         layout.ensure_directories().expect("layout should exist");
         let build_count = Arc::new(AtomicUsize::new(0));
         let build_count_for_call = Arc::clone(&build_count);
+        let attachment = default_network_attachment_id(&sandbox_id);
 
         let error = super::place_sandbox_on_block(
             allocator.as_ref(),
@@ -251,7 +298,7 @@ mod tests {
             &tenant,
             &layout,
             &sandbox_id,
-            &claim,
+            OciPlacementAuthority::new(&attachment, &claim),
             OciPlacementProvider::new(
                 OciAttachmentProviderKind::Container,
                 move |segment, reservation_claim| {
@@ -273,7 +320,6 @@ mod tests {
             0,
             "placement/config construction must not start after reservation failure"
         );
-        let attachment = default_network_attachment_id(&sandbox_id);
         let operations = recorder.operations();
         assert_eq!(
             operations.len(),
@@ -325,6 +371,7 @@ mod tests {
         let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox_id);
         let ipam_authority = direct_test_ipam_authority(&layout);
         layout.ensure_directories().expect("layout should exist");
+        let attachment = default_network_attachment_id(&sandbox_id);
 
         let error = super::place_sandbox_on_block(
             &allocator,
@@ -332,7 +379,7 @@ mod tests {
             &tenant,
             &layout,
             &sandbox_id,
-            &claim,
+            OciPlacementAuthority::new(&attachment, &claim),
             OciPlacementProvider::new(OciAttachmentProviderKind::Container, move |segment, _| {
                 config_for_segment(segment, &foreign_claim)
             }),
@@ -369,6 +416,8 @@ mod tests {
         let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox_id);
         let ipam_authority = direct_test_ipam_authority(&layout);
         layout.ensure_directories().expect("layout should exist");
+        let attachment = default_network_attachment_id(&sandbox_id);
+        let config_attachment = attachment.clone();
 
         let error = super::place_sandbox_on_block(
             &allocator,
@@ -376,8 +425,15 @@ mod tests {
             &tenant,
             &layout,
             &sandbox_id,
-            &claim,
-            OciPlacementProvider::new(OciAttachmentProviderKind::Krun, config_for_segment),
+            OciPlacementAuthority::new(&attachment, &claim),
+            OciPlacementProvider::new(
+                OciAttachmentProviderKind::Krun,
+                move |segment, reservation_claim| {
+                    let mut config = config_for_segment(segment, reservation_claim);
+                    config.attachment_id = config_attachment.clone();
+                    config
+                },
+            ),
         )
         .expect_err("foreign config provider authority must fail before IPAM mutation");
 
@@ -442,10 +498,13 @@ mod tests {
         assert_ne!(c1.network_interface, c2.network_interface);
 
         let sb2 = SandboxId::new("sb-2");
+        let mut c1_for_sb2 = c1.clone();
+        c1_for_sb2.attachment_id = c2.attachment_id.clone();
+        c1_for_sb2.reservation_claim = c2.reservation_claim.clone();
         let selected = super::super::ipam::allocate_container_ips_on_first_available(
             &ipam_authority,
             &sb2_layout,
-            &[c1.clone(), c2.clone()],
+            &[c1_for_sb2, c2.clone()],
             &sb2,
             &reservation_claim(sb2.as_str()),
         )
@@ -515,6 +574,7 @@ mod tests {
             &ipam_authority,
             &sb2_layout,
             &sb2,
+            &secondary.attachment_id,
             &secondary.reservation_claim,
             secondary.provider_kind(),
         )
@@ -660,6 +720,7 @@ mod tests {
                 &ipam_authority,
                 &placements[free_index].1,
                 &placements[free_index].0,
+                &placements[free_index].2.attachment_id,
                 &placements[free_index].2.reservation_claim,
                 placements[free_index].2.provider_kind(),
             )

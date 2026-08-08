@@ -145,6 +145,7 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
         &backend.ipam_authority,
         &stale.network_layout,
         &stale.handle.id,
+        &stale_network_config.attachment_id,
         &stale_network_config.reservation_claim,
         stale_network_config.provider_kind(),
     )
@@ -219,6 +220,7 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
         &backend.ipam_authority,
         &stale.network_layout,
         &stale.handle.id,
+        &replacement_network_config.attachment_id,
         &replacement_network_config.reservation_claim,
         replacement_network_config.provider_kind(),
     )
@@ -378,6 +380,11 @@ fn natural_exit_preserves_terminal_ipam_until_segment_cleanup_finalizes() {
                 .network_config
                 .as_ref()
                 .expect("terminal manifest should retain generation identity")
+                .attachment_id,
+            &terminal
+                .network_config
+                .as_ref()
+                .expect("terminal manifest should retain generation identity")
                 .reservation_claim,
             terminal
                 .network_config
@@ -409,6 +416,7 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
         &backend.ipam_authority,
         &manifest.network_layout,
         &id,
+        &network_config.attachment_id,
         &network_config.reservation_claim,
         network_config.provider_kind(),
     )
@@ -443,6 +451,7 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
             &backend.ipam_authority,
             &manifest.network_layout,
             &id,
+            &network_config.attachment_id,
             &network_config.reservation_claim,
             network_config.provider_kind(),
         )

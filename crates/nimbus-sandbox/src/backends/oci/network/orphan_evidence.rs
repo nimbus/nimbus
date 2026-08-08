@@ -30,6 +30,7 @@ use readers::{
 mod classifier;
 pub(in crate::backends::oci::network) use classifier::{
     OciOrphanDisposition, OciOrphanQuarantineReason, classify_oci_orphan_evidence,
+    classify_retained_desired_manifest,
 };
 
 /// Durable authority that supplied a claim-qualified allocator observation.

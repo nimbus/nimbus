@@ -136,6 +136,68 @@ pub(super) fn write_manifest(
     .expect("manifest should write");
 }
 
+pub(super) fn write_container_manifest(
+    state_root: &Path,
+    sandbox_id: &str,
+    tenant_id: &str,
+    service_name: &str,
+    status: SandboxStatus,
+) {
+    let container_dir = state_root
+        .join("tenants")
+        .join(tenant_id)
+        .join("sandboxes")
+        .join(sandbox_id)
+        .join("state")
+        .join("containers")
+        .join(sandbox_id);
+    fs::create_dir_all(&container_dir).expect("container state directory should build");
+    let handle = nimbus::SandboxHandle::new(
+        nimbus::TenantId::new(tenant_id).expect("tenant id should parse"),
+        nimbus::SandboxId::new(sandbox_id),
+        service_name,
+        nimbus::SandboxBackendKind::Container,
+        status,
+        vec![nimbus::PublishedEndpoint::new(
+            "http",
+            nimbus::EndpointProtocol::Tcp,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
+        )],
+    );
+    let manifest = json!({
+        "handle": handle,
+        "spec": {
+            "tenant_id": tenant_id,
+            "owner": { "kind": "service", "name": service_name },
+            "backend": "container",
+            "root": { "kind": "rootfs", "rootfs": "/tmp/rootfs", "readonly": true },
+            "process": {
+                "args": ["/bin/server"],
+                "env": ["PATH=/usr/bin"],
+                "cwd": "/",
+                "terminal": false
+            },
+            "resources": nimbus::SandboxResourceLimits::default(),
+            "lifecycle": { "restart_policy": "never" },
+            "port_bindings": [nimbus::SandboxPortBinding::tcp("http", 18080, 8080)]
+        },
+        "conmon_layout": {
+            "container_state_dir": container_dir,
+            "ctr_log": container_dir.join("ctr.log"),
+            "oci_log": container_dir.join("oci.log")
+        },
+        "last_exit_code": null,
+        "restart_count": 0,
+        "shutdown_requested": matches!(status, SandboxStatus::Stopped),
+        "status": status
+    });
+    fs::write(
+        container_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).expect("container manifest should serialize"),
+    )
+    .expect("container manifest should write");
+}
+
 pub(super) fn sample_spec(tenant: &TenantId, service_name: &str) -> SandboxSpec {
     SandboxSpec::new(
         tenant.clone(),
@@ -166,7 +228,6 @@ pub(super) fn stub_handle(
 pub(super) struct StubBackend {
     pub(super) handles: Mutex<BTreeMap<String, SandboxHandle>>,
     pub(super) inspections: Mutex<BTreeMap<String, SandboxInspection>>,
-    pub(super) started_services: Mutex<Vec<String>>,
     pub(super) stopped_ids: Mutex<Vec<String>>,
 }
 
@@ -204,19 +265,6 @@ impl SandboxBackend for StubMachineApiSandboxBackend {
         SandboxBackendKind::Container
     }
 
-    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-        let service_name = spec.display_name().to_owned();
-        let handle = SandboxHandle::new(
-            spec.tenant_id.clone(),
-            SandboxId::new(format!("{service_name}-01stub")),
-            service_name,
-            SandboxBackendKind::Container,
-            SandboxStatus::Ready,
-            Vec::new(),
-        );
-        Box::pin(async move { Ok(handle) })
-    }
-
     fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         Box::pin(async move { Ok(None) })
     }
@@ -226,28 +274,35 @@ impl SandboxBackend for StubMachineApiSandboxBackend {
     }
 }
 
+pub(super) struct StubMachineApiContainerBackend {
+    inner: StubBackend,
+}
+
+impl StubMachineApiContainerBackend {
+    pub(super) fn with_handles(handles: impl IntoIterator<Item = SandboxHandle>) -> Self {
+        Self {
+            inner: StubBackend::with_handles(handles),
+        }
+    }
+}
+
+impl SandboxBackend for StubMachineApiContainerBackend {
+    fn kind(&self) -> SandboxBackendKind {
+        SandboxBackendKind::Container
+    }
+
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
+        self.inner.inspect(id)
+    }
+
+    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
+        self.inner.stop(id)
+    }
+}
+
 impl SandboxBackend for StubBackend {
     fn kind(&self) -> SandboxBackendKind {
         SandboxBackendKind::Krun
-    }
-
-    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-        let service_name = spec.display_name().to_owned();
-        let handle = stub_handle(
-            &spec.tenant_id,
-            &SandboxId::new(format!("{service_name}-01stub")),
-            &service_name,
-            SandboxStatus::Starting,
-        );
-        self.started_services
-            .lock()
-            .expect("started services lock should hold")
-            .push(service_name);
-        self.handles
-            .lock()
-            .expect("handles lock should hold")
-            .insert(handle.id.as_str().to_owned(), handle.clone());
-        Box::pin(async move { Ok(handle) })
     }
 
     fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {

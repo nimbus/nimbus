@@ -1,15 +1,15 @@
 use super::support::*;
 use super::*;
 
-/// M2 verification: prove that image EXPOSE ports are auto-assigned from the
-/// backend-owned port range when the generic spec has no explicit bindings.
+/// M2 verification: prove that a compiled provider-assigned listener is
+/// allocated from the host-global port range and can be reused after release.
 ///
 /// Creates a custom image with `EXPOSE 8080/tcp`, then:
-///   1. starts sandbox A with no explicit port bindings
+///   1. provisions sandbox A with an explicit provider-assigned binding
 ///   2. verifies it gets an auto-assigned host port from 15000+
-///   3. starts sandbox B — verifies it gets a different host port
+///   3. provisions sandbox B — verifies it gets a different host port
 ///   4. stops sandbox A — verifies its port is released
-///   5. starts sandbox C — verifies it reuses sandbox A's released port
+///   5. provisions sandbox C — verifies it reuses sandbox A's released port
 #[test]
 #[ignore = "requires a Linux host with KVM, buildah, conmon, and network access"]
 fn krun_backend_m2_auto_port_assignment_and_reuse() {
@@ -17,7 +17,7 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     let bundle_root = base_dir.join("autoport-bundles");
     let state_root = base_dir.join("autoport-state");
 
-    let mut config = smoke_backend_config(bundle_root, state_root);
+    let mut config = smoke_backend_config(bundle_root, state_root.clone());
     config.published_port_range = 15100..=15105;
 
     let buildah = buildah_program();
@@ -51,14 +51,18 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     let backend = KrunSandboxBackend::new(config);
 
     let make_spec = |name: &str| {
-        let mut spec = image_spec(name, "localhost/nimbus-autoport:latest");
+        let mut spec = image_spec(name, "localhost/nimbus-autoport:latest")
+            .with_port_binding(http_binding(0, 8080));
         spec.process = busybox_http_process(8080);
         spec
     };
 
     // --- Sandbox A ---
-    let handle_a =
-        block_on(backend.start(make_spec("autoport-a"))).expect("sandbox A should start");
+    let provisioned_a = provision_krun(&backend, &state_root, make_spec("autoport-a"), true)
+        .expect("sandbox A should provision through every lifecycle phase");
+    assert!(!provisioned_a.ingress.is_empty());
+    let handle_a = provisioned_a.handle;
+    let ingress_a = provisioned_a.ingress;
     let cleanup_a = CleanupGuard::new(backend.clone(), handle_a.id.clone());
 
     let ready_a = wait_for_ready(&backend, &handle_a.id, Duration::from_secs(30));
@@ -83,8 +87,11 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     eprintln!("sandbox A HTTP connectivity on port {port_a}: OK");
 
     // --- Sandbox B ---
-    let handle_b =
-        block_on(backend.start(make_spec("autoport-b"))).expect("sandbox B should start");
+    let provisioned_b = provision_krun(&backend, &state_root, make_spec("autoport-b"), true)
+        .expect("sandbox B should provision through every lifecycle phase");
+    assert!(!provisioned_b.ingress.is_empty());
+    let handle_b = provisioned_b.handle;
+    let _ingress_b = provisioned_b.ingress;
     let cleanup_b = CleanupGuard::new(backend.clone(), handle_b.id.clone());
 
     let ready_b = wait_for_ready(&backend, &handle_b.id, Duration::from_secs(30));
@@ -107,11 +114,15 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     // --- Stop A, verify port release ---
     block_on(backend.stop(&handle_a.id)).expect("stop A should succeed");
     cleanup_a.disarm();
+    drop(ingress_a);
     eprintln!("sandbox A stopped, port {port_a} should be released");
 
     // --- Sandbox C: should reuse A's released port ---
-    let handle_c =
-        block_on(backend.start(make_spec("autoport-c"))).expect("sandbox C should start");
+    let provisioned_c = provision_krun(&backend, &state_root, make_spec("autoport-c"), true)
+        .expect("sandbox C should provision through every lifecycle phase");
+    assert!(!provisioned_c.ingress.is_empty());
+    let handle_c = provisioned_c.handle;
+    let _ingress_c = provisioned_c.ingress;
     let cleanup_c = CleanupGuard::new(backend.clone(), handle_c.id.clone());
 
     let ready_c = wait_for_ready(&backend, &handle_c.id, Duration::from_secs(30));
@@ -152,7 +163,7 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
     let bundle_root = base_dir.join("m3-readiness-bundles");
     let state_root = base_dir.join("m3-readiness-state");
 
-    let backend = KrunSandboxBackend::new(smoke_backend_config(bundle_root, state_root));
+    let backend = KrunSandboxBackend::new(smoke_backend_config(bundle_root, state_root.clone()));
     let delayed_command = format!("sleep 2; exec /bin/busybox httpd -f -p {guest_port}");
     let mut spec = rootfs_spec("m3-readiness-gate", rootfs);
     spec.process = SandboxProcessSpec::new([
@@ -163,7 +174,11 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
     ]);
     let spec = spec.with_port_binding(http_binding(host_port, guest_port));
 
-    let handle = block_on(backend.start(spec)).expect("readiness-gated sandbox should start");
+    let provisioned = provision_krun(&backend, &state_root, spec, true)
+        .expect("readiness-gated sandbox should provision through every lifecycle phase");
+    assert!(!provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let _ingress = provisioned.ingress;
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     assert_eq!(handle.status, SandboxStatus::Starting);
@@ -177,11 +192,11 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
     while Instant::now() < deadline {
         if let Some(current) = block_on(backend.inspect(&handle.id))
             .expect("inspect should succeed")
-            .filter(|h| h.status == SandboxStatus::Starting)
+            .filter(|inspection| inspection.handle.status == SandboxStatus::Starting)
         {
             observed_starting = true;
             assert!(
-                current.published_endpoints.is_empty(),
+                current.handle.published_endpoints.is_empty(),
                 "published endpoints should remain hidden while the guest is still booting"
             );
             break;
@@ -229,7 +244,7 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
     let bundle_root = base_dir.join("m3-liveness-bundles");
     let state_root = base_dir.join("m3-liveness-state");
 
-    let backend = KrunSandboxBackend::new(smoke_backend_config(bundle_root, state_root));
+    let backend = KrunSandboxBackend::new(smoke_backend_config(bundle_root, state_root.clone()));
     let liveness_script = format!(
         "/bin/busybox httpd -f -p {guest_port} & \
          HTTPD_PID=$!; \
@@ -247,7 +262,11 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
     ]);
     let spec = spec.with_port_binding(http_binding(host_port, guest_port));
 
-    let handle = block_on(backend.start(spec)).expect("liveness-gated sandbox should start");
+    let provisioned = provision_krun(&backend, &state_root, spec, true)
+        .expect("liveness-gated sandbox should provision through every lifecycle phase");
+    assert!(!provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let _ingress = provisioned.ingress;
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(15));

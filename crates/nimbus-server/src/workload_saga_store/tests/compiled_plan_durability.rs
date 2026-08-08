@@ -47,7 +47,7 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_CHILD_DIAGNOSTIC_BYTES: usize = 4 * 1024;
 const PID_PREFIX: &str = "NIMBUS_NNC62A_PROCESS_ID";
 const FINGERPRINT_PREFIX: &str = "NIMBUS_NNC62A_COMPILED_PLAN_FINGERPRINT";
-const EXPECTED_OBSERVATION: &str = "compiled-plan-v1:wire-d111446a4c0771bc898907c29b034bc71e4fcd4cc1b128a7f3c2024689cf15e7:content-ebb1107990fac278d146f6a05dacf1702c5e9547292e16a1d4d8676eef8377e2:plan-b8305c5b640d8af7aa4ed054709fe1de510dc4f1cd2fc0843a0bfdb8829eafdc:a1:r1:l1:d1:q3";
+const EXPECTED_OBSERVATION: &str = "compiled-plan-v1:wire-0b0795fd441c8ac37c8d149ac914eb2caedb44b72c1eba118af1d03ec90d7652:content-4a7e6059e526e63c8356d3ffb67decb69efe8022153e1465e2c42a68176a44e5:plan-ccc17276735408f235495e5ad4a792cf59dc101ef4c7d939583feababa2700e0:a1:r1:l1:d1:q3";
 const TENANT: &str = "tenant-nnc62a";
 const WORKLOAD: &str = "workload-nnc62a";
 const NETWORK_GENERATION: u64 = 7;
@@ -277,11 +277,18 @@ fn populated_compiled_plan() -> CompiledWorkloadNetworkPlan {
             NetworkForwardingFeature::PortForwarding,
             NetworkForwardingFeature::ConnectionDrain,
         ]),
-        NetworkLifecycleCapabilitySet::new([
-            NetworkLifecycleFeature::DurableInspect,
-            NetworkLifecycleFeature::Reconcile,
-            NetworkLifecycleFeature::Delete,
-        ]),
+        nimbus_network::NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([
+                NetworkLifecycleFeature::DurableInspect,
+                NetworkLifecycleFeature::Reconcile,
+                NetworkLifecycleFeature::Delete,
+            ]),
+            NetworkLifecycleCapabilitySet::new([
+                NetworkLifecycleFeature::DurableInspect,
+                NetworkLifecycleFeature::Reconcile,
+                NetworkLifecycleFeature::Delete,
+            ]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     );
     let selection = NetworkCapabilitySelection::new(
@@ -417,11 +424,12 @@ async fn recover_compiled_plan(root: &Path) -> Result<String, String> {
             decision.action()
         ));
     };
-    let Some(WorkloadProvisionDisposition::AttemptPending(attempt)) =
+    let Some(WorkloadProvisionDisposition::DispatchPending(claim)) =
         proposed.candidate().provision_disposition()
     else {
         return Err("ReserveNetwork proposal omitted its exact pending attempt".to_owned());
     };
+    let attempt = claim.attempt();
     let nimbus_workloads::WorkloadProvisionSubjects::Network(reference) = attempt.subjects() else {
         return Err("ReserveNetwork attempt omitted its network subject".to_owned());
     };
@@ -431,11 +439,12 @@ async fn recover_compiled_plan(root: &Path) -> Result<String, String> {
     else {
         return Err("expected record did not derive a ReserveNetwork proposal".to_owned());
     };
-    let Some(WorkloadProvisionDisposition::AttemptPending(expected_attempt)) =
+    let Some(WorkloadProvisionDisposition::DispatchPending(expected_claim)) =
         expected_proposed.candidate().provision_disposition()
     else {
         return Err("expected proposal omitted its pending attempt".to_owned());
     };
+    let expected_attempt = expected_claim.attempt();
     if attempt != expected_attempt
         || attempt.key() != record.key()
         || attempt.saga_id() != record.saga_id()

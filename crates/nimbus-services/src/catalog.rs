@@ -7,6 +7,11 @@ use nimbus_tenant::TenantVolumePolicyDecision;
 use sha2::{Digest, Sha256};
 use ulid::Ulid;
 
+const SERVICE_DEFINITION_RESOURCE_VERSION_DOMAIN: &[u8] =
+    b"nimbus.services.service-definition.resource-version.v1";
+const SANDBOX_RESOURCE_VERSION_DOMAIN: &[u8] =
+    b"nimbus.services.sandbox-resource.resource-version.v1";
+
 pub trait ServiceInstanceCatalog: Send + Sync + 'static {
     fn service_instances_for_tenant(&self, tenant_id: &TenantId)
     -> BTreeMap<String, SandboxHandle>;
@@ -81,6 +86,47 @@ pub struct SandboxResource {
     pub created_at_millis: u64,
     pub updated_at_millis: u64,
     pub labels: BTreeMap<String, String>,
+}
+
+/// Desired source for one standalone sandbox, stored before provider effects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxResourceSource {
+    pub tenant_id: TenantId,
+    pub id: String,
+    pub profile: String,
+    pub spec: SandboxSpec,
+    pub generation: u64,
+    pub resource_version: String,
+    pub created_at_millis: u64,
+    pub updated_at_millis: u64,
+    pub labels: BTreeMap<String, String>,
+}
+
+/// Optional provider observation for one exact desired sandbox generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxResourceObservation {
+    pub tenant_id: TenantId,
+    pub id: String,
+    pub observed_generation: u64,
+    pub handle: SandboxHandle,
+    pub observed_at_millis: u64,
+}
+
+/// Source plus its optional observed projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxResourceSnapshot {
+    pub source: SandboxResourceSource,
+    pub observation: Option<SandboxResourceObservation>,
+}
+
+/// Generation-fenced observed projection for a sandbox-backed service definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceDefinitionObservation {
+    pub tenant_id: TenantId,
+    pub name: String,
+    pub observed_generation: u64,
+    pub handle: SandboxHandle,
+    pub observed_at_millis: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -290,19 +336,153 @@ impl ServiceDefinition {
         name: impl Into<String>,
         backend: ServiceBackend,
     ) -> Self {
+        Self::static_catalog_with_labels(tenant_id, name, backend, BTreeMap::new())
+    }
+
+    /// Build one complete immutable catalog snapshot at its initial generation.
+    pub fn static_catalog_with_labels(
+        tenant_id: TenantId,
+        name: impl Into<String>,
+        backend: ServiceBackend,
+        labels: BTreeMap<String, String>,
+    ) -> Self {
         let name = name.into();
+        let generation = 1;
+        let resource_version =
+            service_definition_resource_version(&tenant_id, &name, generation, &backend, &labels);
         Self {
             tenant_id,
-            resource_version: format!("static:{name}"),
+            resource_version,
             name,
             backend,
-            generation: 0,
+            generation,
             created_at_millis: 0,
             updated_at_millis: 0,
-            labels: BTreeMap::new(),
+            labels,
             source: ServiceDefinitionSource::StaticCatalog,
         }
     }
+}
+
+impl SandboxResourceSource {
+    pub fn new(
+        tenant_id: TenantId,
+        id: impl Into<String>,
+        profile: impl Into<String>,
+        spec: SandboxSpec,
+        generation: u64,
+        now_millis: u64,
+        labels: BTreeMap<String, String>,
+    ) -> Self {
+        let id = id.into();
+        let profile = profile.into();
+        let resource_version =
+            sandbox_resource_version(&tenant_id, &id, &profile, generation, &spec, &labels);
+        Self {
+            tenant_id,
+            id,
+            profile,
+            spec,
+            generation,
+            resource_version,
+            created_at_millis: now_millis,
+            updated_at_millis: now_millis,
+            labels,
+        }
+    }
+}
+
+fn service_definition_resource_version(
+    tenant_id: &TenantId,
+    name: &str,
+    generation: u64,
+    backend: &ServiceBackend,
+    labels: &BTreeMap<String, String>,
+) -> String {
+    let backend = canonical_service_backend_bytes(backend);
+    let labels = serde_json::to_vec(labels)
+        .expect("service labels must have an infallible canonical JSON representation");
+    let generation = generation.to_be_bytes();
+    digest_resource_version(
+        SERVICE_DEFINITION_RESOURCE_VERSION_DOMAIN,
+        [
+            tenant_id.as_str().as_bytes(),
+            name.as_bytes(),
+            generation.as_slice(),
+            backend.as_slice(),
+            labels.as_slice(),
+        ],
+    )
+}
+
+fn sandbox_resource_version(
+    tenant_id: &TenantId,
+    id: &str,
+    profile: &str,
+    generation: u64,
+    spec: &SandboxSpec,
+    labels: &BTreeMap<String, String>,
+) -> String {
+    let spec = serde_json::to_vec(spec)
+        .expect("sandbox specs must have an infallible canonical JSON representation");
+    let labels = serde_json::to_vec(labels)
+        .expect("sandbox labels must have an infallible canonical JSON representation");
+    let generation = generation.to_be_bytes();
+    digest_resource_version(
+        SANDBOX_RESOURCE_VERSION_DOMAIN,
+        [
+            tenant_id.as_str().as_bytes(),
+            id.as_bytes(),
+            profile.as_bytes(),
+            generation.as_slice(),
+            spec.as_slice(),
+            labels.as_slice(),
+        ],
+    )
+}
+
+fn canonical_service_backend_bytes(backend: &ServiceBackend) -> Vec<u8> {
+    let value = match backend {
+        ServiceBackend::Sandbox(spec) => serde_json::json!({
+            "kind": "sandbox",
+            "spec": spec,
+        }),
+        ServiceBackend::BuiltIn(spec) => serde_json::json!({
+            "kind": "built_in",
+            "provider": spec.provider(),
+        }),
+        ServiceBackend::External(spec) => {
+            let auth = match spec.auth() {
+                ExternalAuthPolicy::None => "none",
+            };
+            let HealthCheckPolicy::Http { path } = spec.health();
+            serde_json::json!({
+                "kind": "external",
+                "endpoint_url": spec.endpoint(),
+                "auth": auth,
+                "health": {
+                    "kind": "http",
+                    "path": path,
+                },
+            })
+        }
+    };
+    serde_json::to_vec(&value)
+        .expect("service backend values must have an infallible canonical JSON representation")
+}
+
+fn digest_resource_version<'a>(
+    domain: &[u8],
+    frames: impl IntoIterator<Item = &'a [u8]>,
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update((domain.len() as u64).to_be_bytes());
+    digest.update(domain);
+    for frame in frames {
+        digest.update((frame.len() as u64).to_be_bytes());
+        digest.update(frame);
+    }
+    format!("sha256:{}", lower_hex(&digest.finalize()))
 }
 
 impl DurableObjectNamespace {
@@ -445,16 +625,16 @@ fn lower_hex(bytes: &[u8]) -> String {
 }
 
 pub trait ServiceDefinitionCatalog: Send + Sync + 'static {
-    fn service_backend_for_tenant(
+    fn service_definition_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<ServiceBackend>;
+    ) -> Option<ServiceDefinition>;
 
-    fn service_backends_for_tenant(
+    fn service_definitions_for_tenant(
         &self,
         _tenant_id: &TenantId,
-    ) -> BTreeMap<String, ServiceBackend> {
+    ) -> BTreeMap<String, ServiceDefinition> {
         BTreeMap::new()
     }
 
@@ -483,23 +663,26 @@ impl ServiceInstanceCatalog for EmptyServiceInstanceCatalog {
 pub struct EmptyServiceDefinitionCatalog;
 
 impl ServiceDefinitionCatalog for EmptyServiceDefinitionCatalog {
-    fn service_backend_for_tenant(
+    fn service_definition_for_tenant(
         &self,
         _tenant_id: &TenantId,
         _service_name: &str,
-    ) -> Option<ServiceBackend> {
+    ) -> Option<ServiceDefinition> {
         None
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use nimbus_core::TenantId;
 
     use super::{
         DurableObjectId, DurableObjectIdError, DurableObjectInstanceKey, DurableObjectNamespace,
         DurableObjectNamespaceError, DurableObjectStorageHandle, EmptyServiceDefinitionCatalog,
-        EmptyServiceInstanceCatalog, ServiceDefinitionCatalog, ServiceInstanceCatalog,
+        EmptyServiceInstanceCatalog, ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog,
+        ServiceInstanceCatalog,
     };
 
     #[test]
@@ -533,7 +716,7 @@ mod tests {
 
         assert!(
             catalog
-                .service_backend_for_tenant(&tenant_id, "db")
+                .service_definition_for_tenant(&tenant_id, "db")
                 .is_none(),
             "empty service definition catalog should not declare services"
         );
@@ -551,6 +734,59 @@ mod tests {
                 .is_empty(),
             "empty service definition catalog should not authorize service volumes"
         );
+    }
+
+    #[test]
+    fn static_service_definition_digest_is_complete_stable_and_initial_generation() {
+        let tenant_id = TenantId::new("tenant-a").expect("tenant id should be valid");
+        let mut labels = BTreeMap::new();
+        labels.insert("region".to_owned(), "local".to_owned());
+        let definition = ServiceDefinition::static_catalog_with_labels(
+            tenant_id.clone(),
+            "api",
+            ServiceBackend::built_in("native-api"),
+            labels.clone(),
+        );
+        let reconstructed = ServiceDefinition::static_catalog_with_labels(
+            tenant_id.clone(),
+            "api",
+            ServiceBackend::built_in("native-api"),
+            labels.clone(),
+        );
+
+        assert_eq!(definition.generation, 1);
+        assert_eq!(definition, reconstructed);
+        assert!(definition.resource_version.starts_with("sha256:"));
+        assert_eq!(definition.resource_version.len(), "sha256:".len() + 64);
+
+        for changed in [
+            ServiceDefinition::static_catalog_with_labels(
+                TenantId::new("tenant-b").expect("tenant id should be valid"),
+                "api",
+                ServiceBackend::built_in("native-api"),
+                labels.clone(),
+            ),
+            ServiceDefinition::static_catalog_with_labels(
+                tenant_id.clone(),
+                "worker",
+                ServiceBackend::built_in("native-api"),
+                labels.clone(),
+            ),
+            ServiceDefinition::static_catalog_with_labels(
+                tenant_id.clone(),
+                "api",
+                ServiceBackend::built_in("native-worker"),
+                labels.clone(),
+            ),
+            ServiceDefinition::static_catalog_with_labels(
+                tenant_id,
+                "api",
+                ServiceBackend::built_in("native-api"),
+                BTreeMap::new(),
+            ),
+        ] {
+            assert_ne!(definition.resource_version, changed.resource_version);
+        }
     }
 
     #[test]

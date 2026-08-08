@@ -30,7 +30,6 @@ use super::ipam::{
 use super::layout::{OciNetworkConfig, OciNetworkLayout};
 use super::{
     DEFAULT_CONTAINER_INTERFACE_NAME, NETAVARK_OPTION_ISOLATE, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
-    default_network_attachment_id,
 };
 
 #[cfg(test)]
@@ -259,7 +258,7 @@ fn execute_prepared_container_network_setup_with_runner(
             message: format!(
                 "prepared Netavark setup for attachment {} carries addresses that differ from \
                  its exact durable IPAM generation",
-                default_network_attachment_id(sandbox_id)
+                config.attachment_id
             ),
         });
     }
@@ -268,7 +267,7 @@ fn execute_prepared_container_network_setup_with_runner(
         let projection = super::dto::NetavarkStatusProjection {
             schema_version: super::dto::NetavarkStatusProjection::SCHEMA_VERSION,
             tenant_id: layout.tenant_id.clone(),
-            attachment_id: default_network_attachment_id(sandbox_id),
+            attachment_id: config.attachment_id.clone(),
             setup_attempt: setup_claim.operation_attempt().clone(),
             assigned_ips: assigned_ips.clone(),
             response,

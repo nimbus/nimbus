@@ -46,6 +46,7 @@ mod authority;
 mod crash_recovery;
 mod durable_recovery;
 mod effect_order;
+mod exact_plan;
 mod real_adapters;
 
 use authority::stale_provenance_fails_before_effects;
@@ -92,16 +93,17 @@ impl ContractBackend {
     ) -> Result<OciNetworkConfig> {
         let netavark = PathBuf::from("netavark-contract-not-executed");
         let aardvark = PathBuf::from("aardvark-contract-not-executed");
-        match self {
+        let attachment_id = default_network_attachment_id(sandbox_id);
+        let mut config = match self {
             Self::Container => {
                 <ContainerSandboxBackend as OciHostManagedAttachmentBackend>::reserve_attachment_config(
                     lifecycle,
                     tenant_id,
                     layout,
                     sandbox_id,
+                    &attachment_id,
                     claim,
-                    netavark,
-                    aardvark,
+                    OciAttachmentProviderPaths::new(netavark, aardvark),
                 )
             }
             Self::Krun => {
@@ -110,12 +112,14 @@ impl ContractBackend {
                     tenant_id,
                     layout,
                     sandbox_id,
+                    &attachment_id,
                     claim,
-                    netavark,
-                    aardvark,
+                    OciAttachmentProviderPaths::new(netavark, aardvark),
                 )
             }
-        }
+        }?;
+        config.network_plan = Some(oci_attachment_plan(tenant_id, sandbox_id, self.kind()));
+        Ok(config)
     }
 }
 

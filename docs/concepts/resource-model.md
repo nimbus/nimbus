@@ -43,7 +43,7 @@ how the capability is provided, and there are three kinds:
 
 - **Sandbox-backed** — Nimbus launches and supervises a sandbox from the
   spec embedded in the definition. This is the workhorse backend: the
-  lifecycle verbs (`start`, `stop`, `restart`, readiness waiting) operate
+  lifecycle verbs (`start`, `stop`, readiness waiting) operate
   on sandbox-backed services, and it is also how Compose files lower —
   each Compose `services:` entry becomes a sandbox-backed service
   definition in the tenant's catalog.
@@ -56,9 +56,11 @@ how the capability is provided, and there are three kinds:
   validation, and authorization around the endpoint; the process behind
   it is yours.
 
-Today only sandbox-backed services can actually be launched by the service
-manager; built-in and external services exist as validated definitions and
-report a `declared` lifecycle state rather than a running one.
+Today only sandbox-backed services can be provisioned. `nimbus-services` owns
+their desired definitions and observed projections; `nimbus-compute` owns the
+generation-fenced provisioning saga and provider dispatch. Built-in and
+external services exist as validated definitions and report a `declared`
+lifecycle state rather than a running one.
 
 Two distinctions worth internalizing:
 

@@ -3,27 +3,47 @@
 //! This module orders existing portable and effect-owner seams. It does not
 //! implement sockets, provider effects, policy, service naming, or forwarding.
 
+mod forwarded;
+
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nimbus::{Error, ServiceManager};
+use nimbus::{Engine, Error, ServiceManager};
+use nimbus_compute::embedded_local_node_identity;
+use nimbus_compute::workload_saga::{KrunProvisionAdapter, sandbox_execution_provider_id};
 use nimbus_core::{Cidr, CidrError};
 use nimbus_network::{
     LocalNetworkAuthority, LocalNetworkAuthorityRootMismatch, LocalNetworkManager,
     LocalNetworkManagerBootstrap, LocalNetworkManagerError, NetworkAttachmentProviderRegistration,
     NetworkCapabilityBundle, NetworkCapabilityRegistry, NetworkCapabilityRegistryError,
+    NetworkCapabilityRequirements, NetworkCapabilitySelection, NetworkCapabilitySelectionError,
     NetworkIngressProviderRegistration,
 };
 use nimbus_operator::LocalNodeNetworkRoot;
+use nimbus_sandbox::backends::SandboxAttachmentRegistrationError;
 use nimbus_sandbox::backends::krun::{
     KrunSandboxBackend, KrunSandboxBackendConfig, KrunSandboxStateView,
 };
-use nimbus_sandbox::{OciNetworkProcess, OciNetworkProcessError};
+use nimbus_sandbox::{
+    OciNetworkProcess, OciNetworkProcessError, ProviderProvisionJournalError, SandboxBackendKind,
+    sandbox_network_plan_requirements,
+};
+use nimbus_server::{
+    ServeOptions, ServerForegroundWorkloadRuntime, ServerIngressPublicationAdapter,
+    ServerWorkloadComposition, ServerWorkloadCompositionError, ServerWorkloadProviders,
+};
+use nimbus_workloads::{NodeIdentity, WorkloadSagaStore};
 
+use self::forwarded::PreparedForwardedServerWorkload;
+#[cfg(test)]
+pub(crate) use self::forwarded::prepare_forwarded_server_profile_for_test;
 use crate::compose::discovery::ResolvedComposeSelection;
-use crate::compose::prepare_local_service_manager_for_selection_with_isolation_mode;
+use crate::compose::{
+    PreparedForwardedComposeProvisionSource,
+    prepare_local_service_manager_for_selection_with_isolation_mode,
+};
 
 /// Exact source set admitted by the outer local-node composition.
 ///
@@ -141,10 +161,20 @@ impl StagedLocalNetworkComposition {
             _oci_process: self.oci_process,
         })
     }
+
+    pub(crate) fn freeze_bundle(
+        self,
+        bundle: NetworkCapabilityBundle,
+    ) -> Result<FrozenLocalNetworkComposition, LocalNetworkCompositionError> {
+        self.freeze(LocalCapabilitySources::complete(
+            bundle.attachment().clone(),
+            bundle.ingress().clone(),
+        ))
+    }
 }
 
 /// Process-lifetime retention of the frozen manager and optional OCI process.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct FrozenLocalNetworkComposition {
     manager: Arc<LocalNetworkManager>,
     _oci_process: Option<Arc<OciNetworkProcess>>,
@@ -176,10 +206,193 @@ pub(crate) struct PreparedLocalNetworkComposition {
     local_service_manager: Option<Arc<ServiceManager>>,
     local_krun_backend: Option<Arc<KrunSandboxBackend>>,
     local_krun_state_view: Option<KrunSandboxStateView>,
+    local_krun_network_root: Option<PathBuf>,
     compose_selection: Option<ResolvedComposeSelection>,
     control_data_dir: PathBuf,
     tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
     admitted_ingress: Option<NetworkIngressProviderRegistration>,
+    forwarded: Option<PreparedForwardedComposeProvisionSource>,
+}
+
+/// Server profile prepared before provider journals or listener effects exist.
+///
+/// The protocol-only shape retains the exact frozen manager so its process
+/// claim and empty capability report survive until serving starts. The local
+/// shape retains every source that earned the selected provider evidence; it
+/// can only be completed after those sources authenticate again.
+pub(crate) enum PreparedServerWorkloadProfile {
+    ProtocolOnly {
+        network_manager: Arc<LocalNetworkManager>,
+    },
+    LocalKrun(Box<PreparedLocalKrunServerWorkload>),
+    Forwarded(Box<PreparedForwardedServerWorkload>),
+}
+
+pub(crate) struct PreparedLocalKrunServerWorkload {
+    network_manager: Arc<LocalNetworkManager>,
+    service_manager: Arc<ServiceManager>,
+    backend: Arc<KrunSandboxBackend>,
+    network_root: PathBuf,
+    attachment: NetworkAttachmentProviderRegistration,
+    ingress: NetworkIngressProviderRegistration,
+    selection: NetworkCapabilitySelection,
+    requirements: NetworkCapabilityRequirements,
+    local_node: NodeIdentity,
+}
+
+impl PreparedServerWorkloadProfile {
+    /// Whether this profile owns the complete workload lifecycle composition.
+    pub(crate) const fn is_managed(&self) -> bool {
+        matches!(self, Self::LocalKrun(_) | Self::Forwarded(_))
+    }
+
+    /// Complete the prepared profile with the caller's exact Engine.
+    ///
+    /// Complete validation runs before adapters and performs no provider effect.
+    pub(crate) fn complete(
+        self,
+        engine: Arc<Engine>,
+    ) -> Result<ServeOptions, LocalNetworkCompositionError> {
+        match self {
+            Self::ProtocolOnly { network_manager } => {
+                if network_manager
+                    .capability_registry()
+                    .selections()
+                    .next()
+                    .is_some()
+                {
+                    return Err(LocalNetworkCompositionError::PreparedContextMismatch(
+                        "a protocol-only server profile cannot expose workload provider reports"
+                            .to_owned(),
+                    ));
+                }
+                Ok(ServeOptions::protocol_only_with_authority(
+                    engine,
+                    network_manager.authority(),
+                ))
+            }
+            Self::LocalKrun(prepared) => prepared.complete(engine),
+            Self::Forwarded(prepared) => prepared.complete(engine),
+        }
+    }
+
+    pub(crate) fn complete_foreground(
+        self,
+        engine: Arc<Engine>,
+        saga_store: Arc<dyn WorkloadSagaStore>,
+    ) -> Result<ServerForegroundWorkloadRuntime, LocalNetworkCompositionError> {
+        match self {
+            Self::ProtocolOnly { .. } => {
+                Err(LocalNetworkCompositionError::ForegroundWorkloadSourcesUnavailable)
+            }
+            Self::LocalKrun(prepared) => Ok(prepared
+                .into_workload_composition(engine)?
+                .into_foreground_runtime(saga_store)),
+            Self::Forwarded(prepared) => Ok(prepared
+                .into_workload_composition(engine)?
+                .into_foreground_runtime(saga_store)),
+        }
+    }
+}
+
+impl PreparedLocalKrunServerWorkload {
+    fn validate(&self) -> Result<(), LocalNetworkCompositionError> {
+        self.network_manager
+            .authority()
+            .authenticate_state_root(&self.network_root)
+            .map_err(LocalNetworkCompositionError::PreparedAuthorityRootMismatch)?;
+
+        let actual_attachment = self
+            .backend
+            .host_managed_attachment_registration()
+            .map_err(LocalNetworkCompositionError::AttachmentRegistration)?;
+        if actual_attachment != self.attachment {
+            return Err(LocalNetworkCompositionError::PreparedContextMismatch(
+                "the retained krun attachment report changed after capability freeze".to_owned(),
+            ));
+        }
+
+        let actual_ingress = nimbus_server::nimbus_owned_workload_ingress_registration();
+        if actual_ingress != self.ingress {
+            return Err(LocalNetworkCompositionError::PreparedContextMismatch(
+                "the retained server ingress report changed after capability freeze".to_owned(),
+            ));
+        }
+
+        let expected_selection = NetworkCapabilitySelection::new(
+            self.attachment.provider_id().clone(),
+            self.ingress.provider_id().clone(),
+        );
+        if self.selection != expected_selection {
+            return Err(LocalNetworkCompositionError::PreparedContextMismatch(
+                "the prepared provider selection does not name the retained source reports"
+                    .to_owned(),
+            ));
+        }
+
+        let registry = self.network_manager.capability_registry();
+        let selected = registry
+            .select_exact(&self.selection, &self.requirements)
+            .map_err(LocalNetworkCompositionError::CapabilitySelection)?;
+        let selection_count = registry.selections().count();
+        if selection_count != 1 {
+            return Err(LocalNetworkCompositionError::PreparedContextMismatch(
+                format!(
+                    "a local krun server profile requires exactly one admitted provider bundle; found {selection_count}"
+                ),
+            ));
+        }
+        if selected.attachment() != &self.attachment || selected.ingress() != &self.ingress {
+            return Err(LocalNetworkCompositionError::PreparedContextMismatch(
+                "the exact registry selection does not equal the retained source reports"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn complete(self, engine: Arc<Engine>) -> Result<ServeOptions, LocalNetworkCompositionError> {
+        Ok(ServeOptions::managed(
+            self.into_workload_composition(engine)?,
+        ))
+    }
+
+    fn into_workload_composition(
+        self,
+        engine: Arc<Engine>,
+    ) -> Result<ServerWorkloadComposition, LocalNetworkCompositionError> {
+        self.validate()?;
+
+        let execution = Arc::new(
+            KrunProvisionAdapter::new(Arc::clone(&self.backend))
+                .map_err(LocalNetworkCompositionError::ProviderJournal)?,
+        );
+        let ingress = Arc::new(
+            ServerIngressPublicationAdapter::new(
+                Arc::clone(&self.backend),
+                self.network_manager.authority(),
+            )
+            .map_err(LocalNetworkCompositionError::ProviderJournal)?,
+        );
+        let providers = ServerWorkloadProviders::new(
+            self.selection.attachment_provider_id().clone(),
+            Arc::clone(&execution),
+            sandbox_execution_provider_id(SandboxBackendKind::Krun),
+            execution,
+            self.selection.ingress_provider_id().clone(),
+            ingress,
+        );
+        ServerWorkloadComposition::new(
+            engine,
+            self.network_manager,
+            self.service_manager,
+            self.local_node,
+            self.selection,
+            self.requirements.sovereignty().clone(),
+            providers,
+        )
+        .map_err(LocalNetworkCompositionError::ServerWorkload)
+    }
 }
 
 impl PreparedLocalNetworkComposition {
@@ -201,8 +414,9 @@ impl PreparedLocalNetworkComposition {
 
     /// Prepare a standalone Compose composition.
     ///
-    /// The attachment is retained for real execution but the registry freezes
-    /// empty because no ingress source exists in this process.
+    /// Local attachment-only sources freeze no provider report. A machine
+    /// forwarded selection instead freezes its exact complete provider bundle
+    /// while retaining activation until the caller supplies its `Engine`.
     pub(crate) fn prepare_attachment_only(
         staged: StagedLocalNetworkComposition,
         compose_selection: &ResolvedComposeSelection,
@@ -236,12 +450,24 @@ impl PreparedLocalNetworkComposition {
             .transpose()
             .map_err(LocalNetworkCompositionError::Compose)?
             .flatten();
+        let prepared_forwarded = if prepared_local_service.is_none() {
+            forwarded::prepare_source(
+                &staged,
+                compose_selection,
+                control_data_dir,
+                tenant_isolation_mode,
+            )?
+        } else {
+            None
+        };
         let (
             local_service_manager,
             local_krun_backend,
             local_krun_state_view,
+            local_krun_network_root,
             sources,
             admitted_ingress,
+            forwarded,
         ) = match prepared_local_service {
             Some(prepared) => {
                 let (sources, admitted_ingress) = match ingress {
@@ -255,11 +481,35 @@ impl PreparedLocalNetworkComposition {
                     Some(Arc::new(prepared.manager)),
                     Some(prepared.backend),
                     Some(prepared.state_view),
+                    Some(staged.authority().state_root().to_path_buf()),
                     sources,
                     admitted_ingress,
+                    None,
                 )
             }
-            None => (None, None, None, LocalCapabilitySources::empty(), None),
+            None => match prepared_forwarded {
+                Some(prepared) => (
+                    None,
+                    None,
+                    None,
+                    None,
+                    LocalCapabilitySources::complete(
+                        prepared.source.bundle().attachment().clone(),
+                        prepared.source.bundle().ingress().clone(),
+                    ),
+                    None,
+                    Some(prepared),
+                ),
+                None => (
+                    None,
+                    None,
+                    None,
+                    None,
+                    LocalCapabilitySources::empty(),
+                    None,
+                    None,
+                ),
+            },
         };
         let frozen = staged.freeze(sources)?;
         Ok(Self {
@@ -267,10 +517,12 @@ impl PreparedLocalNetworkComposition {
             local_service_manager,
             local_krun_backend,
             local_krun_state_view,
+            local_krun_network_root,
             compose_selection: compose_selection.cloned(),
             control_data_dir: control_data_dir.to_path_buf(),
             tenant_isolation_mode,
             admitted_ingress,
+            forwarded,
         })
     }
 
@@ -278,6 +530,7 @@ impl PreparedLocalNetworkComposition {
         self.frozen.authority()
     }
 
+    #[cfg(test)]
     pub(crate) fn manager(&self) -> Arc<LocalNetworkManager> {
         self.frozen.manager()
     }
@@ -303,8 +556,111 @@ impl PreparedLocalNetworkComposition {
         self.local_krun_state_view.clone()
     }
 
+    #[cfg(test)]
     pub(crate) fn requires_forwarded_service_manager(&self) -> bool {
-        self.compose_selection.is_some() && self.local_service_manager.is_none()
+        self.forwarded.is_some()
+    }
+
+    /// Prepare the exact server workload profile without opening provider
+    /// journals or binding listeners.
+    pub(crate) fn prepare_server_workload_profile(
+        &self,
+    ) -> Result<PreparedServerWorkloadProfile, LocalNetworkCompositionError> {
+        let has_compose_selection = self.compose_selection.is_some();
+        let has_service_manager = self.local_service_manager.is_some();
+        let has_backend = self.local_krun_backend.is_some();
+        let has_state_view = self.local_krun_state_view.is_some();
+        let has_network_root = self.local_krun_network_root.is_some();
+        let has_ingress = self.admitted_ingress.is_some();
+        let has_forwarded = self.forwarded.is_some();
+        let registry_is_empty = self
+            .frozen
+            .manager
+            .capability_registry()
+            .selections()
+            .next()
+            .is_none();
+
+        if !has_compose_selection {
+            if has_service_manager
+                || has_backend
+                || has_state_view
+                || has_network_root
+                || has_ingress
+                || has_forwarded
+                || !registry_is_empty
+            {
+                return Err(
+                    LocalNetworkCompositionError::IncompleteServerWorkloadSources {
+                        reason: "a protocol-only profile retained local workload sources or provider reports",
+                    },
+                );
+            }
+            return Ok(PreparedServerWorkloadProfile::ProtocolOnly {
+                network_manager: self.frozen.manager(),
+            });
+        }
+
+        if let Some(profile) = forwarded::prepare_server_workload_profile(self, registry_is_empty)?
+        {
+            return Ok(profile);
+        }
+
+        if !has_service_manager
+            && !has_backend
+            && !has_state_view
+            && !has_network_root
+            && !has_ingress
+            && !has_forwarded
+            && registry_is_empty
+        {
+            return Err(LocalNetworkCompositionError::ForwardedServerWorkloadUnavailable);
+        }
+
+        let (
+            Some(service_manager),
+            Some(backend),
+            Some(_state_view),
+            Some(network_root),
+            Some(ingress),
+        ) = (
+            self.local_service_manager(),
+            self.local_krun_backend(),
+            self.local_krun_state_view(),
+            self.local_krun_network_root.clone(),
+            self.admitted_ingress.clone(),
+        )
+        else {
+            return Err(
+                LocalNetworkCompositionError::IncompleteServerWorkloadSources {
+                    reason: "a local krun profile requires its service manager, backend, state view, network root, and ingress report",
+                },
+            );
+        };
+
+        let attachment = backend
+            .host_managed_attachment_registration()
+            .map_err(LocalNetworkCompositionError::AttachmentRegistration)?;
+        let selection = NetworkCapabilitySelection::new(
+            attachment.provider_id().clone(),
+            ingress.provider_id().clone(),
+        );
+        let requirements = sandbox_network_plan_requirements(SandboxBackendKind::Krun)
+            .capability_requirements()
+            .clone();
+        let prepared = PreparedLocalKrunServerWorkload {
+            network_manager: self.frozen.manager(),
+            service_manager,
+            backend,
+            network_root,
+            attachment,
+            ingress,
+            selection,
+            requirements,
+            local_node: embedded_local_node_identity(),
+        };
+        prepared.validate()?;
+        Ok(PreparedServerWorkloadProfile::LocalKrun(Box::new(prepared)))
     }
 
     pub(crate) fn validate_start_context(
@@ -348,6 +704,13 @@ pub(crate) enum LocalNetworkCompositionError {
     Compose(Error),
     InvalidNodeSupernet(CidrError),
     Oci(OciNetworkProcessError),
+    AttachmentRegistration(SandboxAttachmentRegistrationError),
+    CapabilitySelection(NetworkCapabilitySelectionError),
+    ProviderJournal(ProviderProvisionJournalError),
+    ServerWorkload(ServerWorkloadCompositionError),
+    IncompleteServerWorkloadSources { reason: &'static str },
+    ForwardedServerWorkloadUnavailable,
+    ForegroundWorkloadSourcesUnavailable,
     PreparedAuthorityRootMismatch(LocalNetworkAuthorityRootMismatch),
     PreparedContextMismatch(String),
     Registry(NetworkCapabilityRegistryError),
@@ -371,6 +734,36 @@ impl Display for LocalNetworkCompositionError {
             Self::Oci(error) => write!(
                 formatter,
                 "failed to prepare local OCI network process: {error}"
+            ),
+            Self::AttachmentRegistration(error) => {
+                write!(
+                    formatter,
+                    "local attachment evidence is unavailable: {error}"
+                )
+            }
+            Self::CapabilitySelection(error) => {
+                write!(formatter, "local provider selection failed: {error}")
+            }
+            Self::ProviderJournal(error) => {
+                write!(formatter, "local provider journal is unavailable: {error}")
+            }
+            Self::ServerWorkload(error) => {
+                write!(
+                    formatter,
+                    "local server workload composition failed: {error}"
+                )
+            }
+            Self::IncompleteServerWorkloadSources { reason } => {
+                write!(
+                    formatter,
+                    "incomplete local server workload sources: {reason}"
+                )
+            }
+            Self::ForwardedServerWorkloadUnavailable => formatter.write_str(
+                "forwarded workload serving requires an explicit machine-owned provider profile",
+            ),
+            Self::ForegroundWorkloadSourcesUnavailable => formatter.write_str(
+                "foreground workload lifecycle requires a complete managed provider profile",
             ),
             Self::PreparedAuthorityRootMismatch(error) => write!(
                 formatter,
@@ -399,36 +792,47 @@ impl StdError for LocalNetworkCompositionError {
             Self::Compose(error) => Some(error),
             Self::InvalidNodeSupernet(error) => Some(error),
             Self::Oci(error) => Some(error),
+            Self::AttachmentRegistration(error) => Some(error),
+            Self::CapabilitySelection(error) => Some(error),
+            Self::ProviderJournal(error) => Some(error),
+            Self::ServerWorkload(error) => Some(error),
             Self::PreparedAuthorityRootMismatch(error) => Some(error),
             Self::Registry(error) => Some(error),
-            Self::PreparedContextMismatch(_) => None,
+            Self::PreparedContextMismatch(_)
+            | Self::IncompleteServerWorkloadSources { .. }
+            | Self::ForwardedServerWorkloadUnavailable
+            | Self::ForegroundWorkloadSourcesUnavailable => None,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    use std::collections::BTreeMap;
+    #[cfg(target_os = "linux")]
+    use std::path::Path;
+    #[cfg(target_os = "linux")]
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     use serial_test::serial;
 
     use super::{
         LocalCapabilitySources, LocalNetworkCompositionError, PreparedLocalNetworkComposition,
-        StagedLocalNetworkComposition,
+        PreparedServerWorkloadProfile, StagedLocalNetworkComposition,
     };
-    use crate::compose::discovery::ResolvedComposeSelection;
+    #[cfg(target_os = "linux")]
+    use nimbus_engine::Engine;
+    #[cfg(target_os = "linux")]
+    use nimbus_network::NetworkCapabilitySelection;
     use nimbus_network::{
         LocalNetworkManager, NetworkAddressFamily, NetworkAttachmentCapabilitySet,
         NetworkAttachmentMode, NetworkAttachmentProviderRegistration, NetworkControlPlaneLocality,
-        NetworkIsolationMode, NetworkLifecycleCapabilitySet, NetworkLifecycleFeature,
-        NetworkManagementMode, NetworkProviderId, NetworkSovereigntyCapabilities,
-    };
-    #[cfg(target_os = "linux")]
-    use nimbus_network::{
-        NetworkBindRealmKind, NetworkCapabilityRequirements, NetworkEndpointCapabilitySet,
-        NetworkExposure, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
-        NetworkIngressFeature, NetworkPortAssignmentMode, NetworkSovereigntyRequirements,
-        PortProtocol,
+        NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
+        NetworkIngressProviderRegistration, NetworkIsolationMode, NetworkLifecycleCapabilitySet,
+        NetworkLifecycleFeature, NetworkManagementMode, NetworkProviderId,
+        NetworkSovereigntyCapabilities,
     };
     use nimbus_operator::LocalNodeNetworkRoot;
     use nimbus_sandbox::backends::krun::KrunSandboxBackendConfig;
@@ -454,37 +858,82 @@ mod tests {
         )
     }
 
-    #[cfg(target_os = "linux")]
-    fn local_requirements() -> NetworkCapabilityRequirements {
-        NetworkCapabilityRequirements::new(
-            NetworkAttachmentCapabilitySet::new(
-                NetworkManagementMode::NimbusHostManaged,
-                [NetworkAttachmentMode::IsolatedNamespace],
-                [
-                    NetworkIsolationMode::WorkloadNamespace,
-                    NetworkIsolationMode::TenantSegment,
-                ],
-            ),
-            NetworkEndpointCapabilitySet::new(
-                [NetworkAddressFamily::Ipv4],
-                [NetworkBindRealmKind::Host],
-                [NetworkExposure::Loopback],
-                [PortProtocol::Tcp],
-                [NetworkPortAssignmentMode::ProviderAssigned],
-            ),
-            NetworkIngressCapabilitySet::new([
-                NetworkIngressFeature::PathRouting,
-                NetworkIngressFeature::WebSocket,
-                NetworkIngressFeature::Streaming,
-            ]),
+    fn fixture_ingress() -> NetworkIngressProviderRegistration {
+        NetworkIngressProviderRegistration::new(
+            NetworkProviderId::for_registration_key("nnc6.4.fixture-ingress"),
+            NetworkEndpointCapabilitySet::new([], [], [], [], []),
+            NetworkIngressCapabilitySet::new([]),
             NetworkForwardingCapabilitySet::new([]),
-            NetworkLifecycleCapabilitySet::new([
-                NetworkLifecycleFeature::DurableInspect,
-                NetworkLifecycleFeature::Reconcile,
-                NetworkLifecycleFeature::Delete,
-            ]),
-            NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
         )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn filesystem_snapshot(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+        fn visit(root: &Path, current: &Path, snapshot: &mut BTreeMap<PathBuf, Option<Vec<u8>>>) {
+            let mut entries = std::fs::read_dir(current)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", current.display()))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap_or_else(|error| {
+                    panic!("failed to enumerate {}: {error}", current.display())
+                });
+            entries.sort_by_key(|entry| entry.path());
+            for entry in entries {
+                let path = entry.path();
+                let relative = path
+                    .strip_prefix(root)
+                    .expect("snapshot entry should stay below its root")
+                    .to_path_buf();
+                if path.is_dir() {
+                    snapshot.insert(relative, None);
+                    visit(root, &path, snapshot);
+                } else {
+                    snapshot.insert(
+                        relative,
+                        Some(std::fs::read(&path).unwrap_or_else(|error| {
+                            panic!("failed to read snapshot file {}: {error}", path.display())
+                        })),
+                    );
+                }
+            }
+        }
+
+        let mut snapshot = BTreeMap::new();
+        if root.is_dir() {
+            visit(root, root, &mut snapshot);
+        }
+        snapshot
+    }
+
+    #[cfg(target_os = "linux")]
+    fn prepare_local_krun_server_fixture(root: &Path) -> PreparedLocalNetworkComposition {
+        let compose_path = root.join("compose.yaml");
+        std::fs::write(
+            &compose_path,
+            r#"
+name: LocalProfile
+services:
+  api:
+    image: busybox:latest
+    x_nimbus:
+      backend: krun
+"#,
+        )
+        .expect("local Compose fixture should write");
+        let selection = ResolvedComposeSelection::explicit(compose_path);
+        let node_root =
+            LocalNodeNetworkRoot::resolve_for_current_platform(Some(&root.join("node")))
+                .expect("node root should resolve");
+        PreparedLocalNetworkComposition::prepare(
+            StagedLocalNetworkComposition::claim(&node_root)
+                .expect("local manager should claim before source collection"),
+            Some(&selection),
+            &root.join("control"),
+            nimbus_tenant::TenantIsolationMode::LocalDevelopment,
+            nimbus_server::nimbus_owned_workload_ingress_registration(),
+        )
+        .expect("real local sources should freeze")
     }
 
     #[test]
@@ -677,7 +1126,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn server_only_and_forwarded_shapes_freeze_empty_without_fabricated_local_sources() {
+    fn server_only_shape_freezes_empty_without_fabricated_workload_sources() {
         let root = tempfile::tempdir().expect("fixture root");
         let server_node = root.path().join("server-node");
         let server_root = LocalNodeNetworkRoot::resolve_for_current_platform(Some(&server_node))
@@ -688,7 +1137,7 @@ mod tests {
             None,
             &root.path().join("server-control"),
             nimbus_tenant::TenantIsolationMode::LocalDevelopment,
-            nimbus_server::nimbus_owned_local_ingress_registration(false),
+            nimbus_server::nimbus_owned_workload_ingress_registration(),
         )
         .expect("server-only composition should freeze");
         let authority_existed_before = server_only.authority().authority_path().exists();
@@ -707,48 +1156,27 @@ mod tests {
         );
         assert!(server_only.local_service_manager().is_none());
         assert!(!server_only.requires_forwarded_service_manager());
+        let profile = server_only
+            .prepare_server_workload_profile()
+            .expect("server-only composition should prepare the protocol profile");
+        assert!(!profile.is_managed());
+        match profile {
+            PreparedServerWorkloadProfile::ProtocolOnly { network_manager } => {
+                assert!(Arc::ptr_eq(&network_manager, &first_manager));
+                assert_eq!(
+                    network_manager.capability_registry().selections().count(),
+                    0
+                );
+            }
+            PreparedServerWorkloadProfile::LocalKrun(_) => {
+                panic!("server-only composition must not fabricate local workload providers")
+            }
+            PreparedServerWorkloadProfile::Forwarded(_) => {
+                panic!("server-only composition must not fabricate forwarded workload providers")
+            }
+        }
         drop(first_manager);
         drop(second_manager);
-        drop(server_only);
-
-        let compose_path = root.path().join("compose.yaml");
-        std::fs::write(
-            &compose_path,
-            r#"
-name: Forwarded
-services:
-  api:
-    image: busybox:latest
-    x_nimbus:
-      backend: container
-"#,
-        )
-        .expect("forwarded Compose fixture should write");
-        let selection = ResolvedComposeSelection::explicit(compose_path);
-        let forwarded_node = root.path().join("forwarded-node");
-        let forwarded_root =
-            LocalNodeNetworkRoot::resolve_for_current_platform(Some(&forwarded_node))
-                .expect("forwarded node root should resolve");
-        let forwarded = PreparedLocalNetworkComposition::prepare(
-            StagedLocalNetworkComposition::claim(&forwarded_root)
-                .expect("forwarded claim should succeed"),
-            Some(&selection),
-            &root.path().join("forwarded-control"),
-            nimbus_tenant::TenantIsolationMode::LocalDevelopment,
-            nimbus_server::nimbus_owned_local_ingress_registration(false),
-        )
-        .expect("forwarded composition should freeze before machine effects");
-        assert_eq!(
-            forwarded
-                .frozen
-                .manager()
-                .capability_registry()
-                .selections()
-                .count(),
-            0
-        );
-        assert!(forwarded.local_service_manager().is_none());
-        assert!(forwarded.requires_forwarded_service_manager());
     }
 
     #[test]
@@ -757,7 +1185,7 @@ services:
         let root_dir = tempfile::tempdir().expect("network root parent");
         let root = LocalNodeNetworkRoot::resolve_for_current_platform(Some(root_dir.path()))
             .expect("absolute explicit root should resolve");
-        let ingress = nimbus_server::nimbus_owned_local_ingress_registration(false);
+        let ingress = nimbus_server::nimbus_owned_workload_ingress_registration();
         let frozen = StagedLocalNetworkComposition::claim(&root)
             .expect("staged claim should open")
             .freeze(LocalCapabilitySources::complete(
@@ -770,10 +1198,12 @@ services:
             local_service_manager: None,
             local_krun_backend: None,
             local_krun_state_view: None,
+            local_krun_network_root: None,
             compose_selection: None,
             control_data_dir: root_dir.path().join("control"),
             tenant_isolation_mode: nimbus_tenant::TenantIsolationMode::LocalDevelopment,
             admitted_ingress: Some(ingress),
+            forwarded: None,
         };
 
         let error = prepared
@@ -781,9 +1211,9 @@ services:
                 None,
                 &root_dir.path().join("control"),
                 nimbus_tenant::TenantIsolationMode::LocalDevelopment,
-                &nimbus_server::nimbus_owned_local_ingress_registration(true),
+                &fixture_ingress(),
             )
-            .expect_err("TLS/report drift must fail before listener effects");
+            .expect_err("source-report drift must fail before listener effects");
         assert!(
             error
                 .to_string()
@@ -820,7 +1250,7 @@ services:
         let node_path = root.path().join("node");
         let node_root = LocalNodeNetworkRoot::resolve_for_current_platform(Some(&node_path))
             .expect("node root should resolve");
-        let ingress = nimbus_server::nimbus_owned_local_ingress_registration(false);
+        let ingress = nimbus_server::nimbus_owned_workload_ingress_registration();
         let prepared = PreparedLocalNetworkComposition::prepare(
             StagedLocalNetworkComposition::claim(&node_root)
                 .expect("local manager should claim before source collection"),
@@ -843,7 +1273,13 @@ services:
             .frozen
             .manager()
             .capability_registry()
-            .select_exact(&expected_selection, &local_requirements())
+            .select_exact(
+                &expected_selection,
+                nimbus_sandbox::sandbox_network_plan_requirements(
+                    nimbus_sandbox::SandboxBackendKind::Krun,
+                )
+                .capability_requirements(),
+            )
             .expect("the exact real source pair should satisfy");
         assert_eq!(selected.attachment(), &attachment);
         assert_eq!(selected.ingress(), &ingress);
@@ -856,11 +1292,56 @@ services:
                 .count(),
             1
         );
+        let expected_manager = prepared.manager();
+        let expected_service_manager = prepared
+            .local_service_manager()
+            .expect("the exact local services owner should remain retained");
+        let expected_backend = prepared
+            .local_krun_backend()
+            .expect("the exact local krun owner should remain retained");
         let authority_path = prepared.authority().authority_path().to_path_buf();
         let durable_before = std::fs::read(&authority_path).ok();
+        let before_profile = filesystem_snapshot(root.path());
+        let profile = prepared
+            .prepare_server_workload_profile()
+            .expect("complete local sources should prepare a server workload profile");
+        assert!(profile.is_managed());
+        match &profile {
+            PreparedServerWorkloadProfile::LocalKrun(local) => {
+                assert!(Arc::ptr_eq(&local.network_manager, &expected_manager));
+                assert!(Arc::ptr_eq(
+                    &local.service_manager,
+                    &expected_service_manager
+                ));
+                assert!(Arc::ptr_eq(&local.backend, &expected_backend));
+                assert_eq!(local.attachment, attachment);
+                assert_eq!(local.ingress, ingress);
+                assert_eq!(local.selection, expected_selection);
+                assert_eq!(
+                    local.local_node,
+                    nimbus_compute::embedded_local_node_identity()
+                );
+            }
+            PreparedServerWorkloadProfile::ProtocolOnly { .. } => {
+                panic!("complete local sources must not collapse to protocol-only")
+            }
+            PreparedServerWorkloadProfile::Forwarded(_) => {
+                panic!("local krun sources must not become forwarded providers")
+            }
+        }
+        assert_eq!(filesystem_snapshot(root.path()), before_profile);
+
+        let engine = Arc::new(
+            Engine::new(root.path().join("engine")).expect("caller engine should initialize"),
+        );
+        let before_completion = filesystem_snapshot(root.path());
+        let options = profile
+            .complete(engine)
+            .expect("validated local providers should complete without an effect");
+        assert_eq!(filesystem_snapshot(root.path()), before_completion);
         LocalNetworkManager::bootstrap(node_root.as_path())
             .expect_err("attachment-bearing prepared composition must retain the process claim");
-        drop(prepared);
+        drop(options);
         let reopened = LocalNetworkManager::bootstrap(node_root.as_path())
             .expect("final attachment-bearing composition drop should permit reopen");
         assert_eq!(
@@ -868,6 +1349,134 @@ services:
             durable_before,
             "manager reopen must not mutate durable network authority"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[serial]
+    fn partial_local_server_profiles_fail_before_journal_or_listener_effects() {
+        for missing_source in ["service-manager", "krun-backend"] {
+            let root = tempfile::tempdir().expect("fixture root");
+            let mut prepared = prepare_local_krun_server_fixture(root.path());
+            match missing_source {
+                "service-manager" => prepared.local_service_manager = None,
+                "krun-backend" => prepared.local_krun_backend = None,
+                other => panic!("unknown missing source fixture {other}"),
+            }
+            let before = filesystem_snapshot(root.path());
+
+            let result = prepared.prepare_server_workload_profile();
+
+            assert!(matches!(
+                result,
+                Err(LocalNetworkCompositionError::IncompleteServerWorkloadSources { .. })
+            ));
+            assert_eq!(filesystem_snapshot(root.path()), before);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[serial]
+    fn crossed_local_server_root_fails_again_before_adapter_construction() {
+        let root = tempfile::tempdir().expect("fixture root");
+        let prepared = prepare_local_krun_server_fixture(root.path());
+        let profile = prepared
+            .prepare_server_workload_profile()
+            .expect("complete local sources should prepare");
+        let PreparedServerWorkloadProfile::LocalKrun(mut local) = profile else {
+            panic!("local krun sources must prepare the managed profile")
+        };
+        local.network_root = root.path().join("crossed-network-root");
+        let engine = Arc::new(
+            Engine::new(root.path().join("engine")).expect("caller engine should initialize"),
+        );
+        let before = filesystem_snapshot(root.path());
+
+        let result = PreparedServerWorkloadProfile::LocalKrun(local).complete(engine);
+
+        assert!(matches!(
+            result,
+            Err(LocalNetworkCompositionError::PreparedAuthorityRootMismatch(
+                _
+            ))
+        ));
+        assert_eq!(filesystem_snapshot(root.path()), before);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[serial]
+    fn crossed_local_provider_selection_fails_again_before_adapter_construction() {
+        let root = tempfile::tempdir().expect("fixture root");
+        let prepared = prepare_local_krun_server_fixture(root.path());
+        let profile = prepared
+            .prepare_server_workload_profile()
+            .expect("complete local sources should prepare");
+        let PreparedServerWorkloadProfile::LocalKrun(mut local) = profile else {
+            panic!("local krun sources must prepare the managed profile")
+        };
+        local.selection = NetworkCapabilitySelection::new(
+            local.attachment.provider_id().clone(),
+            NetworkProviderId::for_registration_key("nnc6.4.crossed-ingress"),
+        );
+        let engine = Arc::new(
+            Engine::new(root.path().join("engine")).expect("caller engine should initialize"),
+        );
+        let before = filesystem_snapshot(root.path());
+
+        let result = PreparedServerWorkloadProfile::LocalKrun(local).complete(engine);
+
+        assert!(matches!(
+            result,
+            Err(LocalNetworkCompositionError::PreparedContextMismatch(reason))
+                if reason.contains("provider selection")
+        ));
+        assert_eq!(filesystem_snapshot(root.path()), before);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[serial]
+    fn missing_exact_registry_selection_fails_before_journal_or_listener_effects() {
+        let root = tempfile::tempdir().expect("fixture root");
+        let compose_path = root.path().join("compose.yaml");
+        std::fs::write(
+            &compose_path,
+            r#"
+name: AttachmentOnly
+services:
+  api:
+    image: busybox:latest
+    x_nimbus:
+      backend: krun
+"#,
+        )
+        .expect("attachment-only Compose fixture should write");
+        let selection = ResolvedComposeSelection::explicit(compose_path);
+        let node_root =
+            LocalNodeNetworkRoot::resolve_for_current_platform(Some(&root.path().join("node")))
+                .expect("node root should resolve");
+        let mut prepared = PreparedLocalNetworkComposition::prepare_attachment_only(
+            StagedLocalNetworkComposition::claim(&node_root)
+                .expect("standalone manager should claim"),
+            &selection,
+            &root.path().join("control"),
+        )
+        .expect("attachment-only composition should prepare");
+        prepared.admitted_ingress =
+            Some(nimbus_server::nimbus_owned_workload_ingress_registration());
+        let before = filesystem_snapshot(root.path());
+
+        let result = prepared.prepare_server_workload_profile();
+
+        assert!(matches!(
+            result,
+            Err(LocalNetworkCompositionError::CapabilitySelection(
+                nimbus_network::NetworkCapabilitySelectionError::UnregisteredComposition { .. }
+            ))
+        ));
+        assert_eq!(filesystem_snapshot(root.path()), before);
     }
 
     #[cfg(target_os = "linux")]

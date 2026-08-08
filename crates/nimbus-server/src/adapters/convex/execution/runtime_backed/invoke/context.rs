@@ -17,6 +17,7 @@ use crate::execution::invocations::{
 use nimbus_auth::normalize_principal_context;
 use nimbus_bridge::admission::RuntimeExecutionAdmission;
 use nimbus_bridge::mutation_retry::{MutationOccConflictDecision, MutationOccRetryPolicy};
+use nimbus_compute::ComputeResourceProvisioner;
 use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{
@@ -25,12 +26,17 @@ use nimbus_tenant::{
 };
 
 use super::super::super::runtime_error_to_core;
+use crate::adapters::convex::host_bridge::ConvexServiceProvisionPort;
+
+#[cfg(test)]
+mod read_only_tests;
 
 pub(in crate::adapters::convex) struct RuntimeInvocationContext<'a> {
     engine: &'a Arc<nimbus_engine::Engine>,
     registry: &'a Arc<ConvexRegistry>,
     runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
     runtime_manager: &'a Arc<RuntimeManager>,
+    service_provisioner: Option<Arc<dyn ConvexServiceProvisionPort>>,
     isolation: TenantIsolationContext,
     tenant_isolation_mode: TenantIsolationMode,
 }
@@ -41,6 +47,7 @@ impl<'a> RuntimeInvocationContext<'a> {
         registry: &'a Arc<ConvexRegistry>,
         runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
         runtime_manager: &'a Arc<RuntimeManager>,
+        service_provisioner: Option<ComputeResourceProvisioner>,
         isolation: TenantIsolationContext,
         tenant_isolation_mode: TenantIsolationMode,
     ) -> Self {
@@ -49,6 +56,8 @@ impl<'a> RuntimeInvocationContext<'a> {
             registry,
             runtime_service_registry,
             runtime_manager,
+            service_provisioner: service_provisioner
+                .map(|provisioner| Arc::new(provisioner) as Arc<dyn ConvexServiceProvisionPort>),
             isolation,
             tenant_isolation_mode,
         }
@@ -222,16 +231,23 @@ impl<'a> RuntimeInvocationContext<'a> {
             .map(serde_json::from_value::<InvocationAuth>)
             .transpose()
             .map_err(|error| Error::Serialization(error.to_string()))?;
+        let scope = ConvexHostBridgeScope::new(
+            self.engine.clone(),
+            self.registry.clone(),
+            decision.clone(),
+            self.runtime_service_registry.clone(),
+            self.runtime_manager.clone(),
+            runtime_authority.clone(),
+            runtime_policy.limits().clone(),
+        );
+        let scope = match &self.service_provisioner {
+            Some(provisioner) => {
+                scope.with_service_provisioning(self.isolation.clone(), Arc::clone(provisioner))?
+            }
+            None => scope,
+        };
         let bridge = Arc::new(ConvexHostBridge::build(
-            ConvexHostBridgeScope::new(
-                self.engine.clone(),
-                self.registry.clone(),
-                decision.clone(),
-                self.runtime_service_registry.clone(),
-                self.runtime_manager.clone(),
-                runtime_authority.clone(),
-                runtime_policy.limits().clone(),
-            ),
+            scope,
             ConvexHostBridgeInvocation::new(
                 auth.clone(),
                 request.services.clone(),

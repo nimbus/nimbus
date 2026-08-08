@@ -9,6 +9,24 @@ use crate::error::{Result, SandboxError};
 use super::{ContainerSandboxBackend, ContainerSandboxManifest, hostname_for};
 
 impl ContainerSandboxBackend {
+    pub(super) fn non_routable_attachment_readiness(
+        &self,
+        manifest: &ContainerSandboxManifest,
+        pep: EgressReadinessState,
+    ) -> Result<OciAttachmentBaseReadinessState> {
+        let network_config = manifest.require_network_config()?;
+        let ports = self.port_lease_coordinator_for_manifest(manifest)?;
+        let hostname = hostname_for(&manifest.spec);
+        Ok(self
+            .non_routable_attachment_adapter(manifest, network_config, &hostname)
+            .inspect_non_routable_readiness(
+                &self.attachment_lifecycle(&ports),
+                self.egress_pin_provider.as_ref(),
+                manifest.egress_proxy.as_ref(),
+                pep,
+            ))
+    }
+
     pub(super) fn host_managed_attachment_readiness(
         &self,
         manifest: &ContainerSandboxManifest,

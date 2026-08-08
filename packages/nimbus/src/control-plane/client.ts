@@ -81,7 +81,9 @@ export class Nimbus {
     );
   }
 
-  static async defaultClient(options: NimbusClientOptions = {}): Promise<Nimbus> {
+  static async defaultClient(
+    options: NimbusClientOptions = {},
+  ): Promise<Nimbus> {
     const client = new Nimbus(options);
     await client.#resolveRestClient();
     return client;
@@ -146,17 +148,6 @@ export class NimbusServices {
     });
   }
 
-  async restart(input: NimbusServiceStartRequest): Promise<NimbusService> {
-    assertLifecycleWaitUntil("restart", input.waitUntil, ["ready", "healthy"]);
-    const service = await this.lifecycle("restart", input);
-    if (!input.waitUntil) return service;
-    return this.wait({
-      name: input.name,
-      tenantId: input.tenantId,
-      until: input.waitUntil,
-    });
-  }
-
   get(selector: NimbusServiceSelector): Promise<NimbusService> {
     return this.sendControlPlaneRequest("services.get", {
       params: serviceResourceParams(this.client, selector),
@@ -173,7 +164,11 @@ export class NimbusServices {
   update(input: NimbusServiceUpdateRequest): Promise<NimbusServiceDefinition> {
     return this.sendControlPlaneRequest("services.update", {
       params: serviceResourceParams(this.client, input),
-      body: serviceDefinitionRequestBody(input, input.name, input.ifMatchGeneration),
+      body: serviceDefinitionRequestBody(
+        input,
+        input.name,
+        input.ifMatchGeneration,
+      ),
     });
   }
 
@@ -190,7 +185,9 @@ export class NimbusServices {
     });
   }
 
-  list(input: NimbusServiceListRequest = {}): Promise<NimbusServiceDefinitionCollection> {
+  list(
+    input: NimbusServiceListRequest = {},
+  ): Promise<NimbusServiceDefinitionCollection> {
     const query = new URLSearchParams();
     if (input.limit !== undefined) query.set("limit", String(input.limit));
     if (input.pageToken !== undefined) query.set("pageToken", input.pageToken);
@@ -201,8 +198,16 @@ export class NimbusServices {
   }
 
   async wait(input: NimbusServiceWaitRequest): Promise<NimbusService> {
-    const timeoutMs = positiveFiniteNumber(input.timeoutMs, 30_000, "timeoutMs");
-    const intervalMs = positiveFiniteNumber(input.intervalMs, 250, "intervalMs");
+    const timeoutMs = positiveFiniteNumber(
+      input.timeoutMs,
+      30_000,
+      "timeoutMs",
+    );
+    const intervalMs = positiveFiniteNumber(
+      input.intervalMs,
+      250,
+      "intervalMs",
+    );
     const deadline = this.waitTiming.monotonicNow() + timeoutMs;
     let latest: NimbusService | null = null;
 
@@ -215,11 +220,11 @@ export class NimbusServices {
     }
 
     const observed = latest
-      ? normalizeStatusString(latest.readiness)
-        ?? normalizeStatusString(latest.health)
-        ?? normalizeStatusString(latest.lifecycleState)
-        ?? normalizeStatusString(latest.state)
-        ?? "unknown"
+      ? (normalizeStatusString(latest.readiness) ??
+        normalizeStatusString(latest.health) ??
+        normalizeStatusString(latest.lifecycleState) ??
+        normalizeStatusString(latest.state) ??
+        "unknown")
       : "unknown";
     throw new Error(
       `Nimbus service ${input.name} did not reach ${input.until} within ${timeoutMs}ms; last observed status was ${observed}.`,
@@ -227,7 +232,7 @@ export class NimbusServices {
   }
 
   private lifecycle(
-    verb: "start" | "stop" | "restart",
+    verb: "start" | "stop",
     input: NimbusServiceLifecycleRequest,
   ): Promise<NimbusService> {
     return this.sendControlPlaneRequest(SERVICE_LIFECYCLE_ROUTES[verb], {
@@ -265,7 +270,8 @@ export class NimbusSandboxes {
     if (input.pageToken !== undefined) query.set("pageToken", input.pageToken);
     if (input.status !== undefined) query.set("status", input.status);
     if (input.labelKey !== undefined) query.set("labelKey", input.labelKey);
-    if (input.labelValue !== undefined) query.set("labelValue", input.labelValue);
+    if (input.labelValue !== undefined)
+      query.set("labelValue", input.labelValue);
     return this.sendControlPlaneRequest("sandboxes.list", {
       params: sandboxCollectionParams(this.client, input),
       query,
@@ -286,13 +292,19 @@ export class NimbusSessions {
   ) {}
 
   open(input: NimbusSessionOpenRequest): Promise<NimbusSessionResource> {
-    const tenantId = resolveTenantId(this.client, input, "session open request");
+    const tenantId = resolveTenantId(
+      this.client,
+      input,
+      "session open request",
+    );
     return this.sendControlPlaneRequest("sessions.open", {
       body: {
         tenantId,
         target: input.target,
         channels: input.channels,
-        ...(input.requestedTtlMs === undefined ? {} : { requestedTtlMs: input.requestedTtlMs }),
+        ...(input.requestedTtlMs === undefined
+          ? {}
+          : { requestedTtlMs: input.requestedTtlMs }),
       },
     });
   }
@@ -304,7 +316,11 @@ export class NimbusSessions {
   }
 
   list(input: NimbusSessionListRequest = {}): Promise<NimbusSessionCollection> {
-    const tenantId = resolveTenantId(this.client, input, "session list request");
+    const tenantId = resolveTenantId(
+      this.client,
+      input,
+      "session list request",
+    );
     const query = new URLSearchParams({ tenantId });
     if (input.limit !== undefined) query.set("limit", String(input.limit));
     if (input.pageToken !== undefined) query.set("pageToken", input.pageToken);
@@ -329,7 +345,6 @@ function clientTenantId(client: Nimbus): string | undefined {
 const SERVICE_LIFECYCLE_ROUTES = {
   start: "services.start",
   stop: "services.stop",
-  restart: "services.restart",
 } as const;
 
 function serviceResourceParams(
@@ -369,7 +384,9 @@ function sandboxResourceParams(
   };
 }
 
-function sessionResourceParams(selector: NimbusSessionSelector): NimbusControlPlaneRouteParams {
+function sessionResourceParams(
+  selector: NimbusSessionSelector,
+): NimbusControlPlaneRouteParams {
   return { session_id: selector.id };
 }
 
@@ -378,7 +395,8 @@ function resolveTenantId(
   selector: { tenantId?: string },
   context: string,
 ): string {
-  const tenantId = stringOrUndefined(selector.tenantId) ?? clientTenantId(client);
+  const tenantId =
+    stringOrUndefined(selector.tenantId) ?? clientTenantId(client);
   if (!tenantId) {
     throw new Error(
       `Nimbus ${context} requires a tenantId. Pass tenantId in the service call or construct the client with new Nimbus({ tenantId }).`,
@@ -405,21 +423,28 @@ function serviceDefinitionRequestBody(
   };
 }
 
-function positiveFiniteNumber(value: unknown, fallback: number, label: string): number {
+function positiveFiniteNumber(
+  value: unknown,
+  fallback: number,
+  label: string,
+): number {
   if (value === undefined) return fallback;
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return value;
   }
-  throw new Error(`Nimbus service wait ${label} must be a positive finite number.`);
+  throw new Error(
+    `Nimbus service wait ${label} must be a positive finite number.`,
+  );
 }
 
 function serviceMatchesCondition(
   service: NimbusService,
   condition: NimbusServiceWaitCondition,
 ): boolean {
-  const state = normalizeStatusString(service.lifecycleState)
-    ?? normalizeStatusString(service.state)
-    ?? normalizeStatusString(service.status);
+  const state =
+    normalizeStatusString(service.lifecycleState) ??
+    normalizeStatusString(service.state) ??
+    normalizeStatusString(service.status);
   const readiness = normalizeStatusString(service.readiness);
   const health = normalizeStatusString(service.health);
 
@@ -434,7 +459,7 @@ function serviceMatchesCondition(
 }
 
 function assertLifecycleWaitUntil(
-  verb: "start" | "stop" | "restart",
+  verb: "start" | "stop",
   waitUntil: NimbusServiceWaitCondition | undefined,
   allowed: readonly NimbusServiceWaitCondition[],
 ): void {
@@ -450,7 +475,9 @@ function formatAllowedValues(values: readonly string[]): string {
 }
 
 function normalizeStatusString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value.toLowerCase() : undefined;
+  return typeof value === "string" && value.length > 0
+    ? value.toLowerCase()
+    : undefined;
 }
 
 function sleep(ms: number): Promise<void> {

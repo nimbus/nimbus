@@ -33,8 +33,9 @@ pub use capability::{
     NetworkEndpointCapabilitySet, NetworkExposure, NetworkExternalDependency,
     NetworkForwardingCapabilitySet, NetworkForwardingFeature, NetworkIngressCapabilitySet,
     NetworkIngressFeature, NetworkIsolationMode, NetworkLifecycleCapabilitySet,
-    NetworkLifecycleFeature, NetworkManagementMode, NetworkPortAssignmentMode,
-    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, NetworkTlsBehavior,
+    NetworkLifecycleFeature, NetworkLifecycleRequirements, NetworkManagementMode,
+    NetworkPortAssignmentMode, NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
+    NetworkTlsBehavior,
 };
 pub use capability_registry::{
     NetworkAttachmentProviderRegistration, NetworkCapabilityBundle,

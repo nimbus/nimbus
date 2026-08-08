@@ -85,6 +85,7 @@ fn activation_attempt_input(
         desired_digest: WorkloadDesiredDigest::sha256("desired"),
         required_node: NodeIdentity::new("node-a").expect("node should validate"),
         source_digest: WorkloadProvisionSourceDigest::sha256("source"),
+        execution_provider_id: WorkloadExecutionProviderId::for_registration_key("execution-a"),
         network_plan_digest: NetworkPlanDigest::from_bytes([0x32; 32]),
         selection_evidence,
         source_phase: WorkloadSagaPhase::NetworkAttached,
@@ -150,12 +151,17 @@ fn source_evidence_binds_independent_generation_version_executable_and_provider(
             .expect("resource version should validate"),
         digest(0x41),
         provider("attachment-a"),
+        WorkloadExecutionProviderId::for_registration_key("execution-a"),
     )
     .expect("source evidence should validate");
 
     assert_eq!(evidence.source_generation().as_u64(), 17);
     assert_eq!(evidence.resource_version().as_str(), "resource-v4");
     assert_eq!(evidence.attachment_provider_id(), &provider("attachment-a"));
+    assert_eq!(
+        evidence.execution_provider_id(),
+        &WorkloadExecutionProviderId::for_registration_key("execution-a")
+    );
     evidence
         .validate(digest(0x41))
         .expect("matching executable should validate");
@@ -167,9 +173,24 @@ fn source_evidence_binds_independent_generation_version_executable_and_provider(
         evidence.resource_version().clone(),
         digest(0x41),
         provider("attachment-a"),
+        evidence.execution_provider_id().clone(),
     )
     .expect("changed source should validate");
     assert_ne!(evidence.source_digest(), changed_generation.source_digest());
+
+    let changed_execution_provider = WorkloadProvisionSourceEvidence::standalone_sandbox(
+        evidence.source_identity().clone(),
+        evidence.source_generation(),
+        evidence.resource_version().clone(),
+        digest(0x41),
+        provider("attachment-a"),
+        WorkloadExecutionProviderId::for_registration_key("execution-b"),
+    )
+    .expect("changed execution provider should validate");
+    assert_ne!(
+        evidence.source_digest(),
+        changed_execution_provider.source_digest()
+    );
 }
 
 #[test]
@@ -182,6 +203,7 @@ fn source_evidence_wire_rejects_crossed_digest_and_unknown_fields() {
             .expect("resource version should validate"),
         digest(0x51),
         provider("attachment-a"),
+        WorkloadExecutionProviderId::for_registration_key("execution-a"),
     )
     .expect("source evidence should validate");
     let exact = serde_json::to_value(&evidence).expect("source evidence should serialize");
@@ -290,6 +312,10 @@ fn attempt_identity_binds_every_named_fence_and_rejects_forged_wire() {
     changed.source_digest = WorkloadProvisionSourceDigest::sha256("changed-source");
     valid_mutations.push(changed);
     let mut changed = input.clone();
+    changed.execution_provider_id =
+        WorkloadExecutionProviderId::for_registration_key("changed-execution");
+    valid_mutations.push(changed);
+    let mut changed = input.clone();
     changed.network_plan_digest = NetworkPlanDigest::from_bytes([0x91; 32]);
     valid_mutations.push(changed);
     let mut changed = input.clone();
@@ -333,6 +359,12 @@ fn attempt_identity_binds_every_named_fence_and_rejects_forged_wire() {
         ("/desiredDigest", json!("66".repeat(32))),
         ("/requiredNode", json!("node-b")),
         ("/sourceDigest", json!("77".repeat(32))),
+        (
+            "/executionProviderId",
+            json!(WorkloadExecutionProviderId::for_registration_key(
+                "forged-execution"
+            )),
+        ),
         ("/networkPlanDigest", json!("88".repeat(32))),
         ("/selectionEvidence/source_digest", json!("99".repeat(32))),
         ("/sourcePhase", json!("workload_activated")),
@@ -421,3 +453,6 @@ fn connected_attempt_requires_selection_evidence() {
         "removing connected selection evidence must invalidate the derived attempt ID"
     );
 }
+
+#[path = "tests/dispatch.rs"]
+mod dispatch;

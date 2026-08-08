@@ -104,6 +104,10 @@ fn version() -> WorkloadProvisionSourceResourceVersion {
         .expect("source version should validate")
 }
 
+fn execution_provider() -> WorkloadExecutionProviderId {
+    WorkloadExecutionProviderId::for_registration_key("composition-execution")
+}
+
 #[test]
 fn pure_composition_binds_node_source_and_selected_reports() {
     let decision = decision(Some("node-a"));
@@ -115,6 +119,7 @@ fn pure_composition_binds_node_source_and_selected_reports() {
     let composed = compose_workload_provision(WorkloadProvisionCompositionInput {
         decision: &decision,
         local_node: &local_node,
+        execution_provider_id: &execution_provider(),
         source: WorkloadProvisionSourceSnapshot::StandaloneSandbox {
             stable_resource_id: "sandbox-a",
             profile: "python",
@@ -168,6 +173,7 @@ fn crossed_local_node_rejects_before_submission() {
         compose_workload_provision(WorkloadProvisionCompositionInput {
             decision: &admitted,
             local_node: &crossed,
+            execution_provider_id: &execution_provider(),
             source: WorkloadProvisionSourceSnapshot::StandaloneSandbox {
                 stable_resource_id: "sandbox-a",
                 profile: "python",
@@ -195,6 +201,7 @@ fn crossed_local_node_rejects_before_submission() {
         compose_workload_provision(WorkloadProvisionCompositionInput {
             decision: &absent,
             local_node: &local,
+            execution_provider_id: &execution_provider(),
             source: WorkloadProvisionSourceSnapshot::StandaloneSandbox {
                 stable_resource_id: "sandbox-a",
                 profile: "python",
@@ -229,6 +236,7 @@ fn crossed_source_snapshot_rejects_before_submission() {
         compose_workload_provision(WorkloadProvisionCompositionInput {
             decision: &decision,
             local_node: &local_node,
+            execution_provider_id: &execution_provider(),
             source: WorkloadProvisionSourceSnapshot::StandaloneSandbox {
                 stable_resource_id: "sandbox-crossed",
                 profile: "python",
@@ -265,6 +273,7 @@ fn crossed_publication_rejects_before_submission() {
         compose_workload_provision(WorkloadProvisionCompositionInput {
             decision: &decision,
             local_node: &local_node,
+            execution_provider_id: &execution_provider(),
             source: WorkloadProvisionSourceSnapshot::StandaloneSandbox {
                 stable_resource_id: "sandbox-a",
                 profile: "python",
@@ -300,6 +309,7 @@ fn source_generation_changes_source_and_desired_digests_without_changing_deploym
         compose_workload_provision(WorkloadProvisionCompositionInput {
             decision: &decision,
             local_node: &local_node,
+            execution_provider_id: &execution_provider(),
             source: WorkloadProvisionSourceSnapshot::StandaloneSandbox {
                 stable_resource_id: "sandbox-a",
                 profile: "python",

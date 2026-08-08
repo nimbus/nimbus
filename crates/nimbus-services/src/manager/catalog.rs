@@ -9,7 +9,7 @@ use super::ServiceManager;
 
 impl ServiceManager {
     pub fn service_declared_for_tenant(&self, tenant_id: &TenantId, service_name: &str) -> bool {
-        self.service_backend_for_tenant(tenant_id, service_name)
+        self.service_definition_for_tenant(tenant_id, service_name)
             .is_some()
     }
 }
@@ -22,17 +22,18 @@ impl ServiceInstanceCatalog for ServiceManager {
         self.state
             .lock()
             .expect("manager lock should not be poisoned")
-            .handles
+            .service_definition_observations
             .iter()
-            .filter(|(key, handle)| {
+            .filter(|(key, observation)| {
                 &key.tenant_id == tenant_id
-                    && handle.tenant_id == *tenant_id
+                    && observation.tenant_id == *tenant_id
+                    && observation.name == key.service_name
                     && !matches!(
-                        handle.status,
+                        observation.handle.status,
                         SandboxStatus::Stopped | SandboxStatus::Failed
                     )
             })
-            .map(|(key, handle)| (key.service_name.clone(), handle.clone()))
+            .map(|(key, observation)| (key.service_name.clone(), observation.handle.clone()))
             .collect()
     }
 }

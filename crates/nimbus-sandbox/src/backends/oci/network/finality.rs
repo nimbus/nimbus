@@ -17,9 +17,7 @@ use crate::instance::SandboxId;
 use super::ipam::{
     ContainerIpamAuthorityState, OciIpamAuthority, inspect_container_ipam_authority,
 };
-use super::{
-    OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator, default_network_attachment_id,
-};
+use super::{OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator};
 
 /// Immutable workload evidence authenticated before terminal publication.
 pub(crate) struct TerminalNetworkFinalityEvidence<'a> {
@@ -132,7 +130,7 @@ impl<'a> TerminalNetworkAuthoritySet<'a> {
             ContainerIpamAuthorityState::Released | ContainerIpamAuthorityState::Absent => {}
         }
 
-        let attachment_id = default_network_attachment_id(self.evidence.sandbox_id);
+        let attachment_id = network_config.attachment_id.clone();
         let attachment_state = self.allocator.inspect_attachment_reservation(
             self.evidence.tenant_id,
             &attachment_id,

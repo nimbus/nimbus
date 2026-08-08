@@ -1886,6 +1886,8 @@ mod local_server_security;
 mod local_ui;
 #[path = "tests/machine_lifecycle.rs"]
 mod machine_lifecycle;
+#[path = "tests/managed_workload.rs"]
+mod managed_workload;
 #[path = "tests/mongodb_wire.rs"]
 mod mongodb_wire;
 #[path = "tests/registry_and_license/mod.rs"]

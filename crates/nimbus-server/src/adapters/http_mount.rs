@@ -227,8 +227,9 @@ mod tests {
     fn test_state() -> (Arc<AppState>, EngineFixture<Engine>) {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let state = Arc::new(AppState::from_config(AppStateConfig {
-            engine: fixture.engine(),
-            network_manager: None,
+            workload: crate::workload_composition::ServerWorkloadProfile::protocol_only(
+                fixture.engine(),
+            ),
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: NodeServicesConfig::default(),

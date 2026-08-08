@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use nimbus::{Error, TenantId};
+use nimbus_compute::embedded_local_node_identity;
 use nimbus_tenant::TenantIsolationMode;
 use nimbus_workloads::{
     DesiredWorkload, DesiredWorkloadState, NodeCapacity, PlacementPlan, WorkloadScheduler,
@@ -55,7 +56,10 @@ impl WorkloadControlBootPlan {
 }
 
 pub(crate) fn default_local_node_capacity() -> Result<Vec<NodeCapacity>, Error> {
-    Ok(vec![NodeCapacity::new("embedded-local-node", u32::MAX)?])
+    Ok(vec![NodeCapacity::new(
+        embedded_local_node_identity().as_str(),
+        u32::MAX,
+    )?])
 }
 
 pub(crate) fn plan_compose_services(

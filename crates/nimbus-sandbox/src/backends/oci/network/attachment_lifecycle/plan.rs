@@ -2,8 +2,8 @@
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    NetworkPlan, NetworkPlanContentDigest, NetworkPlanId, NetworkProviderHandle,
-    NetworkProviderHandleError, NetworkResourceGeneration,
+    NetworkAttachmentId, NetworkPlan, NetworkPlanContentDigest, NetworkPlanId,
+    NetworkProviderHandle, NetworkProviderHandleError, NetworkResourceGeneration,
 };
 
 use super::AttachmentBackendKind;
@@ -49,6 +49,7 @@ pub(crate) fn oci_attachment_plan(
 ///
 /// Live creation and startup classification share this pure compiler so a
 /// stale or substituted provider handle cannot be mistaken for current state.
+#[cfg(test)]
 pub(in crate::backends::oci::network) fn oci_attachment_provider_handle(
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
@@ -56,9 +57,27 @@ pub(in crate::backends::oci::network) fn oci_attachment_provider_handle(
 ) -> Result<NetworkProviderHandle, NetworkProviderHandleError> {
     let attachment_id = default_network_attachment_id(sandbox_id);
     let plan = oci_attachment_plan(tenant_id, sandbox_id, backend);
+    oci_attachment_provider_handle_for_plan(&plan, &attachment_id, backend)
+}
+
+pub(in crate::backends::oci::network) fn oci_attachment_provider_handle_for_plan(
+    plan: &NetworkPlan,
+    attachment_id: &NetworkAttachmentId,
+    backend: AttachmentBackendKind,
+) -> Result<NetworkProviderHandle, NetworkProviderHandleError> {
+    oci_attachment_provider_handle_for_identity(plan.plan_id(), attachment_id, backend)
+}
+
+/// Reconstruct the provider handle from already-authenticated durable desired
+/// identity without re-compiling that identity from a sandbox locator.
+pub(in crate::backends::oci::network) fn oci_attachment_provider_handle_for_identity(
+    plan_id: &NetworkPlanId,
+    attachment_id: &NetworkAttachmentId,
+    backend: AttachmentBackendKind,
+) -> Result<NetworkProviderHandle, NetworkProviderHandleError> {
     NetworkProviderHandle::new(
         host_managed_attachment_provider_id(oci_attachment_registration_kind(backend)),
-        format!("attachment:{}:{attachment_id}", plan.plan_id()),
+        format!("attachment:{plan_id}:{attachment_id}"),
     )
 }
 

@@ -8,11 +8,10 @@ use nimbus_network::{
 };
 
 use super::OciAttachmentContext;
-use super::plan::{
-    oci_attachment_plan, oci_attachment_provider_handle, oci_attachment_registration_kind,
-};
+#[cfg(test)]
+use super::plan::oci_attachment_provider_handle;
+use super::plan::{oci_attachment_provider_handle_for_plan, oci_attachment_registration_kind};
 use crate::backends::capabilities::host_managed_attachment_provider_id;
-use crate::backends::oci::network::default_network_attachment_id;
 use crate::error::{Result, SandboxError};
 
 pub(super) struct OciAttachmentDurableState<'a> {
@@ -37,12 +36,22 @@ impl<'a> OciAttachmentDurableState<'a> {
                 context.provider_label, context.sandbox_id
             ),
         })?;
-        let attachment_id = default_network_attachment_id(context.sandbox_id);
+        let attachment_id = context.config.attachment_id.clone();
         let registration_kind = oci_attachment_registration_kind(context.backend);
         let provider_id = host_managed_attachment_provider_id(registration_kind);
-        let plan = oci_attachment_plan(context.tenant_id, context.sandbox_id, context.backend);
+        let plan =
+            context
+                .config
+                .network_plan
+                .clone()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "{} attachment {} lacks its exact compiled network plan",
+                        context.provider_label, context.sandbox_id
+                    ),
+                })?;
         let stable_handle =
-            oci_attachment_provider_handle(context.tenant_id, context.sandbox_id, context.backend)
+            oci_attachment_provider_handle_for_plan(&plan, &attachment_id, context.backend)
                 .map_err(|error| SandboxError::OperationFailed {
                     message: format!(
                         "{} attachment {} could not construct its stable provider handle: {error}",

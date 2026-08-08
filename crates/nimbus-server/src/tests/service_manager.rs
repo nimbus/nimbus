@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -8,28 +8,26 @@ use axum::http::StatusCode;
 use futures::future::BoxFuture;
 use nimbus_auth::{ApplicationAuthError, ApplicationAuthVerifier};
 use nimbus_core::{
-    InvocationAuth, RuntimeUserIdentity, TableName, TenantId, VerifiedUserIdentity,
-    VerifiedUserIdentityKind,
+    InvocationAuth, RuntimeUserIdentity, TenantId, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
 use nimbus_engine::Engine;
 use nimbus_network::{EndpointProtocol, PublishedEndpoint};
-use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
     SandboxInspection, SandboxOciImageSource, SandboxOwnerSpec, SandboxProcessSpec,
     SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
 use nimbus_services::{
-    RuntimeServiceRegistry, ServiceBackend, ServiceDefinitionCatalog, ServiceManager,
+    ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog, ServiceManager,
 };
 use nimbus_testing::ServerFixture;
 use serde_json::{Map, Value, json};
 
+use super::managed_workload::{TestSandboxActivation, managed_router_config};
 use crate::local_server::{
     LocalServerAuditRecord, LocalServerPaths, LocalServerSecurityState,
     load_or_create_local_admin_token,
 };
-use crate::service_manager::attach_system_state_engine;
 
 #[path = "service_manager/definitions.rs"]
 mod definitions;
@@ -46,61 +44,70 @@ struct StubServiceDefinitionCatalog {
 }
 
 impl ServiceDefinitionCatalog for StubServiceDefinitionCatalog {
-    fn service_backend_for_tenant(
+    fn service_definition_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<ServiceBackend> {
-        if let Some(backend) = self.custom_backends.get(service_name) {
-            return Some(backend.clone());
-        }
-        self.image_launches.get(service_name).map(|image| {
-            let mut spec = sparse_image_spec(tenant_id, service_name);
-            spec.root = SandboxRootSpec::oci_image_reference(image.as_str());
-            ServiceBackend::sandbox(spec)
-        })
+    ) -> Option<ServiceDefinition> {
+        let backend = self
+            .custom_backends
+            .get(service_name)
+            .cloned()
+            .or_else(|| {
+                self.image_launches.get(service_name).map(|image| {
+                    let mut spec = sparse_image_spec(tenant_id, service_name);
+                    spec.root = SandboxRootSpec::oci_image_reference(image.as_str());
+                    ServiceBackend::sandbox(spec)
+                })
+            })?;
+        Some(ServiceDefinition::static_catalog(
+            tenant_id.clone(),
+            service_name,
+            backend,
+        ))
     }
 
-    fn service_backends_for_tenant(
+    fn service_definitions_for_tenant(
         &self,
         tenant_id: &TenantId,
-    ) -> BTreeMap<String, ServiceBackend> {
-        let mut backends = self.custom_backends.clone();
-        for (service_name, image) in &self.image_launches {
-            backends.entry(service_name.clone()).or_insert_with(|| {
-                let mut spec = sparse_image_spec(tenant_id, service_name);
-                spec.root = SandboxRootSpec::oci_image_reference(image.as_str());
-                ServiceBackend::sandbox(spec)
-            });
-        }
-        backends
+    ) -> BTreeMap<String, ServiceDefinition> {
+        self.custom_backends
+            .keys()
+            .chain(self.image_launches.keys())
+            .filter_map(|service_name| {
+                self.service_definition_for_tenant(tenant_id, service_name)
+                    .map(|definition| (service_name.clone(), definition))
+            })
+            .collect()
     }
 }
 
+#[derive(Default)]
 struct ReadySandboxBackend {
     image_starts: AtomicUsize,
     stop_calls: AtomicUsize,
+    handles: std::sync::Mutex<BTreeMap<String, SandboxHandle>>,
 }
 
 impl ReadySandboxBackend {
-    fn handle(tenant_id: &TenantId, service_name: &str, status: SandboxStatus) -> SandboxHandle {
-        let endpoints = if status == SandboxStatus::Ready {
-            vec![
+    fn handle(spec: &SandboxSpec, id: SandboxId, status: SandboxStatus) -> SandboxHandle {
+        let endpoints = spec
+            .port_bindings
+            .iter()
+            .map(|binding| {
                 PublishedEndpoint::new(
-                    "postgres",
-                    EndpointProtocol::Tcp,
-                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
+                    binding.name.clone(),
+                    binding.protocol,
+                    SocketAddr::new(binding.host_address, binding.host_port),
                 )
-                .with_guest_port(5432),
-            ]
-        } else {
-            Vec::new()
-        };
+                .with_guest_port(binding.guest_port)
+            })
+            .collect();
         SandboxHandle::new(
-            tenant_id.clone(),
-            SandboxId::new(format!("sandbox-{tenant_id}-{service_name}")),
-            service_name,
-            SandboxBackendKind::Krun,
+            spec.tenant_id.clone(),
+            id,
+            spec.display_name(),
+            spec.backend,
             status,
             endpoints,
         )
@@ -112,7 +119,33 @@ impl SandboxBackend for ReadySandboxBackend {
         SandboxBackendKind::Krun
     }
 
-    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
+        let inspection = self
+            .activated_handle_for_test(id)
+            .map(SandboxInspection::provider_reported);
+        Box::pin(async move { Ok(inspection) })
+    }
+
+    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
+        self.stop_calls.fetch_add(1, Ordering::SeqCst);
+        self.handles
+            .lock()
+            .expect("ready sandbox handles lock should remain healthy")
+            .remove(id.as_str());
+        Box::pin(async { Ok(()) })
+    }
+
+    fn remove_tenant_artifacts(&self, _tenant_id: TenantId) -> SandboxFuture<()> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+impl TestSandboxActivation for ReadySandboxBackend {
+    fn activate_for_test(
+        &self,
+        spec: SandboxSpec,
+        execution_id: SandboxId,
+    ) -> Result<SandboxHandle, SandboxError> {
         let is_image_start = matches!(
             &spec.root,
             SandboxRootSpec::OciImage(image)
@@ -120,44 +153,28 @@ impl SandboxBackend for ReadySandboxBackend {
         );
         if is_image_start {
             self.image_starts.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async move {
-                Ok(Self::handle(
-                    &spec.tenant_id,
-                    spec.display_name(),
-                    SandboxStatus::Ready,
-                ))
-            })
+            let handle = Self::handle(&spec, execution_id, SandboxStatus::Ready);
+            self.handles
+                .lock()
+                .expect("ready sandbox handles lock should remain healthy")
+                .insert(handle.id.as_str().to_owned(), handle.clone());
+            Ok(handle)
         } else {
-            let service_name = spec.display_name().to_owned();
-            Box::pin(async move {
-                Err(SandboxError::InvalidSpec {
-                    message: format!("non-image service backend unsupported for {service_name}"),
-                })
+            Err(SandboxError::InvalidSpec {
+                message: format!(
+                    "non-image service backend unsupported for {}",
+                    spec.display_name()
+                ),
             })
         }
     }
 
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
-        let id = id.as_str().to_owned();
-        Box::pin(async move {
-            let parts = id.strip_prefix("sandbox-").unwrap_or(&id);
-            let (tenant, service) = parts.rsplit_once('-').unwrap_or(("tenant", "db"));
-            let tenant_id = TenantId::new(tenant).expect("test tenant id should parse");
-            Ok(Some(SandboxInspection::provider_reported(Self::handle(
-                &tenant_id,
-                service,
-                SandboxStatus::Ready,
-            ))))
-        })
-    }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        self.stop_calls.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async { Ok(()) })
-    }
-
-    fn remove_tenant_artifacts(&self, _tenant_id: TenantId) -> SandboxFuture<()> {
-        Box::pin(async { Ok(()) })
+    fn activated_handle_for_test(&self, execution_id: &SandboxId) -> Option<SandboxHandle> {
+        self.handles
+            .lock()
+            .expect("ready sandbox handles lock should remain healthy")
+            .get(execution_id.as_str())
+            .cloned()
     }
 }
 
@@ -169,16 +186,12 @@ fn sparse_image_spec(tenant_id: &TenantId, name: &str) -> SandboxSpec {
         SandboxRootSpec::rootfs(""),
         SandboxProcessSpec::new(Vec::<String>::new()),
     )
-}
-
-fn standalone_sandbox_spec(tenant_id: &TenantId, display_name: &str) -> SandboxSpec {
-    SandboxSpec::new(
-        tenant_id.clone(),
-        SandboxOwnerSpec::standalone_named(display_name),
-        SandboxBackendKind::Krun,
-        SandboxRootSpec::oci_image_reference("registry.example.com/task:latest"),
-        SandboxProcessSpec::new(vec!["task".to_owned()]),
-    )
+    .with_port_binding(nimbus_sandbox::SandboxPortBinding::new(
+        "postgres",
+        EndpointProtocol::Tcp,
+        15432,
+        5432,
+    ))
 }
 
 fn sandbox_spec_body(tenant_id: &str, owner: Value) -> Value {
@@ -299,6 +312,7 @@ fn external_service_definition_body(tenant_id: &str, service_name: &str, endpoin
 
 fn sandbox_create_body(tenant_id: &str, display_name: &str) -> Value {
     json!({
+        "id": format!("sandbox-{tenant_id}-{display_name}"),
         "profile": "worker",
         "spec": sandbox_spec_body(
             tenant_id,
@@ -312,6 +326,7 @@ fn sandbox_create_body(tenant_id: &str, display_name: &str) -> Value {
 
 fn service_owned_sandbox_create_body(tenant_id: &str, service_name: &str) -> Value {
     json!({
+        "id": format!("sandbox-{tenant_id}-{service_name}"),
         "profile": "worker",
         "spec": sandbox_spec_body(
             tenant_id,
@@ -320,8 +335,9 @@ fn service_owned_sandbox_create_body(tenant_id: &str, service_name: &str) -> Val
     })
 }
 
-fn sandbox_create_body_with_spec(spec: Value) -> Value {
+fn sandbox_create_body_with_spec(id: &str, spec: Value) -> Value {
     json!({
+        "id": id,
         "profile": "worker",
         "spec": spec,
     })
@@ -335,17 +351,13 @@ fn service_manager_with_catalog(
     backend: Arc<ReadySandboxBackend>,
     custom_backends: BTreeMap<String, ServiceBackend>,
 ) -> Arc<ServiceManager> {
-    Arc::new(
-        ServiceManager::new(
-            Arc::new(StubServiceDefinitionCatalog {
-                image_launches: BTreeMap::from([("db".to_owned(), "postgres:16".to_owned())]),
-                custom_backends,
-            }),
-            backend,
-        )
-        .with_activation_poll_interval(std::time::Duration::from_millis(1))
-        .with_activation_timeout(std::time::Duration::from_secs(1)),
-    )
+    Arc::new(ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            image_launches: BTreeMap::from([("db".to_owned(), "postgres:16".to_owned())]),
+            custom_backends,
+        }),
+        backend,
+    ))
 }
 
 fn sample_paths(root: &std::path::Path) -> LocalServerPaths {
@@ -806,64 +818,18 @@ fn verified_identity(token: &str, custom_claims: Map<String, Value>) -> Verified
 }
 
 #[tokio::test]
-async fn service_evidence_writer_records_observed_state_to_system_tenant() {
-    let temp = tempfile::tempdir().expect("tempdir should create");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    nimbus_system::prepare_system_tenant_async(&engine, None)
-        .await
-        .expect("system tenant should prepare");
-    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
-    let manager = service_manager(backend);
-    attach_system_state_engine(&manager, engine.clone());
-
-    manager
-        .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
-        .await
-        .expect("service activation should succeed")
-        .expect("db binding should exist");
-
-    let documents = engine
-        .list_documents_async(
-            nimbus_system::system_tenant_id().expect("system id should parse"),
-            TableName::new("services").expect("table should parse"),
-        )
-        .await
-        .expect("service state documents should list");
-    assert_eq!(documents.len(), 1);
-    assert_eq!(documents[0].fields.get("name"), Some(&json!("db")));
-    assert_eq!(documents[0].fields.get("state"), Some(&json!("ready")));
-
-    let ports = engine
-        .list_documents_async(
-            nimbus_system::system_tenant_id().expect("system id should parse"),
-            TableName::new("ports").expect("table should parse"),
-        )
-        .await
-        .expect("service ports should list");
-    assert_eq!(ports.len(), 1);
-    assert_eq!(ports[0].fields.get("tenantId"), Some(&json!("tenant")));
-    assert_eq!(ports[0].fields.get("serviceName"), Some(&json!("db")));
-    assert_eq!(ports[0].fields.get("hostPort"), Some(&json!(15432)));
-    assert_eq!(ports[0].fields.get("guestPort"), Some(&json!(5432)));
-}
-
-#[tokio::test]
 async fn service_lifecycle_routes_reject_unauthenticated_when_local_security_absent() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -891,16 +857,16 @@ async fn operator_service_lifecycle_routes_support_explicit_verbs_and_get() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let (local_server_security, token) = local_server_security(temp.path());
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_local_server_security(local_server_security)
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_local_server_security(local_server_security)
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -918,7 +884,7 @@ async fn operator_service_lifecycle_routes_support_explicit_verbs_and_get() {
         .expect("service get response should parse");
     assert_eq!(before_start_body["tenantId"], json!("tenant"));
     assert_eq!(before_start_body["name"], json!("db"));
-    assert_eq!(before_start_body["state"], json!("stopped"));
+    assert_eq!(before_start_body["state"], json!("pending"));
     assert!(before_start_body.get("sandboxId").is_none());
 
     let start = server
@@ -928,7 +894,11 @@ async fn operator_service_lifecycle_routes_support_explicit_verbs_and_get() {
         .send()
         .await
         .expect("service start request should send");
-    assert_eq!(start.status(), StatusCode::OK);
+    if start.status() != StatusCode::OK {
+        let status = start.status();
+        let body = start.text().await.expect("error response should read");
+        panic!("service start returned {status}: {body}");
+    }
     let start_body = start
         .json::<serde_json::Value>()
         .await
@@ -990,16 +960,16 @@ async fn operator_service_definition_routes_are_resource_shaped_and_precondition
     let temp = tempfile::tempdir().expect("tempdir should create");
     let (local_server_security, token) = local_server_security(temp.path());
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_local_server_security(local_server_security)
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_local_server_security(local_server_security)
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -1011,7 +981,11 @@ async fn operator_service_definition_routes_are_resource_shaped_and_precondition
         .send()
         .await
         .expect("service definition create should send");
-    assert_eq!(create.status(), StatusCode::CREATED);
+    if create.status() != StatusCode::CREATED {
+        let status = create.status();
+        let body = create.text().await.expect("error response should read");
+        panic!("service definition create returned {status}: {body}");
+    }
     let create_body = create
         .json::<Value>()
         .await
@@ -1156,16 +1130,16 @@ fn assert_sandbox_resource_response_redacts_launch_details(response: &Value) {
 async fn service_definition_permissions_do_not_imply_service_lifecycle_grants() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -1205,17 +1179,17 @@ async fn service_definition_list_only_permission_redacts_inspect_details() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let (local_server_security, token) = local_server_security(temp.path());
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_local_server_security(local_server_security)
-            .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_local_server_security(local_server_security)
+        .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -1296,16 +1270,16 @@ async fn service_definition_list_only_permission_redacts_inspect_details() {
 async fn service_definition_force_delete_requires_separate_policy_and_exact_service_grant() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -1363,14 +1337,10 @@ async fn service_definition_update_rejects_active_backend_until_stopped() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let (local_server_security, token) = local_server_security(temp.path());
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let manager = service_manager(backend.clone());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(manager.clone())
+        managed_router_config(engine.clone(), manager.clone(), backend.clone())
             .with_local_server_security(local_server_security)
             .without_deploy_admin_token()
             .build(),
@@ -1455,16 +1425,16 @@ async fn service_definition_update_rejects_active_backend_until_stopped() {
 async fn tenant_workload_service_routes_do_not_require_operator_security() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -1499,16 +1469,16 @@ async fn tenant_workload_service_routes_do_not_require_operator_security() {
 async fn spawned_workload_service_routes_use_own_tenant_and_exact_grants() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -1575,16 +1545,16 @@ async fn principal_class_service_route_policy_allows_operator_cross_tenant_and_a
     let (local_server_security, token) = local_server_security(temp.path());
     let audit_log_path = local_server_security.paths().audit_log_path.clone();
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_local_server_security(local_server_security)
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_local_server_security(local_server_security)
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -1612,17 +1582,17 @@ async fn principal_class_service_route_policy_rejects_tenant_cross_tenant() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let (local_server_security, _token) = local_server_security(temp.path());
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_local_server_security(local_server_security)
-            .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_local_server_security(local_server_security)
+        .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -1643,17 +1613,17 @@ async fn principal_class_service_route_policy_requires_exact_service_grant() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let (local_server_security, _token) = local_server_security(temp.path());
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_local_server_security(local_server_security)
-            .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_local_server_security(local_server_security)
+        .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 

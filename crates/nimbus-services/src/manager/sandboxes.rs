@@ -1,309 +1,229 @@
-use std::collections::BTreeMap;
-
 use nimbus_core::{Error, TenantId};
-use nimbus_sandbox::{
-    SandboxCleanupObservation, SandboxHandle, SandboxOwnerSpec, SandboxSpec, SandboxStatus,
-};
-use nimbus_tenant::{
-    TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput, WorkloadAttributes,
-};
+use nimbus_sandbox::{SandboxHandle, SandboxOwnerSpec, SandboxSpec};
 
-use crate::SandboxResource;
+use crate::{SandboxResourceObservation, SandboxResourceSnapshot, SandboxResourceSource};
 
 use super::ServiceManager;
-use super::clock::{next_version, now_millis};
+use super::clock::now_millis;
+use super::types::TenantSandboxResourceKey;
 
 impl ServiceManager {
-    pub async fn create_sandbox_resource_for_context_async(
-        &self,
-        isolation: &TenantIsolationContext,
-        profile: impl Into<String>,
-        spec: SandboxSpec,
-        labels: BTreeMap<String, String>,
-    ) -> Result<SandboxResource, Error> {
-        let profile = profile.into();
-        let decision = self.sandbox_resource_decision(isolation, &profile, &spec)?;
-        self.create_sandbox_resource_for_decision_async(&decision, profile, spec, labels)
-            .await
-    }
-
-    async fn create_sandbox_resource_for_decision_async(
-        &self,
-        decision: &TenantIsolationDecision,
-        profile: impl Into<String>,
-        spec: SandboxSpec,
-        labels: BTreeMap<String, String>,
-    ) -> Result<SandboxResource, Error> {
-        let tenant_id = decision.tenant_id();
-        let profile = profile.into();
-        validate_sandbox_resource_spec(tenant_id, &spec)?;
-        let actual_backend = self.sandbox_backend.kind();
-        decision.ensure_sandbox_spec_matches(&spec, actual_backend, "standalone sandbox create")?;
-        decision
-            .network()
-            .ensure_sandbox_egress_matches(&spec, "standalone sandbox create")?;
-        decision
-            .volumes()
-            .ensure_sandbox_mounts_match(&spec, "standalone sandbox create")?;
-        self.admit_sandbox_root(decision, &spec)?;
-        let handle = self
-            .sandbox_backend
-            .start(spec.clone())
-            .await
-            .map_err(|error| {
-                Error::Internal(format!(
-                    "failed to start sandbox resource for tenant {tenant_id}: {error}"
-                ))
-            })?;
-        if handle.tenant_id != *tenant_id {
-            let error = Error::InvalidInput(format!(
-                "sandbox backend returned handle for tenant {}, but sandbox create requested tenant {tenant_id}",
-                handle.tenant_id
-            ));
-            self.stop_started_sandbox_resource_after_create_error(
-                &handle,
-                "backend returned a mismatched tenant handle",
-            )
-            .await?;
-            return Err(error);
-        }
-
-        let id = handle.id.as_str().to_owned();
-        let duplicate_id = {
-            let state = self
-                .state
-                .lock()
-                .expect("manager lock should not be poisoned");
-            state.sandbox_resources.contains_key(&id)
-        };
-        if duplicate_id {
-            return Err(Error::conflict(format!(
-                "sandbox backend returned duplicate sandbox id `{id}`"
-            )));
-        }
-        let now = now_millis();
-        let mut handle = Some(handle);
-        let mut spec = Some(spec);
-        let inserted = {
-            let mut state = self
-                .state
-                .lock()
-                .expect("manager lock should not be poisoned");
-            if state.sandbox_resources.contains_key(&id) {
-                None
-            } else {
-                let resource = SandboxResource {
-                    tenant_id: tenant_id.clone(),
-                    id: id.clone(),
-                    profile,
-                    spec: spec
-                        .take()
-                        .expect("sandbox spec should be available before insertion"),
-                    handle: handle
-                        .take()
-                        .expect("sandbox handle should be available before insertion"),
-                    generation: 1,
-                    resource_version: next_version(
-                        &mut state.next_sandbox_resource_version,
-                        "sandbox",
-                    ),
-                    created_at_millis: now,
-                    updated_at_millis: now,
-                    labels,
-                };
-                state.sandbox_resources.insert(id.clone(), resource.clone());
-                Some(resource)
-            }
-        };
-        if let Some(resource) = inserted {
-            return Ok(resource);
-        }
-
-        let error = Error::conflict(format!(
-            "sandbox backend returned duplicate sandbox id `{id}`"
-        ));
-        // The duplicate id is already associated with a tracked sandbox, so a
-        // backend stop by id could stop an existing resource without stop
-        // authorization. Return the conflict and leave backend ownership intact.
-        Err(error)
-    }
-
-    async fn stop_started_sandbox_resource_after_create_error(
-        &self,
-        handle: &SandboxHandle,
-        reason: &str,
-    ) -> Result<(), Error> {
-        if matches!(
-            handle.status,
-            SandboxStatus::Stopped | SandboxStatus::Stopping
-        ) {
-            return Ok(());
-        }
-        self.sandbox_backend.stop(&handle.id).await.map_err(|error| {
-            Error::Internal(format!(
-                "standalone sandbox create failed after backend start ({reason}); failed to stop untracked sandbox `{}`: {error}",
-                handle.id.as_str()
-            ))
-        })
-    }
-
-    pub async fn get_sandbox_resource_async(
+    /// Project one exact provider observation without changing desired source.
+    pub fn project_sandbox_resource_observation(
         &self,
         tenant_id: &TenantId,
-        sandbox_id: &str,
-    ) -> Result<Option<SandboxResource>, Error> {
-        Ok(self
-            .inspect_sandbox_resource_async(tenant_id, sandbox_id)
-            .await?
-            .map(|(resource, _inspection)| resource))
+        stable_resource_id: &str,
+        observed_generation: u64,
+        handle: SandboxHandle,
+    ) -> Result<SandboxResourceObservation, Error> {
+        self.project_sandbox_resource_observation_inner(
+            tenant_id,
+            stable_resource_id,
+            observed_generation,
+            None,
+            None,
+            handle,
+        )
     }
 
-    pub async fn inspect_sandbox_resource_async(
+    /// Project the execution selected for one exact desired sandbox source.
+    ///
+    /// Source version and deterministic execution identity are authenticated
+    /// while the source and first projection share the manager lock. Failed
+    /// evidence leaves the existing observed bytes unchanged.
+    pub fn project_sandbox_resource_execution_observation(
         &self,
         tenant_id: &TenantId,
-        sandbox_id: &str,
-    ) -> Result<Option<(SandboxResource, nimbus_sandbox::SandboxInspection)>, Error> {
-        let current = self.current_sandbox_resource(tenant_id, sandbox_id)?;
-        let Some(current) = current else {
-            return Ok(None);
-        };
-        let inspected = self
-            .sandbox_backend
-            .inspect(&current.handle.id)
-            .await
-            .map_err(|error| {
-                Error::Internal(format!(
-                    "failed to inspect sandbox resource `{sandbox_id}` for tenant {tenant_id}: {error}"
-                ))
-            })?;
-        let Some(inspection) = inspected else {
-            self.state
-                .lock()
-                .expect("manager lock should not be poisoned")
-                .sandbox_resources
-                .remove(sandbox_id);
-            return Ok(None);
-        };
-        let handle = &inspection.handle;
-        validate_sandbox_inspection_identity(tenant_id, sandbox_id, &current.handle, handle)?;
+        stable_resource_id: &str,
+        observed_generation: u64,
+        expected_resource_version: &str,
+        expected_execution_id: &str,
+        handle: SandboxHandle,
+    ) -> Result<SandboxResourceObservation, Error> {
+        self.project_sandbox_resource_observation_inner(
+            tenant_id,
+            stable_resource_id,
+            observed_generation,
+            Some(expected_resource_version),
+            Some(expected_execution_id),
+            handle,
+        )
+    }
 
+    fn project_sandbox_resource_observation_inner(
+        &self,
+        tenant_id: &TenantId,
+        stable_resource_id: &str,
+        observed_generation: u64,
+        expected_resource_version: Option<&str>,
+        expected_execution_id: Option<&str>,
+        handle: SandboxHandle,
+    ) -> Result<SandboxResourceObservation, Error> {
         let mut state = self
             .state
             .lock()
             .expect("manager lock should not be poisoned");
-        let Some(resource) = state.sandbox_resources.get_mut(sandbox_id) else {
-            return Ok(None);
-        };
-        resource.handle = handle.clone();
-        resource.updated_at_millis = now_millis();
-        Ok(Some((resource.clone(), inspection)))
-    }
-
-    pub fn list_sandbox_resources_for_tenant(&self, tenant_id: &TenantId) -> Vec<SandboxResource> {
-        self.state
-            .lock()
-            .expect("manager lock should not be poisoned")
-            .sandbox_resources
-            .values()
-            .filter(|resource| &resource.tenant_id == tenant_id)
-            .cloned()
-            .collect()
-    }
-
-    pub async fn stop_sandbox_resource_async(
-        &self,
-        tenant_id: &TenantId,
-        sandbox_id: &str,
-    ) -> Result<Option<SandboxResource>, Error> {
-        let Some((mut resource, inspection)) = self
-            .inspect_sandbox_resource_async(tenant_id, sandbox_id)
-            .await?
-        else {
-            return Ok(None);
-        };
-        if inspection.cleanup != SandboxCleanupObservation::Finalized {
-            self.sandbox_backend
-                .stop(&resource.handle.id)
-                .await
-                .map_err(|error| {
-                    Error::Internal(format!(
-                        "failed to stop sandbox resource `{sandbox_id}` for tenant {tenant_id}: {error}"
-                    ))
-                })?;
+        let key = TenantSandboxResourceKey::new(tenant_id, stable_resource_id);
+        let source = state.sandbox_resource_sources.get(&key).ok_or_else(|| {
+            Error::NotFound(format!(
+                "sandbox resource `{stable_resource_id}` was not found for tenant `{tenant_id}`"
+            ))
+        })?;
+        if &source.tenant_id != tenant_id {
+            return Err(Error::NotFound(format!(
+                "sandbox resource `{stable_resource_id}` was not found for tenant `{tenant_id}`"
+            )));
         }
-        resource.handle.status = SandboxStatus::Stopped;
-        resource.handle.published_endpoints.clear();
-        resource.updated_at_millis = now_millis();
+        if source.generation != observed_generation {
+            return Err(Error::PreconditionFailed(format!(
+                "sandbox resource `{stable_resource_id}` has generation {}, but observation expected generation {observed_generation}",
+                source.generation
+            )));
+        }
+        if expected_resource_version.is_some_and(|expected| source.resource_version != expected) {
+            return Err(Error::PreconditionFailed(format!(
+                "sandbox resource `{stable_resource_id}` has resource version {}, but observation expected {expected_resource_version:?}",
+                source.resource_version
+            )));
+        }
+        validate_sandbox_observation_identity(source, &handle)?;
+        if expected_execution_id.is_some_and(|expected| handle.id.as_str() != expected) {
+            return Err(Error::InvalidInput(format!(
+                "sandbox resource `{stable_resource_id}` for tenant `{tenant_id}` rejected provider sandbox {} because the exact execution ID is {expected_execution_id:?}",
+                handle.id
+            )));
+        }
+        let exact_first_writer =
+            expected_resource_version.is_some() && expected_execution_id.is_some();
+        if !exact_first_writer && !state.sandbox_resource_observations.contains_key(&key) {
+            return Err(Error::PreconditionFailed(format!(
+                "sandbox resource `{stable_resource_id}` for tenant `{tenant_id}` requires an exact source-version and execution-ID projection before transitional refreshes are accepted"
+            )));
+        }
+        if state
+            .sandbox_resource_observations
+            .iter()
+            .any(|(candidate, observation)| candidate != &key && observation.handle.id == handle.id)
         {
-            let mut state = self
-                .state
-                .lock()
-                .expect("manager lock should not be poisoned");
-            state
-                .sandbox_resources
-                .insert(sandbox_id.to_owned(), resource.clone());
+            return Err(Error::conflict(format!(
+                "sandbox provider handle `{}` is already projected by another resource",
+                handle.id
+            )));
         }
-        Ok(Some(resource))
+        let observation = SandboxResourceObservation {
+            tenant_id: tenant_id.clone(),
+            id: stable_resource_id.to_owned(),
+            observed_generation,
+            handle,
+            observed_at_millis: now_millis(),
+        };
+        if let Some(existing) = state.sandbox_resource_observations.get(&key) {
+            if existing.observed_generation > observed_generation {
+                return Err(Error::PreconditionFailed(format!(
+                    "sandbox resource `{stable_resource_id}` already has newer observed generation {}",
+                    existing.observed_generation
+                )));
+            }
+            if existing.observed_generation == observed_generation
+                && !same_provider_identity(&existing.handle, &observation.handle)
+            {
+                return Err(Error::conflict(format!(
+                    "sandbox resource `{stable_resource_id}` generation {observed_generation} already has a different provider observation"
+                )));
+            }
+            if existing.handle == observation.handle {
+                return Ok(existing.clone());
+            }
+        }
+        state
+            .sandbox_resource_observations
+            .insert(key, observation.clone());
+        Ok(observation)
     }
 
-    fn current_sandbox_resource(
+    /// Return the immutable source-owned sandbox snapshot without provider inspection.
+    ///
+    /// Workload freshness checks use this path so reading source generation,
+    /// resource version, and executable input cannot restart or otherwise
+    /// mutate the sandbox provider.
+    pub fn sandbox_resource_source_for_tenant(
         &self,
         tenant_id: &TenantId,
         sandbox_id: &str,
-    ) -> Result<Option<SandboxResource>, Error> {
-        let Some(resource) = self
+    ) -> Result<Option<SandboxResourceSource>, Error> {
+        Ok(self
+            .sandbox_resource_snapshot_for_tenant(tenant_id, sandbox_id)?
+            .map(|snapshot| snapshot.source))
+    }
+
+    pub fn sandbox_resource_snapshot_for_tenant(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &str,
+    ) -> Result<Option<SandboxResourceSnapshot>, Error> {
+        let state = self
             .state
             .lock()
-            .expect("manager lock should not be poisoned")
-            .sandbox_resources
-            .get(sandbox_id)
-            .cloned()
-        else {
+            .expect("manager lock should not be poisoned");
+        let key = TenantSandboxResourceKey::new(tenant_id, sandbox_id);
+        let Some(source) = state.sandbox_resource_sources.get(&key).cloned() else {
             return Ok(None);
         };
-        if &resource.tenant_id != tenant_id {
-            return Ok(None);
-        }
-        Ok(Some(resource))
+        Ok(Some(SandboxResourceSnapshot {
+            source,
+            observation: state.sandbox_resource_observations.get(&key).cloned(),
+        }))
     }
 
-    fn sandbox_resource_decision(
+    pub fn list_sandbox_resource_snapshots_for_tenant(
         &self,
-        isolation: &TenantIsolationContext,
-        profile: &str,
-        spec: &SandboxSpec,
-    ) -> Result<TenantIsolationDecision, Error> {
-        isolation.admit_decision(
-            TenantIsolationPolicyInput::new(
-                WorkloadAttributes::sandbox(profile).with_sandbox_backend(spec.backend),
-            )
-            .with_image(self.manager_image_policy()),
-        )
+        tenant_id: &TenantId,
+    ) -> Vec<SandboxResourceSnapshot> {
+        let state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        state
+            .sandbox_resource_sources
+            .iter()
+            .filter(|(key, _)| &key.tenant_id == tenant_id)
+            .map(|(key, source)| SandboxResourceSnapshot {
+                observation: state.sandbox_resource_observations.get(key).cloned(),
+                source: source.clone(),
+            })
+            .collect()
     }
 }
 
-fn validate_sandbox_inspection_identity(
-    tenant_id: &TenantId,
-    sandbox_id: &str,
-    expected: &SandboxHandle,
+pub(super) fn same_sandbox_resource_desire(
+    left: &SandboxResourceSource,
+    right: &SandboxResourceSource,
+) -> bool {
+    left.tenant_id == right.tenant_id
+        && left.id == right.id
+        && left.profile == right.profile
+        && left.spec == right.spec
+        && left.generation == right.generation
+        && left.resource_version == right.resource_version
+        && left.labels == right.labels
+}
+
+fn validate_sandbox_observation_identity(
+    source: &SandboxResourceSource,
     observed: &SandboxHandle,
 ) -> Result<(), Error> {
-    if observed.id == expected.id
-        && observed.tenant_id == *tenant_id
-        && observed.name == expected.name
-        && observed.backend == expected.backend
+    if observed.tenant_id == source.tenant_id
+        && observed.name == source.spec.display_name()
+        && observed.backend == source.spec.backend
     {
         return Ok(());
     }
-
-    Err(Error::Internal(format!(
-        "sandbox backend returned crossed inspection identity for resource `{sandbox_id}` tenant \
-         {tenant_id}: expected sandbox {} tenant {} name {} backend {:?}, observed sandbox {} \
-         tenant {} name {} backend {:?}",
-        expected.id,
-        tenant_id,
-        expected.name,
-        expected.backend,
+    Err(Error::InvalidInput(format!(
+        "sandbox provider returned crossed observation for source `{}` tenant {}: expected name {} backend {:?}, observed sandbox {} tenant {} name {} backend {:?}",
+        source.id,
+        source.tenant_id,
+        source.spec.display_name(),
+        source.spec.backend,
         observed.id,
         observed.tenant_id,
         observed.name,
@@ -311,7 +231,17 @@ fn validate_sandbox_inspection_identity(
     )))
 }
 
-fn validate_sandbox_resource_spec(tenant_id: &TenantId, spec: &SandboxSpec) -> Result<(), Error> {
+fn same_provider_identity(left: &SandboxHandle, right: &SandboxHandle) -> bool {
+    left.id == right.id
+        && left.tenant_id == right.tenant_id
+        && left.name == right.name
+        && left.backend == right.backend
+}
+
+pub(super) fn validate_sandbox_resource_spec(
+    tenant_id: &TenantId,
+    spec: &SandboxSpec,
+) -> Result<(), Error> {
     if &spec.tenant_id != tenant_id {
         return Err(Error::InvalidInput(format!(
             "sandbox spec tenant {} does not match route tenant {tenant_id}",

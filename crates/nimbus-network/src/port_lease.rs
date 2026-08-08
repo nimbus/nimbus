@@ -1197,7 +1197,7 @@ impl LocalPortLeaseAuthority {
         bindings: &[(PortLeaseRequest, PortBindClaim, PortLeaseBinding)],
         reservation_claim: Option<&NetworkReservationClaim>,
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
-        self.adopt_claimed_and_activate_batch_inner(bindings, reservation_claim, None)
+        self.adopt_claimed_and_activate_batch_inner(bindings, reservation_claim, None, None)
     }
 
     fn adopt_claimed_and_activate_batch_inner(
@@ -1205,6 +1205,7 @@ impl LocalPortLeaseAuthority {
         bindings: &[(PortLeaseRequest, PortBindClaim, PortLeaseBinding)],
         reservation_claim: Option<&NetworkReservationClaim>,
         required_lifetimes: Option<&BTreeMap<PortLeaseId, PortLeaseLifetime>>,
+        plan_witness: Option<&[PortLeaseRequest]>,
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
             let mut distinct = BTreeMap::<
@@ -1305,7 +1306,14 @@ impl LocalPortLeaseAuthority {
                 .values()
                 .map(|(request, _, _)| *request)
                 .collect::<Vec<_>>();
-            plan_batch::authenticate_complete_plan_batch_if_present(state, &requested)?;
+            if let Some(plan_witness) = plan_witness {
+                let witness = plan_witness.iter().collect::<Vec<_>>();
+                for request in &requested {
+                    plan_batch::authenticate_complete_plan_member(state, &witness, request)?;
+                }
+            } else {
+                plan_batch::authenticate_complete_plan_batch_if_present(state, &requested)?;
+            }
 
             let prospective = distinct.values().copied().collect::<Vec<_>>();
             for (index, (request, _, binding)) in prospective.iter().enumerate() {
@@ -1443,7 +1451,7 @@ impl LocalPortLeaseAuthority {
         claim: &PortBindClaim,
         failure: PortBindFailure,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
-        self.record_bind_failure_with_claim(request, reservation_claim, claim, failure, None)
+        self.record_bind_failure_with_claim(request, reservation_claim, claim, failure, None, None)
     }
 
     /// Record a no-effect bind failure owned by the exact live lifetime.
@@ -1470,6 +1478,35 @@ impl LocalPortLeaseAuthority {
             claim,
             failure,
             Some(lifetime.lifetime()),
+            None,
+        )
+    }
+
+    /// Record a confirmed no-effect failure for one exact planned member.
+    ///
+    /// The complete witness authenticates immutable membership while the
+    /// mutation remains scoped to the provider attempt that actually failed.
+    pub fn record_claimed_plan_member_bind_failure_with_lifetime_without_effect(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        request: &PortLeaseRequest,
+        reservation_claim: &NetworkReservationClaim,
+        claim: &PortBindClaim,
+        failure: PortBindFailure,
+        lifetime: &PortLeaseLifetimeGuard,
+    ) -> Result<PortLeaseRecord, PortLeaseError> {
+        if lifetime.request() != request {
+            return Err(PortLeaseError::LifetimeMismatch {
+                lease_id: request.lease_id().clone(),
+            });
+        }
+        self.record_bind_failure_with_claim(
+            request,
+            Some(reservation_claim),
+            claim,
+            failure,
+            Some(lifetime.lifetime()),
+            Some(plan_members),
         )
     }
 
@@ -1480,9 +1517,15 @@ impl LocalPortLeaseAuthority {
         claim: &PortBindClaim,
         failure: PortBindFailure,
         required_lifetime: Option<PortLeaseLifetime>,
+        plan_witness: Option<&[PortLeaseRequest]>,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
-            plan_batch::authenticate_scalar_plan_if_present(state, request)?;
+            if let Some(plan_witness) = plan_witness {
+                let witness = plan_witness.iter().collect::<Vec<_>>();
+                plan_batch::authenticate_complete_plan_member(state, &witness, request)?;
+            } else {
+                plan_batch::authenticate_scalar_plan_if_present(state, request)?;
+            }
             let existing = exact_record(state, request)?;
             if required_lifetime.is_none() && existing.active_lifetime.is_some() {
                 return Err(PortLeaseOperationError::LifetimeMismatch {
@@ -1689,6 +1732,20 @@ impl LocalPortLeaseAuthority {
     ) -> Result<Option<PortLeaseRecord>, PortLeaseError> {
         let state = self.load_state()?;
         Ok(state.leases.get(lease_id).cloned())
+    }
+
+    /// Inspect one exact planned member while authenticating the complete
+    /// immutable caller-supplied membership witness in the same snapshot.
+    pub fn inspect_plan_member(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        member: &PortLeaseRequest,
+    ) -> Result<PortLeaseRecord, PortLeaseError> {
+        self.transaction(|state| {
+            let witness = plan_members.iter().collect::<Vec<_>>();
+            plan_batch::authenticate_complete_plan_member(state, &witness, member)?;
+            exact_record(state, member).cloned()
+        })
     }
 
     /// List every durable member of one network plan in stable lease-ID order.

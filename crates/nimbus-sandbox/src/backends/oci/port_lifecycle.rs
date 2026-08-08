@@ -5,36 +5,47 @@ use std::sync::Arc;
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    LocalPortLeaseAuthority, NetworkReservationClaim, NetworkReservationLifetimeGuard,
-    PortBindClaim, PortBindRealm, PortBindTarget, PortBindingSpec, PortExposure,
-    PortLeaseAccounting, PortLeaseBinding, PortLeaseEffectScope, PortLeasePhase, PortLeaseRecord,
-    PortLeaseRecoveryGuard, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+    LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderId, NetworkReservationClaim,
+    NetworkReservationLifetimeGuard, PortBindClaim, PortBindRealm, PortBindTarget, PortBindingSpec,
+    PortExposure, PortLeaseAccounting, PortLeaseBinding, PortLeaseEffectScope, PortLeaseFence,
+    PortLeaseId, PortLeasePhase, PortLeaseRecord, PortLeaseRecoveryGuard, PortLeaseRequest,
+    PortProtocol, PortPublicationIntent, PortRequestMode,
 };
 
 use super::buildah::{OciExposedPort, OciExposedPortProtocol};
 use super::port_lease::{
     ExpectedListenerAuthority, OciConfirmedBindFailure, OciPortBindLifetimeBatch,
     OciPortLeaseIntent, OciPortProvider, abandon_bind_attempts_with_lifetimes_without_effect,
-    adopt_claimed_and_activate_batch_with_lifetimes, claim_bind_attempts_with_lifetimes,
-    port_lease_request, prepare_provider_managed_batch_after_confirmed_stop,
+    abandon_bind_plan_members_attempts_with_lifetimes_without_effect,
+    abandon_rebind_plan_members_attempts_with_lifetimes_without_effect,
+    adopt_claimed_and_activate_batch_with_lifetimes,
+    adopt_claimed_and_activate_plan_members_with_lifetimes,
+    adopt_claimed_and_activate_rebind_plan_members_with_lifetimes, canonical_socket_ip,
+    claim_bind_attempts_with_lifetimes, claim_bind_plan_members_attempts_with_lifetimes,
+    claim_rebind_plan_members_attempts_with_lifetimes, port_lease_request,
+    prepare_provider_managed_batch_after_confirmed_stop,
     prepare_provider_managed_claim_batch_after_confirmed_stop,
+    prepare_provider_managed_plan_members_after_confirmed_stop,
     prepare_rebind_batch_after_confirmed_stop_with_lifetimes, provider_binding, published_scope,
     record_bind_failure_with_lifetime, recover_provider_managed_batch_after_owner_death,
-    release_batch_after_confirmed_stop, release_provider_managed_batch_after_confirmed_stop,
+    recover_provider_managed_plan_members_after_owner_death, release_batch_after_confirmed_stop,
+    release_provider_managed_batch_after_confirmed_stop,
     release_provider_managed_batch_after_confirmed_stop_with_lifetimes,
     release_reserved_batch_with_lifetime_without_effect, release_reserved_batch_without_effect,
     require_active_provider_binding, require_current_bind_authority,
     require_current_listener_authority, require_listener_authority,
     require_provider_recovery_binding, reserve_batch, reserve_batch_with_tenant_limit,
-    verify_reserved_batch_for_coordinator, withdraw,
+    reserve_request_batch, verify_reserved_batch_for_coordinator, withdraw,
 };
 #[cfg(test)]
 use super::port_lease::{
     abandon_bind_attempts_without_effect, adopt_claimed_and_activate_batch, claim_bind_attempts,
     new_launch_reservation_claim, prepare_rebind_batch_after_confirmed_stop, release, reserve,
 };
+use crate::backends::capabilities::SANDBOX_EGRESS_PEP_PROVIDER_KEY;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
+use crate::provision::SandboxProvisionNetworkPlan;
 use crate::spec::SandboxPortBinding;
 
 mod authority;
@@ -287,7 +298,6 @@ impl OciPortLeaseCoordinator {
                 self.range_request_mode()?,
             ));
         }
-
         let reserved_batch = match self.max_ports_per_tenant {
             Some(maximum) => reserve_batch_with_tenant_limit(
                 self.authority()?,
@@ -364,6 +374,125 @@ impl OciPortLeaseCoordinator {
                     lease: request,
                 });
             }
+        }
+        Ok(ReservedLaunchPorts {
+            published_bindings,
+            published_leases,
+            internal_listener: internal_reserved,
+            reservation_claim,
+            publication_lifetime: Some(publication_lifetime),
+        })
+    }
+
+    /// Reserve the compiler-selected published listener identities plus one
+    /// provider-local internal listener under the same launch claim.
+    pub(crate) fn reserve_exact_provision_ports(
+        &self,
+        plan: &SandboxProvisionNetworkPlan,
+        internal_listener: Option<InternalListenerReservation>,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<ReservedLaunchPorts> {
+        let mut requests = plan.port_leases();
+        if let Some(internal) = &internal_listener {
+            let dependency = plan
+                .dependency_listeners()
+                .iter()
+                .find(|dependency| dependency.name() == internal.listener_name)
+                .ok_or_else(|| SandboxError::InvalidSpec {
+                    message: format!(
+                        "compiled sandbox network plan omitted dependency listener {:?}",
+                        internal.listener_name
+                    ),
+                })?;
+            let expected_provider =
+                NetworkProviderId::for_registration_key(SANDBOX_EGRESS_PEP_PROVIDER_KEY);
+            if dependency.provider_id() != &expected_provider {
+                return Err(SandboxError::InvalidSpec {
+                    message: format!(
+                        "compiled dependency listener {:?} selected provider {}, not the sandbox egress PEP provider {}",
+                        internal.listener_name,
+                        dependency.provider_id(),
+                        expected_provider
+                    ),
+                });
+            }
+            requests.push(
+                PortLeaseRequest::new(
+                    PortLeaseId::for_listener(dependency.listener_id()),
+                    dependency.listener_id().clone().into(),
+                    Some(plan.tenant_id().clone()),
+                    PortLeaseFence::new(plan.generation(), NetworkLeaseEpoch::new(1)),
+                    PortLeaseAccounting::HostInternal,
+                    PortPublicationIntent::Unpublished,
+                    PortBindingSpec::new(
+                        PortProtocol::Tcp,
+                        PortBindRealm::Host,
+                        internal.target.clone(),
+                        internal.exposure,
+                        self.range_request_mode()?,
+                    ),
+                )
+                .with_plan_id(plan.plan_id().clone()),
+            );
+        }
+        let all_requests = requests.clone();
+        let tenant_limit = self
+            .max_ports_per_tenant
+            .map(|maximum| (plan.tenant_id(), maximum));
+        let reserved = reserve_request_batch(
+            self.authority()?,
+            requests.clone(),
+            tenant_limit,
+            reservation_claim,
+        )?;
+        let (records, reservation_claim, publication_lifetime) = reserved.into_parts();
+        let published_count = plan.listeners().len();
+        let mut published_bindings = plan.bindings();
+        let mut published_leases = Vec::with_capacity(published_count);
+        let mut internal_reserved = None;
+        for (index, (request, record)) in requests.into_iter().zip(records).enumerate() {
+            if index < published_count {
+                let binding = &mut published_bindings[index];
+                match (request.binding().port(), record.reserved_port()) {
+                    (PortRequestMode::Exact(expected), Some(selected)) if expected == &selected => {
+                        binding.host_port = selected.get();
+                    }
+                    (PortRequestMode::ProviderAssigned, None) => {
+                        binding.host_port = 0;
+                    }
+                    _ => {
+                        let error = SandboxError::OperationFailed {
+                            message: format!(
+                                "exact provision lease {} returned incompatible numeric-port evidence",
+                                request.lease_id()
+                            ),
+                        };
+                        return Err(self.compensate_failed_never_bound_requests_with_lifetime(
+                            &all_requests,
+                            &publication_lifetime,
+                            error,
+                            "exact provision reservation projection",
+                        ));
+                    }
+                }
+                published_leases.push(request);
+                continue;
+            }
+            let Some(selected) = record.reserved_port() else {
+                let error = SandboxError::OperationFailed {
+                    message: "internal provision listener did not select a numeric port".to_owned(),
+                };
+                return Err(self.compensate_failed_never_bound_requests_with_lifetime(
+                    &all_requests,
+                    &publication_lifetime,
+                    error,
+                    "exact provision internal-listener projection",
+                ));
+            };
+            internal_reserved = Some(ReservedInternalListener {
+                port: selected.get(),
+                lease: request,
+            });
         }
         Ok(ReservedLaunchPorts {
             published_bindings,

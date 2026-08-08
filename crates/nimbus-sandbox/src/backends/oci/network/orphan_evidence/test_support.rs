@@ -14,8 +14,8 @@ use super::super::attachment_lifecycle::{
 };
 use super::super::ipam::OciIpamAuthority;
 use super::super::{
-    OciNetworkConfig, OciNetworkLayout, OciPlacementProvider, SingleNodeSegmentAllocator,
-    default_network_attachment_id, place_sandbox_on_block,
+    OciNetworkConfig, OciNetworkLayout, OciPlacementAuthority, OciPlacementProvider,
+    SingleNodeSegmentAllocator, default_network_attachment_id, place_sandbox_on_block,
 };
 use crate::backends::capabilities::{
     SandboxAttachmentRegistrationKind, host_managed_attachment_provider_id,
@@ -78,25 +78,26 @@ impl EvidenceFixture {
         let attachments = LocalNetworkAttachmentAuthority::open(&network_root)
             .expect("attachment authority should open");
         let claim = reservation_claim(&format!("{label}-winner"));
+        let attachment_id = default_network_attachment_id(&sandbox_id);
         let config = place_sandbox_on_block(
             &allocator,
             &ipam,
             &tenant_id,
             &layout,
             &sandbox_id,
-            &claim,
+            OciPlacementAuthority::new(&attachment_id, &claim),
             OciPlacementProvider::new(backend.provider_kind(), |segment, reservation_claim| {
                 OciAttachmentLifecycle::config_from_segment(
                     backend,
                     PathBuf::from("netavark-not-executed"),
                     PathBuf::from("aardvark-not-executed"),
                     segment,
+                    &attachment_id,
                     reservation_claim,
                 )
             }),
         )
         .expect("placement should persist IPAM evidence before effects");
-        let attachment_id = default_network_attachment_id(&sandbox_id);
         let allocator_association = allocator
             .inspect_attachment_reservation(&tenant_id, &attachment_id, &claim)
             .expect("allocator reservation should inspect")

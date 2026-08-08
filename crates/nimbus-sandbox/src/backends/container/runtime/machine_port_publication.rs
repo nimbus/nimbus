@@ -22,7 +22,7 @@ use crate::backends::oci::network::DeterministicMachinePortForwardingProvider;
 use crate::backends::oci::network::{
     AttachmentBackendKind, MachinePortForwardOutcome, MachinePortForwardReceipt,
     MachinePortForwardingProvider, MachinePortForwardingSlotObservation,
-    OciMachinePortForwarderConfig, default_network_attachment_id, oci_attachment_plan,
+    OciMachinePortForwarderConfig, oci_attachment_plan,
 };
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -149,6 +149,21 @@ struct MachinePortPublicationExpectation {
     port_leases: Vec<PortLeaseRequest>,
 }
 
+/// Read-only classification of the provider's durable publication journal.
+///
+/// This says nothing about current process or external-provider liveness. The
+/// provision adapter composes that separate observed evidence only after this
+/// exact desired/durable generation authenticates.
+pub(super) enum DurableMachinePortPublicationObservation {
+    Absent,
+    InProgress {
+        generation: u64,
+    },
+    Exposed {
+        receipts: Vec<MachinePortForwardReceipt>,
+    },
+}
+
 impl MachinePortPublicationExpectation {
     fn from_manifest(
         backend: &ContainerSandboxBackend,
@@ -212,12 +227,32 @@ impl MachinePortPublicationExpectation {
         let port_leases = backend.port_lease_coordinator_for_manifest(manifest)?;
         match authority_phase {
             Some(MachinePortPublicationPhase::Exposing | MachinePortPublicationPhase::Exposed) => {
-                port_leases.require_active_machine_bindings(
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                    &manifest.spec.port_bindings,
-                    &manifest.port_leases,
-                )?;
+                if manifest
+                    .port_leases
+                    .first()
+                    .is_some_and(|request| request.plan_id().is_some())
+                {
+                    let plan_members =
+                        ContainerSandboxBackend::provision_port_plan_witness(manifest);
+                    port_leases.require_active_planned_machine_bindings(
+                        &manifest.spec.tenant_id,
+                        &manifest.spec.port_bindings,
+                        &manifest.port_leases,
+                        &plan_members,
+                    )
+                    .map_err(|error| SandboxError::OperationFailed {
+                        message: format!(
+                            "planned forwarded-machine publication rejected exact active compiler lease evidence: {error}"
+                        ),
+                    })?;
+                } else {
+                    port_leases.require_active_machine_bindings(
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                        &manifest.spec.port_bindings,
+                        &manifest.port_leases,
+                    )?;
+                }
             }
             Some(MachinePortPublicationPhase::Withdrawing) => {
                 port_leases.require_machine_publication_withdrawal_fence(
@@ -248,7 +283,7 @@ impl MachinePortPublicationExpectation {
             None => unreachable!("production publication always selects an authority phase"),
         }
         let network_config = manifest.require_network_config()?;
-        let attachment_id = default_network_attachment_id(&manifest.handle.id);
+        let attachment_id = network_config.attachment_id.clone();
         let attachment_authority =
             backend
                 .attachment_authority
@@ -296,11 +331,13 @@ impl MachinePortPublicationExpectation {
         }
         let selected_provider =
             host_managed_attachment_provider_id(SandboxAttachmentRegistrationKind::Container);
-        let attachment_plan = oci_attachment_plan(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            AttachmentBackendKind::Container,
-        );
+        let attachment_plan = network_config.network_plan.clone().unwrap_or_else(|| {
+            oci_attachment_plan(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                AttachmentBackendKind::Container,
+            )
+        });
         let expected_attachment_version = NetworkResourceVersion::for_plan(
             &attachment_plan,
             NetworkResourceId::Attachment(attachment_id.clone()),
@@ -338,6 +375,68 @@ impl MachinePortPublicationExpectation {
 }
 
 impl ContainerSandboxBackend {
+    pub(super) fn inspect_durable_machine_port_publication(
+        &self,
+        manifest: &ContainerSandboxManifest,
+    ) -> Result<DurableMachinePortPublicationObservation> {
+        let provider = manifest
+            .runner_config
+            .machine_port_forwarder
+            .as_ref()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "container sandbox {} has no machine forwarder authority",
+                    manifest.handle.id
+                ),
+            })?;
+        let Some(record) = read_record_if_present(&manifest.conmon_layout.container_state_dir)?
+        else {
+            return Ok(DurableMachinePortPublicationObservation::Absent);
+        };
+        record.validate_self()?;
+        let authority_phase = match record.phase {
+            MachinePortPublicationPhase::Exposing => MachinePortPublicationPhase::Exposing,
+            MachinePortPublicationPhase::Exposed => MachinePortPublicationPhase::Exposed,
+            MachinePortPublicationPhase::Absent | MachinePortPublicationPhase::Withdrawing => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container machine publication for tenant {} sandbox {} is in terminal-withdrawal phase {:?}; publish inspection remains fenced",
+                        manifest.spec.tenant_id, manifest.handle.id, record.phase
+                    ),
+                });
+            }
+        };
+        let expectation = MachinePortPublicationExpectation::from_manifest(
+            self,
+            manifest,
+            provider,
+            authority_phase,
+        )?;
+        if !record.matches(&expectation) {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container machine publication journal does not match the exact current manifest for tenant {} sandbox {}",
+                    manifest.spec.tenant_id, manifest.handle.id
+                ),
+            });
+        }
+        match record.phase {
+            MachinePortPublicationPhase::Exposing => {
+                Ok(DurableMachinePortPublicationObservation::InProgress {
+                    generation: record.batch_generation,
+                })
+            }
+            MachinePortPublicationPhase::Exposed => {
+                Ok(DurableMachinePortPublicationObservation::Exposed {
+                    receipts: terminal_receipts(&record, MachinePortPublicationPhase::Exposed)?,
+                })
+            }
+            MachinePortPublicationPhase::Absent | MachinePortPublicationPhase::Withdrawing => {
+                unreachable!("withdrawal phases return before expectation construction")
+            }
+        }
+    }
+
     pub(super) fn converge_exposed_machine_port_publication(
         &self,
         manifest: &ContainerSandboxManifest,
@@ -474,7 +573,7 @@ impl ContainerSandboxBackend {
         manifest: &ContainerSandboxManifest,
     ) -> Result<()> {
         let network_config = manifest.require_network_config()?;
-        let attachment_id = default_network_attachment_id(&manifest.handle.id);
+        let attachment_id = network_config.attachment_id.clone();
         let reservation = self.segment_allocator.inspect_attachment_reservation(
             &manifest.spec.tenant_id,
             &attachment_id,
@@ -489,11 +588,13 @@ impl ContainerSandboxBackend {
                 ),
             })?
             .clone();
-        let plan = oci_attachment_plan(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            AttachmentBackendKind::Container,
-        );
+        let plan = network_config.network_plan.clone().unwrap_or_else(|| {
+            oci_attachment_plan(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                AttachmentBackendKind::Container,
+            )
+        });
         self.attachment_authority
             .as_ref()
             .ok_or_else(|| SandboxError::OperationFailed {

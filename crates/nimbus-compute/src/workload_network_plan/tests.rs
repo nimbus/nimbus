@@ -4,13 +4,15 @@ use nimbus_core::TenantId;
 use nimbus_network::{
     EndpointProtocol, NetworkAddressFamily, NetworkAttachmentProviderRegistration,
     NetworkBindRealmKind, NetworkCapabilityBundle, NetworkCapabilityDimension,
-    NetworkCapabilityRegistry, NetworkCapabilitySelection, NetworkControlPlaneLocality,
-    NetworkEndpointCapabilitySet, NetworkExposure, NetworkExternalDependency,
-    NetworkForwardingCapabilitySet, NetworkForwardingFeature, NetworkIngressCapabilitySet,
-    NetworkIngressFeature, NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet,
-    NetworkLifecycleFeature, NetworkPlanUpdate, NetworkPortAssignmentMode, NetworkProviderId,
-    NetworkResourceId, NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
-    NetworkTlsBehavior, PortProtocol,
+    NetworkCapabilityMismatch, NetworkCapabilityRegistry, NetworkCapabilityRequirements,
+    NetworkCapabilityRole, NetworkCapabilitySelection, NetworkCapabilitySelectionError,
+    NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkExposure,
+    NetworkExternalDependency, NetworkForwardingCapabilitySet, NetworkForwardingFeature,
+    NetworkIngressCapabilitySet, NetworkIngressFeature, NetworkIngressProviderRegistration,
+    NetworkLifecycleCapabilitySet, NetworkLifecycleFeature, NetworkLifecycleRequirements,
+    NetworkPlanUpdate, NetworkPortAssignmentMode, NetworkProviderId, NetworkResourceId,
+    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, NetworkTlsBehavior,
+    PortProtocol,
 };
 use nimbus_sandbox::{
     SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
@@ -28,7 +30,8 @@ use nimbus_workloads::{
 
 use super::{
     AdmittedWorkloadNetworkSource, EGRESS_PEP_LISTENER_NAME, WorkloadNetworkEndpointSemanticsInput,
-    WorkloadNetworkPlanCompileError, WorkloadNetworkPlanCompiler, require_sovereignty_refinement,
+    WorkloadNetworkPlanCompileError, WorkloadNetworkPlanCompiler, aggregate_requirements,
+    require_sovereignty_refinement,
 };
 
 const TENANT: &str = "tenant-a";
@@ -62,7 +65,7 @@ fn endpoint_semantics(spec: &SandboxSpec) -> Vec<WorkloadNetworkEndpointSemantic
                 &binding.name,
                 WorkloadNetworkForwardingBehavior::PortForwarded,
                 match binding.protocol {
-                    EndpointProtocol::Https => NetworkTlsBehavior::TerminateAtIngress,
+                    EndpointProtocol::Https => NetworkTlsBehavior::Passthrough,
                     EndpointProtocol::Tcp | EndpointProtocol::Http => NetworkTlsBehavior::Disabled,
                 },
             )
@@ -121,7 +124,7 @@ fn ingress_registration(
     forwarding: bool,
     public_exposure: bool,
 ) -> NetworkIngressProviderRegistration {
-    let mut features = vec![NetworkIngressFeature::Streaming];
+    let mut features = Vec::new();
     if tls {
         features.push(NetworkIngressFeature::TlsTermination);
     }
@@ -142,13 +145,17 @@ fn ingress_registration(
             ],
         ),
         NetworkIngressCapabilitySet::new(features).with_tls_behaviors(
-            std::iter::once(NetworkTlsBehavior::Disabled)
-                .chain(tls.then_some(NetworkTlsBehavior::TerminateAtIngress)),
+            [
+                NetworkTlsBehavior::Disabled,
+                NetworkTlsBehavior::Passthrough,
+            ]
+            .into_iter()
+            .chain(tls.then_some(NetworkTlsBehavior::TerminateAtIngress)),
         ),
         NetworkForwardingCapabilitySet::new(
             forwarding.then_some(NetworkForwardingFeature::PortForwarding),
         ),
-        complete_lifecycle(),
+        ingress_lifecycle(),
         NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     )
 }
@@ -197,6 +204,13 @@ fn complete_lifecycle() -> NetworkLifecycleCapabilitySet {
         NetworkLifecycleFeature::DurableInspect,
         NetworkLifecycleFeature::Reconcile,
         NetworkLifecycleFeature::Delete,
+    ])
+}
+
+fn ingress_lifecycle() -> NetworkLifecycleCapabilitySet {
+    NetworkLifecycleCapabilitySet::new([
+        NetworkLifecycleFeature::DurableInspect,
+        NetworkLifecycleFeature::Reconcile,
     ])
 }
 
@@ -333,7 +347,7 @@ fn sandbox_plan_retains_attachment_listeners_and_exact_readiness() {
                 .with_host_address(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         ],
     );
-    let (registry, selection) = registry_for(SandboxBackendKind::Krun, true);
+    let (registry, selection) = registry_for(SandboxBackendKind::Krun, false);
 
     let compiled = compile_standalone(&decision, &spec, &selection, &registry)
         .expect("sandbox plan should compile");
@@ -385,7 +399,80 @@ fn sandbox_plan_retains_attachment_listeners_and_exact_readiness() {
             .requirements()
             .ingress()
             .tls_behaviors()
-            .contains(&NetworkTlsBehavior::TerminateAtIngress)
+            .contains(&NetworkTlsBehavior::Passthrough)
+    );
+    assert!(
+        !compiled
+            .plan()
+            .requirements()
+            .ingress()
+            .features()
+            .contains(&NetworkIngressFeature::Streaming),
+        "HTTP and HTTPS protocol must not fabricate an L7 streaming requirement"
+    );
+    assert_eq!(
+        compiled
+            .plan()
+            .requirements()
+            .lifecycle()
+            .attachment()
+            .features(),
+        complete_lifecycle().features()
+    );
+    assert_eq!(
+        compiled
+            .plan()
+            .requirements()
+            .lifecycle()
+            .ingress()
+            .features(),
+        ingress_lifecycle().features()
+    );
+}
+
+#[test]
+fn explicit_streaming_requirement_survives_and_rejects_transparent_ingress() {
+    let projection = sandbox_network_plan_requirements(SandboxBackendKind::Container);
+    let base = projection.capability_requirements();
+    let source = NetworkCapabilityRequirements::new(
+        base.attachment().clone(),
+        base.endpoint().clone(),
+        NetworkIngressCapabilitySet::new([NetworkIngressFeature::Streaming]),
+        base.forwarding().clone(),
+        NetworkLifecycleRequirements::new(
+            base.lifecycle().attachment().clone(),
+            base.lifecycle().ingress().clone(),
+        ),
+        base.sovereignty().clone(),
+    );
+    let aggregated = aggregate_requirements(&source, &[], sovereignty())
+        .expect("explicit source requirements should aggregate");
+    assert!(
+        aggregated
+            .ingress()
+            .features()
+            .contains(&NetworkIngressFeature::Streaming),
+        "an explicit source requirement must remain authoritative"
+    );
+
+    let (registry, selection) = registry_for(SandboxBackendKind::Container, false);
+    let error = registry
+        .select_exact(&selection, &aggregated)
+        .expect_err("transparent ingress must reject explicit L7 streaming");
+    assert!(matches!(
+        &error,
+        NetworkCapabilitySelectionError::Unsatisfied { .. }
+    ));
+    assert_eq!(error.provider_failures().len(), 1);
+    assert_eq!(
+        error.provider_failures()[0].role(),
+        NetworkCapabilityRole::Ingress
+    );
+    assert_eq!(
+        error.provider_failures()[0].mismatches(),
+        &[NetworkCapabilityMismatch::IngressFeature {
+            required: NetworkIngressFeature::Streaming,
+        }]
     );
 }
 
@@ -1194,8 +1281,27 @@ fn crossed_provider_selection_rejects_before_submission() {
         )],
     );
     let (no_tls_registry, selection) = registry_for(SandboxBackendKind::Container, false);
-    let unsatisfied = compile_standalone(&decision, &https_spec, &selection, &no_tls_registry)
-        .expect_err("TLS need must fail against a non-TLS registration");
+    let unsatisfied = WorkloadNetworkPlanCompiler
+        .compile(
+            &decision,
+            AdmittedWorkloadNetworkSource::Sandbox {
+                stable_resource_id: "sandbox-a",
+                profile: "python",
+                generation: GENERATION,
+                sandbox_spec: &https_spec,
+            },
+            Some(&selection),
+            &no_tls_registry,
+            sovereignty(),
+            &[WorkloadNetworkEndpointSemanticsInput::new(
+                "https",
+                WorkloadNetworkForwardingBehavior::PortForwarded,
+                NetworkTlsBehavior::TerminateAtIngress,
+            )],
+            WorkloadActivationIntent::ActivateWhenAttached,
+            WorkloadPublicationIntent::PublishWhenReady,
+        )
+        .expect_err("TLS termination must fail against transparent ingress");
     assert!(matches!(
         unsatisfied,
         WorkloadNetworkPlanCompileError::CapabilitySelection(_)

@@ -223,6 +223,7 @@ fn netavark_endpoint_effect_requires_complete_current_port_leases() {
                     .reservation_claim()
                     .expect("execute manifest should retain its launch claim"),
             ),
+            true,
         )
         .expect_err("provider setup without the complete lease set must fail");
     assert!(
@@ -1335,12 +1336,21 @@ fn vm_config_materialization_failure_compensates_unstarted_launch_batch() {
             .with_memory_limit_bytes(256 * 1024 * 1024),
     );
 
-    let error =
-        block_on(backend.start(spec.clone())).expect_err("vm config write should fail before bind");
+    let sandbox_id = SandboxId::new("vm-config-materialization-failure");
+    let network_plan =
+        sample_provision_network_plan(&spec, &sandbox_id, "vm-config-materialization-failure");
+    backend
+        .reserve_provision_network(spec.clone(), sandbox_id.clone(), network_plan)
+        .expect("the exact network envelope should reserve before materialization");
+    let error = backend
+        .prepare_provision_workload(&sandbox_id)
+        .expect_err("vm config write should fail before bind");
     assert!(
         error.to_string().contains("failed to write krun vm config"),
         "the materialization failure must remain primary: {error}"
     );
+    block_on(backend.stop(&sandbox_id))
+        .expect("the coordinator's rollback stop should release the reserved launch batch");
 
     let records = nimbus_network::LocalPortLeaseAuthority::open(&state_root)
         .expect("port authority should reopen")
@@ -1477,6 +1487,8 @@ fn ambiguous_placement_failure_retains_reserved_authority_for_restart_cleanup() 
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec_for_tenant("krun-placement-retry", "api");
     let sandbox_id = SandboxId::new("krun-placement-retry");
+    let network_plan =
+        sample_provision_network_plan(&spec, &sandbox_id, "ambiguous-placement-retry");
     let recorder = Arc::new(
         RecordingSegmentAllocator::new(spec.tenant_id.clone(), "10.81.0.0/24", 81)
             .with_reserve_attachment_observer(|_| {
@@ -1493,7 +1505,7 @@ fn ambiguous_placement_failure_retains_reserved_authority_for_restart_cleanup() 
     );
 
     let error = backend
-        .plan_start_with_id(&spec, &sandbox_id, None, None)
+        .plan_reserved_provision_with_id(&spec, &sandbox_id, &network_plan)
         .expect_err("ambiguous placement and exact cleanup failure must fail");
     assert!(
         error
@@ -1513,6 +1525,11 @@ fn ambiguous_placement_failure_retains_reserved_authority_for_restart_cleanup() 
         persisted.launch_authority,
         KrunLaunchAuthority::Reserved { .. }
     ));
+    assert_eq!(
+        persisted.provision_network_plan.as_ref(),
+        Some(&network_plan),
+        "the claim-only manifest must retain the complete compiler plan for exact restart compensation"
+    );
     assert!(
         persisted.network_config.is_none()
             && persisted.port_leases.is_empty()
@@ -1526,7 +1543,7 @@ fn ambiguous_placement_failure_retains_reserved_authority_for_restart_cleanup() 
                 tenant,
                 attachment
             ) if tenant == &spec.tenant_id
-                && attachment == &default_network_attachment_id(&sandbox_id)
+                && attachment == network_plan.attachment_id()
         )),
         "the failed planning pass must attempt only exact claimed compensation"
     );
@@ -1581,14 +1598,15 @@ fn initial_manifest_publication_failure_removes_only_the_exact_materialized_root
     let spec = sparse_image_spec("initial-publication-owned-rootfs");
     let sandbox_id = SandboxId::new("initial-publication-owned-rootfs");
     let owned_rootfs = rootfs_artifact_path(temp_dir.path(), &spec, &sandbox_id);
-    fs::create_dir_all(&owned_rootfs).expect("owned materialized rootfs should exist");
-    fs::write(owned_rootfs.join("owned"), b"owned").expect("owned marker should write");
+    let owned_runtime_rootfs = owned_rootfs.join("rootfs");
+    fs::create_dir_all(&owned_runtime_rootfs).expect("owned materialized rootfs should exist");
+    fs::write(owned_runtime_rootfs.join("owned"), b"owned").expect("owned marker should write");
 
     let error = backend
         .plan_start_with_materialized_image_at_initial_publication_for_test(
             &spec,
             &sandbox_id,
-            prepared_materialized_launch(&owned_rootfs),
+            prepared_materialized_launch(&owned_runtime_rootfs),
             |manifest| {
                 fs::create_dir_all(&manifest.conmon_layout.manifest_path)
                     .expect("manifest publication obstacle should exist");

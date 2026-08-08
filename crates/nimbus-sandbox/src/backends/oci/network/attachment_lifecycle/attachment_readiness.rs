@@ -164,6 +164,26 @@ pub(super) fn inspect_machine_forwarded_base_readiness(
     inspect_common_base(lifecycle, context, pin_provider, proxy, pep)
 }
 
+/// Inspect attachment and egress prerequisites while proving that ingress is
+/// still deliberately deferred.
+pub(super) fn inspect_non_routable_readiness(
+    lifecycle: &OciAttachmentLifecycle<'_>,
+    context: &OciAttachmentContext<'_>,
+    pin_provider: &dyn OciEgressPinObserver,
+    proxy: Option<&EgressProxyAssignment>,
+    pep: EgressReadinessState,
+) -> OciAttachmentBaseReadinessState {
+    if let Err(error) = context.validate_backend_publication() {
+        return base_not_ready(OciAttachmentReadinessFailure::InvalidContext(
+            error.to_string(),
+        ));
+    }
+    if !context.publication.is_deferred() {
+        return base_not_ready(OciAttachmentReadinessFailure::UnsupportedPublicationMode);
+    }
+    inspect_common_base(lifecycle, context, pin_provider, proxy, pep)
+}
+
 pub(super) fn complete_machine_forwarded_readiness(
     context: &OciAttachmentContext<'_>,
     base: OciAttachmentBaseReadinessEvidence,

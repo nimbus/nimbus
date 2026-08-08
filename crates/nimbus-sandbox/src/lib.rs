@@ -14,6 +14,7 @@ mod error;
 mod inspection;
 mod instance;
 mod process;
+mod provision;
 mod spec;
 pub mod volume;
 
@@ -28,6 +29,15 @@ pub use inspection::{
     SandboxRestartBlocker, SandboxRestartIneligibility,
 };
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
+pub use provision::{
+    ProviderProvisionAttemptJournal, ProviderProvisionClaim, ProviderProvisionClaimDecision,
+    ProviderProvisionClaimInput, ProviderProvisionJournalError, ProviderProvisionObservation,
+    ProviderProvisionObservationKind, ProviderProvisionOperation,
+    SandboxProvisionDependencyListener, SandboxProvisionIngressRoute,
+    SandboxProvisionIngressTargetObservation, SandboxProvisionIngressTargets,
+    SandboxProvisionListener, SandboxProvisionNetworkPlan, SandboxProvisionNetworkPlanError,
+    SandboxProvisionPhaseObservation,
+};
 pub use spec::{
     SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec, SandboxOciBuildSpec,
     SandboxOciImageReferenceSpec, SandboxOciImageSource, SandboxOciImageSpec, SandboxOwnerSpec,

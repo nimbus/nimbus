@@ -4,25 +4,28 @@ use std::sync::{Mutex, RwLock};
 use futures::executor::block_on;
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
-    NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
+    NetworkAttachmentCapabilitySet, NetworkAttachmentProviderRegistration, NetworkCapabilityBundle,
+    NetworkCapabilityRequirements, NetworkCapabilitySelection, NetworkControlPlaneLocality,
     NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
-    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkProviderId,
-    NetworkResourceGeneration, NetworkSovereigntyRequirements, PublishedEndpointId,
+    NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet, NetworkManagementMode,
+    NetworkProviderId, NetworkResourceGeneration, NetworkSovereigntyCapabilities,
+    NetworkSovereigntyRequirements, PublishedEndpointId,
 };
 use nimbus_tenant::TenantIsolationDecisionId;
 
 use super::*;
+use crate::WorkloadExecutionProviderId;
 use crate::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     TenantWorkloadUid, WorkloadActivationIntent, WorkloadAdmissionEvidence,
     WorkloadEffectReferences, WorkloadExecutableEncoding, WorkloadExecutableIntent,
-    WorkloadGeneration, WorkloadInspectionRequirement, WorkloadNetworkIntent,
-    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest,
-    WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadProvisionSourceEvidence,
-    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
-    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent,
-    WorkloadPublicationReference, WorkloadSagaIntent, WorkloadSagaPhase, WorkloadSagaTransitionId,
-    WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
+    WorkloadGeneration, WorkloadInspectionRequirement, WorkloadNetworkAttachmentBlueprint,
+    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
+    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
+    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
+    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion,
+    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaIntent, WorkloadSagaPhase,
+    WorkloadSagaTransitionId, WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
 
 fn require_object_safe_store(_: &dyn WorkloadSagaStore) {}
@@ -1384,15 +1387,63 @@ fn intent_with_publication(
         NetworkEndpointCapabilitySet::new([], [], [], [], []),
         NetworkIngressCapabilitySet::new([]),
         NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([]),
+        nimbus_network::NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     );
+    let (selection, selection_evidence, attachment) = if publication
+        == WorkloadPublicationIntent::PublishWhenReady
+    {
+        let attachment_provider = NetworkProviderId::for_registration_key("fixture-attachment");
+        let ingress_provider = NetworkProviderId::for_registration_key("fixture-ingress");
+        let selection =
+            NetworkCapabilitySelection::new(attachment_provider.clone(), ingress_provider.clone());
+        let evidence = NetworkCapabilityBundle::new(
+            NetworkAttachmentProviderRegistration::new(
+                attachment_provider,
+                NetworkAttachmentCapabilitySet::new(
+                    NetworkManagementMode::NimbusHostManaged,
+                    [],
+                    [],
+                ),
+                [],
+                NetworkLifecycleCapabilitySet::new([]),
+                NetworkSovereigntyCapabilities::new(
+                    NetworkControlPlaneLocality::LocalOnly,
+                    [],
+                    true,
+                ),
+            ),
+            NetworkIngressProviderRegistration::new(
+                ingress_provider,
+                NetworkEndpointCapabilitySet::new([], [], [], [], []),
+                NetworkIngressCapabilitySet::new([]),
+                NetworkForwardingCapabilitySet::new([]),
+                NetworkLifecycleCapabilitySet::new([]),
+                NetworkSovereigntyCapabilities::new(
+                    NetworkControlPlaneLocality::LocalOnly,
+                    [],
+                    true,
+                ),
+            ),
+        )
+        .selection_evidence();
+        (
+            Some(selection),
+            Some(evidence),
+            Some(WorkloadNetworkAttachmentBlueprint::new(&identity, "default").unwrap()),
+        )
+    } else {
+        (None, None, None)
+    };
     let content = WorkloadNetworkPlanContent::new(
         identity,
         requirements,
-        None,
-        None,
-        None,
+        selection,
+        selection_evidence,
+        attachment,
         [],
         [],
         [],
@@ -1413,6 +1464,7 @@ fn intent_with_publication(
         WorkloadProvisionSourceResourceVersion::new("fixture-v1").unwrap(),
         executable.content_digest(),
         NetworkProviderId::for_registration_key("fixture-attachment"),
+        WorkloadExecutionProviderId::for_registration_key("fixture-execution"),
     )
     .unwrap();
     WorkloadSagaIntent::new(

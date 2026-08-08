@@ -50,12 +50,17 @@
       "kind": "behavioral",
       "artifact": "docs/private/plans/proof/nimbus-network-control-plane/nnc4.6e-machine-network-authority-realms.md",
       "marker": "| E3 | pass |"
+    },
+    "nnc6.4": {
+      "kind": "behavioral",
+      "artifact": "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4-atomic-provision-caller-cutover.md",
+      "marker": "NNCV033 is green at `40/40`, its standalone"
     }
   },
   "summary": {
-    "occurrences": 106,
-    "owning_managers": 22,
-    "manager_derived_handles": 37,
+    "occurrences": 114,
+    "owning_managers": 25,
+    "manager_derived_handles": 42,
     "admitted_cross_process_reconstructions": 24,
     "test_fixtures": 23
   },
@@ -65,7 +70,7 @@
       "kind": "manager-derived-krun-backend-construction",
       "symbol": "prepare_local_service_manager_for_selection_with_isolation_mode",
       "ordinal": 1,
-      "line": 115,
+      "line": 117,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -73,19 +78,9 @@
     {
       "path": "crates/nimbus-cli/src/compose/mod.rs",
       "kind": "manager-derived-parent-machine-authority",
-      "symbol": "run_compose_up",
-      "ordinal": 1,
-      "line": 165,
-      "classification": "manager-derived-handle",
-      "os_node_realm": "parent-host",
-      "evidence": "nnc4.6e"
-    },
-    {
-      "path": "crates/nimbus-cli/src/compose/mod.rs",
-      "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_down",
       "ordinal": 1,
-      "line": 188,
+      "line": 236,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -95,7 +90,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_ps",
       "ordinal": 1,
-      "line": 211,
+      "line": 259,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -105,7 +100,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_inspect",
       "ordinal": 1,
-      "line": 233,
+      "line": 281,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -115,7 +110,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_logs",
       "ordinal": 1,
-      "line": 255,
+      "line": 303,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -125,7 +120,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_top",
       "ordinal": 1,
-      "line": 281,
+      "line": 329,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -135,7 +130,7 @@
       "kind": "local-node-root-resolver",
       "symbol": "prepare_standalone_compose_network",
       "ordinal": 1,
-      "line": 305,
+      "line": 353,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -145,7 +140,7 @@
       "kind": "cli-staged-manager-claim",
       "symbol": "prepare_standalone_compose_network",
       "ordinal": 1,
-      "line": 309,
+      "line": 357,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -155,10 +150,60 @@
       "kind": "cli-attachment-only-composition",
       "symbol": "prepare_standalone_compose_network",
       "ordinal": 1,
-      "line": 311,
+      "line": 359,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
+    },
+    {
+      "path": "crates/nimbus-cli/src/compose/provision.rs",
+      "kind": "local-node-root-resolver",
+      "symbol": "prepare",
+      "ordinal": 1,
+      "line": 116,
+      "classification": "owning-manager",
+      "os_node_realm": "local-node",
+      "evidence": "nnc6.4"
+    },
+    {
+      "path": "crates/nimbus-cli/src/compose/provision.rs",
+      "kind": "cli-staged-manager-claim",
+      "symbol": "prepare",
+      "ordinal": 1,
+      "line": 120,
+      "classification": "owning-manager",
+      "os_node_realm": "local-node",
+      "evidence": "nnc6.4"
+    },
+    {
+      "path": "crates/nimbus-cli/src/compose/provision.rs",
+      "kind": "cli-complete-composition",
+      "symbol": "prepare",
+      "ordinal": 1,
+      "line": 125,
+      "classification": "owning-manager",
+      "os_node_realm": "local-node",
+      "evidence": "nnc6.4"
+    },
+    {
+      "path": "crates/nimbus-cli/src/compose/provision.rs",
+      "kind": "manager-derived-parent-machine-authority",
+      "symbol": "prepare",
+      "ordinal": 1,
+      "line": 145,
+      "classification": "manager-derived-handle",
+      "os_node_realm": "parent-host",
+      "evidence": "nnc6.4"
+    },
+    {
+      "path": "crates/nimbus-cli/src/compose/provision.rs",
+      "kind": "manager-derived-parent-machine-authority",
+      "symbol": "activate",
+      "ordinal": 1,
+      "line": 195,
+      "classification": "manager-derived-handle",
+      "os_node_realm": "parent-host",
+      "evidence": "nnc6.4"
     },
     {
       "path": "crates/nimbus-cli/src/dev.rs",
@@ -281,6 +326,36 @@
       "evidence": "nnc4.6e"
     },
     {
+      "path": "crates/nimbus-cli/src/machine/backend/provision.rs",
+      "kind": "capability-bundle-construction",
+      "symbol": "new",
+      "ordinal": 1,
+      "line": 141,
+      "classification": "manager-derived-handle",
+      "os_node_realm": "parent-host",
+      "evidence": "nnc6.4"
+    },
+    {
+      "path": "crates/nimbus-cli/src/machine/backend/provision.rs",
+      "kind": "attachment-registration-construction",
+      "symbol": "new",
+      "ordinal": 1,
+      "line": 142,
+      "classification": "manager-derived-handle",
+      "os_node_realm": "parent-host",
+      "evidence": "nnc6.4"
+    },
+    {
+      "path": "crates/nimbus-cli/src/machine/backend/provision.rs",
+      "kind": "ingress-registration-construction",
+      "symbol": "new",
+      "ordinal": 1,
+      "line": 149,
+      "classification": "manager-derived-handle",
+      "os_node_realm": "parent-host",
+      "evidence": "nnc6.4"
+    },
+    {
       "path": "crates/nimbus-cli/src/machine/manager/launch.rs",
       "kind": "machine-forwarder-authority-mint",
       "symbol": "next_machine_forwarder_authority",
@@ -375,7 +450,7 @@
       "kind": "capability-bundle-construction",
       "symbol": "into_registry",
       "ordinal": 1,
-      "line": 60,
+      "line": 80,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -385,7 +460,7 @@
       "kind": "capability-registry-construction",
       "symbol": "into_registry",
       "ordinal": 1,
-      "line": 65,
+      "line": 85,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -395,7 +470,7 @@
       "kind": "manager-bootstrap",
       "symbol": "claim",
       "ordinal": 1,
-      "line": 81,
+      "line": 101,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -405,17 +480,37 @@
       "kind": "oci-process-construction",
       "symbol": "prepare_krun_process",
       "ordinal": 1,
-      "line": 120,
+      "line": 140,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
+    },
+    {
+      "path": "crates/nimbus-cli/src/network_composition/forwarded.rs",
+      "kind": "manager-derived-parent-machine-authority",
+      "symbol": "prepare_source",
+      "ordinal": 1,
+      "line": 43,
+      "classification": "manager-derived-handle",
+      "os_node_realm": "parent-host",
+      "evidence": "nnc6.4"
+    },
+    {
+      "path": "crates/nimbus-cli/src/network_composition/forwarded.rs",
+      "kind": "manager-derived-parent-machine-authority",
+      "symbol": "into_workload_composition",
+      "ordinal": 1,
+      "line": 115,
+      "classification": "manager-derived-handle",
+      "os_node_realm": "parent-host",
+      "evidence": "nnc6.4"
     },
     {
       "path": "crates/nimbus-cli/src/start/boot.rs",
       "kind": "cli-staged-manager-claim",
       "symbol": "run_start_command",
       "ordinal": 1,
-      "line": 70,
+      "line": 69,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -425,30 +520,10 @@
       "kind": "cli-complete-composition",
       "symbol": "run_start_command_inner",
       "ordinal": 1,
-      "line": 204,
+      "line": 203,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
-    },
-    {
-      "path": "crates/nimbus-cli/src/start/boot.rs",
-      "kind": "manager-derived-serve-options",
-      "symbol": "run_start_command_inner",
-      "ordinal": 1,
-      "line": 259,
-      "classification": "manager-derived-handle",
-      "os_node_realm": "local-node",
-      "evidence": "nnc4.6d"
-    },
-    {
-      "path": "crates/nimbus-cli/src/start/boot.rs",
-      "kind": "manager-derived-parent-machine-authority",
-      "symbol": "run_start_command_inner",
-      "ordinal": 1,
-      "line": 323,
-      "classification": "manager-derived-handle",
-      "os_node_realm": "parent-host",
-      "evidence": "nnc4.6e"
     },
     {
       "path": "crates/nimbus-cli/src/start/config.rs",
@@ -625,7 +700,7 @@
       "kind": "attachment-registration-construction",
       "symbol": "host_managed_attachment_registration_for_target",
       "ordinal": 1,
-      "line": 226,
+      "line": 236,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6c"
@@ -635,7 +710,7 @@
       "kind": "direct-container-backend-constructor-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 45,
+      "line": 47,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -645,7 +720,7 @@
       "kind": "segment-direct-reconstruction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 47,
+      "line": 49,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -655,7 +730,7 @@
       "kind": "manager-derived-container-backend-constructor-declaration",
       "symbol": "with_network_process",
       "ordinal": 1,
-      "line": 63,
+      "line": 65,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6c"
@@ -665,7 +740,7 @@
       "kind": "ipam-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 86,
+      "line": 88,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -675,7 +750,7 @@
       "kind": "port-coordinator-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 91,
+      "line": 93,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -685,7 +760,7 @@
       "kind": "container-runner-reconstruction-declaration",
       "symbol": "reconstruct_for_runner",
       "ordinal": 1,
-      "line": 127,
+      "line": 129,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node-child",
       "evidence": "nnc4.6c"
@@ -695,7 +770,7 @@
       "kind": "segment-runner-reconstruction",
       "symbol": "reconstruct_for_runner",
       "ordinal": 1,
-      "line": 129,
+      "line": 131,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node-child",
       "evidence": "nnc4.6c"
@@ -705,7 +780,7 @@
       "kind": "ipam-runner-reconstruction",
       "symbol": "reconstruct_for_runner",
       "ordinal": 1,
-      "line": 134,
+      "line": 136,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node-child",
       "evidence": "nnc4.6c"
@@ -715,7 +790,7 @@
       "kind": "port-coordinator-runner-reconstruction",
       "symbol": "reconstruct_for_runner",
       "ordinal": 1,
-      "line": 135,
+      "line": 137,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node-child",
       "evidence": "nnc4.6c"
@@ -725,7 +800,7 @@
       "kind": "direct-krun-backend-constructor-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 299,
+      "line": 314,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -735,7 +810,7 @@
       "kind": "segment-direct-reconstruction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 301,
+      "line": 316,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -745,7 +820,7 @@
       "kind": "ipam-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 326,
+      "line": 341,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -755,7 +830,7 @@
       "kind": "port-coordinator-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 331,
+      "line": 346,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -952,30 +1027,30 @@
     },
     {
       "path": "crates/nimbus-server/src/construction.rs",
-      "kind": "manager-derived-serve-options-declaration",
-      "symbol": "new",
+      "kind": "manager-derived-server-listener-authority",
+      "symbol": "managed",
       "ordinal": 1,
-      "line": 44,
+      "line": 46,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
-      "evidence": "nnc4.6d"
+      "evidence": "nnc6.4"
     },
     {
       "path": "crates/nimbus-server/src/construction.rs",
       "kind": "manager-derived-server-listener-authority",
-      "symbol": "new",
+      "symbol": "protocol_only_with_authority",
       "ordinal": 1,
-      "line": 45,
+      "line": 73,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
-      "evidence": "nnc4.6d"
+      "evidence": "nnc6.4"
     },
     {
       "path": "crates/nimbus-server/src/construction.rs",
       "kind": "direct-serve-options-reconstruction-declaration",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 61,
+      "line": 83,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -985,7 +1060,7 @@
       "kind": "direct-serve-options-reconstruction-declaration",
       "symbol": "reconstruct_direct_at",
       "ordinal": 1,
-      "line": 71,
+      "line": 93,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -995,7 +1070,7 @@
       "kind": "server-internal-direct-reconstruction",
       "symbol": "reconstruct_direct_at",
       "ordinal": 1,
-      "line": 76,
+      "line": 98,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1005,7 +1080,7 @@
       "kind": "manager-derived-prebound-listeners-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 475,
+      "line": 637,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1015,7 +1090,7 @@
       "kind": "manager-derived-server-listener-authority",
       "symbol": "new",
       "ordinal": 1,
-      "line": 477,
+      "line": 639,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1025,7 +1100,7 @@
       "kind": "direct-prebound-listener-reconstruction-declaration",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 487,
+      "line": 649,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1035,7 +1110,7 @@
       "kind": "server-internal-direct-reconstruction",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 489,
+      "line": 651,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1045,7 +1120,7 @@
       "kind": "manager-derived-server-listener-authority-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 584,
+      "line": 746,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1055,7 +1130,7 @@
       "kind": "manager-derived-server-primitive-handle",
       "symbol": "new",
       "ordinal": 1,
-      "line": 585,
+      "line": 747,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1065,7 +1140,7 @@
       "kind": "server-internal-direct-reconstruction-declaration",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 590,
+      "line": 752,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1075,7 +1150,7 @@
       "kind": "server-primitive-direct-reconstruction",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 592,
+      "line": 754,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1083,12 +1158,12 @@
     {
       "path": "crates/nimbus-server/src/network_capabilities.rs",
       "kind": "ingress-registration-construction",
-      "symbol": "nimbus_owned_local_ingress_registration",
+      "symbol": "nimbus_owned_workload_ingress_registration",
       "ordinal": 1,
-      "line": 45,
+      "line": 25,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
-      "evidence": "nnc4.6d"
+      "evidence": "nnc6.4"
     },
     {
       "path": "crates/nimbus-server/src/network_composition.rs",
@@ -1119,6 +1194,16 @@
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
+    },
+    {
+      "path": "crates/nimbus-server/src/workload_ingress.rs",
+      "kind": "manager-derived-server-listener-authority",
+      "symbol": "new",
+      "ordinal": 1,
+      "line": 114,
+      "classification": "manager-derived-handle",
+      "os_node_realm": "current-os-node",
+      "evidence": "nnc6.4"
     }
   ]
 }

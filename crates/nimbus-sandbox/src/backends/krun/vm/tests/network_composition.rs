@@ -7,8 +7,8 @@ use nimbus_network::NetworkSegmentAllocator;
 
 use super::{env_from_config, support::*};
 use crate::backends::oci::network::{
-    OciSegmentAllocator, RecordingSegmentAllocator, SegmentAllocatorOperation,
-    allocate_container_ips, default_network_attachment_id,
+    AttachmentBackendKind, OciSegmentAllocator, RecordingSegmentAllocator,
+    SegmentAllocatorOperation, allocate_container_ips, oci_attachment_plan,
 };
 
 #[test]
@@ -127,8 +127,8 @@ fn plan_only_stop_does_not_invent_attachment_cleanup_authority() {
         injected,
     );
 
-    let handle =
-        block_on(backend.start(spec.clone())).expect("plan-only krun start should succeed");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only krun lowering should succeed");
     let before_stop = recorder.operations();
     block_on(backend.stop(&handle.id)).expect("plan-only krun stop should clean local artifacts");
 
@@ -156,16 +156,22 @@ fn restart_network_teardown_retains_exact_segment_hold() {
         ),
         injected,
     );
-    let handle =
-        block_on(backend.start(spec)).expect("plan-only krun start should render the manifest");
+    let handle = materialize_plan_only_fixture(&backend, spec)
+        .expect("plan-only krun lowering should render the manifest");
     let mut manifest = backend
         .read_manifest(&handle.id)
         .expect("manifest read should succeed")
         .expect("planned manifest should exist");
-    let network_config = backend
+    let mut network_config = backend
         .network_config(&manifest.spec.tenant_id)
         .expect("execute-shaped network config should resolve");
+    network_config.network_plan = Some(oci_attachment_plan(
+        &manifest.spec.tenant_id,
+        &manifest.handle.id,
+        AttachmentBackendKind::Krun,
+    ));
     let reservation_claim = network_config.reservation_claim.clone();
+    let attachment_id = network_config.attachment_id.clone();
     let segment_id = network_config
         .segment_id
         .parse()
@@ -184,24 +190,20 @@ fn restart_network_teardown_retains_exact_segment_hold() {
     recorder
         .reserve_attachment_for_coordinator(
             &manifest.spec.tenant_id,
-            &default_network_attachment_id(&manifest.handle.id),
+            &attachment_id,
             &reservation_claim,
         )
         .expect("execute-shaped fixture should reserve its exact attachment");
     recorder
         .bind_reserved_attachment_to_segment(
             &manifest.spec.tenant_id,
-            &default_network_attachment_id(&manifest.handle.id),
+            &attachment_id,
             &segment_id,
             &reservation_claim,
         )
         .expect("execute-shaped fixture should bind its exact segment");
     recorder
-        .adopt_reserved_attachment(
-            &manifest.spec.tenant_id,
-            &default_network_attachment_id(&manifest.handle.id),
-            &reservation_claim,
-        )
+        .adopt_reserved_attachment(&manifest.spec.tenant_id, &attachment_id, &reservation_claim)
         .expect("execute-shaped fixture should adopt its exact segment association");
     manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
     let before_restart = recorder.operations().len();
@@ -217,7 +219,7 @@ fn restart_network_teardown_retains_exact_segment_hold() {
         &recorder.operations()[before_restart..],
         [SegmentAllocatorOperation::InspectAttachment(
             manifest.spec.tenant_id.clone(),
-            default_network_attachment_id(&manifest.handle.id),
+            attachment_id.clone(),
         )],
         "restart teardown may authenticate but must not mutate the exact segment hold while the \
          persisted network config will be reused"
@@ -233,24 +235,21 @@ fn restart_network_teardown_retains_exact_segment_hold() {
         [
             SegmentAllocatorOperation::InspectAttachment(
                 manifest.spec.tenant_id.clone(),
-                default_network_attachment_id(&manifest.handle.id),
+                attachment_id.clone(),
             ),
             SegmentAllocatorOperation::InspectAttachment(
                 manifest.spec.tenant_id.clone(),
-                default_network_attachment_id(&manifest.handle.id),
+                attachment_id.clone(),
             ),
             SegmentAllocatorOperation::Quarantine(
                 manifest.spec.tenant_id.clone(),
-                default_network_attachment_id(&manifest.handle.id),
+                attachment_id.clone(),
             ),
             SegmentAllocatorOperation::Quarantine(
                 manifest.spec.tenant_id.clone(),
-                default_network_attachment_id(&manifest.handle.id),
+                attachment_id.clone(),
             ),
-            SegmentAllocatorOperation::Release(
-                manifest.spec.tenant_id.clone(),
-                default_network_attachment_id(&manifest.handle.id),
-            ),
+            SegmentAllocatorOperation::Release(manifest.spec.tenant_id.clone(), attachment_id,),
             SegmentAllocatorOperation::FinalizeRelease(
                 manifest.spec.tenant_id.clone(),
                 vec!["netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()],

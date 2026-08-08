@@ -62,8 +62,11 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
         guest_script,
     ]);
 
-    let handle =
-        block_on(backend.start(spec)).expect("guest-user-switch image-backed start should succeed");
+    let provisioned = provision_krun(&backend, &state_root, spec, true)
+        .expect("guest-user-switch image-backed provision phases should succeed");
+    assert!(!provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let _ingress = provisioned.ingress;
     let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));

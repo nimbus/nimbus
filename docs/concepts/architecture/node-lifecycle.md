@@ -140,29 +140,26 @@ know about is reported as stopped rather than as an error.
 ## The workload reconciler
 
 `crates/nimbus-node/src/reconciler.rs` provides
-`NodeWorkloadReconciler`, which converges observed unit state toward the
-desired state derived from a tenant workload spec: an active spec should
-be running, a deleting spec should be stopped.
+`NodeWorkloadReconciler`, which validates and observes the desired state
+derived from a tenant workload spec: an active spec should already be
+running, while a deleting spec should be stopped.
 
-Reconciliation is inspect-first. For a workload that should be running,
-the reconciler inspects the unit; if it is already submitted, running,
-or ready, the outcome is "observed running" and nothing is touched —
-otherwise it issues a start and re-inspects. The stopped path is
-symmetric. Each pass writes status evidence through a writer seam so the
-observation that justified the outcome is recorded alongside it.
+The running path is deliberately observation-only. It validates the exact
+host plan and inspects the provider. Submitted, running, or ready is recorded
+as "observed running"; any other state fails because the compute coordinator
+has not authorized an activation. The deleting path may inspect and stop the
+unit. Each pass writes status evidence through a writer seam so the observation
+that justified the outcome is recorded alongside it.
 
-The live implementation entry point is the hidden node workload executor
-(`crates/nimbus-cli/src/node_workload_executor.rs`), which constructs a
-`NodeWorkloadReconciler` over the systemd transient backend and runs the
-reconcile loop for one assigned workload per invocation. It is not part
-of the public workload CLI. User-facing commands declare workload intent
-through higher-level run, deploy, service, or sandbox resources; the node
-executor is the mechanism that converges an assigned spec on a host.
-What stays out of scope here is the control plane that decides *which*
-workloads land on a node: multi-node scheduling and assignment are not
-part of a single Nimbus process. The reconciler converges a node toward
-the spec it has been given; it does not distribute workloads across a
-cluster.
+There is no hidden node workload executor in the CLI. Workload provisioning is
+coordinated above the node boundary by `crates/nimbus-compute`; the node backend
+is an exact activation and inspection sink. On the managed-machine path,
+`crates/nimbus-cli/src/machine/api.rs` constructs the systemd transient backend,
+and `crates/nimbus-cli/src/machine/api/service_workloads/provision.rs` accepts
+one authenticated, generation-fenced phase command at a time. The guest does
+not admit desired state, advance the saga, choose another provider, or retry a
+phase. Multi-node scheduling and assignment remain outside a single Nimbus
+process.
 
 ## Related pages
 

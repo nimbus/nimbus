@@ -8,7 +8,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use nimbus_core::TenantId;
-use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_services::{
     ExternalAuthPolicy, HealthCheckPolicy, ServiceBackend, ServiceDefinition,
@@ -22,6 +21,7 @@ use time::format_description::well_known::Rfc3339;
 use crate::pagination::{CollectionMetadataResponse, paginate_by_key};
 use crate::sandbox_spec::{SandboxSpecInput, SandboxSpecResponse};
 use crate::state::{ComputeError, ComputeState};
+use crate::workload_provisioner::WorkloadProvisionCancellation;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -304,7 +304,6 @@ pub enum ServiceLifecycleVerb {
     Get,
     Start,
     Stop,
-    Restart,
 }
 
 impl ServiceLifecycleVerb {
@@ -313,7 +312,6 @@ impl ServiceLifecycleVerb {
             Self::Get => "native_http.service.get",
             Self::Start => "native_http.service.start",
             Self::Stop => "native_http.service.stop",
-            Self::Restart => "native_http.service.restart",
         }
     }
 
@@ -324,7 +322,6 @@ impl ServiceLifecycleVerb {
             Self::Get => None,
             Self::Start => Some("start"),
             Self::Stop => Some("stop"),
-            Self::Restart => Some("restart"),
         }
     }
 }
@@ -336,42 +333,43 @@ pub async fn service_lifecycle(
     verb: ServiceLifecycleVerb,
 ) -> Result<ServiceResourceResponse, ComputeError> {
     let manager = service_manager(compute)?;
-    let handle = match verb {
+    let (definition, handle) = match verb {
         ServiceLifecycleVerb::Get => {
-            if !manager.service_declared_for_tenant(tenant_context.tenant_id(), service_name) {
-                return Err(service_not_found(tenant_context.tenant_id(), service_name));
-            }
-            manager
-                .inspect_service_lifecycle_for_context_async(tenant_context, service_name)
-                .await?
-                .map(|inspection| inspection.handle)
+            let definition = manager
+                .service_definition_for_tenant(tenant_context.tenant_id(), service_name)
+                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), service_name))?;
+            let observation = manager.service_definition_observation_for_tenant(
+                tenant_context.tenant_id(),
+                service_name,
+            );
+            (
+                definition,
+                observation.map(|observation| observation.handle),
+            )
         }
-        ServiceLifecycleVerb::Start => Some(
-            manager
-                .start_service_for_context_async(
+        ServiceLifecycleVerb::Start => {
+            let snapshot = compute
+                .resource_provisioner()?
+                .provision_sandbox_service(
                     tenant_context,
                     service_name,
-                    HostCallCancellation::default(),
+                    &WorkloadProvisionCancellation::default(),
                 )
-                .await?
-                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), service_name))?,
-        ),
-        ServiceLifecycleVerb::Stop => Some(
-            manager
-                .stop_service_for_context_async(tenant_context, service_name)
-                .await?
-                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), service_name))?,
-        ),
-        ServiceLifecycleVerb::Restart => Some(
-            manager
-                .restart_service_for_context_async(
-                    tenant_context,
-                    service_name,
-                    HostCallCancellation::default(),
-                )
-                .await?
-                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), service_name))?,
-        ),
+                .await
+                .map_err(|error| error.into_compute_error())?;
+            (
+                snapshot.definition,
+                snapshot.observation.map(|observation| observation.handle),
+            )
+        }
+        ServiceLifecycleVerb::Stop => {
+            let retirement = compute
+                .resource_provisioner()?
+                .retire_sandbox_service(tenant_context, service_name)
+                .await
+                .map_err(|error| error.into_compute_error())?;
+            (retirement.definition, retirement.retired_handle)
+        }
     };
     if let (Some(action), Some(handle)) = (verb.event_action(), handle.as_ref()) {
         record_service_event(compute, tenant_context.tenant_id(), action, handle).await?;
@@ -379,9 +377,7 @@ pub async fn service_lifecycle(
 
     Ok(match handle {
         Some(handle) => ServiceResourceResponse::from_handle(tenant_context.tenant_id(), &handle),
-        None => {
-            ServiceResourceResponse::declared_inactive(tenant_context.tenant_id(), service_name)
-        }
+        None => ServiceResourceResponse::from_definition_without_observation(definition),
     })
 }
 
@@ -410,15 +406,25 @@ impl ServiceResourceResponse {
         }
     }
 
-    fn declared_inactive(tenant_id: &TenantId, service_name: &str) -> Self {
+    fn from_definition_without_observation(definition: ServiceDefinition) -> Self {
+        let (state, readiness, backend) = match definition.backend {
+            ServiceBackend::Sandbox(spec) => (
+                "pending",
+                "pending",
+                Some(nimbus_system::sandbox_backend(spec.backend).to_owned()),
+            ),
+            ServiceBackend::BuiltIn(_) | ServiceBackend::External(_) => {
+                ("declared", "unknown", None)
+            }
+        };
         Self {
-            tenant_id: tenant_id.as_str().to_owned(),
-            name: service_name.to_owned(),
+            tenant_id: definition.tenant_id.as_str().to_owned(),
+            name: definition.name,
             sandbox_id: None,
-            backend: None,
-            state: "stopped".to_owned(),
-            lifecycle_state: "stopped".to_owned(),
-            readiness: "stopped".to_owned(),
+            backend,
+            state: state.to_owned(),
+            lifecycle_state: state.to_owned(),
+            readiness: readiness.to_owned(),
             health: "unknown".to_owned(),
             endpoints: Vec::new(),
         }

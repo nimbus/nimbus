@@ -23,7 +23,6 @@ mod machine;
 mod network_composition;
 mod node_runtime;
 mod node_service;
-mod node_workload_executor;
 mod object_storage;
 mod path_boundary;
 mod policy;
@@ -128,9 +127,6 @@ enum Command {
     Machine(MachineCommand),
     /// Manage Nimbus node service-manager installation artifacts.
     Node(NodeCommand),
-    /// Internal node-local workload executor entrypoint.
-    #[command(name = "node-workload-executor", hide = true)]
-    NodeWorkloadExecutor(node_workload_executor::NodeWorkloadExecutorCommand),
     /// Internal typed container runner entrypoint.
     #[command(name = "container-runner", hide = true)]
     ContainerRunner(ContainerRunnerCommand),
@@ -182,9 +178,6 @@ async fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             run_machine_command(command).await?;
         }
         Command::Node(command) => run_node_command(command).await?,
-        Command::NodeWorkloadExecutor(command) => {
-            node_workload_executor::run_node_workload_executor_command(command).await?
-        }
         Command::ContainerRunner(command) => run_container_runner_command(command).await?,
         Command::Compose(command) => {
             let persistence_config =
@@ -326,28 +319,6 @@ mod tests {
         assert!(
             matches!(cli.command, Command::SandboxSupervisor(_)),
             "sandbox-supervisor should parse as the packaged internal entrypoint"
-        );
-    }
-
-    #[test]
-    fn node_workload_executor_command_parses_as_hidden_internal_entrypoint() {
-        let cli = Cli::parse_from([
-            "nimbus",
-            "node-workload-executor",
-            "--tenant",
-            "demo",
-            "--workload",
-            "worker",
-            "--exec",
-            "/usr/bin/true",
-            "--status-path",
-            "status.jsonl",
-            "--once",
-        ]);
-
-        assert!(
-            matches!(cli.command, Command::NodeWorkloadExecutor(_)),
-            "node-workload-executor should parse as the packaged internal entrypoint"
         );
     }
 

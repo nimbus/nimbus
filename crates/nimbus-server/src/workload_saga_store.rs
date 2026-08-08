@@ -1,4 +1,8 @@
-//! Server-private Engine adapter for durable workload-saga state.
+//! Server-owned Engine adapter for durable workload-saga state.
+//!
+//! Compute owns saga choreography. This adapter remains in the server because
+//! it translates that portable store contract onto the server-composed Engine
+//! mutation path; embedders may inject it through the public constructor.
 
 use std::sync::Arc;
 
@@ -21,12 +25,12 @@ mod tenant_enumeration;
 use self::codec::{decode_workload_saga_record, encode_workload_saga_record};
 use self::schema::{prepare_exact_schema, workload_saga_table, workload_saga_tenant};
 
-pub(crate) struct EngineWorkloadSagaStore {
+pub struct EngineWorkloadSagaStore {
     engine: Arc<Engine>,
 }
 
 impl EngineWorkloadSagaStore {
-    pub(crate) fn new(engine: Arc<Engine>) -> Self {
+    pub fn new(engine: Arc<Engine>) -> Self {
         Self { engine }
     }
 

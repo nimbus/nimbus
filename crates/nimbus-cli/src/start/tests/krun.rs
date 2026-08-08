@@ -1,8 +1,8 @@
 use super::*;
 use std::time::Duration;
 
-use nimbus_server::{RouterOptions, build_router};
-use nimbus_testing::{EngineFixture, HttpApiFixture, ServerFixture, wait_for_condition};
+use nimbus_server::serve_leased;
+use nimbus_testing::{EngineFixture, wait_for_condition};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -52,29 +52,59 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
         Some(&selection),
         &control_data_dir,
         nimbus_tenant::TenantIsolationMode::LocalDevelopment,
-        nimbus_server::nimbus_owned_local_ingress_registration(false),
+        nimbus_server::nimbus_owned_workload_ingress_registration(),
     )
     .expect("compose-backed network composition should prepare");
     let service_manager = prepared_network
         .local_service_manager()
         .expect("compose-backed service manager should load");
     let fixture = EngineFixture::new(|path| nimbus::Engine::new(path));
-    let server = ServerFixture::start(build_router(
-        RouterOptions::new(fixture.engine(), prepared_network.manager())
-            .with_convex_registry(registry)
-            .with_service_manager(service_manager.clone()),
-    ))
-    .await;
-    let api = HttpApiFixture::new(&server);
+    let options = prepared_network
+        .prepare_server_workload_profile()
+        .expect("compose-backed server profile should prepare")
+        .complete(fixture.engine())
+        .expect("compose-backed server profile should complete with the caller engine")
+        .with_convex_registry(registry);
+    let requested_addr = "127.0.0.1:0"
+        .parse()
+        .expect("provider-assigned test address should parse");
+    let prepared_listener = options
+        .prepare_main_listener(requested_addr)
+        .expect("managed server listener should reserve");
+    let listener = tokio::net::TcpListener::bind(requested_addr)
+        .await
+        .expect("managed server listener should bind");
+    let listener = prepared_listener
+        .adopt(listener)
+        .expect("managed server listener should activate");
+    let server_addr = listener
+        .local_addr()
+        .expect("managed server address should resolve");
+    let server = tokio::spawn(async move {
+        serve_leased(listener, options)
+            .await
+            .expect("managed server should run");
+    });
+    let client = reqwest::Client::new();
+    let base_url = format!("http://{server_addr}");
 
     assert_eq!(
-        api.create_tenant("demo").await.status(),
+        client
+            .post(format!("{base_url}/api/tenants"))
+            .json(&json!({ "id": "demo" }))
+            .send()
+            .await
+            .expect("tenant request should succeed")
+            .status(),
         reqwest::StatusCode::CREATED
     );
 
-    let response = api
-        .convex_named_query("demo", "services:activate", json!({}))
+    let response = client
+        .post(format!("{base_url}/convex/demo/query"))
+        .json(&json!({ "name": "services:activate", "args": {} }))
+        .send()
         .await;
+    let response = response.expect("service activation query should succeed");
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let port = response
         .json::<serde_json::Value>()
@@ -96,7 +126,11 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
         "compose-backed manager should expose the declared db binding"
     );
 
-    let delete = api.delete_tenant("demo").await;
+    let delete = client
+        .delete(format!("{base_url}/api/tenants/demo"))
+        .send()
+        .await
+        .expect("tenant deletion request should succeed");
     assert_eq!(delete.status(), reqwest::StatusCode::NO_CONTENT);
     wait_for_condition(
         "compose-backed krun service should disappear after tenant deletion",
@@ -112,4 +146,6 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
         },
     )
     .await;
+    server.abort();
+    let _ = server.await;
 }

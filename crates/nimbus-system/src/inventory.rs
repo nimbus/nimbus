@@ -160,13 +160,6 @@ pub fn route_inventory() -> Vec<RouteInventoryEntry> {
             true,
         ),
         route(
-            "POST",
-            "/api/tenants/{tenant_id}/services/{service_name}/restart",
-            "native",
-            "restart_service",
-            true,
-        ),
-        route(
             "GET",
             "/api/tenants/{tenant_id}/documents/{table}",
             "native",

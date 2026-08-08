@@ -230,7 +230,7 @@ impl MachineLaunchPlan {
     }
 }
 
-fn next_machine_forwarder_authority(
+pub(super) fn next_machine_forwarder_authority(
     config: &MachineConfigRecord,
     state: &MachineStateRecord,
 ) -> Result<MachineForwarderAuthority, Error> {

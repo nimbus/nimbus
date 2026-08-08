@@ -1234,8 +1234,9 @@ fn direct_effect_fence_persistence_exhaustion_stop_converges() {
         .expect("direct launch should reserve complete authority");
     let planned = plan.manifest.clone();
 
+    let mut manifest = plan.manifest;
     let error = backend
-        .finish_start(plan)
+        .execute_direct_start(&mut manifest)
         .expect_err("permanent effect-fence persistence failure must return");
     assert!(
         error.to_string().contains("after 4 attempts")
@@ -1334,8 +1335,9 @@ fn direct_effect_fence_acknowledgement_loss_never_enters_provider() {
         .expect("direct launch should reserve exact authority");
     let id = plan.manifest.handle.id.clone();
 
+    let mut manifest = plan.manifest;
     let error = backend
-        .finish_start(plan)
+        .execute_direct_start(&mut manifest)
         .expect_err("acknowledgement loss must return without provider launch");
     assert!(
         error.to_string().contains("may have published")
@@ -1381,8 +1383,9 @@ fn terminal_pre_effect_cleanup_reopen_publishes_lifecycle_once() {
         )
         .expect("direct launch should reserve complete authority");
     let id = plan.manifest.handle.id.clone();
+    let mut manifest = plan.manifest;
     backend
-        .finish_start(plan)
+        .execute_direct_start(&mut manifest)
         .expect_err("effect-fence exhaustion must retain the pre-effect decision");
     let mut terminal = backend
         .read_manifest(&id)

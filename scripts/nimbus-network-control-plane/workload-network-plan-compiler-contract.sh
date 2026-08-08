@@ -316,7 +316,10 @@ NODE
     add_error "portable workloads source imports service/sandbox owners: ${workload_imports}"
   fi
 
-  cargo_changes="$(git diff --name-only HEAD -- Cargo.toml 'crates/*/Cargo.toml')"
+  cargo_changes="$(
+    git diff-tree --no-commit-id --name-only -r "${ITEM_COMMIT}" -- \
+      Cargo.toml 'crates/*/Cargo.toml' 2>/dev/null
+  )"
   if [ -n "${cargo_changes}" ]; then
     add_error "NNC6.2 changed Cargo manifests even though all required edges pre-exist: ${cargo_changes}"
   fi
@@ -325,11 +328,12 @@ NODE
 verify_oci_compiler_caller_baseline() {
   actual_callers=$(
     (
-    rg -n 'oci_attachment_plan[[:space:]]*\(' crates/nimbus-sandbox/src --glob '*.rs' || true
+    git grep -n -E 'oci_attachment_plan[[:space:]]*\(' "${ITEM_COMMIT}" -- \
+      crates/nimbus-sandbox/src 2>/dev/null || true
     if [ "${NIMBUS_NETWORK_NNC62_TEST_MUTATION:-}" = "extra-oci-caller" ]; then
-      printf '%s\n' 'crates/nimbus-sandbox/src/extra_nnc62_caller.rs:1:oci_attachment_plan('
+      printf '%s\n' "${ITEM_COMMIT}:crates/nimbus-sandbox/src/extra_nnc62_caller.rs:1:oci_attachment_plan("
     fi
-    ) | while IFS=: read -r path _rest; do
+    ) | while IFS=: read -r _revision path _rest; do
     if [[ "${path}" == */tests/* || "${path}" == */tests.rs ||
       "${path}" == */test_support.rs ||
       "${path}" == */attachment_lifecycle/plan.rs ]]; then

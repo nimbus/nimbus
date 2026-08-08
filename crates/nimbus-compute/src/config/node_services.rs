@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nimbus_engine::Engine;
 use nimbus_services::{
     EmptyServiceInstanceCatalog, RuntimeServiceRegistry, ServiceInstanceBindingRegistry,
-    ServiceInstanceCatalog, ServiceManager,
+    ServiceInstanceCatalog, ServiceManager, TenantServiceRetirement,
 };
 use nimbus_tenant::TenantIsolationMode;
 
@@ -17,6 +17,7 @@ enum RuntimeServiceSource {
     Resolved {
         runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
         service_manager: Option<Arc<ServiceManager>>,
+        tenant_service_retirement: Option<Arc<dyn TenantServiceRetirement>>,
     },
 }
 
@@ -42,6 +43,7 @@ impl RuntimeServiceSource {
                     service_instances,
                 )),
                 service_manager: None,
+                tenant_service_retirement: None,
             },
             Self::ServiceManager(service_manager) => {
                 crate::service_manager::attach_system_state_engine(
@@ -52,7 +54,8 @@ impl RuntimeServiceSource {
                     service_manager.clone();
                 Self::Resolved {
                     runtime_service_registry,
-                    service_manager: Some(service_manager),
+                    service_manager: Some(service_manager.clone()),
+                    tenant_service_retirement: Some(service_manager),
                 }
             }
             Self::Resolved { .. } => self,
@@ -69,6 +72,17 @@ impl RuntimeServiceSource {
             Self::ServiceInstanceCatalog(service_instances) => Arc::new(
                 ServiceInstanceBindingRegistry::new(service_instances.clone()),
             ),
+        }
+    }
+
+    fn tenant_service_retirement(&self) -> Option<Arc<dyn TenantServiceRetirement>> {
+        match self {
+            Self::Resolved {
+                tenant_service_retirement,
+                ..
+            } => tenant_service_retirement.clone(),
+            Self::ServiceManager(service_manager) => Some(service_manager.clone()),
+            Self::ServiceInstanceCatalog(_) => None,
         }
     }
 }
@@ -101,6 +115,22 @@ impl NodeServicesConfig {
             runtime_service_source: RuntimeServiceSource::Resolved {
                 runtime_service_registry,
                 service_manager: None,
+                tenant_service_retirement: None,
+            },
+            ..Self::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_runtime_service_registry_and_retirement(
+        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+        tenant_service_retirement: Arc<dyn TenantServiceRetirement>,
+    ) -> Self {
+        Self {
+            runtime_service_source: RuntimeServiceSource::Resolved {
+                runtime_service_registry,
+                service_manager: None,
+                tenant_service_retirement: Some(tenant_service_retirement),
             },
             ..Self::default()
         }
@@ -156,6 +186,10 @@ impl NodeServicesConfig {
 
     pub fn service_manager(&self) -> Option<Arc<ServiceManager>> {
         self.runtime_service_source.service_manager()
+    }
+
+    pub fn tenant_service_retirement(&self) -> Option<Arc<dyn TenantServiceRetirement>> {
+        self.runtime_service_source.tenant_service_retirement()
     }
 
     pub fn machine_lifecycle_manager(&self) -> Option<Arc<dyn MachineLifecycleManager>> {

@@ -481,7 +481,9 @@ fn provider_attempts_are_bound_to_the_exact_claim_and_segment_generation() {
         )
         .expect_err("a prior-generation provider attempt must fail closed");
         assert!(
-            error.to_string().contains("generation binding"),
+            error
+                .to_string()
+                .contains("allocation identity digest mismatch"),
             "{substitution} substitution should name its attempt-generation fence: {error}"
         );
         assert_eq!(
@@ -988,8 +990,10 @@ fn tenant_sandbox_and_attachment_substitution_fail_closed_without_mutation() {
     )
     .expect_err("locator sandbox substitution must fail");
     assert!(
-        error.to_string().contains("does not match locator sandbox"),
-        "sandbox substitution should name its attachment mismatch: {error}"
+        error
+            .to_string()
+            .contains("allocation identity digest mismatch"),
+        "sandbox substitution should name its immutable provider-identity fence: {error}"
     );
     assert_eq!(
         fixture.authority_bytes(),
@@ -1020,8 +1024,10 @@ fn tenant_sandbox_and_attachment_substitution_fail_closed_without_mutation() {
     )
     .expect_err("attachment key substitution must fail");
     assert!(
-        error.to_string().contains("does not match locator sandbox"),
-        "attachment substitution should name its locator mismatch: {error}"
+        error
+            .to_string()
+            .contains("allocation identity digest mismatch"),
+        "attachment substitution should name its immutable allocation identity fence: {error}"
     );
     assert_eq!(
         fixture.authority_bytes(),

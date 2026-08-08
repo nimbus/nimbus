@@ -22,13 +22,12 @@ pub(super) fn machine_api_capability_response(
         shared_blockers.push(error);
     }
 
-    let image_start_blockers = merge_operation_blockers(
+    let provision_blockers = merge_operation_blockers(
         &shared_blockers,
-        missing_binary_blockers(&binary_statuses, MACHINE_API_IMAGE_START_OPERATION),
-    );
-    let build_start_blockers = merge_operation_blockers(
-        &image_start_blockers,
-        missing_binary_blockers(&binary_statuses, MACHINE_API_BUILD_START_OPERATION),
+        missing_binary_blockers(
+            &binary_statuses,
+            MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION,
+        ),
     );
     let bootc_status_blockers =
         missing_binary_blockers(&binary_statuses, MACHINE_API_BOOTC_STATUS_OPERATION);
@@ -67,15 +66,17 @@ pub(super) fn machine_api_capability_response(
             shared_operation_blockers(state_operations_available, &shared_blockers),
         ),
         machine_api_operation_status(
-            MACHINE_API_IMAGE_START_OPERATION,
-            image_start_blockers.clone(),
+            MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION,
+            provision_blockers.clone(),
         ),
-        machine_api_operation_status(MACHINE_API_STOP_OPERATION, image_start_blockers.clone()),
-        machine_api_operation_status(MACHINE_API_BUILD_START_OPERATION, build_start_blockers),
+        machine_api_operation_status(
+            MACHINE_API_STOP_OPERATION,
+            shared_operation_blockers(state_operations_available, &shared_blockers),
+        ),
     ];
     let service_execution_blockers = operation_statuses
         .iter()
-        .find(|status| status.name == MACHINE_API_IMAGE_START_OPERATION)
+        .find(|status| status.name == MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION)
         .map(|status| status.blockers.clone())
         .unwrap_or_default();
     let service_execution_ready = service_execution_blockers.is_empty();

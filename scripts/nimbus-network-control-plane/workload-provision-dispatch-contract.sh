@@ -10,25 +10,75 @@ REPO_ROOT="${NIMBUS_NETWORK_NNC64_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 NNC63B_COMPLETION_CHECKPOINT="${NIMBUS_NETWORK_NNC64_NNC63B_CHECKPOINT:-c42c61fb2d97d037069f3b27b9055d6e58f11d1d}"
 
 WORKLOAD_PROVISION="crates/nimbus-workloads/src/saga/provision.rs"
+WORKLOAD_PROVISION_DISPATCH="crates/nimbus-workloads/src/saga/provision/dispatch.rs"
+WORKLOAD_PROVISION_DISPATCH_TESTS="crates/nimbus-workloads/src/saga/provision/tests/dispatch.rs"
 WORKLOAD_STATE="crates/nimbus-workloads/src/saga/state.rs"
+WORKLOAD_STATE_PROVISION="crates/nimbus-workloads/src/saga/state/provision.rs"
+WORKLOAD_STATE_PROVISION_TESTS="crates/nimbus-workloads/src/saga/tests/provision_state.rs"
 WORKLOAD_STORE="crates/nimbus-workloads/src/store.rs"
 COMPUTE_SAGA="crates/nimbus-compute/src/workload_saga.rs"
 COMPUTE_DECISION="crates/nimbus-compute/src/workload_saga/provision_decision.rs"
 COMPUTE_DISPATCH="crates/nimbus-compute/src/workload_saga/provision_dispatch.rs"
 COMPUTE_DISPATCH_TESTS="crates/nimbus-compute/src/workload_saga/provision_dispatch/tests.rs"
+COMPUTE_DISPATCHER="crates/nimbus-compute/src/workload_saga/provision_dispatcher.rs"
+COMPUTE_DISPATCHER_TESTS="crates/nimbus-compute/src/workload_saga/provision_dispatcher/tests.rs"
+COMPUTE_DRIVER="crates/nimbus-compute/src/workload_saga/provision_driver.rs"
+COMPUTE_DRIVER_TESTS="crates/nimbus-compute/src/workload_saga/provision_driver/tests.rs"
+COMPUTE_PROVISION_PROVIDER="crates/nimbus-compute/src/workload_saga/provision_provider.rs"
+COMPUTE_SANDBOX_PROVIDER="crates/nimbus-compute/src/workload_saga/provision_sandbox.rs"
 COMPUTE_STATE="crates/nimbus-compute/src/state.rs"
+COMPUTE_RESOURCE_PROVISION="crates/nimbus-compute/src/resource_provision.rs"
+COMPUTE_RESOURCE_PROVISION_TESTS="crates/nimbus-compute/src/resource_provision/tests.rs"
+COMPUTE_SANDBOXES="crates/nimbus-compute/src/sandboxes.rs"
+COMPUTE_SERVICES="crates/nimbus-compute/src/services.rs"
 SERVER_STATE="crates/nimbus-server/src/state.rs"
+SERVER_INGRESS="crates/nimbus-server/src/workload_ingress.rs"
+SERVER_CONSTRUCTION="crates/nimbus-server/src/construction.rs"
+SERVER_ROUTER="crates/nimbus-server/src/router.rs"
+SERVER_WORKLOAD_COMPOSITION="crates/nimbus-server/src/workload_composition.rs"
+SERVER_PROVISION_PROCESS_TESTS="crates/nimbus-server/src/workload_saga_store/tests/provision_driver_process.rs"
+SERVER_CONVEX_ASYNC="crates/nimbus-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/runtime_calls.rs"
+SERVER_CONVEX_CONTEXT_READ_ONLY_TESTS="crates/nimbus-server/src/adapters/convex/execution/runtime_backed/invoke/context/read_only_tests.rs"
+SERVER_CONVEX_LOOKUP_READ_ONLY_TESTS="crates/nimbus-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/runtime_calls/read_only_tests.rs"
 SANDBOX_BACKEND="crates/nimbus-sandbox/src/backend.rs"
+SANDBOX_PROVISION="crates/nimbus-sandbox/src/provision.rs"
+SANDBOX_CONTAINER_PROVIDER="crates/nimbus-sandbox/src/backends/container/runtime.rs"
+SANDBOX_CONTAINER_PROVIDER_JOURNAL="crates/nimbus-sandbox/src/backends/container/runtime/provision.rs"
+SANDBOX_KRUN_PROVIDER="crates/nimbus-sandbox/src/backends/krun/vm.rs"
 SERVICES_REGISTRY="crates/nimbus-services/src/registry.rs"
+SERVICES_MANAGER="crates/nimbus-services/src/manager.rs"
+SERVICES_ACTIVATION="crates/nimbus-services/src/manager/activation.rs"
 SERVICES_START="crates/nimbus-services/src/manager/service_start.rs"
 SERVICES_SANDBOXES="crates/nimbus-services/src/manager/sandboxes.rs"
 COMPOSE_LIFECYCLE="crates/nimbus-cli/src/compose/lifecycle.rs"
+COMPOSE_EXECUTION="crates/nimbus-cli/src/compose/execution.rs"
+COMPOSE_LIFECYCLE_TESTS="crates/nimbus-cli/src/compose/tests/lifecycle.rs"
+COMPOSE_FORWARDED_TESTS="crates/nimbus-cli/src/compose/tests/forwarded_api.rs"
+NIMBUS_MACHINE_API="crates/nimbus-machine/src/api.rs"
 MACHINE_ROUTES="crates/nimbus-cli/src/machine/api/routes.rs"
 MACHINE_SERVICE="crates/nimbus-cli/src/machine/api/service_workloads.rs"
+MACHINE_CLIENT="crates/nimbus-cli/src/machine/client.rs"
+MACHINE_STUB_CLIENT="crates/nimbus-cli/src/machine/stub/client.rs"
+MACHINE_STUB_BACKEND="crates/nimbus-cli/src/machine/stub/backend.rs"
+MACHINE_BACKEND="crates/nimbus-cli/src/machine/backend.rs"
+MACHINE_BACKEND_PROVISION="crates/nimbus-cli/src/machine/backend/provision.rs"
+MACHINE_PUBLICATION="crates/nimbus-cli/src/machine/publication_authority.rs"
+MACHINE_CAPABILITIES="crates/nimbus-cli/src/machine/api/capabilities.rs"
+MACHINE_PROVISION_ROUTE_TESTS="crates/nimbus-cli/src/machine/api/tests/provision_phase.rs"
+MACHINE_PROVISION_ADAPTER_TESTS="crates/nimbus-cli/src/machine/backend/provision/tests.rs"
 NODE_RECONCILER="crates/nimbus-node/src/reconciler.rs"
+NODE_HOST_LIFECYCLE="crates/nimbus-node/src/host_lifecycle.rs"
+NODE_DIRECT_PROCESS="crates/nimbus-node/src/direct_process.rs"
+NODE_SYSTEMD_TRANSIENT="crates/nimbus-node/src/systemd_transient.rs"
+NODE_EXECUTOR="crates/nimbus-cli/src/node_workload_executor.rs"
+CLI_LIB="crates/nimbus-cli/src/lib.rs"
+CLI_START_BOOT="crates/nimbus-cli/src/start/boot.rs"
+CLI_DEV_WIRE="crates/nimbus-cli/src/dev/wire.rs"
+MACHINE_LOCAL_SERVER="crates/nimbus-cli/src/machine/local_server.rs"
 CLOUD_FUNCTIONS_HOST="crates/nimbus-cloud-functions/src/host_bridge.rs"
 CLOUD_FUNCTIONS_HTTP="crates/nimbus-cloud-functions/src/http/invocation.rs"
 CLOUD_FUNCTIONS_TRIGGER="crates/nimbus-cloud-functions/src/trigger_executor.rs"
+CLOUD_FUNCTIONS_READ_ONLY_TESTS="crates/nimbus-cloud-functions/tests/read_only_snapshots.rs"
 NETWORK_MANIFEST="crates/nimbus-network/Cargo.toml"
 NETWORK_SOURCE="crates/nimbus-network/src/lib.rs"
 OWNER_PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
@@ -52,6 +102,12 @@ const path = process.argv[2];
 const source = fs.existsSync(path) ? fs.readFileSync(path, "utf8") : "";
 process.stdout.write(source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, ""));
 NODE
+}
+
+raw_source() {
+  if [ -f "$1" ]; then
+    command cat -- "$1"
+  fi
 }
 
 source_without_comments_or_strings() {
@@ -198,6 +254,31 @@ replace_once() {
   printf -v "${variable}" '%s' "${value/"${old}"/"${new}"}"
 }
 
+replace_nth() {
+  variable="$1"
+  old="$2"
+  new="$3"
+  occurrence="$4"
+  value="${!variable}"
+  remaining="${value}"
+  rebuilt=""
+  for ((index = 1; index <= occurrence; index += 1)); do
+    if [[ "${remaining}" != *"${old}"* ]]; then
+      add_error "mutation ${NIMBUS_NETWORK_NNC64_TEST_MUTATION:-unknown} did not find occurrence ${occurrence}"
+      return
+    fi
+    prefix="${remaining%%"${old}"*}"
+    remaining="${remaining#*"${old}"}"
+    rebuilt+="${prefix}"
+    if [ "${index}" -eq "${occurrence}" ]; then
+      rebuilt+="${new}${remaining}"
+      printf -v "${variable}" '%s' "${rebuilt}"
+      return
+    fi
+    rebuilt+="${old}"
+  done
+}
+
 append_source() {
   variable="$1"
   addition="$2"
@@ -205,24 +286,79 @@ append_source() {
   printf -v "${variable}" '%s\n%s\n' "${value}" "${addition}"
 }
 
+# Several inputs are consumed through the required-input indirection and
+# mutation harness rather than a lexical reference.
+# shellcheck disable=SC2034
 load_sources() {
-  workload_provision_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_PROVISION}")"
-  workload_state_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_STATE}")"
+  workload_provision_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_PROVISION}")
+$(source_without_comments "${REPO_ROOT}/${WORKLOAD_PROVISION_DISPATCH}")"
+  workload_provision_tests_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_PROVISION_DISPATCH_TESTS}")"
+  workload_state_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_STATE}")
+$(source_without_comments "${REPO_ROOT}/${WORKLOAD_STATE_PROVISION}")"
+  workload_state_tests_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_STATE_PROVISION_TESTS}")"
   workload_store_source="$(source_without_comments "${REPO_ROOT}/${WORKLOAD_STORE}")"
   compute_saga_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_SAGA}")"
   compute_decision_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_DECISION}")"
-  compute_dispatch_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_DISPATCH}")"
-  compute_dispatch_tests_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_DISPATCH_TESTS}")"
+  compute_dispatch_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_DISPATCH}")
+$(source_without_comments "${REPO_ROOT}/${COMPUTE_DISPATCHER}")
+$(source_without_comments "${REPO_ROOT}/${COMPUTE_DRIVER}")"
+  compute_dispatch_tests_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_DISPATCH_TESTS}")
+$(source_without_comments "${REPO_ROOT}/${COMPUTE_DISPATCHER_TESTS}")
+$(source_without_comments "${REPO_ROOT}/${COMPUTE_DRIVER_TESTS}")
+$(source_without_comments "${REPO_ROOT}/${SERVER_PROVISION_PROCESS_TESTS}")"
+  caller_proof_source="${compute_dispatch_tests_source}
+$(source_without_comments "${REPO_ROOT}/${SERVER_CONVEX_CONTEXT_READ_ONLY_TESTS}")
+$(source_without_comments "${REPO_ROOT}/${SERVER_CONVEX_LOOKUP_READ_ONLY_TESTS}")
+$(source_without_comments "${REPO_ROOT}/${CLOUD_FUNCTIONS_READ_ONLY_TESTS}")"
+  compute_phase_provider_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_PROVISION_PROVIDER}")"
+  compute_provider_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_SANDBOX_PROVIDER}")"
   compute_state_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_STATE}")"
-  server_state_source="$(source_without_comments "${REPO_ROOT}/${SERVER_STATE}")"
+  compute_resource_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_RESOURCE_PROVISION}")"
+  compute_sandboxes_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_SANDBOXES}")"
+  compute_services_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_SERVICES}")"
+  native_caller_tests_source="$(source_without_comments "${REPO_ROOT}/${COMPUTE_RESOURCE_PROVISION_TESTS}")"
+  server_state_source="$(source_without_comments "${REPO_ROOT}/${SERVER_STATE}")
+$(source_without_comments "${REPO_ROOT}/${SERVER_INGRESS}")"
+  server_composition_source="$(source_without_comments "${REPO_ROOT}/${SERVER_CONSTRUCTION}")
+$(source_without_comments "${REPO_ROOT}/${SERVER_ROUTER}")
+$(source_without_comments "${REPO_ROOT}/${SERVER_WORKLOAD_COMPOSITION}")"
+  convex_async_source="$(source_without_comments "${REPO_ROOT}/${SERVER_CONVEX_ASYNC}")"
+  convex_lookup_tests_source="$(source_without_comments "${REPO_ROOT}/${SERVER_CONVEX_LOOKUP_READ_ONLY_TESTS}")"
   sandbox_backend_source="$(source_without_comments "${REPO_ROOT}/${SANDBOX_BACKEND}")"
+  sandbox_provision_source="$(source_without_comments "${REPO_ROOT}/${SANDBOX_PROVISION}")"
+  sandbox_container_provider_source="$(source_without_comments "${REPO_ROOT}/${SANDBOX_CONTAINER_PROVIDER}")
+$(source_without_comments "${REPO_ROOT}/${SANDBOX_CONTAINER_PROVIDER_JOURNAL}")"
+  sandbox_krun_provider_source="$(source_without_comments "${REPO_ROOT}/${SANDBOX_KRUN_PROVIDER}")"
   services_registry_source="$(source_without_comments "${REPO_ROOT}/${SERVICES_REGISTRY}")"
+  services_manager_source="$(source_without_comments "${REPO_ROOT}/${SERVICES_MANAGER}")
+$(source_without_comments "${REPO_ROOT}/${SERVICES_ACTIVATION}")"
   services_start_source="$(source_without_comments "${REPO_ROOT}/${SERVICES_START}")"
   services_sandboxes_source="$(source_without_comments "${REPO_ROOT}/${SERVICES_SANDBOXES}")"
-  compose_lifecycle_source="$(source_without_comments "${REPO_ROOT}/${COMPOSE_LIFECYCLE}")"
+  compose_lifecycle_source="$(source_without_comments "${REPO_ROOT}/${COMPOSE_LIFECYCLE}")
+$(source_without_comments "${REPO_ROOT}/${COMPOSE_EXECUTION}")"
+  compose_caller_tests_source="$(source_without_comments "${REPO_ROOT}/${COMPOSE_LIFECYCLE_TESTS}")
+$(source_without_comments "${REPO_ROOT}/${COMPOSE_FORWARDED_TESTS}")"
+  nimbus_machine_api_source="$(source_without_comments "${REPO_ROOT}/${NIMBUS_MACHINE_API}")"
   machine_routes_source="$(source_without_comments "${REPO_ROOT}/${MACHINE_ROUTES}")"
   machine_service_source="$(source_without_comments "${REPO_ROOT}/${MACHINE_SERVICE}")"
+  machine_parent_source="$(source_without_comments "${REPO_ROOT}/${MACHINE_CLIENT}")
+$(source_without_comments "${REPO_ROOT}/${MACHINE_STUB_CLIENT}")
+$(source_without_comments "${REPO_ROOT}/${MACHINE_STUB_BACKEND}")
+$(source_without_comments "${REPO_ROOT}/${MACHINE_BACKEND}")
+$(source_without_comments "${REPO_ROOT}/${MACHINE_BACKEND_PROVISION}")
+$(source_without_comments "${REPO_ROOT}/${MACHINE_PUBLICATION}")
+$(source_without_comments "${REPO_ROOT}/${MACHINE_CAPABILITIES}")"
+  machine_guest_caller_tests_source="$(source_without_comments "${REPO_ROOT}/${MACHINE_PROVISION_ROUTE_TESTS}")
+$(source_without_comments "${REPO_ROOT}/${MACHINE_PROVISION_ADAPTER_TESTS}")"
   node_reconciler_source="$(source_without_comments "${REPO_ROOT}/${NODE_RECONCILER}")"
+  node_host_lifecycle_source="$(source_without_comments "${REPO_ROOT}/${NODE_HOST_LIFECYCLE}")"
+  node_provider_source="$(source_without_comments "${REPO_ROOT}/${NODE_DIRECT_PROCESS}")
+$(source_without_comments "${REPO_ROOT}/${NODE_SYSTEMD_TRANSIENT}")"
+  node_executor_source="$(source_without_comments "${REPO_ROOT}/${NODE_EXECUTOR}")
+$(source_without_comments "${REPO_ROOT}/${CLI_LIB}")"
+  process_composition_caller_source="$(source_without_comments "${REPO_ROOT}/${CLI_START_BOOT}")
+$(source_without_comments "${REPO_ROOT}/${CLI_DEV_WIRE}")
+$(source_without_comments "${REPO_ROOT}/${MACHINE_LOCAL_SERVER}")"
   cloud_functions_host_source="$(source_without_comments "${REPO_ROOT}/${CLOUD_FUNCTIONS_HOST}")"
   cloud_functions_http_source="$(source_without_comments "${REPO_ROOT}/${CLOUD_FUNCTIONS_HTTP}")"
   cloud_functions_trigger_source="$(source_without_comments "${REPO_ROOT}/${CLOUD_FUNCTIONS_TRIGGER}")"
@@ -230,19 +366,20 @@ load_sources() {
   network_source="$(source_without_comments "${REPO_ROOT}/${NETWORK_SOURCE}")"
   owner_plan_source="$(source_without_comments "${REPO_ROOT}/${OWNER_PLAN}")"
   owner_proof_source="$(source_without_comments "${REPO_ROOT}/${OWNER_PROOF}")"
+  legacy_mutation_source=""
 }
 
 apply_test_mutation() {
   case "${NIMBUS_NETWORK_NNC64_TEST_MUTATION:-}" in
     '') ;;
     missing-command-vocabulary)
-      replace_once compute_dispatch_source 'pub enum WorkloadProvisionCommandMode' 'pub enum RemovedCommandMode'
+      replace_once workload_provision_source 'pub enum WorkloadProvisionCommandMode' 'pub enum RemovedCommandMode'
       ;;
     extra-command-mode)
-      replace_once compute_dispatch_source $'    Inspect,\n}' $'    Inspect,\n    Cancel,\n}'
+      replace_once workload_provision_source $'    Inspect,\n}' $'    Inspect,\n    Cancel,\n}'
       ;;
     forgeable-command-constructor)
-      append_source compute_dispatch_source 'pub fn new() -> ConfirmedWorkloadProvisionCommand { unreachable!() }'
+      replace_once compute_dispatch_source '    fn from_confirmation(' '    pub fn from_confirmation('
       ;;
     missing-confirmed-transition-id)
       replace_once compute_dispatch_source 'transition_id: WorkloadSagaTransitionId' 'removed_transition_id: ()'
@@ -269,7 +406,7 @@ apply_test_mutation() {
       replace_once compute_dispatch_source 'subjects: WorkloadProvisionSubjects' 'removed_subjects: ()'
       ;;
     missing-command-id-domain)
-      replace_once compute_dispatch_source 'nimbus.compute.workload.provision.command.id.v1' 'removed-command-id-domain'
+      replace_once workload_provision_source 'nimbus.compute.workload.provision.command.id.v1' 'removed-command-id-domain'
       ;;
     missing-dispatch-epoch)
       replace_once workload_provision_source 'pub struct WorkloadProvisionDispatchEpoch' 'pub struct RemovedDispatchEpoch'
@@ -294,8 +431,8 @@ apply_test_mutation() {
     retry-reuses-dispatch-epoch)
       replace_once compute_dispatch_tests_source 'absence_retry_increments_dispatch_epoch_exactly_once' 'absence_retry_reuses_dispatch_epoch'
       ;;
-    retry-lacks-absence-evidence)
-      replace_once compute_dispatch_tests_source 'retry_without_absence_evidence_is_rejected' 'retry_without_absence_evidence_is_allowed'
+    retry-crosses-absence-revision)
+      replace_once workload_provision_tests_source 'retry_authorization_wire_rejects_crossed_absence_revision' 'retry_authorization_wire_accepts_crossed_absence_revision'
       ;;
     fixed-revision-offset-retry)
       append_source workload_state_source 'fn fixed_retry_history() { let after_three = after_two.checked_next(); }'
@@ -307,7 +444,7 @@ apply_test_mutation() {
       append_source compute_dispatch_source 'fn bad() { let _ = (WorkloadSagaConfirmation::ConfirmedReplay, WorkloadProvisionCommandMode::Execute); }'
       ;;
     execute-before-attempt-cas)
-      replace_once compute_dispatch_tests_source 'unconfirmed_candidate_cannot_form_provider_command' 'unconfirmed_candidate_forms_provider_command'
+      replace_once compute_dispatch_tests_source 'unconfirmed_recovery_candidate_cannot_form_provider_command' 'unconfirmed_recovery_candidate_forms_provider_command'
       ;;
     source-mismatch-effects)
       replace_once compute_dispatch_tests_source 'current_source_mismatch_rejects_before_attempt_cas' 'current_source_mismatch_dispatches'
@@ -372,14 +509,30 @@ apply_test_mutation() {
     portable-provider-handle)
       append_source workload_provision_source 'struct PortableProviderLeak { provider_handle: String }'
       ;;
-    old-provision-authority-remains)
-      append_source sandbox_backend_source 'pub trait SandboxBackend { fn start(&self); }'
+    random-parent-attempt-id)
+      append_source legacy_mutation_source 'fn random_parent_attempt() { let _ = Ulid::new(); }'
       ;;
-    caller-family-bypass)
-      replace_once compute_dispatch_tests_source 'machine_api_and_guest_node_use_fenced_commands' 'machine_api_and_guest_node_bypass_compute'
+    missing-forwarded-command-proof)
+      replace_once machine_guest_caller_tests_source \
+        'real_registry_substitution_publishes_and_observes_exact_forwarded_command' \
+        'forwarded_parent_drops_canonical_command_identity'
       ;;
     cloud-functions-effect)
       append_source cloud_functions_host_source 'fn activate() { ensure_service_binding_for_decision_async(); }'
+      ;;
+    missing-container-provider-connector)
+      replace_nth compute_provider_source \
+        'backend.attempt_idempotency_journal()?' \
+        'backend.removed_container_attempt_journal_connector()?' 1
+      append_source compute_provider_source \
+        'fn decoy_container_connector() { let _ = "backend.attempt_idempotency_journal()?"; }'
+      ;;
+    missing-krun-provider-connector)
+      replace_nth compute_provider_source \
+        'backend.attempt_idempotency_journal()?' \
+        'backend.removed_krun_attempt_journal_connector()?' 2
+      append_source compute_provider_source \
+        'fn decoy_krun_connector() { let _ = "backend.attempt_idempotency_journal()?"; }'
       ;;
     *) add_error "unknown NNC6.4 test mutation: ${NIMBUS_NETWORK_NNC64_TEST_MUTATION}" ;;
   esac
@@ -391,6 +544,8 @@ verify_contract() {
 
   confirmed_command_block="$(printf '%s\n' "${compute_dispatch_source}" |
     extract_rust_item 'pub struct ConfirmedWorkloadProvisionCommand')"
+  confirmed_command_impl="$(printf '%s\n' "${compute_dispatch_source}" |
+    extract_rust_item 'impl ConfirmedWorkloadProvisionCommand')"
   command_result_block="$(printf '%s\n' "${compute_dispatch_source}" |
     extract_rust_item 'pub struct WorkloadProvisionCommandResult')"
   absence_evidence_block="$(printf '%s\n' "${workload_provision_source}" |
@@ -404,7 +559,9 @@ verify_contract() {
   for required in \
     workload_provision_source workload_state_source workload_store_source \
     compute_saga_source compute_decision_source compute_state_source server_state_source \
-    sandbox_backend_source services_registry_source compose_lifecycle_source \
+    compute_phase_provider_source compute_provider_source sandbox_backend_source sandbox_provision_source \
+    sandbox_container_provider_source sandbox_krun_provider_source \
+    services_registry_source compose_lifecycle_source \
     node_reconciler_source cloud_functions_host_source network_manifest_source \
     owner_plan_source; do
     if [ -z "${!required}" ]; then
@@ -419,7 +576,7 @@ verify_contract() {
   if [ "${#NNC64_ERRORS[@]}" -eq "${required_errors}" ]; then pass_check; fi
 
   check_literals "routing-proof-and-completion-baseline" "${owner_plan_source}
-${owner_proof_source}" 'NNC6.4' 'provider dispatch' '40 checks' '48 passed'
+${owner_proof_source}" 'NNC6.4' 'provider dispatch' '40 checks' '50 passed'
 
   pin_errors="${#NNC64_ERRORS[@]}"
   if [ "${NIMBUS_NETWORK_NNC64_TEST_PINNED_HISTORY:-}" = "present" ]; then
@@ -429,16 +586,16 @@ ${owner_proof_source}" 'NNC6.4' 'provider dispatch' '40 checks' '48 passed'
   fi
   if [ "${#NNC64_ERRORS[@]}" -eq "${pin_errors}" ]; then pass_check; fi
 
-  check_exact_variants "confirmed-command-closed-vocabulary" "${compute_dispatch_source}" \
+  check_exact_variants "confirmed-command-closed-vocabulary" "${workload_provision_source}" \
     'pub enum WorkloadProvisionCommandMode' 'Execute Inspect '
 
   constructor_errors="${#NNC64_ERRORS[@]}"
-  if ! printf '%s\n' "${compute_dispatch_source}" |
+  if ! printf '%s\n' "${confirmed_command_impl}" |
     rg -q -F 'fn from_confirmation('; then
     add_error "confirmed-command-private-construction: missing private confirmation constructor"
   fi
-  if printf '%s\n' "${compute_dispatch_source}" |
-    rg -q 'pub[[:space:]]+fn[[:space:]]+(new|from_confirmation)[[:space:]]*\('; then
+  if printf '%s\n' "${confirmed_command_impl}" |
+    rg -q 'pub([[:space:]]*\([^)]*\))?[[:space:]]+fn[[:space:]]+(new|from_confirmation)[[:space:]]*\('; then
     add_error "confirmed-command-private-construction: command constructor is publicly forgeable"
   fi
   if [ "${#NNC64_ERRORS[@]}" -eq "${constructor_errors}" ]; then pass_check; fi
@@ -451,9 +608,12 @@ ${owner_proof_source}" 'NNC6.4' 'provider dispatch' '40 checks' '48 passed'
     'issuing_revision: WorkloadSagaRevision' 'confirmed_revision: WorkloadSagaRevision' \
     'transition_id: WorkloadSagaTransitionId'
 
-  check_literals "confirmed-command-generation-digest-fence" "${confirmed_command_block}" \
+  check_literals "confirmed-command-generation-digest-fence" "${confirmed_command_block}
+${confirmed_command_impl}" \
     'generation: WorkloadGeneration' 'desired_digest: WorkloadDesiredDigest' \
-    'source_digest: WorkloadProvisionSourceDigest' 'network_plan_digest: NetworkPlanDigest'
+    'source: WorkloadProvisionSourceEvidence' 'network_plan_digest: NetworkPlanDigest' \
+    'pub const fn source_digest(&self) -> WorkloadProvisionSourceDigest' \
+    'self.source.source_digest()'
 
   provider_fence_errors="${#NNC64_ERRORS[@]}"
   provider_target_variants="$(printf '%s\n' "${provider_target_block}" |
@@ -481,7 +641,7 @@ ${owner_proof_source}" 'NNC6.4' 'provider dispatch' '40 checks' '48 passed'
   done
   if [ "${#NNC64_ERRORS[@]}" -eq "${provider_fence_errors}" ]; then pass_check; fi
 
-  check_literals "confirmed-command-domain-separated-id" "${compute_dispatch_source}" \
+  check_literals "confirmed-command-domain-separated-id" "${workload_provision_source}" \
     'pub struct WorkloadProvisionCommandId' \
     'nimbus.compute.workload.provision.command.id.v1'
 
@@ -507,10 +667,16 @@ ${owner_proof_source}" 'NNC6.4' 'provider dispatch' '40 checks' '48 passed'
   check_exact_variants "inspection-result-closed-vocabulary" "${workload_provision_source}" \
     'pub enum WorkloadProvisionInspectionResult' \
     'Absent Ambiguous DefiniteFailure InProgress Succeeded '
+  if ! printf '%s\n' "${workload_provision_tests_source}" |
+    rg -q -F 'dispatch_epoch_and_inspection_wire_reject_unknown_noncanonical_values'; then
+    add_error "inspection-result-closed-vocabulary: strict wire proof missing"
+  fi
 
   check_literals "absence-evidence-complete-fence" "${absence_evidence_block}" \
     'pub struct WorkloadProvisionAbsenceEvidence' 'attempt_id: WorkloadProvisionAttemptId' \
     'dispatch_epoch: WorkloadProvisionDispatchEpoch' \
+    'confirmed_revision: WorkloadSagaRevision' \
+    'transition_id: WorkloadSagaTransitionId' \
     'provider_target: WorkloadProvisionProviderTarget' \
     'step: WorkloadProvisionStep' 'evidence: WorkloadOwnerEvidenceDigest'
 
@@ -539,7 +705,13 @@ ${owner_proof_source}" 'NNC6.4' 'provider dispatch' '40 checks' '48 passed'
   fi
   if [ "${#NNC64_ERRORS[@]}" -eq "${state_errors}" ]; then pass_check; fi
 
-  check_literals "same-attempt-monotonic-retry" "${compute_dispatch_tests_source}" \
+  check_literals "same-attempt-monotonic-retry" "${workload_provision_source}
+${workload_provision_tests_source}
+${workload_state_tests_source}
+${compute_dispatch_tests_source}" \
+    'absence.confirmed_revision.checked_next() != Some(self.claimed_revision)' \
+    'retry_authorization_wire_rejects_crossed_absence_revision' \
+    'retry_reusing_skipping_or_crossing_absence_transition_is_rejected' \
     'inspection_absence_authorizes_same_attempt_next_epoch' \
     'absence_retry_increments_dispatch_epoch_exactly_once' \
     'retry_without_absence_evidence_is_rejected'
@@ -563,8 +735,20 @@ ${compute_dispatch_tests_source}" 'reduce_command_result' 'WorkloadProvisionInsp
     add_error "direct-winner-only-execute: replay or ambiguous confirmation can execute"
   fi
   if ! printf '%s\n' "${compute_dispatch_tests_source}" |
-    rg -q -F 'unconfirmed_candidate_cannot_form_provider_command'; then
-    add_error "direct-winner-only-execute: unconfirmed candidate proof missing"
+    rg -q -F 'unconfirmed_recovery_candidate_cannot_form_provider_command'; then
+    add_error "direct-winner-only-execute: unconfirmed recovery candidate proof missing"
+  fi
+  if ! printf '%s\n' "${compute_dispatch_source}" |
+    rg -q -F 'confirmed_record: Option<WorkloadSagaRecord>'; then
+    add_error "direct-winner-only-execute: conflict can expose an unconfirmed candidate as durable"
+  fi
+  if ! printf '%s\n' "${compute_dispatch_source}" |
+    rg -q -F 'self.store.load(key).await?'; then
+    add_error "direct-winner-only-execute: recovery inspection does not load durable truth"
+  fi
+  if ! printf '%s\n' "${compute_dispatch_tests_source}" |
+    rg -q -F 'conflict_exposes_no_candidate_record_or_command'; then
+    add_error "direct-winner-only-execute: conflict candidate exposure proof missing"
   fi
   if [ "${#NNC64_ERRORS[@]}" -eq "${winner_errors}" ]; then pass_check; fi
 
@@ -611,8 +795,9 @@ ${compute_dispatch_tests_source}" 'validate_current_provider_report' \
     'trait WorkloadReadinessCapability' 'trait IngressPublicationCapability' \
     'ContainerProvisionAdapter' 'KrunProvisionAdapter' \
     'ForwardedMachineProvisionAdapter' 'ServerIngressPublicationAdapter'; do
-    if ! printf '%s\n%s\n%s\n' \
-      "${compute_dispatch_source}" "${sandbox_backend_source}" "${server_state_source}" |
+    if ! printf '%s\n%s\n%s\n%s\n' \
+      "${compute_dispatch_source}" "${compute_provider_source}" "${server_state_source}" \
+      "${machine_parent_source}" |
       rg -q -F "${seam}"; then
       add_error "small-real-capability-seams: missing ${seam}"
     fi
@@ -622,9 +807,48 @@ ${compute_dispatch_tests_source}" 'validate_current_provider_report' \
   fi
   if [ "${#NNC64_ERRORS[@]}" -eq "${capability_errors}" ]; then pass_check; fi
 
-  check_literals "provider-local-attempt-idempotency" "${sandbox_backend_source}
-${server_state_source}" 'attempt_idempotency_journal' 'claim_dispatch_epoch' \
-    'reject_stale_dispatch_epoch' 'adopt_exact_attempt'
+  provider_journal_errors="${#NNC64_ERRORS[@]}"
+  for literal in attempt_idempotency_journal claim_dispatch_epoch record_observation; do
+    if ! printf '%s\n' "${compute_phase_provider_source}" | rg -q -F "${literal}"; then
+      add_error "provider-local-attempt-idempotency: shared phase adapter missing ${literal}"
+    fi
+  done
+  for literal in claim_dispatch_epoch reject_stale_dispatch_epoch adopt_exact_attempt; do
+    if ! printf '%s\n' "${sandbox_provision_source}" | rg -q -F "${literal}"; then
+      add_error "provider-local-attempt-idempotency: sandbox journal missing ${literal}"
+    fi
+  done
+  container_adapter_impl="$(printf '%s\n' "${compute_provider_source}" |
+    extract_rust_item 'impl ContainerProvisionAdapter')"
+  krun_adapter_impl="$(printf '%s\n' "${compute_provider_source}" |
+    extract_rust_item 'impl KrunProvisionAdapter')"
+  container_journal_connector="$(printf '%s\n' "${sandbox_container_provider_source}" |
+    extract_rust_item 'pub fn attempt_idempotency_journal(')"
+  krun_journal_connector="$(printf '%s\n' "${sandbox_krun_provider_source}" |
+    extract_rust_item 'pub fn attempt_idempotency_journal(')"
+  if ! printf '%s\n' "${container_adapter_impl}" |
+    rg -q -F 'ProviderProvisionPhaseAdapter::new(backend.attempt_idempotency_journal()?)'; then
+    add_error "provider-local-attempt-idempotency: Container adapter does not open its backend journal"
+  fi
+  if ! printf '%s\n' "${krun_adapter_impl}" |
+    rg -q -F 'ProviderProvisionPhaseAdapter::new(backend.attempt_idempotency_journal()?)'; then
+    add_error "provider-local-attempt-idempotency: Krun adapter does not open its backend journal"
+  fi
+  for provider_connector in \
+    "container|${container_journal_connector}|container-runtime" \
+    "krun|${krun_journal_connector}|krun-runtime"; do
+    provider="${provider_connector%%|*}"
+    connector_and_namespace="${provider_connector#*|}"
+    connector="${connector_and_namespace%|*}"
+    namespace="${provider_connector##*|}"
+    for literal in \
+      'ProviderProvisionAttemptJournal::open' 'config.workload_state_root' "${namespace}"; do
+      if ! printf '%s\n' "${connector}" | rg -q -F "${literal}"; then
+        add_error "provider-local-attempt-idempotency: ${provider} backend journal connector missing ${literal}"
+      fi
+    done
+  done
+  if [ "${#NNC64_ERRORS[@]}" -eq "${provider_journal_errors}" ]; then pass_check; fi
 
   authority_errors="${#NNC64_ERRORS[@]}"
   authority_source="${workload_store_source}
@@ -645,7 +869,7 @@ ${compute_saga_source}"
 
   check_literals "managed-compute-required-dispatch-composition" "${compute_state_source}
 ${server_state_source}" 'provision_capabilities:' 'source_authority:' \
-    'WorkloadProvisionDispatcher' 'saga_store:' 'network_manager:'
+    'WorkloadProvisioner' 'saga_store:' 'network_manager:'
 
   check_literals "reserve-command-mapping" "${compute_dispatch_source}
 ${compute_dispatch_tests_source}" 'ReserveNetwork' 'NetworkReservationCapability' \
@@ -689,14 +913,60 @@ ${compute_dispatch_tests_source}" 'Publish' 'ObservePublication' 'IngressPublica
     'fresh_process_reopens_engine_without_snapshot_handoff'
 
   caller_errors="${#NNC64_ERRORS[@]}"
-  for seam in \
-    'native_service_and_sandbox_callers_use_compute_dispatch' \
-    'convex_async_activation_uses_compute_dispatch' \
-    'compose_local_and_forwarded_use_compute_dispatch' \
+  native_caller_source="${compute_resource_source}
+${compute_sandboxes_source}
+${compute_services_source}"
+  for seam in 'provision_with_source_reservation' 'provision_standalone_sandbox' \
+    'provision_sandbox_service'; do
+    if ! printf '%s\n' "${native_caller_source}" | rg -q -F "${seam}"; then
+      add_error "positive-and-read-only-caller-census: native caller path missing ${seam}"
+    fi
+  done
+  if ! printf '%s\n' "${native_caller_tests_source}" |
+    rg -q 'fn[[:space:]]+native_service_and_sandbox_callers_use_compute_dispatch[[:space:]]*\('; then
+    add_error "positive-and-read-only-caller-census: missing native behavior test"
+  fi
+  for seam in 'provision_sandbox_service' 'WorkloadProvisionCancellation'; do
+    if ! printf '%s\n' "${convex_async_source}" | rg -q -F "${seam}"; then
+      add_error "positive-and-read-only-caller-census: Convex async path missing ${seam}"
+    fi
+  done
+  if ! printf '%s\n' "${convex_lookup_tests_source}" |
+    rg -q 'fn[[:space:]]+convex_async_activation_uses_compute_dispatch[[:space:]]*\('; then
+    add_error "positive-and-read-only-caller-census: missing Convex async behavior test"
+  fi
+  for seam in 'resource_provisioner' 'EngineWorkloadSagaStore'; do
+    if ! printf '%s\n' "${compose_lifecycle_source}" | rg -q -F "${seam}"; then
+      add_error "positive-and-read-only-caller-census: Compose path missing ${seam}"
+    fi
+  done
+  if ! printf '%s\n' "${compose_caller_tests_source}" |
+    rg -q 'fn[[:space:]]+compose_local_and_forwarded_use_compute_dispatch[[:space:]]*\('; then
+    add_error "positive-and-read-only-caller-census: missing Compose behavior test"
+  fi
+  for seam in 'MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH' \
+    'MachineApiWorkloadProvisionCommandEnvelope' 'ForwardedMachineProvisionAdapter'; do
+    if ! printf '%s\n%s\n%s\n' "${nimbus_machine_api_source}" \
+      "${machine_service_source}" "${machine_parent_source}" | rg -q -F "${seam}"; then
+      add_error "positive-and-read-only-caller-census: Machine/guest path missing ${seam}"
+    fi
+  done
+  for proof in \
     'machine_api_and_guest_node_use_fenced_commands' \
-    'convex_sync_and_invocation_snapshots_are_read_only' \
+    'machine_api_and_guest_use_exact_compute_phase_dispatch' \
+    'real_registry_substitution_publishes_and_observes_exact_forwarded_command'; do
+    if ! printf '%s\n' "${machine_guest_caller_tests_source}" |
+      rg -q "fn[[:space:]]+${proof}[[:space:]]*\\("; then
+      add_error "positive-and-read-only-caller-census: missing Machine/guest proof ${proof}"
+    fi
+  done
+  if ! printf '%s\n' "${machine_parent_source}" |
+    rg -q 'fn[[:space:]]+legacy_service_intent_cannot_represent_canonical_command_identity[[:space:]]*\('; then
+    add_error "positive-and-read-only-caller-census: missing parent-journal canonical identity proof"
+  fi
+  for seam in 'convex_sync_and_invocation_snapshots_are_read_only' \
     'cloud_functions_snapshots_have_zero_activation_store_or_provider_calls'; do
-    if ! printf '%s\n' "${compute_dispatch_tests_source}" | rg -q -F "${seam}"; then
+    if ! printf '%s\n' "${caller_proof_source}" | rg -q -F "${seam}"; then
       add_error "positive-and-read-only-caller-census: missing ${seam}"
     fi
   done
@@ -714,21 +984,65 @@ ${cloud_functions_trigger_source}"
   if [ "${#NNC64_ERRORS[@]}" -eq "${caller_errors}" ]; then pass_check; fi
 
   deletion_errors="${#NNC64_ERRORS[@]}"
-  legacy_source="${sandbox_backend_source}
-${compute_decision_source}
-${services_registry_source}
-${services_start_source}
-${services_sandboxes_source}
-${compose_lifecycle_source}
-${machine_routes_source}
-${machine_service_source}
-${node_reconciler_source}"
+  legacy_source="$(raw_source "${REPO_ROOT}/${SANDBOX_BACKEND}")
+$(raw_source "${REPO_ROOT}/${SANDBOX_CONTAINER_PROVIDER}")
+$(raw_source "${REPO_ROOT}/${SANDBOX_KRUN_PROVIDER}")
+$(raw_source "${REPO_ROOT}/${COMPUTE_DECISION}")
+$(raw_source "${REPO_ROOT}/${SERVICES_REGISTRY}")
+$(raw_source "${REPO_ROOT}/${SERVICES_MANAGER}")
+$(raw_source "${REPO_ROOT}/${SERVICES_ACTIVATION}")
+$(raw_source "${REPO_ROOT}/${SERVICES_START}")
+$(raw_source "${REPO_ROOT}/${SERVICES_SANDBOXES}")
+$(raw_source "${REPO_ROOT}/${COMPOSE_LIFECYCLE}")
+$(raw_source "${REPO_ROOT}/${NIMBUS_MACHINE_API}")
+$(raw_source "${REPO_ROOT}/${MACHINE_ROUTES}")
+$(raw_source "${REPO_ROOT}/${MACHINE_SERVICE}")
+$(raw_source "${REPO_ROOT}/${MACHINE_CLIENT}")
+$(raw_source "${REPO_ROOT}/${MACHINE_STUB_CLIENT}")
+$(raw_source "${REPO_ROOT}/${MACHINE_STUB_BACKEND}")
+$(raw_source "${REPO_ROOT}/${MACHINE_BACKEND}")
+$(raw_source "${REPO_ROOT}/${MACHINE_BACKEND_PROVISION}")
+$(raw_source "${REPO_ROOT}/${MACHINE_PUBLICATION}")
+$(raw_source "${REPO_ROOT}/${MACHINE_CAPABILITIES}")
+$(raw_source "${REPO_ROOT}/${NODE_RECONCILER}")
+$(raw_source "${REPO_ROOT}/${NODE_HOST_LIFECYCLE}")
+$(raw_source "${REPO_ROOT}/${NODE_DIRECT_PROCESS}")
+$(raw_source "${REPO_ROOT}/${NODE_SYSTEMD_TRANSIENT}")
+$(raw_source "${REPO_ROOT}/${NODE_EXECUTOR}")
+$(raw_source "${REPO_ROOT}/${CLI_LIB}")
+${legacy_mutation_source}"
   legacy_code="$(printf '%s\n' "${legacy_source}" | source_without_comments_or_strings)"
   legacy_hits="$(printf '%s\n' "${legacy_code}" |
-    rg -n 'start_service_launch|ensure_service_binding_for_decision_async|trait[[:space:]]+SandboxBackend[^}]*fn[[:space:]]+start|\.start[[:space:]]*\(' |
+    rg -n 'start_service_launch|start_sync|finish_start|ensure_service_binding(_for_decision)?_async|activations_in_progress|ActivationClaim|MACHINE_API_SERVICE_SANDBOX_(IMAGE|BUILD)_START_PATH|MachineApiServiceSandbox(Image|Build)StartRequest|MachineApiServiceSandboxStartResponse|start_service_sandbox_from_(image|build)|machine_api_start_(image|build)_service_sandbox|admit_workload_spec|NodeWorkloadCoordinator::new|reconcile_running|NodeWorkloadExecutor|Ulid::new|fn[[:space:]]+start[[:space:]]*(<[^>]+>)?[[:space:]]*\(' |
     awk 'BEGIN { separator = "" } { printf "%s%s", separator, $0; separator = "; " }' || true)"
   if [ -n "${legacy_hits}" ]; then
     add_error "legacy-deletion-path-dependency-effect-contract: legacy provision authority remains: ${legacy_hits}"
+  fi
+  product_bypass_source="$(raw_source "${REPO_ROOT}/${COMPUTE_SANDBOXES}")
+$(raw_source "${REPO_ROOT}/${COMPUTE_SERVICES}")
+$(raw_source "${REPO_ROOT}/${COMPUTE_STATE}")
+$(raw_source "${REPO_ROOT}/${SERVER_CONVEX_ASYNC}")"
+  product_bypass_code="$(printf '%s\n' "${product_bypass_source}" |
+    source_without_comments_or_strings)"
+  product_bypass_hits="$(printf '%s\n' "${product_bypass_code}" |
+    rg -n 'create_sandbox_resource_for_context_async|inspect_sandbox_resource_async|start_service_for_context_async|restart_service_for_context_async|ensure_service_binding(_for_decision)?_async|teardown_tenant_async' |
+    awk 'BEGIN { separator = "" } { printf "%s%s", separator, $0; separator = "; " }' || true)"
+  if [ -n "${product_bypass_hits}" ]; then
+    add_error "legacy-deletion-path-dependency-effect-contract: product caller bypass remains: ${product_bypass_hits}"
+  fi
+  server_shim_source="$(raw_source "${REPO_ROOT}/${SERVER_CONSTRUCTION}")
+$(raw_source "${REPO_ROOT}/${SERVER_ROUTER}")
+$(raw_source "${REPO_ROOT}/${SERVER_WORKLOAD_COMPOSITION}")
+$(raw_source "${REPO_ROOT}/${CLI_START_BOOT}")
+$(raw_source "${REPO_ROOT}/${CLI_DEV_WIRE}")
+$(raw_source "${REPO_ROOT}/${MACHINE_LOCAL_SERVER}")"
+  server_shim_code="$(printf '%s\n' "${server_shim_source}" |
+    source_without_comments_or_strings)"
+  server_shim_hits="$(printf '%s\n' "${server_shim_code}" |
+    rg -n 'ServeOptions::new|RouterOptions::new|fn[[:space:]]+with_service_manager[[:space:]]*\(' |
+    awk 'BEGIN { separator = "" } { printf "%s%s", separator, $0; separator = "; " }' || true)"
+  if [ -n "${server_shim_hits}" ]; then
+    add_error "legacy-deletion-path-dependency-effect-contract: incomplete server composition shim remains: ${server_shim_hits}"
   fi
   network_code="$(printf '%s\n' "${network_source}" | source_without_comments_or_strings)"
   if printf '%s\n' "${network_code}" |

@@ -27,10 +27,6 @@ export const NIMBUS_CONTROL_PLANE_ROUTES = {
     verb: "POST",
     path: "/api/tenants/{tenant_id}/services/{service_name}/stop",
   },
-  "services.restart": {
-    verb: "POST",
-    path: "/api/tenants/{tenant_id}/services/{service_name}/restart",
-  },
   "sandboxes.create": {
     verb: "POST",
     path: "/api/tenants/{tenant_id}/sandboxes",
@@ -65,7 +61,8 @@ export const NIMBUS_CONTROL_PLANE_ROUTES = {
   },
 } as const;
 
-export type NimbusControlPlaneRouteName = keyof typeof NIMBUS_CONTROL_PLANE_ROUTES;
+export type NimbusControlPlaneRouteName =
+  keyof typeof NIMBUS_CONTROL_PLANE_ROUTES;
 export type NimbusControlPlaneRouteParams = Record<string, string | undefined>;
 
 const PARAMETER_LABELS: Record<string, string> = {
@@ -75,7 +72,9 @@ const PARAMETER_LABELS: Record<string, string> = {
   session_id: "session",
 };
 
-export function controlPlaneRouteVerb(route: NimbusControlPlaneRouteName): string {
+export function controlPlaneRouteVerb(
+  route: NimbusControlPlaneRouteName,
+): string {
   return NIMBUS_CONTROL_PLANE_ROUTES[route].verb;
 }
 

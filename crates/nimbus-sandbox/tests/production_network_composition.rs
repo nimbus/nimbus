@@ -5,13 +5,13 @@ use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use futures::executor::block_on;
 use nimbus_core::{Cidr, TenantId};
 use nimbus_network::{
     ListenerId, LocalNetworkAuthority, LocalNetworkAuthorityRootMismatch, LocalNetworkManager,
-    NetworkLeaseEpoch, NetworkResourceGeneration, PortBindRealm, PortBindTarget, PortBindingSpec,
-    PortExposure, PortLeaseAccounting, PortLeaseError, PortLeaseFence, PortLeaseId, PortLeasePhase,
-    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+    NetworkAttachmentId, NetworkLeaseEpoch, NetworkPlan, NetworkPlanContentDigest, NetworkPlanId,
+    NetworkResourceGeneration, PortBindRealm, PortBindTarget, PortBindingSpec, PortExposure,
+    PortIpv6Overlap, PortLeaseAccounting, PortLeaseError, PortLeaseFence, PortLeaseId,
+    PortLeasePhase, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
 use nimbus_sandbox::backends::container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
@@ -22,9 +22,10 @@ use nimbus_sandbox::backends::{
     SandboxAttachmentRegistrationError,
 };
 use nimbus_sandbox::{
-    OciNetworkProcess, OciNetworkProcessError, SandboxBackend, SandboxBackendKind,
-    SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec, SandboxRootfsSpec,
-    SandboxSpec,
+    OciNetworkProcess, OciNetworkProcessError, SandboxBackendKind, SandboxHandle, SandboxId,
+    SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxProvisionDependencyListener,
+    SandboxProvisionListener, SandboxProvisionNetworkPlan, SandboxRootSpec, SandboxRootfsSpec,
+    SandboxSpec, sandbox_network_plan_requirements,
 };
 use serde_json::Value;
 use tempfile::tempdir;
@@ -34,6 +35,106 @@ static COMPOSITION_TEST_SERIALIZER: Mutex<()> = Mutex::new(());
 const ACTIVE_SUPERNET: &str = "10.44.0.0/16";
 const SUBSTITUTE_SUPERNET: &str = "10.45.0.0/16";
 const ACTIVE_TENANT_PREFIX: u8 = 24;
+
+fn compiled_network_plan(
+    spec: &SandboxSpec,
+    sandbox_id: &SandboxId,
+    label: &str,
+) -> SandboxProvisionNetworkPlan {
+    let incarnation = format!("composition-{label}:{}", sandbox_id.as_str());
+    let generation = NetworkResourceGeneration::new(7);
+    let requirements = sandbox_network_plan_requirements(spec.backend);
+    let plan = NetworkPlan::new(
+        NetworkPlanId::for_tenant_workload_plan(&spec.tenant_id, &incarnation),
+        generation,
+        NetworkPlanContentDigest::sha256(format!("production-composition:{label}")),
+        requirements.capability_requirements().clone(),
+    );
+    let plan_id = plan.plan_id().clone();
+    let listeners = spec.port_bindings.iter().map(|binding| {
+        let listener_id =
+            ListenerId::for_tenant_workload_listener(&spec.tenant_id, &incarnation, &binding.name);
+        let (target, exposure) = match binding.host_address {
+            std::net::IpAddr::V4(address) if address.is_unspecified() => {
+                (PortBindTarget::ipv4_wildcard(), PortExposure::Public)
+            }
+            std::net::IpAddr::V4(address) => (
+                PortBindTarget::ipv4_specific(address),
+                if address.is_loopback() {
+                    PortExposure::Loopback
+                } else {
+                    PortExposure::Private
+                },
+            ),
+            std::net::IpAddr::V6(address) if address.is_unspecified() => (
+                PortBindTarget::ipv6_wildcard(PortIpv6Overlap::Unknown),
+                PortExposure::Public,
+            ),
+            std::net::IpAddr::V6(address) => (
+                PortBindTarget::ipv6_specific(address, PortIpv6Overlap::Unknown)
+                    .expect("fixture address should not be IPv4-mapped"),
+                if address.is_loopback() {
+                    PortExposure::Loopback
+                } else {
+                    PortExposure::Private
+                },
+            ),
+        };
+        let request = PortLeaseRequest::new(
+            PortLeaseId::for_listener(&listener_id),
+            listener_id.clone().into(),
+            Some(spec.tenant_id.clone()),
+            PortLeaseFence::new(generation, NetworkLeaseEpoch::new(1)),
+            PortLeaseAccounting::TenantPublished,
+            PortPublicationIntent::host(binding.host_address),
+            PortBindingSpec::new(
+                PortProtocol::Tcp,
+                PortBindRealm::Host,
+                target,
+                exposure,
+                NonZeroU16::new(binding.host_port)
+                    .map_or(PortRequestMode::ProviderAssigned, PortRequestMode::Exact),
+            ),
+        )
+        .with_plan_id(plan_id.clone());
+        SandboxProvisionListener::new(listener_id, binding.clone(), request)
+    });
+    SandboxProvisionNetworkPlan::new(
+        plan,
+        spec.tenant_id.clone(),
+        generation,
+        NetworkAttachmentId::for_workload_attachment(&incarnation, "primary"),
+        listeners,
+        [SandboxProvisionDependencyListener::new(
+            ListenerId::for_tenant_workload_listener(&spec.tenant_id, &incarnation, "egress-pep"),
+            "egress-pep",
+            requirements.pep_provider_id().clone(),
+        )],
+    )
+    .expect("composition network plan should validate")
+}
+
+fn reserve_and_prepare_container(
+    backend: &ContainerSandboxBackend,
+    spec: SandboxSpec,
+    label: &str,
+) -> nimbus_sandbox::Result<SandboxHandle> {
+    let id = SandboxId::new(format!("composition-container-{label}"));
+    let plan = compiled_network_plan(&spec, &id, label);
+    backend.reserve_provision_network(spec, id.clone(), plan)?;
+    backend.prepare_provision_workload(&id)
+}
+
+fn reserve_and_prepare_krun(
+    backend: &KrunSandboxBackend,
+    spec: SandboxSpec,
+    label: &str,
+) -> nimbus_sandbox::Result<SandboxHandle> {
+    let id = SandboxId::new(format!("composition-krun-{label}"));
+    let plan = compiled_network_plan(&spec, &id, label);
+    backend.reserve_provision_network(spec, id.clone(), plan)?;
+    backend.prepare_provision_workload(&id)
+}
 
 #[derive(Clone, Copy, Debug)]
 enum BackendFixture {
@@ -205,12 +306,16 @@ fn accepted_authority_alias_is_pinned_before_later_work() {
                     process.clone(),
                 );
                 retarget_symlink(&alias_root, &foreign_root);
-                block_on(injected.start(sandbox_spec(
-                    TenantId::new("alias-container").expect("fixture tenant should validate"),
+                reserve_and_prepare_container(
+                    &injected,
+                    sandbox_spec(
+                        TenantId::new("alias-container").expect("fixture tenant should validate"),
+                        "alias-container",
+                        SandboxBackendKind::Container,
+                        None,
+                    ),
                     "alias-container",
-                    SandboxBackendKind::Container,
-                    None,
-                )))
+                )
             }
             BackendFixture::Krun => {
                 let injected = expect_krun_backend(
@@ -219,17 +324,21 @@ fn accepted_authority_alias_is_pinned_before_later_work() {
                         &alias_root,
                         cidr(ACTIVE_SUPERNET),
                         ACTIVE_TENANT_PREFIX,
-                        KrunStartMode::PlanOnly,
+                        KrunStartMode::Execute,
                     ),
                     process.clone(),
                 );
                 retarget_symlink(&alias_root, &foreign_root);
-                block_on(injected.start(sandbox_spec(
-                    TenantId::new("alias-krun").expect("fixture tenant should validate"),
+                reserve_and_prepare_krun(
+                    &injected,
+                    sandbox_spec(
+                        TenantId::new("alias-krun").expect("fixture tenant should validate"),
+                        "alias-krun",
+                        SandboxBackendKind::Krun,
+                        None,
+                    ),
                     "alias-krun",
-                    SandboxBackendKind::Krun,
-                    None,
-                )))
+                )
             }
         };
         start_result.unwrap_or_else(|error| {
@@ -312,7 +421,7 @@ fn distinct_workload_roots_share_only_portable_node_authority() {
             &node_root,
             cidr(ACTIVE_SUPERNET),
             ACTIVE_TENANT_PREFIX,
-            KrunStartMode::PlanOnly,
+            KrunStartMode::Execute,
         ),
         process.clone(),
     );
@@ -320,20 +429,28 @@ fn distinct_workload_roots_share_only_portable_node_authority() {
     let container_tenant =
         TenantId::new("composition-container").expect("fixture tenant should validate");
     let krun_tenant = TenantId::new("composition-krun").expect("fixture tenant should validate");
-    let container_handle = block_on(container.start(sandbox_spec(
-        container_tenant.clone(),
-        "container-workload",
-        SandboxBackendKind::Container,
-        None,
-    )))
+    let container_handle = reserve_and_prepare_container(
+        &container,
+        sandbox_spec(
+            container_tenant.clone(),
+            "container-workload",
+            SandboxBackendKind::Container,
+            None,
+        ),
+        "distinct-workload-roots",
+    )
     .expect("PlanOnly container should materialize only its workload artifacts");
-    let krun_handle = block_on(krun.start(sandbox_spec(
-        krun_tenant.clone(),
-        "krun-workload",
-        SandboxBackendKind::Krun,
-        None,
-    )))
-    .expect("PlanOnly krun should materialize only its workload artifacts");
+    let krun_handle = reserve_and_prepare_krun(
+        &krun,
+        sandbox_spec(
+            krun_tenant.clone(),
+            "krun-workload",
+            SandboxBackendKind::Krun,
+            None,
+        ),
+        "distinct-workload-roots",
+    )
+    .expect("Krun reserve/prepare should materialize only workload-owned artifacts");
     assert_eq!(container_handle.tenant_id, container_tenant);
     assert_eq!(krun_handle.tenant_id, krun_tenant);
 
@@ -442,21 +559,29 @@ fn same_host_port_conflicts_before_provider_effect() {
         "a rejected overlap must not mutate durable authority"
     );
 
-    let container_error = block_on(container.start(sandbox_spec(
-        TenantId::new("container-port-conflict").expect("fixture tenant should validate"),
-        "container-port-conflict",
-        SandboxBackendKind::Container,
-        Some(41_471),
-    )))
+    let container_error = reserve_and_prepare_container(
+        &container,
+        sandbox_spec(
+            TenantId::new("container-port-conflict").expect("fixture tenant should validate"),
+            "container-port-conflict",
+            SandboxBackendKind::Container,
+            Some(41_471),
+        ),
+        "port-conflict",
+    )
     .expect_err("the injected container facade must observe the krun seed lease");
     assert_port_conflict(&container_error.to_string(), 41_471, &krun_seed);
 
-    let krun_error = block_on(krun.start(sandbox_spec(
-        TenantId::new("krun-port-conflict").expect("fixture tenant should validate"),
-        "krun-port-conflict",
-        SandboxBackendKind::Krun,
-        Some(41_470),
-    )))
+    let krun_error = reserve_and_prepare_krun(
+        &krun,
+        sandbox_spec(
+            TenantId::new("krun-port-conflict").expect("fixture tenant should validate"),
+            "krun-port-conflict",
+            SandboxBackendKind::Krun,
+            Some(41_470),
+        ),
+        "port-conflict",
+    )
     .expect_err("the injected krun facade must observe the container seed lease");
     assert_port_conflict(&krun_error.to_string(), 41_470, &container_seed);
 
@@ -516,25 +641,41 @@ fn startup_failure_never_becomes_registered_capability() {
         process,
     );
 
-    let container_start = block_on(container.start(sandbox_spec(
-        TenantId::new("startup-container").expect("fixture tenant should validate"),
-        "new-container-work",
-        SandboxBackendKind::Container,
-        None,
-    )))
+    let container_start = reserve_and_prepare_container(
+        &container,
+        sandbox_spec(
+            TenantId::new("startup-container").expect("fixture tenant should validate"),
+            "new-container-work",
+            SandboxBackendKind::Container,
+            None,
+        ),
+        "startup-failure",
+    )
     .expect_err("cached container startup failure must fence new work");
     let corrupt_container_manifest =
         corrupt_manifest_path(&container_root, "startup-container", "corrupt-container");
-    assert_cached_startup_failure(&container_start.to_string(), &corrupt_container_manifest);
-    let krun_start = block_on(krun.start(sandbox_spec(
-        TenantId::new("startup-krun").expect("fixture tenant should validate"),
-        "new-krun-work",
-        SandboxBackendKind::Krun,
-        None,
-    )))
+    assert_cached_startup_failure(
+        &container_start.to_string(),
+        &corrupt_container_manifest,
+        "is structurally untrusted",
+    );
+    let krun_start = reserve_and_prepare_krun(
+        &krun,
+        sandbox_spec(
+            TenantId::new("startup-krun").expect("fixture tenant should validate"),
+            "new-krun-work",
+            SandboxBackendKind::Krun,
+            None,
+        ),
+        "startup-failure",
+    )
     .expect_err("cached krun startup failure must fence new work");
     let corrupt_krun_manifest = corrupt_manifest_path(&krun_root, "startup-krun", "corrupt-krun");
-    assert_cached_startup_failure(&krun_start.to_string(), &corrupt_krun_manifest);
+    assert_cached_startup_failure(
+        &krun_start.to_string(),
+        &corrupt_krun_manifest,
+        "unmatched artifact",
+    );
 
     let container_registration = container.host_managed_attachment_registration();
     let krun_registration = krun.host_managed_attachment_registration();
@@ -552,11 +693,13 @@ fn startup_failure_never_becomes_registered_capability() {
             container_registration.expect_err("container registration must fail closed"),
             CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
             &corrupt_container_manifest,
+            "is structurally untrusted",
         );
         assert_startup_registration_failure(
             krun_registration.expect_err("krun registration must fail closed"),
             KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
             &corrupt_krun_manifest,
+            "unmatched artifact",
         );
     }
     #[cfg(not(target_os = "linux"))]
@@ -817,10 +960,10 @@ fn manifest_files(workload_root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn assert_cached_startup_failure(error: &str, expected_manifest: &Path) {
+fn assert_cached_startup_failure(error: &str, expected_manifest: &Path, expected_reason: &str) {
     assert!(
         error.contains("startup reconciliation did not complete")
-            && error.contains("unmatched artifact")
+            && error.contains(expected_reason)
             && error.contains(&expected_manifest.display().to_string()),
         "new work must preserve the cached startup failure: {error}"
     );
@@ -831,6 +974,7 @@ fn assert_startup_registration_failure(
     error: SandboxAttachmentRegistrationError,
     expected_provider: &'static str,
     expected_manifest: &Path,
+    expected_reason: &str,
 ) {
     match error {
         SandboxAttachmentRegistrationError::StartupReconciliationFailed {
@@ -838,7 +982,7 @@ fn assert_startup_registration_failure(
             reason,
         } => {
             assert_eq!(provider_key, expected_provider);
-            assert_cached_startup_failure(&reason, expected_manifest);
+            assert_cached_startup_failure(&reason, expected_manifest, expected_reason);
         }
         other => panic!("expected cached startup registration refusal, got {other:?}"),
     }

@@ -675,6 +675,30 @@ impl NetworkCapabilityRegistry {
         requested: &NetworkCapabilitySelection,
         requirements: &NetworkCapabilityRequirements,
     ) -> Result<&NetworkCapabilityBundle, NetworkCapabilitySelectionError> {
+        self.select_exact_with(requested, |bundle| evaluate_bundle(bundle, requirements))
+    }
+
+    /// Select one exact admitted composition and prove its sovereignty.
+    ///
+    /// This narrower proof is for composition owners whose remaining network
+    /// requirements were authenticated earlier but which must still freeze a
+    /// sovereignty contract against the exact source-owned provider reports.
+    /// Safe alternatives remain diagnostic only and are never selected.
+    pub fn select_exact_sovereignty(
+        &self,
+        requested: &NetworkCapabilitySelection,
+        requirements: &NetworkSovereigntyRequirements,
+    ) -> Result<&NetworkCapabilityBundle, NetworkCapabilitySelectionError> {
+        self.select_exact_with(requested, |bundle| {
+            evaluate_bundle_sovereignty(bundle, requirements)
+        })
+    }
+
+    fn select_exact_with(
+        &self,
+        requested: &NetworkCapabilitySelection,
+        evaluate: impl Fn(&NetworkCapabilityBundle) -> Vec<NetworkCapabilityProviderFailure>,
+    ) -> Result<&NetworkCapabilityBundle, NetworkCapabilitySelectionError> {
         let Some(bundle) = self.bundles.get(requested) else {
             let mut missing_roles = Vec::new();
             if !self
@@ -696,7 +720,7 @@ impl NetworkCapabilityRegistry {
             });
         };
 
-        let failures = evaluate_bundle(bundle, requirements);
+        let failures = evaluate(bundle);
         if failures.is_empty() {
             return Ok(bundle);
         }
@@ -704,7 +728,7 @@ impl NetworkCapabilityRegistry {
             .bundles
             .iter()
             .filter(|(selection, candidate)| {
-                *selection != requested && evaluate_bundle(candidate, requirements).is_empty()
+                *selection != requested && evaluate(candidate).is_empty()
             })
             .map(|(selection, _)| selection.clone())
             .collect();
@@ -719,6 +743,41 @@ impl NetworkCapabilityRegistry {
     pub fn selections(&self) -> impl ExactSizeIterator<Item = &NetworkCapabilitySelection> {
         self.bundles.keys()
     }
+}
+
+fn evaluate_bundle_sovereignty(
+    bundle: &NetworkCapabilityBundle,
+    requirements: &NetworkSovereigntyRequirements,
+) -> Vec<NetworkCapabilityProviderFailure> {
+    [
+        sovereignty_failure(
+            NetworkCapabilityRole::Attachment,
+            bundle.attachment.provider_id(),
+            bundle.attachment.sovereignty(),
+            requirements,
+        ),
+        sovereignty_failure(
+            NetworkCapabilityRole::Ingress,
+            bundle.ingress.provider_id(),
+            bundle.ingress.sovereignty(),
+            requirements,
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn sovereignty_failure(
+    role: NetworkCapabilityRole,
+    provider_id: &NetworkProviderId,
+    offered: &NetworkSovereigntyCapabilities,
+    requirements: &NetworkSovereigntyRequirements,
+) -> Option<NetworkCapabilityProviderFailure> {
+    let mut mismatches = Vec::new();
+    sovereignty_mismatches(&mut mismatches, offered, requirements);
+    (!mismatches.is_empty())
+        .then(|| NetworkCapabilityProviderFailure::new(role, provider_id.clone(), mismatches))
 }
 
 fn insert_report<V>(
@@ -805,7 +864,7 @@ fn attachment_mismatches(
     lifecycle_mismatches(
         &mut mismatches,
         &offered.lifecycle,
-        requirements.lifecycle(),
+        requirements.lifecycle().attachment(),
     );
     sovereignty_mismatches(
         &mut mismatches,
@@ -895,7 +954,7 @@ fn ingress_mismatches(
     lifecycle_mismatches(
         &mut mismatches,
         &offered.lifecycle,
-        requirements.lifecycle(),
+        requirements.lifecycle().ingress(),
     );
     sovereignty_mismatches(
         &mut mismatches,

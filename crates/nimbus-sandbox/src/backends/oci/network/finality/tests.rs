@@ -43,6 +43,7 @@ fn fixture(
         .ensure_directories()
         .expect("network layout should exist");
     let config = OciNetworkConfig {
+        attachment_id: default_network_attachment_id(&sandbox_id),
         segment_id: segment.segment_id().as_str().to_owned(),
         network_subnet: segment.cidr().to_string(),
         network_name: segment.network_name().to_owned(),
@@ -164,6 +165,7 @@ fn terminal_finality_rejects_every_reserved_attachment_phase_until_absent() {
         &ipam_authority,
         &layout,
         &sandbox_id,
+        &config.attachment_id,
         &config.reservation_claim,
         config.provider_kind(),
     )
@@ -292,6 +294,7 @@ fn terminal_finality_rejects_adopted_and_provider_cleanup_pending_attachments() 
         &ipam_authority,
         &layout,
         &sandbox_id,
+        &config.attachment_id,
         &config.reservation_claim,
         config.provider_kind(),
     )

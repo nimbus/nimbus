@@ -32,6 +32,7 @@ mod composition;
 mod durability;
 mod executable_durability;
 mod ingress;
+mod provision_driver_process;
 mod provision_fixture;
 mod recovery;
 mod store;
@@ -81,6 +82,7 @@ fn initial_record_with_counters_and_seed(
             .expect("fixture source version is valid"),
         executable.content_digest(),
         nimbus_network::NetworkProviderId::for_registration_key("fixture-attachment"),
+        nimbus_workloads::WorkloadExecutionProviderId::for_registration_key("fixture-execution"),
     )
     .expect("fixture source evidence is valid");
     let intent = nimbus_workloads::WorkloadSagaIntent::new(
@@ -126,6 +128,7 @@ pub(super) fn provision_source(
             .expect("fixture source version is valid"),
         executable.content_digest(),
         attachment_provider_id,
+        nimbus_workloads::WorkloadExecutionProviderId::for_registration_key("fixture-execution"),
     )
     .expect("fixture source evidence is valid")
 }
@@ -160,7 +163,7 @@ pub(super) fn compiled_network_plan(
         endpoint.clone(),
         ingress.clone(),
         forwarding.clone(),
-        lifecycle.clone(),
+        nimbus_network::NetworkLifecycleRequirements::new(lifecycle.clone(), lifecycle.clone()),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     );
     let (selection, selection_evidence, listeners) =

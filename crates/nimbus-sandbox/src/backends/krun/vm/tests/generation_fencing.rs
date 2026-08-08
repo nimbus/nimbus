@@ -45,6 +45,7 @@ fn stale_krun_cleanup_cannot_mutate_replacement_network_generation() {
         &backend.ipam_authority,
         &layout,
         &manifest.handle.id,
+        &stale_config.attachment_id,
         &stale_config.reservation_claim,
         stale_config.provider_kind(),
     )

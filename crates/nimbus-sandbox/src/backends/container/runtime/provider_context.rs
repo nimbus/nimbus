@@ -8,74 +8,82 @@ use crate::backends::oci::{conmon::OciConmonLayout, network::OciNetworkLayout};
 use crate::error::{Result, SandboxError};
 
 use super::{
-    ContainerRunnerExecutionConfig, ContainerSandboxBackend, ContainerSandboxManifest, runner,
+    ContainerRunnerExecutionConfig, ContainerSandboxBackend, ContainerSandboxBackendConfig,
+    ContainerSandboxManifest, runner,
 };
+
+pub(super) fn validate_manifest_execution_context_for_config(
+    config: &ContainerSandboxBackendConfig,
+    manifest: &ContainerSandboxManifest,
+) -> Result<()> {
+    runner::validate_runner_authority_roots(manifest)?;
+    if config.workload_state_root != manifest.runner_config.workload_state_root {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "container backend workload root {} does not match manifest launch-time \
+                 workload root {}",
+                config.workload_state_root.display(),
+                manifest.runner_config.workload_state_root.display()
+            ),
+        });
+    }
+    if config.network_state_root != manifest.runner_config.network_state_root {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "container backend network authority root {} does not match manifest \
+                 launch-time network authority root {}",
+                config.network_state_root.display(),
+                manifest.runner_config.network_state_root.display()
+            ),
+        });
+    }
+    if manifest.handle.tenant_id != manifest.spec.tenant_id {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "container manifest handle tenant {} does not match specification tenant {} \
+                 for {}",
+                manifest.handle.tenant_id, manifest.spec.tenant_id, manifest.handle.id
+            ),
+        });
+    }
+    let expected_network_layout = OciNetworkLayout::with_roots(
+        &manifest.runner_config.workload_state_root,
+        &manifest.runner_config.network_state_root,
+        &manifest.spec.tenant_id,
+        &manifest.handle.id,
+    );
+    if manifest.network_layout != expected_network_layout {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "container manifest network layout for {} does not match its tenant-qualified \
+                 launch-time authority root",
+                manifest.handle.id
+            ),
+        });
+    }
+    let expected_conmon_layout = OciConmonLayout::new_for_tenant(
+        &manifest.runner_config.workload_state_root,
+        &manifest.spec.tenant_id,
+        &manifest.handle.id,
+    );
+    if manifest.conmon_layout != expected_conmon_layout {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "container manifest runtime layout for {} does not match its tenant-qualified \
+                 launch-time authority root",
+                manifest.handle.id
+            ),
+        });
+    }
+    Ok(())
+}
 
 impl ContainerSandboxBackend {
     pub(in crate::backends::container::runtime) fn validate_manifest_execution_context(
         &self,
         manifest: &ContainerSandboxManifest,
     ) -> Result<()> {
-        runner::validate_runner_authority_roots(manifest)?;
-        if self.config.workload_state_root != manifest.runner_config.workload_state_root {
-            return Err(SandboxError::InvalidSpec {
-                message: format!(
-                    "container backend workload root {} does not match manifest launch-time \
-                     workload root {}",
-                    self.config.workload_state_root.display(),
-                    manifest.runner_config.workload_state_root.display()
-                ),
-            });
-        }
-        if self.config.network_state_root != manifest.runner_config.network_state_root {
-            return Err(SandboxError::InvalidSpec {
-                message: format!(
-                    "container backend network authority root {} does not match manifest \
-                     launch-time network authority root {}",
-                    self.config.network_state_root.display(),
-                    manifest.runner_config.network_state_root.display()
-                ),
-            });
-        }
-        if manifest.handle.tenant_id != manifest.spec.tenant_id {
-            return Err(SandboxError::InvalidSpec {
-                message: format!(
-                    "container manifest handle tenant {} does not match specification tenant {} \
-                     for {}",
-                    manifest.handle.tenant_id, manifest.spec.tenant_id, manifest.handle.id
-                ),
-            });
-        }
-        let expected_network_layout = OciNetworkLayout::with_roots(
-            &manifest.runner_config.workload_state_root,
-            &manifest.runner_config.network_state_root,
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-        );
-        if manifest.network_layout != expected_network_layout {
-            return Err(SandboxError::InvalidSpec {
-                message: format!(
-                    "container manifest network layout for {} does not match its tenant-qualified \
-                     launch-time authority root",
-                    manifest.handle.id
-                ),
-            });
-        }
-        let expected_conmon_layout = OciConmonLayout::new_for_tenant(
-            &manifest.runner_config.workload_state_root,
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-        );
-        if manifest.conmon_layout != expected_conmon_layout {
-            return Err(SandboxError::InvalidSpec {
-                message: format!(
-                    "container manifest runtime layout for {} does not match its tenant-qualified \
-                     launch-time authority root",
-                    manifest.handle.id
-                ),
-            });
-        }
-        Ok(())
+        validate_manifest_execution_context_for_config(&self.config, manifest)
     }
 
     pub(in crate::backends::container::runtime) fn port_lease_coordinator(

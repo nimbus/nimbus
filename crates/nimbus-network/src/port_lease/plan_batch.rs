@@ -79,6 +79,62 @@ pub(super) fn authenticate_complete_plan_batch_if_present(
     authenticate_complete(state, requests, key)
 }
 
+/// Authenticate one exact member against a caller-supplied complete plan.
+///
+/// The witness proves immutable membership without forcing lifecycle effects
+/// for unrelated members into the same provider phase. Initial reservation
+/// still establishes the whole set atomically; this seam only authorizes a
+/// later mutation of a member that is already durable in that exact set.
+pub(super) fn authenticate_complete_plan_member(
+    state: &PortLeaseState,
+    plan_members: &[&PortLeaseRequest],
+    member: &PortLeaseRequest,
+) -> Result<(), PortLeaseOperationError> {
+    let key = required_plan_key(plan_members)?;
+    authenticate_complete(state, plan_members, key)?;
+    if !plan_members.contains(&member) {
+        return Err(PortLeaseOperationError::PlanMembershipConflict {
+            plan_id: member.plan_id().cloned().unwrap_or_else(|| {
+                plan_members[0]
+                    .plan_id()
+                    .expect("required plan key")
+                    .clone()
+            }),
+        });
+    }
+    exact_record(state, member)?;
+    Ok(())
+}
+
+/// Authenticate a provider-owned subset against one complete durable plan.
+///
+/// The witness establishes immutable membership. The member set is required
+/// to be identity-distinct and every member must match an exact witness entry,
+/// but unrelated plan members remain outside the caller's lifecycle effect.
+pub(super) fn authenticate_complete_plan_members(
+    state: &PortLeaseState,
+    plan_members: &[&PortLeaseRequest],
+    members: &[&PortLeaseRequest],
+) -> Result<(), PortLeaseOperationError> {
+    let key = required_plan_key(plan_members)?;
+    authenticate_complete(state, plan_members, key)?;
+    let witness = distinct_requests(plan_members)?;
+    let members = distinct_requests(members)?;
+    for (lease_id, member) in members {
+        if witness.get(&lease_id) != Some(&member) {
+            return Err(PortLeaseOperationError::PlanMembershipConflict {
+                plan_id: member
+                    .plan_id()
+                    .cloned()
+                    .or_else(|| plan_members[0].plan_id().cloned())
+                    .expect("complete plan witness has a plan identity"),
+            });
+        }
+        exact_record(state, &member)?;
+    }
+    Ok(())
+}
+
 /// Authenticate one complete provider-managed plan.
 pub(super) fn authenticate_complete_plan_batch(
     state: &PortLeaseState,
@@ -119,13 +175,13 @@ fn authenticate_complete(
     key: PlanBatchKey,
 ) -> Result<(), PortLeaseOperationError> {
     let supplied = distinct_requests(requests)?;
-    for request in requests {
-        exact_record(state, request)?;
-    }
     if durable_plan_members(state, &key) != supplied {
         return Err(PortLeaseOperationError::PlanMembershipConflict {
             plan_id: key.plan_id,
         });
+    }
+    for request in requests {
+        exact_record(state, request)?;
     }
     Ok(())
 }

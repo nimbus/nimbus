@@ -3,7 +3,9 @@ use std::io::Write;
 #[cfg(test)]
 use super::readiness::running_status;
 use super::readiness::synchronize_handle_status;
-use super::start::{ensure_guest_user_helper_available, hostname_for};
+#[cfg(test)]
+use super::start::ensure_guest_user_helper_available;
+use super::start::hostname_for;
 use super::*;
 use crate::backends::conmon::lifecycle::RuntimeStateObservation;
 
@@ -133,12 +135,7 @@ impl KrunSandboxBackend {
         self.persist_effect_barrier(manifest, "reserved krun stop completion")
     }
 
-    pub(super) fn execute_start(&self, launch_plan: &KrunStartPlan) -> Result<SandboxHandle> {
-        let preflight = ensure_linux_host("krun")
-            .and_then(|()| ensure_guest_user_helper_available(&self.config, &launch_plan.manifest));
-        self.execute_start_after_preflight(launch_plan, preflight)
-    }
-
+    #[cfg(test)]
     pub(super) fn execute_start_after_preflight(
         &self,
         launch_plan: &KrunStartPlan,
@@ -534,6 +531,7 @@ impl KrunSandboxBackend {
         Ok((status, evidence))
     }
 
+    #[cfg(test)]
     pub(super) fn launch_manifest(
         &self,
         manifest: &mut KrunSandboxManifest,
@@ -578,9 +576,20 @@ impl KrunSandboxBackend {
                     return Err(self.persist_unstarted_launch_failure(manifest, error));
                 }
             }
+            let attachment_id = manifest
+                .network_config
+                .as_ref()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "krun launch for {} lacks reserved attachment identity",
+                        manifest.handle.id
+                    ),
+                })?
+                .attachment_id
+                .clone();
             if let Err(error) = self.segment_allocator.adopt_reserved_attachment(
                 &manifest.spec.tenant_id,
-                &default_network_attachment_id(&manifest.handle.id),
+                &attachment_id,
                 reservation_claim,
             ) {
                 return Err(self.persist_unstarted_launch_failure(manifest, error));
@@ -615,7 +624,7 @@ impl KrunSandboxBackend {
         );
         let provider_launch = ensure_linux_host("krun")
             .and_then(|()| ensure_guest_user_helper_available(&self.config, manifest))
-            .and_then(|()| self.configure_network(manifest, attachment_authority))
+            .and_then(|()| self.configure_network(manifest, attachment_authority, true))
             .and_then(|()| {
                 self.launch_into_network(manifest, clear_last_exit_code, reservation_claim.as_ref())
             });
@@ -625,6 +634,7 @@ impl KrunSandboxBackend {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) fn persist_provider_launch_failure(
         &self,
         manifest: &mut KrunSandboxManifest,
@@ -871,6 +881,7 @@ impl KrunSandboxBackend {
         }
     }
 
+    #[cfg(test)]
     fn launch_into_network(
         &self,
         manifest: &mut KrunSandboxManifest,
@@ -920,12 +931,17 @@ impl KrunSandboxBackend {
         &self,
         manifest: &KrunSandboxManifest,
         attachment_authority: AttachmentAttachAuthority<'_>,
+        publish_ingress: bool,
     ) -> Result<()> {
         let network_config = manifest.require_network_config()?;
         let ports = self.port_lease_coordinator();
         let hostname = hostname_for(&manifest.spec);
         let lifecycle = self.attachment_lifecycle(&ports);
-        let adapter = self.attachment_adapter(manifest, network_config, &hostname);
+        let adapter = if publish_ingress {
+            self.attachment_adapter(manifest, network_config, &hostname)
+        } else {
+            self.non_routable_attachment_adapter(manifest, network_config, &hostname)
+        };
 
         // Pin the netns so the ONLY reachable egress is this sandbox's own PEP.
         // The netavark deny is route-based, but the shared bridge gateway is
@@ -977,6 +993,7 @@ impl KrunSandboxBackend {
     /// precondition, any lookup error, or a not-ready PEP returns `Err`, which
     /// the caller treats as deny: the VMM is never spawned and the half-built
     /// namespace is torn down. The gate never degrades to allow.
+    #[cfg(test)]
     pub(super) fn ensure_execute_egress_enforced(
         &self,
         manifest: &KrunSandboxManifest,
@@ -1090,7 +1107,7 @@ impl KrunSandboxBackend {
         }
     }
 
-    fn authenticated_egress_readiness(
+    pub(super) fn authenticated_egress_readiness(
         &self,
         manifest: &KrunSandboxManifest,
     ) -> Result<EgressReadinessState> {
@@ -1121,7 +1138,7 @@ impl KrunSandboxBackend {
             ))
     }
 
-    fn ensure_egress_proxy_running_with_release_authority(
+    pub(super) fn ensure_egress_proxy_running_with_release_authority(
         &self,
         manifest: &KrunSandboxManifest,
         release_authority: crate::backends::oci::egress::PepPreAdoptionReleaseAuthority<'_>,
@@ -1465,6 +1482,7 @@ impl KrunSandboxBackend {
                 &self.ipam_authority,
                 &manifest.network_layout,
                 &manifest.handle.id,
+                &network_config.attachment_id,
                 &network_config.reservation_claim,
                 network_config.provider_kind(),
             )

@@ -1,5 +1,3 @@
-#![cfg(target_os = "linux")]
-
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -20,6 +18,10 @@ use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxId, SandboxMountSpec, SandboxOwnerSpec,
     SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
 };
+
+#[path = "support/provision.rs"]
+mod provision_support;
+use provision_support::provision_container;
 
 const RESULT_VOLUME: &str = "egress-proof";
 const RESULT_PATH_IN_GUEST: &str = "/nimbus-egress/result";
@@ -56,7 +58,10 @@ fn container_execute_mode_denies_direct_external_egress() {
         RESULT_VOLUME,
         "/nimbus-egress",
     ));
-    let handle = block_on(backend.start(spec)).expect("container should start");
+    let provisioned = provision_container(&backend, &workdir.join("state"), spec, false)
+        .expect("container provision phases should activate the workload");
+    assert!(provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
     let cleanup = CleanupGuard::new(backend.clone(), handle.id.clone(), tenant_id.clone());
 
     let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
@@ -114,7 +119,10 @@ fn container_execute_mode_enforces_proxy_policy_and_live_reload() {
         "/nimbus-egress",
     ))
     .with_egress_policy(phase_one_policy(phase_one_upstream.addr.port()));
-    let handle = block_on(backend.start(spec)).expect("container should start");
+    let provisioned = provision_container(&backend, &workdir.join("state"), spec, false)
+        .expect("container provision phases should activate the workload");
+    assert!(provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
     let cleanup = CleanupGuard::new(backend.clone(), handle.id.clone(), tenant_id.clone());
     let volume = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME);
 

@@ -20,6 +20,7 @@ nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 nimbus-workloads = { path = "../nimbus-workloads" }
+serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 ulid.workspace = true

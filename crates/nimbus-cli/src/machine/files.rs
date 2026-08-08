@@ -188,6 +188,62 @@ pub(super) fn load_machine_config_if_exists(
     }
 }
 
+/// Read one current-version machine config without repair, backup, or write.
+///
+/// Provision-source preparation uses this before it owns the machine lock only
+/// to reject provider-managed networking. A host-managed result is never
+/// trusted until the authenticated locked snapshot is read again.
+pub(super) fn read_machine_config_snapshot_if_exists(
+    path: &Path,
+) -> Result<Option<MachineConfigRecord>, Error> {
+    let Some(bytes) = read_file_if_exists(path)? else {
+        return Ok(None);
+    };
+    let version = probe_machine_record_version(path, &bytes, "machine config")?;
+    if version != super::CURRENT_MACHINE_CONFIG_VERSION {
+        return Err(Error::InvalidInput(format!(
+            "machine config at {} uses schema version {version}; expected {}",
+            path.display(),
+            super::CURRENT_MACHINE_CONFIG_VERSION
+        )));
+    }
+    parse_machine_record(path, &bytes, "machine config").map(Some)
+}
+
+/// Read the exact persisted config and state without refresh, repair, or write.
+///
+/// Callers must hold the authenticated machine-record lock. This is a desired
+/// source snapshot, not observed process status; activation re-reads and
+/// compares it under the same lock before any machine effect.
+pub(super) fn load_machine_provision_source_snapshot(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    machine_name: &str,
+) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
+    let paths = roots.paths(machine_name);
+    let config = read_machine_config_snapshot_if_exists(&paths.config_path)?.ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "machine '{machine_name}' is not initialized; run `nimbus machine start` to create it with defaults or `nimbus machine init` to configure it first"
+        ))
+    })?;
+    authenticate_machine_config(network, &config, roots)?;
+    let state = match read_file_if_exists(&paths.state_path)? {
+        Some(bytes) => {
+            let version = probe_machine_record_version(&paths.state_path, &bytes, "machine state")?;
+            if version != super::CURRENT_MACHINE_STATE_VERSION {
+                return Err(Error::InvalidInput(format!(
+                    "machine state at {} uses schema version {version}; expected {}",
+                    paths.state_path.display(),
+                    super::CURRENT_MACHINE_STATE_VERSION
+                )));
+            }
+            parse_machine_record(&paths.state_path, &bytes, "machine state")?
+        }
+        None => MachineStateRecord::initialized(),
+    };
+    Ok((paths, config, state))
+}
+
 fn rebuild_machine_state(
     path: &Path,
     reason: impl Into<String>,
@@ -324,6 +380,36 @@ pub(super) fn with_authenticated_default_machine_lock<T>(
     operation: impl FnOnce() -> Result<T, Error>,
 ) -> Result<T, Error> {
     with_authenticated_machine_lock(roots, network, DEFAULT_MACHINE_NAME, operation)
+}
+
+/// Lock the default machine without invoking config backup or state repair.
+///
+/// Provision-source preparation and activation are exact-snapshot operations.
+/// They authenticate the current-version config once before creating the lock
+/// path and again while holding the lock, but never convert a read failure into
+/// a filesystem mutation.
+pub(super) fn with_exact_authenticated_default_machine_lock<T>(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    operation: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    authenticate_machine_config_snapshot_if_exists(roots, network, DEFAULT_MACHINE_NAME)?;
+    with_machine_lock(roots, DEFAULT_MACHINE_NAME, || {
+        authenticate_machine_config_snapshot_if_exists(roots, network, DEFAULT_MACHINE_NAME)?;
+        operation()
+    })
+}
+
+fn authenticate_machine_config_snapshot_if_exists(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    machine_name: &str,
+) -> Result<(), Error> {
+    let paths = roots.paths(machine_name);
+    let Some(config) = read_machine_config_snapshot_if_exists(&paths.config_path)? else {
+        return Ok(());
+    };
+    authenticate_machine_config(network, &config, roots)
 }
 
 fn lock_machine_records(

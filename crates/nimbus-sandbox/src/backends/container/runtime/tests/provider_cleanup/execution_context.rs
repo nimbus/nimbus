@@ -7,14 +7,29 @@ use super::*;
 #[test]
 fn unstarted_artifact_cleanup_failure_retains_claim_for_idempotent_retry() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let rootfs_path = temp_dir.path().join("transient-rootfs-obstacle");
-    std::fs::write(&rootfs_path, b"not a directory").expect("rootfs cleanup obstacle should write");
     let backend =
         ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
+    let spec = sample_spec();
+    let sandbox_id = SandboxId::new("unstarted-artifact-cleanup-retry");
+    let artifact_path = crate::artifact_paths::rootfs_root(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    )
+    .join(sandbox_id.as_str());
+    std::fs::create_dir_all(
+        artifact_path
+            .parent()
+            .expect("artifact parent should exist"),
+    )
+    .expect("artifact parent should create");
+    std::fs::write(&artifact_path, b"not a directory")
+        .expect("rootfs cleanup obstacle should write");
+    let rootfs_path = artifact_path.join("rootfs");
     let mut manifest = backend
         .plan_start_with_id(
-            &sample_spec(),
-            &SandboxId::new("unstarted-artifact-cleanup-retry"),
+            &spec,
+            &sandbox_id,
             None,
             Some(sample_rootfs_artifact(rootfs_path.clone())),
         )
@@ -31,7 +46,7 @@ fn unstarted_artifact_cleanup_failure_retains_claim_for_idempotent_retry() {
     assert!(
         error
             .to_string()
-            .contains("failed to remove materialized rootfs"),
+            .contains("filesystem identity is no longer an owned directory"),
         "cleanup must report the exact artifact failure: {error}"
     );
     assert_eq!(
@@ -41,7 +56,7 @@ fn unstarted_artifact_cleanup_failure_retains_claim_for_idempotent_retry() {
     );
     assert!(!manifest.network_cleanup_complete);
 
-    std::fs::remove_file(&rootfs_path).expect("cleanup obstacle should be removable");
+    std::fs::remove_file(&artifact_path).expect("cleanup obstacle should be removable");
     backend
         .release_unstarted_launch_artifacts(&mut manifest)
         .expect("same-claim replay should converge after the transient artifact failure");

@@ -21,6 +21,7 @@ mod db_ops;
 mod egress_gateway;
 mod function_ops;
 mod read_tracking;
+mod service_provision;
 
 pub(crate) use bridge::{ConvexHostBridge, ConvexHostBridgeInvocation, ConvexHostBridgeScope};
 pub(in crate::adapters::convex) use nimbus_convex::host_bridge::convex_host_operation_name;
@@ -37,3 +38,4 @@ pub(in crate::adapters::convex) use nimbus_convex::host_bridge::{
     ConvexRuntimeSchedulerRunAtPayload, ConvexRuntimeServiceLookupPayload,
     runtime_host_payload_value, synthesize_runtime_paginate_cursor,
 };
+pub(in crate::adapters::convex) use service_provision::ConvexServiceProvisionPort;

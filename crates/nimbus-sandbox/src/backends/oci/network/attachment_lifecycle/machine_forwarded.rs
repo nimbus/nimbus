@@ -155,7 +155,7 @@ impl OciAttachmentLifecycle<'_> {
             quarantine_network_segment_hold(
                 self.allocator,
                 context.tenant_id,
-                context.sandbox_id,
+                &context.config.attachment_id,
                 &context.config.reservation_claim,
             )
             .map_err(recovery::before_provider_detach_failure)?;
@@ -188,6 +188,7 @@ impl OciAttachmentLifecycle<'_> {
                 self.ipam,
                 context.layout,
                 context.sandbox_id,
+                &context.config.attachment_id,
                 &context.config.reservation_claim,
                 context.config.provider_kind(),
             ) {
@@ -197,7 +198,7 @@ impl OciAttachmentLifecycle<'_> {
                     release_network_segment_hold(
                         self.allocator,
                         context.tenant_id,
-                        context.sandbox_id,
+                        &context.config.attachment_id,
                         &context.config.reservation_claim,
                     )
                     .into_iter()

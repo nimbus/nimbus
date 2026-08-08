@@ -38,6 +38,29 @@ pub(crate) enum OciPortProvider {
     EgressPep,
 }
 
+pub(crate) struct OciPortActivation<'a> {
+    claim: &'a PortBindClaim,
+    actual_addr: SocketAddr,
+    provider: OciPortProvider,
+    lifetime: &'a PortLeaseLifetimeGuard,
+}
+
+impl<'a> OciPortActivation<'a> {
+    pub(crate) fn new(
+        claim: &'a PortBindClaim,
+        actual_addr: SocketAddr,
+        provider: OciPortProvider,
+        lifetime: &'a PortLeaseLifetimeGuard,
+    ) -> Self {
+        Self {
+            claim,
+            actual_addr,
+            provider,
+            lifetime,
+        }
+    }
+}
+
 /// Provider-owned evidence that one bind attempt produced no effect.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OciConfirmedBindFailure {
@@ -62,6 +85,12 @@ impl OciConfirmedBindFailure {
 
 pub(crate) struct ReservedPortLeaseBatch {
     selected: Vec<(PortLeaseRequest, NonZeroU16)>,
+    reservation_claim: NetworkReservationClaim,
+    publication_lifetime: NetworkReservationLifetimeGuard,
+}
+
+pub(crate) struct ReservedPortLeaseRecordBatch {
+    records: Vec<PortLeaseRecord>,
     reservation_claim: NetworkReservationClaim,
     publication_lifetime: NetworkReservationLifetimeGuard,
 }
@@ -108,6 +137,22 @@ impl ReservedPortLeaseBatch {
     ) {
         (
             self.selected,
+            self.reservation_claim,
+            self.publication_lifetime,
+        )
+    }
+}
+
+impl ReservedPortLeaseRecordBatch {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Vec<PortLeaseRecord>,
+        NetworkReservationClaim,
+        NetworkReservationLifetimeGuard,
+    ) {
+        (
+            self.records,
             self.reservation_claim,
             self.publication_lifetime,
         )
@@ -296,6 +341,48 @@ pub(crate) fn reserve_batch_with_tenant_limit(
     )
 }
 
+/// Reserve an exact request batch without requiring every request to have a
+/// numeric port yet. Provider-assigned listeners remain durable unbound
+/// authority until their effect owner binds port zero and adopts the result.
+pub(crate) fn reserve_request_batch(
+    authority: &LocalPortLeaseAuthority,
+    requests: Vec<PortLeaseRequest>,
+    tenant_limit: Option<(&TenantId, usize)>,
+    reservation_claim: &NetworkReservationClaim,
+) -> Result<ReservedPortLeaseRecordBatch> {
+    let publication_lifetime = acquire_reservation_lifetime(authority, reservation_claim)?;
+    let records = match tenant_limit {
+        Some((tenant_id, maximum)) => authority.reserve_batch_with_tenant_limit_for_coordinator(
+            requests.clone(),
+            TenantPublishedPortLimit::new(tenant_id.clone(), maximum),
+            reservation_claim,
+        ),
+        None => authority.reserve_batch_for_coordinator(requests.clone(), reservation_claim),
+    }
+    .map_err(port_lease_error)?;
+    if records.len() != requests.len()
+        || records
+            .iter()
+            .zip(&requests)
+            .any(|(record, request)| record.request() != request)
+    {
+        let projection_error = SandboxError::OperationFailed {
+            message: "port authority returned a crossed exact request batch".to_owned(),
+        };
+        return Err(compensate_projection_failure(
+            authority,
+            &requests,
+            &publication_lifetime,
+            projection_error,
+        ));
+    }
+    Ok(ReservedPortLeaseRecordBatch {
+        records,
+        reservation_claim: reservation_claim.clone(),
+        publication_lifetime,
+    })
+}
+
 fn finish_reserved_batch(
     authority: &LocalPortLeaseAuthority,
     requests: Vec<PortLeaseRequest>,
@@ -438,6 +525,91 @@ pub(crate) fn claim_bind_attempt_with_lifetime(
     Ok((claim, lifetime))
 }
 
+/// Claim one compiler-planned effect while proving the complete immutable
+/// plan membership without claiming unrelated listeners for this provider.
+pub(crate) fn claim_bind_plan_member_attempt_with_lifetime(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    request: &PortLeaseRequest,
+    provider: OciPortProvider,
+    reservation_claim: &NetworkReservationClaim,
+    effect_scope: PortLeaseEffectScope,
+) -> Result<(PortBindClaim, PortLeaseLifetimeGuard)> {
+    let claim = provider_bind_claim(request, provider)?;
+    let lifetime = authority
+        .claim_bind_plan_member_with_lifetime(
+            plan_members,
+            request,
+            reservation_claim,
+            claim.clone(),
+            effect_scope,
+        )
+        .map_err(port_lease_error)?;
+    Ok((claim, lifetime))
+}
+
+/// Claim one retained planned binding for its next process lifetime.
+pub(crate) fn claim_rebind_plan_member_attempt_with_lifetime(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    request: &PortLeaseRequest,
+    actual_addr: SocketAddr,
+    provider: OciPortProvider,
+    effect_scope: PortLeaseEffectScope,
+) -> Result<(PortBindClaim, PortLeaseLifetimeGuard)> {
+    let claim = provider_bind_claim(request, provider)?;
+    let confirmed_stopped_binding = provider_binding(request, actual_addr, provider)?;
+    let lifetime = authority
+        .claim_rebind_plan_member_with_lifetime(
+            plan_members,
+            request,
+            &confirmed_stopped_binding,
+            claim.clone(),
+            effect_scope,
+        )
+        .map_err(port_lease_error)?;
+    Ok((claim, lifetime))
+}
+
+pub(crate) fn claim_rebind_plan_members_attempts_with_lifetimes(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+    actual_addrs: &[SocketAddr],
+    provider: OciPortProvider,
+    effect_scope: PortLeaseEffectScope,
+) -> Result<OciPortBindLifetimeBatch> {
+    if requests.len() != actual_addrs.len() {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "cannot claim {} planned rebind requests from {} confirmed bindings",
+                requests.len(),
+                actual_addrs.len()
+            ),
+        });
+    }
+    let claims = requests
+        .iter()
+        .map(|request| provider_bind_claim(request, provider))
+        .collect::<Result<Vec<_>>>()?;
+    let entries = requests
+        .iter()
+        .zip(&claims)
+        .zip(actual_addrs)
+        .map(|((request, claim), actual_addr)| {
+            Ok((
+                request.clone(),
+                claim.clone(),
+                provider_binding(request, *actual_addr, provider)?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let lifetimes = authority
+        .claim_rebind_plan_members_with_lifetimes(plan_members, &entries, effect_scope)
+        .map_err(port_lease_error)?;
+    OciPortBindLifetimeBatch::from_reclaimed(claims, lifetimes)
+}
+
 /// Claim a complete provider batch together with exact process lifetimes.
 pub(crate) fn claim_bind_attempts_with_lifetimes(
     authority: &LocalPortLeaseAuthority,
@@ -457,6 +629,36 @@ pub(crate) fn claim_bind_attempts_with_lifetimes(
         .collect::<Vec<_>>();
     let lifetimes = authority
         .claim_bind_batch_with_lifetimes(&claimed, reservation_claim, effect_scope)
+        .map_err(port_lease_error)?;
+    Ok(OciPortBindLifetimeBatch { claims, lifetimes })
+}
+
+/// Claim one provider-owned subset while authenticating the complete compiler
+/// plan in the same durable transaction.
+pub(crate) fn claim_bind_plan_members_attempts_with_lifetimes(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+    provider: OciPortProvider,
+    reservation_claim: &NetworkReservationClaim,
+    effect_scope: PortLeaseEffectScope,
+) -> Result<OciPortBindLifetimeBatch> {
+    let claims = requests
+        .iter()
+        .map(|request| provider_bind_claim(request, provider))
+        .collect::<Result<Vec<_>>>()?;
+    let claimed = requests
+        .iter()
+        .cloned()
+        .zip(claims.iter().cloned())
+        .collect::<Vec<_>>();
+    let lifetimes = authority
+        .claim_bind_plan_members_with_lifetimes(
+            plan_members,
+            &claimed,
+            reservation_claim,
+            effect_scope,
+        )
         .map_err(port_lease_error)?;
     Ok(OciPortBindLifetimeBatch { claims, lifetimes })
 }
@@ -500,6 +702,88 @@ pub(crate) fn abandon_bind_attempt_with_lifetime_without_effect(
         .map_err(port_lease_error)
 }
 
+pub(crate) fn abandon_bind_plan_member_attempt_with_lifetime_without_effect(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    request: &PortLeaseRequest,
+    claim: &PortBindClaim,
+    lifetime: &PortLeaseLifetimeGuard,
+    reservation_claim: &NetworkReservationClaim,
+) -> Result<PortLeaseRecord> {
+    authority
+        .abandon_bind_plan_member_with_lifetime_without_effect(
+            plan_members,
+            request,
+            reservation_claim,
+            claim,
+            lifetime,
+        )
+        .map_err(port_lease_error)
+}
+
+pub(crate) fn abandon_rebind_plan_member_attempt_with_lifetime_without_effect(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    request: &PortLeaseRequest,
+    claim: &PortBindClaim,
+    lifetime: &PortLeaseLifetimeGuard,
+) -> Result<PortLeaseRecord> {
+    let confirmed_stopped_binding = authority
+        .inspect_plan_member(plan_members, request)
+        .map_err(port_lease_error)?
+        .confirmed_stopped_binding()
+        .cloned()
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "planned rebind {} lost its exact confirmed-stop receipt",
+                request.lease_id()
+            ),
+        })?;
+    authority
+        .abandon_rebind_plan_member_with_lifetime_without_effect(
+            plan_members,
+            request,
+            &confirmed_stopped_binding,
+            claim,
+            lifetime,
+        )
+        .map_err(port_lease_error)
+}
+
+pub(crate) fn abandon_rebind_plan_members_attempts_with_lifetimes_without_effect(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+    actual_addrs: &[SocketAddr],
+    provider: OciPortProvider,
+    batch: &OciPortBindLifetimeBatch,
+) -> Result<Vec<PortLeaseRecord>> {
+    if requests.len() != actual_addrs.len() || requests.len() != batch.claims.len() {
+        return Err(SandboxError::OperationFailed {
+            message: "planned rebind abandonment received crossed batch lengths".to_owned(),
+        });
+    }
+    let entries = requests
+        .iter()
+        .zip(&batch.claims)
+        .zip(actual_addrs)
+        .map(|((request, claim), actual_addr)| {
+            Ok((
+                request.clone(),
+                claim.clone(),
+                provider_binding(request, *actual_addr, provider)?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    authority
+        .abandon_rebind_plan_members_with_lifetimes_without_effect(
+            plan_members,
+            &entries,
+            &batch.lifetimes,
+        )
+        .map_err(port_lease_error)
+}
+
 /// Relinquish one complete lifetime-fenced batch after proving no effect.
 pub(crate) fn abandon_bind_attempts_with_lifetimes_without_effect(
     authority: &LocalPortLeaseAuthority,
@@ -524,6 +808,39 @@ pub(crate) fn abandon_bind_attempts_with_lifetimes_without_effect(
         .collect::<Vec<_>>();
     authority
         .abandon_bind_batch_with_lifetimes_without_effect(
+            &claims,
+            reservation_claim,
+            &batch.lifetimes,
+        )
+        .map_err(port_lease_error)
+}
+
+/// Relinquish one no-effect provider subset under the complete compiler plan.
+pub(crate) fn abandon_bind_plan_members_attempts_with_lifetimes_without_effect(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+    batch: &OciPortBindLifetimeBatch,
+    reservation_claim: &NetworkReservationClaim,
+) -> Result<Vec<PortLeaseRecord>> {
+    if requests.len() != batch.claims.len() || requests.len() != batch.lifetimes.len() {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "cannot abandon {} planned sandbox requests from {} claims and {} process lifetimes",
+                requests.len(),
+                batch.claims.len(),
+                batch.lifetimes.len()
+            ),
+        });
+    }
+    let claims = requests
+        .iter()
+        .cloned()
+        .zip(batch.claims.iter().cloned())
+        .collect::<Vec<_>>();
+    authority
+        .abandon_bind_plan_members_with_lifetimes_without_effect(
+            plan_members,
             &claims,
             reservation_claim,
             &batch.lifetimes,
@@ -788,6 +1105,82 @@ pub(crate) fn adopt_claimed_and_activate_with_lifetime(
         .map_err(port_lease_error)
 }
 
+pub(crate) fn adopt_claimed_and_activate_plan_member_with_lifetime(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    request: &PortLeaseRequest,
+    reservation_claim: &NetworkReservationClaim,
+    activation: OciPortActivation<'_>,
+) -> Result<PortLeaseRecord> {
+    let binding = provider_binding(request, activation.actual_addr, activation.provider)?;
+    authority
+        .adopt_claimed_and_activate_plan_member_with_lifetime(
+            plan_members,
+            request,
+            reservation_claim,
+            activation.claim,
+            binding,
+            activation.lifetime,
+        )
+        .map_err(port_lease_error)
+}
+
+pub(crate) fn adopt_claimed_and_activate_rebind_plan_member_with_lifetime(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    request: &PortLeaseRequest,
+    claim: &PortBindClaim,
+    actual_addr: SocketAddr,
+    provider: OciPortProvider,
+    lifetime: &PortLeaseLifetimeGuard,
+) -> Result<PortLeaseRecord> {
+    let binding = provider_binding(request, actual_addr, provider)?;
+    authority
+        .adopt_claimed_and_activate_rebind_plan_member_with_lifetime(
+            plan_members,
+            request,
+            &binding,
+            claim,
+            binding.clone(),
+            lifetime,
+        )
+        .map_err(port_lease_error)
+}
+
+pub(crate) fn adopt_claimed_and_activate_rebind_plan_members_with_lifetimes(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+    actual_addrs: &[SocketAddr],
+    provider: OciPortProvider,
+    batch: &OciPortBindLifetimeBatch,
+) -> Result<Vec<PortLeaseRecord>> {
+    if requests.len() != actual_addrs.len() || requests.len() != batch.claims.len() {
+        return Err(SandboxError::OperationFailed {
+            message: "planned rebind activation received crossed batch lengths".to_owned(),
+        });
+    }
+    let entries = requests
+        .iter()
+        .zip(&batch.claims)
+        .zip(actual_addrs)
+        .map(|((request, claim), actual_addr)| {
+            Ok((
+                request.clone(),
+                claim.clone(),
+                provider_binding(request, *actual_addr, provider)?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    authority
+        .adopt_claimed_and_activate_rebind_plan_members_with_lifetimes(
+            plan_members,
+            &entries,
+            &batch.lifetimes,
+        )
+        .map_err(port_lease_error)
+}
+
 /// Convert an exact dead process-bound effect into a restart-retained slot.
 pub(crate) fn prepare_process_bound_rebind_after_owner_death(
     authority: &LocalPortLeaseAuthority,
@@ -820,6 +1213,35 @@ pub(crate) fn prepare_process_bound_rebind_after_owner_death(
             ),
         }),
     }
+}
+
+/// Convert one exact dead process-bound plan member into a retained rebind slot.
+pub(crate) fn prepare_process_bound_plan_member_rebind_after_owner_death(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    request: &PortLeaseRequest,
+) -> Result<PortLeaseRecord> {
+    let requests = std::slice::from_ref(request);
+    let recoveries = authority
+        .recover_dead_plan_members(plan_members, requests)
+        .map_err(port_lease_error)?;
+    authority
+        .mark_cleanup_pending_plan_members_after_owner_death(plan_members, requests, &recoveries)
+        .map_err(port_lease_error)?;
+    authority
+        .prepare_rebind_process_bound_plan_members_after_owner_death(
+            plan_members,
+            requests,
+            &recoveries,
+        )
+        .map_err(port_lease_error)?
+        .pop()
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "planned process-bound rebind returned no record for {}",
+                request.lease_id()
+            ),
+        })
 }
 
 /// Atomically adopt and activate a complete Nimbus-owned listener batch.
@@ -897,6 +1319,53 @@ pub(crate) fn adopt_claimed_and_activate_batch_with_lifetimes(
         .collect::<Result<Vec<_>>>()?;
     authority
         .adopt_claimed_and_activate_batch_with_lifetimes(
+            &bindings,
+            reservation_claim,
+            &batch.lifetimes,
+        )
+        .map_err(port_lease_error)
+}
+
+/// Atomically activate one provider-owned subset under the complete compiler
+/// plan and exact process lifetimes.
+pub(crate) fn adopt_claimed_and_activate_plan_members_with_lifetimes(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+    batch: &OciPortBindLifetimeBatch,
+    actual_addrs: &[SocketAddr],
+    provider: OciPortProvider,
+    reservation_claim: &NetworkReservationClaim,
+) -> Result<Vec<PortLeaseRecord>> {
+    if requests.len() != batch.claims.len()
+        || requests.len() != batch.lifetimes.len()
+        || requests.len() != actual_addrs.len()
+    {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "cannot activate {} planned sandbox listeners from {} claims, {} process lifetimes, and {} provider addresses",
+                requests.len(),
+                batch.claims.len(),
+                batch.lifetimes.len(),
+                actual_addrs.len()
+            ),
+        });
+    }
+    let bindings = requests
+        .iter()
+        .zip(&batch.claims)
+        .zip(actual_addrs)
+        .map(|((request, claim), actual_addr)| {
+            Ok((
+                request.clone(),
+                claim.clone(),
+                provider_binding(request, *actual_addr, provider)?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    authority
+        .adopt_claimed_and_activate_plan_members_with_lifetimes(
+            plan_members,
             &bindings,
             reservation_claim,
             &batch.lifetimes,
@@ -1025,6 +1494,34 @@ pub(crate) fn record_bind_failure_with_lifetime(
     )?;
     authority
         .record_claimed_bind_failure_with_lifetime_without_effect(
+            request,
+            reservation_claim,
+            claim,
+            failure,
+            lifetime,
+        )
+        .map_err(port_lease_error)
+}
+
+pub(crate) fn record_plan_member_bind_failure_with_lifetime(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    request: &PortLeaseRequest,
+    claim: &PortBindClaim,
+    observed: OciConfirmedBindFailure,
+    reservation_claim: &NetworkReservationClaim,
+    lifetime: &PortLeaseLifetimeGuard,
+) -> Result<PortLeaseRecord> {
+    let failure = provider_bind_failure(
+        request,
+        claim,
+        observed.attempted_addr,
+        observed.provider,
+        observed.error_kind,
+    )?;
+    authority
+        .record_claimed_plan_member_bind_failure_with_lifetime_without_effect(
+            plan_members,
             request,
             reservation_claim,
             claim,
@@ -1233,6 +1730,16 @@ pub(crate) fn recover_provider_managed_batch_after_owner_death(
     Ok(recoveries)
 }
 
+pub(crate) fn recover_provider_managed_plan_members_after_owner_death(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+) -> Result<Vec<PortLeaseRecoveryGuard>> {
+    authority
+        .recover_dead_plan_members(plan_members, requests)
+        .map_err(port_lease_error)
+}
+
 /// Retain a recovered provider batch after the adapter confirms exact absence.
 pub(crate) fn prepare_provider_managed_batch_after_confirmed_stop(
     authority: &LocalPortLeaseAuthority,
@@ -1256,6 +1763,35 @@ pub(crate) fn prepare_provider_managed_batch_after_confirmed_stop(
         .collect::<Vec<_>>();
     authority
         .prepare_rebind_provider_managed_batch_after_confirmed_stop(&expected, recoveries)
+        .map_err(port_lease_error)
+}
+
+pub(crate) fn prepare_provider_managed_plan_members_after_confirmed_stop(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+    expected_bindings: &[PortLeaseBinding],
+    recoveries: &[PortLeaseRecoveryGuard],
+) -> Result<Vec<PortLeaseRecord>> {
+    if requests.len() != expected_bindings.len() {
+        return Err(SandboxError::OperationFailed {
+            message: "planned provider rebind received crossed binding lengths".to_owned(),
+        });
+    }
+    authority
+        .mark_cleanup_pending_plan_members_after_owner_death(plan_members, requests, recoveries)
+        .map_err(port_lease_error)?;
+    let expected = requests
+        .iter()
+        .cloned()
+        .zip(expected_bindings.iter().cloned())
+        .collect::<Vec<_>>();
+    authority
+        .prepare_rebind_provider_managed_plan_members_after_confirmed_stop(
+            plan_members,
+            &expected,
+            recoveries,
+        )
         .map_err(port_lease_error)
 }
 

@@ -1,7 +1,57 @@
 use super::*;
 
+fn project_service_for_retirement(
+    manager: &ServiceManager,
+    backend: &StubSandboxBackend,
+    tenant_id: &TenantId,
+    service_name: &str,
+) -> SandboxHandle {
+    let definition = manager
+        .service_definition_for_tenant(tenant_id, service_name)
+        .expect("service definition should exist");
+    let handle = backend.sandbox_handle(tenant_id, service_name, SandboxStatus::Ready);
+    manager
+        .project_service_definition_execution_observation(
+            tenant_id,
+            service_name,
+            definition.generation,
+            &definition.resource_version,
+            handle.id.as_str(),
+            handle.clone(),
+        )
+        .expect("service observation should project");
+    handle
+}
+
+fn reserve_and_project_standalone_for_retirement(
+    manager: &ServiceManager,
+    backend: &StubSandboxBackend,
+    tenant_id: &TenantId,
+) -> (crate::SandboxResourceSource, SandboxHandle) {
+    let source = reserve_standalone_source(
+        manager,
+        tenant_id,
+        "stable-worker",
+        "worker",
+        standalone_resource_spec(tenant_id, "task"),
+        BTreeMap::new(),
+    );
+    let handle = backend.sandbox_handle(tenant_id, "task", SandboxStatus::Ready);
+    manager
+        .project_sandbox_resource_execution_observation(
+            tenant_id,
+            &source.id,
+            source.generation,
+            &source.resource_version,
+            handle.id.as_str(),
+            handle.clone(),
+        )
+        .expect("standalone observation should project");
+    (source, handle)
+}
+
 #[tokio::test]
-async fn teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources() {
+async fn tenant_retirement_stops_observed_sandboxes_and_clears_tenant_resources() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(1));
     let manager = ServiceManager::new(
@@ -12,15 +62,9 @@ async fn teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources() {
             )]),
         }),
         backend.clone(),
-    )
-    .with_activation_poll_interval(Duration::from_millis(1))
-    .with_activation_timeout(Duration::from_secs(1));
+    );
 
-    manager
-        .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
-        .await
-        .expect("service activation should succeed")
-        .expect("db binding should exist");
+    project_service_for_retirement(&manager, &backend, &tenant_id, "db");
     manager
         .create_service_definition(
             &tenant_id,
@@ -29,15 +73,8 @@ async fn teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources() {
             BTreeMap::new(),
         )
         .expect("dynamic built-in definition should be recorded");
-    let standalone = manager
-        .create_sandbox_resource_for_context_async(
-            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
-            "worker",
-            standalone_resource_spec(&tenant_id, "task"),
-            BTreeMap::new(),
-        )
-        .await
-        .expect("standalone sandbox should start");
+    let (standalone, _) =
+        reserve_and_project_standalone_for_retirement(&manager, &backend, &tenant_id);
     manager
         .open_session_async(
             &tenant_id,
@@ -56,50 +93,51 @@ async fn teardown_tenant_stops_tracked_sandboxes_and_clears_tenant_resources() {
             .is_some()
     );
     assert_eq!(
-        manager.list_sandbox_resources_for_tenant(&tenant_id).len(),
+        manager
+            .list_sandbox_resource_snapshots_for_tenant(&tenant_id)
+            .len(),
         1
     );
     assert_eq!(manager.list_sessions_for_tenant(&tenant_id).len(), 1);
 
-    manager
-        .teardown_tenant_async(&tenant_id)
+    TenantServiceRetirement::retire_tenant_async(&manager, &tenant_id)
         .await
-        .expect("tenant teardown should stop tracked resources");
+        .expect("tenant retirement should stop tracked resources");
 
     assert_eq!(
         backend.stop_calls.load(Ordering::SeqCst),
         2,
-        "tenant teardown should stop service-backed and standalone sandboxes"
+        "tenant retirement should stop service-backed and standalone sandboxes"
     );
     assert_eq!(
         backend.artifact_cleanup_calls.load(Ordering::SeqCst),
         1,
-        "tenant teardown should remove tenant-owned sandbox artifact roots"
+        "tenant retirement should remove tenant-owned sandbox artifact roots"
     );
     assert!(
         manager.snapshot_for_tenant(&tenant_id).is_empty(),
-        "tenant teardown should clear manager snapshots"
+        "tenant retirement should clear manager snapshots"
     );
     assert!(
         manager
             .service_definition_for_tenant(&tenant_id, "browser")
             .is_none(),
-        "tenant teardown should purge dynamic service definitions"
+        "tenant retirement should purge dynamic service definitions"
     );
     assert!(
         manager
-            .list_sandbox_resources_for_tenant(&tenant_id)
+            .list_sandbox_resource_snapshots_for_tenant(&tenant_id)
             .is_empty(),
-        "tenant teardown should purge standalone sandbox resources"
+        "tenant retirement should purge standalone sandbox resources"
     );
     assert!(
         manager.list_sessions_for_tenant(&tenant_id).is_empty(),
-        "tenant teardown should purge tenant sessions"
+        "tenant retirement should purge tenant sessions"
     );
 }
 
 #[tokio::test]
-async fn teardown_tenant_attempts_all_stops_and_clears_successes_before_returning_errors() {
+async fn tenant_retirement_attempts_all_stops_and_clears_successes_before_errors() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(1));
     let manager = ServiceManager::new(
@@ -110,24 +148,11 @@ async fn teardown_tenant_attempts_all_stops_and_clears_successes_before_returnin
             )]),
         }),
         backend.clone(),
-    )
-    .with_activation_poll_interval(Duration::from_millis(1))
-    .with_activation_timeout(Duration::from_secs(1));
+    );
 
-    manager
-        .ensure_service_binding_async(&tenant_id, "db", HostCallCancellation::default())
-        .await
-        .expect("service activation should succeed")
-        .expect("db binding should exist");
-    let standalone = manager
-        .create_sandbox_resource_for_context_async(
-            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
-            "worker",
-            standalone_resource_spec(&tenant_id, "task"),
-            BTreeMap::new(),
-        )
-        .await
-        .expect("standalone sandbox should start");
+    project_service_for_retirement(&manager, &backend, &tenant_id, "db");
+    let (standalone, standalone_handle) =
+        reserve_and_project_standalone_for_retirement(&manager, &backend, &tenant_id);
     manager
         .open_session_async(
             &tenant_id,
@@ -139,36 +164,37 @@ async fn teardown_tenant_attempts_all_stops_and_clears_successes_before_returnin
         )
         .await
         .expect("standalone sandbox session should open");
-    backend.fail_stop_for(standalone.id.as_str());
+    backend.fail_stop_for(standalone_handle.id.as_str());
 
-    let error = manager
-        .teardown_tenant_async(&tenant_id)
+    let error = TenantServiceRetirement::retire_tenant_async(&manager, &tenant_id)
         .await
-        .expect_err("failed standalone stop should be reported after best-effort teardown");
+        .expect_err("failed standalone stop should be reported after best-effort retirement");
 
     assert!(
-        error.to_string().contains(standalone.id.as_str())
+        error.to_string().contains(standalone_handle.id.as_str())
             && error.to_string().contains("best-effort cleanup"),
-        "aggregate teardown error should name the failed sandbox: {error}"
+        "aggregate retirement error should name the failed sandbox: {error}"
     );
     assert_eq!(
         backend.stop_calls.load(Ordering::SeqCst),
         2,
-        "tenant teardown should attempt service-backed and standalone stops"
+        "tenant retirement should attempt service-backed and standalone stops"
     );
     assert_eq!(
         backend.artifact_cleanup_calls.load(Ordering::SeqCst),
         1,
-        "tenant teardown should still attempt tenant artifact cleanup"
+        "tenant retirement should still attempt tenant artifact cleanup"
     );
     assert!(
         manager.snapshot_for_tenant(&tenant_id).is_empty(),
-        "successfully stopped service handle should be cleared before returning the aggregate error"
+        "successfully stopped service observation should be cleared before returning the aggregate error"
     );
     assert_eq!(
-        manager.list_sandbox_resources_for_tenant(&tenant_id).len(),
+        manager
+            .list_sandbox_resource_snapshots_for_tenant(&tenant_id)
+            .len(),
         1,
-        "failed standalone sandbox resource should remain for retry"
+        "failed standalone sandbox source should remain for retry"
     );
     assert_eq!(
         manager.list_sessions_for_tenant(&tenant_id).len(),

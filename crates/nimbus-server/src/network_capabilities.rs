@@ -4,44 +4,24 @@
 //! not validate readiness, inspect certificates, bind sockets, or provide an
 //! effect interface.
 
-use std::collections::BTreeSet;
-
 use nimbus_network::{
     NetworkAddressFamily, NetworkBindRealmKind, NetworkControlPlaneLocality,
     NetworkEndpointCapabilitySet, NetworkExposure, NetworkForwardingCapabilitySet,
-    NetworkIngressCapabilitySet, NetworkIngressFeature, NetworkIngressProviderRegistration,
+    NetworkForwardingFeature, NetworkIngressCapabilitySet, NetworkIngressProviderRegistration,
     NetworkLifecycleCapabilitySet, NetworkLifecycleFeature, NetworkPortAssignmentMode,
     NetworkProviderId, NetworkSovereigntyCapabilities, NetworkTlsBehavior, PortProtocol,
 };
 
 use crate::listener_lease::SERVER_LISTENER_PROVIDER_KEY;
 
-/// Report the closed capability facts of Nimbus-owned local ingress.
+/// Report the closed capability facts of Nimbus-owned workload ingress.
 ///
-/// This source-owned report is effect-free: it does not construct listener
-/// authority, inspect certificates, bind sockets, or validate readiness.
-/// Callers that must freeze provider selection before constructing
-/// [`crate::ServeOptions`] may use this function directly.
-pub fn nimbus_owned_local_ingress_registration(
-    tls_configured: bool,
-) -> NetworkIngressProviderRegistration {
-    let ingress_features = BTreeSet::from([
-        NetworkIngressFeature::PathRouting,
-        NetworkIngressFeature::WebSocket,
-        NetworkIngressFeature::Streaming,
-    ]);
-    // The registration describes the aggregate Nimbus-owned ingress surface:
-    // TLS terminates on the main HTTP listener while sibling wire listeners
-    // remain plain TCP.
-    let tls_behaviors = if tls_configured {
-        BTreeSet::from([
-            NetworkTlsBehavior::Disabled,
-            NetworkTlsBehavior::TerminateAtIngress,
-        ])
-    } else {
-        BTreeSet::from([NetworkTlsBehavior::Disabled])
-    };
-
+/// The concrete adapter owns a transparent TCP proxy over server-held host
+/// listeners. It neither terminates TLS nor interprets HTTP paths or
+/// WebSockets. Main-server HTTP TLS configuration is therefore deliberately
+/// absent from this report. Constructing it performs no provider or socket
+/// effect.
+pub fn nimbus_owned_workload_ingress_registration() -> NetworkIngressProviderRegistration {
     NetworkIngressProviderRegistration::new(
         NetworkProviderId::for_registration_key(SERVER_LISTENER_PROVIDER_KEY),
         NetworkEndpointCapabilitySet::new(
@@ -58,15 +38,22 @@ pub fn nimbus_owned_local_ingress_registration(
                 NetworkPortAssignmentMode::ProviderAssigned,
             ],
         ),
-        NetworkIngressCapabilitySet::new(ingress_features).with_tls_behaviors(tls_behaviors),
-        NetworkForwardingCapabilitySet::new([]),
+        NetworkIngressCapabilitySet::new([]).with_tls_behaviors([
+            NetworkTlsBehavior::Disabled,
+            NetworkTlsBehavior::Passthrough,
+        ]),
+        NetworkForwardingCapabilitySet::new([NetworkForwardingFeature::PortForwarding]),
         NetworkLifecycleCapabilitySet::new([
             NetworkLifecycleFeature::DurableInspect,
             NetworkLifecycleFeature::Reconcile,
-            NetworkLifecycleFeature::Delete,
         ]),
         NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     )
+}
+
+/// Stable provider identity shared by capability reporting and publication.
+pub fn nimbus_owned_local_ingress_provider_id() -> NetworkProviderId {
+    NetworkProviderId::for_registration_key(SERVER_LISTENER_PROVIDER_KEY)
 }
 
 #[cfg(test)]

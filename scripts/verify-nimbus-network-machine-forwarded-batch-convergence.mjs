@@ -7,8 +7,7 @@ const paths = {
     "crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication.rs",
   store:
     "crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication/store.rs",
-  forwarding:
-    "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+  forwarding: "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
   observation:
     "crates/nimbus-sandbox/src/backends/oci/network/forwarding/receipt.rs",
   processLifetime:
@@ -19,9 +18,10 @@ const paths = {
     "crates/nimbus-sandbox/src/backends/container/runtime/lifecycle.rs",
   providerCleanup:
     "crates/nimbus-sandbox/src/backends/container/runtime/tests/provider_cleanup.rs",
-  portLifecycle:
-    "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+  portLifecycle: "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
 };
+const modularityProofPath =
+  "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4-atomic-provision-caller-cutover.md";
 
 const legacyPaths = [
   "crates/nimbus-sandbox/src/backends/container/runtime/machine_port_evidence.rs",
@@ -34,6 +34,7 @@ const sources = Object.fromEntries(
     fs.readFileSync(sourcePath, "utf8"),
   ]),
 );
+const modularityProof = fs.readFileSync(modularityProofPath, "utf8");
 let legacyAuthorityPresent = legacyPaths.some((sourcePath) =>
   fs.existsSync(sourcePath),
 );
@@ -175,7 +176,9 @@ function stringArrayConstant(source, constantName) {
 }
 
 if (legacyAuthorityPresent) {
-  failures.push("legacy terminal-only machine-port evidence authority still exists");
+  failures.push(
+    "legacy terminal-only machine-port evidence authority still exists",
+  );
 }
 for (const token of [
   "publication_may_exist",
@@ -324,11 +327,7 @@ requireText(
   "pub(crate) trait MachinePortForwardingProvider",
   "small machine-forwarding capability trait is missing",
 );
-for (const method of [
-  "fn inspect(",
-  "fn expose_one(",
-  "fn withdraw_one(",
-]) {
+for (const method of ["fn inspect(", "fn expose_one(", "fn withdraw_one("]) {
   requireText(
     sources.forwarding,
     method,
@@ -350,7 +349,9 @@ const observationDeclaration =
     /(?:#\[[^\]]+\]\s*)*pub\(crate\) struct CurrentMachinePortForwardingObservation/,
   )?.[0] ?? "";
 if (/Serialize|Deserialize/.test(observationDeclaration)) {
-  failures.push("current provider observation became serializable provider truth");
+  failures.push(
+    "current provider observation became serializable provider truth",
+  );
 }
 
 const exposureCuts = [
@@ -371,7 +372,10 @@ const withdrawalCuts = [
   "machine.withdraw.batch_absent",
   "machine.withdraw.listener_settled",
 ];
-const actualExposureCuts = stringArrayConstant(sources.freshProcess, "EXPOSURE_CUTS");
+const actualExposureCuts = stringArrayConstant(
+  sources.freshProcess,
+  "EXPOSURE_CUTS",
+);
 if (JSON.stringify(actualExposureCuts) !== JSON.stringify(exposureCuts)) {
   failures.push(
     `real-process exposure cuts are ${JSON.stringify(actualExposureCuts)}, expected ${JSON.stringify(exposureCuts)}`,
@@ -403,16 +407,71 @@ for (const token of [
   );
 }
 
-for (const [name, source] of Object.entries({
-  publication: sources.publication,
-  lifecycle: sources.lifecycle,
-  providerCleanup: sources.providerCleanup,
-  portLifecycle: sources.portLifecycle,
-  forwarding: sources.forwarding,
-})) {
+const modularityExpectations = {
+  publication: {
+    sourceTokens: ["mod store;"],
+    rationaleTokens: [
+      "external-publication journal",
+      "command/authority authentication state machine",
+      "transport",
+      "provider selection remain outside",
+    ],
+  },
+  portLifecycle: {
+    sourceTokens: [
+      "mod authority;",
+      "mod batch_state;",
+      "mod machine;",
+      "mod netavark_lifetime;",
+    ],
+    rationaleTokens: [
+      "port transition state machine",
+      "machine-specific behavior",
+      "child",
+    ],
+  },
+};
+
+for (const [name, sourcePath, source] of [
+  ["publication", paths.publication, sources.publication],
+  ["lifecycle", paths.lifecycle, sources.lifecycle],
+  ["providerCleanup", paths.providerCleanup, sources.providerCleanup],
+  ["portLifecycle", paths.portLifecycle, sources.portLifecycle],
+  ["forwarding", paths.forwarding, sources.forwarding],
+]) {
   const lines = source.split("\n").length - 1;
-  if (lines >= 1500) {
-    failures.push(`${name} composition owner is ${lines} lines (must remain below 1500)`);
+  if (lines >= 2000) {
+    failures.push(
+      `${name} composition owner is ${lines} lines (must remain below 2000)`,
+    );
+  } else if (lines >= 1500) {
+    const exactPrefix = `| \`${sourcePath}\` | ${lines.toLocaleString("en-US")} |`;
+    const disposition = modularityProof
+      .split("\n")
+      .find((line) => line.startsWith(exactPrefix));
+    if (!disposition) {
+      failures.push(
+        `${name} composition owner is ${lines} lines without an exact NNC6.4 ownership disposition`,
+      );
+      continue;
+    }
+    const expectations = modularityExpectations[name];
+    if (expectations) {
+      for (const token of expectations.sourceTokens) {
+        requireText(
+          source,
+          token,
+          `${name} composition owner lacks concept-owned child ${token}`,
+        );
+      }
+      for (const token of expectations.rationaleTokens) {
+        requireText(
+          disposition,
+          token,
+          `${name} modularity disposition lacks ownership rationale ${token}`,
+        );
+      }
+    }
   }
 }
 

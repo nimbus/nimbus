@@ -6,11 +6,12 @@
 
 use nimbus_workloads::{
     WorkloadActivationIntent, WorkloadEffectReferences, WorkloadExecutionReference,
-    WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadProvisionAttempt,
-    WorkloadProvisionAttemptInput, WorkloadProvisionDisposition, WorkloadProvisionEffectResult,
-    WorkloadProvisionPrerequisiteEvidence, WorkloadProvisionStep, WorkloadProvisionSubjects,
-    WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadPublicationReference,
-    WorkloadSagaError, WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
+    WorkloadProvisionAttempt, WorkloadProvisionAttemptInput, WorkloadProvisionDispatchClaim,
+    WorkloadProvisionDisposition, WorkloadProvisionEffectResult,
+    WorkloadProvisionPrerequisiteEvidence, WorkloadProvisionProviderTarget, WorkloadProvisionStep,
+    WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent,
+    WorkloadPublicationReference, WorkloadSagaError, WorkloadSagaPhase, WorkloadSagaRecord,
 };
 
 /// A provider-neutral operation that becomes actionable only after its
@@ -33,7 +34,7 @@ pub struct ProposedWorkloadProvisionTransition {
 }
 
 impl ProposedWorkloadProvisionTransition {
-    fn new(
+    pub(super) fn new(
         candidate: WorkloadSagaRecord,
         action_after_confirmation: Option<WorkloadProvisionSymbolicAction>,
     ) -> Self {
@@ -64,7 +65,7 @@ pub enum WorkloadProvisionDecision {
     /// Persist this candidate before interpreting its symbolic action.
     Proposed(ProposedWorkloadProvisionTransition),
     /// Reopen only by inspecting the byte-exact durable attempt.
-    InspectExact(Box<WorkloadProvisionAttempt>),
+    InspectExact(Box<WorkloadProvisionDispatchClaim>),
     /// This generation is halted until the later compensation owner acts.
     DefiniteFailure,
     /// No provision transition or inspection is currently required.
@@ -84,7 +85,7 @@ impl WorkloadProvisionDecision {
                 .map_or(proposed.candidate().phase(), |attempt| {
                     attempt.target_phase()
                 }),
-            Self::InspectExact(attempt) => attempt.target_phase(),
+            Self::InspectExact(claim) => claim.attempt().target_phase(),
             Self::DefiniteFailure | Self::Wait => current_phase,
         }
     }
@@ -99,9 +100,9 @@ impl WorkloadProvisionDecision {
             ));
         }
         match record.provision_disposition() {
-            Some(WorkloadProvisionDisposition::AttemptPending(attempt))
-            | Some(WorkloadProvisionDisposition::InspectionRequired(attempt)) => {
-                return Ok(Self::InspectExact(Box::new(attempt.clone())));
+            Some(WorkloadProvisionDisposition::DispatchPending(claim))
+            | Some(WorkloadProvisionDisposition::InspectionRequired(claim)) => {
+                return Ok(Self::InspectExact(Box::new(claim.clone())));
             }
             Some(WorkloadProvisionDisposition::DefiniteFailure { .. }) => {
                 return Ok(Self::DefiniteFailure);
@@ -149,10 +150,10 @@ impl WorkloadProvisionDecision {
             WorkloadSagaPhase::Ready
                 if intent.publication() == WorkloadPublicationIntent::Withheld =>
             {
-                let candidate = record.transition_provision_disposition(
+                let candidate = record.advance(
                     WorkloadSagaPhase::Observed,
                     record.phase_detail().clone(),
-                    WorkloadProvisionDisposition::Ready,
+                    None,
                 )?;
                 return Ok(Self::Proposed(ProposedWorkloadProvisionTransition::new(
                     candidate, None,
@@ -187,17 +188,18 @@ impl WorkloadProvisionDecision {
         result: WorkloadProvisionEffectResult,
     ) -> Result<Self, WorkloadSagaError> {
         record.validate()?;
-        let attempt = match record.provision_disposition() {
+        let claim = match record.provision_disposition() {
             Some(
-                WorkloadProvisionDisposition::AttemptPending(attempt)
-                | WorkloadProvisionDisposition::InspectionRequired(attempt),
-            ) => attempt,
+                WorkloadProvisionDisposition::DispatchPending(claim)
+                | WorkloadProvisionDisposition::InspectionRequired(claim),
+            ) => claim,
             _ => {
                 return Err(WorkloadSagaError::InvalidTransition(
                     "provision result requires an exact unresolved attempt",
                 ));
             }
         };
+        let attempt = claim.attempt();
         let result_attempt_id = match &result {
             WorkloadProvisionEffectResult::Succeeded { attempt_id, .. }
             | WorkloadProvisionEffectResult::DefiniteFailure { attempt_id, .. }
@@ -215,27 +217,16 @@ impl WorkloadProvisionDecision {
                     record.provision_disposition(),
                     Some(WorkloadProvisionDisposition::InspectionRequired(_))
                 ) {
-                    return Ok(Self::InspectExact(Box::new(attempt.clone())));
+                    return Ok(Self::InspectExact(Box::new(claim.clone())));
                 }
-                let candidate = record.transition_provision_disposition(
-                    record.phase(),
-                    record.phase_detail().clone(),
-                    WorkloadProvisionDisposition::InspectionRequired(attempt.clone()),
-                )?;
+                let candidate = record.dispatch_to_inspection()?;
                 Ok(Self::Proposed(ProposedWorkloadProvisionTransition::new(
                     candidate,
                     Some(WorkloadProvisionSymbolicAction::InspectExactAttempt),
                 )))
             }
             WorkloadProvisionEffectResult::DefiniteFailure { failure, .. } => {
-                let candidate = record.transition_provision_disposition(
-                    record.phase(),
-                    record.phase_detail().clone(),
-                    WorkloadProvisionDisposition::DefiniteFailure {
-                        attempt: attempt.clone(),
-                        failure,
-                    },
-                )?;
+                let candidate = record.dispatch_to_definite_failure(failure)?;
                 Ok(Self::Proposed(ProposedWorkloadProvisionTransition::new(
                     candidate, None,
                 )))
@@ -255,11 +246,7 @@ impl WorkloadProvisionDecision {
                     );
                 }
                 let phase_detail = phase_detail_after_success(record, &evidence)?;
-                let candidate = record.transition_provision_disposition(
-                    attempt.target_phase(),
-                    phase_detail,
-                    WorkloadProvisionDisposition::Ready,
-                )?;
+                let candidate = record.dispatch_to_success(attempt.target_phase(), phase_detail)?;
                 Ok(Self::Proposed(ProposedWorkloadProvisionTransition::new(
                     candidate, None,
                 )))
@@ -283,6 +270,7 @@ fn propose_attempt(
         desired_digest: intent.desired_digest(),
         required_node: intent.admission().assigned_node().clone(),
         source_digest: intent.source().source_digest(),
+        execution_provider_id: intent.source().execution_provider_id().clone(),
         network_plan_digest: intent.network().digest(),
         selection_evidence: intent
             .network()
@@ -296,17 +284,58 @@ fn propose_attempt(
         subjects: subjects_for(record, step)?,
         prerequisite,
     })?;
-    let candidate = record.transition_provision_disposition(
-        record.phase(),
-        record.phase_detail().clone(),
-        WorkloadProvisionDisposition::AttemptPending(attempt),
-    )?;
+    let provider_target = WorkloadProvisionProviderTarget::for_attempt(&attempt)?;
+    let Some(provider_target) = provider_target else {
+        let evidence = resource_free_success(record, &attempt)?;
+        let phase_detail = phase_detail_after_success(record, &evidence)?;
+        let candidate =
+            record.record_resource_free_network_step(step, target_phase, phase_detail)?;
+        return Ok(WorkloadProvisionDecision::Proposed(
+            ProposedWorkloadProvisionTransition::new(candidate, None),
+        ));
+    };
+    let candidate = if step == WorkloadProvisionStep::ActivateWorkload {
+        record.dispatch_to_activation(attempt, provider_target)?
+    } else {
+        record.ready_to_initial_dispatch(attempt, provider_target)?
+    };
     Ok(WorkloadProvisionDecision::Proposed(
         ProposedWorkloadProvisionTransition::new(
             candidate,
             Some(WorkloadProvisionSymbolicAction::StartExactAttempt),
         ),
     ))
+}
+
+fn resource_free_success(
+    record: &WorkloadSagaRecord,
+    attempt: &WorkloadProvisionAttempt,
+) -> Result<WorkloadProvisionSuccessEvidence, WorkloadSagaError> {
+    let reference = nimbus_workloads::WorkloadNetworkReference::for_intent(record.active_intent());
+    let evidence = match attempt.step() {
+        WorkloadProvisionStep::ReserveNetwork => {
+            WorkloadProvisionSuccessEvidence::NetworkReserved {
+                reference,
+                evidence: WorkloadOwnerEvidenceDigest::sha256(format!(
+                    "nimbus.compute.resource-free.reserve:{}",
+                    attempt.network_plan_digest()
+                )),
+            }
+        }
+        WorkloadProvisionStep::AttachNetwork => WorkloadProvisionSuccessEvidence::NetworkAttached {
+            reference,
+            evidence: WorkloadOwnerEvidenceDigest::sha256(format!(
+                "nimbus.compute.resource-free.attach:{}",
+                attempt.network_plan_digest()
+            )),
+        },
+        _ => {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "only resource-free reserve or attach can omit a provider target",
+            ));
+        }
+    };
+    Ok(evidence)
 }
 
 fn subjects_for(

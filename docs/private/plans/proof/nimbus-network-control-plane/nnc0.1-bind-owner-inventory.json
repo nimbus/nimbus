@@ -40,7 +40,7 @@
       "verification": "source-occurrence",
       "category": "allocation-adapter",
       "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
-      "line": 220,
+      "line": 231,
       "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
       "authority_kinds": [
         "suspicious-port-allocation-definition"
@@ -61,7 +61,7 @@
       "verification": "symbol-presence",
       "category": "allocation-consumer",
       "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
-      "line": 220,
+      "line": 231,
       "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
       "declaration_name": "reserve_launch_ports_for_sandbox",
       "current_owner": "nimbus-sandbox composition consuming nimbus-network authority",
@@ -112,7 +112,7 @@
       "verification": "symbol-presence",
       "category": "pre-bound-consumer",
       "path": "crates/nimbus-cli/src/start/boot.rs",
-      "line": 99,
+      "line": 98,
       "symbol": "run_start_command_inner",
       "declaration_name": "run_start_command_inner",
       "current_owner": "nimbus-cli startup composition plus nimbus-server adoption",
@@ -234,7 +234,7 @@
       "verification": "source-occurrence",
       "category": "socket-bind",
       "path": "crates/nimbus-server/src/construction.rs",
-      "line": 423,
+      "line": 490,
       "symbol": "serve_leased",
       "authority_kinds": [
         "listener-ownership-slot",
@@ -269,7 +269,7 @@
       "verification": "source-occurrence",
       "category": "pre-bound-consumer",
       "path": "crates/nimbus-server/src/listener_lease.rs",
-      "line": 332,
+      "line": 454,
       "symbol": "into_leased",
       "authority_kinds": [
         "listener-ownership-slot",
@@ -465,7 +465,7 @@
       "verification": "source-occurrence",
       "category": "unix-pre-bound-consumer",
       "path": "crates/nimbus-cli/src/machine/api.rs",
-      "line": 182,
+      "line": 171,
       "symbol": "serve_machine_api",
       "authority_kinds": [
         "listener-ownership-slot",
@@ -563,6 +563,52 @@
       "disposition": "local-ipc-exempt",
       "target_owner": "remain machine-provider filesystem IPC",
       "owner_item": "NNC0.1"
+    },
+    {
+      "id": "sandbox-exact-provision-port-allocation",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "allocation-adapter",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+      "line": 389,
+      "symbol": "OciPortLeaseCoordinator::reserve_exact_provision_ports",
+      "authority_kinds": [
+        "suspicious-port-allocation-definition"
+      ],
+      "authority_symbols": [
+        "reserve_exact_provision_ports"
+      ],
+      "current_owner": "nimbus-sandbox composition consuming nimbus-network authority",
+      "current_truth": "Translates the compiled exact plan plus any internal dependency listener into one durable network-owned batch; it does not scan or select ports.",
+      "disposition": "migrated",
+      "target_owner": "nimbus-network owns host-global reservation; sandbox owns exact provision projection and provider sequencing",
+      "owner_item": "NNC6.4"
+    },
+    {
+      "id": "server-workload-ingress-listener",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "socket-bind",
+      "path": "crates/nimbus-server/src/workload_ingress.rs",
+      "line": 520,
+      "symbol": "RunningIngressBatch::start",
+      "authority_kinds": [
+        "tcp-bind",
+        "listener-return-handoff"
+      ],
+      "authority_symbols": [
+        "start",
+        "into_std_parts"
+      ],
+      "authority_paths": [
+        "crates/nimbus-server/src/workload_ingress.rs",
+        "crates/nimbus-server/src/listener_lease.rs"
+      ],
+      "current_owner": "nimbus-server workload-ingress adapter",
+      "current_truth": "Authenticates the exact plan, claims before the real bind, adopts and activates the lease, then continuously hands the owned socket and lifetime into the transparent ingress worker.",
+      "disposition": "migrated",
+      "target_owner": "server retains the bind and ingress worker; every listener consumes a nimbus-network lease",
+      "owner_item": "NNC6.4"
     }
   ],
   "authority_occurrences": [
@@ -580,7 +626,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve_machine_api",
       "ordinal": 1,
-      "line": 182
+      "line": 171
     },
     {
       "site_id": "machine-api-unix-consumer",
@@ -668,7 +714,7 @@
       "kind": "tcp-bind",
       "symbol": "start_listener",
       "ordinal": 1,
-      "line": 800
+      "line": 766
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -676,7 +722,7 @@
       "kind": "listener-return-handoff",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 861
+      "line": 827
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -684,7 +730,7 @@
       "kind": "tcp-from-raw-fd",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 908
+      "line": 874
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -692,7 +738,7 @@
       "kind": "tcp-from-std",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 910
+      "line": 876
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -700,7 +746,7 @@
       "kind": "listener-return-handoff",
       "symbol": "activated_systemd_listener",
       "ordinal": 2,
-      "line": 914
+      "line": 880
     },
     {
       "site_id": "kv-direct-listener",
@@ -828,7 +874,7 @@
       "kind": "netavark-port-mapping-request",
       "symbol": "build_netavark_request",
       "ordinal": 1,
-      "line": 583
+      "line": 582
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -844,7 +890,7 @@
       "kind": "tcp-bind",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 329
+      "line": 347
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -852,7 +898,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "accept_machine_port_proxy",
       "ordinal": 1,
-      "line": 816
+      "line": 1029
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -860,7 +906,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "accept_machine_port_proxy_with",
       "ordinal": 1,
-      "line": 831
+      "line": 1044
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -868,7 +914,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "accept_machine_port_proxy_with_listener_observer",
       "ordinal": 1,
-      "line": 855
+      "line": 1068
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -876,7 +922,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 2,
-      "line": 923
+      "line": 1136
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -884,7 +930,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "new",
       "ordinal": 1,
-      "line": 929
+      "line": 1142
     },
     {
       "site_id": "sandbox-manifest-port-allocation",
@@ -892,7 +938,7 @@
       "kind": "suspicious-port-allocation-definition",
       "symbol": "reserve_launch_ports_for_sandbox",
       "ordinal": 1,
-      "line": 220
+      "line": 231
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -956,7 +1002,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_external_main_listener",
       "ordinal": 1,
-      "line": 153
+      "line": 165
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -964,7 +1010,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve_with_router_config",
       "ordinal": 1,
-      "line": 322
+      "line": 330
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -972,7 +1018,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve",
       "ordinal": 1,
-      "line": 371
+      "line": 379
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -980,7 +1026,7 @@
       "kind": "tcp-bind",
       "symbol": "serve_leased",
       "ordinal": 1,
-      "line": 482
+      "line": 490
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -988,7 +1034,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt",
       "ordinal": 1,
-      "line": 135
+      "line": 193
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -996,7 +1042,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_std",
       "ordinal": 1,
-      "line": 171
+      "line": 220
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1004,7 +1050,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_after_failed_adoption",
       "ordinal": 1,
-      "line": 232
+      "line": 310
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1012,7 +1058,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_std_after_failed_adoption",
       "ordinal": 1,
-      "line": 250
+      "line": 328
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1020,7 +1066,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 1,
-      "line": 279
+      "line": 387
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1028,7 +1074,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 2,
-      "line": 291
+      "line": 399
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1036,7 +1082,7 @@
       "kind": "tcp-from-std",
       "symbol": "into_leased",
       "ordinal": 1,
-      "line": 346
+      "line": 454
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1044,7 +1090,7 @@
       "kind": "listener-return-handoff",
       "symbol": "into_parts",
       "ordinal": 1,
-      "line": 397
+      "line": 511
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1052,7 +1098,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_external_main",
       "ordinal": 1,
-      "line": 663
+      "line": 825
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1060,7 +1106,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "abandon_prepared_after_guard_failure",
       "ordinal": 1,
-      "line": 1003
+      "line": 1548
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1069,6 +1115,30 @@
       "symbol": "serve_tls",
       "ordinal": 1,
       "line": 118
+    },
+    {
+      "site_id": "sandbox-exact-provision-port-allocation",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+      "kind": "suspicious-port-allocation-definition",
+      "symbol": "reserve_exact_provision_ports",
+      "ordinal": 1,
+      "line": 389
+    },
+    {
+      "site_id": "server-workload-ingress-listener",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-return-handoff",
+      "symbol": "into_std_parts",
+      "ordinal": 1,
+      "line": 478
+    },
+    {
+      "site_id": "server-workload-ingress-listener",
+      "path": "crates/nimbus-server/src/workload_ingress.rs",
+      "kind": "tcp-bind",
+      "symbol": "start",
+      "ordinal": 1,
+      "line": 520
     }
   ],
   "non_authority_occurrences": [
@@ -1117,7 +1187,7 @@
       "kind": "ambiguous-instance-bind",
       "symbol": "run_start_command_inner",
       "ordinal": 1,
-      "line": 256,
+      "line": 261,
       "reason": "Binds resolved adapter configuration into an in-process registry; real listener effects are classified separately."
     },
     {
@@ -1245,7 +1315,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "ambiguous_mutation_error",
       "ordinal": 1,
-      "line": 1464,
+      "line": 1565,
       "reason": "Formats a joined mutation/inspection diagnostic from an already-admitted exact binding; it performs no bind, allocation, provider mutation, or authority transition."
     },
     {
@@ -1301,7 +1371,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 333,
+      "line": 351,
       "reason": "Formats the error from the separately classified TcpListener bind; it does not create a second bind or allocation authority."
     },
     {
@@ -1309,7 +1379,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "reserve_launch_ports_for_sandbox",
       "ordinal": 1,
-      "line": 331,
+      "line": 341,
       "reason": "Formats an invariant error from the already-classified PortLease reservation path; it performs no additional allocation or socket effect."
     },
     {
@@ -1317,7 +1387,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "withdraw_bindings",
       "ordinal": 1,
-      "line": 1270,
+      "line": 1399,
       "reason": "Formats a withdrawal failure for an authenticated existing lease; the nimbus-network withdrawal call owns the state transition."
     },
     {
@@ -1468,6 +1538,20 @@
           "cfg_owner": "crates/nimbus-sandbox/src/backends/oci/network.rs",
           "owner_module": "test_support",
           "module": "test_support"
+        },
+        {
+          "path": "crates/nimbus-cli/src/test_support.rs",
+          "declared_from": "crates/nimbus-cli/src/lib.rs",
+          "cfg_owner": "crates/nimbus-cli/src/lib.rs",
+          "owner_module": "test_support",
+          "module": "test_support"
+        },
+        {
+          "path": "crates/nimbus-cli/src/test_support/managed_workload.rs",
+          "declared_from": "crates/nimbus-cli/src/test_support.rs",
+          "cfg_owner": "crates/nimbus-cli/src/lib.rs",
+          "owner_module": "test_support",
+          "module": "managed_workload"
         }
       ],
       "allowed_shape": "The exact child path is admitted only while its declaration remains inside the mechanically verified #[cfg(test)] tests module and no production mod, path, or include edge reaches it."
@@ -1488,15 +1572,15 @@
     }
   ],
   "summary": {
-    "production_sites": 26,
-    "active_production_sites": 23,
+    "production_sites": 28,
+    "active_production_sites": 25,
     "retired_production_sites": 3,
-    "authority_occurrences": 63,
+    "authority_occurrences": 66,
     "non_authority_occurrences": 34,
     "portable_owner_sites": 6,
     "trust_inputs_not_network_authorities": 3,
     "unclassified_production_sites": 0,
-    "production_tcp_bind_occurrences": 6,
+    "production_tcp_bind_occurrences": 7,
     "production_udp_bind_occurrences": 0,
     "local_ipc_occurrences": 5
   }

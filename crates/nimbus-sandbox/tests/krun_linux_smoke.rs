@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 #![allow(clippy::field_reassign_with_default)]
 
 use std::env;
@@ -17,6 +16,9 @@ use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
     SandboxResourceLimits, SandboxRestartPolicy, SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
+
+#[path = "support/provision.rs"]
+mod provision_support;
 
 #[path = "krun_linux_smoke/cleanup.rs"]
 mod cleanup;

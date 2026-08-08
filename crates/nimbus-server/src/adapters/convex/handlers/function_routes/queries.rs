@@ -39,6 +39,7 @@ pub(crate) async fn query(
                 &registry,
                 &runtime_service_registry,
                 &runtime_manager,
+                state.resource_provisioner().ok(),
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
             );
@@ -134,6 +135,7 @@ pub(crate) async fn paginated_query(
                 &registry,
                 &runtime_service_registry,
                 &runtime_manager,
+                state.resource_provisioner().ok(),
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
             );

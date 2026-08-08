@@ -51,6 +51,10 @@ pub(crate) struct MachineForwardedPublicationInspection<'a> {
     pub(crate) durable_receipts: &'a [MachinePortForwardReceipt],
     pub(crate) forwarder: &'a OciMachinePortForwarderConfig,
     pub(crate) port_leases: &'a OciPortLeaseCoordinator,
+    /// Complete compiler-owned launch membership for a PlanOnly provision.
+    /// Legacy coarse launches retain their sandbox-derived authority until the
+    /// NNC6.4 deletion gate removes that path.
+    pub(crate) planned_members: Option<&'a [PortLeaseRequest]>,
 }
 
 /// Non-serializable proof that one exact machine publication is current.
@@ -182,15 +186,26 @@ impl MachinePortProxyLifetimeRegistry {
                 });
             }
         };
-        inspection
-            .port_leases
-            .require_active_machine_bindings_with_lifetimes(
-                inspection.tenant_id,
-                inspection.sandbox_id,
-                inspection.bindings,
-                inspection.leases,
-                live_authority,
-            )?;
+        match inspection.planned_members {
+            Some(plan_members) => inspection
+                .port_leases
+                .require_active_planned_machine_bindings_with_lifetimes(
+                    inspection.tenant_id,
+                    inspection.bindings,
+                    inspection.leases,
+                    plan_members,
+                    live_authority,
+                )?,
+            None => inspection
+                .port_leases
+                .require_active_machine_bindings_with_lifetimes(
+                    inspection.tenant_id,
+                    inspection.sandbox_id,
+                    inspection.bindings,
+                    inspection.leases,
+                    live_authority,
+                )?,
+        };
         if registration
             .proxies
             .iter()

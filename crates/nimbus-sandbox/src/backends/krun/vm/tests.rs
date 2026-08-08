@@ -12,6 +12,7 @@ mod manifest_schema;
 mod natural_exit;
 mod network_composition;
 mod provider_failure_recovery;
+mod provision_phases;
 mod root_ownership;
 mod startup_fencing;
 mod support;
@@ -221,8 +222,18 @@ fn execute_start_denies_fail_closed_off_linux() {
         temp_dir.path().to_path_buf(),
     ));
 
-    let error = block_on(backend.start(sample_spec()))
-        .expect_err("krun execute-mode must fail closed on a non-Linux host");
+    let spec = sample_spec();
+    let activation_id = SandboxId::new("kme4-off-linux-activation");
+    let network_plan = sample_provision_network_plan(&spec, &activation_id, "off-linux-activation");
+    backend
+        .reserve_provision_network(spec, activation_id.clone(), network_plan)
+        .expect("non-Linux reservation must not launch the VMM");
+    backend
+        .prepare_provision_workload(&activation_id)
+        .expect("non-Linux preparation must not launch the VMM");
+    let error = backend
+        .activate_provision_workload(&activation_id)
+        .expect_err("krun activation must fail closed on a non-Linux host");
     assert!(
         matches!(error, crate::error::SandboxError::BackendUnavailable { .. })
             && error.to_string().contains("requires a Linux host"),
@@ -256,17 +267,16 @@ fn execute_start_denies_fail_closed_off_linux() {
 }
 
 #[test]
-fn plan_only_backend_lowers_through_generic_trait_surface() {
+fn plan_only_backend_lowers_before_generic_lifecycle_inspection() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(
-        KrunSandboxBackendConfig::plan_only(
-            temp_dir.path().join("bundles"),
-            temp_dir.path().join("state"),
-        ),
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
     ));
     let spec = sample_spec();
 
-    let handle = block_on(backend.start(spec)).expect("plan-only start should succeed");
+    let handle = materialize_plan_only_fixture(&backend, spec)
+        .expect("plan-only lowering should materialize its fixture");
     assert_eq!(handle.backend, SandboxBackendKind::Krun);
     assert_eq!(handle.status, crate::instance::SandboxStatus::Starting);
     assert_eq!(handle.published_endpoints.len(), 2);
@@ -287,7 +297,7 @@ fn plan_only_backend_lowers_through_generic_trait_surface() {
 }
 
 #[test]
-fn plan_only_backend_lowers_image_launch_through_generic_trait_surface() {
+fn plan_only_backend_lowers_image_launch_before_lifecycle_inspection() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let image_reference = sample_registry_image_reference();
     let mut config = KrunSandboxBackendConfig::plan_only(
@@ -295,12 +305,12 @@ fn plan_only_backend_lowers_image_launch_through_generic_trait_surface() {
         temp_dir.path().join("state"),
     );
     config.use_buildah_unshare = false;
-    let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
+    let backend = KrunSandboxBackend::new(config);
 
     let mut spec = sparse_image_spec("image-trait");
     spec.root = SandboxRootSpec::oci_image_reference(image_reference);
-    let handle = block_on(backend.start(spec.clone()))
-        .expect("plan-only image-backed start should succeed through the trait");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only image-backed lowering should materialize");
 
     assert_eq!(handle.backend, SandboxBackendKind::Krun);
     assert_eq!(handle.status, crate::instance::SandboxStatus::Starting);
@@ -312,7 +322,7 @@ fn plan_only_backend_lowers_image_launch_through_generic_trait_surface() {
 }
 
 #[test]
-fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
+fn plan_only_backend_lowers_build_launch_before_lifecycle_inspection() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let workspace = temp_dir.path().join("workspace");
     fs::create_dir_all(&workspace).expect("workspace directory should exist");
@@ -325,11 +335,11 @@ fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
         temp_dir.path().join("state"),
     );
     config.use_buildah_unshare = false;
-    let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
+    let backend = KrunSandboxBackend::new(config);
 
     let spec = sparse_build_spec("build-trait", "nimbus-api", &dockerfile_path, &workspace);
-    let handle = block_on(backend.start(spec.clone()))
-        .expect("plan-only build-backed start should succeed through the trait");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only build-backed lowering should materialize");
 
     assert_eq!(handle.backend, SandboxBackendKind::Krun);
     assert_eq!(handle.status, crate::instance::SandboxStatus::Starting);
@@ -359,7 +369,8 @@ fn plan_start_writes_bundle_and_manifest_under_backend_roots() {
     ));
     let spec = sample_spec();
 
-    let handle = block_on(backend.start(spec.clone())).expect("plan-only start should succeed");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only lowering should materialize");
     let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let bundle_path = bundle_config_path(temp_dir.path(), &spec, &handle.id);
 
@@ -385,10 +396,10 @@ fn plan_start_scopes_artifacts_by_tenant_for_same_service_name() {
     let tenant_a = sample_spec_for_tenant("tenant-a", "api");
     let tenant_b = sample_spec_for_tenant("tenant-b", "api");
 
-    let handle_a =
-        block_on(backend.start(tenant_a.clone())).expect("tenant-a start should persist");
-    let handle_b =
-        block_on(backend.start(tenant_b.clone())).expect("tenant-b start should persist");
+    let handle_a = materialize_plan_only_fixture(&backend, tenant_a.clone())
+        .expect("tenant-a plan should persist");
+    let handle_b = materialize_plan_only_fixture(&backend, tenant_b.clone())
+        .expect("tenant-b plan should persist");
 
     let manifest_a = manifest_path(temp_dir.path(), &tenant_a, &handle_a.id);
     let manifest_b = manifest_path(temp_dir.path(), &tenant_b, &handle_b.id);
@@ -428,10 +439,10 @@ fn plan_start_lowers_tenant_volume_mounts_under_tenant_state_root() {
     let tenant_b = sample_spec_for_tenant("tenant-b", "api")
         .with_mount(SandboxMountSpec::tenant_volume("shared", "/var/lib/app").read_only(true));
 
-    let handle_a =
-        block_on(backend.start(tenant_a.clone())).expect("tenant-a start should persist");
-    let handle_b =
-        block_on(backend.start(tenant_b.clone())).expect("tenant-b start should persist");
+    let handle_a = materialize_plan_only_fixture(&backend, tenant_a.clone())
+        .expect("tenant-a plan should persist");
+    let handle_b = materialize_plan_only_fixture(&backend, tenant_b.clone())
+        .expect("tenant-b plan should persist");
 
     let volume_a = temp_dir
         .path()
@@ -500,10 +511,10 @@ fn remove_tenant_artifacts_deletes_only_matching_krun_tenant_roots() {
     ));
     let tenant_a = sample_spec_for_tenant("tenant-a", "api");
     let tenant_b = sample_spec_for_tenant("tenant-b", "api");
-    let handle_a =
-        block_on(backend.start(tenant_a.clone())).expect("tenant-a start should persist");
-    let handle_b =
-        block_on(backend.start(tenant_b.clone())).expect("tenant-b start should persist");
+    let handle_a = materialize_plan_only_fixture(&backend, tenant_a.clone())
+        .expect("tenant-a plan should persist");
+    let handle_b = materialize_plan_only_fixture(&backend, tenant_b.clone())
+        .expect("tenant-b plan should persist");
     let shared_cache = temp_dir
         .path()
         .join("state")
@@ -552,7 +563,8 @@ fn plan_only_start_writes_krun_vm_config_for_explicit_resource_limits() {
             .with_memory_limit_bytes(256 * 1024 * 1024),
     );
 
-    let handle = block_on(backend.start(spec.clone())).expect("plan-only start should succeed");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only lowering should materialize");
     let vm_config_path = krun_vm_config_path(&rootfs);
     let vm_config =
         fs::read_to_string(&vm_config_path).expect("krun vm config should be materialized");
@@ -578,7 +590,7 @@ fn plan_only_start_removes_stale_krun_vm_config_when_cpu_limit_is_unset() {
     ));
     let spec = sample_spec_with_rootfs(&rootfs).with_memory_limit_bytes(256 * 1024 * 1024);
 
-    block_on(backend.start(spec)).expect("plan-only start should succeed");
+    materialize_plan_only_fixture(&backend, spec).expect("plan-only lowering should materialize");
 
     assert!(
         !stale_vm_config.exists(),
@@ -601,7 +613,7 @@ fn rootfs_plan_resolves_entrypoint_command_and_user_without_image_defaults() {
         .with_command(["exec app"])
         .with_user("1001:1002");
 
-    let handle = block_on(backend.start(spec.clone()))
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
         .expect("rootfs krun plan should lower entrypoint/command without image defaults");
     let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let manifest: serde_json::Value = serde_json::from_slice(
@@ -837,8 +849,8 @@ fn oci_image_root_plan_only_persists_and_then_cleans_up_materialized_rootfs() {
     let mut spec = spec;
     spec.root = SandboxRootSpec::oci_image_reference(image_reference);
 
-    let handle =
-        block_on(backend.start(spec.clone())).expect("plan-only image-backed start should succeed");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only image-backed lowering should materialize");
 
     let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let manifest_before_stop =
@@ -920,8 +932,8 @@ fn oci_image_root_plan_only_previews_ports_without_reserving_them() {
 
     let mut first_spec = sparse_image_spec("first");
     first_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
-    let first = block_on(backend.start(first_spec))
-        .expect("first plan-only image-backed start should succeed");
+    let first = materialize_plan_only_fixture(&backend, first_spec)
+        .expect("first plan-only image-backed lowering should succeed");
     let first_inspected = block_on(backend.inspect(&first.id))
         .expect("inspect should succeed")
         .expect("first sandbox should be persisted");
@@ -933,8 +945,8 @@ fn oci_image_root_plan_only_previews_ports_without_reserving_them() {
 
     let mut second_spec = sparse_image_spec("second");
     second_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
-    let second = block_on(backend.start(second_spec))
-        .expect("second plan-only image-backed start should succeed");
+    let second = materialize_plan_only_fixture(&backend, second_spec)
+        .expect("second plan-only image-backed lowering should succeed");
     let second_inspected = block_on(backend.inspect(&second.id))
         .expect("inspect should succeed")
         .expect("second sandbox should be persisted");
@@ -951,8 +963,8 @@ fn oci_image_root_plan_only_previews_ports_without_reserving_them() {
 
     let mut third_spec = sparse_image_spec("third");
     third_spec.root = SandboxRootSpec::oci_image_reference(image_reference);
-    let third = block_on(backend.start(third_spec.clone()))
-        .expect("third plan-only image-backed start should succeed");
+    let third = materialize_plan_only_fixture(&backend, third_spec.clone())
+        .expect("third plan-only image-backed lowering should succeed");
     let third_inspected = block_on(backend.inspect(&third.id))
         .expect("inspect should succeed")
         .expect("third sandbox should be persisted");
@@ -1050,7 +1062,11 @@ fn execute_manifest_without_attachment_config_fails_before_network_effects() {
         .expect("missing-config test claim should mint");
 
     let error = backend
-        .configure_network(&manifest, AttachmentAttachAuthority::FreshLaunch(&claim))
+        .configure_network(
+            &manifest,
+            AttachmentAttachAuthority::FreshLaunch(&claim),
+            true,
+        )
         .expect_err("missing attachment config must fail before Netavark");
     assert!(
         error.to_string().contains("no reserved network attachment"),
@@ -1080,11 +1096,12 @@ fn oci_image_root_plan_only_does_not_charge_manifest_only_port_previews() {
 
     let mut first_spec = sparse_image_spec("first");
     first_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
-    block_on(backend.start(first_spec)).expect("first image-backed service plan should render");
+    materialize_plan_only_fixture(&backend, first_spec)
+        .expect("first image-backed service plan should render");
 
     let mut second_spec = sparse_image_spec("second");
     second_spec.root = SandboxRootSpec::oci_image_reference(image_reference);
-    let second = block_on(backend.start(second_spec))
+    let second = materialize_plan_only_fixture(&backend, second_spec)
         .expect("a manifest-only preview must not consume durable tenant quota");
     assert!(
         !second.published_endpoints.is_empty(),
@@ -1115,10 +1132,10 @@ fn plan_only_backend_rejects_same_tenant_active_sandbox_quota_exhaustion() {
         .with_max_log_bytes_per_tenant(None);
     let backend = KrunSandboxBackend::new(config);
 
-    block_on(backend.start(sample_spec()))
+    materialize_plan_only_fixture(&backend, sample_spec())
         .expect("first plan-only sandbox should consume the single active slot");
 
-    let error = block_on(backend.start(sample_spec_for_tenant("tenant", "api")))
+    let error = materialize_plan_only_fixture(&backend, sample_spec_for_tenant("tenant", "api"))
         .expect_err("second same-tenant sandbox should exceed active sandbox quota");
 
     assert!(

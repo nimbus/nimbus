@@ -6,7 +6,8 @@ use crate::{
     NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkExposure,
     NetworkExternalDependency, NetworkForwardingCapabilitySet, NetworkForwardingFeature,
     NetworkIngressCapabilitySet, NetworkIngressFeature, NetworkIsolationMode,
-    NetworkLifecycleFeature, NetworkManagementMode, NetworkPortAssignmentMode,
+    NetworkLifecycleFeature, NetworkLifecycleRequirements, NetworkManagementMode,
+    NetworkPlanContentDigest, NetworkPlanDigest, NetworkPortAssignmentMode,
     NetworkSovereigntyRequirements, PortProtocol,
 };
 
@@ -77,9 +78,23 @@ fn complete_lifecycle() -> [NetworkLifecycleFeature; 3] {
     ]
 }
 
+fn inspect_reconcile_lifecycle() -> [NetworkLifecycleFeature; 2] {
+    [
+        NetworkLifecycleFeature::DurableInspect,
+        NetworkLifecycleFeature::Reconcile,
+    ]
+}
+
+fn complete_lifecycle_requirements() -> NetworkLifecycleRequirements {
+    NetworkLifecycleRequirements::new(
+        NetworkLifecycleCapabilitySet::new(complete_lifecycle()),
+        NetworkLifecycleCapabilitySet::new(complete_lifecycle()),
+    )
+}
+
 fn requirements(
     address_families: impl IntoIterator<Item = NetworkAddressFamily>,
-    lifecycle: impl IntoIterator<Item = NetworkLifecycleFeature>,
+    lifecycle: NetworkLifecycleRequirements,
     offline_restart: bool,
 ) -> NetworkCapabilityRequirements {
     NetworkCapabilityRequirements::new(
@@ -104,7 +119,7 @@ fn requirements(
             NetworkIngressFeature::Streaming,
         ]),
         NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new(lifecycle),
+        lifecycle,
         NetworkSovereigntyRequirements::new(
             NetworkControlPlaneLocality::LocalOnly,
             [],
@@ -229,7 +244,11 @@ fn known_provider_ids_do_not_create_an_implicit_pair() {
     let error = registry
         .select_exact(
             &requested,
-            &requirements([NetworkAddressFamily::Ipv4], complete_lifecycle(), true),
+            &requirements(
+                [NetworkAddressFamily::Ipv4],
+                complete_lifecycle_requirements(),
+                true,
+            ),
         )
         .expect_err("known IDs must not imply compatibility");
 
@@ -250,7 +269,11 @@ fn unknown_provider_roles_are_named_in_stable_role_order() {
     let error = registry
         .select_exact(
             &requested,
-            &requirements([NetworkAddressFamily::Ipv4], complete_lifecycle(), true),
+            &requirements(
+                [NetworkAddressFamily::Ipv4],
+                complete_lifecycle_requirements(),
+                true,
+            ),
         )
         .expect_err("unknown role providers must fail");
 
@@ -261,6 +284,92 @@ fn unknown_provider_roles_are_named_in_stable_role_order() {
             NetworkCapabilityRole::Ingress,
         ]
     );
+}
+
+#[test]
+fn exact_sovereignty_selection_returns_the_authenticated_bundle() {
+    let offered = bundle("attachment-local", "ingress-local");
+    let selection = offered.selection();
+    let expected_evidence = offered.selection_evidence();
+    let registry = NetworkCapabilityRegistry::new([offered]).expect("bundle should register");
+
+    let selected = registry
+        .select_exact_sovereignty(
+            &selection,
+            &NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+        )
+        .expect("exact local providers should satisfy local sovereignty");
+
+    assert_eq!(selected.selection_evidence(), expected_evidence);
+}
+
+#[test]
+fn exact_sovereignty_selection_attributes_each_provider_failure() {
+    let offered = NetworkCapabilityBundle::new(
+        NetworkAttachmentProviderRegistration::new(
+            NetworkProviderId::for_registration_key("attachment-external"),
+            NetworkAttachmentCapabilitySet::new(
+                NetworkManagementMode::NimbusHostManaged,
+                [NetworkAttachmentMode::IsolatedNamespace],
+                [NetworkIsolationMode::TenantSegment],
+            ),
+            [NetworkAddressFamily::Ipv4],
+            NetworkLifecycleCapabilitySet::new(complete_lifecycle()),
+            NetworkSovereigntyCapabilities::new(
+                NetworkControlPlaneLocality::ThirdParty,
+                [NetworkExternalDependency::ExternalControlPlane],
+                false,
+            ),
+        ),
+        NetworkIngressProviderRegistration::new(
+            NetworkProviderId::for_registration_key("ingress-external"),
+            NetworkEndpointCapabilitySet::new([], [], [], [], []),
+            NetworkIngressCapabilitySet::new([]),
+            NetworkForwardingCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new(complete_lifecycle()),
+            NetworkSovereigntyCapabilities::new(
+                NetworkControlPlaneLocality::ThirdParty,
+                [NetworkExternalDependency::Dns],
+                false,
+            ),
+        ),
+    );
+    let selection = offered.selection();
+    let registry = NetworkCapabilityRegistry::new([offered]).expect("bundle should register");
+
+    let error = registry
+        .select_exact_sovereignty(
+            &selection,
+            &NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+        )
+        .expect_err("external providers must fail local-only sovereignty");
+
+    assert_eq!(error.provider_failures().len(), 2);
+    assert_eq!(
+        error
+            .provider_failures()
+            .iter()
+            .map(NetworkCapabilityProviderFailure::role)
+            .collect::<Vec<_>>(),
+        [
+            NetworkCapabilityRole::Attachment,
+            NetworkCapabilityRole::Ingress,
+        ]
+    );
+    for failure in error.provider_failures() {
+        assert_eq!(
+            failure
+                .mismatches()
+                .iter()
+                .map(NetworkCapabilityMismatch::dimension)
+                .collect::<Vec<_>>(),
+            [
+                NetworkCapabilityDimension::ControlPlaneLocality,
+                NetworkCapabilityDimension::ExternalDependency,
+                NetworkCapabilityDimension::OfflineRestart,
+            ]
+        );
+    }
 }
 
 #[test]
@@ -287,7 +396,7 @@ fn shared_dimensions_are_checked_independently_for_both_roles() {
             &selection,
             &requirements(
                 [NetworkAddressFamily::Ipv4, NetworkAddressFamily::Ipv6],
-                complete_lifecycle(),
+                complete_lifecycle_requirements(),
                 true,
             ),
         )
@@ -320,6 +429,182 @@ fn shared_dimensions_are_checked_independently_for_both_roles() {
             ]
         );
     }
+}
+
+#[test]
+fn role_specific_lifecycle_accepts_attachment_delete_without_ingress_delete() {
+    let offered = NetworkCapabilityBundle::new(
+        attachment(
+            "attachment-complete",
+            [NetworkAddressFamily::Ipv4],
+            complete_lifecycle(),
+            true,
+        ),
+        ingress(
+            "ingress-observable",
+            [NetworkAddressFamily::Ipv4],
+            inspect_reconcile_lifecycle(),
+            true,
+        ),
+    );
+    let selection = offered.selection();
+    let registry = NetworkCapabilityRegistry::new([offered]).expect("bundle should register");
+    let required = requirements(
+        [NetworkAddressFamily::Ipv4],
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new(complete_lifecycle()),
+            NetworkLifecycleCapabilitySet::new(inspect_reconcile_lifecycle()),
+        ),
+        true,
+    );
+
+    registry
+        .select_exact(&selection, &required)
+        .expect("ingress deletion is not required for NNC6.4 publication");
+}
+
+#[test]
+fn missing_attachment_delete_fails_only_attachment_role() {
+    let offered = NetworkCapabilityBundle::new(
+        attachment(
+            "attachment-without-delete",
+            [NetworkAddressFamily::Ipv4],
+            inspect_reconcile_lifecycle(),
+            true,
+        ),
+        ingress(
+            "ingress-complete",
+            [NetworkAddressFamily::Ipv4],
+            inspect_reconcile_lifecycle(),
+            true,
+        ),
+    );
+    let selection = offered.selection();
+    let registry = NetworkCapabilityRegistry::new([offered]).expect("bundle should register");
+    let error = registry
+        .select_exact(
+            &selection,
+            &requirements(
+                [NetworkAddressFamily::Ipv4],
+                NetworkLifecycleRequirements::new(
+                    NetworkLifecycleCapabilitySet::new(complete_lifecycle()),
+                    NetworkLifecycleCapabilitySet::new(inspect_reconcile_lifecycle()),
+                ),
+                true,
+            ),
+        )
+        .expect_err("attachment deletion must fail closed");
+
+    assert!(error.safe_alternatives().is_empty());
+    assert_eq!(error.provider_failures().len(), 1);
+    assert_eq!(
+        error.provider_failures()[0].role(),
+        NetworkCapabilityRole::Attachment
+    );
+    assert_eq!(
+        error.provider_failures()[0].mismatches(),
+        &[NetworkCapabilityMismatch::LifecycleFeature {
+            required: NetworkLifecycleFeature::Delete,
+        }]
+    );
+}
+
+#[test]
+fn missing_ingress_reconcile_fails_only_ingress_role() {
+    let offered = NetworkCapabilityBundle::new(
+        attachment(
+            "attachment-complete",
+            [NetworkAddressFamily::Ipv4],
+            complete_lifecycle(),
+            true,
+        ),
+        ingress(
+            "ingress-without-reconcile",
+            [NetworkAddressFamily::Ipv4],
+            [NetworkLifecycleFeature::DurableInspect],
+            true,
+        ),
+    );
+    let selection = offered.selection();
+    let registry = NetworkCapabilityRegistry::new([offered]).expect("bundle should register");
+    let error = registry
+        .select_exact(
+            &selection,
+            &requirements(
+                [NetworkAddressFamily::Ipv4],
+                NetworkLifecycleRequirements::new(
+                    NetworkLifecycleCapabilitySet::new(complete_lifecycle()),
+                    NetworkLifecycleCapabilitySet::new(inspect_reconcile_lifecycle()),
+                ),
+                true,
+            ),
+        )
+        .expect_err("ingress reconciliation must fail closed");
+
+    assert!(error.safe_alternatives().is_empty());
+    assert_eq!(error.provider_failures().len(), 1);
+    assert_eq!(
+        error.provider_failures()[0].role(),
+        NetworkCapabilityRole::Ingress
+    );
+    assert_eq!(
+        error.provider_failures()[0].mismatches(),
+        &[NetworkCapabilityMismatch::LifecycleFeature {
+            required: NetworkLifecycleFeature::Reconcile,
+        }]
+    );
+}
+
+#[test]
+fn role_specific_lifecycle_wire_rejects_uniform_legacy_shape_and_binds_roles() {
+    let required = requirements(
+        [NetworkAddressFamily::Ipv4],
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::Delete]),
+            NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::Reconcile]),
+        ),
+        true,
+    );
+    let encoded = serde_json::to_value(&required).expect("requirements should serialize");
+    assert_eq!(
+        encoded.get("lifecycle"),
+        Some(&serde_json::json!({
+            "attachment": { "features": ["delete"] },
+            "ingress": { "features": ["reconcile"] },
+        }))
+    );
+
+    let mut legacy = encoded;
+    legacy["lifecycle"] = serde_json::json!({ "features": ["delete"] });
+    assert!(
+        serde_json::from_value::<NetworkCapabilityRequirements>(legacy).is_err(),
+        "the uniform lifecycle wire shape must fail closed"
+    );
+
+    let swapped = requirements(
+        [NetworkAddressFamily::Ipv4],
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::Reconcile]),
+            NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::Delete]),
+        ),
+        true,
+    );
+    assert_ne!(
+        serde_json::to_vec(&required).expect("requirements should serialize"),
+        serde_json::to_vec(&swapped).expect("requirements should serialize")
+    );
+    assert_ne!(
+        NetworkPlanDigest::for_content(
+            NetworkPlanContentDigest::sha256(b"role-specific-lifecycle"),
+            &required,
+            &[],
+        ),
+        NetworkPlanDigest::for_content(
+            NetworkPlanContentDigest::sha256(b"role-specific-lifecycle"),
+            &swapped,
+            &[],
+        ),
+    );
 }
 
 #[test]
@@ -366,7 +651,10 @@ fn complete_mismatch_diagnostic_has_fixed_role_and_dimension_order() {
         ),
         NetworkIngressCapabilitySet::new([NetworkIngressFeature::TlsTermination]),
         NetworkForwardingCapabilitySet::new([NetworkForwardingFeature::ConnectionDrain]),
-        NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::Delete]),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::Delete]),
+            NetworkLifecycleCapabilitySet::new([NetworkLifecycleFeature::Delete]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     );
 
@@ -444,7 +732,11 @@ fn satisfying_alternative_is_reported_but_never_selected() {
     let error = registry
         .select_exact(
             &requested,
-            &requirements([NetworkAddressFamily::Ipv4], complete_lifecycle(), true),
+            &requirements(
+                [NetworkAddressFamily::Ipv4],
+                complete_lifecycle_requirements(),
+                true,
+            ),
         )
         .expect_err("requested weak bundle must not be replaced");
 
@@ -488,7 +780,11 @@ fn incomplete_bundle_cannot_appear_as_a_safe_alternative() {
     let error = registry
         .select_exact(
             &selection,
-            &requirements([NetworkAddressFamily::Ipv4], complete_lifecycle(), true),
+            &requirements(
+                [NetworkAddressFamily::Ipv4],
+                complete_lifecycle_requirements(),
+                true,
+            ),
         )
         .expect_err("requested bundle should fail");
 
@@ -553,7 +849,11 @@ fn reordered_bundle_input_has_identical_selection_and_error_wire_output() {
         registry
             .select_exact(
                 &requested,
-                &requirements([NetworkAddressFamily::Ipv4], complete_lifecycle(), true),
+                &requirements(
+                    [NetworkAddressFamily::Ipv4],
+                    complete_lifecycle_requirements(),
+                    true,
+                ),
             )
             .expect_err("missing exact pair should fail")
     });

@@ -9,18 +9,20 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use nimbus_core::TenantId;
-use nimbus_network::{LocalNetworkAttachmentAuthority, NetworkReservationClaim, PortLeaseRequest};
+use nimbus_network::{
+    LocalNetworkAttachmentAuthority, NetworkAttachmentId, NetworkReservationClaim, PortLeaseRequest,
+};
 
 use super::provider_locator::OciAttachmentProviderKind;
 use super::{
     OciIpamAuthority, OciMachinePortForwarderConfig, OciNetavarkOperation, OciNetworkConfig,
-    OciNetworkDirectEgress, OciNetworkLayout, OciPlacementProvider, OciSegmentAllocator,
-    OciSegmentRealization, ReservedNetworkLaunchAuthority,
-    authenticate_container_network_generation,
+    OciNetworkDirectEgress, OciNetworkLayout, OciPlacementAuthority, OciPlacementProvider,
+    OciSegmentAllocator, OciSegmentRealization, ReservedNetworkLaunchAuthority,
+    ReservedNetworkLaunchIdentity, authenticate_container_network_generation,
     authenticate_container_network_generation_for_cleanup,
     compensate_reserved_network_launch_after_ports,
-    deallocate_container_ips_after_confirmed_detach, default_network_attachment_id,
-    place_sandbox_on_block, quarantine_network_segment_hold, release_network_segment_hold,
+    deallocate_container_ips_after_confirmed_detach, place_sandbox_on_block,
+    quarantine_network_segment_hold, release_network_segment_hold,
     release_reserved_network_launch_after_ports,
 };
 use crate::backends::oci::port_lease::{OciPortBindLifetimeBatch, OciPortProvider};
@@ -41,6 +43,9 @@ pub(crate) enum AttachmentBackendKind {
 /// Provider publication shape selected by the already-admitted backend.
 #[derive(Clone, Copy)]
 enum AttachmentPublicationMode<'a> {
+    /// Attachment-only setup. Provider ingress remains deliberately unbound
+    /// until a later, separately fenced publication command.
+    Deferred,
     /// Netavark owns the host listener effects and exact live port lifetimes.
     HostManaged,
     /// A container-only machine adapter owns publication outside Netavark.
@@ -50,13 +55,25 @@ enum AttachmentPublicationMode<'a> {
 impl<'a> AttachmentPublicationMode<'a> {
     fn machine_forwarder(self) -> Option<&'a OciMachinePortForwarderConfig> {
         match self {
-            Self::HostManaged => None,
+            Self::Deferred | Self::HostManaged => None,
             Self::MachineForwarded(forwarder) => Some(forwarder),
         }
     }
 
     fn owns_netavark_bindings(self) -> bool {
         matches!(self, Self::HostManaged)
+    }
+
+    fn is_deferred(self) -> bool {
+        matches!(self, Self::Deferred)
+    }
+
+    fn netavark_bindings(self, bindings: &[SandboxPortBinding]) -> &[SandboxPortBinding] {
+        if self.owns_netavark_bindings() {
+            bindings
+        } else {
+            &[]
+        }
     }
 }
 
@@ -87,7 +104,9 @@ mod recovery;
 mod state;
 
 pub(crate) use plan::oci_attachment_plan;
+#[cfg(test)]
 pub(in crate::backends::oci::network) use plan::oci_attachment_provider_handle;
+pub(in crate::backends::oci::network) use plan::oci_attachment_provider_handle_for_identity;
 
 #[cfg(test)]
 mod test_api;
@@ -287,6 +306,22 @@ impl<'a> OciAttachmentAdapter<'a> {
         )
     }
 
+    pub(crate) fn inspect_non_routable_readiness(
+        &self,
+        lifecycle: &OciAttachmentLifecycle<'_>,
+        pin_provider: &dyn super::OciEgressPinObserver,
+        proxy: Option<&crate::backends::oci::egress::EgressProxyAssignment>,
+        pep: crate::backends::oci::egress::EgressReadinessState,
+    ) -> OciAttachmentBaseReadinessState {
+        attachment_readiness::inspect_non_routable_readiness(
+            lifecycle,
+            &self.context,
+            pin_provider,
+            proxy,
+            pep,
+        )
+    }
+
     pub(crate) fn complete_machine_forwarded_readiness(
         &self,
         base: attachment_readiness::OciAttachmentBaseReadinessEvidence,
@@ -362,6 +397,20 @@ impl<'a> OciAttachmentAuxiliaryListener<'a> {
 /// The adapter constructor stays private to this owner. Production callers and
 /// the shared contract therefore exercise the same type-bound route rather
 /// than manufacturing a test profile.
+pub(crate) struct OciAttachmentProviderPaths {
+    netavark: PathBuf,
+    aardvark_dns: PathBuf,
+}
+
+impl OciAttachmentProviderPaths {
+    pub(crate) fn new(netavark: PathBuf, aardvark_dns: PathBuf) -> Self {
+        Self {
+            netavark,
+            aardvark_dns,
+        }
+    }
+}
+
 pub(crate) trait OciHostManagedAttachmentBackend {
     const ATTACHMENT_BACKEND_KIND: AttachmentBackendKind;
 
@@ -370,19 +419,20 @@ pub(crate) trait OciHostManagedAttachmentBackend {
         tenant_id: &TenantId,
         layout: &OciNetworkLayout,
         sandbox_id: &SandboxId,
+        attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
-        netavark_path: PathBuf,
-        aardvark_dns_path: PathBuf,
+        provider_paths: OciAttachmentProviderPaths,
     ) -> Result<OciNetworkConfig> {
         lifecycle.reserve_config(
             tenant_id,
             layout,
             sandbox_id,
+            attachment_id,
             reservation_claim,
             OciAttachmentProviderConfig {
                 backend: Self::ATTACHMENT_BACKEND_KIND,
-                netavark_path,
-                aardvark_dns_path,
+                netavark_path: provider_paths.netavark,
+                aardvark_dns_path: provider_paths.aardvark_dns,
             },
         )
     }
@@ -394,6 +444,16 @@ pub(crate) trait OciHostManagedAttachmentBackend {
             Self::ATTACHMENT_BACKEND_KIND,
             input,
             AttachmentPublicationMode::HostManaged,
+        )
+    }
+
+    fn non_routable_attachment_adapter<'a>(
+        input: OciAttachmentInput<'a>,
+    ) -> OciAttachmentAdapter<'a> {
+        OciAttachmentAdapter::new(
+            Self::ATTACHMENT_BACKEND_KIND,
+            input,
+            AttachmentPublicationMode::Deferred,
         )
     }
 }
@@ -428,7 +488,7 @@ impl OciAttachmentContext<'_> {
             self.sandbox_id,
             self.display_name,
             self.hostname,
-            self.bindings,
+            self.publication.netavark_bindings(self.bindings),
             self.publication.machine_forwarder(),
         )
     }
@@ -558,9 +618,12 @@ impl<'a> OciAttachmentLifecycle<'a> {
         netavark_path: PathBuf,
         aardvark_dns_path: PathBuf,
         segment: &OciSegmentRealization,
+        attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
     ) -> OciNetworkConfig {
         OciNetworkConfig {
+            attachment_id: attachment_id.clone(),
+            network_plan: None,
             netavark_path,
             aardvark_dns_path,
             network_name: segment.network_name().to_owned(),
@@ -584,6 +647,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
         tenant_id: &TenantId,
         layout: &OciNetworkLayout,
         sandbox_id: &SandboxId,
+        attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
         provider: OciAttachmentProviderConfig,
     ) -> Result<OciNetworkConfig> {
@@ -593,13 +657,14 @@ impl<'a> OciAttachmentLifecycle<'a> {
             tenant_id,
             layout,
             sandbox_id,
-            reservation_claim,
+            OciPlacementAuthority::new(attachment_id, reservation_claim),
             OciPlacementProvider::new(provider.backend.provider_kind(), move |segment, claim| {
                 Self::config_from_segment(
                     provider.backend,
                     provider.netavark_path.clone(),
                     provider.aardvark_dns_path.clone(),
                     segment,
+                    attachment_id,
                     claim,
                 )
             }),
@@ -611,23 +676,17 @@ impl<'a> OciAttachmentLifecycle<'a> {
     pub(crate) fn compensate_reserved(
         &self,
         backend: AttachmentBackendKind,
-        layout: &OciNetworkLayout,
-        tenant_id: &TenantId,
-        sandbox_id: &SandboxId,
-        reservation_claim: &NetworkReservationClaim,
+        identity: ReservedNetworkLaunchIdentity<'_>,
         primary: SandboxError,
     ) -> SandboxError {
         let port_compensation = self
             .ports
-            .release_never_bound_launch_claim(reservation_claim);
+            .release_never_bound_launch_claim(identity.reservation_claim());
         compensate_reserved_network_launch_after_ports(
             ReservedNetworkLaunchAuthority::new(
                 self.allocator,
                 self.ipam,
-                layout,
-                tenant_id,
-                sandbox_id,
-                reservation_claim,
+                identity,
                 backend.provider_kind(),
             ),
             primary,
@@ -639,20 +698,14 @@ impl<'a> OciAttachmentLifecycle<'a> {
     pub(crate) fn release_reserved(
         &self,
         backend: AttachmentBackendKind,
-        layout: &OciNetworkLayout,
-        tenant_id: &TenantId,
-        sandbox_id: &SandboxId,
-        reservation_claim: &NetworkReservationClaim,
+        identity: ReservedNetworkLaunchIdentity<'_>,
         port_compensation: Result<()>,
     ) -> Result<()> {
         release_reserved_network_launch_after_ports(
             ReservedNetworkLaunchAuthority::new(
                 self.allocator,
                 self.ipam,
-                layout,
-                tenant_id,
-                sandbox_id,
-                reservation_claim,
+                identity,
                 backend.provider_kind(),
             ),
             port_compensation,
@@ -695,12 +748,16 @@ impl<'a> OciAttachmentLifecycle<'a> {
             context.sandbox_id,
         )?;
         observer.checkpoint(AttachmentAttachPhase::GenerationAuthenticated)?;
-        self.ports.require_binding_leases(
-            context.tenant_id,
-            context.sandbox_id,
-            context.bindings,
-            context.leases,
-        )?;
+        if context.publication.is_deferred() {
+            self.authenticate_deferred_listener_authority(context)?;
+        } else {
+            self.ports.require_binding_leases(
+                context.tenant_id,
+                context.sandbox_id,
+                context.bindings,
+                context.leases,
+            )?;
+        }
         observer.checkpoint(AttachmentAttachPhase::LeasesAuthenticated)?;
         let association = authority::authenticate_attach_association(self.allocator, context)?;
         let durable =
@@ -945,10 +1002,10 @@ impl<'a> OciAttachmentLifecycle<'a> {
         // Adoption already moved the exact reservation to Held. This call is an
         // idempotent confirmation that the same attachment remains current
         // after provider setup; it does not create a second hold.
-        if let Err(primary) = self.allocator.acquire(
-            context.tenant_id,
-            &default_network_attachment_id(context.sandbox_id),
-        ) {
+        if let Err(primary) = self
+            .allocator
+            .acquire(context.tenant_id, &context.config.attachment_id)
+        {
             let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(self.compensate_registered_failure(
                 context,
@@ -1221,7 +1278,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
             && let Err(error) = quarantine_network_segment_hold(
                 self.allocator,
                 context.tenant_id,
-                context.sandbox_id,
+                &context.config.attachment_id,
                 &context.config.reservation_claim,
             )
         {

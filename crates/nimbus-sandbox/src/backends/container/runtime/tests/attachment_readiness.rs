@@ -218,6 +218,7 @@ fn netavark_endpoint_effect_requires_complete_current_port_leases() {
                     .as_ref()
                     .expect("planned launch should retain coordinator claim"),
             ),
+            true,
         )
         .expect_err("provider setup without the complete lease set must fail");
     assert!(

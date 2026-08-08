@@ -19,6 +19,18 @@ fn freeze_empty(bootstrap: LocalNetworkManagerBootstrap) -> Arc<LocalNetworkMana
         .freeze(NetworkCapabilityRegistry::new([]).expect("empty test registry should validate"))
 }
 
+fn protocol_only_listener_options(
+    engine: Arc<Engine>,
+    manager: Arc<LocalNetworkManager>,
+) -> ServeOptions {
+    assert_eq!(
+        manager.capability_registry().selections().count(),
+        0,
+        "listener-only fixtures must not advertise workload providers"
+    );
+    ServeOptions::protocol_only_with_authority(engine, manager.authority())
+}
+
 #[cfg(unix)]
 #[test]
 fn manager_derived_listener_authority_survives_alias_retarget_until_final_drop() {
@@ -39,7 +51,7 @@ fn manager_derived_listener_authority_survives_alias_retarget_until_final_drop()
     let engine = Arc::new(
         Engine::new(root.path().join("engine")).expect("fixture engine should initialize"),
     );
-    let options = ServeOptions::new(engine, manager);
+    let options = protocol_only_listener_options(engine, manager);
 
     std::fs::remove_file(&alias).expect("original alias should be removed");
     symlink(&foreign_root, &alias).expect("alias should be retargeted");
@@ -86,7 +98,7 @@ async fn manager_derived_main_sibling_and_external_paths_retain_one_authority() 
     let engine = Arc::new(
         Engine::new(root.path().join("engine")).expect("fixture engine should initialize"),
     );
-    let options = ServeOptions::new(engine, manager);
+    let options = protocol_only_listener_options(engine, manager);
     let mut prebound = PreboundServerListeners::new(authority);
 
     std::fs::remove_file(&alias).expect("original alias should be removed");
@@ -243,7 +255,7 @@ fn sandbox_shaped_reservation_conflicts_with_server_before_kernel_bind() {
     let engine = Arc::new(
         Engine::new(root.path().join("engine")).expect("fixture engine should initialize"),
     );
-    let server = ServeOptions::new(engine, manager);
+    let server = protocol_only_listener_options(engine, manager);
 
     let error = match server.prepare_main_listener(requested_addr) {
         Ok(_) => panic!("server must lose to the sandbox-shaped durable reservation"),

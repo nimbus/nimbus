@@ -1,6 +1,8 @@
 use super::super::OciNetworkConfig;
 use super::*;
-use crate::backends::oci::network::{SingleNodeSegmentAllocator, direct_test_ipam_authority};
+use crate::backends::oci::network::{
+    SingleNodeSegmentAllocator, default_network_attachment_id, direct_test_ipam_authority,
+};
 use nimbus_core::TenantId;
 use nimbus_network::{
     LocalNetworkStateStore, NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim,
@@ -31,16 +33,18 @@ fn exact_pre_effect_compensation_removes_ipam_before_segment_authority() {
         .expect("layout should initialize");
     let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
     let claim = reservation_claim("exact-compensation");
+    let attachment_id = super::super::default_network_attachment_id(&sandbox);
     super::super::placement::place_sandbox_on_block(
         &allocator,
         &ipam_authority,
         &tenant,
         &layout,
         &sandbox,
-        &claim,
+        super::super::placement::OciPlacementAuthority::new(&attachment_id, &claim),
         super::super::placement::OciPlacementProvider::new(
             super::super::provider_locator::OciAttachmentProviderKind::Container,
             |segment, reservation_claim| OciNetworkConfig {
+                attachment_id: attachment_id.clone(),
                 network_name: segment.network_name().to_owned(),
                 network_interface: segment.network_interface().to_owned(),
                 network_subnet: segment.cidr().to_string(),
@@ -61,10 +65,7 @@ fn exact_pre_effect_compensation_removes_ipam_before_segment_authority() {
         ReservedNetworkLaunchAuthority::new(
             &allocator,
             &ipam_authority,
-            &layout,
-            &tenant,
-            &sandbox,
-            &claim,
+            ReservedNetworkLaunchIdentity::new(&layout, &tenant, &sandbox, &attachment_id, &claim),
             super::super::provider_locator::OciAttachmentProviderKind::Container,
         ),
         Ok(()),
@@ -106,16 +107,18 @@ fn exact_pre_effect_compensation_removes_ipam_while_sibling_hold_remains() {
         (&cancelled_layout, &cancelled, &cancelled_claim),
         (&sibling_layout, &sibling, &sibling_claim),
     ] {
+        let attachment_id = super::super::default_network_attachment_id(sandbox);
         super::super::placement::place_sandbox_on_block(
             &allocator,
             &ipam_authority,
             &tenant,
             layout,
             sandbox,
-            claim,
+            super::super::placement::OciPlacementAuthority::new(&attachment_id, claim),
             super::super::placement::OciPlacementProvider::new(
                 super::super::provider_locator::OciAttachmentProviderKind::Container,
                 |segment, reservation_claim| OciNetworkConfig {
+                    attachment_id: attachment_id.clone(),
                     network_name: segment.network_name().to_owned(),
                     network_interface: segment.network_interface().to_owned(),
                     network_subnet: segment.cidr().to_string(),
@@ -128,15 +131,19 @@ fn exact_pre_effect_compensation_removes_ipam_while_sibling_hold_remains() {
         )
         .expect("placement should reserve attachment and IPAM");
     }
+    let cancelled_attachment_id = super::super::default_network_attachment_id(&cancelled);
 
     release_reserved_network_launch_after_ports(
         ReservedNetworkLaunchAuthority::new(
             &allocator,
             &ipam_authority,
-            &cancelled_layout,
-            &tenant,
-            &cancelled,
-            &cancelled_claim,
+            ReservedNetworkLaunchIdentity::new(
+                &cancelled_layout,
+                &tenant,
+                &cancelled,
+                &cancelled_attachment_id,
+                &cancelled_claim,
+            ),
             super::super::provider_locator::OciAttachmentProviderKind::Container,
         ),
         Ok(()),
@@ -181,16 +188,18 @@ fn foreign_pre_effect_claim_preserves_ipam_and_segment_authority_byte_for_byte()
         .expect("layout should initialize");
     let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
     let winner = reservation_claim("winner");
+    let attachment_id = super::super::default_network_attachment_id(&sandbox);
     super::super::placement::place_sandbox_on_block(
         &allocator,
         &ipam_authority,
         &tenant,
         &layout,
         &sandbox,
-        &winner,
+        super::super::placement::OciPlacementAuthority::new(&attachment_id, &winner),
         super::super::placement::OciPlacementProvider::new(
             super::super::provider_locator::OciAttachmentProviderKind::Container,
             |segment, reservation_claim| OciNetworkConfig {
+                attachment_id: attachment_id.clone(),
                 network_name: segment.network_name().to_owned(),
                 network_interface: segment.network_interface().to_owned(),
                 network_subnet: segment.cidr().to_string(),
@@ -209,10 +218,13 @@ fn foreign_pre_effect_claim_preserves_ipam_and_segment_authority_byte_for_byte()
         ReservedNetworkLaunchAuthority::new(
             &allocator,
             &ipam_authority,
-            &layout,
-            &tenant,
-            &sandbox,
-            &reservation_claim("foreign"),
+            ReservedNetworkLaunchIdentity::new(
+                &layout,
+                &tenant,
+                &sandbox,
+                &attachment_id,
+                &reservation_claim("foreign"),
+            ),
             super::super::provider_locator::OciAttachmentProviderKind::Container,
         ),
         Ok(()),
@@ -245,18 +257,16 @@ fn failed_bridge_cleanup_must_fence_segment_from_reuse() {
     let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
     let original_tenant = TenantId::new("tenant-original").expect("tenant should parse");
     let original_sandbox = SandboxId::new("sandbox-original");
+    let original_attachment_id = default_network_attachment_id(&original_sandbox);
     let original = allocator
-        .acquire(
-            &original_tenant,
-            &default_network_attachment_id(&original_sandbox),
-        )
+        .acquire(&original_tenant, &original_attachment_id)
         .expect("original segment should allocate");
 
     let mut surviving_bridges = Vec::new();
     let cleanup_errors = release_network_segment_hold_with(
         &allocator,
         &original_tenant,
-        &original_sandbox,
+        &original_attachment_id,
         None,
         |segment| {
             surviving_bridges.push(segment.network_interface().to_owned());
@@ -293,7 +303,7 @@ fn failed_bridge_cleanup_must_fence_segment_from_reuse() {
     let retry_errors = release_network_segment_hold_with(
         &allocator,
         &original_tenant,
-        &original_sandbox,
+        &original_attachment_id,
         None,
         |segment| {
             successful_reaps += 1;
@@ -320,7 +330,7 @@ fn failed_bridge_cleanup_must_fence_segment_from_reuse() {
     let repeated_errors = release_network_segment_hold_with(
         &allocator,
         &original_tenant,
-        &original_sandbox,
+        &original_attachment_id,
         None,
         |_| {
             successful_reaps += 1;

@@ -10,14 +10,16 @@ use crate::backends::oci::egress::{
 use crate::backends::oci::network::{
     ConfiguredSegmentAllocator, MachinePortProxyLifetimeRegistry, OciIpamAuthority,
     OciNetworkProcess, OciNetworkProcessError, OciSegmentAllocator, RealOciEgressPinProvider,
-    reconcile_startup_network_state,
+    reconcile_startup_network_state_with_retained_desired_manifests,
 };
 use crate::backends::oci::port_lifecycle::{NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator};
 #[cfg(test)]
 use crate::backends::readiness_probe::ReadinessProbeProvider;
 use crate::backends::readiness_probe::SocketReadinessProbeProvider;
 
-use super::manifest::reconcile_startup_manifest_publications;
+use super::manifest::{
+    reconcile_startup_manifest_publications, retained_reservation_pending_manifest_paths,
+};
 use super::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 
 impl ContainerSandboxBackend {
@@ -168,16 +170,17 @@ impl ContainerSandboxBackend {
         let startup_reconciliation_error = match attachment_authority.as_ref() {
             Err(error) => Some(Arc::<str>::from(error.to_string())),
             Ok(attachment_authority) => {
-                reconcile_startup_manifest_publications(&config.workload_state_root).and_then(
-                    |()| {
-                        reconcile_startup_network_state(
+                reconcile_startup_manifest_publications(&config.workload_state_root)
+                    .and_then(|()| retained_reservation_pending_manifest_paths(&config))
+                    .and_then(|retained_desired_manifests| {
+                        reconcile_startup_network_state_with_retained_desired_manifests(
                             &config.workload_state_root,
                             attachment_authority,
                             &ipam_authority,
                             segment_allocator.as_ref(),
+                            &retained_desired_manifests,
                         )
-                    },
-                )
+                    })
             }
             .err()
             .map(|error| Arc::<str>::from(error.to_string())),

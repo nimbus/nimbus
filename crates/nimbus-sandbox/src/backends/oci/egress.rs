@@ -15,18 +15,24 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::backends::oci::port_lease::{
-    ExpectedListenerAuthority, OciConfirmedBindFailure, OciPortProvider,
+    ExpectedListenerAuthority, OciConfirmedBindFailure, OciPortActivation, OciPortProvider,
     abandon_bind_attempt_with_lifetime_without_effect, abandon_bind_attempts_without_effect,
+    abandon_bind_plan_member_attempt_with_lifetime_without_effect,
+    abandon_rebind_plan_member_attempt_with_lifetime_without_effect,
+    adopt_claimed_and_activate_plan_member_with_lifetime,
+    adopt_claimed_and_activate_rebind_plan_member_with_lifetime,
     adopt_claimed_and_activate_with_lifetime, claim_bind_attempt_with_lifetime,
+    claim_bind_plan_member_attempt_with_lifetime, claim_rebind_plan_member_attempt_with_lifetime,
+    prepare_process_bound_plan_member_rebind_after_owner_death,
     prepare_process_bound_rebind_after_owner_death, prepare_rebind_after_confirmed_stop,
     prepare_rebind_after_confirmed_stop_with_lifetime, record_bind_failure_with_lifetime,
-    release_reserved_batch_without_effect, require_active_provider_binding,
-    require_current_listener_authority,
+    record_plan_member_bind_failure_with_lifetime, release_reserved_batch_without_effect,
+    require_active_provider_binding, require_current_listener_authority, target_for_ip,
 };
 #[cfg(test)]
 use crate::backends::oci::port_lease::{
     OciPortLeaseIntent, adopt_claimed_and_activate, claim_bind_attempts, port_lease_request,
-    reserve_provider_assigned, target_for_ip,
+    reserve_provider_assigned,
 };
 #[cfg(test)]
 use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
@@ -39,11 +45,11 @@ use nimbus_egress::{
     EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV,
     EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
 };
-#[cfg(test)]
-use nimbus_network::PortExposure;
 use nimbus_network::{
     ListenerId, LocalNetworkAuthority, LocalPortLeaseAuthority, NetworkReservationClaim,
-    PortBindClaim, PortLeaseEffectScope, PortLeaseLifetimeGuard, PortLeaseRecord, PortLeaseRequest,
+    PortBindClaim, PortBindRealm, PortExposure, PortLeaseAccounting, PortLeaseEffectScope,
+    PortLeaseLifetimeGuard, PortLeasePhase, PortLeaseRecord, PortLeaseRequest, PortProtocol,
+    PortPublicationIntent, PortRequestMode,
 };
 use nimbus_proxy::{
     AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressEngine, EgressProxyError,
@@ -117,6 +123,10 @@ struct RegisteredArtifacts {
     /// Present on every production registration. Test-only injection may omit
     /// it because it never exercises provider lease lifecycle.
     port_lease: Option<PortLeaseRequest>,
+    /// Complete compiler-issued membership witness for a planned PEP lease.
+    /// Stored with the live effect so readiness/recovery never reconstructs
+    /// identities or generations from `SandboxId`.
+    plan_members: Option<Vec<PortLeaseRequest>>,
     /// Exact non-cloneable process lifetime retained for the complete PEP
     /// socket/worker lifetime. Test-only injection without a durable lease may
     /// omit it.
@@ -137,6 +147,13 @@ enum PepPreAdoptionAttempt<'a> {
 pub(crate) enum PepPreAdoptionReleaseAuthority<'a> {
     Retain,
     FreshLaunch(&'a NetworkReservationClaim),
+    FreshPlannedLaunch {
+        reservation_claim: &'a NetworkReservationClaim,
+        plan_members: &'a [PortLeaseRequest],
+    },
+    PlannedRebind {
+        plan_members: &'a [PortLeaseRequest],
+    },
 }
 
 impl<'a> PepPreAdoptionReleaseAuthority<'a> {
@@ -144,7 +161,23 @@ impl<'a> PepPreAdoptionReleaseAuthority<'a> {
         match self {
             Self::Retain => None,
             Self::FreshLaunch(claim) => Some(claim),
+            Self::FreshPlannedLaunch {
+                reservation_claim, ..
+            } => Some(reservation_claim),
+            Self::PlannedRebind { .. } => None,
         }
+    }
+
+    fn plan_members(self) -> Option<&'a [PortLeaseRequest]> {
+        match self {
+            Self::FreshPlannedLaunch { plan_members, .. }
+            | Self::PlannedRebind { plan_members } => Some(plan_members),
+            Self::Retain | Self::FreshLaunch(_) => None,
+        }
+    }
+
+    fn is_planned_rebind(self) -> bool {
+        matches!(self, Self::PlannedRebind { .. })
     }
 }
 
@@ -341,7 +374,70 @@ impl EgressProxyRegistry {
         id: &SandboxId,
         bind_addr: SocketAddr,
         port_lease: &PortLeaseRequest,
+        release_authority: PepPreAdoptionReleaseAuthority<'_>,
     ) -> Result<PortLeaseRecord> {
+        if let Some(plan_members) = release_authority.plan_members() {
+            let requested_port_matches = match port_lease.binding().port() {
+                PortRequestMode::Exact(port) => port.get() == bind_addr.port(),
+                PortRequestMode::Range(range) => {
+                    range.start().get() <= bind_addr.port() && bind_addr.port() <= range.end().get()
+                }
+                PortRequestMode::ProviderAssigned => false,
+            };
+            if port_lease.tenant_id() != Some(tenant_id)
+                || port_lease.accounting() != PortLeaseAccounting::HostInternal
+                || port_lease.publication() != &PortPublicationIntent::Unpublished
+                || port_lease.binding().protocol() != PortProtocol::Tcp
+                || port_lease.binding().realm() != &PortBindRealm::Host
+                || port_lease.binding().target() != &target_for_ip(bind_addr.ip())?
+                || port_lease.binding().exposure() != PortExposure::Private
+                || !requested_port_matches
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "planned egress PEP lease {} crossed its tenant, generation, or exact bind intent",
+                        port_lease.lease_id()
+                    ),
+                });
+            }
+            let record = self
+                .port_authority()?
+                .inspect_plan_member(plan_members, port_lease)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "planned egress PEP lease {} rejected its complete membership witness: {error}",
+                        port_lease.lease_id()
+                    ),
+                })?;
+            let retained_rebind = record.phase() == PortLeasePhase::Reserved
+                && record.reservation_claim().is_none()
+                && record.binding().is_none()
+                && record.adoption_claim().is_none()
+                && record.confirmed_stopped_binding().is_some()
+                && record.failure().is_none();
+            if record.reserved_port().map(std::num::NonZeroU16::get) != Some(bind_addr.port())
+                || !matches!(
+                    record.phase(),
+                    PortLeasePhase::Reserved
+                        | PortLeasePhase::Binding
+                        | PortLeasePhase::Active
+                        | PortLeasePhase::CleanupPending
+                )
+                || (record.phase() == PortLeasePhase::Reserved
+                    && record.reservation_claim() != release_authority.reservation_claim()
+                    && !retained_rebind)
+                || (record.phase() == PortLeasePhase::CleanupPending
+                    && (record.binding().is_none() || record.active_lifetime().is_none()))
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "planned egress PEP lease {} crossed its exact assignment, launch claim, or current phase",
+                        port_lease.lease_id()
+                    ),
+                });
+            }
+            return Ok(record);
+        }
         require_current_listener_authority(
             self.port_authority()?,
             ExpectedListenerAuthority::egress_pep(tenant_id, id, bind_addr)?,
@@ -409,8 +505,31 @@ impl EgressProxyRegistry {
             }
         };
         let bind_claim_abandoned = if let Some(bind_claim) = bind_claim {
-            let abandon = match lifetime {
-                Some(lifetime) => abandon_bind_attempt_with_lifetime_without_effect(
+            let abandon = match (lifetime, release_authority.plan_members()) {
+                (Some(lifetime), Some(plan_members)) if release_authority.is_planned_rebind() => {
+                    abandon_rebind_plan_member_attempt_with_lifetime_without_effect(
+                        port_authority,
+                        plan_members,
+                        port_lease,
+                        bind_claim,
+                        lifetime,
+                    )
+                    .map(|_| ())
+                }
+                (Some(lifetime), Some(plan_members)) => {
+                    abandon_bind_plan_member_attempt_with_lifetime_without_effect(
+                        port_authority,
+                        plan_members,
+                        port_lease,
+                        bind_claim,
+                        lifetime,
+                        release_authority
+                            .reservation_claim()
+                            .expect("planned launch carries a reservation claim"),
+                    )
+                    .map(|_| ())
+                }
+                (Some(lifetime), None) => abandon_bind_attempt_with_lifetime_without_effect(
                     port_authority,
                     port_lease,
                     bind_claim,
@@ -418,7 +537,7 @@ impl EgressProxyRegistry {
                     release_authority.reservation_claim(),
                 )
                 .map(|_| ()),
-                None => abandon_bind_attempts_without_effect(
+                (None, _) => abandon_bind_attempts_without_effect(
                     port_authority,
                     std::slice::from_ref(port_lease),
                     std::slice::from_ref(bind_claim),
@@ -501,9 +620,10 @@ impl EgressProxyRegistry {
         } else {
             false
         };
-        if let Some(reservation_claim) = release_authority
-            .reservation_claim()
-            .filter(|_| trust_anchor_cleanup_confirmed && bind_claim_abandoned)
+        if release_authority.plan_members().is_none()
+            && let Some(reservation_claim) = release_authority
+                .reservation_claim()
+                .filter(|_| trust_anchor_cleanup_confirmed && bind_claim_abandoned)
         {
             match release_reserved_batch_without_effect(
                 port_authority,
@@ -602,6 +722,10 @@ impl EgressProxyRegistry {
             PepPreAdoptionReleaseAuthority::FreshLaunch(_) => {
                 self.stop_with_assignment(tenant_id, sandbox_id, Some(&assignment))
             }
+            PepPreAdoptionReleaseAuthority::FreshPlannedLaunch { .. }
+            | PepPreAdoptionReleaseAuthority::PlannedRebind { .. } => {
+                self.stop_with_assignment(tenant_id, sandbox_id, Some(&assignment))
+            }
         };
         match cleanup {
             Ok(_) => match retention_conflict {
@@ -658,6 +782,10 @@ impl EgressProxyRegistry {
         port_lease: &PortLeaseRequest,
         release_authority: PepPreAdoptionReleaseAuthority<'_>,
     ) -> Result<()> {
+        // Authenticate durable authority before reserving a process registry
+        // slot or creating any filesystem/provider effect.
+        let current =
+            self.require_pep_lease(tenant_id, id, bind_addr, port_lease, release_authority)?;
         let decision_log_path = self.decision_log_path(tenant_id, id);
         let trust_anchor_path = self.trust_anchor_path(tenant_id, id);
         let workload_id = Self::workload_id(tenant_id, id)?;
@@ -677,8 +805,21 @@ impl EgressProxyRegistry {
                 phase: RegisteredLifecyclePhase::Running,
                 evidence: Some(lifetime),
             } => {
-                let record = self.require_pep_lease(tenant_id, id, bind_addr, port_lease)?;
-                if record.active_lifetime() != Some(lifetime) {
+                // `reserve_or_inspect` may wait for a concurrent preparation
+                // to commit. The authority snapshot authenticated before that
+                // wait can therefore still be Reserved or Binding even though
+                // the registry now exposes the winner's Running lifetime.
+                // Re-authenticate current durable state before comparing the
+                // exact process generation; never accept the stale snapshot as
+                // evidence against a successfully committed peer.
+                let committed = self.require_pep_lease(
+                    tenant_id,
+                    id,
+                    bind_addr,
+                    port_lease,
+                    release_authority,
+                )?;
+                if committed.active_lifetime() != Some(lifetime) {
                     return Err(SandboxError::OperationFailed {
                         message: format!(
                             "running egress proxy for sandbox {id} does not match durable \
@@ -717,20 +858,74 @@ impl EgressProxyRegistry {
                 });
             }
         };
-        let current = self.require_pep_lease(tenant_id, id, bind_addr, port_lease)?;
+        let planned_rebind = release_authority.plan_members().is_some()
+            && (matches!(
+                current.phase(),
+                PortLeasePhase::Active | PortLeasePhase::CleanupPending
+            ) || (current.phase() == PortLeasePhase::Reserved
+                && current.reservation_claim().is_none()
+                && current.confirmed_stopped_binding().is_some()));
         if current.active_lifetime().is_some() && current.binding().is_some() {
-            prepare_process_bound_rebind_after_owner_death(self.port_authority()?, port_lease)?;
+            match release_authority.plan_members() {
+                Some(plan_members) => {
+                    prepare_process_bound_plan_member_rebind_after_owner_death(
+                        self.port_authority()?,
+                        plan_members,
+                        port_lease,
+                    )?;
+                }
+                None => {
+                    prepare_process_bound_rebind_after_owner_death(
+                        self.port_authority()?,
+                        port_lease,
+                    )?;
+                }
+            }
         }
+        let release_authority = if planned_rebind {
+            PepPreAdoptionReleaseAuthority::PlannedRebind {
+                plan_members: release_authority
+                    .plan_members()
+                    .expect("planned rebind retains its complete plan witness"),
+            }
+        } else {
+            release_authority
+        };
         // Durable attempt exclusivity precedes every fallible preparation.
         // This prevents a concurrent same-request preparation failure from
         // compensating another invocation's restart or fresh-launch authority.
-        let (bind_claim, lifetime) = claim_bind_attempt_with_lifetime(
-            self.port_authority()?,
-            port_lease,
-            OciPortProvider::EgressPep,
+        let (bind_claim, lifetime) = match (
+            release_authority.plan_members(),
             release_authority.reservation_claim(),
-            PortLeaseEffectScope::ProcessBound,
-        )?;
+        ) {
+            (Some(plan_members), None) if release_authority.is_planned_rebind() => {
+                claim_rebind_plan_member_attempt_with_lifetime(
+                    self.port_authority()?,
+                    plan_members,
+                    port_lease,
+                    bind_addr,
+                    OciPortProvider::EgressPep,
+                    PortLeaseEffectScope::ProcessBound,
+                )?
+            }
+            (Some(plan_members), Some(reservation_claim)) => {
+                claim_bind_plan_member_attempt_with_lifetime(
+                    self.port_authority()?,
+                    plan_members,
+                    port_lease,
+                    OciPortProvider::EgressPep,
+                    reservation_claim,
+                    PortLeaseEffectScope::ProcessBound,
+                )?
+            }
+            _ => claim_bind_attempt_with_lifetime(
+                self.port_authority()?,
+                port_lease,
+                OciPortProvider::EgressPep,
+                release_authority.reservation_claim(),
+                PortLeaseEffectScope::ProcessBound,
+            )?,
+        };
         #[cfg(test)]
         if let Some(observer) = self.post_bind_claim_observer.as_ref() {
             observer();
@@ -835,6 +1030,28 @@ impl EgressProxyRegistry {
                             },
                         }
                     }
+                    PepPreAdoptionReleaseAuthority::FreshPlannedLaunch {
+                        reservation_claim,
+                        plan_members,
+                    } => {
+                        match record_plan_member_bind_failure_with_lifetime(
+                            self.port_authority()?,
+                            plan_members,
+                            port_lease,
+                            &bind_claim,
+                            OciConfirmedBindFailure::new(address, OciPortProvider::EgressPep, kind),
+                            reservation_claim,
+                            &lifetime,
+                        ) {
+                            Ok(_) => bind_error,
+                            Err(record_error) => SandboxError::OperationFailed {
+                                message: format!(
+                                    "{bind_error}; durable planned PEP bind-failure recording also failed: {record_error}"
+                                ),
+                            },
+                        }
+                    }
+                    PepPreAdoptionReleaseAuthority::PlannedRebind { .. } => bind_error,
                 };
                 return Err(self.compensate_pep_pre_adoption_failure(
                     PepPreAdoptionCompensation::claimed(
@@ -881,15 +1098,46 @@ impl EgressProxyRegistry {
                 error,
             ));
         }
-        if let Err(error) = adopt_claimed_and_activate_with_lifetime(
-            self.port_authority()?,
-            port_lease,
+        let adoption = match (
+            release_authority.plan_members(),
             release_authority.reservation_claim(),
-            &bind_claim,
-            prepared.local_addr(),
-            OciPortProvider::EgressPep,
-            &lifetime,
         ) {
+            (Some(plan_members), None) if release_authority.is_planned_rebind() => {
+                adopt_claimed_and_activate_rebind_plan_member_with_lifetime(
+                    self.port_authority()?,
+                    plan_members,
+                    port_lease,
+                    &bind_claim,
+                    prepared.local_addr(),
+                    OciPortProvider::EgressPep,
+                    &lifetime,
+                )
+            }
+            (Some(plan_members), Some(reservation_claim)) => {
+                adopt_claimed_and_activate_plan_member_with_lifetime(
+                    self.port_authority()?,
+                    plan_members,
+                    port_lease,
+                    reservation_claim,
+                    OciPortActivation::new(
+                        &bind_claim,
+                        prepared.local_addr(),
+                        OciPortProvider::EgressPep,
+                        &lifetime,
+                    ),
+                )
+            }
+            _ => adopt_claimed_and_activate_with_lifetime(
+                self.port_authority()?,
+                port_lease,
+                release_authority.reservation_claim(),
+                &bind_claim,
+                prepared.local_addr(),
+                OciPortProvider::EgressPep,
+                &lifetime,
+            ),
+        };
+        if let Err(error) = adoption {
             return Err(self.compensate_pep_pre_adoption_failure(
                 PepPreAdoptionCompensation::bound(
                     prepared,
@@ -909,6 +1157,7 @@ impl EgressProxyRegistry {
                 trust_anchor_path: Some(trust_anchor_path),
                 tenant_lease,
                 port_lease: Some(port_lease.clone()),
+                plan_members: release_authority.plan_members().map(<[_]>::to_vec),
                 lifetime: Some(lifetime),
                 cleanup: None,
             };
@@ -936,6 +1185,7 @@ impl EgressProxyRegistry {
             trust_anchor_path: Some(trust_anchor_path),
             tenant_lease,
             port_lease: Some(port_lease.clone()),
+            plan_members: release_authority.plan_members().map(<[_]>::to_vec),
             lifetime: Some(lifetime),
             cleanup: None,
         };
@@ -1124,6 +1374,7 @@ impl EgressProxyRegistry {
                 trust_anchor_path: None,
                 tenant_lease: self.engine.fairness().checkout(tenant_id),
                 port_lease: None,
+                plan_members: None,
                 lifetime: None,
                 cleanup: None,
             },

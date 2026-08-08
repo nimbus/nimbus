@@ -12,7 +12,8 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use super::plan_batch::{
-    authenticate_complete_plan_batch_if_present, authenticate_scalar_plan_if_present,
+    authenticate_complete_plan_batch_if_present, authenticate_complete_plan_member,
+    authenticate_complete_plan_members, authenticate_scalar_plan_if_present,
 };
 use super::{
     LocalPortLeaseAuthority, PortBindClaim, PortLeaseBinding, PortLeaseError, PortLeaseOperation,
@@ -215,7 +216,102 @@ enum LifetimeLockAttempt {
     Contended,
 }
 
+fn exact_plan_recoveries<'a>(
+    requests: &[PortLeaseRequest],
+    recoveries: &'a [PortLeaseRecoveryGuard],
+) -> Result<BTreeMap<PortLeaseId, &'a PortLeaseRecoveryGuard>, PortLeaseError> {
+    let Some(first_request) = requests.first() else {
+        return Err(PortLeaseError::CorruptAuthority {
+            reason: "planned recovery transition requires at least one member".to_owned(),
+        });
+    };
+    if requests.len() != recoveries.len() {
+        return Err(PortLeaseError::LifetimeMismatch {
+            lease_id: first_request.lease_id().clone(),
+        });
+    }
+    let mut distinct_requests = BTreeMap::new();
+    for request in requests {
+        if distinct_requests
+            .insert(request.lease_id().clone(), request)
+            .is_some()
+        {
+            return Err(PortLeaseError::IdentityConflict {
+                lease_id: request.lease_id().clone(),
+            });
+        }
+    }
+    let mut by_id = BTreeMap::new();
+    for recovery in recoveries {
+        if by_id
+            .insert(recovery.request().lease_id().clone(), recovery)
+            .is_some()
+        {
+            return Err(PortLeaseError::IdentityConflict {
+                lease_id: recovery.request().lease_id().clone(),
+            });
+        }
+    }
+    for request in requests {
+        if by_id
+            .get(request.lease_id())
+            .is_none_or(|recovery| recovery.request() != request)
+        {
+            return Err(PortLeaseError::LifetimeMismatch {
+                lease_id: request.lease_id().clone(),
+            });
+        }
+    }
+    Ok(by_id)
+}
+
 impl LocalPortLeaseAuthority {
+    /// Inspect whether an exact planned subset has never reached a provider effect.
+    ///
+    /// The complete plan witness and reservation claim authenticate the desired
+    /// generation. A `false` result preserves ambiguity for any prior claim,
+    /// lifetime, adoption, binding, stop receipt, or failure evidence.
+    pub fn inspect_plan_members_never_effected(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        requests: &[PortLeaseRequest],
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<bool, PortLeaseError> {
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        let requested = requests.iter().collect::<Vec<_>>();
+        self.transaction(|state| {
+            authenticate_complete_plan_members(state, &witness, &requested)?;
+            let mut distinct = BTreeMap::new();
+            for request in requests {
+                if let Some(previous) = distinct.insert(request.lease_id().clone(), request)
+                    && previous != request
+                {
+                    return Err(PortLeaseOperationError::IdentityConflict {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                let record = exact_record(state, request)?;
+                if record.reservation_claim.as_ref() != Some(reservation_claim) {
+                    return Err(PortLeaseOperationError::ReservationClaimConflict {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                if record.phase != PortLeasePhase::Reserved
+                    || record.bind_claim.is_some()
+                    || record.adoption_claim.is_some()
+                    || record.binding.is_some()
+                    || record.confirmed_stopped_binding.is_some()
+                    || record.failure.is_some()
+                    || record.last_lifetime_generation != 0
+                    || record.active_lifetime.is_some()
+                {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })
+    }
+
     /// Release one live-owner effect after the adapter confirms exact absence.
     ///
     /// The non-cloneable guard authenticates the process generation whose
@@ -383,6 +479,487 @@ impl LocalPortLeaseAuthority {
         })
     }
 
+    /// Claim one planned member while authenticating its complete immutable
+    /// plan witness in the same durable transaction.
+    ///
+    /// Unrelated members remain untouched so independent effect providers can
+    /// realize separate listener phases without weakening plan membership.
+    pub fn claim_bind_plan_member_with_lifetime(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        request: &PortLeaseRequest,
+        reservation_claim: &NetworkReservationClaim,
+        claim: PortBindClaim,
+        effect_scope: PortLeaseEffectScope,
+    ) -> Result<PortLeaseLifetimeGuard, PortLeaseError> {
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        self.transaction(|state| authenticate_complete_plan_member(state, &witness, request))?;
+        let lock = match self.try_acquire_lifetime_lock(request.lease_id())? {
+            LifetimeLockAttempt::Acquired(lock) => lock,
+            LifetimeLockAttempt::Contended => {
+                return Err(PortLeaseError::LifetimeOwnerLive {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
+        };
+        let lifetime = self.transaction(|state| {
+            authenticate_complete_plan_member(state, &witness, request)?;
+            let record = exact_record_mut(state, request)?;
+            require_reservation_claim(record, Some(reservation_claim))?;
+            if record.phase != PortLeasePhase::Reserved {
+                return Err(PortLeaseOperationError::InvalidTransition {
+                    lease_id: request.lease_id().clone(),
+                    phase: record.phase,
+                    operation: PortLeaseOperation::BeginLifetime,
+                });
+            }
+            if record
+                .bind_claim
+                .as_ref()
+                .is_some_and(|current| current != &claim)
+            {
+                return Err(PortLeaseOperationError::BindClaimConflict {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
+            if record.active_lifetime.is_some() {
+                return Err(PortLeaseOperationError::LifetimeConflict {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
+            let lifetime = advance_lifetime(record, request, effect_scope)?;
+            record.bind_claim = Some(claim);
+            Ok(lifetime)
+        })?;
+        Ok(PortLeaseLifetimeGuard {
+            request: request.clone(),
+            lifetime,
+            _lock: lock,
+        })
+    }
+
+    /// Claim an exact retained plan member for one higher rebind lifetime.
+    ///
+    /// The confirmed-stop binding is the durable receipt for the prior effect.
+    /// A dead claim-only retry advances again under the same exclusive lock;
+    /// it never reuses the former process generation.
+    pub fn claim_rebind_plan_member_with_lifetime(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        request: &PortLeaseRequest,
+        confirmed_stopped_binding: &PortLeaseBinding,
+        claim: PortBindClaim,
+        effect_scope: PortLeaseEffectScope,
+    ) -> Result<PortLeaseLifetimeGuard, PortLeaseError> {
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        self.transaction(|state| authenticate_complete_plan_member(state, &witness, request))?;
+        let lock = match self.try_acquire_lifetime_lock(request.lease_id())? {
+            LifetimeLockAttempt::Acquired(lock) => lock,
+            LifetimeLockAttempt::Contended => {
+                return Err(PortLeaseError::LifetimeOwnerLive {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
+        };
+        let lifetime = self.transaction(|state| {
+            authenticate_complete_plan_member(state, &witness, request)?;
+            let record = exact_record_mut(state, request)?;
+            if record.phase != PortLeasePhase::Reserved
+                || record.reservation_claim.is_some()
+                || record.binding.is_some()
+                || record.adoption_claim.is_some()
+                || record.confirmed_stopped_binding.as_ref() != Some(confirmed_stopped_binding)
+                || record.failure.is_some()
+            {
+                return Err(PortLeaseOperationError::InvalidTransition {
+                    lease_id: request.lease_id().clone(),
+                    phase: record.phase,
+                    operation: PortLeaseOperation::BeginLifetime,
+                });
+            }
+            if let Some(active) = record.active_lifetime {
+                if active.effect_scope != effect_scope {
+                    return Err(PortLeaseOperationError::LifetimeConflict {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                if record.bind_claim.as_ref() != Some(&claim) {
+                    return Err(PortLeaseOperationError::BindClaimConflict {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+            } else if record.bind_claim.is_some() {
+                return Err(PortLeaseOperationError::BindClaimConflict {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
+            let lifetime = advance_lifetime(record, request, effect_scope)?;
+            record.bind_claim = Some(claim);
+            Ok(lifetime)
+        })?;
+        Ok(PortLeaseLifetimeGuard {
+            request: request.clone(),
+            lifetime,
+            _lock: lock,
+        })
+    }
+
+    /// Activate the exact binding retained by a planned rebind claim.
+    pub fn adopt_claimed_and_activate_rebind_plan_member_with_lifetime(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        request: &PortLeaseRequest,
+        confirmed_stopped_binding: &PortLeaseBinding,
+        claim: &PortBindClaim,
+        binding: PortLeaseBinding,
+        lifetime: &PortLeaseLifetimeGuard,
+    ) -> Result<PortLeaseRecord, PortLeaseError> {
+        if lifetime.request != *request {
+            return Err(PortLeaseError::LifetimeMismatch {
+                lease_id: request.lease_id().clone(),
+            });
+        }
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        self.transaction(|state| {
+            authenticate_complete_plan_member(state, &witness, request)?;
+            let record = exact_record_mut(state, request)?;
+            if record.phase == PortLeasePhase::Active
+                && record.reservation_claim.is_none()
+                && record.bind_claim.is_none()
+                && record.adoption_claim.as_ref() == Some(claim)
+                && record.binding.as_ref() == Some(&binding)
+                && record.confirmed_stopped_binding.is_none()
+                && record.active_lifetime == Some(lifetime.lifetime)
+            {
+                return Ok(record.clone());
+            }
+            if binding != *confirmed_stopped_binding
+                || !binding.provider_registration_matches_claim(claim)
+            {
+                return Err(PortLeaseOperationError::BindingConflict {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
+            if let Some(mismatch) = binding.mismatch(request.binding()) {
+                return Err(PortLeaseOperationError::BindingMismatch {
+                    lease_id: request.lease_id().clone(),
+                    mismatch,
+                });
+            }
+            if record.phase != PortLeasePhase::Reserved
+                || record.reservation_claim.is_some()
+                || record.bind_claim.as_ref() != Some(claim)
+                || record.adoption_claim.is_some()
+                || record.binding.is_some()
+                || record.confirmed_stopped_binding.as_ref() != Some(confirmed_stopped_binding)
+                || record.active_lifetime != Some(lifetime.lifetime)
+                || record.reserved_port != Some(binding.actual_port())
+                || record.failure.is_some()
+            {
+                return Err(PortLeaseOperationError::InvalidTransition {
+                    lease_id: request.lease_id().clone(),
+                    phase: record.phase,
+                    operation: PortLeaseOperation::Adopt,
+                });
+            }
+            record.phase = PortLeasePhase::Active;
+            record.bind_claim = None;
+            record.adoption_claim = Some(claim.clone());
+            record.binding = Some(binding);
+            record.confirmed_stopped_binding = None;
+            Ok(record.clone())
+        })
+    }
+
+    /// Relinquish an exact planned rebind claim after proving no effect.
+    pub fn abandon_rebind_plan_member_with_lifetime_without_effect(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        request: &PortLeaseRequest,
+        confirmed_stopped_binding: &PortLeaseBinding,
+        claim: &PortBindClaim,
+        lifetime: &PortLeaseLifetimeGuard,
+    ) -> Result<PortLeaseRecord, PortLeaseError> {
+        if lifetime.request != *request {
+            return Err(PortLeaseError::LifetimeMismatch {
+                lease_id: request.lease_id().clone(),
+            });
+        }
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        self.transaction(|state| {
+            authenticate_complete_plan_member(state, &witness, request)?;
+            let record = exact_record_mut(state, request)?;
+            let replay = record.phase == PortLeasePhase::Reserved
+                && record.reservation_claim.is_none()
+                && record.bind_claim.is_none()
+                && record.adoption_claim.is_none()
+                && record.binding.is_none()
+                && record.confirmed_stopped_binding.as_ref() == Some(confirmed_stopped_binding)
+                && record.active_lifetime.is_none()
+                && record.last_lifetime_generation == lifetime.lifetime.generation.as_u64()
+                && record.failure.is_none();
+            if replay {
+                return Ok(record.clone());
+            }
+            if record.phase != PortLeasePhase::Reserved
+                || record.reservation_claim.is_some()
+                || record.bind_claim.as_ref() != Some(claim)
+                || record.adoption_claim.is_some()
+                || record.binding.is_some()
+                || record.confirmed_stopped_binding.as_ref() != Some(confirmed_stopped_binding)
+                || record.active_lifetime != Some(lifetime.lifetime)
+                || record.failure.is_some()
+            {
+                return Err(PortLeaseOperationError::InvalidTransition {
+                    lease_id: request.lease_id().clone(),
+                    phase: record.phase,
+                    operation: PortLeaseOperation::AbandonBindClaimWithoutEffect,
+                });
+            }
+            record.bind_claim = None;
+            record.active_lifetime = None;
+            Ok(record.clone())
+        })
+    }
+
+    /// Atomically claim a retained provider-owned plan subset for rebind.
+    pub fn claim_rebind_plan_members_with_lifetimes(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        claims: &[(PortLeaseRequest, PortBindClaim, PortLeaseBinding)],
+        effect_scope: PortLeaseEffectScope,
+    ) -> Result<Vec<PortLeaseLifetimeGuard>, PortLeaseError> {
+        let Some(first) = claims.first() else {
+            return Err(PortLeaseError::CorruptAuthority {
+                reason: "planned rebind claim requires at least one member".to_owned(),
+            });
+        };
+        let mut distinct = BTreeMap::new();
+        for (request, claim, binding) in claims {
+            if distinct
+                .insert(request.lease_id().clone(), (request, claim, binding))
+                .is_some()
+            {
+                return Err(PortLeaseError::IdentityConflict {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
+        }
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        let requested = claims
+            .iter()
+            .map(|(request, _, _)| request)
+            .collect::<Vec<_>>();
+        self.transaction(|state| authenticate_complete_plan_members(state, &witness, &requested))?;
+        let mut locks = BTreeMap::new();
+        for lease_id in distinct.keys() {
+            let lock = match self.try_acquire_lifetime_lock(lease_id)? {
+                LifetimeLockAttempt::Acquired(lock) => lock,
+                LifetimeLockAttempt::Contended => {
+                    return Err(PortLeaseError::LifetimeOwnerLive {
+                        lease_id: lease_id.clone(),
+                    });
+                }
+            };
+            locks.insert(lease_id.clone(), lock);
+        }
+        let lifetimes = self.transaction(|state| {
+            authenticate_complete_plan_members(state, &witness, &requested)?;
+            for (request, claim, confirmed) in distinct.values().copied() {
+                let record = exact_record(state, request)?;
+                if let Some(active) = record.active_lifetime {
+                    if active.effect_scope != effect_scope {
+                        return Err(PortLeaseOperationError::LifetimeConflict {
+                            lease_id: request.lease_id().clone(),
+                        });
+                    }
+                    if record.bind_claim.as_ref() != Some(claim) {
+                        return Err(PortLeaseOperationError::BindClaimConflict {
+                            lease_id: request.lease_id().clone(),
+                        });
+                    }
+                }
+                if record.phase != PortLeasePhase::Reserved
+                    || record.reservation_claim.is_some()
+                    || record.binding.is_some()
+                    || record.adoption_claim.is_some()
+                    || record.confirmed_stopped_binding.as_ref() != Some(confirmed)
+                    || record.failure.is_some()
+                    || (record.active_lifetime.is_none() && record.bind_claim.is_some())
+                {
+                    return Err(PortLeaseOperationError::InvalidTransition {
+                        lease_id: request.lease_id().clone(),
+                        phase: record.phase,
+                        operation: PortLeaseOperation::BeginLifetime,
+                    });
+                }
+            }
+            let mut lifetimes = BTreeMap::new();
+            for (request, claim, _) in distinct.values().copied() {
+                let record = exact_record_mut(state, request)?;
+                let lifetime = advance_lifetime(record, request, effect_scope)?;
+                record.bind_claim = Some(claim.clone());
+                lifetimes.insert(request.lease_id().clone(), lifetime);
+            }
+            Ok(lifetimes)
+        })?;
+        let _ = first;
+        claims
+            .iter()
+            .map(|(request, _, _)| {
+                Ok(PortLeaseLifetimeGuard {
+                    request: request.clone(),
+                    lifetime: lifetimes[request.lease_id()],
+                    _lock: locks
+                        .remove(request.lease_id())
+                        .expect("every planned rebind member owns one stable lock"),
+                })
+            })
+            .collect()
+    }
+
+    /// Atomically activate a retained provider-owned plan subset after bind.
+    pub fn adopt_claimed_and_activate_rebind_plan_members_with_lifetimes(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        bindings: &[(PortLeaseRequest, PortBindClaim, PortLeaseBinding)],
+        lifetimes: &[PortLeaseLifetimeGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let claims = bindings
+            .iter()
+            .map(|(request, claim, _)| (request.clone(), claim.clone()))
+            .collect::<Vec<_>>();
+        let lifetimes = exact_lifetime_batch(&claims, lifetimes)?;
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        let requested = bindings
+            .iter()
+            .map(|(request, _, _)| request)
+            .collect::<Vec<_>>();
+        self.transaction(|state| {
+            authenticate_complete_plan_members(state, &witness, &requested)?;
+            for (request, claim, binding) in bindings {
+                let lifetime = lifetimes[request.lease_id()];
+                let record = exact_record(state, request)?;
+                let replay = record.phase == PortLeasePhase::Active
+                    && record.reservation_claim.is_none()
+                    && record.bind_claim.is_none()
+                    && record.adoption_claim.as_ref() == Some(claim)
+                    && record.binding.as_ref() == Some(binding)
+                    && record.confirmed_stopped_binding.is_none()
+                    && record.active_lifetime == Some(lifetime);
+                if replay {
+                    continue;
+                }
+                if !binding.provider_registration_matches_claim(claim) {
+                    return Err(PortLeaseOperationError::BindingConflict {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                if let Some(mismatch) = binding.mismatch(request.binding()) {
+                    return Err(PortLeaseOperationError::BindingMismatch {
+                        lease_id: request.lease_id().clone(),
+                        mismatch,
+                    });
+                }
+                if record.phase != PortLeasePhase::Reserved
+                    || record.reservation_claim.is_some()
+                    || record.bind_claim.as_ref() != Some(claim)
+                    || record.adoption_claim.is_some()
+                    || record.binding.is_some()
+                    || record.confirmed_stopped_binding.as_ref() != Some(binding)
+                    || record.active_lifetime != Some(lifetime)
+                    || record.reserved_port != Some(binding.actual_port())
+                    || record.failure.is_some()
+                {
+                    return Err(PortLeaseOperationError::InvalidTransition {
+                        lease_id: request.lease_id().clone(),
+                        phase: record.phase,
+                        operation: PortLeaseOperation::Adopt,
+                    });
+                }
+            }
+            for (request, claim, binding) in bindings {
+                let record = exact_record_mut(state, request)?;
+                if record.phase == PortLeasePhase::Active {
+                    continue;
+                }
+                record.phase = PortLeasePhase::Active;
+                record.bind_claim = None;
+                record.adoption_claim = Some(claim.clone());
+                record.binding = Some(binding.clone());
+                record.confirmed_stopped_binding = None;
+            }
+            bindings
+                .iter()
+                .map(|(request, _, _)| exact_record(state, request).cloned())
+                .collect()
+        })
+    }
+
+    /// Atomically abandon a retained rebind subset after proving no effect.
+    pub fn abandon_rebind_plan_members_with_lifetimes_without_effect(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        bindings: &[(PortLeaseRequest, PortBindClaim, PortLeaseBinding)],
+        lifetimes: &[PortLeaseLifetimeGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let claims = bindings
+            .iter()
+            .map(|(request, claim, _)| (request.clone(), claim.clone()))
+            .collect::<Vec<_>>();
+        let lifetimes = exact_lifetime_batch(&claims, lifetimes)?;
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        let requested = bindings
+            .iter()
+            .map(|(request, _, _)| request)
+            .collect::<Vec<_>>();
+        self.transaction(|state| {
+            authenticate_complete_plan_members(state, &witness, &requested)?;
+            for (request, claim, binding) in bindings {
+                let lifetime = lifetimes[request.lease_id()];
+                let record = exact_record(state, request)?;
+                let replay = record.phase == PortLeasePhase::Reserved
+                    && record.reservation_claim.is_none()
+                    && record.bind_claim.is_none()
+                    && record.adoption_claim.is_none()
+                    && record.binding.is_none()
+                    && record.confirmed_stopped_binding.as_ref() == Some(binding)
+                    && record.active_lifetime.is_none()
+                    && record.last_lifetime_generation == lifetime.generation.as_u64()
+                    && record.failure.is_none();
+                if replay {
+                    continue;
+                }
+                if record.phase != PortLeasePhase::Reserved
+                    || record.reservation_claim.is_some()
+                    || record.bind_claim.as_ref() != Some(claim)
+                    || record.adoption_claim.is_some()
+                    || record.binding.is_some()
+                    || record.confirmed_stopped_binding.as_ref() != Some(binding)
+                    || record.active_lifetime != Some(lifetime)
+                    || record.failure.is_some()
+                {
+                    return Err(PortLeaseOperationError::InvalidTransition {
+                        lease_id: request.lease_id().clone(),
+                        phase: record.phase,
+                        operation: PortLeaseOperation::AbandonBindClaimWithoutEffect,
+                    });
+                }
+            }
+            for (request, _, _) in bindings {
+                let record = exact_record_mut(state, request)?;
+                if record.active_lifetime.is_some() {
+                    record.bind_claim = None;
+                    record.active_lifetime = None;
+                }
+            }
+            bindings
+                .iter()
+                .map(|(request, _, _)| exact_record(state, request).cloned())
+                .collect()
+        })
+    }
+
     /// Atomically claim a complete provider batch and one lifetime per lease.
     ///
     /// Every lifetime file is locked before the durable transaction. Inputs
@@ -394,6 +971,33 @@ impl LocalPortLeaseAuthority {
         claims: &[(PortLeaseRequest, PortBindClaim)],
         reservation_claim: Option<&NetworkReservationClaim>,
         effect_scope: PortLeaseEffectScope,
+    ) -> Result<Vec<PortLeaseLifetimeGuard>, PortLeaseError> {
+        self.claim_bind_batch_with_lifetimes_inner(claims, reservation_claim, effect_scope, None)
+    }
+
+    /// Atomically claim a provider-owned subset under one complete plan
+    /// witness and one exact reservation coordinator.
+    pub fn claim_bind_plan_members_with_lifetimes(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        claims: &[(PortLeaseRequest, PortBindClaim)],
+        reservation_claim: &NetworkReservationClaim,
+        effect_scope: PortLeaseEffectScope,
+    ) -> Result<Vec<PortLeaseLifetimeGuard>, PortLeaseError> {
+        self.claim_bind_batch_with_lifetimes_inner(
+            claims,
+            Some(reservation_claim),
+            effect_scope,
+            Some(plan_members),
+        )
+    }
+
+    fn claim_bind_batch_with_lifetimes_inner(
+        &self,
+        claims: &[(PortLeaseRequest, PortBindClaim)],
+        reservation_claim: Option<&NetworkReservationClaim>,
+        effect_scope: PortLeaseEffectScope,
+        plan_witness: Option<&[PortLeaseRequest]>,
     ) -> Result<Vec<PortLeaseLifetimeGuard>, PortLeaseError> {
         let mut distinct = BTreeMap::<PortLeaseId, (&PortLeaseRequest, &PortBindClaim)>::new();
         for (request, claim) in claims {
@@ -410,7 +1014,14 @@ impl LocalPortLeaseAuthority {
             .iter()
             .map(|(request, _)| request)
             .collect::<Vec<_>>();
-        self.transaction(|state| authenticate_complete_plan_batch_if_present(state, &requested))?;
+        self.transaction(|state| {
+            if let Some(plan_witness) = plan_witness {
+                let witness = plan_witness.iter().collect::<Vec<_>>();
+                authenticate_complete_plan_members(state, &witness, &requested)
+            } else {
+                authenticate_complete_plan_batch_if_present(state, &requested)
+            }
+        })?;
 
         let mut locks = BTreeMap::new();
         for lease_id in distinct.keys() {
@@ -426,7 +1037,12 @@ impl LocalPortLeaseAuthority {
         }
 
         let lifetimes = self.transaction(|state| {
-            authenticate_complete_plan_batch_if_present(state, &requested)?;
+            if let Some(plan_witness) = plan_witness {
+                let witness = plan_witness.iter().collect::<Vec<_>>();
+                authenticate_complete_plan_members(state, &witness, &requested)?;
+            } else {
+                authenticate_complete_plan_batch_if_present(state, &requested)?;
+            }
             for (request, claim) in distinct.values().copied() {
                 let record = exact_record(state, request)?;
                 require_reservation_claim(record, reservation_claim)?;
@@ -502,6 +1118,7 @@ impl LocalPortLeaseAuthority {
             &[(request.clone(), claim.clone(), binding)],
             reservation_claim,
             Some(&required_lifetimes),
+            None,
         )
         .map(|mut records| {
             records
@@ -566,6 +1183,59 @@ impl LocalPortLeaseAuthority {
             bindings,
             reservation_claim,
             Some(&required_lifetimes),
+            None,
+        )
+    }
+
+    /// Adopt and activate one planned member under a complete immutable plan
+    /// witness and its exact live process guard.
+    pub fn adopt_claimed_and_activate_plan_member_with_lifetime(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        request: &PortLeaseRequest,
+        reservation_claim: &NetworkReservationClaim,
+        claim: &PortBindClaim,
+        binding: super::PortLeaseBinding,
+        lifetime: &PortLeaseLifetimeGuard,
+    ) -> Result<PortLeaseRecord, PortLeaseError> {
+        if lifetime.request != *request {
+            return Err(PortLeaseError::LifetimeMismatch {
+                lease_id: request.lease_id().clone(),
+            });
+        }
+        let required_lifetimes = BTreeMap::from([(request.lease_id().clone(), lifetime.lifetime)]);
+        self.adopt_claimed_and_activate_batch_inner(
+            &[(request.clone(), claim.clone(), binding)],
+            Some(reservation_claim),
+            Some(&required_lifetimes),
+            Some(plan_members),
+        )
+        .map(|mut records| {
+            records
+                .pop()
+                .expect("one plan-member activation returns one record")
+        })
+    }
+
+    /// Atomically activate a provider-owned subset while authenticating one
+    /// complete immutable plan witness.
+    pub fn adopt_claimed_and_activate_plan_members_with_lifetimes(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        bindings: &[(PortLeaseRequest, PortBindClaim, PortLeaseBinding)],
+        reservation_claim: &NetworkReservationClaim,
+        lifetimes: &[PortLeaseLifetimeGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let claims = bindings
+            .iter()
+            .map(|(request, claim, _)| (request.clone(), claim.clone()))
+            .collect::<Vec<_>>();
+        let required_lifetimes = exact_lifetime_batch(&claims, lifetimes)?;
+        self.adopt_claimed_and_activate_batch_inner(
+            bindings,
+            Some(reservation_claim),
+            Some(&required_lifetimes),
+            Some(plan_members),
         )
     }
 
@@ -627,6 +1297,61 @@ impl LocalPortLeaseAuthority {
         })
     }
 
+    /// Relinquish one no-effect planned member while authenticating the exact
+    /// complete plan witness and launch coordinator.
+    pub fn abandon_bind_plan_member_with_lifetime_without_effect(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        request: &PortLeaseRequest,
+        reservation_claim: &NetworkReservationClaim,
+        claim: &PortBindClaim,
+        lifetime: &PortLeaseLifetimeGuard,
+    ) -> Result<PortLeaseRecord, PortLeaseError> {
+        if lifetime.request != *request {
+            return Err(PortLeaseError::LifetimeMismatch {
+                lease_id: request.lease_id().clone(),
+            });
+        }
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        self.transaction(|state| {
+            authenticate_complete_plan_member(state, &witness, request)?;
+            let record = exact_record_mut(state, request)?;
+            require_reservation_claim(record, Some(reservation_claim))?;
+            match record.phase {
+                PortLeasePhase::Reserved
+                    if record.bind_claim.as_ref() == Some(claim)
+                        && record.active_lifetime == Some(lifetime.lifetime) =>
+                {
+                    record.bind_claim = None;
+                    record.active_lifetime = None;
+                }
+                PortLeasePhase::Reserved
+                    if record.bind_claim.is_none()
+                        && record.active_lifetime.is_none()
+                        && record.last_lifetime_generation
+                            == lifetime.lifetime.generation.as_u64() => {}
+                PortLeasePhase::Failed
+                    if record.active_lifetime.is_none()
+                        && record.failure.as_ref().is_some_and(|failure| {
+                            failure.provider_attempt() == claim.provider_attempt()
+                        }) => {}
+                PortLeasePhase::Reserved => {
+                    return Err(PortLeaseOperationError::LifetimeMismatch {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                phase => {
+                    return Err(PortLeaseOperationError::InvalidTransition {
+                        lease_id: request.lease_id().clone(),
+                        phase,
+                        operation: PortLeaseOperation::AbandonBindClaimWithoutEffect,
+                    });
+                }
+            }
+            Ok(record.clone())
+        })
+    }
+
     /// Atomically relinquish one exact lifetime-fenced no-effect batch.
     pub fn abandon_bind_batch_with_lifetimes_without_effect(
         &self,
@@ -645,6 +1370,69 @@ impl LocalPortLeaseAuthority {
                 let lifetime = required_lifetimes[request.lease_id()];
                 let record = exact_record(state, request)?;
                 require_reservation_claim(record, reservation_claim)?;
+                match record.phase {
+                    PortLeasePhase::Reserved
+                        if record.bind_claim.as_ref() == Some(claim)
+                            && record.active_lifetime == Some(lifetime) => {}
+                    PortLeasePhase::Reserved
+                        if record.bind_claim.is_none()
+                            && record.active_lifetime.is_none()
+                            && record.last_lifetime_generation == lifetime.generation.as_u64() => {}
+                    PortLeasePhase::Failed
+                        if record.active_lifetime.is_none()
+                            && record.last_lifetime_generation == lifetime.generation.as_u64()
+                            && record.failure.as_ref().is_some_and(|failure| {
+                                failure.provider_attempt() == claim.provider_attempt()
+                            }) => {}
+                    PortLeasePhase::Reserved => {
+                        return Err(PortLeaseOperationError::LifetimeMismatch {
+                            lease_id: request.lease_id().clone(),
+                        });
+                    }
+                    phase => {
+                        return Err(PortLeaseOperationError::InvalidTransition {
+                            lease_id: request.lease_id().clone(),
+                            phase,
+                            operation: PortLeaseOperation::AbandonBindClaimWithoutEffect,
+                        });
+                    }
+                }
+            }
+            for (request, claim) in claims {
+                let record = exact_record_mut(state, request)?;
+                if record.bind_claim.as_ref() == Some(claim) {
+                    record.bind_claim = None;
+                    record.active_lifetime = None;
+                }
+            }
+            claims
+                .iter()
+                .map(|(request, _)| exact_record(state, request).cloned())
+                .collect()
+        })
+    }
+
+    /// Atomically relinquish a no-effect provider subset while proving the
+    /// complete immutable plan and exact launch coordinator.
+    pub fn abandon_bind_plan_members_with_lifetimes_without_effect(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        claims: &[(PortLeaseRequest, PortBindClaim)],
+        reservation_claim: &NetworkReservationClaim,
+        lifetimes: &[PortLeaseLifetimeGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let required_lifetimes = exact_lifetime_batch(claims, lifetimes)?;
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        let members = claims
+            .iter()
+            .map(|(request, _)| request)
+            .collect::<Vec<_>>();
+        self.transaction(|state| {
+            authenticate_complete_plan_members(state, &witness, &members)?;
+            for (request, claim) in claims {
+                let lifetime = required_lifetimes[request.lease_id()];
+                let record = exact_record(state, request)?;
+                require_reservation_claim(record, Some(reservation_claim))?;
                 match record.phase {
                     PortLeasePhase::Reserved
                         if record.bind_claim.as_ref() == Some(claim)
@@ -778,6 +1566,311 @@ impl LocalPortLeaseAuthority {
                 }))
             }
         }
+    }
+
+    /// Acquire dead-owner authority for an exact reconcilable subset of one plan.
+    ///
+    /// The complete immutable plan witness authenticates membership while the
+    /// requested subset identifies only the provider effects this caller owns.
+    /// Unrequested siblings may remain reserved. This operation performs no
+    /// durable mutation and acquires every requested lifetime lock atomically.
+    pub fn recover_dead_plan_members(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        requests: &[PortLeaseRequest],
+    ) -> Result<Vec<PortLeaseRecoveryGuard>, PortLeaseError> {
+        if requests.is_empty() {
+            return Err(PortLeaseError::CorruptAuthority {
+                reason: "planned lifetime recovery requires at least one member".to_owned(),
+            });
+        }
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        let requested = requests.iter().collect::<Vec<_>>();
+        let initial_witness = self.transaction(|state| {
+            authenticate_complete_plan_members(state, &witness, &requested)?;
+            for request in requests {
+                let record = exact_record(state, request)?;
+                if !matches!(
+                    record.phase(),
+                    PortLeasePhase::Active | PortLeasePhase::CleanupPending
+                ) || record.active_lifetime().is_none()
+                {
+                    return Err(PortLeaseOperationError::LifetimeMismatch {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+            }
+            plan_members
+                .iter()
+                .map(|request| exact_record(state, request).cloned())
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+
+        let mut locks = BTreeMap::new();
+        let mut stable_ids = requests
+            .iter()
+            .map(|request| request.lease_id().clone())
+            .collect::<Vec<_>>();
+        stable_ids.sort();
+        stable_ids.dedup();
+        for lease_id in stable_ids {
+            let lock = match self.try_acquire_lifetime_lock(&lease_id)? {
+                LifetimeLockAttempt::Acquired(lock) => lock,
+                LifetimeLockAttempt::Contended => {
+                    return Err(PortLeaseError::LifetimeOwnerLive { lease_id });
+                }
+            };
+            locks.insert(lease_id, lock);
+        }
+
+        let current = self.transaction(|state| {
+            authenticate_complete_plan_members(state, &witness, &requested)?;
+            for (request, expected) in plan_members.iter().zip(&initial_witness) {
+                let record = exact_record(state, request)?;
+                if record != expected {
+                    return Err(PortLeaseOperationError::LifetimeConflict {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+            }
+            requests
+                .iter()
+                .map(|request| {
+                    let record = exact_record(state, request)?;
+                    if !matches!(
+                        record.phase(),
+                        PortLeasePhase::Active | PortLeasePhase::CleanupPending
+                    ) || record.active_lifetime().is_none()
+                    {
+                        return Err(PortLeaseOperationError::LifetimeMismatch {
+                            lease_id: request.lease_id().clone(),
+                        });
+                    }
+                    Ok(record.clone())
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+
+        requests
+            .iter()
+            .zip(current)
+            .map(|(request, record)| {
+                let lifetime =
+                    record
+                        .active_lifetime()
+                        .ok_or_else(|| PortLeaseError::LifetimeMismatch {
+                            lease_id: request.lease_id().clone(),
+                        })?;
+                Ok(PortLeaseRecoveryGuard {
+                    request: request.clone(),
+                    lifetime,
+                    _lock: locks
+                        .remove(request.lease_id())
+                        .expect("every recovered plan member owns one stable lock"),
+                })
+            })
+            .collect()
+    }
+
+    /// Quarantine an exact recovered subset while preserving plan siblings.
+    ///
+    /// This is the durable crash checkpoint between dead-owner authentication
+    /// and provider-specific cleanup or rebind. Every supplied recovery guard
+    /// must belong to the exact requested member and complete plan witness.
+    pub fn mark_cleanup_pending_plan_members_after_owner_death(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        requests: &[PortLeaseRequest],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let recoveries = exact_plan_recoveries(requests, recoveries)?;
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        let requested = requests.iter().collect::<Vec<_>>();
+        self.transaction(|state| {
+            authenticate_complete_plan_members(state, &witness, &requested)?;
+            for request in requests {
+                let recovery = recoveries[request.lease_id()];
+                let record = exact_record(state, request)?;
+                authenticate_recovery(record, request, recovery)?;
+                if !matches!(
+                    record.phase,
+                    PortLeasePhase::Active | PortLeasePhase::CleanupPending
+                ) {
+                    return Err(PortLeaseOperationError::InvalidTransition {
+                        lease_id: request.lease_id().clone(),
+                        phase: record.phase,
+                        operation: PortLeaseOperation::MarkCleanupPending,
+                    });
+                }
+                if record.binding.is_none()
+                    || record.bind_claim.is_some()
+                    || record.adoption_claim.is_none()
+                {
+                    return Err(PortLeaseOperationError::BindingConflict {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+            }
+            for request in requests {
+                exact_record_mut(state, request)?.phase = PortLeasePhase::CleanupPending;
+            }
+            requests
+                .iter()
+                .map(|request| exact_record(state, request).cloned())
+                .collect()
+        })
+    }
+
+    /// Retain exact process-bound plan members for rebind after owner death.
+    ///
+    /// Callers must first durably checkpoint the same subset as cleanup
+    /// pending. Replays with the same recovery generation are idempotent.
+    pub fn prepare_rebind_process_bound_plan_members_after_owner_death(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        requests: &[PortLeaseRequest],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let recoveries = exact_plan_recoveries(requests, recoveries)?;
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        let requested = requests.iter().collect::<Vec<_>>();
+        self.transaction(|state| {
+            authenticate_complete_plan_members(state, &witness, &requested)?;
+            for request in requests {
+                let recovery = recoveries[request.lease_id()];
+                let record = exact_record(state, request)?;
+                let replay = record.phase == PortLeasePhase::Reserved
+                    && record.active_lifetime.is_none()
+                    && record.last_lifetime_generation == recovery.lifetime.generation.as_u64()
+                    && record.confirmed_stopped_binding.is_some()
+                    && recovery.request == *request;
+                if replay {
+                    continue;
+                }
+                authenticate_recovery(record, request, recovery)?;
+                if recovery.lifetime.effect_scope != PortLeaseEffectScope::ProcessBound {
+                    return Err(PortLeaseOperationError::LifetimeScopeMismatch {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                if record.phase != PortLeasePhase::CleanupPending {
+                    return Err(PortLeaseOperationError::InvalidTransition {
+                        lease_id: request.lease_id().clone(),
+                        phase: record.phase,
+                        operation: PortLeaseOperation::PrepareRebindAfterOwnerDeath,
+                    });
+                }
+                if record.binding.is_none()
+                    || record.bind_claim.is_some()
+                    || record.adoption_claim.is_none()
+                {
+                    return Err(PortLeaseOperationError::BindingConflict {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+            }
+            for request in requests {
+                let recovery = recoveries[request.lease_id()];
+                let record = exact_record_mut(state, request)?;
+                if record.phase == PortLeasePhase::Reserved
+                    && record.active_lifetime.is_none()
+                    && record.last_lifetime_generation == recovery.lifetime.generation.as_u64()
+                    && record.confirmed_stopped_binding.is_some()
+                {
+                    continue;
+                }
+                let binding = record.binding.take().ok_or_else(|| {
+                    PortLeaseOperationError::BindingConflict {
+                        lease_id: request.lease_id().clone(),
+                    }
+                })?;
+                record.phase = PortLeasePhase::Reserved;
+                record.bind_claim = None;
+                record.adoption_claim = None;
+                record.confirmed_stopped_binding = Some(binding);
+                record.failure = None;
+                record.active_lifetime = None;
+            }
+            requests
+                .iter()
+                .map(|request| exact_record(state, request).cloned())
+                .collect()
+        })
+    }
+
+    /// Retain an exact provider-managed plan subset after confirmed stop.
+    pub fn prepare_rebind_provider_managed_plan_members_after_confirmed_stop(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        bindings: &[(PortLeaseRequest, PortLeaseBinding)],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let requests = bindings
+            .iter()
+            .map(|(request, _)| request.clone())
+            .collect::<Vec<_>>();
+        let recoveries = exact_plan_recoveries(&requests, recoveries)?;
+        let witness = plan_members.iter().collect::<Vec<_>>();
+        let requested = requests.iter().collect::<Vec<_>>();
+        self.transaction(|state| {
+            authenticate_complete_plan_members(state, &witness, &requested)?;
+            for (request, expected_binding) in bindings {
+                let recovery = recoveries[request.lease_id()];
+                if recovery.lifetime.effect_scope != PortLeaseEffectScope::ProviderManaged {
+                    return Err(PortLeaseOperationError::LifetimeScopeMismatch {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                let record = exact_record(state, request)?;
+                match record.phase {
+                    PortLeasePhase::CleanupPending => {
+                        authenticate_recovery(record, request, recovery)?;
+                        if record.binding.as_ref() != Some(expected_binding)
+                            || record.reserved_port != Some(expected_binding.actual_port())
+                        {
+                            return Err(PortLeaseOperationError::BindingConflict {
+                                lease_id: request.lease_id().clone(),
+                            });
+                        }
+                    }
+                    PortLeasePhase::Reserved
+                        if record.active_lifetime.is_none()
+                            && record.last_lifetime_generation
+                                == recovery.lifetime.generation.as_u64()
+                            && record.confirmed_stopped_binding.as_ref()
+                                == Some(expected_binding)
+                            && record.reservation_claim.is_none()
+                            && record.binding.is_none()
+                            && record.bind_claim.is_none()
+                            && record.adoption_claim.is_none()
+                            && record.failure.is_none() => {}
+                    phase => {
+                        return Err(PortLeaseOperationError::InvalidTransition {
+                            lease_id: request.lease_id().clone(),
+                            phase,
+                            operation: PortLeaseOperation::PrepareRebindAfterConfirmedStop,
+                        });
+                    }
+                }
+            }
+            for (request, expected_binding) in bindings {
+                let record = exact_record_mut(state, request)?;
+                if record.phase == PortLeasePhase::CleanupPending {
+                    record.phase = PortLeasePhase::Reserved;
+                    record.reservation_claim = None;
+                    record.binding = None;
+                    record.bind_claim = None;
+                    record.adoption_claim = None;
+                    record.confirmed_stopped_binding = Some(expected_binding.clone());
+                    record.failure = None;
+                    record.active_lifetime = None;
+                }
+            }
+            bindings
+                .iter()
+                .map(|(request, _)| exact_record(state, request).cloned())
+                .collect()
+        })
     }
 
     /// Acquire every dead lifetime in one exact durable batch.

@@ -3,6 +3,7 @@ use crate::machine_lifecycle::{
     MachineLifecycleSnapshot, MachineUpdateRequest,
 };
 
+use super::managed_workload::effect_forbidden_managed_router_config;
 use super::*;
 use nimbus_core::DocumentId;
 
@@ -147,7 +148,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     );
     let manager = StubMachineLifecycleManager::new(roots);
     let server = ServerFixture::start(
-        RouterBuildConfig::core(engine.clone())
+        effect_forbidden_managed_router_config(engine.clone())
             .with_machine_lifecycle_manager(Arc::new(manager.clone()))
             .build(),
     )
@@ -255,7 +256,7 @@ async fn machine_config_routes_create_update_delete_and_project_system_state() {
     );
     let manager = StubMachineLifecycleManager::new(roots);
     let server = ServerFixture::start(
-        RouterBuildConfig::core(engine.clone())
+        effect_forbidden_managed_router_config(engine.clone())
             .with_machine_lifecycle_manager(Arc::new(manager.clone()))
             .build(),
     )

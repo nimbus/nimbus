@@ -8,14 +8,18 @@ use nimbus_core::TenantId;
 #[cfg(test)]
 use nimbus_network::{LocalNetworkStateStore, NetworkProviderHandle, NetworkProviderId};
 use nimbus_network::{NetworkAttachmentId, NetworkReservationClaim, NetworkSegmentId};
+use sha2::{Digest, Sha256};
 
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxId, SandboxStatus};
 
+#[cfg(test)]
 use super::default_network_attachment_id;
 use super::dto::{IpamAllocation, IpamState, NetavarkProviderOperation};
 use super::layout::{OciNetworkConfig, OciNetworkLayout};
 use super::provider_locator::{OciAttachmentProviderKind, OciAttachmentProviderLocator};
+
+const IPAM_ALLOCATION_IDENTITY_DOMAIN: &[u8] = b"nimbus.sandbox.oci.ipam-allocation-identity.v1\0";
 
 mod authority;
 #[cfg_attr(
@@ -167,11 +171,51 @@ pub(super) struct BlockIpAllocation {
 /// network authority lock, so concurrent placers cannot select the same
 /// address. Existing idempotent reservations are mapped back to their owning
 /// block and fail closed if that block is no longer in the supplied set.
+#[cfg(test)]
 pub(super) fn allocate_container_ips_on_first_available(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     configs: &[OciNetworkConfig],
     sandbox_id: &SandboxId,
+    reservation_claim: &NetworkReservationClaim,
+) -> Result<BlockIpAllocation> {
+    let attachment_id = configs
+        .first()
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "cannot allocate OCI IPs for sandbox {} without an exact attachment config",
+                sandbox_id.as_str()
+            ),
+        })?
+        .attachment_id
+        .clone();
+    if configs
+        .iter()
+        .any(|config| config.attachment_id != attachment_id)
+    {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "OCI IPAM test configs disagree on exact attachment identity for sandbox {}",
+                sandbox_id.as_str()
+            ),
+        });
+    }
+    allocate_container_ips_on_first_available_for_attachment(
+        authority,
+        layout,
+        configs,
+        sandbox_id,
+        &attachment_id,
+        reservation_claim,
+    )
+}
+
+pub(super) fn allocate_container_ips_on_first_available_for_attachment(
+    authority: &OciIpamAuthority,
+    layout: &OciNetworkLayout,
+    configs: &[OciNetworkConfig],
+    sandbox_id: &SandboxId,
+    attachment_id: &NetworkAttachmentId,
     reservation_claim: &NetworkReservationClaim,
 ) -> Result<BlockIpAllocation> {
     if configs.is_empty() {
@@ -183,7 +227,6 @@ pub(super) fn allocate_container_ips_on_first_available(
         });
     }
 
-    let attachment_id = default_network_attachment_id(sandbox_id);
     let provider_kind = configs[0].provider_kind;
     if configs
         .iter()
@@ -268,6 +311,13 @@ pub(super) fn allocate_container_ips_on_first_available(
                 })?;
             match allocate_next_ipv4(config, state) {
                 Ok(ip) => {
+                    let identity_digest = ipam_allocation_identity_digest(
+                        &layout.tenant_id,
+                        attachment_id,
+                        &segment_id,
+                        reservation_claim,
+                        &provider_locator,
+                    )?;
                     state.released_allocations.remove(attachment_id.as_str());
                     state.allocations.insert(
                         attachment_id.as_str().to_owned(),
@@ -275,6 +325,7 @@ pub(super) fn allocate_container_ips_on_first_available(
                             segment_id: segment_id.as_str().to_owned(),
                             reservation_claim: reservation_claim.clone(),
                             provider_locator: provider_locator.clone(),
+                            identity_digest,
                             ips: vec![ip.to_string()],
                             provider_operation: NetavarkProviderOperation::Reserved,
                         },
@@ -328,9 +379,9 @@ pub(super) fn load_released_container_ips(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
-    sandbox_id: &SandboxId,
+    _sandbox_id: &SandboxId,
 ) -> Result<Vec<Ipv4Addr>> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
+    let attachment_id = config.attachment_id.clone();
     let state = read_ipam_state(authority, layout)?;
     let released = state
         .released_allocations
@@ -354,7 +405,7 @@ pub(super) fn load_container_ips_for_segment(
         || SandboxError::OperationFailed {
             message: format!(
                 "failed to find allocated container IPs for attachment {}",
-                default_network_attachment_id(sandbox_id).as_str()
+                config.attachment_id.as_str()
             ),
         },
     )
@@ -367,9 +418,9 @@ pub(super) fn authenticate_container_network_generation_for_cleanup(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
-    sandbox_id: &SandboxId,
+    _sandbox_id: &SandboxId,
 ) -> Result<Option<Vec<Ipv4Addr>>> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
+    let attachment_id = config.attachment_id.clone();
     let state = read_ipam_state(authority, layout)?;
     if let Some(assigned) = state.allocations.get(attachment_id.as_str()) {
         return validate_ipam_generation(config, &attachment_id, assigned).map(Some);
@@ -403,9 +454,9 @@ pub(super) fn inspect_container_ipam_authority(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
-    sandbox_id: &SandboxId,
+    _sandbox_id: &SandboxId,
 ) -> Result<ContainerIpamAuthorityState> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
+    let attachment_id = config.attachment_id.clone();
     let state = read_ipam_state(authority, layout)?;
     if let Some(assigned) = state.allocations.get(attachment_id.as_str()) {
         validate_ipam_generation(config, &attachment_id, assigned)?;
@@ -422,9 +473,9 @@ pub(super) fn load_container_ips_for_segment_if_present(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
-    sandbox_id: &SandboxId,
+    _sandbox_id: &SandboxId,
 ) -> Result<Option<Vec<Ipv4Addr>>> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
+    let attachment_id = config.attachment_id.clone();
     let state = read_ipam_state(authority, layout)?;
     state
         .allocations
@@ -493,10 +544,10 @@ pub(crate) fn deallocate_container_ips_after_confirmed_detach(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
+    attachment_id: &NetworkAttachmentId,
     reservation_claim: &NetworkReservationClaim,
     provider_kind: OciAttachmentProviderKind,
 ) -> Result<()> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
     with_ipam_state(authority, layout, |state| {
         if let Some(allocation) = state.allocations.get(attachment_id.as_str()) {
             if &allocation.reservation_claim != reservation_claim {
@@ -511,7 +562,7 @@ pub(crate) fn deallocate_container_ips_after_confirmed_detach(
                 layout,
                 sandbox_id,
                 provider_kind,
-                &attachment_id,
+                attachment_id,
                 allocation,
                 "confirmed-detach IPAM release",
             )?;
@@ -529,7 +580,7 @@ pub(crate) fn deallocate_container_ips_after_confirmed_detach(
             layout,
             sandbox_id,
             provider_kind,
-            &attachment_id,
+            attachment_id,
             reservation_claim,
         )
     })
@@ -539,10 +590,10 @@ pub(super) fn deallocate_container_ips_for_claim(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
+    attachment_id: &NetworkAttachmentId,
     reservation_claim: &NetworkReservationClaim,
     provider_kind: OciAttachmentProviderKind,
 ) -> Result<()> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
     with_ipam_state(authority, layout, |state| {
         if let Some(allocation) = state.allocations.get(attachment_id.as_str()) {
             if &allocation.reservation_claim != reservation_claim {
@@ -557,7 +608,7 @@ pub(super) fn deallocate_container_ips_for_claim(
                 layout,
                 sandbox_id,
                 provider_kind,
-                &attachment_id,
+                attachment_id,
                 allocation,
                 "never-realized IPAM release",
             )?;
@@ -577,7 +628,7 @@ pub(super) fn deallocate_container_ips_for_claim(
             layout,
             sandbox_id,
             provider_kind,
-            &attachment_id,
+            attachment_id,
             released,
             "never-realized terminal IPAM reconciliation",
         )?;
@@ -603,10 +654,10 @@ pub(crate) fn retire_terminal_container_ipam_release(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
+    attachment_id: &NetworkAttachmentId,
     reservation_claim: &NetworkReservationClaim,
     provider_kind: OciAttachmentProviderKind,
 ) -> Result<bool> {
-    let attachment_id = default_network_attachment_id(sandbox_id);
     let observed = read_ipam_state(authority, layout)?;
     if observed.allocations.contains_key(attachment_id.as_str())
         || !observed
@@ -633,7 +684,7 @@ pub(crate) fn retire_terminal_container_ipam_release(
                 layout,
                 sandbox_id,
                 provider_kind,
-                &attachment_id,
+                attachment_id,
                 released,
                 "terminal IPAM retirement",
             )?;
@@ -871,6 +922,7 @@ pub(crate) fn reconcile_terminal_container_ipam_releases(
             authority,
             &network_layout,
             &sandbox_id,
+            &network_config.attachment_id,
             &network_config.reservation_claim,
             network_config.provider_kind(),
         )?);
@@ -955,11 +1007,109 @@ fn with_ipam_state<T>(
     layout: &OciNetworkLayout,
     mutator: impl FnOnce(&mut IpamState) -> Result<T>,
 ) -> Result<T> {
-    authority.transaction(layout, mutator)
+    authority.transaction(layout, |state| {
+        authenticate_ipam_state(&layout.tenant_id, state)?;
+        let result = mutator(state)?;
+        authenticate_ipam_state(&layout.tenant_id, state)?;
+        Ok(result)
+    })
 }
 
 fn read_ipam_state(authority: &OciIpamAuthority, layout: &OciNetworkLayout) -> Result<IpamState> {
-    authority.read(layout)
+    let state = authority.read(layout)?;
+    authenticate_ipam_state(&layout.tenant_id, &state)?;
+    Ok(state)
+}
+
+fn authenticate_ipam_state(tenant_id: &TenantId, state: &IpamState) -> Result<()> {
+    for (attachment_key, allocation) in state
+        .allocations
+        .iter()
+        .chain(state.released_allocations.iter())
+    {
+        let attachment_id = attachment_key
+            .parse::<NetworkAttachmentId>()
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "OCI IPAM authority for tenant {} contains invalid attachment key \
+                     {attachment_key:?}: {error}",
+                    tenant_id.as_str()
+                ),
+            })?;
+        authenticate_ipam_allocation_identity(tenant_id, &attachment_id, allocation)?;
+    }
+    Ok(())
+}
+
+pub(super) fn authenticate_ipam_allocation_identity(
+    tenant_id: &TenantId,
+    attachment_id: &NetworkAttachmentId,
+    allocation: &IpamAllocation,
+) -> Result<()> {
+    let segment_id = allocation
+        .segment_id
+        .parse::<NetworkSegmentId>()
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "OCI IPAM allocation for tenant {} attachment {} contains invalid segment \
+                 identity {:?}: {error}",
+                tenant_id.as_str(),
+                attachment_id.as_str(),
+                allocation.segment_id
+            ),
+        })?;
+    let expected = ipam_allocation_identity_digest(
+        tenant_id,
+        attachment_id,
+        &segment_id,
+        &allocation.reservation_claim,
+        &allocation.provider_locator,
+    )?;
+    if allocation.identity_digest != expected {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "OCI IPAM allocation identity digest mismatch for tenant {} attachment {}; \
+                 refusing a substituted attachment, segment, coordinator, or provider locator",
+                tenant_id.as_str(),
+                attachment_id.as_str()
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn ipam_allocation_identity_digest(
+    tenant_id: &TenantId,
+    attachment_id: &NetworkAttachmentId,
+    segment_id: &NetworkSegmentId,
+    reservation_claim: &NetworkReservationClaim,
+    provider_locator: &OciAttachmentProviderLocator,
+) -> Result<String> {
+    let claim =
+        serde_json::to_vec(reservation_claim).map_err(|error| SandboxError::OperationFailed {
+            message: format!("failed to encode OCI IPAM reservation identity: {error}"),
+        })?;
+    let locator =
+        serde_json::to_vec(provider_locator).map_err(|error| SandboxError::OperationFailed {
+            message: format!("failed to encode OCI IPAM provider locator identity: {error}"),
+        })?;
+    let mut digest = Sha256::new();
+    digest.update(IPAM_ALLOCATION_IDENTITY_DOMAIN);
+    for field in [
+        tenant_id.as_str().as_bytes(),
+        attachment_id.as_str().as_bytes(),
+        segment_id.as_str().as_bytes(),
+        claim.as_slice(),
+        locator.as_slice(),
+    ] {
+        digest.update((field.len() as u64).to_be_bytes());
+        digest.update(field);
+    }
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 fn ipam_store_error(error: impl std::fmt::Display) -> SandboxError {

@@ -1,5 +1,3 @@
-#![cfg(target_os = "linux")]
-
 //! KME2 runtime deny proof for the krun (libkrun/TSI microVM) backend.
 //!
 //! The krun execute path runs its VMM inside a deny-by-default network
@@ -42,6 +40,10 @@ use nimbus_sandbox::{
     SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
 };
 
+#[path = "support/provision.rs"]
+mod provision_support;
+use provision_support::{provision_container, provision_krun};
+
 const RESULT_VOLUME: &str = "krun-egress-proof";
 const RESULT_PATH_IN_GUEST: &str = "/nimbus-egress/result";
 const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -77,8 +79,10 @@ fn krun_execute_mode_denies_direct_external_egress() {
         "/nimbus-egress",
     ));
 
-    let handle = block_on(backend.start(spec))
-        .expect("krun guest should start once execute mode is enabled (KME4)");
+    let provisioned = provision_krun(&backend, &workdir.join("state"), spec, false)
+        .expect("krun phases should activate once execute mode is enabled (KME4)");
+    assert!(provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
 
     // The guard force-tears-down on scope exit AND on panic: it never blocks on
     // guest exit, killing the VMM and releasing the netns under hard timeouts.
@@ -168,8 +172,10 @@ fn run_krun_parity_probe(policy: &EgressPolicy, allowed_port: u16, unlisted_port
     ))
     .with_egress_policy(policy.clone());
 
-    let handle = block_on(backend.start(spec))
-        .expect("krun guest should start once execute mode is enabled (KME4)");
+    let provisioned = provision_krun(&backend, &workdir.join("state"), spec, false)
+        .expect("krun phases should activate once execute mode is enabled (KME4)");
+    assert!(provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
     let teardown = ForceTeardownGuard::new(
         backend.clone(),
         handle.id.clone(),
@@ -212,7 +218,10 @@ fn run_container_parity_probe(
     ))
     .with_egress_policy(policy.clone());
 
-    let handle = block_on(backend.start(spec)).expect("container should start");
+    let provisioned = provision_container(&backend, &workdir.join("state"), spec, false)
+        .expect("container phases should activate the parity workload");
+    assert!(provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
     let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
     let result = wait_for_result(
         &result_path,
@@ -573,7 +582,10 @@ fn krun_execute_mode_denies_all_known_bypass_vectors() {
     ))
     .with_egress_policy(policy);
 
-    let handle = block_on(backend.start(spec)).expect("krun bypass-vectors guest should start");
+    let provisioned = provision_krun(&backend, &workdir.join("state"), spec, false)
+        .expect("krun phases should activate the bypass-vectors guest");
+    assert!(provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
     let _teardown = ForceTeardownGuard::new(
         backend.clone(),
         handle.id.clone(),
@@ -678,7 +690,10 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
     .with_mount(SandboxMountSpec::tenant_volume(b_volume, "/nimbus-egress"))
     .with_egress_policy(policy.clone());
 
-    let b_handle = block_on(backend.start(b_spec)).expect("sibling B should start");
+    let b_provisioned = provision_krun(&backend, &workdir.join("state"), b_spec, false)
+        .expect("sibling B provision phases should activate");
+    assert!(b_provisioned.ingress.is_empty());
+    let b_handle = b_provisioned.handle;
     let _b_teardown = ForceTeardownGuard::new(
         backend.clone(),
         b_handle.id.clone(),
@@ -711,7 +726,10 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
     .with_mount(SandboxMountSpec::tenant_volume(a_volume, "/nimbus-egress"))
     .with_egress_policy(policy);
 
-    let a_handle = block_on(backend.start(a_spec)).expect("sandbox A should start");
+    let a_provisioned = provision_krun(&backend, &workdir.join("state"), a_spec, false)
+        .expect("sandbox A provision phases should activate");
+    assert!(a_provisioned.ingress.is_empty());
+    let a_handle = a_provisioned.handle;
     let _a_teardown = ForceTeardownGuard::new(
         backend.clone(),
         a_handle.id.clone(),
@@ -781,7 +799,10 @@ fn krun_two_tenants_cannot_reach_each_others_sandbox() {
             .with_command([a_command]),
     )
     .with_egress_policy(policy.clone());
-    let a_handle = block_on(backend.start(a_spec)).expect("tenant A should start");
+    let a_provisioned = provision_krun(&backend, &workdir.join("state"), a_spec, false)
+        .expect("tenant A provision phases should activate");
+    assert!(a_provisioned.ingress.is_empty());
+    let a_handle = a_provisioned.handle;
     let _a_teardown = ForceTeardownGuard::new(
         backend.clone(),
         a_handle.id.clone(),
@@ -808,7 +829,10 @@ fn krun_two_tenants_cannot_reach_each_others_sandbox() {
         "/nimbus-egress",
     ))
     .with_egress_policy(policy);
-    let b_handle = block_on(backend.start(b_spec)).expect("tenant B should start");
+    let b_provisioned = provision_krun(&backend, &workdir.join("state"), b_spec, false)
+        .expect("tenant B provision phases should activate");
+    assert!(b_provisioned.ingress.is_empty());
+    let b_handle = b_provisioned.handle;
     let _b_teardown = ForceTeardownGuard::new(
         backend.clone(),
         b_handle.id.clone(),
@@ -873,7 +897,10 @@ fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
             .with_command(["sleep 120".to_owned()]),
     )
     .with_egress_policy(policy.clone());
-    let s1_handle = block_on(backend.start(s1_spec)).expect("sandbox 1 should start");
+    let s1_provisioned = provision_krun(&backend, &workdir.join("state"), s1_spec, false)
+        .expect("sandbox 1 provision phases should activate");
+    assert!(s1_provisioned.ingress.is_empty());
+    let s1_handle = s1_provisioned.handle;
     let _s1_teardown = ForceTeardownGuard::new(
         backend.clone(),
         s1_handle.id.clone(),
@@ -900,8 +927,10 @@ fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
         "/nimbus-egress",
     ))
     .with_egress_policy(policy);
-    let s2_handle =
-        block_on(backend.start(s2_spec)).expect("sandbox 2 should start by growing a block");
+    let s2_provisioned = provision_krun(&backend, &workdir.join("state"), s2_spec, false)
+        .expect("sandbox 2 provision phases should grow a block and activate");
+    assert!(s2_provisioned.ingress.is_empty());
+    let s2_handle = s2_provisioned.handle;
     let _s2_teardown = ForceTeardownGuard::new(
         backend.clone(),
         s2_handle.id.clone(),

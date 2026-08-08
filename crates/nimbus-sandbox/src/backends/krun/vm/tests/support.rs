@@ -46,6 +46,8 @@ pub(super) use crate::inspection::{
     SandboxRestartBlocker, SandboxRestartIneligibility,
 };
 pub(super) use crate::instance::{SandboxId, SandboxStatus};
+use crate::provision::test_support::legacy_start_attachment_network_plan_fixture;
+pub(super) use crate::provision::test_support::sandbox_provision_network_plan_fixture as sample_provision_network_plan;
 pub(super) use crate::spec::{
     SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxResourceQuotaPolicy,
@@ -55,6 +57,30 @@ pub(super) use nimbus_network::EndpointProtocol;
 
 pub(super) fn sample_spec() -> SandboxSpec {
     sample_spec_with_rootfs(Path::new("/srv/rootfs"))
+}
+
+/// Preserve plan-only lowering coverage after removal of the production
+/// coarse-start authority. This fixture deliberately exercises only the
+/// test-only planner and provider-local artifact materialization; it does not
+/// attach, activate, publish, or stand in for the compute provision saga.
+pub(super) fn materialize_plan_only_fixture(
+    backend: &KrunSandboxBackend,
+    spec: SandboxSpec,
+) -> crate::Result<crate::SandboxHandle> {
+    let launch_plan = backend.plan_start(&spec)?;
+    materialize_plan_only_plan_fixture(backend, launch_plan)
+}
+
+pub(super) fn materialize_plan_only_plan_fixture(
+    backend: &KrunSandboxBackend,
+    launch_plan: KrunStartPlan,
+) -> crate::Result<crate::SandboxHandle> {
+    backend.materialize_krun_vm_config(&launch_plan.manifest)?;
+    let mut manifest = launch_plan.manifest;
+    manifest.last_exit_code = None;
+    manifest.shutdown_requested = false;
+    backend.write_manifest(&manifest)?;
+    Ok(manifest.handle)
 }
 
 /// Loopback bind address (ephemeral port) for starting test egress PEPs without
@@ -181,15 +207,23 @@ pub(super) fn sample_image_metadata() -> KrunImageMetadata {
 
 pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> KrunSandboxManifest {
     let endpoints = visible_published_endpoints(start_mode, &spec, SandboxStatus::Starting);
-    let network_layout = super::super::OciNetworkLayout::under_root(
-        "/tmp/state",
-        &spec.tenant_id,
-        &crate::instance::SandboxId::new("sandbox-01"),
-    );
+    let sandbox_id = crate::instance::SandboxId::new("sandbox-01");
+    let attachment_network_plan = (start_mode == KrunStartMode::Execute).then(|| {
+        legacy_start_attachment_network_plan_fixture(&spec, &sandbox_id, "krun-sample-manifest")
+    });
+    let network_config = attachment_network_plan.as_ref().map(|plan| {
+        let mut config = super::super::OciNetworkConfig::default();
+        config.attachment_id =
+            crate::backends::oci::network::default_network_attachment_id(&sandbox_id);
+        config.network_plan = Some(plan.clone());
+        config
+    });
+    let network_layout =
+        super::super::OciNetworkLayout::under_root("/tmp/state", &spec.tenant_id, &sandbox_id);
     KrunSandboxManifest {
         handle: crate::instance::SandboxHandle::new(
             spec.tenant_id.clone(),
-            crate::instance::SandboxId::new("sandbox-01"),
+            sandbox_id.clone(),
             spec.display_name().to_owned(),
             SandboxBackendKind::Krun,
             SandboxStatus::Starting,
@@ -198,13 +232,12 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
         spec,
         image_metadata: KrunImageMetadata::default(),
         launch_artifact: None,
+        provision_prepared: true,
         bundle_layout: super::super::KrunBundleLayout::new("/tmp/bundle"),
-        conmon_layout: super::super::OciConmonLayout::new(
-            "/tmp/state",
-            &crate::instance::SandboxId::new("sandbox-01"),
-        ),
+        conmon_layout: super::super::OciConmonLayout::new("/tmp/state", &sandbox_id),
         network_layout,
-        network_config: (start_mode == KrunStartMode::Execute).then(Default::default),
+        provision_network_plan: None,
+        network_config,
         port_leases: Vec::new(),
         launch_authority: match start_mode {
             KrunStartMode::PlanOnly => KrunLaunchAuthority::PlanOnly,

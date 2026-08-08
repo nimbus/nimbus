@@ -692,6 +692,7 @@ fn final_detach_reopens_after_allocator_finalization_before_portable_completion(
             &fixture.ipam,
             &fixture.layout,
             &fixture.sandbox_id,
+            &adapter.context.config.attachment_id,
             &fixture.claim,
             adapter.context.config.provider_kind(),
         )
@@ -870,6 +871,7 @@ fn machine_forwarded_final_detach_reopens_after_allocator_finalization() {
         &fixture.ipam,
         &fixture.layout,
         &fixture.sandbox_id,
+        &adapter.context.config.attachment_id,
         &fixture.claim,
         adapter.context.config.provider_kind(),
     )

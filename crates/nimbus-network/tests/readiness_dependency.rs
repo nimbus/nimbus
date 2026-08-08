@@ -39,7 +39,7 @@ fn direct_and_pep_required_plans_have_distinct_digests() {
     );
     assert_eq!(
         pep_required.digest().to_string(),
-        "e3653495e8aa1fcb5a622ef24f7dbfa6bf0553455c4d56cfd7e511d49f4c00ed",
+        "f872b98d52b7c7fdc71cfcb838349adcfd05fd38522c50fe5d431c6ac2b6b8a1",
         "the PEP-required desired digest is a pinned wire contract"
     );
 }
@@ -762,7 +762,10 @@ fn capability_requirements() -> NetworkCapabilityRequirements {
         ),
         NetworkIngressCapabilitySet::new(BTreeSet::new()),
         NetworkForwardingCapabilitySet::new(BTreeSet::new()),
-        NetworkLifecycleCapabilitySet::new(BTreeSet::new()),
+        nimbus_network::NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new(BTreeSet::new()),
+            NetworkLifecycleCapabilitySet::new(BTreeSet::new()),
+        ),
         NetworkSovereigntyRequirements::new(
             NetworkControlPlaneLocality::LocalOnly,
             BTreeSet::new(),

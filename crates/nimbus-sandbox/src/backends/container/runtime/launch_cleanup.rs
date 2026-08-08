@@ -516,8 +516,9 @@ fn direct_execute_effect_fence_precedes_every_provider_probe() {
         .expect("direct launch should reserve complete authority");
     let planned = plan.manifest.clone();
 
+    let mut manifest = plan.manifest;
     let error = backend
-        .finish_start(plan)
+        .execute_direct_start(&mut manifest)
         .expect_err("the injected boundary must stop before provider execution");
     assert!(
         error.to_string().contains("after durable effect fence"),
@@ -996,8 +997,9 @@ fn terminal_manifest_write_failure_converges_before_lifecycle_publication() {
         .expect("runtime-absence fixture must remain the durable launch plan");
     let initial = plan.manifest.clone();
 
+    let mut manifest = plan.manifest;
     let error = backend
-        .finish_start(plan)
+        .execute_direct_start(&mut manifest)
         .expect_err("terminal persistence injection must fail the launch");
     assert!(
         error

@@ -10,10 +10,11 @@ use nimbus_network::NetworkReservationClaim;
 use super::*;
 use crate::backends::oci::network::{
     AttachmentBackendKind, OciAttachmentAdapter, OciAttachmentAuxiliaryListener,
-    OciAttachmentInput, OciHostManagedAttachmentBackend, OciMachineForwardedAttachmentBackend,
-    OciMachinePortForwarderConfig,
+    OciAttachmentInput, OciAttachmentProviderPaths, OciHostManagedAttachmentBackend,
+    OciMachineForwardedAttachmentBackend, OciMachinePortForwarderConfig,
 };
 use crate::backends::oci::network::{OciAttachmentLifecycle, OciNetworkConfig, OciNetworkLayout};
+use nimbus_network::NetworkAttachmentId;
 
 impl OciHostManagedAttachmentBackend for ContainerSandboxBackend {
     const ATTACHMENT_BACKEND_KIND: AttachmentBackendKind = AttachmentBackendKind::Container;
@@ -73,15 +74,50 @@ impl ContainerSandboxBackend {
         }
     }
 
+    /// Compose attachment-only OCI setup with ingress effects deliberately
+    /// deferred to the later publication capability.
+    pub(super) fn non_routable_attachment_adapter<'a>(
+        &'a self,
+        manifest: &'a ContainerSandboxManifest,
+        network_config: &'a OciNetworkConfig,
+        hostname: &'a str,
+    ) -> OciAttachmentAdapter<'a> {
+        let input = OciAttachmentInput {
+            workload_state_root: &manifest.runner_config.workload_state_root,
+            tenant_id: &manifest.spec.tenant_id,
+            sandbox_id: &manifest.handle.id,
+            display_name: manifest.spec.display_name(),
+            hostname,
+            bindings: &manifest.spec.port_bindings,
+            leases: &manifest.port_leases,
+            auxiliary_listener: manifest.egress_proxy.as_ref().map(|assignment| {
+                OciAttachmentAuxiliaryListener::egress_pep(
+                    &assignment.port_lease,
+                    &assignment.host,
+                    assignment.port,
+                )
+            }),
+            layout: &manifest.network_layout,
+            config: network_config,
+            launch_claim: manifest.launch_reservation_claim.as_ref(),
+        };
+        <Self as OciHostManagedAttachmentBackend>::non_routable_attachment_adapter(input)
+    }
+
     #[cfg(test)]
     pub(super) fn network_config(&self, tenant: &TenantId) -> Result<OciNetworkConfig> {
         let segment = self.segment_allocator.segment_for(tenant)?;
         let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()?;
+        let attachment_id = NetworkAttachmentId::for_workload_attachment(
+            tenant.as_str(),
+            "container-network-config-test",
+        );
         Ok(OciAttachmentLifecycle::config_from_segment(
             AttachmentBackendKind::Container,
             self.config.netavark_path.clone(),
             self.config.aardvark_dns_path.clone(),
             &segment,
+            &attachment_id,
             &reservation_claim,
         ))
     }
@@ -92,6 +128,7 @@ impl ContainerSandboxBackend {
         tenant: &TenantId,
         layout: &OciNetworkLayout,
         sandbox_id: &SandboxId,
+        attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<OciNetworkConfig> {
         let ports = self.port_lease_coordinator();
@@ -100,9 +137,12 @@ impl ContainerSandboxBackend {
             tenant,
             layout,
             sandbox_id,
+            attachment_id,
             reservation_claim,
-            self.config.netavark_path.clone(),
-            self.config.aardvark_dns_path.clone(),
+            OciAttachmentProviderPaths::new(
+                self.config.netavark_path.clone(),
+                self.config.aardvark_dns_path.clone(),
+            ),
         )
     }
 
@@ -112,16 +152,20 @@ impl ContainerSandboxBackend {
         layout: &OciNetworkLayout,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
+        attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
         planning_error: SandboxError,
     ) -> SandboxError {
         let ports = self.port_lease_coordinator();
         self.attachment_lifecycle(&ports).compensate_reserved(
             AttachmentBackendKind::Container,
-            layout,
-            tenant_id,
-            sandbox_id,
-            reservation_claim,
+            crate::backends::oci::network::ReservedNetworkLaunchIdentity::new(
+                layout,
+                tenant_id,
+                sandbox_id,
+                attachment_id,
+                reservation_claim,
+            ),
             planning_error,
         )
     }
@@ -134,12 +178,16 @@ impl ContainerSandboxBackend {
     ) -> Result<()> {
         let ports = self.port_lease_coordinator_for_manifest(manifest)?;
         let port_compensation = ports.release_never_bound_launch_claim(reservation_claim);
+        let attachment_id = &manifest.require_network_config()?.attachment_id;
         self.attachment_lifecycle(&ports).release_reserved(
             AttachmentBackendKind::Container,
-            &manifest.network_layout,
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            reservation_claim,
+            crate::backends::oci::network::ReservedNetworkLaunchIdentity::new(
+                &manifest.network_layout,
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                attachment_id,
+                reservation_claim,
+            ),
             port_compensation,
         )
     }

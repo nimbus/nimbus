@@ -5,9 +5,10 @@ use nimbus_network::{
     NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkExposure,
     NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet, NetworkIngressFeature,
     NetworkIngressProviderRegistration, NetworkIsolationMode, NetworkLifecycleCapabilitySet,
-    NetworkLifecycleFeature, NetworkManagementMode, NetworkPlan, NetworkPlanContentDigest,
-    NetworkPlanId, NetworkPortAssignmentMode, NetworkProviderId, NetworkResourceGeneration,
-    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, PortProtocol,
+    NetworkLifecycleFeature, NetworkLifecycleRequirements, NetworkManagementMode, NetworkPlan,
+    NetworkPlanContentDigest, NetworkPlanId, NetworkPortAssignmentMode, NetworkProviderId,
+    NetworkResourceGeneration, NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
+    PortProtocol,
 };
 
 fn attachment(
@@ -85,11 +86,18 @@ fn local_requirements() -> NetworkCapabilityRequirements {
             NetworkIngressFeature::Streaming,
         ]),
         NetworkForwardingCapabilitySet::new([]),
-        NetworkLifecycleCapabilitySet::new([
-            NetworkLifecycleFeature::DurableInspect,
-            NetworkLifecycleFeature::Reconcile,
-            NetworkLifecycleFeature::Delete,
-        ]),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([
+                NetworkLifecycleFeature::DurableInspect,
+                NetworkLifecycleFeature::Reconcile,
+                NetworkLifecycleFeature::Delete,
+            ]),
+            NetworkLifecycleCapabilitySet::new([
+                NetworkLifecycleFeature::DurableInspect,
+                NetworkLifecycleFeature::Reconcile,
+                NetworkLifecycleFeature::Delete,
+            ]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     )
 }

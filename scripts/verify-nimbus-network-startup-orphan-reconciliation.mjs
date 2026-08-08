@@ -4,7 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 const repoRoot = process.cwd();
-const mutation = process.env.NIMBUS_NETWORK_VERIFY_TEST_STARTUP_ORPHAN_MUTATION ?? "";
+const mutation =
+  process.env.NIMBUS_NETWORK_VERIFY_TEST_STARTUP_ORPHAN_MUTATION ?? "";
 
 const sourcePaths = {
   network: "crates/nimbus-sandbox/src/backends/oci/network.rs",
@@ -16,10 +17,8 @@ const sourcePaths = {
   portableSegment: "crates/nimbus-network/src/segment.rs",
   sandboxSegment: "crates/nimbus-sandbox/src/backends/oci/network/segment.rs",
   cluster: "crates/nimbus-sandbox/src/backends/oci/network/cluster.rs",
-  cleanup:
-    "crates/nimbus-sandbox/src/backends/oci/network/segment/cleanup.rs",
-  testSupport:
-    "crates/nimbus-sandbox/src/backends/oci/network/test_support.rs",
+  cleanup: "crates/nimbus-sandbox/src/backends/oci/network/segment/cleanup.rs",
+  testSupport: "crates/nimbus-sandbox/src/backends/oci/network/test_support.rs",
   reaper: "crates/nimbus-sandbox/src/backends/oci/network/reaper.rs",
 };
 
@@ -27,7 +26,7 @@ function syntheticSources() {
   return {
     network: [
       "mod startup_reconciliation;",
-      "pub(crate) use startup_reconciliation::reconcile_startup_network_state;",
+      "pub(crate) use startup_reconciliation::{reconcile_startup_network_state, reconcile_startup_network_state_with_retained_desired_manifests};",
     ].join("\n"),
     startup: [
       "use nimbus_network::{LocalNetworkAttachmentAuthority, NetworkResourcePhase, NetworkTransitionEvidence};",
@@ -44,10 +43,13 @@ function syntheticSources() {
       "  }",
       "}",
     ].join("\n"),
-    container:
-      "reconcile_startup_network_state(attachment_authority, &ipam_authority, segment_allocator.as_ref());",
-    krun:
-      "reconcile_startup_network_state(attachment_authority, &ipam_authority, segment_allocator.as_ref());",
+    container: [
+      "reconcile_startup_manifest_publications(&config.workload_state_root)",
+      "  .and_then(|()| retained_reservation_pending_manifest_paths(&config))",
+      "  .and_then(|retained_desired_manifests| reconcile_startup_network_state_with_retained_desired_manifests(",
+      "    &config.workload_state_root, attachment_authority, &ipam_authority, segment_allocator.as_ref(), &retained_desired_manifests));",
+    ].join("\n"),
+    krun: "reconcile_startup_network_state(&config.workload_state_root, attachment_authority, &ipam_authority, segment_allocator.as_ref());",
     portableSegment: "pub trait NetworkSegmentAllocator {}",
     sandboxSegment: "impl NetworkSegmentAllocator for Allocator {}",
     cluster: "impl NetworkSegmentAllocator for ClusterAllocator {}",
@@ -66,7 +68,8 @@ function loadSources() {
           "\nfn reconcile_orphans(live: &BTreeSet<(TenantId, NetworkAttachmentId)>) {}";
         break;
       case "missing-container-injection":
-        sources.container = "fn construct_container_without_reconciliation() {}";
+        sources.container =
+          "fn construct_container_without_reconciliation() {}";
         break;
       case "missing-krun-injection":
         sources.krun = "fn construct_krun_without_reconciliation() {}";
@@ -128,8 +131,17 @@ function verify(input) {
   if (!network.includes("mod startup_reconciliation")) {
     errors.push("OCI network composition does not own startup_reconciliation");
   }
-  if (!network.includes("startup_reconciliation::reconcile_startup_network_state")) {
-    errors.push("OCI network composition does not export the sole startup reconciler");
+  for (const exported of [
+    "reconcile_startup_network_state",
+    "reconcile_startup_network_state_with_retained_desired_manifests",
+  ]) {
+    const exportPattern = new RegExp(
+      `pub\\s*\\(\\s*crate\\s*\\)\\s+use\\s+startup_reconciliation\\s*::\\s*(?:${exported}\\b|\\{[^}]*\\b${exported}\\b)`,
+      "s",
+    );
+    if (!exportPattern.test(network)) {
+      errors.push(`OCI network composition does not export ${exported}`);
+    }
   }
 
   for (const token of [
@@ -158,17 +170,25 @@ function verify(input) {
     ".release(",
   ]) {
     if (startup.includes(forbidden)) {
-      errors.push(`startup reconciler gained forbidden cleanup capability: ${forbidden}`);
+      errors.push(
+        `startup reconciler gained forbidden cleanup capability: ${forbidden}`,
+      );
     }
   }
 
-  const callPattern =
-    /reconcile_startup_network_state\s*\([\s\S]{0,500}attachment_authority/;
-  if (!callPattern.test(sources.container ?? "")) {
-    errors.push("container startup does not inject durable attachment evidence");
+  const containerCallPattern =
+    /reconcile_startup_manifest_publications\s*\(\s*&config\.workload_state_root\s*\)[\s\S]{0,300}?retained_reservation_pending_manifest_paths\s*\(\s*&config\s*\)[\s\S]{0,500}?reconcile_startup_network_state_with_retained_desired_manifests\s*\(\s*&config\.workload_state_root\s*,\s*attachment_authority\s*,\s*&ipam_authority\s*,\s*segment_allocator\.as_ref\(\)\s*,\s*&retained_desired_manifests\s*,?\s*\)/;
+  if (!containerCallPattern.test(sources.container ?? "")) {
+    errors.push(
+      "container startup must reconcile publication state, retain exact desired manifests, then inject all five reconciliation inputs",
+    );
   }
-  if (!callPattern.test(sources.krun ?? "")) {
-    errors.push("krun startup does not inject durable attachment evidence");
+  const krunCallPattern =
+    /reconcile_startup_network_state\s*\(\s*&config\.workload_state_root\s*,\s*attachment_authority\s*,\s*&ipam_authority\s*,\s*segment_allocator\.as_ref\(\)\s*,?\s*\)/;
+  if (!krunCallPattern.test(sources.krun ?? "")) {
+    errors.push(
+      "krun startup must inject the exact four base reconciliation inputs",
+    );
   }
 
   return errors;

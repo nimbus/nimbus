@@ -357,7 +357,8 @@ impl WorkloadNetworkPlanIdentity {
         self.generation
     }
 
-    fn plan_id(&self) -> NetworkPlanId {
+    /// Stable identity of the complete desired network plan.
+    pub fn plan_id(&self) -> NetworkPlanId {
         NetworkPlanId::for_tenant_workload_plan(&self.tenant_id, &self.workload_incarnation_key)
     }
 

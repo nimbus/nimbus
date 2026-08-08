@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use nimbus_network::{PortBindingProvenance, PortLeaseEffectScope, PortLeasePhase};
+use nimbus_network::{
+    ListenerId, NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim,
+    NetworkResourceId, PortBindingProvenance, PortLeaseEffectScope, PortLeaseId, PortLeasePhase,
+};
 
 use super::*;
 
@@ -15,6 +18,375 @@ fn external_context(incarnation: &str, generation: u64) -> ExternalServerListene
 fn direct_authority(state_root: &Path) -> ServerListenerLeaseAuthority {
     ServerListenerLeaseAuthority::reconstruct_direct(state_root)
         .expect("direct listener authority should reconstruct once")
+}
+
+fn workload_reservation_claim() -> NetworkReservationClaim {
+    NetworkReservationClaim::new(
+        NetworkProviderHandle::new(
+            NetworkProviderId::for_registration_key("nimbus-sandbox.test-attachment"),
+            "workload-reservation-attempt",
+        )
+        .expect("fixture provider handle should validate"),
+    )
+}
+
+fn workload_request() -> PortLeaseRequest {
+    let listener = ListenerId::for_workload_listener("tenant-a/workload-a", "http");
+    PortLeaseRequest::new(
+        PortLeaseId::for_listener(&listener),
+        NetworkResourceId::from(listener),
+        Some(nimbus_core::TenantId::new("tenant-a").expect("fixture tenant should parse")),
+        PortLeaseFence::new(NetworkResourceGeneration::new(7), NetworkLeaseEpoch::new(1)),
+        PortLeaseAccounting::TenantPublished,
+        PortPublicationIntent::host(Ipv4Addr::LOCALHOST.into()),
+        PortBindingSpec::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            PortBindTarget::ipv4_specific(Ipv4Addr::LOCALHOST),
+            PortExposure::Loopback,
+            PortRequestMode::ProviderAssigned,
+        ),
+    )
+}
+
+fn planned_workload_request(
+    tenant: &nimbus_core::TenantId,
+    plan_id: &NetworkPlanId,
+    listener_name: &str,
+    internal: bool,
+) -> PortLeaseRequest {
+    let listener = ListenerId::for_tenant_workload_listener(tenant, "workload-a", listener_name);
+    PortLeaseRequest::new(
+        PortLeaseId::for_listener(&listener),
+        NetworkResourceId::from(listener),
+        Some(tenant.clone()),
+        PortLeaseFence::new(NetworkResourceGeneration::new(7), NetworkLeaseEpoch::new(1)),
+        if internal {
+            PortLeaseAccounting::HostInternal
+        } else {
+            PortLeaseAccounting::TenantPublished
+        },
+        if internal {
+            PortPublicationIntent::Unpublished
+        } else {
+            PortPublicationIntent::host(Ipv4Addr::LOCALHOST.into())
+        },
+        PortBindingSpec::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            PortBindTarget::ipv4_specific(Ipv4Addr::LOCALHOST),
+            PortExposure::Loopback,
+            PortRequestMode::ProviderAssigned,
+        ),
+    )
+    .with_plan_id(plan_id.clone())
+}
+
+fn lease_record_bytes(authority: &LocalPortLeaseAuthority, request: &PortLeaseRequest) -> Vec<u8> {
+    let record = authority
+        .inspect(request.lease_id())
+        .expect("planned member should inspect")
+        .expect("planned member should remain durable");
+    serde_json::to_vec(&record).expect("planned member should serialize canonically")
+}
+
+#[test]
+fn workload_ingress_claims_exact_launch_reservation_before_bind() {
+    let state_root = tempfile::tempdir().expect("state root should be created");
+    let request = workload_request();
+    let reservation = workload_reservation_claim();
+    let port_authority =
+        LocalPortLeaseAuthority::open(state_root.path()).expect("port authority should open");
+    port_authority
+        .reserve_for_coordinator(request.clone(), &reservation)
+        .expect("launch coordinator should reserve the exact request");
+
+    let prepared = direct_authority(state_root.path())
+        .prepare_workload_ingress(None, request.clone(), &reservation)
+        .expect("server publisher should claim the exact reservation");
+    let claimed = port_authority
+        .inspect(request.lease_id())
+        .expect("claimed lease should inspect")
+        .expect("claimed lease should remain");
+    assert_eq!(claimed.phase(), PortLeasePhase::Reserved);
+    assert!(claimed.bind_claim().is_some());
+    assert_eq!(claimed.reservation_claim(), Some(&reservation));
+
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("provider-assigned socket should bind");
+    let active = prepared
+        .adopt_std(listener)
+        .expect("listener should adopt the exact claim");
+    assert_ne!(
+        active.local_addr().expect("address should resolve").port(),
+        0
+    );
+    active
+        .close_and_settle()
+        .expect("confirmed close should settle the test listener");
+}
+
+#[test]
+fn live_listener_observation_evidence_is_exact_stripped_and_effect_free() {
+    let state_root = tempfile::tempdir().expect("state root should be created");
+    let request = workload_request();
+    let reservation = workload_reservation_claim();
+    let port_authority =
+        LocalPortLeaseAuthority::open(state_root.path()).expect("port authority should open");
+    port_authority
+        .reserve_for_coordinator(request.clone(), &reservation)
+        .expect("launch coordinator should reserve the exact request");
+    let prepared = direct_authority(state_root.path())
+        .prepare_workload_ingress(None, request.clone(), &reservation)
+        .expect("server publisher should claim the exact reservation");
+    let listener = std::net::TcpListener::bind(
+        prepared
+            .bind_addr()
+            .expect("authorized bind address should resolve"),
+    )
+    .expect("provider-assigned socket should bind");
+    let adopted = prepared
+        .adopt_std(listener)
+        .expect("listener should adopt the exact claim");
+    let actual_addr = adopted.local_addr().expect("bound address should resolve");
+    let (listener, mut lease, _) = adopted.into_std_parts();
+    let before = port_authority
+        .inspect(request.lease_id())
+        .expect("active lease should inspect")
+        .expect("active lease should remain");
+
+    let evidence = lease
+        .observation_evidence()
+        .expect("coherent live owner should expose stripped evidence");
+    assert_eq!(evidence.request(), &request);
+    assert_eq!(evidence.lifetime(), before.active_lifetime().unwrap());
+    assert_eq!(
+        evidence.provenance(),
+        PortBindingProvenance::ProviderAssigned
+    );
+    assert_eq!(evidence.bound_endpoint().port().get(), actual_addr.port());
+    assert_eq!(
+        evidence.bound_endpoint().target().specific_address(),
+        Some(actual_addr.ip())
+    );
+    assert_eq!(
+        port_authority
+            .inspect(request.lease_id())
+            .expect("active lease should remain readable")
+            .expect("active lease should remain"),
+        before,
+        "the evidence accessor must not mutate durable authority"
+    );
+
+    lease.provenance = PortBindingProvenance::ExternallyOwned;
+    assert!(
+        lease.observation_evidence().is_none(),
+        "crossed retained provenance must fail closed"
+    );
+    lease.provenance = PortBindingProvenance::ProviderAssigned;
+    lease.request =
+        request
+            .clone()
+            .with_plan_id(nimbus_network::NetworkPlanId::for_tenant_workload_plan(
+                request
+                    .tenant_id()
+                    .expect("workload lease should retain tenant"),
+                "crossed-workload",
+            ));
+    assert!(
+        lease.observation_evidence().is_none(),
+        "a request crossed with another lifetime must fail closed"
+    );
+    lease.request = request;
+
+    drop(listener);
+    lease
+        .settle_after_confirmed_local_close()
+        .expect("confirmed close should settle the fixture lease");
+}
+
+#[test]
+fn dead_workload_ingress_owner_rebinds_same_provider_assigned_port() {
+    let state_root = tempfile::tempdir().expect("state root should be created");
+    let request = workload_request();
+    let reservation = workload_reservation_claim();
+    let port_authority =
+        LocalPortLeaseAuthority::open(state_root.path()).expect("port authority should open");
+    port_authority
+        .reserve_for_coordinator(request.clone(), &reservation)
+        .expect("launch coordinator should reserve the exact request");
+    let first = direct_authority(state_root.path())
+        .prepare_workload_ingress(None, request.clone(), &reservation)
+        .expect("first publisher should claim");
+    let first = first
+        .adopt_std(
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .expect("first provider-assigned socket should bind"),
+        )
+        .expect("first listener should adopt");
+    let first_addr = first.local_addr().expect("first address should resolve");
+    drop(first);
+
+    let second = direct_authority(state_root.path())
+        .prepare_workload_ingress(None, request.clone(), &reservation)
+        .expect("dead process-bound owner should retain and reclaim its exact slot");
+    assert_eq!(
+        second
+            .bind_addr()
+            .expect("recovery bind address should resolve"),
+        first_addr,
+        "the recovered effect owner must receive the exact fenced port"
+    );
+    let rebound = std::net::TcpListener::bind(
+        second
+            .bind_addr()
+            .expect("recovery bind address should resolve"),
+    )
+    .expect("the confirmed-dead socket should release its exact port");
+    let second = second
+        .adopt_std(rebound)
+        .expect("rebound listener should adopt the higher lifetime generation");
+    assert_eq!(
+        second.local_addr().expect("second address should resolve"),
+        first_addr
+    );
+    let active = port_authority
+        .inspect(request.lease_id())
+        .expect("rebound lease should inspect")
+        .expect("rebound lease should remain");
+    assert_eq!(active.phase(), PortLeasePhase::Active);
+    assert_eq!(
+        active
+            .last_lifetime_generation()
+            .expect("rebind should retain lifetime generation")
+            .as_u64(),
+        2
+    );
+    second
+        .close_and_settle()
+        .expect("confirmed close should settle the rebound listener");
+}
+
+#[test]
+fn planned_workload_ingress_preserves_unrelated_members_across_member_lifecycle() {
+    let state_root = tempfile::tempdir().expect("state root should be created");
+    let tenant = nimbus_core::TenantId::new("tenant-a").expect("fixture tenant should parse");
+    let plan_id = NetworkPlanId::for_tenant_workload_plan(&tenant, "workload-a");
+    let ingress_http = planned_workload_request(&tenant, &plan_id, "http", false);
+    let ingress_admin = planned_workload_request(&tenant, &plan_id, "admin", false);
+    let internal_pep = planned_workload_request(&tenant, &plan_id, "egress-pep", true);
+    let plan_members = vec![
+        ingress_http.clone(),
+        ingress_admin.clone(),
+        internal_pep.clone(),
+    ];
+    let reservation = workload_reservation_claim();
+    let port_authority =
+        LocalPortLeaseAuthority::open(state_root.path()).expect("port authority should open");
+    port_authority
+        .reserve_batch_for_coordinator(plan_members.clone(), &reservation)
+        .expect("launch coordinator should atomically reserve the complete plan");
+    let listener_authority = direct_authority(state_root.path());
+    let ingress_members = [ingress_http.clone(), ingress_admin.clone()];
+    let durable_witness = listener_authority
+        .authenticate_workload_ingress_plan(
+            &plan_id,
+            &tenant,
+            NetworkResourceGeneration::new(7),
+            &ingress_members,
+            &reservation,
+        )
+        .expect("server owner should authenticate all three durable members");
+    assert_eq!(durable_witness.len(), 3);
+
+    let initial = plan_members
+        .iter()
+        .map(|request| lease_record_bytes(&port_authority, request))
+        .collect::<Vec<_>>();
+    let abandoned = listener_authority
+        .prepare_workload_ingress(Some(&durable_witness), ingress_http.clone(), &reservation)
+        .expect("planned HTTP listener should claim under the complete witness");
+    assert_eq!(
+        lease_record_bytes(&port_authority, &ingress_admin),
+        initial[1]
+    );
+    assert_eq!(
+        lease_record_bytes(&port_authority, &internal_pep),
+        initial[2]
+    );
+    let crossed = std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+        .expect("crossed fixture listener should bind");
+    abandoned
+        .adopt_std(crossed)
+        .expect_err("crossed binding should abandon only its planned member");
+    let restored_http = port_authority
+        .inspect(ingress_http.lease_id())
+        .expect("abandoned HTTP member should inspect")
+        .expect("abandoned HTTP member should remain durable");
+    assert_eq!(restored_http.phase(), PortLeasePhase::Reserved);
+    assert!(restored_http.bind_claim().is_none());
+    assert!(restored_http.active_lifetime().is_none());
+    assert_eq!(
+        restored_http
+            .last_lifetime_generation()
+            .expect("abandoned HTTP member should retain its monotonic fence")
+            .as_u64(),
+        1
+    );
+    assert_eq!(
+        lease_record_bytes(&port_authority, &ingress_admin),
+        initial[1],
+        "abandoning HTTP must not rewrite its ingress sibling"
+    );
+    assert_eq!(
+        lease_record_bytes(&port_authority, &internal_pep),
+        initial[2],
+        "abandoning HTTP must not rewrite the unrelated internal member"
+    );
+
+    let prepared = listener_authority
+        .prepare_workload_ingress(Some(&durable_witness), ingress_http.clone(), &reservation)
+        .expect("planned HTTP listener should reclaim under the same witness");
+    let listener = std::net::TcpListener::bind(
+        prepared
+            .bind_addr()
+            .expect("planned bind address should resolve"),
+    )
+    .expect("planned HTTP listener should bind");
+    let active_http = prepared
+        .adopt_std(listener)
+        .expect("planned HTTP listener should activate");
+    assert_eq!(
+        lease_record_bytes(&port_authority, &ingress_admin),
+        initial[1]
+    );
+    assert_eq!(
+        lease_record_bytes(&port_authority, &internal_pep),
+        initial[2]
+    );
+
+    let active_http_before = lease_record_bytes(&port_authority, &ingress_http);
+    let internal_before = lease_record_bytes(&port_authority, &internal_pep);
+    let failed = listener_authority
+        .prepare_workload_ingress(Some(&durable_witness), ingress_admin.clone(), &reservation)
+        .expect("planned admin listener should claim independently");
+    let failure = failed
+        .record_bind_failure(io::Error::new(
+            io::ErrorKind::AddrInUse,
+            "injected planned-member bind conflict",
+        ))
+        .expect("planned bind failure should record under the complete witness");
+    assert_eq!(failure.into_error().kind(), io::ErrorKind::AddrInUse);
+    assert_eq!(
+        lease_record_bytes(&port_authority, &ingress_http),
+        active_http_before
+    );
+    assert_eq!(
+        lease_record_bytes(&port_authority, &internal_pep),
+        internal_before
+    );
+
+    drop(active_http);
 }
 
 #[tokio::test]

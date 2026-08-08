@@ -50,11 +50,11 @@ use crate::backends::oci::network::{
     DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME,
     DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, OciAttachmentAdapter,
     OciAttachmentAuxiliaryListener, OciAttachmentInput, OciAttachmentLifecycle,
-    OciAttachmentReadinessState, OciEgressPinProvider, OciHostManagedAttachmentBackend,
-    OciIpamAuthority, OciNetworkConfig, OciNetworkLayout, OciNetworkProcess, OciSegmentAllocator,
-    RealOciEgressPinProvider, TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence,
-    default_network_attachment_id, reconcile_startup_network_state,
-    retire_terminal_container_ipam_release,
+    OciAttachmentProviderPaths, OciAttachmentReadinessState, OciEgressPinProvider,
+    OciHostManagedAttachmentBackend, OciIpamAuthority, OciNetworkConfig, OciNetworkLayout,
+    OciNetworkProcess, OciSegmentAllocator, RealOciEgressPinProvider, TerminalNetworkAuthoritySet,
+    TerminalNetworkFinalityEvidence, default_network_attachment_id,
+    reconcile_startup_network_state, retire_terminal_container_ipam_release,
 };
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
 use crate::backends::oci::port_lifecycle::{
@@ -65,11 +65,12 @@ use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::backends::readiness_probe::{ReadinessProbeProvider, SocketReadinessProbeProvider};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
+use crate::provision::SandboxProvisionNetworkPlan;
 use crate::spec::{
     SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxRootfsSpec,
     SandboxSpec, resolve_process_without_image_defaults,
 };
-use nimbus_network::{NetworkReservationClaim, PublishedEndpoint};
+use nimbus_network::{NetworkAttachmentId, NetworkReservationClaim, PublishedEndpoint};
 
 mod attachment_recovery;
 mod creator;
@@ -77,6 +78,7 @@ mod inspection;
 mod lifecycle;
 mod manifest_publication;
 mod network_composition;
+mod provision;
 mod readiness;
 
 impl OciHostManagedAttachmentBackend for KrunSandboxBackend {
@@ -278,6 +280,19 @@ impl KrunEffectBarrierTestProbe {
 }
 
 impl KrunSandboxBackend {
+    /// Open this provider's durable provision-attempt idempotency journal.
+    pub fn attempt_idempotency_journal(
+        &self,
+    ) -> std::result::Result<
+        crate::ProviderProvisionAttemptJournal,
+        crate::ProviderProvisionJournalError,
+    > {
+        crate::ProviderProvisionAttemptJournal::open(
+            &self.config.workload_state_root,
+            "krun-runtime",
+        )
+    }
+
     /// Report conservative host-managed attachment evidence for this composition.
     ///
     /// This refuses configurations that cannot own the exact local Execute
@@ -482,16 +497,50 @@ impl KrunSandboxBackend {
         )
     }
 
+    fn non_routable_attachment_adapter<'a>(
+        &'a self,
+        manifest: &'a KrunSandboxManifest,
+        network_config: &'a OciNetworkConfig,
+        hostname: &'a str,
+    ) -> OciAttachmentAdapter<'a> {
+        <Self as OciHostManagedAttachmentBackend>::non_routable_attachment_adapter(
+            OciAttachmentInput {
+                workload_state_root: &self.config.workload_state_root,
+                tenant_id: &manifest.spec.tenant_id,
+                sandbox_id: &manifest.handle.id,
+                display_name: manifest.spec.display_name(),
+                hostname,
+                bindings: &manifest.spec.port_bindings,
+                leases: &manifest.port_leases,
+                auxiliary_listener: manifest.egress_proxy.as_ref().map(|assignment| {
+                    OciAttachmentAuxiliaryListener::egress_pep(
+                        &assignment.port_lease,
+                        &assignment.host,
+                        assignment.port,
+                    )
+                }),
+                layout: &manifest.network_layout,
+                config: network_config,
+                launch_claim: manifest.reservation_claim(),
+            },
+        )
+    }
+
     #[cfg(test)]
     fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
         // Per-tenant PRIMARY block: distinct subnet + bridge identity (audit M1).
         let segment = self.segment_allocator.segment_for(tenant)?;
         let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()?;
+        let attachment_id = NetworkAttachmentId::for_workload_attachment(
+            tenant.as_str(),
+            "krun-network-config-test",
+        );
         Ok(OciAttachmentLifecycle::config_from_segment(
             AttachmentBackendKind::Krun,
             self.config.netavark_path.clone(),
             self.config.aardvark_dns_path.clone(),
             &segment,
+            &attachment_id,
             &reservation_claim,
         ))
     }
@@ -504,6 +553,7 @@ impl KrunSandboxBackend {
         tenant: &nimbus_core::TenantId,
         layout: &OciNetworkLayout,
         sandbox_id: &SandboxId,
+        attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<OciNetworkConfig> {
         let ports = self.port_lease_coordinator();
@@ -512,9 +562,12 @@ impl KrunSandboxBackend {
             tenant,
             layout,
             sandbox_id,
+            attachment_id,
             reservation_claim,
-            self.config.netavark_path.clone(),
-            self.config.aardvark_dns_path.clone(),
+            OciAttachmentProviderPaths::new(
+                self.config.netavark_path.clone(),
+                self.config.aardvark_dns_path.clone(),
+            ),
         )
     }
 
@@ -522,12 +575,23 @@ impl KrunSandboxBackend {
         let reservation_claim = manifest.require_reserved_claim()?;
         let ports = self.port_lease_coordinator();
         let port_compensation = ports.release_never_bound_launch_claim(reservation_claim);
+        let fallback_attachment_id = manifest.provision_network_plan.as_ref().map_or_else(
+            || default_network_attachment_id(&manifest.handle.id),
+            |plan| plan.attachment_id().clone(),
+        );
+        let attachment_id = manifest
+            .network_config
+            .as_ref()
+            .map_or(&fallback_attachment_id, |config| &config.attachment_id);
         self.attachment_lifecycle(&ports).release_reserved(
             AttachmentBackendKind::Krun,
-            &manifest.network_layout,
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            reservation_claim,
+            crate::backends::oci::network::ReservedNetworkLaunchIdentity::new(
+                &manifest.network_layout,
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                attachment_id,
+                reservation_claim,
+            ),
             port_compensation,
         )
     }
@@ -538,15 +602,19 @@ impl KrunSandboxBackend {
         reservations: &ReservedLaunchPorts,
     ) -> Result<()> {
         let reservation_claim = manifest.require_reserved_claim()?;
+        let attachment_id = &manifest.require_network_config()?.attachment_id;
         let ports = self.port_lease_coordinator();
         let port_compensation =
             ports.release_unpublished_launch_ports(reservations, reservation_claim);
         self.attachment_lifecycle(&ports).release_reserved(
             AttachmentBackendKind::Krun,
-            &manifest.network_layout,
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            reservation_claim,
+            crate::backends::oci::network::ReservedNetworkLaunchIdentity::new(
+                &manifest.network_layout,
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                attachment_id,
+                reservation_claim,
+            ),
             port_compensation,
         )
     }
@@ -566,42 +634,6 @@ impl KrunSandboxBackend {
         Ok(())
     }
 
-    fn start_sync(&self, spec: SandboxSpec) -> Result<SandboxHandle> {
-        let launch_plan = self.plan_start(&spec)?;
-        self.finish_start(launch_plan)
-    }
-
-    fn finish_start(&self, launch_plan: KrunStartPlan) -> Result<SandboxHandle> {
-        let mut manifest = launch_plan.manifest;
-        let materialization_lifecycle = (self.config.start_mode == KrunStartMode::Execute)
-            .then(|| self.lock_launch_lifecycle(&manifest))
-            .transpose()?;
-        if materialization_lifecycle.is_some() {
-            self.require_current_launch_plan(&manifest)?;
-        }
-        if let Err(error) = self.materialize_krun_vm_config(&manifest) {
-            return match self.config.start_mode {
-                KrunStartMode::PlanOnly => Err(error),
-                KrunStartMode::Execute => {
-                    Err(self.persist_unstarted_launch_failure(&mut manifest, error))
-                }
-            };
-        }
-        drop(materialization_lifecycle);
-        let launch_plan = KrunStartPlan { manifest };
-
-        match self.config.start_mode {
-            KrunStartMode::PlanOnly => {
-                let mut manifest = launch_plan.manifest.clone();
-                manifest.last_exit_code = None;
-                manifest.shutdown_requested = false;
-                self.write_manifest(&manifest)?;
-                Ok(manifest.handle)
-            }
-            KrunStartMode::Execute => self.execute_start(&launch_plan),
-        }
-    }
-
     fn resource_quota_manager(&self) -> ResourceQuotaManager {
         ResourceQuotaManager::new(
             self.config.workload_state_root.clone(),
@@ -613,11 +645,6 @@ impl KrunSandboxBackend {
 impl SandboxBackend for KrunSandboxBackend {
     fn kind(&self) -> SandboxBackendKind {
         SandboxBackendKind::Krun
-    }
-
-    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-        let backend = self.clone();
-        Box::pin(async move { backend.start_sync(spec) })
     }
 
     fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<crate::SandboxInspection>> {
@@ -649,9 +676,17 @@ struct KrunSandboxManifest {
     spec: SandboxSpec,
     image_metadata: KrunImageMetadata,
     launch_artifact: Option<KrunLaunchArtifact>,
+    /// Whether workload-owned artifacts and the exact bundle config are
+    /// durably materialized for the reserved provision envelope.
+    #[serde(default)]
+    provision_prepared: bool,
     bundle_layout: KrunBundleLayout,
     conmon_layout: OciConmonLayout,
     network_layout: OciNetworkLayout,
+    /// Complete compiler-issued desired network plan persisted before the
+    /// first attachment reservation. This preserves the exact attachment ID
+    /// when placement returns an ambiguous failure before publishing a config.
+    provision_network_plan: Option<SandboxProvisionNetworkPlan>,
     /// Exact placed network config for a launch that owns an attachment.
     ///
     /// `None` is the authority-free PlanOnly state. Execute preparation must

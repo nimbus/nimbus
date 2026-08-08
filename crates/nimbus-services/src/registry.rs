@@ -1,24 +1,22 @@
 use std::collections::BTreeMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use nimbus_core::{Error, TenantId};
 use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 use nimbus_runtime::{
-    HostCallCancellation, InvocationServiceBinding, InvocationServiceEndpoint,
-    InvocationServiceProtocol, InvocationServices,
+    InvocationServiceBinding, InvocationServiceEndpoint, InvocationServiceProtocol,
+    InvocationServices,
 };
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_tenant::TenantServiceAccessDecision;
 
 use crate::ServiceInstanceCatalog;
 
-pub type RuntimeServiceBindingFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Option<InvocationServiceBinding>, Error>> + Send + 'a>>;
-pub type RuntimeServiceTeardownFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
-
+/// Effect-free runtime service naming projection.
+///
+/// Provision and tenant retirement deliberately use separate capabilities so
+/// a snapshot or lookup holder cannot start, inspect, stop, or clean up a
+/// provider.
 pub trait RuntimeServiceRegistry: Send + Sync + 'static {
     fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> InvocationServices;
 
@@ -33,45 +31,6 @@ pub trait RuntimeServiceRegistry: Send + Sync + 'static {
         service_access: &TenantServiceAccessDecision,
     ) -> Result<Option<InvocationServiceBinding>, Error> {
         self.resolve_service_binding(service_access.tenant_id(), service_access.service_name())
-    }
-
-    fn ensure_service_binding_async<'a>(
-        &'a self,
-        tenant_id: &'a TenantId,
-        service_name: &'a str,
-        cancellation: HostCallCancellation,
-    ) -> RuntimeServiceBindingFuture<'a> {
-        Box::pin(async move {
-            if cancellation.is_cancelled() {
-                return Err(Error::Cancelled);
-            }
-            self.resolve_service_binding(tenant_id, service_name)
-        })
-    }
-
-    fn ensure_service_binding_for_decision_async<'a>(
-        &'a self,
-        service_access: &'a TenantServiceAccessDecision,
-        cancellation: HostCallCancellation,
-    ) -> RuntimeServiceBindingFuture<'a> {
-        Box::pin(async move {
-            if cancellation.is_cancelled() {
-                return Err(Error::Cancelled);
-            }
-            self.ensure_service_binding_async(
-                service_access.tenant_id(),
-                service_access.service_name(),
-                cancellation,
-            )
-            .await
-        })
-    }
-
-    fn teardown_tenant_async<'a>(
-        &'a self,
-        _tenant_id: &'a TenantId,
-    ) -> RuntimeServiceTeardownFuture<'a> {
-        Box::pin(async move { Ok(()) })
     }
 }
 

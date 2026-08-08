@@ -85,8 +85,7 @@ fn krun_reload_rejects_a_substituted_network_root_before_runtime_effects() {
             None,
         )
         .expect("original plan should render");
-    let handle = original
-        .finish_start(plan)
+    let handle = materialize_plan_only_plan_fixture(&original, plan)
         .expect("original plan should persist its exact root witness");
 
     let runtime_effect = temp_dir.path().join("runtime-effect");

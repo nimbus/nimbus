@@ -12,9 +12,6 @@ use nimbus::{
     SandboxSpec, SandboxStatus, ServiceBackend,
 };
 use nimbus_sandbox::SandboxFuture;
-use nimbus_sandbox::backends::container::{
-    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
-};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -26,7 +23,7 @@ use crate::compose::execution::{
     should_auto_start_default_machine_for_host_loader,
 };
 use crate::compose::lifecycle::{
-    ServiceLifecycleAction, ServiceLifecycleTarget, start_service_launch, stop_service_target,
+    ServiceLifecycleAction, ServiceLifecycleTarget, stop_service_target,
 };
 use crate::compose::logs::{read_log_chunk, resolve_service_ctr_log_path};
 use crate::compose::process::{
@@ -34,8 +31,8 @@ use crate::compose::process::{
 };
 use crate::machine::{
     MachineApiClient, MachineApiListenMode, MachineApiState, bind_direct_listener,
-    default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_container_backend,
-    machine_api_node_workload_facade_from_sandbox_backend, serve_machine_api,
+    default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_sandbox_backend,
+    machine_api_node_workload_facade_from_sandbox_backend_with_absence, serve_machine_api,
 };
 
 mod forwarded_api;

@@ -8,10 +8,11 @@ use nimbus_bridge::{
 use nimbus_compute::runtime_manager::{RuntimeInvocationAuthority, RuntimeManager};
 use nimbus_runtime::RuntimeLimits;
 use nimbus_services::RuntimeServiceRegistry;
-use nimbus_tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
+use nimbus_tenant::{TenantIsolationContext, TenantIsolationDecision, TenantStorageAccessDecision};
 use nimbus_workloads::LocalEnforcementBinding;
 
 use super::egress_gateway::EgressGatewayEnforcementReadiness;
+use super::service_provision::{ConvexServiceProvisionPort, ConvexServiceProvisionScope};
 
 #[derive(Clone)]
 pub(crate) struct ConvexHostBridgeScope {
@@ -23,6 +24,7 @@ pub(crate) struct ConvexHostBridgeScope {
     runtime_authority: RuntimeInvocationAuthority,
     runtime_limits: RuntimeLimits,
     egress_readiness: Option<EgressGatewayEnforcementReadiness>,
+    service_provision: Option<ConvexServiceProvisionScope>,
 }
 
 impl ConvexHostBridgeScope {
@@ -44,7 +46,19 @@ impl ConvexHostBridgeScope {
             runtime_authority,
             runtime_limits,
             egress_readiness: None,
+            service_provision: None,
         }
+    }
+
+    pub(in crate::adapters::convex) fn with_service_provisioning(
+        mut self,
+        context: TenantIsolationContext,
+        port: Arc<dyn ConvexServiceProvisionPort>,
+    ) -> Result<Self, Error> {
+        self.decision
+            .ensure_tenant_matches(context.tenant_id(), "Convex service provisioning context")?;
+        self.service_provision = Some(ConvexServiceProvisionScope::new(context, port));
+        Ok(self)
     }
 
     #[cfg(test)]
@@ -126,6 +140,7 @@ pub(crate) struct ConvexHostBridge {
     auth: Option<InvocationAuth>,
     services: nimbus_runtime::InvocationServices,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    service_provision: Option<ConvexServiceProvisionScope>,
     runtime_manager: Arc<RuntimeManager>,
     runtime_authority: RuntimeInvocationAuthority,
     egress_readiness: EgressGatewayEnforcementReadiness,
@@ -175,6 +190,7 @@ impl ConvexHostBridge {
             auth: invocation.auth,
             services: invocation.services,
             runtime_service_registry: scope.runtime_service_registry,
+            service_provision: scope.service_provision,
             runtime_manager: scope.runtime_manager,
             runtime_authority: scope.runtime_authority,
             egress_readiness,
@@ -277,6 +293,10 @@ impl ConvexHostBridge {
 
     pub(crate) fn runtime_service_registry(&self) -> &Arc<dyn RuntimeServiceRegistry> {
         &self.runtime_service_registry
+    }
+
+    pub(super) fn service_provision_scope(&self) -> Option<&ConvexServiceProvisionScope> {
+        self.service_provision.as_ref()
     }
 
     pub(in crate::adapters::convex) fn runtime_manager(&self) -> &Arc<RuntimeManager> {

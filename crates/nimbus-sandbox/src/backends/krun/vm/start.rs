@@ -1,7 +1,24 @@
 use super::readiness::visible_published_endpoints;
 use super::*;
 
+struct KrunStartPlanningOptions<'a> {
+    launch_defaults: Option<&'a OciImageLaunchDefaults>,
+    launch_artifact: Option<KrunLaunchArtifact>,
+    provision_network_plan: Option<&'a SandboxProvisionNetworkPlan>,
+    prepare_bundle: bool,
+}
+
+struct KrunInitialPublicationHooks<Before, After> {
+    before_initial_publication: Before,
+    after_network_reservation: After,
+}
+
+fn no_initial_publication_hook(_manifest: &KrunSandboxManifest) -> Result<()> {
+    Ok(())
+}
+
 impl KrunSandboxBackend {
+    #[cfg(test)]
     pub(super) fn plan_start(&self, spec: &SandboxSpec) -> Result<KrunStartPlan> {
         self.ensure_startup_network_reconciliation_ready()?;
         let sandbox_id = next_sandbox_id(spec.display_name());
@@ -33,6 +50,7 @@ impl KrunSandboxBackend {
         self.plan_start_with_id(spec, &sandbox_id, launch_defaults, None)
     }
 
+    #[cfg(test)]
     fn plan_start_with_materialized_image_under_lock(
         &self,
         spec: &SandboxSpec,
@@ -66,6 +84,7 @@ impl KrunSandboxBackend {
         )
     }
 
+    #[cfg(test)]
     fn plan_start_with_materialized_image_at_initial_publication(
         &self,
         spec: &SandboxSpec,
@@ -78,10 +97,16 @@ impl KrunSandboxBackend {
         let result = self.plan_start_with_id_under_lock_at_initial_publication(
             spec,
             sandbox_id,
-            Some(&prepared_launch.launch_defaults),
-            Some(KrunLaunchArtifact::Rootfs(prepared_launch.artifact)),
-            before_initial_publication,
-            after_network_reservation,
+            KrunStartPlanningOptions {
+                launch_defaults: Some(&prepared_launch.launch_defaults),
+                launch_artifact: Some(KrunLaunchArtifact::Rootfs(prepared_launch.artifact)),
+                provision_network_plan: None,
+                prepare_bundle: true,
+            },
+            KrunInitialPublicationHooks {
+                before_initial_publication,
+                after_network_reservation,
+            },
         );
         match result {
             Ok(plan) => Ok(plan),
@@ -94,6 +119,7 @@ impl KrunSandboxBackend {
         }
     }
 
+    #[cfg(test)]
     fn compensate_unpublished_materialized_launch(
         &self,
         spec: &SandboxSpec,
@@ -112,29 +138,13 @@ impl KrunSandboxBackend {
         }
     }
 
+    #[cfg(test)]
     fn cleanup_unpublished_materialized_launch(
         &self,
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
         artifact: &MaterializedImageRootfs,
     ) -> Result<()> {
-        let expected_rootfs = crate::artifact_paths::rootfs_root(
-            &self.config.workload_state_root,
-            &spec.tenant_id,
-            sandbox_id,
-        )
-        .join(sandbox_id.as_str());
-        if artifact.rootfs_path != expected_rootfs {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "refusing to remove materialized krun rootfs {} because this launch owns only \
-                     the deterministic artifact path {}",
-                    artifact.rootfs_path.display(),
-                    expected_rootfs.display()
-                ),
-            });
-        }
-
         let manifest_path = crate::artifact_paths::manifest_path(
             &self.config.workload_state_root,
             &spec.tenant_id,
@@ -164,33 +174,12 @@ impl KrunSandboxBackend {
                 });
             }
         }
-
-        match std::fs::symlink_metadata(&artifact.rootfs_path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(SandboxError::OperationFailed {
-                message: format!(
-                    "failed to inspect materialized krun rootfs {}: {error}",
-                    artifact.rootfs_path.display()
-                ),
-            }),
-            Ok(metadata) if metadata.file_type().is_dir() => {
-                std::fs::remove_dir_all(&artifact.rootfs_path).map_err(|error| {
-                    SandboxError::OperationFailed {
-                        message: format!(
-                            "failed to remove unpublished materialized krun rootfs {}: {error}",
-                            artifact.rootfs_path.display()
-                        ),
-                    }
-                })
-            }
-            Ok(_) => Err(SandboxError::OperationFailed {
-                message: format!(
-                    "refusing to remove materialized krun rootfs {} because its filesystem \
-                     identity is no longer an owned directory",
-                    artifact.rootfs_path.display()
-                ),
-            }),
-        }
+        OciImageMaterializer::for_tenant_sandbox(
+            &self.config.workload_state_root,
+            &spec.tenant_id,
+            sandbox_id,
+        )
+        .remove_owned_artifact(sandbox_id, artifact)
     }
 
     #[cfg(test)]
@@ -206,6 +195,7 @@ impl KrunSandboxBackend {
         self.plan_start_with_id_under_lock(spec, sandbox_id, launch_defaults, launch_artifact)
     }
 
+    #[cfg(test)]
     fn plan_start_with_id_under_lock(
         &self,
         spec: &SandboxSpec,
@@ -216,10 +206,45 @@ impl KrunSandboxBackend {
         self.plan_start_with_id_under_lock_at_initial_publication(
             spec,
             sandbox_id,
-            launch_defaults,
-            launch_artifact,
-            |_| Ok(()),
-            |_| Ok(()),
+            KrunStartPlanningOptions {
+                launch_defaults,
+                launch_artifact,
+                provision_network_plan: None,
+                prepare_bundle: true,
+            },
+            KrunInitialPublicationHooks {
+                before_initial_publication: no_initial_publication_hook,
+                after_network_reservation: no_initial_publication_hook,
+            },
+        )
+    }
+
+    pub(super) fn plan_reserved_provision_with_id(
+        &self,
+        spec: &SandboxSpec,
+        sandbox_id: &SandboxId,
+        network_plan: &SandboxProvisionNetworkPlan,
+    ) -> Result<KrunStartPlan> {
+        self.ensure_startup_network_reconciliation_ready()?;
+        if self.config.start_mode != KrunStartMode::Execute {
+            return Err(SandboxError::InvalidSpec {
+                message: "krun provision phases require execute mode".to_owned(),
+            });
+        }
+        let _lifecycle = self.lock_launch_lifecycle_for(&spec.tenant_id, sandbox_id)?;
+        self.plan_start_with_id_under_lock_at_initial_publication(
+            spec,
+            sandbox_id,
+            KrunStartPlanningOptions {
+                launch_defaults: None,
+                launch_artifact: None,
+                provision_network_plan: Some(network_plan),
+                prepare_bundle: false,
+            },
+            KrunInitialPublicationHooks {
+                before_initial_publication: no_initial_publication_hook,
+                after_network_reservation: no_initial_publication_hook,
+            },
         )
     }
 
@@ -235,22 +260,40 @@ impl KrunSandboxBackend {
         self.plan_start_with_id_under_lock_at_initial_publication(
             spec,
             sandbox_id,
-            None,
-            None,
-            |_| Ok(()),
-            after_network_reservation,
+            KrunStartPlanningOptions {
+                launch_defaults: None,
+                launch_artifact: None,
+                provision_network_plan: None,
+                prepare_bundle: true,
+            },
+            KrunInitialPublicationHooks {
+                before_initial_publication: no_initial_publication_hook,
+                after_network_reservation,
+            },
         )
     }
 
-    fn plan_start_with_id_under_lock_at_initial_publication(
+    fn plan_start_with_id_under_lock_at_initial_publication<Before, After>(
         &self,
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
-        launch_defaults: Option<&OciImageLaunchDefaults>,
-        launch_artifact: Option<KrunLaunchArtifact>,
-        before_initial_publication: impl FnOnce(&KrunSandboxManifest) -> Result<()>,
-        after_network_reservation: impl FnOnce(&KrunSandboxManifest) -> Result<()>,
-    ) -> Result<KrunStartPlan> {
+        options: KrunStartPlanningOptions<'_>,
+        hooks: KrunInitialPublicationHooks<Before, After>,
+    ) -> Result<KrunStartPlan>
+    where
+        Before: FnOnce(&KrunSandboxManifest) -> Result<()>,
+        After: FnOnce(&KrunSandboxManifest) -> Result<()>,
+    {
+        let KrunStartPlanningOptions {
+            launch_defaults,
+            launch_artifact,
+            provision_network_plan,
+            prepare_bundle,
+        } = options;
+        let KrunInitialPublicationHooks {
+            before_initial_publication,
+            after_network_reservation,
+        } = hooks;
         self.ensure_startup_network_reconciliation_ready()?;
         if spec.backend != SandboxBackendKind::Krun {
             return Err(SandboxError::InvalidSpec {
@@ -342,9 +385,11 @@ impl KrunSandboxBackend {
             spec: resolved_launch.spec,
             image_metadata: resolved_launch.image_metadata,
             launch_artifact,
+            provision_prepared: false,
             bundle_layout,
             conmon_layout,
             network_layout,
+            provision_network_plan: provision_network_plan.cloned(),
             network_config: None,
             port_leases: Vec::new(),
             launch_authority,
@@ -366,13 +411,16 @@ impl KrunSandboxBackend {
             // evidence.
             before_initial_publication(&manifest)?;
             self.create_manifest(&manifest)?;
-            let mut reservations =
-                match self.reserve_execute_launch_network(&mut manifest, &manager) {
-                    Ok(reservations) => reservations,
-                    Err(error) => {
-                        return Err(self.persist_unstarted_launch_failure(&mut manifest, error));
-                    }
-                };
+            let mut reservations = match self.reserve_execute_launch_network(
+                &mut manifest,
+                &manager,
+                provision_network_plan,
+            ) {
+                Ok(reservations) => reservations,
+                Err(error) => {
+                    return Err(self.persist_unstarted_launch_failure(&mut manifest, error));
+                }
+            };
             if let Err(error) = after_network_reservation(&manifest) {
                 return Err(self.persist_unstarted_launch_failure_with_reservations(
                     &mut manifest,
@@ -392,29 +440,35 @@ impl KrunSandboxBackend {
             }
         }
 
-        let bundle_result = krun_bundle_options(
-            &self.config,
-            &manifest.spec,
-            &manifest.image_metadata,
-            sandbox_id,
-            manifest.egress_proxy.as_ref(),
-        )
-        .and_then(|options| {
-            write_bundle_config(
-                &manifest.bundle_layout,
-                &hostname_for(&manifest.spec),
+        if prepare_bundle {
+            let bundle_result = krun_bundle_options(
+                &self.config,
                 &manifest.spec,
-                Some(manifest.network_layout.netns_path.as_path()),
-                &options,
+                &manifest.image_metadata,
+                sandbox_id,
+                manifest.egress_proxy.as_ref(),
             )
-        });
-        if let Err(error) = bundle_result {
-            return match self.config.start_mode {
-                KrunStartMode::PlanOnly => Err(error),
-                KrunStartMode::Execute => {
-                    Err(self.persist_unstarted_launch_failure(&mut manifest, error))
-                }
-            };
+            .and_then(|options| {
+                write_bundle_config(
+                    &manifest.bundle_layout,
+                    &hostname_for(&manifest.spec),
+                    &manifest.spec,
+                    Some(manifest.network_layout.netns_path.as_path()),
+                    &options,
+                )
+            });
+            if let Err(error) = bundle_result {
+                return match self.config.start_mode {
+                    KrunStartMode::PlanOnly => Err(error),
+                    KrunStartMode::Execute => {
+                        Err(self.persist_unstarted_launch_failure(&mut manifest, error))
+                    }
+                };
+            }
+            manifest.provision_prepared = true;
+            if self.config.start_mode == KrunStartMode::Execute {
+                self.write_manifest(&manifest)?;
+            }
         }
         Ok(KrunStartPlan { manifest })
     }
@@ -423,25 +477,55 @@ impl KrunSandboxBackend {
         &self,
         manifest: &mut KrunSandboxManifest,
         manager: &OciPortLeaseCoordinator,
+        provision_network_plan: Option<&SandboxProvisionNetworkPlan>,
     ) -> Result<ReservedLaunchPorts> {
         let reservation_claim = manifest.require_reserved_claim()?.clone();
-        let network_config = self.place_sandbox_config(
+        let attachment_id = provision_network_plan.map_or_else(
+            || default_network_attachment_id(&manifest.handle.id),
+            |plan| plan.attachment_id().clone(),
+        );
+        let mut network_config = self.place_sandbox_config(
             &manifest.spec.tenant_id,
             &manifest.network_layout,
             &manifest.handle.id,
+            &attachment_id,
             &reservation_claim,
         )?;
+        network_config.network_plan =
+            provision_network_plan.map(|plan| plan.network_plan().clone());
+        #[cfg(test)]
+        if network_config.network_plan.is_none() {
+            network_config.network_plan = Some(
+                crate::provision::test_support::legacy_start_attachment_network_plan_fixture(
+                    &manifest.spec,
+                    &manifest.handle.id,
+                    "krun-coarse-start",
+                ),
+            );
+        }
+        // Keep the exact placed attachment available to the synchronous
+        // compensation path before listener reservation can fail. In
+        // particular, a compiler-issued attachment ID must never be replaced
+        // with a workload-derived fallback during rollback.
+        manifest.network_config = Some(network_config.clone());
         let internal_listener = egress_listener_reservation(&network_config)?;
-        let reservations = manager.reserve_launch_ports_for_sandbox(
-            SandboxLaunchPortPlan::new(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.image_metadata.exposed_ports,
-            )
-            .with_internal_listener(internal_listener),
-            &reservation_claim,
-        )?;
+        let reservations = match provision_network_plan {
+            Some(plan) => manager.reserve_exact_provision_ports(
+                plan,
+                Some(internal_listener),
+                &reservation_claim,
+            )?,
+            None => manager.reserve_launch_ports_for_sandbox(
+                SandboxLaunchPortPlan::new(
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                    &manifest.spec.port_bindings,
+                    &manifest.image_metadata.exposed_ports,
+                )
+                .with_internal_listener(internal_listener),
+                &reservation_claim,
+            )?,
+        };
         let egress_listener = reservations.internal_listener.clone().ok_or_else(|| {
             SandboxError::OperationFailed {
                 message: "krun launch reservation omitted the required egress listener".to_owned(),
@@ -450,7 +534,6 @@ impl KrunSandboxBackend {
         let egress_proxy = egress_proxy_assignment(&network_config, egress_listener)?;
         manifest.spec.port_bindings = reservations.published_bindings.clone();
         manifest.port_leases = reservations.published_leases.clone();
-        manifest.network_config = Some(network_config);
         manifest.egress_proxy = Some(egress_proxy);
         Ok(reservations)
     }
@@ -491,7 +574,7 @@ impl KrunSandboxBackend {
         )
     }
 
-    fn prepare_oci_image_start(
+    pub(super) fn prepare_oci_image_start(
         &self,
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
@@ -520,17 +603,12 @@ impl KrunSandboxBackend {
         };
         match artifact {
             KrunLaunchArtifact::Rootfs(rootfs) => {
-                if !rootfs.rootfs_path.exists() {
-                    return Ok(());
-                }
-                std::fs::remove_dir_all(&rootfs.rootfs_path).map_err(|error| {
-                    SandboxError::OperationFailed {
-                        message: format!(
-                            "failed to remove materialized krun rootfs {}: {error}",
-                            rootfs.rootfs_path.display()
-                        ),
-                    }
-                })?;
+                OciImageMaterializer::for_tenant_sandbox(
+                    &self.config.workload_state_root,
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                )
+                .remove_owned_artifact(&manifest.handle.id, rootfs)?;
             }
         }
         Ok(())
@@ -598,6 +676,7 @@ impl KrunSandboxBackend {
     }
 }
 
+#[cfg(test)]
 fn next_sandbox_id(name: &str) -> SandboxId {
     SandboxId::new(format!(
         "{}-{}",
@@ -672,7 +751,7 @@ fn krun_vm_config_prelude(spec: &SandboxSpec, needs_unshare_mount: bool) -> Resu
     }
 }
 
-fn resolve_start_spec(
+pub(super) fn resolve_start_spec(
     spec: &SandboxSpec,
     launch_defaults: Option<&OciImageLaunchDefaults>,
 ) -> Result<KrunResolvedLaunchSpec> {
@@ -714,7 +793,7 @@ fn required_rootfs(spec: &SandboxSpec) -> Result<&SandboxRootfsSpec> {
     })
 }
 
-fn apply_guest_user_switch(
+pub(super) fn apply_guest_user_switch(
     spec: &mut SandboxSpec,
     image_metadata: &KrunImageMetadata,
 ) -> Result<()> {
@@ -774,7 +853,7 @@ fn krun_additional_mounts(
     Ok(mounts)
 }
 
-fn krun_bundle_options(
+pub(super) fn krun_bundle_options(
     config: &KrunSandboxBackendConfig,
     spec: &SandboxSpec,
     image_metadata: &KrunImageMetadata,

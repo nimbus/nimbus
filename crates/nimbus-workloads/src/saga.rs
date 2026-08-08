@@ -1489,13 +1489,16 @@ pub use executable::{
 };
 pub use network::{WorkloadNetworkIntent, WorkloadNetworkReference};
 pub use provision::{
-    WorkloadProvisionAttempt, WorkloadProvisionAttemptId, WorkloadProvisionAttemptInput,
-    WorkloadProvisionDisposition, WorkloadProvisionEffectResult,
-    WorkloadProvisionPrerequisiteEvidence, WorkloadProvisionSourceDigest,
-    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
-    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceKind,
-    WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep, WorkloadProvisionSubjects,
-    WorkloadProvisionSuccessEvidence,
+    WorkloadExecutionProviderId, WorkloadProvisionAbsenceEvidence, WorkloadProvisionAttempt,
+    WorkloadProvisionAttemptId, WorkloadProvisionAttemptInput, WorkloadProvisionCommandId,
+    WorkloadProvisionCommandMode, WorkloadProvisionDispatchAuthorization,
+    WorkloadProvisionDispatchClaim, WorkloadProvisionDispatchEpoch, WorkloadProvisionDisposition,
+    WorkloadProvisionEffectResult, WorkloadProvisionInspectionResult,
+    WorkloadProvisionPrerequisiteEvidence, WorkloadProvisionProviderTarget,
+    WorkloadProvisionSourceDigest, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceKind, WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep,
+    WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence,
 };
 use state::validate_phase_detail;
 pub use state::{WorkloadSagaIntentUpdate, WorkloadSagaRecord, WorkloadSagaTransition};

@@ -10,8 +10,8 @@ use nimbus_network::{
     NetworkAttachmentProviderRegistration, NetworkCapabilityRequirements,
     NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet,
     NetworkIngressCapabilitySet, NetworkIsolationMode, NetworkLifecycleCapabilitySet,
-    NetworkLifecycleFeature, NetworkManagementMode, NetworkProviderId,
-    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
+    NetworkLifecycleFeature, NetworkLifecycleRequirements, NetworkManagementMode,
+    NetworkProviderId, NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
 };
 use thiserror::Error;
 
@@ -25,6 +25,8 @@ pub const KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY: &str =
     "nimbus-sandbox.krun.host-managed-attachment";
 /// Stable identity key for the sandbox-owned egress PEP listener composition.
 pub(crate) const SANDBOX_EGRESS_PEP_PROVIDER_KEY: &str = "nimbus-sandbox.egress-pep";
+/// Stable source-owned name for the sandbox egress PEP readiness dependency.
+pub(crate) const SANDBOX_EGRESS_PEP_LISTENER_NAME: &str = "egress-pep";
 
 /// Effect-free network requirements sourced from one OCI sandbox backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +46,11 @@ impl SandboxNetworkPlanRequirements {
     /// Exact source-owned provider identity for the sandbox egress PEP listener.
     pub fn pep_provider_id(&self) -> &NetworkProviderId {
         &self.pep_provider_id
+    }
+
+    /// Exact source-owned logical name for the sandbox egress PEP dependency.
+    pub const fn pep_listener_name(&self) -> &'static str {
+        SANDBOX_EGRESS_PEP_LISTENER_NAME
     }
 
     /// Provider-neutral capability requirements for plan compilation.
@@ -170,7 +177,10 @@ pub(crate) fn host_managed_attachment_requirements(
         NetworkEndpointCapabilitySet::new([NetworkAddressFamily::Ipv4], [], [], [], []),
         NetworkIngressCapabilitySet::new([]),
         NetworkForwardingCapabilitySet::new([]),
-        host_managed_lifecycle_capabilities(),
+        NetworkLifecycleRequirements::new(
+            host_managed_lifecycle_capabilities(),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     )
 }
@@ -307,6 +317,23 @@ mod tests {
                     .capability_requirements()
                     .sovereignty()
                     .offline_restart_required()
+            );
+            assert_eq!(
+                projection
+                    .capability_requirements()
+                    .lifecycle()
+                    .attachment()
+                    .features(),
+                host_managed_lifecycle_capabilities().features()
+            );
+            assert!(
+                projection
+                    .capability_requirements()
+                    .lifecycle()
+                    .ingress()
+                    .features()
+                    .is_empty(),
+                "sandbox source requirements must not claim ingress lifecycle ownership"
             );
         }
     }

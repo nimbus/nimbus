@@ -4,16 +4,17 @@ use std::time::Duration;
 use nimbus_sandbox::SandboxBackend;
 use tokio::sync::Notify;
 
-mod activation;
 mod catalog;
 mod clock;
+mod definition_mutation;
 mod definitions;
 mod handles;
 mod registry;
+mod retirement;
 mod sandboxes;
-mod service_start;
 mod session_channels;
 mod sessions;
+mod source;
 mod system_state;
 mod types;
 mod verification;
@@ -24,10 +25,11 @@ use nimbus_tenant::{TenantImagePolicyDecision, TenantImageVerificationProvider};
 use types::ServiceManagerState;
 use verification::DefaultTenantImageVerificationProvider;
 
+pub use retirement::{TenantServiceRetirement, TenantServiceRetirementFuture};
+pub use source::{SandboxServiceProvisionSource, StandaloneSandboxProvisionSource};
 pub use system_state::{NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter};
 
-const DEFAULT_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(10);
-const DEFAULT_ACTIVATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const DEFAULT_DEFINITION_MUTATION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Whether the service manager admits local-build sandbox roots.
 ///
@@ -51,13 +53,12 @@ pub struct ServiceManager {
     sandbox_backend: Arc<dyn SandboxBackend>,
     image_verification_provider: Arc<dyn TenantImageVerificationProvider>,
     local_build_admission: LocalBuildAdmission,
-    activation_timeout: Duration,
-    activation_poll_interval: Duration,
+    definition_mutation_timeout: Duration,
     state: Mutex<ServiceManagerState>,
     service_evidence_writer: Mutex<Arc<dyn ServiceEvidenceWriter>>,
-    activation_notify: Notify,
+    definition_mutation_notify: Notify,
     #[cfg(test)]
-    activation_wait_observer: Mutex<Option<Arc<Notify>>>,
+    definition_mutation_wait_observer: Mutex<Option<Arc<Notify>>>,
 }
 
 impl ServiceManager {
@@ -70,13 +71,12 @@ impl ServiceManager {
             sandbox_backend,
             image_verification_provider: Arc::new(DefaultTenantImageVerificationProvider),
             local_build_admission: LocalBuildAdmission::Denied,
-            activation_timeout: DEFAULT_ACTIVATION_TIMEOUT,
-            activation_poll_interval: DEFAULT_ACTIVATION_POLL_INTERVAL,
+            definition_mutation_timeout: DEFAULT_DEFINITION_MUTATION_TIMEOUT,
             state: Mutex::new(ServiceManagerState::default()),
             service_evidence_writer: Mutex::new(Arc::new(NoopServiceEvidenceWriter)),
-            activation_notify: Notify::new(),
+            definition_mutation_notify: Notify::new(),
             #[cfg(test)]
-            activation_wait_observer: Mutex::new(None),
+            definition_mutation_wait_observer: Mutex::new(None),
         }
     }
 
@@ -105,13 +105,11 @@ impl ServiceManager {
         }
     }
 
-    pub fn with_activation_timeout(mut self, activation_timeout: Duration) -> Self {
-        self.activation_timeout = activation_timeout;
-        self
-    }
-
-    pub fn with_activation_poll_interval(mut self, activation_poll_interval: Duration) -> Self {
-        self.activation_poll_interval = activation_poll_interval;
+    pub fn with_definition_mutation_timeout(
+        mut self,
+        definition_mutation_timeout: Duration,
+    ) -> Self {
+        self.definition_mutation_timeout = definition_mutation_timeout;
         self
     }
 
@@ -139,19 +137,20 @@ impl ServiceManager {
     }
 
     #[cfg(test)]
-    fn set_activation_wait_observer(&self, observer: Arc<Notify>) {
+    fn set_definition_mutation_wait_observer(&self, observer: Arc<Notify>) {
         *self
-            .activation_wait_observer
+            .definition_mutation_wait_observer
             .lock()
-            .expect("activation wait observer lock should not be poisoned") = Some(observer);
+            .expect("definition mutation wait observer lock should not be poisoned") =
+            Some(observer);
     }
 
     #[cfg(test)]
-    fn notify_activation_wait_observer(&self) {
+    fn notify_definition_mutation_wait_observer(&self) {
         if let Some(observer) = self
-            .activation_wait_observer
+            .definition_mutation_wait_observer
             .lock()
-            .expect("activation wait observer lock should not be poisoned")
+            .expect("definition mutation wait observer lock should not be poisoned")
             .as_ref()
         {
             observer.notify_waiters();
@@ -159,7 +158,7 @@ impl ServiceManager {
     }
 
     #[cfg(not(test))]
-    fn notify_activation_wait_observer(&self) {}
+    fn notify_definition_mutation_wait_observer(&self) {}
 }
 
 #[cfg(test)]

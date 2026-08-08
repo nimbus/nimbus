@@ -674,9 +674,8 @@ fn ensure_running_rejects_a_different_lease_for_an_existing_pep() {
         )
         .expect_err("a running PEP must reject different lifecycle authority");
     assert!(
-        error
-            .to_string()
-            .contains("does not match durable port lease")
+        error.to_string().contains("rejected port lease")
+            && error.to_string().contains("does not match the caller")
             && error.to_string().contains(different.lease_id().as_str()),
         "mismatch must identify the rejected lease without replacing the PEP: {error}"
     );

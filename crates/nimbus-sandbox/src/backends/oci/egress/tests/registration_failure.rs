@@ -165,6 +165,7 @@ fn registration_commit_failure_compensates_activated_provider_and_publication() 
         trust_anchor_path: Some(trust_anchor_path.clone()),
         tenant_lease: registry.engine.fairness().checkout(&tenant),
         port_lease: Some(port_lease.clone()),
+        plan_members: None,
         lifetime: None,
         cleanup: None,
     };
@@ -289,6 +290,7 @@ fn registration_commit_compensation_failure_retains_retryable_tombstone() {
         trust_anchor_path: Some(trust_anchor_path.clone()),
         tenant_lease: registry.engine.fairness().checkout(&tenant),
         port_lease: Some(port_lease),
+        plan_members: None,
         lifetime: None,
         cleanup: None,
     };

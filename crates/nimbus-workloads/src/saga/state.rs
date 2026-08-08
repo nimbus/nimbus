@@ -2,6 +2,14 @@
 
 use super::*;
 
+#[path = "state/provision.rs"]
+mod provision_state;
+
+use provision_state::{
+    initial_provision_disposition, validate_provision_disposition,
+    validate_provision_disposition_transition,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct WorkloadSagaTransition {
@@ -331,16 +339,227 @@ impl WorkloadSagaRecord {
         )
     }
 
-    /// Build one pure provision-state successor without performing an effect.
-    ///
-    /// A caller may persist the returned candidate, but the candidate itself
-    /// is not dispatch authority. The sole coordinator confirms it through the
-    /// saga store before any later effect owner can act.
-    pub fn transition_provision_disposition(
+    /// Claim the first dispatch epoch for one exact provision attempt.
+    pub fn ready_to_initial_dispatch(
+        &self,
+        attempt: WorkloadProvisionAttempt,
+        provider_target: WorkloadProvisionProviderTarget,
+    ) -> Result<Self, WorkloadSagaError> {
+        if self.provision_disposition != Some(WorkloadProvisionDisposition::Ready)
+            || attempt.issuing_revision() != self.revision
+        {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "initial dispatch requires ready state and the exact current revision",
+            ));
+        }
+        let claim = WorkloadProvisionDispatchClaim::initial(attempt, provider_target)?;
+        self.build_provision_transition(
+            self.phase,
+            self.phase_detail.clone(),
+            WorkloadProvisionDisposition::DispatchPending(claim),
+            None,
+        )
+    }
+
+    /// Record a reserve or attach edge for a plan with no provider-owned resources.
+    pub fn record_resource_free_network_step(
+        &self,
+        step: WorkloadProvisionStep,
+        phase: WorkloadSagaPhase,
+        phase_detail: WorkloadPhaseDetail,
+    ) -> Result<Self, WorkloadSagaError> {
+        if self.provision_disposition != Some(WorkloadProvisionDisposition::Ready)
+            || !matches!(
+                step,
+                WorkloadProvisionStep::ReserveNetwork | WorkloadProvisionStep::AttachNetwork
+            )
+            || self
+                .active_intent
+                .network
+                .compiled_plan()
+                .content()
+                .capability_selection_evidence()
+                .is_some()
+        {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "resource-free network transition requires ready state and no provider selection",
+            ));
+        }
+        let expected_edge = matches!(
+            (step, self.phase, phase),
+            (
+                WorkloadProvisionStep::ReserveNetwork,
+                WorkloadSagaPhase::IntentCommitted,
+                WorkloadSagaPhase::NetworkReserved
+            ) | (
+                WorkloadProvisionStep::AttachNetwork,
+                WorkloadSagaPhase::WorkloadPrepared,
+                WorkloadSagaPhase::NetworkAttached
+            )
+        );
+        if !expected_edge {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "resource-free network step does not match its lifecycle edge",
+            ));
+        }
+        self.build_provision_transition(
+            phase,
+            phase_detail,
+            WorkloadProvisionDisposition::Ready,
+            None,
+        )
+    }
+
+    /// Require side-effect-free inspection after an uncertain dispatch.
+    pub fn dispatch_to_inspection(&self) -> Result<Self, WorkloadSagaError> {
+        let Some(WorkloadProvisionDisposition::DispatchPending(claim)) =
+            self.provision_disposition.as_ref()
+        else {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "dispatch inspection requires an exact pending claim",
+            ));
+        };
+        self.build_provision_transition(
+            self.phase,
+            self.phase_detail.clone(),
+            WorkloadProvisionDisposition::InspectionRequired(claim.clone()),
+            None,
+        )
+    }
+
+    /// Authorize the same stable attempt at the next epoch after exact absence.
+    pub fn inspection_to_retry_dispatch(
+        &self,
+        absence: WorkloadProvisionAbsenceEvidence,
+    ) -> Result<Self, WorkloadSagaError> {
+        let previous = match self.provision_disposition.as_ref() {
+            Some(WorkloadProvisionDisposition::InspectionRequired(previous)) => previous,
+            _ => {
+                return Err(WorkloadSagaError::InvalidTransition(
+                    "dispatch retry requires an exact inspected claim",
+                ));
+            }
+        };
+        if !absence.matches_inspection(self, previous) {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "retry absence evidence is crossed with the inspected dispatch claim",
+            ));
+        }
+        let claimed_revision = self
+            .revision
+            .checked_next()
+            .ok_or(WorkloadSagaError::RevisionOverflow)?;
+        let next = WorkloadProvisionDispatchClaim::retry_after_absence(
+            previous,
+            claimed_revision,
+            absence,
+        )?;
+        self.build_provision_transition(
+            self.phase,
+            self.phase_detail.clone(),
+            WorkloadProvisionDisposition::DispatchPending(next),
+            None,
+        )
+    }
+
+    /// Persist one exact successful dispatch and return to ready disposition.
+    pub fn dispatch_to_success(
+        &self,
+        phase: WorkloadSagaPhase,
+        phase_detail: WorkloadPhaseDetail,
+    ) -> Result<Self, WorkloadSagaError> {
+        let claim = match self.provision_disposition.as_ref() {
+            Some(
+                WorkloadProvisionDisposition::DispatchPending(claim)
+                | WorkloadProvisionDisposition::InspectionRequired(claim),
+            ) => claim,
+            _ => {
+                return Err(WorkloadSagaError::InvalidTransition(
+                    "dispatch success requires an exact unresolved claim",
+                ));
+            }
+        };
+        if claim.attempt().step() == WorkloadProvisionStep::InspectActivationPrerequisites {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "activation-prerequisite success requires a distinct activation dispatch",
+            ));
+        }
+        if phase != claim.attempt().target_phase() {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "dispatch success must advance to the attempted target phase",
+            ));
+        }
+        self.build_provision_transition(
+            phase,
+            phase_detail,
+            WorkloadProvisionDisposition::Ready,
+            None,
+        )
+    }
+
+    /// Persist prerequisite success as the distinct activation dispatch claim.
+    pub fn dispatch_to_activation(
+        &self,
+        attempt: WorkloadProvisionAttempt,
+        provider_target: WorkloadProvisionProviderTarget,
+    ) -> Result<Self, WorkloadSagaError> {
+        let previous = match self.provision_disposition.as_ref() {
+            Some(
+                WorkloadProvisionDisposition::DispatchPending(claim)
+                | WorkloadProvisionDisposition::InspectionRequired(claim),
+            ) => claim,
+            _ => {
+                return Err(WorkloadSagaError::InvalidTransition(
+                    "activation dispatch requires a retained prerequisite claim",
+                ));
+            }
+        };
+        if previous.attempt().step() != WorkloadProvisionStep::InspectActivationPrerequisites
+            || attempt.issuing_revision() != self.revision
+        {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "activation dispatch must follow exact prerequisite inspection",
+            ));
+        }
+        let claim = WorkloadProvisionDispatchClaim::initial(attempt, provider_target)?;
+        self.build_provision_transition(
+            self.phase,
+            self.phase_detail.clone(),
+            WorkloadProvisionDisposition::DispatchPending(claim),
+            None,
+        )
+    }
+
+    /// Halt this generation at its last completed phase after definite failure.
+    pub fn dispatch_to_definite_failure(
+        &self,
+        failure: WorkloadFailureEvidence,
+    ) -> Result<Self, WorkloadSagaError> {
+        let claim = match self.provision_disposition.as_ref() {
+            Some(
+                WorkloadProvisionDisposition::DispatchPending(claim)
+                | WorkloadProvisionDisposition::InspectionRequired(claim),
+            ) => claim.clone(),
+            _ => {
+                return Err(WorkloadSagaError::InvalidTransition(
+                    "dispatch failure requires an exact unresolved claim",
+                ));
+            }
+        };
+        self.build_provision_transition(
+            self.phase,
+            self.phase_detail.clone(),
+            WorkloadProvisionDisposition::DefiniteFailure { claim, failure },
+            None,
+        )
+    }
+
+    fn build_provision_transition(
         &self,
         phase: WorkloadSagaPhase,
         phase_detail: WorkloadPhaseDetail,
         provision_disposition: WorkloadProvisionDisposition,
+        failure: Option<WorkloadFailureEvidence>,
     ) -> Result<Self, WorkloadSagaError> {
         if self.active_intent.desired_state != DesiredWorkloadState::Running
             || !self.phase.is_provision()
@@ -363,7 +582,7 @@ impl WorkloadSagaRecord {
             phase,
             phase_detail,
             Some(provision_disposition),
-            None,
+            failure,
         )
     }
 
@@ -379,7 +598,7 @@ impl WorkloadSagaRecord {
             && matches!(
                 self.provision_disposition,
                 Some(
-                    WorkloadProvisionDisposition::AttemptPending(_)
+                    WorkloadProvisionDisposition::DispatchPending(_)
                         | WorkloadProvisionDisposition::InspectionRequired(_)
                         | WorkloadProvisionDisposition::DefiniteFailure { .. }
                 )
@@ -839,250 +1058,6 @@ fn validate_successor_intent_change(
             "queuing a successor must preserve or withdraw active-generation state",
         )),
         _ => Ok(()),
-    }
-}
-
-fn initial_provision_disposition(
-    intent: &WorkloadSagaIntent,
-) -> Option<WorkloadProvisionDisposition> {
-    (intent.desired_state == DesiredWorkloadState::Running)
-        .then_some(WorkloadProvisionDisposition::Ready)
-}
-
-fn validate_provision_disposition(record: &WorkloadSagaRecord) -> Result<(), WorkloadSagaError> {
-    let should_exist = record.active_intent.desired_state == DesiredWorkloadState::Running
-        && record.phase.is_provision();
-    if record.provision_disposition.is_some() != should_exist {
-        return Err(WorkloadSagaError::InvalidTransition(
-            "provision disposition presence does not match lifecycle state",
-        ));
-    }
-    let Some(disposition) = record.provision_disposition.as_ref() else {
-        return Ok(());
-    };
-    if let Some(attempt) = disposition.attempt() {
-        validate_attempt_for_record(record, attempt)?;
-        validate_attempt_revision(record, disposition, attempt)?;
-    }
-    if let WorkloadProvisionDisposition::DefiniteFailure { failure, .. } = disposition {
-        failure.validate()?;
-    }
-    Ok(())
-}
-
-fn validate_attempt_revision(
-    record: &WorkloadSagaRecord,
-    disposition: &WorkloadProvisionDisposition,
-    attempt: &WorkloadProvisionAttempt,
-) -> Result<(), WorkloadSagaError> {
-    let after_one = attempt.issuing_revision().checked_next();
-    let after_two = after_one.and_then(WorkloadSagaRevision::checked_next);
-    let after_three = after_two.and_then(WorkloadSagaRevision::checked_next);
-    let valid = match disposition {
-        WorkloadProvisionDisposition::Ready => false,
-        WorkloadProvisionDisposition::AttemptPending(_) => after_one == Some(record.revision),
-        WorkloadProvisionDisposition::InspectionRequired(_) => after_two == Some(record.revision),
-        WorkloadProvisionDisposition::DefiniteFailure { .. } => {
-            after_two == Some(record.revision) || after_three == Some(record.revision)
-        }
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(WorkloadSagaError::InvalidEvidence(
-            "provision attempt issuing revision does not exactly bind disposition history",
-        ))
-    }
-}
-
-fn validate_attempt_for_record(
-    record: &WorkloadSagaRecord,
-    attempt: &WorkloadProvisionAttempt,
-) -> Result<(), WorkloadSagaError> {
-    let intent = &record.active_intent;
-    if attempt.key() != &record.key
-        || attempt.saga_id() != &record.saga_id
-        || attempt.generation() != intent.generation
-        || attempt.desired_digest() != intent.desired_digest
-        || attempt.required_node() != intent.admission.assigned_node()
-        || attempt.source_digest() != intent.source.source_digest()
-        || attempt.network_plan_digest() != intent.network.digest()
-        || attempt.selection_evidence()
-            != intent
-                .network
-                .compiled_plan()
-                .content()
-                .capability_selection_evidence()
-        || attempt.source_phase() != record.phase
-        || attempt.issuing_revision() >= record.revision
-    {
-        return Err(WorkloadSagaError::InvalidEvidence(
-            "provision attempt is crossed with the durable workload generation",
-        ));
-    }
-    let references = record.phase_detail.references();
-    let subjects_match = match attempt.subjects() {
-        WorkloadProvisionSubjects::Network(reference) => {
-            reference == &WorkloadNetworkReference::for_intent(intent)
-        }
-        WorkloadProvisionSubjects::Execution(reference) => {
-            reference == &WorkloadExecutionReference::for_intent(intent)
-        }
-        WorkloadProvisionSubjects::Readiness { network, execution } => {
-            network == &WorkloadNetworkReference::for_intent(intent)
-                && execution == &WorkloadExecutionReference::for_intent(intent)
-        }
-        WorkloadProvisionSubjects::Publication(reference) => {
-            references.publication() == Some(reference)
-        }
-    };
-    if !subjects_match {
-        return Err(WorkloadSagaError::InvalidEvidence(
-            "provision attempt subjects are crossed with durable lifecycle references",
-        ));
-    }
-    if attempt.step() == WorkloadProvisionStep::ActivateWorkload
-        && !activation_prerequisite_matches_intent(attempt, intent)
-    {
-        return Err(WorkloadSagaError::InvalidEvidence(
-            "activation prerequisite is crossed with durable lifecycle references",
-        ));
-    }
-    Ok(())
-}
-
-fn activation_prerequisite_matches_intent(
-    attempt: &WorkloadProvisionAttempt,
-    intent: &WorkloadSagaIntent,
-) -> bool {
-    matches!(
-        (attempt.subjects(), attempt.prerequisite().map(WorkloadProvisionPrerequisiteEvidence::evidence)),
-        (
-            WorkloadProvisionSubjects::Execution(activation_execution),
-            Some(WorkloadProvisionSuccessEvidence::ActivationPrerequisitesReady {
-                network,
-                execution,
-                ..
-            })
-        ) if activation_execution == execution
-            && network == &WorkloadNetworkReference::for_intent(intent)
-            && execution == &WorkloadExecutionReference::for_intent(intent)
-    )
-}
-
-fn activation_attempt_follows_inspection(
-    previous: &WorkloadProvisionAttempt,
-    next: &WorkloadProvisionAttempt,
-) -> bool {
-    matches!(
-        (
-            previous.subjects(),
-            next.subjects(),
-            next.prerequisite(),
-        ),
-        (
-            WorkloadProvisionSubjects::Readiness {
-                network: inspected_network,
-                execution: inspected_execution,
-            },
-            WorkloadProvisionSubjects::Execution(activation_execution),
-            Some(prerequisite),
-        ) if prerequisite.attempt_id() == previous.attempt_id()
-            && matches!(
-                prerequisite.evidence(),
-                WorkloadProvisionSuccessEvidence::ActivationPrerequisitesReady {
-                    network,
-                    execution,
-                    ..
-                } if network == inspected_network
-                    && execution == inspected_execution
-                    && activation_execution == execution
-            )
-    )
-}
-
-fn validate_provision_disposition_transition(
-    current: &WorkloadSagaRecord,
-    candidate: &WorkloadSagaRecord,
-    active_changed: bool,
-) -> Result<(), WorkloadSagaError> {
-    if active_changed {
-        return if candidate.provision_disposition
-            == initial_provision_disposition(&candidate.active_intent)
-        {
-            Ok(())
-        } else {
-            Err(WorkloadSagaError::InvalidTransition(
-                "promoted generation must retain its exact initial provision disposition",
-            ))
-        };
-    }
-    match (
-        current.provision_disposition.as_ref(),
-        candidate.provision_disposition.as_ref(),
-    ) {
-        (None, None) => Ok(()),
-        (Some(WorkloadProvisionDisposition::Ready), None)
-            if matches!(
-                candidate.phase,
-                WorkloadSagaPhase::CleanupPending | WorkloadSagaPhase::WithdrawalCommitted
-            ) =>
-        {
-            Ok(())
-        }
-        (Some(WorkloadProvisionDisposition::Ready), Some(WorkloadProvisionDisposition::Ready))
-            if current.phase == WorkloadSagaPhase::Ready
-                && candidate.phase == WorkloadSagaPhase::Observed
-                && current.active_intent.publication == WorkloadPublicationIntent::Withheld =>
-        {
-            Ok(())
-        }
-        (
-            Some(WorkloadProvisionDisposition::Ready),
-            Some(WorkloadProvisionDisposition::AttemptPending(attempt)),
-        ) if candidate.phase == current.phase
-            && attempt.issuing_revision() == current.revision
-            && attempt.step() != WorkloadProvisionStep::ActivateWorkload =>
-        {
-            Ok(())
-        }
-        (
-            Some(WorkloadProvisionDisposition::AttemptPending(previous)),
-            Some(WorkloadProvisionDisposition::InspectionRequired(next)),
-        ) if candidate.phase == current.phase && previous == next => Ok(()),
-        (
-            Some(
-                WorkloadProvisionDisposition::AttemptPending(previous)
-                | WorkloadProvisionDisposition::InspectionRequired(previous),
-            ),
-            Some(WorkloadProvisionDisposition::DefiniteFailure { attempt, .. }),
-        ) if candidate.phase == current.phase && previous == attempt => Ok(()),
-        (
-            Some(
-                WorkloadProvisionDisposition::AttemptPending(previous)
-                | WorkloadProvisionDisposition::InspectionRequired(previous),
-            ),
-            Some(WorkloadProvisionDisposition::Ready),
-        ) if candidate.phase == previous.target_phase() && candidate.phase != current.phase => {
-            Ok(())
-        }
-        (
-            Some(
-                WorkloadProvisionDisposition::AttemptPending(previous)
-                | WorkloadProvisionDisposition::InspectionRequired(previous),
-            ),
-            Some(WorkloadProvisionDisposition::AttemptPending(next)),
-        ) if candidate.phase == current.phase
-            && previous.step() == WorkloadProvisionStep::InspectActivationPrerequisites
-            && next.step() == WorkloadProvisionStep::ActivateWorkload
-            && next.issuing_revision() == current.revision
-            && activation_attempt_follows_inspection(previous, next) =>
-        {
-            Ok(())
-        }
-        _ => Err(WorkloadSagaError::InvalidTransition(
-            "provision disposition transition is not legal",
-        )),
     }
 }
 

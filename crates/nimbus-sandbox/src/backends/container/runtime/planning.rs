@@ -60,9 +60,12 @@ fn plan_only_backend_persists_a_container_manifest() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let backend = sample_plan_only_backend(temp_dir.path());
 
-    let handle = backend
-        .start_sync(sample_spec().with_port_binding(SandboxPortBinding::tcp("db", 5432, 5432)))
-        .expect("container plan should start");
+    let handle = reserve_and_prepare_plan_only_fixture(
+        &backend,
+        sample_spec().with_port_binding(SandboxPortBinding::tcp("db", 5432, 5432)),
+        "persist-manifest",
+    )
+    .expect("container provision phases should persist the plan");
 
     assert_eq!(handle.backend, SandboxBackendKind::Container);
     let manifest_path = crate::artifact_paths::manifest_path(
@@ -156,7 +159,7 @@ fn startup_network_reconciliation_failure_blocks_new_container_planning() {
         error
             .to_string()
             .contains("refuses new durable work because startup reconciliation did not complete")
-            && error.to_string().contains("unmatched artifact")
+            && error.to_string().contains("is structurally untrusted")
             && error
                 .to_string()
                 .contains(&corrupt_manifest_path.display().to_string()),
@@ -914,12 +917,12 @@ fn plan_only_backend_scopes_container_artifacts_by_tenant_for_same_service_name(
     let tenant_a = sample_spec_for_tenant("tenant-a", "api");
     let tenant_b = sample_spec_for_tenant("tenant-b", "api");
 
-    let handle_a = backend
-        .start_sync(tenant_a.clone())
-        .expect("tenant-a container plan should start");
-    let handle_b = backend
-        .start_sync(tenant_b.clone())
-        .expect("tenant-b container plan should start");
+    let handle_a =
+        reserve_and_prepare_plan_only_fixture(&backend, tenant_a.clone(), "tenant-a-scoped")
+            .expect("tenant-a container plan should prepare");
+    let handle_b =
+        reserve_and_prepare_plan_only_fixture(&backend, tenant_b.clone(), "tenant-b-scoped")
+            .expect("tenant-b container plan should prepare");
 
     let manifest_a = crate::artifact_paths::manifest_path(
         &temp_dir.path().join("state"),
@@ -984,12 +987,12 @@ fn plan_only_backend_lowers_tenant_volume_mounts_under_tenant_state_root() {
     let tenant_b = sample_spec_for_tenant("tenant-b", "api")
         .with_mount(SandboxMountSpec::tenant_volume("shared", "/var/lib/app").read_only(true));
 
-    let handle_a = backend
-        .start_sync(tenant_a.clone())
-        .expect("tenant-a container plan should start");
-    let handle_b = backend
-        .start_sync(tenant_b.clone())
-        .expect("tenant-b container plan should start");
+    let handle_a =
+        reserve_and_prepare_plan_only_fixture(&backend, tenant_a.clone(), "tenant-a-volume")
+            .expect("tenant-a container plan should prepare");
+    let handle_b =
+        reserve_and_prepare_plan_only_fixture(&backend, tenant_b.clone(), "tenant-b-volume")
+            .expect("tenant-b container plan should prepare");
 
     let volume_a = temp_dir
         .path()
@@ -1429,9 +1432,18 @@ fn plan_only_backend_does_not_charge_manifest_only_port_previews() {
     let state_root = config.network_state_root.clone();
     let backend = ContainerSandboxBackend::new(config);
 
-    backend
-        .start_sync(sample_spec().with_port_binding(SandboxPortBinding::tcp("db", 15432, 5432)))
-        .expect("first same-tenant plan should render");
+    let first = backend
+        .plan_start_with_id(
+            &sample_spec().with_port_binding(SandboxPortBinding::tcp("db", 15432, 5432)),
+            &SandboxId::new("db-preview-01"),
+            None,
+            None,
+        )
+        .expect("first same-tenant manifest-only preview should render");
+    assert!(
+        first.manifest.port_leases.is_empty(),
+        "a manifest-only preview must not claim host-global port authority"
+    );
 
     let second = backend
         .plan_start_with_id(
@@ -1508,6 +1520,7 @@ fn execute_manifest_without_attachment_config_fails_before_network_effects() {
             &manifest,
             AttachmentAttachAuthority::FreshLaunch(&claim),
             MachinePortPreparationReleaseAuthority::FreshLaunch(&claim),
+            true,
         )
         .expect_err("missing attachment config must fail before Netavark");
     assert!(
@@ -1538,27 +1551,29 @@ fn plan_only_backend_rejects_same_tenant_resource_quota_exhaustion() {
         .with_max_log_bytes_per_tenant(Some(512));
     let backend = ContainerSandboxBackend::new(config);
 
-    backend
-        .start_sync(
-            sample_spec_for_tenant("tenant-a", "db").with_resource_limits(
-                SandboxResourceLimits::default()
-                    .with_cpu_count(1)
-                    .with_memory_limit_bytes(512)
-                    .with_log_limit_bytes(256),
-            ),
-        )
-        .expect("first sandbox should fit within tenant quota");
+    reserve_and_prepare_plan_only_fixture(
+        &backend,
+        sample_spec_for_tenant("tenant-a", "db").with_resource_limits(
+            SandboxResourceLimits::default()
+                .with_cpu_count(1)
+                .with_memory_limit_bytes(512)
+                .with_log_limit_bytes(256),
+        ),
+        "tenant-a-db-quota",
+    )
+    .expect("first sandbox should fit within tenant quota");
 
-    let error = backend
-        .start_sync(
-            sample_spec_for_tenant("tenant-a", "api").with_resource_limits(
-                SandboxResourceLimits::default()
-                    .with_cpu_count(2)
-                    .with_memory_limit_bytes(512)
-                    .with_log_limit_bytes(256),
-            ),
-        )
-        .expect_err("second sandbox should exceed same-tenant vCPU quota");
+    let error = reserve_and_prepare_plan_only_fixture(
+        &backend,
+        sample_spec_for_tenant("tenant-a", "api").with_resource_limits(
+            SandboxResourceLimits::default()
+                .with_cpu_count(2)
+                .with_memory_limit_bytes(512)
+                .with_log_limit_bytes(256),
+        ),
+        "tenant-a-api-quota",
+    )
+    .expect_err("second sandbox should exceed same-tenant vCPU quota");
 
     assert!(
         error.to_string().contains("sandbox vCPU quota exceeded")
@@ -1566,16 +1581,17 @@ fn plan_only_backend_rejects_same_tenant_resource_quota_exhaustion() {
         "expected tenant vCPU quota error, got: {error}"
     );
 
-    backend
-        .start_sync(
-            sample_spec_for_tenant("tenant-b", "api").with_resource_limits(
-                SandboxResourceLimits::default()
-                    .with_cpu_count(2)
-                    .with_memory_limit_bytes(512)
-                    .with_log_limit_bytes(256),
-            ),
-        )
-        .expect("other tenant should have an independent quota bucket");
+    reserve_and_prepare_plan_only_fixture(
+        &backend,
+        sample_spec_for_tenant("tenant-b", "api").with_resource_limits(
+            SandboxResourceLimits::default()
+                .with_cpu_count(2)
+                .with_memory_limit_bytes(512)
+                .with_log_limit_bytes(256),
+        ),
+        "tenant-b-api-quota",
+    )
+    .expect("other tenant should have an independent quota bucket");
 }
 
 #[test]

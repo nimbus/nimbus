@@ -24,8 +24,8 @@ use crate::backends::oci::network::orphan_evidence::test_support::{
     EvidenceFixture, reservation_claim,
 };
 use crate::backends::oci::network::{
-    OciNetworkLayout, OciPlacementProvider, RecordingSegmentAllocator, SegmentAllocatorOperation,
-    default_network_attachment_id, place_sandbox_on_block,
+    OciNetworkLayout, OciPlacementAuthority, OciPlacementProvider, RecordingSegmentAllocator,
+    SegmentAllocatorOperation, default_network_attachment_id, place_sandbox_on_block,
 };
 use crate::instance::SandboxId;
 
@@ -279,13 +279,14 @@ fn desired_then_allocator_partial_failure_converges_after_restart() {
     let attachments = LocalNetworkAttachmentAuthority::open(&network_root)
         .expect("attachment authority should open");
     let claim = reservation_claim("partial-quarantine");
+    let attachment_id = default_network_attachment_id(&sandbox_id);
     let config = place_sandbox_on_block(
         &allocator,
         &ipam,
         &tenant_id,
         &layout,
         &sandbox_id,
-        &claim,
+        OciPlacementAuthority::new(&attachment_id, &claim),
         OciPlacementProvider::new(
             AttachmentBackendKind::Container.provider_kind(),
             |segment, reservation_claim| {
@@ -294,13 +295,13 @@ fn desired_then_allocator_partial_failure_converges_after_restart() {
                     PathBuf::from("netavark-not-executed"),
                     PathBuf::from("aardvark-not-executed"),
                     segment,
+                    &attachment_id,
                     reservation_claim,
                 )
             },
         ),
     )
     .expect("placement should reserve exact authority");
-    let attachment_id = default_network_attachment_id(&sandbox_id);
     let association = allocator
         .inspect_attachment_reservation(&tenant_id, &attachment_id, &claim)
         .expect("allocator reservation should inspect")
@@ -574,13 +575,14 @@ fn unmatched_provider_without_a_hold_remains_durable_and_fences_every_restart() 
         OciIpamAuthority::reconstruct_for_direct_test(&layout).expect("IPAM authority should open");
     let allocator = RecordingSegmentAllocator::new(tenant_id.clone(), "10.95.0.0/24", 95);
     let claim = reservation_claim("unmatched-provider");
+    let attachment_id = default_network_attachment_id(&sandbox_id);
     place_sandbox_on_block(
         &allocator,
         &ipam,
         &tenant_id,
         &layout,
         &sandbox_id,
-        &claim,
+        OciPlacementAuthority::new(&attachment_id, &claim),
         OciPlacementProvider::new(
             AttachmentBackendKind::Container.provider_kind(),
             |segment, reservation_claim| {
@@ -589,13 +591,13 @@ fn unmatched_provider_without_a_hold_remains_durable_and_fences_every_restart() 
                     PathBuf::from("netavark-not-executed"),
                     PathBuf::from("aardvark-not-executed"),
                     segment,
+                    &attachment_id,
                     reservation_claim,
                 )
             },
         ),
     )
     .expect("provider authority should persist");
-    let attachment_id = default_network_attachment_id(&sandbox_id);
     allocator
         .release_reserved_attachment_without_effect(&tenant_id, &attachment_id, &claim)
         .expect("test cut should move allocator authority toward removal");

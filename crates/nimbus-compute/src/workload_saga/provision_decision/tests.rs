@@ -2,9 +2,10 @@
 
 use nimbus_workloads::{
     WorkloadActivationIntent, WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest,
-    WorkloadPhaseDetail, WorkloadProvisionDisposition, WorkloadProvisionEffectResult,
-    WorkloadProvisionStep, WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence,
-    WorkloadPublicationIntent, WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadPhaseDetail, WorkloadProvisionDispatchClaim, WorkloadProvisionDisposition,
+    WorkloadProvisionEffectResult, WorkloadProvisionStep, WorkloadProvisionSubjects,
+    WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadSagaPhase,
+    WorkloadSagaRecord,
 };
 
 use super::*;
@@ -28,13 +29,16 @@ fn proposed(record: &WorkloadSagaRecord) -> ProposedWorkloadProvisionTransition 
     proposed
 }
 
-fn pending_attempt(record: &WorkloadSagaRecord) -> &WorkloadProvisionAttempt {
-    let Some(WorkloadProvisionDisposition::AttemptPending(attempt)) =
-        record.provision_disposition()
+fn pending_claim(record: &WorkloadSagaRecord) -> &WorkloadProvisionDispatchClaim {
+    let Some(WorkloadProvisionDisposition::DispatchPending(claim)) = record.provision_disposition()
     else {
-        panic!("candidate should retain an exact pending attempt");
+        panic!("candidate should retain an exact pending dispatch claim");
     };
-    attempt
+    claim
+}
+
+fn pending_attempt(record: &WorkloadSagaRecord) -> &WorkloadProvisionAttempt {
+    pending_claim(record).attempt()
 }
 
 fn success_for(attempt: &WorkloadProvisionAttempt) -> WorkloadProvisionSuccessEvidence {
@@ -110,10 +114,11 @@ fn failure_for(attempt: &WorkloadProvisionAttempt) -> WorkloadFailureEvidence {
 fn assert_effect_result_matrix(
     pending: &WorkloadSagaRecord,
 ) -> ProposedWorkloadProvisionTransition {
+    let claim = pending_claim(pending).clone();
     let attempt = pending_attempt(pending).clone();
     assert_eq!(
         WorkloadProvisionDecision::plan(pending).expect("pending state should reopen"),
-        WorkloadProvisionDecision::InspectExact(Box::new(attempt.clone())),
+        WorkloadProvisionDecision::InspectExact(Box::new(claim.clone())),
         "a process reopening a pending attempt may only inspect it"
     );
 
@@ -137,12 +142,12 @@ fn assert_effect_result_matrix(
     );
     assert!(matches!(
         inspection.candidate().provision_disposition(),
-        Some(WorkloadProvisionDisposition::InspectionRequired(retained)) if retained == &attempt
+        Some(WorkloadProvisionDisposition::InspectionRequired(retained)) if retained == &claim
     ));
     assert_eq!(
         WorkloadProvisionDecision::plan(inspection.candidate())
             .expect("inspection state should reopen"),
-        WorkloadProvisionDecision::InspectExact(Box::new(attempt.clone()))
+        WorkloadProvisionDecision::InspectExact(Box::new(claim.clone()))
     );
     assert_eq!(
         WorkloadProvisionDecision::reduce(
@@ -152,7 +157,7 @@ fn assert_effect_result_matrix(
             },
         )
         .expect("repeated ambiguity should remain inspect-only"),
-        WorkloadProvisionDecision::InspectExact(Box::new(attempt.clone()))
+        WorkloadProvisionDecision::InspectExact(Box::new(claim.clone()))
     );
 
     for unresolved in [pending, inspection.candidate()] {
@@ -292,6 +297,7 @@ fn definite_failure_retains_completed_phase() {
 #[test]
 fn ambiguous_result_requires_exact_inspection() {
     let candidate = proposed(&record(WorkloadSagaPhase::IntentCommitted)).into_candidate();
+    let claim = pending_claim(&candidate).clone();
     let attempt = pending_attempt(&candidate).clone();
     let WorkloadProvisionDecision::Proposed(inspection) = WorkloadProvisionDecision::reduce(
         &candidate,
@@ -309,7 +315,7 @@ fn ambiguous_result_requires_exact_inspection() {
     assert_eq!(
         WorkloadProvisionDecision::plan(inspection.candidate())
             .expect("ambiguous state should reopen"),
-        WorkloadProvisionDecision::InspectExact(Box::new(attempt))
+        WorkloadProvisionDecision::InspectExact(Box::new(claim))
     );
 }
 
@@ -320,7 +326,7 @@ fn crossed_attempt_id_rejects_without_candidate_or_command() {
         "crossed-attempt",
         WorkloadSagaPhase::IntentCommitted,
         WorkloadActivationIntent::ActivateWhenAttached,
-        WorkloadPublicationIntent::Withheld,
+        WorkloadPublicationIntent::PublishWhenReady,
     ))
     .into_candidate();
     let crossed_id = pending_attempt(&second).attempt_id().clone();
@@ -403,14 +409,22 @@ fn publication_is_unreachable_before_workload_readiness() {
 
 #[test]
 fn resource_free_attempt_has_no_selection_evidence() {
-    let candidate = proposed(&provision_record(
+    let proposal = proposed(&provision_record(
         "decision-resource-free",
         WorkloadSagaPhase::IntentCommitted,
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::Withheld,
-    ))
-    .into_candidate();
-    assert!(pending_attempt(&candidate).selection_evidence().is_none());
+    ));
+    assert_eq!(
+        proposal.candidate().phase(),
+        WorkloadSagaPhase::NetworkReserved
+    );
+    assert_eq!(
+        proposal.candidate().provision_disposition(),
+        Some(&WorkloadProvisionDisposition::Ready),
+        "a resource-free reserve step must not fabricate a provider dispatch claim"
+    );
+    assert!(proposal.action_after_confirmation().is_none());
 }
 
 #[test]
