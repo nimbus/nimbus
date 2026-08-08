@@ -254,9 +254,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
   `594 + 31 ignores`, and `82`; final composition/CLI adaptation is
   `10 + 6 + 3`. Affected all-target, strict Clippy, warning-denied rustdoc,
   format/diff/syntax, and NNCV034 `71/71` pass. The live contract is red only
-  for service, machine, scheduler, and final behavior. R3 starts by extracting
-  the verifier fixture before adding service/SDK, Compose, machine, and
-  scheduler cutovers. No structured review has run on this partial work.
+  for service, machine, scheduler, and final behavior. R3 verifier extraction
+  is durable at `e1c57ce9eba823b8dc7d0a5a4ab02d58fe4c0030`: the `1,527`-line
+  production contract and `471`-line fixture sibling reuse one scanner, and
+  R2/R3 now have separate frozen path ranges. Service/SDK is next, followed by
+  Compose, machine, and scheduler cutovers. No structured review has run on
+  this partial work.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
