@@ -224,11 +224,19 @@ extension-registry seam before the second concern edits `extensions.rs`.
   exactly the intended ten R2-R4 diagnostics red. It found two portable gaps
   that R2 must close before provider effects: record-owned claim/result
   transitions and one bounded, clock-free global restart-candidate query. R2
-  also generalizes the existing provider journal with a monotonic restart
-  ordinal and earns small Container/Krun capabilities. R1 adds no provider
-  effect, service route, SDK method, or caller cutover. Service/SDK, machine
-  transport, scheduler deletion, and full live convergence remain R3/R4. No
-  structured review runs on this partial work.
+  closed those two portable gaps at
+  `14e6236d4e3d1199a7ae40674bcdedd50b98fd58`: exact claims,
+  inspection, absence-fenced retry, success receipts, terminal failure, and
+  one strict Engine-backed global candidate page are durable. Workloads passes
+  `165/165`. Server workload-store behavior passes `52` with `5` declared
+  child-only ignores. Affected all-target, strict Clippy, warning-denied
+  rustdoc, format, and static gates pass. NNCV034 remains `68/68`, with exactly
+  the intended ten R2-R4 diagnostics red and no path violation. The next slice
+  is compute reducer/confirmation/driver/watch. R2 then generalizes the
+  existing provider journal with a monotonic restart ordinal and earns small
+  Container/Krun capabilities. Service/SDK, machine transport, scheduler
+  deletion, and full live convergence remain R3/R4, and no structured review
+  runs on this partial work.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
