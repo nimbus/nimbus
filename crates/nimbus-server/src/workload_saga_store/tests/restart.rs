@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
 use nimbus_workloads::{
-    WorkloadEffectReferences, WorkloadExecutionReference, WorkloadNetworkReference,
-    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
     WorkloadRestartAdmissionInput, WorkloadRestartAdmissionUpdate, WorkloadRestartCommandClaim,
     WorkloadRestartEffectResult, WorkloadRestartEpoch, WorkloadRestartEvidenceDigest,
-    WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy, WorkloadRestartRequestId,
-    WorkloadRestartTrigger, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaPageRequest,
-    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore,
+    WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPhase, WorkloadRestartPolicy,
+    WorkloadRestartRequestId, WorkloadRestartTrigger, WorkloadSagaCommit, WorkloadSagaExpected,
+    WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore,
 };
 use serde_json::{Value, json};
 
@@ -138,7 +136,6 @@ fn extend_successful_command(history: &mut Vec<WorkloadSagaRecord>, label: &str)
                 WorkloadRestartEffectResult::Succeeded {
                     evidence: WorkloadRestartEvidenceDigest::sha256(label),
                 },
-                None,
             )
             .expect("restart command should succeed"),
     );
@@ -157,7 +154,13 @@ fn extend_restart_to_completion(history: &mut Vec<WorkloadSagaRecord>) {
         .advance_restart_without_effect(&request_id)
         .expect("requested restart should enter withdrawal");
     history.push(record);
-    extend_successful_command(history, "restart-withdrawn");
+    if history
+        .last()
+        .and_then(|record| record.restart_state().active())
+        .is_some_and(|active| active.phase() == WorkloadRestartPhase::PublicationWithdrawalPending)
+    {
+        extend_successful_command(history, "restart-withdrawn");
+    }
     extend_successful_command(history, "restart-quiesced");
     record = history.last().unwrap().clone();
     let due = record
@@ -185,63 +188,10 @@ fn extend_restart_to_completion(history: &mut Vec<WorkloadSagaRecord>) {
         .advance_restart_without_effect(&request_id)
         .expect("withheld publication should advance without an ingress effect");
     history.push(record.clone());
-
-    let claimed = record
-        .claim_restart_command(&request_id)
-        .expect("observation command should claim");
-    let claim = active_claim(&claimed);
-    history.push(claimed.clone());
-
-    let intent = claimed.active_intent();
-    let restart_epoch = claimed
-        .restart_state()
-        .active()
-        .unwrap()
-        .admission()
-        .restart_epoch();
-    let execution = WorkloadExecutionReference::for_restart_epoch(intent, restart_epoch);
-    let network = WorkloadNetworkReference::for_intent(intent);
-    let references =
-        WorkloadEffectReferences::new(Some(network.clone()), Some(execution.clone()), None);
-    let observed_detail = WorkloadPhaseDetail::provision(
-        WorkloadSagaPhase::Observed,
-        intent,
-        references,
-        vec![
-            WorkloadOwnerObservation::NetworkReserved {
-                reference: network.clone(),
-                evidence: WorkloadOwnerEvidenceDigest::sha256("restart-network-reserved"),
-            },
-            WorkloadOwnerObservation::ExecutionPrepared {
-                reference: execution.clone(),
-                evidence: WorkloadOwnerEvidenceDigest::sha256("restart-execution-prepared"),
-            },
-            WorkloadOwnerObservation::NetworkAttached {
-                reference: network.clone(),
-                evidence: WorkloadOwnerEvidenceDigest::sha256("restart-network-attached"),
-            },
-            WorkloadOwnerObservation::ExecutionActivated {
-                reference: execution.clone(),
-                evidence: WorkloadOwnerEvidenceDigest::sha256("restart-execution-activated"),
-            },
-            WorkloadOwnerObservation::Ready {
-                network,
-                execution,
-                evidence: WorkloadOwnerEvidenceDigest::sha256("restart-ready"),
-            },
-        ],
-    )
-    .expect("new-attempt observed detail should validate");
     history.push(
-        claimed
-            .apply_restart_effect_result(
-                &claim,
-                WorkloadRestartEffectResult::Succeeded {
-                    evidence: WorkloadRestartEvidenceDigest::sha256("restart-observed"),
-                },
-                Some(observed_detail),
-            )
-            .expect("restart should complete"),
+        record
+            .advance_restart_without_effect(&request_id)
+            .expect("withheld restart should complete without publication observation"),
     );
 }
 
@@ -388,18 +338,25 @@ async fn restart_store_round_trip_preserves_complete_admission_history() {
         .clone();
     history.push(admitted);
     extend_restart_to_completion(&mut history);
+    let expected = history
+        .last()
+        .expect("completed restart history should exist")
+        .clone();
+    let expected_evidence = expected
+        .restart_state()
+        .last_completed()
+        .expect("completed restart evidence should exist")
+        .evidence();
     persist_history(&store, &history).await;
 
     let reopened = store.load(observed.key()).await.unwrap().unwrap();
+    assert_eq!(reopened, expected);
     let completed = reopened
         .restart_state()
         .last_completed()
         .expect("reopened record should retain completed restart history");
     assert_eq!(completed.admission(), &expected_admission);
-    assert_eq!(
-        completed.evidence(),
-        WorkloadRestartEvidenceDigest::sha256("restart-observed")
-    );
+    assert_eq!(completed.evidence(), expected_evidence);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

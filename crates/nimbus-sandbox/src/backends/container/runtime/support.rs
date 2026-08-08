@@ -93,6 +93,13 @@ pub(super) fn sample_plan_only_backend(root: &std::path::Path) -> ContainerSandb
     })
 }
 
+pub(super) fn sample_execution_attempt_id(
+    sandbox_id: &SandboxId,
+) -> crate::SandboxExecutionAttemptId {
+    crate::SandboxExecutionAttemptId::new(format!("test-execution-attempt:{sandbox_id}"))
+        .expect("test execution attempt should validate")
+}
+
 /// Drive the two non-effectful PlanOnly provision phases in tests without
 /// recreating the deleted production coarse-start authority.
 pub(super) fn reserve_and_prepare_plan_only_fixture(
@@ -102,8 +109,14 @@ pub(super) fn reserve_and_prepare_plan_only_fixture(
 ) -> Result<SandboxHandle> {
     let sandbox_id = SandboxId::new(format!("plan-only-{label}"));
     let network_plan = sample_provision_network_plan(&spec, &sandbox_id, label);
-    backend.reserve_provision_network(spec, sandbox_id.clone(), network_plan)?;
-    backend.prepare_provision_workload(&sandbox_id)
+    let execution_attempt_id = sample_execution_attempt_id(&sandbox_id);
+    backend.reserve_provision_network(
+        spec,
+        sandbox_id.clone(),
+        execution_attempt_id.clone(),
+        network_plan,
+    )?;
+    backend.prepare_provision_workload(&sandbox_id, &execution_attempt_id)
 }
 
 pub(super) fn mark_runtime_absent_for_cleanup(manifest: &mut ContainerSandboxManifest) {

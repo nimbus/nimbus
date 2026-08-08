@@ -19,6 +19,7 @@ use crate::backends::oci::network::{
     TerminalNetworkFinalityEvidence,
 };
 use crate::error::{Result, SandboxError};
+use crate::execution_attempt::{SandboxExecutionAttemptId, SandboxRestartAttemptFence};
 use crate::instance::SandboxId;
 use crate::instance::{SandboxHandle, SandboxStatus};
 use crate::provision::SandboxProvisionNetworkPlan;
@@ -94,6 +95,7 @@ pub(super) fn retained_reservation_pending_manifest_paths(
             && manifest.egress_proxy.is_none()
             && manifest.port_leases.is_empty()
             && manifest.creator_handoff == ContainerCreatorHandoffState::NotSpawned
+            && manifest.restart_transition.is_none()
             && manifest.runner_handoff_id.is_none()
             && !manifest.network_cleanup_complete
             && !manifest.shutdown_requested
@@ -271,6 +273,8 @@ pub(crate) struct ContainerStartPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct ContainerSandboxManifest {
     pub(super) handle: SandboxHandle,
+    /// Exact workload execution incarnation persisted before provider effects.
+    pub(super) execution_attempt_id: SandboxExecutionAttemptId,
     pub(super) spec: SandboxSpec,
     /// Durable phase marker separating reservation from workload artifact
     /// materialization. Legacy coarse starts publish this as `true`.
@@ -305,6 +309,14 @@ pub(super) struct ContainerSandboxManifest {
     /// absence alone cannot release network authority while a creator might
     /// still materialize it.
     pub(super) creator_handoff: ContainerCreatorHandoffState,
+    /// Exact restart fence and provider-local phase retained across process
+    /// death. Absence means this workload has not entered a restart command.
+    ///
+    /// The optional shape is intentional: ordinary initial execution has no
+    /// restart authority. Once present, every transition authenticates the
+    /// complete source/target/ordinal fence before it may touch provider state.
+    #[serde(default)]
+    pub(super) restart_transition: Option<ContainerRestartTransition>,
     /// Exact generation of the durable Execute handoff that owns provider
     /// effects for this manifest.
     ///
@@ -401,6 +413,71 @@ pub(super) enum ContainerCreatorHandoffState {
     RuntimeObserved { receipt: CreatorAttemptReceipt },
 }
 
+/// Durable provider-local progress for one exact coordinator-issued restart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "phase", deny_unknown_fields)]
+pub(super) enum ContainerRestartTransition {
+    /// The source runtime and its creator are proven absent. The source
+    /// execution attempt remains the manifest owner at this phase.
+    SourceQuiesced {
+        fence: SandboxRestartAttemptFence,
+        creator_quiescence: CreatorQuiescenceProof,
+    },
+    /// The target attempt owns the manifest, but stale source receipts may
+    /// still need idempotent removal before activation is admitted.
+    TargetPreparing {
+        fence: SandboxRestartAttemptFence,
+        creator_quiescence: CreatorQuiescenceProof,
+    },
+    /// The target attempt is durable and all source runtime receipts are
+    /// retired. No target creator has been launched by this phase.
+    TargetPrepared {
+        fence: SandboxRestartAttemptFence,
+        creator_quiescence: CreatorQuiescenceProof,
+    },
+    /// The target reuses the exact retained private attachment and PEP. This
+    /// does not imply ingress publication.
+    RetainedNetworkAttached {
+        fence: SandboxRestartAttemptFence,
+        creator_quiescence: CreatorQuiescenceProof,
+    },
+}
+
+impl ContainerRestartTransition {
+    pub(super) fn fence(&self) -> &SandboxRestartAttemptFence {
+        match self {
+            Self::SourceQuiesced { fence, .. }
+            | Self::TargetPreparing { fence, .. }
+            | Self::TargetPrepared { fence, .. }
+            | Self::RetainedNetworkAttached { fence, .. } => fence,
+        }
+    }
+
+    pub(super) fn creator_quiescence(&self) -> &CreatorQuiescenceProof {
+        match self {
+            Self::SourceQuiesced {
+                creator_quiescence, ..
+            }
+            | Self::TargetPreparing {
+                creator_quiescence, ..
+            }
+            | Self::TargetPrepared {
+                creator_quiescence, ..
+            }
+            | Self::RetainedNetworkAttached {
+                creator_quiescence, ..
+            } => creator_quiescence,
+        }
+    }
+
+    pub(super) fn target_is_prepared(&self) -> bool {
+        matches!(
+            self,
+            Self::TargetPrepared { .. } | Self::RetainedNetworkAttached { .. }
+        )
+    }
+}
+
 impl ContainerCreatorHandoffState {
     pub(super) fn authorizes_runtime_cleanup(&self) -> bool {
         matches!(
@@ -411,6 +488,22 @@ impl ContainerCreatorHandoffState {
 }
 
 impl ContainerSandboxManifest {
+    pub(super) fn require_execution_attempt(
+        &self,
+        expected: &SandboxExecutionAttemptId,
+        operation: &str,
+    ) -> crate::error::Result<()> {
+        if &self.execution_attempt_id == expected {
+            return Ok(());
+        }
+        Err(crate::error::SandboxError::InvalidSpec {
+            message: format!(
+                "{operation} for {} crossed execution attempt {}; durable attempt is {}",
+                self.handle.id, expected, self.execution_attempt_id
+            ),
+        })
+    }
+
     /// Whether the durable manifest has reached exact terminal network finality.
     ///
     /// `Stopped` and `Failed` are observed projections, not cleanup authority.

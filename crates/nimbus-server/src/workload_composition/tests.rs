@@ -13,7 +13,8 @@ use nimbus_compute::workload_network_plan::{
     WorkloadNetworkPlanCompiler,
 };
 use nimbus_compute::workload_saga::{
-    ConfirmedWorkloadProvisionCommand, WorkloadProvisionCapabilityFuture,
+    ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadRestartCommand,
+    WorkloadProvisionCapabilityFuture, WorkloadRestartCapabilityFuture,
 };
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
@@ -59,6 +60,39 @@ impl SandboxBackend for EffectForbiddenSandboxBackend {
 
 struct EffectForbiddenAttachmentProvider;
 
+macro_rules! effect_restart_capability {
+    ($provider:ty, $trait_name:ident) => {
+        impl $trait_name for $provider {
+            fn execute(
+                &self,
+                _command: &ConfirmedWorkloadRestartCommand,
+            ) -> WorkloadRestartCapabilityFuture<'_> {
+                panic!("composition must not execute a restart provider effect")
+            }
+
+            fn inspect(
+                &self,
+                _command: &ConfirmedWorkloadRestartCommand,
+            ) -> WorkloadRestartCapabilityFuture<'_> {
+                panic!("composition must not inspect restart provider state")
+            }
+        }
+    };
+}
+
+macro_rules! inspect_restart_capability {
+    ($provider:ty, $trait_name:ident) => {
+        impl $trait_name for $provider {
+            fn inspect(
+                &self,
+                _command: &ConfirmedWorkloadRestartCommand,
+            ) -> WorkloadRestartCapabilityFuture<'_> {
+                panic!("composition must not inspect restart provider state")
+            }
+        }
+    };
+}
+
 macro_rules! effect_capability {
     ($provider:ty, $trait_name:ident) => {
         impl $trait_name for $provider {
@@ -86,6 +120,10 @@ effect_capability!(
 effect_capability!(
     EffectForbiddenAttachmentProvider,
     NetworkAttachmentCapability
+);
+effect_restart_capability!(
+    EffectForbiddenAttachmentProvider,
+    NetworkRestartAttachmentCapability
 );
 
 struct EffectForbiddenExecutionProvider;
@@ -126,6 +164,27 @@ impl WorkloadExecutionObservationCapability for EffectForbiddenExecutionProvider
     }
 }
 
+effect_restart_capability!(
+    EffectForbiddenExecutionProvider,
+    WorkloadExecutionQuiescenceCapability
+);
+effect_restart_capability!(
+    EffectForbiddenExecutionProvider,
+    WorkloadRestartPreparationCapability
+);
+inspect_restart_capability!(
+    EffectForbiddenExecutionProvider,
+    WorkloadRestartActivationPrerequisiteCapability
+);
+effect_restart_capability!(
+    EffectForbiddenExecutionProvider,
+    WorkloadRestartActivationCapability
+);
+inspect_restart_capability!(
+    EffectForbiddenExecutionProvider,
+    WorkloadRestartReadinessCapability
+);
+
 struct EffectForbiddenIngressProvider;
 
 effect_capability!(EffectForbiddenIngressProvider, IngressPublicationCapability);
@@ -147,6 +206,16 @@ impl WorkloadIngressObservationCapability for EffectForbiddenIngressProvider {
         panic!("composition must not observe ingress")
     }
 }
+
+effect_restart_capability!(
+    EffectForbiddenIngressProvider,
+    RestartPublicationWithdrawalCapability
+);
+effect_restart_capability!(EffectForbiddenIngressProvider, RestartPublicationCapability);
+inspect_restart_capability!(
+    EffectForbiddenIngressProvider,
+    RestartPublicationObservationCapability
+);
 
 #[derive(Default)]
 struct InjectedSagaStore {
@@ -305,6 +374,7 @@ fn providers(
         ingress_provider_id,
         Arc::new(EffectForbiddenIngressProvider),
     )
+    .with_restart_capabilities()
 }
 
 fn sovereignty() -> NetworkSovereigntyRequirements {
@@ -569,7 +639,8 @@ fn foreground_runtime_owns_exact_manager_services_and_provider_arc_lifetimes() {
             execution,
             fixture.ingress_provider_id.clone(),
             ingress,
-        ),
+        )
+        .with_restart_capabilities(),
     )
     .expect("complete tracked fixture should compose");
 

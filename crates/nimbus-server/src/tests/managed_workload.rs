@@ -7,11 +7,16 @@ use nimbus_compute::workload_saga::provision_provider::{
     ProviderProvisionEffectObservation, ProviderProvisionPhaseAdapter,
 };
 use nimbus_compute::workload_saga::{
-    ConfirmedWorkloadProvisionCommand, IngressPublicationCapability,
-    IngressPublicationInspectionCapability, NetworkAttachmentCapability,
-    NetworkReservationCapability, WorkloadActivationCapability,
-    WorkloadActivationPrerequisiteCapability, WorkloadPreparationCapability,
-    WorkloadProvisionCapabilityFuture, WorkloadReadinessCapability, sandbox_execution_provider_id,
+    ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadRestartCommand,
+    IngressPublicationCapability, IngressPublicationInspectionCapability,
+    NetworkAttachmentCapability, NetworkReservationCapability, NetworkRestartAttachmentCapability,
+    RestartPublicationCapability, RestartPublicationObservationCapability,
+    RestartPublicationWithdrawalCapability, WorkloadActivationCapability,
+    WorkloadActivationPrerequisiteCapability, WorkloadExecutionQuiescenceCapability,
+    WorkloadPreparationCapability, WorkloadProvisionCapabilityFuture, WorkloadReadinessCapability,
+    WorkloadRestartActivationCapability, WorkloadRestartActivationPrerequisiteCapability,
+    WorkloadRestartCapabilityFuture, WorkloadRestartPreparationCapability,
+    WorkloadRestartReadinessCapability, sandbox_execution_provider_id,
 };
 use nimbus_compute::{
     WorkloadExecutionObservationCapability, WorkloadExecutionObservationFuture,
@@ -29,9 +34,9 @@ use nimbus_network::{
     PortBindingProvenance, PortBoundEndpoint, PortLeaseLifetime, PortProtocol,
 };
 use nimbus_sandbox::{
-    ProviderProvisionAttemptJournal, SandboxBackend, SandboxBackendKind, SandboxError,
-    SandboxFuture, SandboxHandle, SandboxId, SandboxInspection, SandboxSpec,
-    sandbox_network_plan_requirements,
+    ProviderCommandAttemptJournal, SandboxBackend, SandboxBackendKind, SandboxError,
+    SandboxExecutionAttemptId, SandboxFuture, SandboxHandle, SandboxId, SandboxInspection,
+    SandboxSpec, sandbox_network_plan_requirements,
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceManager};
 use nimbus_workloads::{NodeIdentity, WorkloadNetworkPortRequestMode};
@@ -96,6 +101,55 @@ struct ManagedTestWorkloadProvider<Backend> {
     backend: Arc<Backend>,
     phases: ProviderProvisionPhaseAdapter,
 }
+
+macro_rules! managed_restart_capability {
+    ($trait_name:ident) => {
+        impl<Backend> $trait_name for ManagedTestWorkloadProvider<Backend>
+        where
+            Backend: TestSandboxActivation,
+        {
+            fn execute(
+                &self,
+                _command: &ConfirmedWorkloadRestartCommand,
+            ) -> WorkloadRestartCapabilityFuture<'_> {
+                panic!("managed provision fixture must not execute restart effects")
+            }
+
+            fn inspect(
+                &self,
+                _command: &ConfirmedWorkloadRestartCommand,
+            ) -> WorkloadRestartCapabilityFuture<'_> {
+                panic!("managed provision fixture must not inspect restart effects")
+            }
+        }
+    };
+}
+
+macro_rules! managed_restart_inspection_capability {
+    ($trait_name:ident) => {
+        impl<Backend> $trait_name for ManagedTestWorkloadProvider<Backend>
+        where
+            Backend: TestSandboxActivation,
+        {
+            fn inspect(
+                &self,
+                _command: &ConfirmedWorkloadRestartCommand,
+            ) -> WorkloadRestartCapabilityFuture<'_> {
+                panic!("managed provision fixture must not inspect restart effects")
+            }
+        }
+    };
+}
+
+managed_restart_capability!(NetworkRestartAttachmentCapability);
+managed_restart_capability!(WorkloadExecutionQuiescenceCapability);
+managed_restart_capability!(WorkloadRestartPreparationCapability);
+managed_restart_inspection_capability!(WorkloadRestartActivationPrerequisiteCapability);
+managed_restart_capability!(WorkloadRestartActivationCapability);
+managed_restart_inspection_capability!(WorkloadRestartReadinessCapability);
+managed_restart_capability!(RestartPublicationWithdrawalCapability);
+managed_restart_capability!(RestartPublicationCapability);
+managed_restart_inspection_capability!(RestartPublicationObservationCapability);
 
 impl<Backend> ManagedTestWorkloadProvider<Backend>
 where
@@ -284,7 +338,16 @@ where
             let sandbox_id = SandboxId::new(request.execution().execution_id().as_str());
             self.backend
                 .activated_handle_for_test(&sandbox_id)
-                .map(SandboxInspection::provider_reported)
+                .map(|handle| {
+                    SandboxInspection::provider_authenticated_running(
+                        handle,
+                        SandboxExecutionAttemptId::new(
+                            request.execution().attempt_id().to_string(),
+                        )
+                        .expect("managed fixture attempt ID should be valid"),
+                        b"managed-test-workload-provider",
+                    )
+                })
                 .map(WorkloadProviderObservation::Present)
                 .unwrap_or(WorkloadProviderObservation::Absent)
         })
@@ -403,7 +466,7 @@ where
     let bootstrap = LocalNetworkManager::bootstrap(&network_root)
         .expect("managed test network authority should bootstrap");
     let network_manager = bootstrap.freeze(reports);
-    let journal = ProviderProvisionAttemptJournal::open(
+    let journal = ProviderCommandAttemptJournal::open(
         network_root.join("provider"),
         "server-managed-test-provider",
     )
@@ -420,7 +483,8 @@ where
         provider.clone(),
         ingress_provider_id,
         provider,
-    );
+    )
+    .with_restart_capabilities();
     let composition = ServerWorkloadComposition::new(
         engine,
         network_manager,

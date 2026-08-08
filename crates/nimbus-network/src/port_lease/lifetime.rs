@@ -604,7 +604,12 @@ impl LocalPortLeaseAuthority {
         })
     }
 
-    /// Activate the exact binding retained by a planned rebind claim.
+    /// Activate the exact retained endpoint under a new provider incarnation.
+    ///
+    /// The stopped binding authenticates the endpoint and provenance. The new
+    /// binding must use that same numeric slot while its provider handle
+    /// authenticates the new claim instead of reusing the stopped effect's
+    /// opaque incarnation.
     pub fn adopt_claimed_and_activate_rebind_plan_member_with_lifetime(
         &self,
         plan_members: &[PortLeaseRequest],
@@ -633,7 +638,8 @@ impl LocalPortLeaseAuthority {
             {
                 return Ok(record.clone());
             }
-            if binding != *confirmed_stopped_binding
+            if binding.endpoint() != confirmed_stopped_binding.endpoint()
+                || binding.provenance() != confirmed_stopped_binding.provenance()
                 || !binding.provider_registration_matches_claim(claim)
             {
                 return Err(PortLeaseOperationError::BindingConflict {
@@ -818,7 +824,11 @@ impl LocalPortLeaseAuthority {
             .collect()
     }
 
-    /// Atomically activate a retained provider-owned plan subset after bind.
+    /// Atomically activate a retained plan subset after exact-slot rebind.
+    ///
+    /// Each new binding keeps the retained endpoint and provenance but carries
+    /// the new claim's provider incarnation. The stopped incarnation is
+    /// evidence for absence, not identity for the replacement effect.
     pub fn adopt_claimed_and_activate_rebind_plan_members_with_lifetimes(
         &self,
         plan_members: &[PortLeaseRequest],
@@ -861,12 +871,19 @@ impl LocalPortLeaseAuthority {
                         mismatch,
                     });
                 }
+                let retained_binding_matches = record
+                    .confirmed_stopped_binding
+                    .as_ref()
+                    .is_some_and(|confirmed| {
+                        confirmed.endpoint() == binding.endpoint()
+                            && confirmed.provenance() == binding.provenance()
+                    });
                 if record.phase != PortLeasePhase::Reserved
                     || record.reservation_claim.is_some()
                     || record.bind_claim.as_ref() != Some(claim)
                     || record.adoption_claim.is_some()
                     || record.binding.is_some()
-                    || record.confirmed_stopped_binding.as_ref() != Some(binding)
+                    || !retained_binding_matches
                     || record.active_lifetime != Some(lifetime)
                     || record.reserved_port != Some(binding.actual_port())
                     || record.failure.is_some()

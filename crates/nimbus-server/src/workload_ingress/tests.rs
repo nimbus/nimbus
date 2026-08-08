@@ -39,6 +39,7 @@ impl LocalSandboxIngressTargetSource for AbsentContainerIngressSource {
     fn inspect_targets(
         &self,
         _sandbox_id: &nimbus_sandbox::SandboxId,
+        _execution_attempt_id: &nimbus_sandbox::SandboxExecutionAttemptId,
         _network_plan: &SandboxProvisionNetworkPlan,
     ) -> Result<SandboxProvisionIngressTargetObservation, SandboxError> {
         Ok(SandboxProvisionIngressTargetObservation::Absent {
@@ -258,6 +259,7 @@ fn live_observation_fixture(listener_names: &[&str]) -> LiveObservationFixture {
                     "tenant-a/workload-a",
                     "private",
                 ),
+                plan_members,
                 routes,
             },
         );
@@ -268,6 +270,7 @@ fn live_observation_fixture(listener_names: &[&str]) -> LiveObservationFixture {
         query: LiveIngressObservationQuery {
             saga_id,
             execution_id: "execution-workload-a".to_owned(),
+            attempt_id: "fixture-publication-attempt".to_owned(),
             tenant_id,
             plan_id,
             plan_digest,
@@ -413,6 +416,74 @@ fn restart_without_live_listener_ownership_remains_in_progress_and_effect_free()
         WorkloadProviderObservation::InProgress
     );
     assert_eq!(snapshot_regular_files(fixture.state_root.path()), before);
+}
+
+#[test]
+fn restart_withdrawal_joins_listener_and_rebinds_the_same_retained_port() {
+    let fixture = live_observation_fixture(&["http"]);
+    let (key, batch) = fixture
+        .adapter
+        .running
+        .lock()
+        .expect("fixture registry lock should remain healthy")
+        .pop_first()
+        .expect("fixture should retain one exact publication");
+    let request = batch.routes[0].expected.request.clone();
+    let expected = batch.routes[0].expected.clone();
+    let original_port = batch.routes[0].bound_addr.port();
+    let plan_members = batch.plan_members.clone();
+
+    let evidence = batch
+        .stop_and_retain_for_restart()
+        .expect("restart withdrawal should stop, join, and retain the complete batch");
+    assert!(String::from_utf8_lossy(&evidence).contains("restart_retained="));
+    let retained = fixture
+        .network_authority
+        .port_leases()
+        .inspect(request.lease_id())
+        .expect("retained lease should inspect")
+        .expect("retained lease should remain durable");
+    assert_eq!(retained.phase(), nimbus_network::PortLeasePhase::Reserved);
+    assert_eq!(
+        retained
+            .confirmed_stopped_binding()
+            .expect("retained lease should carry confirmed-stop evidence")
+            .actual_port()
+            .get(),
+        original_port
+    );
+
+    let prepared = fixture
+        .adapter
+        .listeners
+        .prepare_workload_ingress(
+            Some(&plan_members),
+            request.clone(),
+            &reservation_claim("server-ingress-observation"),
+        )
+        .expect("target attempt should claim the retained exact-port rebind");
+    let bind_addr = prepared
+        .bind_addr()
+        .expect("retained rebind address should resolve");
+    assert_eq!(bind_addr.port(), original_port);
+    let listener = TcpListener::bind(bind_addr).expect("retained exact port should rebind");
+    let adopted = prepared
+        .adopt_std(listener)
+        .expect("target listener should adopt the retained lease");
+    let route = RunningIngressRoute::start(expected, adopted, DEFAULT_MAX_ACTIVE_CONNECTIONS)
+        .expect("target attempt ingress route should start");
+    assert_eq!(route.bound_addr.port(), original_port);
+    assert!(route.is_healthy());
+    drop(route);
+    assert!(
+        !fixture
+            .adapter
+            .running
+            .lock()
+            .expect("fixture registry lock should remain healthy")
+            .contains_key(&key),
+        "the source attempt must stay withdrawn"
+    );
 }
 
 #[test]

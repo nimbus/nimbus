@@ -5,9 +5,6 @@
 //! coordinator confirm the proposed transition. Provider effects remain in
 //! later command adapters.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use nimbus_workloads::{
     DesiredWorkloadState, WorkloadDesiredDigest, WorkloadExecutionProviderId, WorkloadGeneration,
     WorkloadInspectionVersion, WorkloadProvisionDisposition, WorkloadProvisionSourceGeneration,
@@ -17,15 +14,23 @@ use nimbus_workloads::{
     WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaRevision, WorkloadSagaStoreError,
 };
 use thiserror::Error;
+use tokio::sync::watch;
 
 use super::WorkloadSagaCoordinator;
 
 /// Cancellation observed before durable submission starts.
 ///
 /// Cancellation after a compare-and-swap begins cannot revoke durable work.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct WorkloadRestartCancellationToken {
-    cancelled: Arc<AtomicBool>,
+    signal: watch::Sender<bool>,
+}
+
+impl Default for WorkloadRestartCancellationToken {
+    fn default() -> Self {
+        let (signal, _) = watch::channel(false);
+        Self { signal }
+    }
 }
 
 impl WorkloadRestartCancellationToken {
@@ -34,11 +39,15 @@ impl WorkloadRestartCancellationToken {
     }
 
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
+        self.signal.send_replace(true);
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        *self.signal.borrow()
+    }
+
+    pub(super) fn subscribe(&self) -> watch::Receiver<bool> {
+        self.signal.subscribe()
     }
 }
 
@@ -389,6 +398,7 @@ pub fn decide_restart_progress(
                 ))
             }),
         nimbus_workloads::WorkloadRestartPhase::PublicationPending
+        | nimbus_workloads::WorkloadRestartPhase::ObservationPending
             if record.active_intent().publication()
                 == nimbus_workloads::WorkloadPublicationIntent::Withheld =>
         {

@@ -25,7 +25,11 @@ use nimbus_services::{
     EmptyServiceDefinitionCatalog, ServiceDefinition, ServiceDefinitionObservation, ServiceManager,
 };
 use nimbus_tenant::TenantIsolationContext;
-use nimbus_workloads::{NodeIdentity, WorkloadExecutionProviderId};
+use nimbus_workloads::{
+    NodeIdentity, TenantWorkloadUid, WorkloadDesiredDigest, WorkloadExecutionAttemptId,
+    WorkloadExecutionId, WorkloadExecutionProviderId, WorkloadExecutionReference,
+    WorkloadGeneration, WorkloadRestartEpoch,
+};
 
 struct ForegroundAttachmentProvider;
 
@@ -122,10 +126,41 @@ impl RecordingComposeProvision {
         spec.backend = backend;
         let definition =
             ServiceDefinition::static_catalog(tenant.clone(), "db", ServiceBackend::sandbox(spec));
+        let generation = WorkloadGeneration::new(definition.generation);
+        let desired_digest = WorkloadDesiredDigest::sha256(format!(
+            "compose-lifecycle:{}:{backend:?}",
+            tenant.as_str()
+        ));
+        let workload_uid: TenantWorkloadUid = format!(
+            "twu_{}",
+            match backend {
+                SandboxBackendKind::Krun => "a".repeat(64),
+                SandboxBackendKind::Container => "b".repeat(64),
+            }
+        )
+        .try_into()
+        .expect("fixture workload UID should validate");
+        let node_identity =
+            NodeIdentity::new("compose-lifecycle-node").expect("fixture node should validate");
+        let execution_id =
+            WorkloadExecutionId::for_execution(&workload_uid, &node_identity, generation);
+        let restart_epoch = WorkloadRestartEpoch::new(0);
+        let attempt_id = WorkloadExecutionAttemptId::for_execution(&execution_id, restart_epoch);
+        let execution: WorkloadExecutionReference = serde_json::from_value(serde_json::json!({
+            "workloadUid": workload_uid,
+            "nodeIdentity": node_identity,
+            "executionId": execution_id,
+            "restartEpoch": restart_epoch,
+            "attemptId": attempt_id,
+            "generation": generation,
+            "desiredDigest": desired_digest,
+        }))
+        .expect("fixture execution should validate");
         let observation = ServiceDefinitionObservation {
             tenant_id: tenant.clone(),
             name: "db".to_owned(),
             observed_generation: definition.generation,
+            execution,
             handle: SandboxHandle::new(
                 tenant,
                 SandboxId::new(format!("db-{backend:?}")),

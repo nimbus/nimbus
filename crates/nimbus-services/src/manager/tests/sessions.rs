@@ -54,7 +54,7 @@ async fn open_session_rejects_not_ready_sandbox_targets() {
         standalone_resource_spec(&tenant_id, "task"),
         BTreeMap::new(),
     );
-    let handle = SandboxHandle::new(
+    let mut handle = SandboxHandle::new(
         tenant_id.clone(),
         SandboxId::new("execution-stable-resource"),
         "task",
@@ -62,13 +62,14 @@ async fn open_session_rejects_not_ready_sandbox_targets() {
         SandboxStatus::Starting,
         Vec::new(),
     );
+    let execution = execution_reference_for_handle(&mut handle, sandbox.generation, 0);
     manager
         .project_sandbox_resource_execution_observation(
             &tenant_id,
             &sandbox.id,
             sandbox.generation,
             &sandbox.resource_version,
-            handle.id.as_str(),
+            &execution,
             handle.clone(),
         )
         .expect("non-ready sandbox observation should project");
@@ -115,14 +116,15 @@ fn session_commit_revalidates_exact_sandbox_source_and_observation() {
         standalone_resource_spec(&tenant_id, "task"),
         BTreeMap::new(),
     );
-    let ready = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Ready);
+    let mut ready = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Ready);
+    let execution = execution_reference_for_handle(&mut ready, source.generation, 0);
     manager
         .project_sandbox_resource_execution_observation(
             &tenant_id,
             &source.id,
             source.generation,
             &source.resource_version,
-            ready.id.as_str(),
+            &execution,
             ready.clone(),
         )
         .expect("exact ready sandbox should project");

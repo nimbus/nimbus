@@ -33,7 +33,7 @@ use nimbus_network::{
     NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet, NetworkManagementMode,
     NetworkPortAssignmentMode, NetworkProviderId, NetworkSovereigntyCapabilities, PortProtocol,
 };
-use nimbus_sandbox::ProviderProvisionAttemptJournal;
+use nimbus_sandbox::ProviderCommandAttemptJournal;
 use nimbus_testing::{
     ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
 };
@@ -265,7 +265,7 @@ fn process_driver(
     };
     let coordinator = Arc::new(WorkloadSagaCoordinator::new(store));
     let journal =
-        ProviderProvisionAttemptJournal::open(root.join("provider"), PROVIDER_JOURNAL_NAMESPACE)
+        ProviderCommandAttemptJournal::open(root.join("provider"), PROVIDER_JOURNAL_NAMESPACE)
             .map_err(|error| format!("provider journal open failed: {error}"))?;
     let provider = Arc::new(ProcessProofProvider {
         phases: ProviderProvisionPhaseAdapter::new(journal),

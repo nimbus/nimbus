@@ -316,14 +316,14 @@ impl KrunSandboxBackend {
         if persisted == *candidate
             && matches!(
                 persisted.launch_authority,
-                KrunLaunchAuthority::Reserved { .. }
+                KrunLaunchAuthority::Reserved { .. } | KrunLaunchAuthority::Adopted { .. }
             )
         {
             return Ok(());
         }
         Err(SandboxError::OperationFailed {
             message: format!(
-                "krun launch {} no longer owns the durable reserved launch plan; \
+                "krun launch {} no longer owns the durable reserved or adopted launch plan; \
                  refusing stale provider execution or compensation",
                 candidate.handle.id
             ),
@@ -850,7 +850,10 @@ impl KrunSandboxBackend {
         })
     }
 
-    fn delete_runtime_and_confirm_absent(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+    pub(super) fn delete_runtime_and_confirm_absent(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<()> {
         let delete_error = run_status_best_effort(&manifest.conmon_launch.delete_command).err();
         match runtime_state(
             &manifest.conmon_launch.state_command,

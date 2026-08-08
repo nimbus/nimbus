@@ -5,15 +5,16 @@
 //! receives execute authority. Replay, uncertain commit, and fresh-process
 //! recovery persist inspection state before any provider read.
 
+use nimbus_network::NetworkPlanDigest;
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, WorkloadDesiredDigest, WorkloadExecutableIntent,
-    WorkloadExecutionAttemptId, WorkloadExecutionProviderId, WorkloadGeneration,
-    WorkloadInspectionVersion, WorkloadPhaseDetail, WorkloadProvisionSourceEvidence,
-    WorkloadRestartAbsenceEvidence, WorkloadRestartCommandClaim, WorkloadRestartCommandId,
-    WorkloadRestartDispatchEpoch, WorkloadRestartEffectResult, WorkloadRestartEpoch,
-    WorkloadRestartEvidenceDigest, WorkloadRestartRequestId, WorkloadRestartStep, WorkloadSagaId,
-    WorkloadSagaKey, WorkloadSagaRecord, WorkloadSagaRevision, WorkloadSagaStoreError,
-    WorkloadSagaTransitionId,
+    WorkloadExecutionAttemptId, WorkloadExecutionProviderId, WorkloadExecutionReference,
+    WorkloadGeneration, WorkloadInspectionVersion, WorkloadProvisionSourceDigest,
+    WorkloadProvisionSourceEvidence, WorkloadRestartAbsenceEvidence, WorkloadRestartCommandClaim,
+    WorkloadRestartCommandId, WorkloadRestartDispatchEpoch, WorkloadRestartEffectResult,
+    WorkloadRestartEpoch, WorkloadRestartEvidenceDigest, WorkloadRestartRequestId,
+    WorkloadRestartStep, WorkloadSagaId, WorkloadSagaKey, WorkloadSagaRecord, WorkloadSagaRevision,
+    WorkloadSagaStoreError, WorkloadSagaTransitionId,
 };
 
 use super::{
@@ -38,8 +39,8 @@ pub struct ConfirmedWorkloadRestartCommand {
     generation: WorkloadGeneration,
     desired_digest: WorkloadDesiredDigest,
     source: WorkloadProvisionSourceEvidence,
-    source_attempt_id: WorkloadExecutionAttemptId,
-    attempt_id: WorkloadExecutionAttemptId,
+    source_execution: WorkloadExecutionReference,
+    execution: WorkloadExecutionReference,
     restart_epoch: WorkloadRestartEpoch,
     dispatch_epoch: WorkloadRestartDispatchEpoch,
     request_id: WorkloadRestartRequestId,
@@ -97,6 +98,11 @@ impl ConfirmedWorkloadRestartCommand {
 
         authenticate_exact_restart_confirmation(record, claim, mode)?;
         let admission = active.admission();
+        let source_execution = record.current_execution_reference();
+        let execution = WorkloadExecutionReference::for_restart_epoch(
+            record.active_intent(),
+            admission.restart_epoch(),
+        );
         Ok(Some(Self {
             command_id: claim.command_id().clone(),
             key: record.key().clone(),
@@ -105,8 +111,8 @@ impl ConfirmedWorkloadRestartCommand {
             generation: admission.generation(),
             desired_digest: admission.desired_digest(),
             source: admission.source().clone(),
-            source_attempt_id: admission.source_attempt_id().clone(),
-            attempt_id: admission.attempt_id().clone(),
+            source_execution,
+            execution,
             restart_epoch: admission.restart_epoch(),
             dispatch_epoch: claim.dispatch_epoch(),
             request_id: admission.request_id().clone(),
@@ -150,12 +156,24 @@ impl ConfirmedWorkloadRestartCommand {
         &self.source
     }
 
+    pub const fn source_digest(&self) -> WorkloadProvisionSourceDigest {
+        self.source.source_digest()
+    }
+
     pub fn source_attempt_id(&self) -> &WorkloadExecutionAttemptId {
-        &self.source_attempt_id
+        self.source_execution.attempt_id()
     }
 
     pub fn attempt_id(&self) -> &WorkloadExecutionAttemptId {
-        &self.attempt_id
+        self.execution.attempt_id()
+    }
+
+    pub fn source_execution(&self) -> &WorkloadExecutionReference {
+        &self.source_execution
+    }
+
+    pub fn execution(&self) -> &WorkloadExecutionReference {
+        &self.execution
     }
 
     pub const fn restart_epoch(&self) -> WorkloadRestartEpoch {
@@ -204,6 +222,10 @@ impl ConfirmedWorkloadRestartCommand {
 
     pub fn compiled_network_plan(&self) -> &CompiledWorkloadNetworkPlan {
         &self.compiled_network_plan
+    }
+
+    pub fn network_plan_digest(&self) -> NetworkPlanDigest {
+        self.compiled_network_plan.plan().digest()
     }
 }
 
@@ -281,7 +303,6 @@ pub enum WorkloadRestartCommandOutcome {
     },
     Succeeded {
         evidence: WorkloadRestartEvidenceDigest,
-        observed_detail: Option<Box<WorkloadPhaseDetail>>,
     },
 }
 
@@ -304,7 +325,7 @@ impl WorkloadRestartCommandResult {
         Self {
             command_id: command.command_id.clone(),
             transition_id: command.transition_id.clone(),
-            attempt_id: command.attempt_id.clone(),
+            attempt_id: command.execution.attempt_id().clone(),
             dispatch_epoch: command.dispatch_epoch,
             provider_selection: command.provider_selection.clone(),
             outcome,
@@ -348,18 +369,13 @@ pub fn apply_restart_result(
             let candidate = record.apply_restart_effect_result(
                 command.claim(),
                 WorkloadRestartEffectResult::Failed { evidence },
-                None,
             )?;
             Ok(stop_restart_dispatch(candidate))
         }
-        WorkloadRestartCommandOutcome::Succeeded {
-            evidence,
-            observed_detail,
-        } => {
+        WorkloadRestartCommandOutcome::Succeeded { evidence } => {
             let candidate = record.apply_restart_effect_result(
                 command.claim(),
                 WorkloadRestartEffectResult::Succeeded { evidence },
-                observed_detail.map(|detail| *detail),
             )?;
             Ok(WorkloadRestartDecision::Proposed(
                 ProposedWorkloadRestartTransition::new(candidate, None),
@@ -398,7 +414,7 @@ fn authenticate_result_attempt(
             "restart result requires an active durable request",
         ),
     )?;
-    if result.attempt_id != command.attempt_id
+    if result.attempt_id != *command.attempt_id()
         || result.provider_selection != command.provider_selection
         || active.admission().attempt_id() != command.attempt_id()
         || active.admission().source_attempt_id() != command.source_attempt_id()
@@ -600,9 +616,35 @@ impl WorkloadSagaCoordinator {
         &self,
         loaded: &WorkloadSagaRecord,
         proposed: &ProposedWorkloadRestartTransition,
-    ) -> Result<WorkloadSagaConfirmation, WorkloadSagaStoreError> {
-        self.confirm_transition(Some(loaded), proposed.candidate().clone())
-            .await
+    ) -> Result<ConfirmedWorkloadRestartTransition, WorkloadSagaStoreError> {
+        let candidate = proposed.candidate().clone();
+        let confirmation = self
+            .confirm_transition(Some(loaded), candidate.clone())
+            .await?;
+        if proposed.action_after_confirmation()
+            == Some(WorkloadRestartSymbolicAction::StartExactAttempt)
+            && matches!(
+                confirmation,
+                WorkloadSagaConfirmation::ConfirmedAfterAmbiguity
+                    | WorkloadSagaConfirmation::ConfirmedReplay
+            )
+        {
+            return self.inspect_ambiguous_restart(&candidate).await;
+        }
+        let command = match proposed.action_after_confirmation() {
+            Some(action) => ConfirmedWorkloadRestartCommand::from_confirmation(
+                &candidate,
+                action,
+                confirmation,
+            )?,
+            None => None,
+        };
+        let confirmed_record = confirmation_is_durable(confirmation).then_some(candidate);
+        Ok(ConfirmedWorkloadRestartTransition {
+            confirmed_record,
+            confirmation,
+            command,
+        })
     }
 }
 

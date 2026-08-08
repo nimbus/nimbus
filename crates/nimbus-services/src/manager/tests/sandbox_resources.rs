@@ -110,14 +110,15 @@ async fn explicit_standalone_retirement_is_the_only_provider_inspecting_read() {
         standalone_resource_spec(&tenant_id, "task"),
         BTreeMap::new(),
     );
-    let handle = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Starting);
+    let mut handle = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Starting);
+    let execution = execution_reference_for_handle(&mut handle, source.generation, 0);
     manager
         .project_sandbox_resource_execution_observation(
             &tenant_id,
             &source.id,
             source.generation,
             &source.resource_version,
-            handle.id.as_str(),
+            &execution,
             handle.clone(),
         )
         .expect("exact execution observation should establish the projection");

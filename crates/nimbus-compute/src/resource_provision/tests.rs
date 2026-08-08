@@ -267,14 +267,21 @@ impl crate::workload_projection::WorkloadExecutionObservationCapability
             let spec = crate::workload_executable::decode_sandbox_spec(request.executable())
                 .expect("native fixture executable should decode");
             crate::workload_projection::WorkloadProviderObservation::Present(
-                SandboxInspection::provider_reported(SandboxHandle::new(
-                    request.key().tenant_id().clone(),
-                    SandboxId::new(request.execution().execution_id().as_str()),
-                    spec.display_name(),
-                    spec.backend,
-                    nimbus_sandbox::SandboxStatus::Ready,
-                    Vec::new(),
-                )),
+                SandboxInspection::provider_authenticated_running(
+                    SandboxHandle::new(
+                        request.key().tenant_id().clone(),
+                        SandboxId::new(request.execution().execution_id().as_str()),
+                        spec.display_name(),
+                        spec.backend,
+                        nimbus_sandbox::SandboxStatus::Ready,
+                        Vec::new(),
+                    ),
+                    nimbus_sandbox::SandboxExecutionAttemptId::new(
+                        request.execution().attempt_id().to_string(),
+                    )
+                    .expect("native fixture attempt ID should be valid"),
+                    b"native-provision-provider",
+                ),
             )
         })
     }

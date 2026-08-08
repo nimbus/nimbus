@@ -274,6 +274,7 @@ pub enum WorkloadProjectionCapabilityError {
 }
 
 /// Immutable exact routing table for small provision capabilities.
+#[derive(Clone)]
 pub struct WorkloadProvisionCapabilityRegistry {
     reservations: BTreeMap<NetworkProviderId, Arc<dyn NetworkReservationCapability>>,
     attachments: BTreeMap<NetworkProviderId, Arc<dyn NetworkAttachmentCapability>>,

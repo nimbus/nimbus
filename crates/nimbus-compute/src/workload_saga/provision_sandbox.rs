@@ -15,15 +15,18 @@ use nimbus_network::{
 use nimbus_sandbox::backends::container::ContainerSandboxBackend;
 use nimbus_sandbox::backends::krun::KrunSandboxBackend;
 use nimbus_sandbox::{
-    ProviderProvisionJournalError, SandboxBackend, SandboxBackendKind, SandboxError, SandboxId,
+    ProviderCommandJournalError, SandboxBackend, SandboxBackendKind, SandboxError, SandboxId,
     SandboxProvisionDependencyListener, SandboxProvisionListener, SandboxProvisionNetworkPlan,
     SandboxProvisionPhaseObservation, SandboxSpec,
 };
-use nimbus_workloads::WorkloadNetworkPortRequestMode;
+use nimbus_workloads::{
+    CompiledWorkloadNetworkPlan, WorkloadGeneration, WorkloadNetworkPortRequestMode,
+};
 
 use super::provision_provider::{
     ProviderProvisionEffectObservation, ProviderProvisionPhaseAdapter,
 };
+use super::restart_provider_command::ProviderRestartPhaseAdapter;
 use super::{
     ConfirmedWorkloadProvisionCommand, NetworkAttachmentCapability, NetworkReservationCapability,
     WorkloadActivationCapability, WorkloadActivationPrerequisiteCapability,
@@ -56,6 +59,7 @@ pub fn sandbox_execution_provider_id(
 pub struct ValidatedSandboxProvisionCommand {
     spec: SandboxSpec,
     sandbox_id: SandboxId,
+    execution_attempt_id: nimbus_sandbox::SandboxExecutionAttemptId,
     network_plan: SandboxProvisionNetworkPlan,
 }
 
@@ -66,6 +70,10 @@ impl ValidatedSandboxProvisionCommand {
 
     pub fn sandbox_id(&self) -> &SandboxId {
         &self.sandbox_id
+    }
+
+    pub fn execution_attempt_id(&self) -> &nimbus_sandbox::SandboxExecutionAttemptId {
+        &self.execution_attempt_id
     }
 
     pub fn network_plan(&self) -> &SandboxProvisionNetworkPlan {
@@ -103,6 +111,10 @@ pub fn validate_sandbox_provision_command(
     Ok(ValidatedSandboxProvisionCommand {
         spec,
         sandbox_id: SandboxId::new(command.execution().execution_id().as_str()),
+        execution_attempt_id: nimbus_sandbox::SandboxExecutionAttemptId::new(
+            command.execution().attempt_id().to_string(),
+        )
+        .map_err(|error| definite_failure("invalid_execution_attempt", error.to_string()))?,
         network_plan,
     })
 }
@@ -111,9 +123,17 @@ fn sandbox_network_plan(
     command: &ConfirmedWorkloadProvisionCommand,
     spec: &SandboxSpec,
 ) -> Result<SandboxProvisionNetworkPlan, ProviderProvisionEffectObservation> {
-    let content = command.compiled_network_plan().content();
+    sandbox_network_plan_for(command.generation(), command.compiled_network_plan(), spec)
+}
+
+pub(super) fn sandbox_network_plan_for(
+    generation: WorkloadGeneration,
+    compiled_network_plan: &CompiledWorkloadNetworkPlan,
+    spec: &SandboxSpec,
+) -> Result<SandboxProvisionNetworkPlan, ProviderProvisionEffectObservation> {
+    let content = compiled_network_plan.content();
     if content.identity().tenant_id() != &spec.tenant_id
-        || content.identity().generation().as_u64() != command.generation().as_u64()
+        || content.identity().generation().as_u64() != generation.as_u64()
     {
         return Err(definite_failure(
             "network_plan_identity_mismatch",
@@ -197,7 +217,7 @@ fn sandbox_network_plan(
         )
     });
     SandboxProvisionNetworkPlan::new(
-        command.compiled_network_plan().plan().clone(),
+        compiled_network_plan.plan().clone(),
         spec.tenant_id.clone(),
         content.identity().generation(),
         attachment.attachment_id().clone(),
@@ -312,7 +332,7 @@ fn definite_failure(
 fn validate_execution_observation_request(
     request: &WorkloadExecutionObservationRequest,
     backend: SandboxBackendKind,
-) -> Option<SandboxId> {
+) -> Option<(SandboxId, nimbus_sandbox::SandboxExecutionAttemptId)> {
     let spec = decode_sandbox_spec(request.executable()).ok()?;
     if spec.backend != backend
         || spec.tenant_id != *request.key().tenant_id()
@@ -320,13 +340,20 @@ fn validate_execution_observation_request(
     {
         return None;
     }
-    Some(SandboxId::new(request.execution().execution_id().as_str()))
+    Some((
+        SandboxId::new(request.execution().execution_id().as_str()),
+        nimbus_sandbox::SandboxExecutionAttemptId::new(
+            request.execution().attempt_id().to_string(),
+        )
+        .ok()?,
+    ))
 }
 
 trait ExactNetworkReservationInspection {
     fn inspect_exact_network_reservation(
         &self,
         sandbox_id: &SandboxId,
+        execution_attempt_id: &nimbus_sandbox::SandboxExecutionAttemptId,
         network_plan: &SandboxProvisionNetworkPlan,
     ) -> Result<Option<nimbus_sandbox::SandboxHandle>, SandboxError>;
 }
@@ -335,9 +362,10 @@ impl ExactNetworkReservationInspection for ContainerSandboxBackend {
     fn inspect_exact_network_reservation(
         &self,
         sandbox_id: &SandboxId,
+        execution_attempt_id: &nimbus_sandbox::SandboxExecutionAttemptId,
         network_plan: &SandboxProvisionNetworkPlan,
     ) -> Result<Option<nimbus_sandbox::SandboxHandle>, SandboxError> {
-        self.inspect_provision_network_reservation(sandbox_id, network_plan)
+        self.inspect_provision_network_reservation(sandbox_id, execution_attempt_id, network_plan)
     }
 }
 
@@ -345,24 +373,30 @@ impl ExactNetworkReservationInspection for KrunSandboxBackend {
     fn inspect_exact_network_reservation(
         &self,
         sandbox_id: &SandboxId,
+        execution_attempt_id: &nimbus_sandbox::SandboxExecutionAttemptId,
         network_plan: &SandboxProvisionNetworkPlan,
     ) -> Result<Option<nimbus_sandbox::SandboxHandle>, SandboxError> {
-        self.inspect_provision_network_reservation(sandbox_id, network_plan)
+        self.inspect_provision_network_reservation(sandbox_id, execution_attempt_id, network_plan)
     }
 }
 
 /// Real Container substitution for attachment and execution capabilities.
 pub struct ContainerProvisionAdapter {
-    backend: Arc<ContainerSandboxBackend>,
+    pub(super) backend: Arc<ContainerSandboxBackend>,
     phases: ProviderProvisionPhaseAdapter,
+    pub(super) restart_phases: ProviderRestartPhaseAdapter,
 }
 
 impl ContainerProvisionAdapter {
-    pub fn new(
-        backend: Arc<ContainerSandboxBackend>,
-    ) -> Result<Self, ProviderProvisionJournalError> {
-        let phases = ProviderProvisionPhaseAdapter::new(backend.attempt_idempotency_journal()?);
-        Ok(Self { backend, phases })
+    pub fn new(backend: Arc<ContainerSandboxBackend>) -> Result<Self, ProviderCommandJournalError> {
+        let journal = backend.attempt_idempotency_journal()?;
+        let phases = ProviderProvisionPhaseAdapter::new(journal.clone());
+        let restart_phases = ProviderRestartPhaseAdapter::new(journal);
+        Ok(Self {
+            backend,
+            phases,
+            restart_phases,
+        })
     }
 
     fn validated(
@@ -375,14 +409,21 @@ impl ContainerProvisionAdapter {
 
 /// Real Krun substitution for attachment and execution capabilities.
 pub struct KrunProvisionAdapter {
-    backend: Arc<KrunSandboxBackend>,
+    pub(super) backend: Arc<KrunSandboxBackend>,
     phases: ProviderProvisionPhaseAdapter,
+    pub(super) restart_phases: ProviderRestartPhaseAdapter,
 }
 
 impl KrunProvisionAdapter {
-    pub fn new(backend: Arc<KrunSandboxBackend>) -> Result<Self, ProviderProvisionJournalError> {
-        let phases = ProviderProvisionPhaseAdapter::new(backend.attempt_idempotency_journal()?);
-        Ok(Self { backend, phases })
+    pub fn new(backend: Arc<KrunSandboxBackend>) -> Result<Self, ProviderCommandJournalError> {
+        let journal = backend.attempt_idempotency_journal()?;
+        let phases = ProviderProvisionPhaseAdapter::new(journal.clone());
+        let restart_phases = ProviderRestartPhaseAdapter::new(journal);
+        Ok(Self {
+            backend,
+            phases,
+            restart_phases,
+        })
     }
 
     fn validated(
@@ -406,6 +447,7 @@ macro_rules! impl_sandbox_capabilities {
                         Ok(validated) => handle_result(self.backend.reserve_provision_network(
                             validated.spec,
                             validated.sandbox_id,
+                            validated.execution_attempt_id,
                             validated.network_plan,
                         )),
                         Err(error) => error,
@@ -423,6 +465,7 @@ macro_rules! impl_sandbox_capabilities {
                         Ok(validated) => {
                             optional_handle_result(self.backend.inspect_exact_network_reservation(
                                 &validated.sandbox_id,
+                                &validated.execution_attempt_id,
                                 &validated.network_plan,
                             ))
                         }
@@ -442,7 +485,10 @@ macro_rules! impl_sandbox_capabilities {
                     self.phases.execute(command, || match validated {
                         Ok(validated) => handle_result(
                             self.backend
-                                .prepare_provision_workload(&validated.sandbox_id),
+                                .prepare_provision_workload(
+                                    &validated.sandbox_id,
+                                    &validated.execution_attempt_id,
+                                ),
                         ),
                         Err(error) => error,
                     })
@@ -458,7 +504,10 @@ macro_rules! impl_sandbox_capabilities {
                     self.phases.inspect(command, || match validated {
                         Ok(validated) => optional_handle_result(
                             self.backend
-                                .inspect_provision_preparation(&validated.sandbox_id),
+                                .inspect_provision_preparation(
+                                    &validated.sandbox_id,
+                                    &validated.execution_attempt_id,
+                                ),
                         ),
                         Err(error) => error,
                     })
@@ -475,7 +524,10 @@ macro_rules! impl_sandbox_capabilities {
                     let validated = self.validated(command);
                     self.phases.execute(command, || match validated {
                         Ok(validated) => phase_result(
-                            self.backend.attach_provision_network(&validated.sandbox_id),
+                            self.backend.attach_provision_network(
+                                &validated.sandbox_id,
+                                &validated.execution_attempt_id,
+                            ),
                         ),
                         Err(error) => error,
                     })
@@ -491,7 +543,10 @@ macro_rules! impl_sandbox_capabilities {
                     self.phases.inspect(command, || match validated {
                         Ok(validated) => phase_result(
                             self.backend
-                                .inspect_provision_network_attachment(&validated.sandbox_id),
+                                .inspect_provision_network_attachment(
+                                    &validated.sandbox_id,
+                                    &validated.execution_attempt_id,
+                                ),
                         ),
                         Err(error) => error,
                     })
@@ -509,7 +564,10 @@ macro_rules! impl_sandbox_capabilities {
                     self.phases.inspect(command, || match validated {
                         Ok(validated) => phase_result(
                             self.backend
-                                .inspect_provision_activation_prerequisites(&validated.sandbox_id),
+                                .inspect_provision_activation_prerequisites(
+                                    &validated.sandbox_id,
+                                    &validated.execution_attempt_id,
+                                ),
                         ),
                         Err(error) => error,
                     })
@@ -527,7 +585,10 @@ macro_rules! impl_sandbox_capabilities {
                     self.phases.execute(command, || match validated {
                         Ok(validated) => phase_result(
                             self.backend
-                                .activate_provision_workload(&validated.sandbox_id),
+                                .activate_provision_workload(
+                                    &validated.sandbox_id,
+                                    &validated.execution_attempt_id,
+                                ),
                         ),
                         Err(error) => error,
                     })
@@ -543,7 +604,10 @@ macro_rules! impl_sandbox_capabilities {
                     self.phases.inspect(command, || match validated {
                         Ok(validated) => phase_result(
                             self.backend
-                                .inspect_provision_workload_activation(&validated.sandbox_id),
+                                .inspect_provision_workload_activation(
+                                    &validated.sandbox_id,
+                                    &validated.execution_attempt_id,
+                                ),
                         ),
                         Err(error) => error,
                     })
@@ -561,7 +625,10 @@ macro_rules! impl_sandbox_capabilities {
                     self.phases.inspect(command, || match validated {
                         Ok(validated) => phase_result(
                             self.backend
-                                .inspect_provision_workload_readiness(&validated.sandbox_id),
+                                .inspect_provision_workload_readiness(
+                                    &validated.sandbox_id,
+                                    &validated.execution_attempt_id,
+                                ),
                         ),
                         Err(error) => error,
                     })
@@ -575,13 +642,23 @@ macro_rules! impl_sandbox_capabilities {
                 request: &'a WorkloadExecutionObservationRequest,
             ) -> WorkloadExecutionObservationFuture<'a> {
                 Box::pin(async move {
-                    let Some(sandbox_id) =
+                    let Some((sandbox_id, expected_attempt_id)) =
                         validate_execution_observation_request(request, self.backend.kind())
                     else {
                         return WorkloadProviderObservation::Ambiguous;
                     };
                     match self.backend.inspect(&sandbox_id).await {
-                        Ok(Some(inspection)) => WorkloadProviderObservation::Present(inspection),
+                        Ok(Some(inspection))
+                            if matches!(
+                                &inspection.execution_attempt,
+                                nimbus_sandbox::SandboxExecutionAttemptObservation::Exact(
+                                    observed
+                                ) if observed == &expected_attempt_id
+                            ) =>
+                        {
+                            WorkloadProviderObservation::Present(inspection)
+                        }
+                        Ok(Some(_)) => WorkloadProviderObservation::Ambiguous,
                         Ok(None) | Err(SandboxError::NotFound { .. }) => {
                             WorkloadProviderObservation::Absent
                         }

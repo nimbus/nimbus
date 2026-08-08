@@ -2,7 +2,7 @@ use super::support::*;
 use crate::backends::oci::network::default_network_attachment_id;
 use nimbus_network::{LocalPortLeaseAuthority, NetworkResourceGeneration, PortLeasePhase};
 use std::collections::BTreeMap;
-use std::io::{Read as _, Write as _};
+use std::io::Read as _;
 use std::net::{Shutdown, TcpListener};
 
 #[derive(Clone, Copy, Debug)]
@@ -18,10 +18,11 @@ fn container_provision_activation_classifies_runtime_state() {
     let backend =
         ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(root.path()));
     let id = SandboxId::new("container-activation-state-matrix");
+    let execution_attempt_id = sample_execution_attempt_id(&id);
     let spec = sample_spec_for_tenant("container-activation-state", "api");
     let network_plan = sample_provision_network_plan(&spec, &id, "activation-state-matrix");
     backend
-        .reserve_provision_network(spec, id.clone(), network_plan)
+        .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), network_plan)
         .expect("activation fixture should reserve");
     let mut manifest = backend
         .read_manifest(&id)
@@ -48,7 +49,7 @@ fn container_provision_activation_classifies_runtime_state() {
             .write_manifest(&manifest)
             .expect("activation state fixture should persist");
         let observed = backend
-            .inspect_provision_workload_activation(&id)
+            .inspect_provision_workload_activation(&id, &execution_attempt_id)
             .expect("activation state should inspect");
         let actual = match observed {
             crate::SandboxProvisionPhaseObservation::Succeeded { .. } => "succeeded",
@@ -72,6 +73,7 @@ fn seed_partial_reservation(
             spec,
             id,
             ContainerStartPlanningOptions {
+                execution_attempt_id: sample_execution_attempt_id(id),
                 launch_defaults: None,
                 launch_artifact: None,
                 provision_network_plan: Some(network_plan),
@@ -140,6 +142,7 @@ struct PlanOnlyMachineProvisionFixture {
     _root: tempfile::TempDir,
     backend: ContainerSandboxBackend,
     id: SandboxId,
+    execution_attempt_id: crate::SandboxExecutionAttemptId,
     spec: SandboxSpec,
     network_plan: crate::SandboxProvisionNetworkPlan,
     published_reservation: Option<TcpListener>,
@@ -182,16 +185,23 @@ impl PlanOnlyMachineProvisionFixture {
         )
         .with_port_binding(SandboxPortBinding::tcp("api", published_port, 8080));
         let network_plan = sample_provision_network_plan(&spec, &id, name);
+        let execution_attempt_id = sample_execution_attempt_id(&id);
         backend
-            .reserve_provision_network(spec.clone(), id.clone(), network_plan.clone())
+            .reserve_provision_network(
+                spec.clone(),
+                id.clone(),
+                execution_attempt_id.clone(),
+                network_plan.clone(),
+            )
             .expect("PlanOnly reservation should retain exact network authority");
         backend
-            .prepare_provision_workload(&id)
+            .prepare_provision_workload(&id, &execution_attempt_id)
             .expect("PlanOnly preparation should install the runner handoff");
         Self {
             _root: root,
             backend,
             id,
+            execution_attempt_id,
             spec,
             network_plan,
             published_reservation: Some(published_reservation),
@@ -213,7 +223,7 @@ impl PlanOnlyMachineProvisionFixture {
     fn attach(&mut self) {
         drop(self.pep_reservation.take());
         self.backend
-            .attach_provision_network_with_test_host(&self.id)
+            .attach_provision_network_with_test_host(&self.id, &self.execution_attempt_id)
             .expect("deterministic host should realize the private attachment");
     }
 
@@ -223,6 +233,7 @@ impl PlanOnlyMachineProvisionFixture {
         self.backend
             .publish_provision_machine_ingress_with_test_provider(
                 &self.id,
+                &self.execution_attempt_id,
                 &self.network_plan,
                 forwarder.provider_instance(),
                 forwarder.provider_generation(),
@@ -340,7 +351,12 @@ fn reserve_is_durable_and_stays_unprepared_and_unattached() {
     let network_plan = sample_provision_network_plan(&spec, &id, "container-reserve");
 
     let handle = backend
-        .reserve_provision_network(spec.clone(), id.clone(), network_plan.clone())
+        .reserve_provision_network(
+            spec.clone(),
+            id.clone(),
+            sample_execution_attempt_id(&id),
+            network_plan.clone(),
+        )
         .expect("reserve should acquire durable provider resources");
     assert_eq!(handle.id, id);
     let manifest = backend
@@ -362,7 +378,11 @@ fn reserve_is_durable_and_stays_unprepared_and_unattached() {
     );
     assert_eq!(
         backend
-            .inspect_provision_network_reservation(&id, &network_plan)
+            .inspect_provision_network_reservation(
+                &id,
+                &sample_execution_attempt_id(&id),
+                &network_plan,
+            )
             .expect("reservation inspection should succeed")
             .expect("reservation should be observed")
             .id,
@@ -370,18 +390,31 @@ fn reserve_is_durable_and_stays_unprepared_and_unattached() {
     );
     let crossed_plan = sample_provision_network_plan(&spec, &id, "container-reserve-crossed");
     let error = backend
-        .inspect_provision_network_reservation(&id, &crossed_plan)
+        .inspect_provision_network_reservation(
+            &id,
+            &sample_execution_attempt_id(&id),
+            &crossed_plan,
+        )
         .expect_err("crossed reservation plans must fail closed");
-    assert!(error.to_string().contains("exact compiled network plan"));
+    assert!(
+        error
+            .to_string()
+            .contains("exact execution attempt or compiled network plan")
+    );
     assert!(
         backend
-            .inspect_provision_preparation(&id)
+            .inspect_provision_preparation(&id, &sample_execution_attempt_id(&id))
             .expect("preparation inspection should succeed")
             .is_none(),
         "an unprepared reservation must not be reported as prepared"
     );
     let error = backend
-        .reserve_provision_network(spec, id.clone(), network_plan)
+        .reserve_provision_network(
+            spec,
+            id.clone(),
+            sample_execution_attempt_id(&id),
+            network_plan,
+        )
         .expect_err("direct replay must inspect rather than replace the reservation");
     assert!(error.to_string().contains("inspect it instead"));
 }
@@ -412,7 +445,12 @@ fn every_partial_reservation_cut_reopens_and_converges_exactly_once() {
 
         let reopened = ContainerSandboxBackend::new(config);
         reopened
-            .reserve_provision_network(spec.clone(), id.clone(), network_plan.clone())
+            .reserve_provision_network(
+                spec.clone(),
+                id.clone(),
+                sample_execution_attempt_id(&id),
+                network_plan.clone(),
+            )
             .unwrap_or_else(|error| panic!("{cut:?} retry should converge: {error}"));
         let complete = reopened
             .read_manifest(&id)
@@ -464,7 +502,7 @@ fn partial_reservation_crossed_plan_fails_before_any_durable_mutation() {
     let before = snapshot_files(root.path());
     let crossed = sample_provision_network_plan(&spec, &id, "crossed-plan");
     let error = reopened
-        .reserve_provision_network(spec, id, crossed)
+        .reserve_provision_network(spec, id.clone(), sample_execution_attempt_id(&id), crossed)
         .expect_err("crossed desired plan must fail before resume effects");
     assert!(error.to_string().contains("crossed its exact durable"));
     assert_eq!(
@@ -513,7 +551,12 @@ fn effect_bearing_claim_only_manifest_is_fenced_on_fresh_backend_without_mutatio
         "{startup_error}"
     );
     let error = reopened
-        .reserve_provision_network(spec, id, network_plan)
+        .reserve_provision_network(
+            spec,
+            id.clone(),
+            sample_execution_attempt_id(&id),
+            network_plan,
+        )
         .expect_err("startup fence must reject effects before retry");
     assert!(error.to_string().contains("refuses new durable work"));
     assert_eq!(snapshot_files(root.path()), before);
@@ -550,7 +593,12 @@ fn corrupt_claim_only_manifest_is_fenced_on_fresh_backend_without_mutation() {
         "{startup_error}"
     );
     let error = reopened
-        .reserve_provision_network(spec, id, network_plan)
+        .reserve_provision_network(
+            spec,
+            id.clone(),
+            sample_execution_attempt_id(&id),
+            network_plan,
+        )
         .expect_err("corrupt manifest must reject retry");
     assert!(
         error.to_string().contains("refuses new durable work"),
@@ -565,18 +613,19 @@ fn prepare_requires_reservation_and_stays_unattached() {
     let backend =
         ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(root.path()));
     let id = SandboxId::new("wex-prepared-container");
+    let execution_attempt_id = sample_execution_attempt_id(&id);
     let spec = sample_spec();
     let network_plan = sample_provision_network_plan(&spec, &id, "container-prepare");
     let missing = backend
-        .prepare_provision_workload(&id)
+        .prepare_provision_workload(&id, &execution_attempt_id)
         .expect_err("preparation cannot invent a reservation");
     assert!(matches!(missing, SandboxError::NotFound { .. }));
 
     backend
-        .reserve_provision_network(spec, id.clone(), network_plan)
+        .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), network_plan)
         .expect("reservation should succeed");
     let handle = backend
-        .prepare_provision_workload(&id)
+        .prepare_provision_workload(&id, &execution_attempt_id)
         .expect("prepare should materialize the reserved workload");
     assert_eq!(handle.id, id);
     let manifest = backend
@@ -593,7 +642,7 @@ fn prepare_requires_reservation_and_stays_unattached() {
     );
     assert_eq!(
         backend
-            .inspect_provision_preparation(&id)
+            .inspect_provision_preparation(&id, &execution_attempt_id)
             .expect("preparation inspection should succeed")
             .expect("preparation should be observed")
             .id,
@@ -601,10 +650,42 @@ fn prepare_requires_reservation_and_stays_unattached() {
     );
     assert_eq!(
         backend
-            .prepare_provision_workload(&id)
+            .prepare_provision_workload(&id, &execution_attempt_id)
             .expect("exact direct replay should adopt durable preparation")
             .id,
         id
+    );
+}
+
+#[test]
+fn crossed_attempt_preparation_inspection_preserves_durable_state() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let backend =
+        ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(root.path()));
+    let id = SandboxId::new("crossed-attempt-preparation-inspection");
+    let execution_attempt_id = sample_execution_attempt_id(&id);
+    let spec = sample_spec();
+    let network_plan = sample_provision_network_plan(&spec, &id, "crossed-inspection");
+    backend
+        .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), network_plan)
+        .expect("reservation should succeed");
+    backend
+        .prepare_provision_workload(&id, &execution_attempt_id)
+        .expect("preparation should succeed");
+    let before = snapshot_files(root.path());
+    let crossed_attempt_id =
+        crate::SandboxExecutionAttemptId::new("crossed-attempt-preparation-inspection:other")
+            .expect("crossed attempt should validate");
+
+    let error = backend
+        .inspect_provision_preparation(&id, &crossed_attempt_id)
+        .expect_err("crossed inspection must fail closed");
+
+    assert!(error.to_string().contains("crossed execution attempt"));
+    assert_eq!(
+        snapshot_files(root.path()),
+        before,
+        "crossed inspection must not repair or rewrite durable state"
     );
 }
 
@@ -631,7 +712,12 @@ fn reservation_preserves_compiler_identities_without_binding_or_routability() {
     );
 
     backend
-        .reserve_provision_network(spec.clone(), id.clone(), network_plan)
+        .reserve_provision_network(
+            spec.clone(),
+            id.clone(),
+            sample_execution_attempt_id(&id),
+            network_plan,
+        )
         .expect("exact reservation should succeed");
     let manifest = backend
         .read_manifest(&id)
@@ -748,12 +834,12 @@ fn plan_only_reserve_and_prepare_publish_only_the_exact_runner_handoff() {
 
     fixture
         .backend
-        .prepare_provision_workload(&fixture.id)
+        .prepare_provision_workload(&fixture.id, &fixture.execution_attempt_id)
         .expect("exact preparation replay should adopt the same handoff");
     assert!(
         fixture
             .backend
-            .activate_provision_workload(&fixture.id)
+            .activate_provision_workload(&fixture.id, &fixture.execution_attempt_id)
             .expect_err("PlanOnly activation must remain node-owned")
             .to_string()
             .contains("guest node provider")
@@ -761,7 +847,7 @@ fn plan_only_reserve_and_prepare_publish_only_the_exact_runner_handoff() {
     assert!(
         fixture
             .backend
-            .inspect_provision_workload_readiness(&fixture.id)
+            .inspect_provision_workload_readiness(&fixture.id, &fixture.execution_attempt_id)
             .expect_err("PlanOnly readiness must remain node-owned")
             .to_string()
             .contains("guest node provider")
@@ -776,7 +862,7 @@ fn plan_only_private_attach_keeps_machine_publication_absent() {
     assert!(matches!(
         fixture
             .backend
-            .inspect_provision_network_attachment(&fixture.id)
+            .inspect_provision_network_attachment(&fixture.id, &fixture.execution_attempt_id)
             .expect("private attachment should inspect"),
         crate::SandboxProvisionPhaseObservation::Succeeded { .. }
     ));
@@ -793,6 +879,7 @@ fn plan_only_private_attach_keeps_machine_publication_absent() {
         .backend
         .inspect_provision_machine_ingress(
             &fixture.id,
+            &fixture.execution_attempt_id,
             &fixture.network_plan,
             forwarder.provider_instance(),
             forwarder.provider_generation(),
@@ -804,6 +891,30 @@ fn plan_only_private_attach_keeps_machine_publication_absent() {
     ));
     assert_eq!(fixture.publication_registry_len(), 0);
     assert!(!fixture.evidence_path().exists());
+}
+
+#[test]
+fn crossed_attempt_private_attach_fails_before_provider_effects() {
+    let fixture = PlanOnlyMachineProvisionFixture::prepared("crossed-attempt-attach");
+    let before = snapshot_files(fixture._root.path());
+    let crossed_attempt_id =
+        crate::SandboxExecutionAttemptId::new("crossed-attempt-private-attach:other")
+            .expect("crossed attempt should validate");
+
+    let error = fixture
+        .backend
+        .attach_provision_network_with_test_host(&fixture.id, &crossed_attempt_id)
+        .expect_err("crossed attachment must fail before provider effects");
+
+    assert!(error.to_string().contains("crossed execution attempt"));
+    assert_eq!(fixture.publication_registry_len(), 0);
+    assert!(fixture.pep_reservation.is_some());
+    assert!(!fixture.manifest().network_layout.netns_path.exists());
+    assert_eq!(
+        snapshot_files(fixture._root.path()),
+        before,
+        "crossed attachment must preserve manifest, allocator, IPAM, and lease bytes"
+    );
 }
 
 #[test]
@@ -844,6 +955,7 @@ fn machine_ingress_absence_requires_exact_never_effected_leases() {
         .backend
         .inspect_provision_machine_ingress(
             &fixture.id,
+            &fixture.execution_attempt_id,
             &fixture.network_plan,
             forwarder.provider_instance(),
             forwarder.provider_generation(),
@@ -864,6 +976,7 @@ fn machine_publish_rejects_missing_prerequisites_without_listener_or_journal_eff
         .backend
         .publish_provision_machine_ingress_with_test_provider(
             &fixture.id,
+            &fixture.execution_attempt_id,
             &fixture.network_plan,
             forwarder.provider_instance(),
             forwarder.provider_generation(),
@@ -922,6 +1035,7 @@ fn exact_machine_publish_is_first_routable_effect_and_replay_is_idempotent() {
         .backend
         .publish_provision_machine_ingress_with_test_provider(
             &fixture.id,
+            &fixture.execution_attempt_id,
             &fixture.network_plan,
             forwarder.provider_instance(),
             forwarder.provider_generation(),
@@ -942,6 +1056,7 @@ fn exact_machine_publish_is_first_routable_effect_and_replay_is_idempotent() {
         .backend
         .inspect_provision_machine_ingress(
             &fixture.id,
+            &fixture.execution_attempt_id,
             &fixture.network_plan,
             forwarder.provider_instance(),
             forwarder.provider_generation(),
@@ -1054,13 +1169,14 @@ fn fresh_backend_recovers_planned_pep_and_machine_listener_after_lost_response()
     fixture.reopen_backend_after_process_death();
     fixture
         .backend
-        .attach_provision_network_with_test_host(&fixture.id)
+        .attach_provision_network_with_test_host(&fixture.id, &fixture.execution_attempt_id)
         .expect("fresh owner should recover the exact planned PEP without reattaching");
     let forwarder = fixture.forwarder();
     fixture
         .backend
         .publish_provision_machine_ingress_with_test_provider(
             &fixture.id,
+            &fixture.execution_attempt_id,
             &fixture.network_plan,
             forwarder.provider_instance(),
             forwarder.provider_generation(),
@@ -1105,6 +1221,7 @@ fn crossed_plan_listener_and_forwarder_generations_fail_before_publication() {
         .backend
         .publish_provision_machine_ingress_with_test_provider(
             &fixture.id,
+            &fixture.execution_attempt_id,
             &crossed_plan,
             forwarder.provider_instance(),
             forwarder.provider_generation(),
@@ -1118,6 +1235,7 @@ fn crossed_plan_listener_and_forwarder_generations_fail_before_publication() {
         .backend
         .publish_provision_machine_ingress_with_test_provider(
             &fixture.id,
+            &fixture.execution_attempt_id,
             &fixture.network_plan,
             forwarder.provider_instance(),
             stale_generation,

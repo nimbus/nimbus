@@ -34,8 +34,26 @@ const ALLOWED_EXACT_PATHS = new Set([
   "crates/nimbus-compute/src/resource_provision/tests.rs",
   "crates/nimbus-compute/src/state.rs",
   "crates/nimbus-compute/src/workload_projection.rs",
+  "crates/nimbus-compute/src/workload_projection/tests.rs",
   "crates/nimbus-compute/src/workload_provisioner.rs",
   "crates/nimbus-compute/src/services.rs",
+  "crates/nimbus-cli/src/network_composition.rs",
+  "crates/nimbus-network/src/port_lease/lifetime.rs",
+  "crates/nimbus-network/src/port_lease/rebind.rs",
+  "crates/nimbus-sandbox/src/backends/container/runtime.rs",
+  "crates/nimbus-sandbox/src/backends/krun/vm.rs",
+  "crates/nimbus-sandbox/src/execution_attempt.rs",
+  "crates/nimbus-sandbox/src/provision.rs",
+  "crates/nimbus-sandbox/src/provision/tests.rs",
+  "crates/nimbus-sandbox/src/provider_command/tests.rs",
+  "crates/nimbus-sandbox/tests/production_network_composition.rs",
+  "crates/nimbus-sandbox/tests/support/provision.rs",
+  "crates/nimbus-server/src/listener_lease.rs",
+  "crates/nimbus-server/src/listener_lease/restart_retain.rs",
+  "crates/nimbus-server/src/listener_lease/restart_retain/tests.rs",
+  "crates/nimbus-server/src/tests/managed_workload.rs",
+  "crates/nimbus-server/src/workload_ingress.rs",
+  "crates/nimbus-server/src/workload_ingress/tests.rs",
   "crates/nimbus-server/src/workload_saga_store.rs",
   "crates/nimbus-server/src/workload_composition/tests.rs",
   "crates/nimbus-server/src/http/services.rs",
@@ -45,6 +63,7 @@ const ALLOWED_EXACT_PATHS = new Set([
   "crates/nimbus-sandbox/src/inspection.rs",
   "crates/nimbus-sandbox/src/lib.rs",
   "crates/nimbus-sandbox/src/provider_command.rs",
+  "crates/nimbus-services/src/catalog.rs",
   "crates/nimbus-machine/src/api.rs",
   "crates/nimbus-node/src/host_lifecycle.rs",
   "crates/nimbus-node/src/reconciler.rs",
@@ -68,6 +87,8 @@ const ALLOWED_PREFIXES = [
   "crates/nimbus-workloads/src/saga/",
   "crates/nimbus-compute/src/workload_saga/",
   "crates/nimbus-compute/src/workload_provisioner/",
+  "crates/nimbus-network/src/port_lease/rebind/",
+  "crates/nimbus-services/src/manager/",
   "crates/nimbus-server/src/workload_saga_store/",
   "crates/nimbus-server/src/http/services/",
   "crates/nimbus-sandbox/src/backends/container/runtime/",
@@ -126,9 +147,38 @@ const R2_ALLOWED_EXACT_PATHS = new Set([
   "crates/nimbus-compute/src/workload_saga.rs",
   "crates/nimbus-compute/src/resource_provision/tests.rs",
   "crates/nimbus-compute/src/state.rs",
+  "crates/nimbus-compute/src/workload_projection.rs",
+  "crates/nimbus-compute/src/workload_projection/tests.rs",
   "crates/nimbus-compute/src/workload_provisioner/tests.rs",
+  "crates/nimbus-cli/src/compose/tests/lifecycle.rs",
+  "crates/nimbus-cli/src/machine/api/service_workloads/provision.rs",
+  "crates/nimbus-cli/src/machine/api/service_workloads/provision/tests.rs",
+  "crates/nimbus-cli/src/machine/backend/provision.rs",
+  "crates/nimbus-cli/src/network_composition.rs",
+  "crates/nimbus-sandbox/src/backends/container/runtime.rs",
+  "crates/nimbus-sandbox/src/backends/krun/vm.rs",
   "crates/nimbus-sandbox/src/lib.rs",
+  "crates/nimbus-sandbox/src/execution_attempt.rs",
+  "crates/nimbus-sandbox/src/inspection.rs",
   "crates/nimbus-sandbox/src/provider_command.rs",
+  "crates/nimbus-sandbox/src/provider_command/tests.rs",
+  "crates/nimbus-sandbox/src/provision.rs",
+  "crates/nimbus-sandbox/src/provision/tests.rs",
+  "crates/nimbus-sandbox/tests/production_network_composition.rs",
+  "crates/nimbus-sandbox/tests/support/provision.rs",
+  "crates/nimbus-network/src/port_lease/lifetime.rs",
+  "crates/nimbus-network/src/port_lease/rebind.rs",
+  "crates/nimbus-server/src/listener_lease.rs",
+  "crates/nimbus-server/src/listener_lease/restart_retain.rs",
+  "crates/nimbus-server/src/listener_lease/restart_retain/tests.rs",
+  "crates/nimbus-server/src/tests/managed_workload.rs",
+  "crates/nimbus-server/src/workload_composition.rs",
+  "crates/nimbus-server/src/workload_ingress.rs",
+  "crates/nimbus-server/src/workload_ingress/tests.rs",
+  "crates/nimbus-services/src/catalog.rs",
+  "crates/nimbus-services/src/manager/handles.rs",
+  "crates/nimbus-services/src/manager/retirement.rs",
+  "crates/nimbus-services/src/manager/sandboxes.rs",
   "crates/nimbus-cli/src/machine/backend/provision/tests.rs",
   "crates/nimbus-server/src/workload_composition/tests.rs",
   "crates/nimbus-server/src/workload_saga_store.rs",
@@ -155,6 +205,8 @@ const R2_ALLOWED_PREFIXES = [
   "crates/nimbus-compute/src/workload_saga/",
   "crates/nimbus-sandbox/src/backends/container/runtime/",
   "crates/nimbus-sandbox/src/backends/krun/vm/",
+  "crates/nimbus-network/src/port_lease/rebind/",
+  "crates/nimbus-services/src/manager/tests/",
 ];
 
 const DIAGNOSTICS = {
@@ -286,8 +338,8 @@ pub(crate) struct ConfirmedWorkloadRestartCommand {
     generation: WorkloadGeneration,
     desired_digest: WorkloadDesiredDigest,
     source: WorkloadProvisionSourceEvidence,
-    source_attempt_id: WorkloadExecutionAttemptId,
-    attempt_id: WorkloadExecutionAttemptId,
+    source_execution: WorkloadExecutionReference,
+    execution: WorkloadExecutionReference,
     restart_epoch: WorkloadRestartEpoch,
     dispatch_epoch: WorkloadRestartDispatchEpoch,
     request_id: WorkloadRestartRequestId,
@@ -307,6 +359,8 @@ impl ConfirmedWorkloadRestartCommand {
         let mode = match confirmation { WorkloadSagaConfirmation::AppliedByThisCall => WorkloadRestartCommandMode::Execute, _ => WorkloadRestartCommandMode::Inspect };
         Self::try_from((record, confirmation))
     }
+    fn source_attempt_id(&self) -> &WorkloadExecutionAttemptId { self.source_execution.attempt_id() }
+    fn attempt_id(&self) -> &WorkloadExecutionAttemptId { self.execution.attempt_id() }
 }
 fn authenticate_exact_restart_confirmation(record: &WorkloadSagaRecord, claim: &WorkloadRestartCommandClaim, mode: WorkloadRestartCommandMode) {
     require_exact_admission(record, claim)?;
@@ -353,95 +407,151 @@ impl WorkloadSagaCoordinator {
     }
 }
 `),
+    "crates/nimbus-workloads/src/saga/state/restart.rs": withoutCfgTestItems(`
+fn restart_step_for_phase(phase: WorkloadRestartPhase) -> Option<WorkloadRestartStep> {
+    match phase {
+        WorkloadRestartPhase::PublicationWithdrawalPending => Some(WorkloadRestartStep::WithdrawPublication),
+        WorkloadRestartPhase::ExecutionQuiescencePending => Some(WorkloadRestartStep::QuiesceExecution),
+        WorkloadRestartPhase::PreparationPending => Some(WorkloadRestartStep::PrepareExecution),
+        WorkloadRestartPhase::AttachmentPending => Some(WorkloadRestartStep::AttachNetwork),
+        WorkloadRestartPhase::ActivationPrerequisitePending => Some(WorkloadRestartStep::InspectActivationPrerequisites),
+        WorkloadRestartPhase::ActivationPending => Some(WorkloadRestartStep::ActivateExecution),
+        WorkloadRestartPhase::ReadinessPending => Some(WorkloadRestartStep::InspectReadiness),
+        WorkloadRestartPhase::PublicationPending => Some(WorkloadRestartStep::Publish),
+        WorkloadRestartPhase::ObservationPending => Some(WorkloadRestartStep::ObservePublication),
+    }
+}
+fn restart_target_for_step(step: WorkloadRestartStep) -> Option<WorkloadRestartPhase> {
+    match step {
+        WorkloadRestartStep::WithdrawPublication => Some(WorkloadRestartPhase::ExecutionQuiescencePending),
+        WorkloadRestartStep::QuiesceExecution => Some(WorkloadRestartPhase::Scheduled),
+        WorkloadRestartStep::PrepareExecution => Some(WorkloadRestartPhase::AttachmentPending),
+        WorkloadRestartStep::AttachNetwork => Some(WorkloadRestartPhase::ActivationPrerequisitePending),
+        WorkloadRestartStep::InspectActivationPrerequisites => Some(WorkloadRestartPhase::ActivationPending),
+        WorkloadRestartStep::ActivateExecution => Some(WorkloadRestartPhase::ReadinessPending),
+        WorkloadRestartStep::InspectReadiness => Some(WorkloadRestartPhase::PublicationPending),
+        WorkloadRestartStep::Publish => Some(WorkloadRestartPhase::ObservationPending),
+        WorkloadRestartStep::ObservePublication => None,
+    }
+}
+`),
     "crates/nimbus-compute/src/workload_saga/restart_driver.rs":
       withoutCfgTestItems(`
-fn drive_confirmed_restart(command: &ConfirmedWorkloadRestartCommand) {
-    withdraw_publication(command)?;
-    quiesce_execution(command)?;
-    prepare_restart_retained_authority(command)?;
-    attach_same_generation_network(command)?;
-    require_same_attempt_attachment(command)?;
-    require_same_attempt_pep(command)?;
-    activate_execution_attempt(command)?;
-    inspect_new_attempt_readiness(command)?;
-    publish_new_attempt(command)?;
-    observe_new_attempt_publication(command)?;
+async fn drive_confirmed_restart(record: WorkloadSagaRecord) {
+    let decision = decide_restart_progress(&record, now_unix_millis)?;
+    let confirmed = self.dispatcher.confirm_transition(&self.coordinator, &record, &proposed).await?;
+    let result = self.dispatcher.dispatch_confirmed(&confirmed).await?;
+    let result_decision = apply_restart_result(&durable, &command, result)?;
+    self.coordinator.compare_and_swap_restart_result(&durable, &proposed).await?;
 }
-fn accept_restart_callback(command: &ConfirmedWorkloadRestartCommand, callback: RestartCallback) {
-    require_exact_generation(command.generation(), callback.generation())?;
-    require_exact_attempt(command.attempt_id(), callback.attempt_id())?;
-    require_exact_transition(command.result_transition_id(), callback.transition_id())?;
+`),
+    "crates/nimbus-compute/src/workload_saga/restart_dispatcher.rs":
+      withoutCfgTestItems(`
+async fn dispatch_confirmed(command: &ConfirmedWorkloadRestartCommand) {
+    let observation = capabilities.invoke(command).await;
+    if !observation.matches_command(command) {
+        return Err(WorkloadRestartDispatchError::CrossedProviderObservation);
+    }
 }
 `),
     "crates/nimbus-compute/src/workload_saga/restart_provider.rs":
       withoutCfgTestItems(`
 trait RestartPublicationWithdrawalCapability: Send + Sync {
-    fn withdraw(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectResult;
-    fn inspect_withdrawal(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectInspection;
+    fn execute(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
+    fn inspect(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
 }
 trait WorkloadExecutionQuiescenceCapability: Send + Sync {
-    fn quiesce(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectResult;
-    fn inspect_quiescence(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectInspection;
+    fn execute(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
+    fn inspect(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
 }
 trait WorkloadRestartPreparationCapability: Send + Sync {
-    fn prepare(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectResult;
-    fn inspect_preparation(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectInspection;
+    fn execute(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
+    fn inspect(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
 }
 trait NetworkRestartAttachmentCapability: Send + Sync {
-    fn attach(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectResult;
-    fn inspect_attachment(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectInspection;
+    fn execute(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
+    fn inspect(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
+}
+trait WorkloadRestartActivationPrerequisiteCapability: Send + Sync {
+    fn inspect(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
 }
 trait WorkloadRestartActivationCapability: Send + Sync {
-    fn activate(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectResult;
-    fn inspect_activation(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectInspection;
+    fn execute(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
+    fn inspect(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
 }
 trait WorkloadRestartReadinessCapability: Send + Sync {
-    fn inspect_readiness(&self, command: &ConfirmedWorkloadRestartCommand) -> RestartEffectInspection;
+    fn inspect(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
 }
-fn register_restart_capabilities(selection: WorkloadExecutionProviderId, capabilities: RestartCapabilities) {
-    if self.providers.insert(selection, capabilities).is_some() {
-        return Err(RestartRegistryError::DuplicateProviderSelection);
+trait RestartPublicationCapability: Send + Sync {
+    fn execute(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
+    fn inspect(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
+}
+trait RestartPublicationObservationCapability: Send + Sync {
+    fn inspect(&self, command: &ConfirmedWorkloadRestartCommand) -> WorkloadRestartCapabilityFuture<'_>;
+}
+fn register_restart_capabilities(capabilities: WorkloadRestartCapabilities) {
+    let realm = (capabilities.execution_provider_id.clone(), capabilities.network_selection.clone());
+    if self.providers.insert(realm.clone(), capabilities).is_some() {
+        return Err(WorkloadRestartCapabilityRegistryError::DuplicateProviderSelection);
     }
 }
-fn resolve_restart_capabilities(selection: &WorkloadExecutionProviderId) {
-    self.providers.get(selection).ok_or(RestartRegistryError::MissingProviderSelection)
+fn resolve_restart_capabilities(command: &ConfirmedWorkloadRestartCommand) {
+    let realm = (command.provider_selection().clone(), network_selection);
+    let capabilities = self.providers.get(&realm).ok_or_else(|| WorkloadRestartCapabilityRegistryError::MissingProviderSelection);
+    if !capabilities.matches_command(command) { return Err(WorkloadRestartCapabilityRegistryError::CrossedProviderRealm); }
 }
 `),
     "crates/nimbus-compute/src/workload_saga/restart_sandbox.rs":
       withoutCfgTestItems(`
-impl RestartPublicationWithdrawalCapability for ContainerRestartAdapter {}
-impl WorkloadExecutionQuiescenceCapability for ContainerRestartAdapter {}
-impl WorkloadRestartPreparationCapability for ContainerRestartAdapter {}
-impl NetworkRestartAttachmentCapability for ContainerRestartAdapter {}
-impl WorkloadRestartActivationCapability for ContainerRestartAdapter {}
-impl WorkloadRestartReadinessCapability for ContainerRestartAdapter {}
-impl RestartPublicationWithdrawalCapability for KrunRestartAdapter {}
-impl WorkloadExecutionQuiescenceCapability for KrunRestartAdapter {}
-impl WorkloadRestartPreparationCapability for KrunRestartAdapter {}
-impl NetworkRestartAttachmentCapability for KrunRestartAdapter {}
-impl WorkloadRestartActivationCapability for KrunRestartAdapter {}
-impl WorkloadRestartReadinessCapability for KrunRestartAdapter {}
+macro_rules! impl_sandbox_restart_capabilities {
+    ($adapter:ty) => {
+        impl WorkloadExecutionQuiescenceCapability for $adapter {}
+        impl WorkloadRestartPreparationCapability for $adapter {}
+        impl NetworkRestartAttachmentCapability for $adapter {}
+        impl WorkloadRestartActivationPrerequisiteCapability for $adapter {}
+        impl WorkloadRestartActivationCapability for $adapter {}
+        impl WorkloadRestartReadinessCapability for $adapter {}
+    };
+}
+impl_sandbox_restart_capabilities!(ContainerProvisionAdapter);
+impl_sandbox_restart_capabilities!(KrunProvisionAdapter);
+`),
+    "crates/nimbus-server/src/workload_ingress.rs": withoutCfgTestItems(`
+impl RestartPublicationWithdrawalCapability for ServerIngressPublicationAdapter {}
+impl RestartPublicationCapability for ServerIngressPublicationAdapter {}
+impl RestartPublicationObservationCapability for ServerIngressPublicationAdapter {}
 `),
     "crates/nimbus-compute/src/workload_saga/restart_watch.rs":
       withoutCfgTestItems(`
+const MAX_RESTART_PAGES_PER_SWEEP: usize = 64;
 trait RestartClock: Send + Sync {
-    fn now_unix_millis(&self) -> u64;
-    fn wait_until(&self, deadline_unix_millis: u64, cancellation: &CancellationToken) -> RestartWait;
+    fn now_unix_millis(&self) -> WorkloadRestartNotBeforeUnixMillis;
+    fn wait_until(&self, deadline: WorkloadRestartNotBeforeUnixMillis, cancellation: &WorkloadRestartCancellationToken) -> RestartWaitFuture<'_>;
 }
 struct DurableRestartWatch {
     page_size: NonZeroUsize,
     clock: Arc<dyn RestartClock>,
-    cancellation: CancellationToken,
+    cancellation: WorkloadRestartCancellationToken,
+    sweep_cursor: Mutex<Option<WorkloadRestartCandidateCursor>>,
 }
-fn load_durable_restart_page(watch: &DurableRestartWatch) {
-    store.load_restart_candidates(watch.page_size)?;
+async fn load_durable_restart_page(&self) {
+    let page_size = self.page_size.get();
+    self.coordinator.list_restart_candidates(request).await?;
 }
-fn bounded_restart_watch(watch: &DurableRestartWatch) {
-    while !watch.cancellation.is_cancelled() {
-        let page = load_durable_restart_page(watch)?;
-        dispatch_each_due_epoch_once(page, watch.clock.now_unix_millis())?;
-        watch.clock.wait_until(next_deadline(page), &watch.cancellation)?;
+async fn dispatch_each_due_epoch_once(&self) {
+    let mut retained_cursor = self.sweep_cursor.lock().await;
+    while pages < MAX_RESTART_PAGES_PER_SWEEP {
+        if self.cancellation.is_cancelled() { break; }
+        let page = self.load_durable_restart_page(cursor).await?;
+        self.supervisor.track(record.clone())?;
     }
+    *retained_cursor = cursor;
+}
+async fn bounded_restart_watch(&self) {
+    if self.cancellation.is_cancelled() { return RestartWait::Cancelled; }
+    let now = self.clock.now_unix_millis();
+    let deadline = self.dispatch_each_due_epoch_once().await?;
+    self.clock.wait_until(deadline, &self.cancellation).await;
 }
 fn read_only_exit_hint() -> RestartHint { RestartHint::ReadOnly }
 `),
@@ -469,13 +579,15 @@ fn definite_failure_stops_later_commands() {}
 fn crossed_restart_result_is_rejected() {}
 fn reused_skipped_and_crossed_dispatch_epochs_fail_closed() {}
 `,
+    "crates/nimbus-compute/src/workload_saga/restart_dispatcher/tests.rs": `
+fn old_attempt_provider_observation_is_rejected_before_result() {}
+`,
     "crates/nimbus-compute/src/workload_saga/restart_driver/tests.rs": `
 fn publication_withdrawal_precedes_execution_quiescence() {}
 fn restart_retained_detach_precedes_attachment() {}
 fn activation_waits_for_same_generation_attachment_and_pep() {}
 fn readiness_binds_the_new_execution_attempt() {}
 fn publication_waits_for_new_attempt_readiness() {}
-fn old_attempt_callback_is_rejected() {}
 fn withdrawal_after_admission_vetoes_unissued_command() {}
 fn withdrawal_after_ambiguous_effect_requires_inspection() {}
 `,
@@ -495,12 +607,14 @@ fn concurrent_restart_dispatch_produces_one_provider_effect() {}
 fn automatic_watch_loads_one_bounded_durable_page() {}
 fn automatic_watch_does_not_busy_spin_before_deadline() {}
 fn automatic_watch_dispatches_each_due_epoch_once() {}
+fn automatic_watch_caps_each_sweep_and_rotates_cursor() {}
 fn read_only_exit_hint_cannot_submit_or_execute_restart() {}
 fn watch_cancellation_cancels_waiter_not_durable_work() {}
 fn get_and_name_resolution_make_zero_restart_effects() {}
 `,
     "__fixture__/legacy_tests.rs": `
 fn same_generation_restart_keeps_desired_generation() {}
+fn restart_legal_transition_matrix_is_exhaustive() {}
 fn restart_recovery_eligibility_is_exhaustive() {}
 fn explicit_restart_does_not_consume_automatic_count() {}
 fn deadline_survives_clock_rollback_without_early_admission() {}
@@ -798,8 +912,7 @@ function applyFixtureMutation(sources, mutation) {
     "crates/nimbus-compute/src/workload_saga/restart_decision.rs";
   const dispatchFile =
     "crates/nimbus-compute/src/workload_saga/restart_dispatch.rs";
-  const driverFile =
-    "crates/nimbus-compute/src/workload_saga/restart_driver.rs";
+  const restartStateFile = "crates/nimbus-workloads/src/saga/state/restart.rs";
   const providerFile =
     "crates/nimbus-compute/src/workload_saga/restart_provider.rs";
   const sandboxFile =
@@ -842,6 +955,16 @@ function applyFixtureMutation(sources, mutation) {
       "request_id: WorkloadRestartRequestId,",
       "",
     ],
+    "missing-command-source-execution": [
+      dispatchFile,
+      "source_execution: WorkloadExecutionReference,",
+      "",
+    ],
+    "missing-command-target-execution": [
+      dispatchFile,
+      "execution: WorkloadExecutionReference,",
+      "",
+    ],
     "crossed-command-result": [
       dispatchFile,
       "authenticate_result_transition(record, command, &result)?;",
@@ -878,49 +1001,44 @@ function applyFixtureMutation(sources, mutation) {
       "retry_after_authenticated_absence(command)",
     ],
     "quiesce-before-publication-withdrawal": [
-      driverFile,
-      "withdraw_publication(command)?;\n    quiesce_execution(command)?;",
-      "quiesce_execution(command)?;\n    withdraw_publication(command)?;",
+      restartStateFile,
+      "WorkloadRestartStep::WithdrawPublication => Some(WorkloadRestartPhase::ExecutionQuiescencePending)",
+      "WorkloadRestartStep::WithdrawPublication => Some(WorkloadRestartPhase::Scheduled)",
     ],
     "restart-detach-releases-authority": [
-      driverFile,
-      "prepare_restart_retained_authority(command)?;",
-      "release_terminal_authority(command)?;",
+      restartStateFile,
+      "WorkloadRestartStep::PrepareExecution => Some(WorkloadRestartPhase::AttachmentPending)",
+      "WorkloadRestartStep::PrepareExecution => Some(WorkloadRestartPhase::ActivationPending)",
     ],
     "attachment-drops-attempt-fence": [
-      driverFile,
-      "require_same_attempt_attachment(command)?;",
-      "accept_any_attachment_attempt(command)?;",
-    ],
-    "pep-drops-attempt-fence": [
-      driverFile,
-      "require_same_attempt_pep(command)?;",
-      "accept_any_pep_attempt(command)?;",
+      restartStateFile,
+      "WorkloadRestartStep::AttachNetwork => Some(WorkloadRestartPhase::ActivationPrerequisitePending)",
+      "WorkloadRestartStep::AttachNetwork => Some(WorkloadRestartPhase::ActivationPending)",
     ],
     "publish-before-new-attempt-ready": [
-      driverFile,
-      "inspect_new_attempt_readiness(command)?;\n    publish_new_attempt(command)?;",
-      "publish_new_attempt(command)?;\n    inspect_new_attempt_readiness(command)?;",
+      restartStateFile,
+      "WorkloadRestartStep::InspectReadiness => Some(WorkloadRestartPhase::PublicationPending)",
+      "WorkloadRestartStep::InspectReadiness => Some(WorkloadRestartPhase::ObservationPending)",
     ],
     "missing-container-restart-adapter": [
       sandboxFile,
-      "impl WorkloadExecutionQuiescenceCapability for ContainerRestartAdapter {}",
+      "impl_sandbox_restart_capabilities!(ContainerProvisionAdapter);",
       "",
     ],
     "missing-krun-restart-adapter": [
       sandboxFile,
-      "impl WorkloadExecutionQuiescenceCapability for KrunRestartAdapter {}",
+      "impl_sandbox_restart_capabilities!(KrunProvisionAdapter);",
       "",
     ],
     "restart-registry-first-available-fallback": [
       providerFile,
-      "self.providers.get(selection).ok_or",
-      "self.providers.values().next().ok_or",
+      "self.providers.get(&realm).ok_or_else",
+      "self.providers.values().next().ok_or_else",
     ],
     "duplicate-restart-capability-registration": [
       providerFile,
-      "if self.providers.insert(selection, capabilities).is_some()",
-      "if self.providers.contains_key(&selection)",
+      "if self.providers.insert(realm.clone(), capabilities).is_some()",
+      "if self.providers.contains_key(&realm)",
     ],
     "unbounded-watch-page": [
       watchFile,
@@ -929,12 +1047,12 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "watch-busy-spin": [
       watchFile,
-      "watch.clock.wait_until(next_deadline(page), &watch.cancellation)?;",
+      "self.clock.wait_until(deadline, &self.cancellation).await;",
       "continue;",
     ],
     "watch-uses-system-clock": [
       watchFile,
-      "watch.clock.now_unix_millis()",
+      "self.clock.now_unix_millis()",
       "SystemTime::now()",
     ],
     "watch-effects-from-read-only-hint": [
@@ -949,8 +1067,13 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "watch-cancellation-drops-durable-work": [
       watchFile,
-      "while !watch.cancellation.is_cancelled() {",
-      "while !watch.cancellation.is_cancelled() { store.delete_restart()?;",
+      "if self.cancellation.is_cancelled() { break; }",
+      "if self.cancellation.is_cancelled() { store.delete_restart()?; break; }",
+    ],
+    "unbounded-watch-sweep": [
+      watchFile,
+      "while pages < MAX_RESTART_PAGES_PER_SWEEP {",
+      "loop {",
     ],
   };
   if (mutation in fileMutations) {
@@ -993,9 +1116,14 @@ function applyFixtureMutation(sources, mutation) {
       "activation_waits_for_same_generation_attachment_and_pep",
       "activation_precedes_attachment",
     ],
+    "pep-drops-attempt-fence": [
+      "tests",
+      "activation_waits_for_same_generation_attachment_and_pep",
+      "activation_ignores_pep_readiness",
+    ],
     "old-attempt-callback": [
       "tests",
-      "old_attempt_callback_is_rejected",
+      "old_attempt_provider_observation_is_rejected_before_result",
       "old_attempt_callback_updates_projection",
     ],
     "god-provider": [
@@ -1330,8 +1458,8 @@ export function verifyWorkloadRestartContract() {
     ["generation", "WorkloadGeneration"],
     ["desired_digest", "WorkloadDesiredDigest"],
     ["source", "WorkloadProvisionSourceEvidence"],
-    ["source_attempt_id", "WorkloadExecutionAttemptId"],
-    ["attempt_id", "WorkloadExecutionAttemptId"],
+    ["source_execution", "WorkloadExecutionReference"],
+    ["execution", "WorkloadExecutionReference"],
     ["restart_epoch", "WorkloadRestartEpoch"],
     ["dispatch_epoch", "WorkloadRestartDispatchEpoch"],
     ["request_id", "WorkloadRestartRequestId"],
@@ -1352,6 +1480,10 @@ export function verifyWorkloadRestartContract() {
         "authenticate_exact_restart_confirmation",
         "WorkloadSagaConfirmation::AppliedByThisCall",
         "WorkloadRestartCommandMode::Execute",
+        "fn source_attempt_id",
+        "self.source_execution.attempt_id()",
+        "fn attempt_id",
+        "self.execution.attempt_id()",
       ]) &&
       !/\bpub(?:\([^)]*\))?\s+fn\s+(?:new|from_confirmation)\b/u.test(
         commandImpl,
@@ -1456,6 +1588,18 @@ export function verifyWorkloadRestartContract() {
     DIAGNOSTICS.withdrawal,
   );
 
+  const restartStateSource = sourceAt(
+    sources,
+    "crates/nimbus-workloads/src/saga/state/restart.rs",
+  );
+  const restartStepForPhase = extractItem(
+    restartStateSource,
+    "fn restart_step_for_phase",
+  );
+  const restartTargetForStep = extractItem(
+    restartStateSource,
+    "fn restart_target_for_step",
+  );
   const restartDriverSource = sourceAt(
     sources,
     "crates/nimbus-compute/src/workload_saga/restart_driver.rs",
@@ -1464,28 +1608,62 @@ export function verifyWorkloadRestartContract() {
     restartDriverSource,
     "fn drive_confirmed_restart",
   );
-  const acceptRestartCallback = extractItem(
-    restartDriverSource,
-    "fn accept_restart_callback",
+  const restartDispatcherSource = sourceAt(
+    sources,
+    "crates/nimbus-compute/src/workload_saga/restart_dispatcher.rs",
+  );
+  const dispatchConfirmed = extractItem(
+    restartDispatcherSource,
+    "fn dispatch_confirmed",
   );
   requireContract(
-    appearsInOrder(driveConfirmedRestart, [
-      "withdraw_publication",
-      "quiesce_execution",
-      "prepare_restart_retained_authority",
-      "attach_same_generation_network",
-      "require_same_attempt_attachment",
-      "require_same_attempt_pep",
-      "activate_execution_attempt",
-      "inspect_new_attempt_readiness",
-      "publish_new_attempt",
-      "observe_new_attempt_publication",
+    hasAll(restartStepForPhase, [
+      "PublicationWithdrawalPending =>",
+      "WorkloadRestartStep::WithdrawPublication",
+      "ExecutionQuiescencePending =>",
+      "WorkloadRestartStep::QuiesceExecution",
+      "PreparationPending =>",
+      "WorkloadRestartStep::PrepareExecution",
+      "AttachmentPending =>",
+      "WorkloadRestartStep::AttachNetwork",
+      "ActivationPrerequisitePending =>",
+      "WorkloadRestartStep::InspectActivationPrerequisites",
+      "ActivationPending =>",
+      "WorkloadRestartStep::ActivateExecution",
+      "ReadinessPending =>",
+      "WorkloadRestartStep::InspectReadiness",
+      "PublicationPending =>",
+      "WorkloadRestartStep::Publish",
+      "ObservationPending =>",
+      "WorkloadRestartStep::ObservePublication",
     ]) &&
-      hasAll(acceptRestartCallback, [
-        "require_exact_generation",
-        "require_exact_attempt",
-        "require_exact_transition",
+      hasAll(restartTargetForStep, [
+        "WorkloadRestartStep::WithdrawPublication =>",
+        "Some(WorkloadRestartPhase::ExecutionQuiescencePending)",
+        "WorkloadRestartStep::QuiesceExecution => Some(WorkloadRestartPhase::Scheduled)",
+        "WorkloadRestartStep::PrepareExecution => Some(WorkloadRestartPhase::AttachmentPending)",
+        "WorkloadRestartStep::AttachNetwork =>",
+        "Some(WorkloadRestartPhase::ActivationPrerequisitePending)",
+        "WorkloadRestartStep::InspectActivationPrerequisites =>",
+        "Some(WorkloadRestartPhase::ActivationPending)",
+        "WorkloadRestartStep::ActivateExecution => Some(WorkloadRestartPhase::ReadinessPending)",
+        "WorkloadRestartStep::InspectReadiness => Some(WorkloadRestartPhase::PublicationPending)",
+        "WorkloadRestartStep::Publish => Some(WorkloadRestartPhase::ObservationPending)",
+        "WorkloadRestartStep::ObservePublication => None",
       ]) &&
+      hasAll(driveConfirmedRestart, [
+        "decide_restart_progress",
+        "confirm_transition",
+        "dispatch_confirmed",
+        "apply_restart_result",
+        "compare_and_swap_restart_result",
+      ]) &&
+      hasAll(dispatchConfirmed, [
+        "capabilities.invoke(command)",
+        "observation.matches_command(command)",
+        "CrossedProviderObservation",
+      ]) &&
+      sources.tests.includes("restart_legal_transition_matrix_is_exhaustive") &&
       hasTestsAt(
         sources,
         "crates/nimbus-compute/src/workload_saga/restart_driver/tests.rs",
@@ -1495,10 +1673,14 @@ export function verifyWorkloadRestartContract() {
           "activation_waits_for_same_generation_attachment_and_pep",
           "readiness_binds_the_new_execution_attempt",
           "publication_waits_for_new_attempt_readiness",
-          "old_attempt_callback_is_rejected",
           "withdrawal_after_admission_vetoes_unissued_command",
           "withdrawal_after_ambiguous_effect_requires_inspection",
         ],
+      ) &&
+      hasTestsAt(
+        sources,
+        "crates/nimbus-compute/src/workload_saga/restart_dispatcher/tests.rs",
+        ["old_attempt_provider_observation_is_rejected_before_result"],
       ),
     DIAGNOSTICS.readiness,
   );
@@ -1511,13 +1693,20 @@ export function verifyWorkloadRestartContract() {
     sources,
     "crates/nimbus-compute/src/workload_saga/restart_sandbox.rs",
   );
+  const restartIngressSource = sourceAt(
+    sources,
+    "crates/nimbus-server/src/workload_ingress.rs",
+  );
   const restartCapabilityNames = [
     "RestartPublicationWithdrawalCapability",
     "WorkloadExecutionQuiescenceCapability",
     "WorkloadRestartPreparationCapability",
     "NetworkRestartAttachmentCapability",
+    "WorkloadRestartActivationPrerequisiteCapability",
     "WorkloadRestartActivationCapability",
     "WorkloadRestartReadinessCapability",
+    "RestartPublicationCapability",
+    "RestartPublicationObservationCapability",
   ];
   const restartCapabilitiesAreObjectSafe = restartCapabilityNames.every(
     (name) => {
@@ -1541,20 +1730,31 @@ export function verifyWorkloadRestartContract() {
   );
   requireContract(
     restartCapabilitiesAreObjectSafe &&
-      restartCapabilityNames.every(
-        (name) =>
-          restartSandboxSource.includes(
-            `impl ${name} for ContainerRestartAdapter`,
-          ) &&
-          restartSandboxSource.includes(`impl ${name} for KrunRestartAdapter`),
-      ) &&
+      hasAll(restartSandboxSource, [
+        "macro_rules! impl_sandbox_restart_capabilities",
+        "impl WorkloadExecutionQuiescenceCapability for $adapter",
+        "impl WorkloadRestartPreparationCapability for $adapter",
+        "impl NetworkRestartAttachmentCapability for $adapter",
+        "impl WorkloadRestartActivationPrerequisiteCapability for $adapter",
+        "impl WorkloadRestartActivationCapability for $adapter",
+        "impl WorkloadRestartReadinessCapability for $adapter",
+        "impl_sandbox_restart_capabilities!(ContainerProvisionAdapter)",
+        "impl_sandbox_restart_capabilities!(KrunProvisionAdapter)",
+      ]) &&
+      hasAll(restartIngressSource, [
+        "impl RestartPublicationWithdrawalCapability for ServerIngressPublicationAdapter",
+        "impl RestartPublicationCapability for ServerIngressPublicationAdapter",
+        "impl RestartPublicationObservationCapability for ServerIngressPublicationAdapter",
+      ]) &&
       hasAll(registerRestartCapabilities, [
-        "insert(selection, capabilities).is_some()",
+        "insert(realm.clone(), capabilities).is_some()",
         "DuplicateProviderSelection",
       ]) &&
       hasAll(resolveRestartCapabilities, [
-        "providers.get(selection)",
+        "providers.get(&realm)",
+        "matches_command(command)",
         "MissingProviderSelection",
+        "CrossedProviderRealm",
       ]) &&
       !/\b(?:values|iter)\s*\(\s*\)\s*\.\s*(?:next|find)\b/u.test(
         resolveRestartCapabilities,
@@ -1619,6 +1819,10 @@ export function verifyWorkloadRestartContract() {
     restartWatchSource,
     "fn load_durable_restart_page",
   );
+  const dispatchRestartSweep = extractItem(
+    restartWatchSource,
+    "fn dispatch_each_due_epoch_once",
+  );
   const boundedRestartWatch = extractItem(
     restartWatchSource,
     "fn bounded_restart_watch",
@@ -1631,20 +1835,29 @@ export function verifyWorkloadRestartContract() {
     hasAll(restartClock, [
       "now_unix_millis",
       "wait_until",
-      "CancellationToken",
+      "WorkloadRestartCancellationToken",
     ]) &&
       hasAll(restartWatch, [
         "page_size: NonZeroUsize",
         "clock: Arc<dyn RestartClock>",
-        "cancellation: CancellationToken",
+        "cancellation: WorkloadRestartCancellationToken",
+        "sweep_cursor: Mutex<Option<WorkloadRestartCandidateCursor>>",
       ]) &&
-      hasAll(loadRestartPage, ["load_restart_candidates", "page_size"]) &&
+      restartWatchSource.includes("const MAX_RESTART_PAGES_PER_SWEEP: usize") &&
+      hasAll(loadRestartPage, ["list_restart_candidates", "page_size"]) &&
+      hasAll(dispatchRestartSweep, [
+        "self.sweep_cursor.lock().await",
+        "pages < MAX_RESTART_PAGES_PER_SWEEP",
+        "self.load_durable_restart_page",
+        "self.supervisor",
+        ".track(record.clone())",
+        "*retained_cursor = cursor",
+      ]) &&
       hasAll(boundedRestartWatch, [
-        "load_durable_restart_page",
         "dispatch_each_due_epoch_once",
-        "clock.now_unix_millis",
-        "clock.wait_until",
-        "cancellation.is_cancelled",
+        "self.clock.now_unix_millis",
+        "self.clock.wait_until",
+        "self.cancellation.is_cancelled",
       ]) &&
       hasAll(readOnlyExitHint, ["RestartHint::ReadOnly"]) &&
       !/\b(?:SystemTime|Utc)::now\b|\b(?:execute|publish|attach|quiesce)_provider\b|\bdelete_restart\b|\bfn\s+(?:get|resolve_name)\w*\b[\s\S]{0,160}\bbounded_restart_watch\b/u.test(
@@ -1655,6 +1868,7 @@ export function verifyWorkloadRestartContract() {
         "crates/nimbus-compute/src/workload_saga/restart_watch/tests.rs",
         [
           "automatic_watch_loads_one_bounded_durable_page",
+          "automatic_watch_caps_each_sweep_and_rotates_cursor",
           "automatic_watch_does_not_busy_spin_before_deadline",
           "automatic_watch_dispatches_each_due_epoch_once",
           "read_only_exit_hint_cannot_submit_or_execute_restart",

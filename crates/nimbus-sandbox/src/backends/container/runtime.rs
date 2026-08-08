@@ -20,7 +20,6 @@ mod network_composition;
 mod network_launch;
 mod provider_context;
 mod provision;
-#[cfg(test)]
 mod restart;
 mod runner;
 mod status;
@@ -73,6 +72,7 @@ use crate::backends::oci::port_lifecycle::{
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::backends::readiness_probe::ReadinessProbeProvider;
 use crate::error::{Result, SandboxError};
+use crate::execution_attempt::{SandboxExecutionAttemptId, SandboxRestartAttemptFence};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::provision::SandboxProvisionNetworkPlan;
 use crate::spec::{SandboxOciImageSource, SandboxRootSpec, SandboxSpec};
@@ -138,6 +138,7 @@ pub struct PreparedContainerServiceWorkload {
 }
 
 struct ContainerStartPlanningOptions<'a> {
+    execution_attempt_id: SandboxExecutionAttemptId,
     launch_defaults: Option<&'a OciImageLaunchDefaults>,
     launch_artifact: Option<ContainerLaunchArtifact>,
     provision_network_plan: Option<&'a SandboxProvisionNetworkPlan>,
@@ -767,6 +768,7 @@ impl ContainerSandboxBackend {
                 spec,
                 sandbox_id,
                 ContainerStartPlanningOptions {
+                    execution_attempt_id: SandboxExecutionAttemptId::provider_initial(),
                     launch_defaults: None,
                     launch_artifact: None,
                     provision_network_plan: None,
@@ -801,6 +803,7 @@ impl ContainerSandboxBackend {
             spec,
             sandbox_id,
             ContainerStartPlanningOptions {
+                execution_attempt_id: SandboxExecutionAttemptId::provider_initial(),
                 launch_defaults: Some(&prepared_launch.launch_defaults),
                 launch_artifact: Some(ContainerLaunchArtifact::Rootfs(prepared_launch.artifact)),
                 provision_network_plan: None,
@@ -822,6 +825,7 @@ impl ContainerSandboxBackend {
             spec,
             sandbox_id,
             ContainerStartPlanningOptions {
+                execution_attempt_id: SandboxExecutionAttemptId::provider_initial(),
                 launch_defaults,
                 launch_artifact,
                 provision_network_plan: None,
@@ -838,6 +842,7 @@ impl ContainerSandboxBackend {
         options: ContainerStartPlanningOptions<'_>,
     ) -> Result<ContainerStartPlan> {
         let ContainerStartPlanningOptions {
+            execution_attempt_id,
             launch_defaults,
             launch_artifact,
             provision_network_plan,
@@ -934,6 +939,7 @@ impl ContainerSandboxBackend {
         let mut plan = ContainerStartPlan {
             manifest: ContainerSandboxManifest {
                 handle,
+                execution_attempt_id,
                 spec: resolved_spec,
                 provision_prepared: prepare_bundle,
                 image_metadata: resolved_launch.image_metadata,
@@ -945,6 +951,7 @@ impl ContainerSandboxBackend {
                 network_config: None,
                 network_cleanup_complete: false,
                 creator_handoff: ContainerCreatorHandoffState::NotSpawned,
+                restart_transition: None,
                 runner_handoff_id: None,
                 requested_port_bindings,
                 port_leases: Vec::new(),
@@ -1572,6 +1579,9 @@ impl SandboxBackend for ContainerSandboxBackend {
         Box::pin(async move { backend.remove_tenant_artifacts_sync(&tenant_id) })
     }
 }
+
+#[cfg(test)]
+mod support;
 
 #[cfg(test)]
 mod tests;

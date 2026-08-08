@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use nimbus_workloads::{
-    WorkloadSagaCommit, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
-    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
+    WorkloadRestartCandidatePage, WorkloadRestartCandidatePageRequest, WorkloadSagaCommit,
+    WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecord,
+    WorkloadSagaStore, WorkloadSagaStoreError,
 };
 
 mod ingress;
@@ -17,6 +18,14 @@ mod provision_sandbox;
 mod recovery;
 mod restart_decision;
 mod restart_dispatch;
+mod restart_dispatcher;
+mod restart_driver;
+mod restart_provider;
+pub mod restart_provider_command;
+pub(super) mod restart_runtime;
+pub mod restart_sandbox;
+mod restart_supervisor;
+mod restart_watch;
 
 pub use ingress::{ConfirmedWorkloadSagaIntent, WorkloadSagaIngressDisposition};
 pub use nimbus_workloads::{WorkloadProvisionCommandId, WorkloadProvisionCommandMode};
@@ -60,7 +69,15 @@ pub use restart_dispatch::{
     WorkloadRestartCommandMode, WorkloadRestartCommandOutcome, WorkloadRestartCommandResult,
     apply_restart_result,
 };
-
+pub use restart_provider::{
+    NetworkRestartAttachmentCapability, RestartPublicationCapability,
+    RestartPublicationObservationCapability, RestartPublicationWithdrawalCapability,
+    WorkloadExecutionQuiescenceCapability, WorkloadRestartActivationCapability,
+    WorkloadRestartActivationPrerequisiteCapability, WorkloadRestartCapabilities,
+    WorkloadRestartCapabilityFuture, WorkloadRestartCapabilityRegistry,
+    WorkloadRestartCapabilityRegistryError, WorkloadRestartPreparationCapability,
+    WorkloadRestartProviderObservation, WorkloadRestartReadinessCapability,
+};
 /// Sole cross-domain writer of portable workload-saga transitions.
 pub struct WorkloadSagaCoordinator {
     store: Arc<dyn WorkloadSagaStore>,
@@ -99,6 +116,13 @@ impl WorkloadSagaCoordinator {
         request: WorkloadSagaPageRequest,
     ) -> Result<WorkloadSagaPage, WorkloadSagaStoreError> {
         self.store.list_recoverable(request).await
+    }
+
+    pub(super) async fn list_restart_candidates(
+        &self,
+        request: WorkloadRestartCandidatePageRequest,
+    ) -> Result<WorkloadRestartCandidatePage, WorkloadSagaStoreError> {
+        self.store.list_restart_candidates(request).await
     }
 }
 

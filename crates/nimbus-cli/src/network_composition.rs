@@ -27,7 +27,7 @@ use nimbus_sandbox::backends::krun::{
     KrunSandboxBackend, KrunSandboxBackendConfig, KrunSandboxStateView,
 };
 use nimbus_sandbox::{
-    OciNetworkProcess, OciNetworkProcessError, ProviderProvisionJournalError, SandboxBackendKind,
+    OciNetworkProcess, OciNetworkProcessError, ProviderCommandJournalError, SandboxBackendKind,
     sandbox_network_plan_requirements,
 };
 use nimbus_server::{
@@ -381,7 +381,8 @@ impl PreparedLocalKrunServerWorkload {
             execution,
             self.selection.ingress_provider_id().clone(),
             ingress,
-        );
+        )
+        .with_restart_capabilities();
         ServerWorkloadComposition::new(
             engine,
             self.network_manager,
@@ -706,7 +707,7 @@ pub(crate) enum LocalNetworkCompositionError {
     Oci(OciNetworkProcessError),
     AttachmentRegistration(SandboxAttachmentRegistrationError),
     CapabilitySelection(NetworkCapabilitySelectionError),
-    ProviderJournal(ProviderProvisionJournalError),
+    ProviderJournal(ProviderCommandJournalError),
     ServerWorkload(ServerWorkloadCompositionError),
     IncompleteServerWorkloadSources { reason: &'static str },
     ForwardedServerWorkloadUnavailable,

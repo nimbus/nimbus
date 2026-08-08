@@ -330,14 +330,15 @@ async fn definition_delete_retires_only_the_canonical_observation() {
             BTreeMap::new(),
         )
         .expect("definition should create");
-    let handle = backend.sandbox_handle(&tenant_id, "worker", SandboxStatus::Stopping);
+    let mut handle = backend.sandbox_handle(&tenant_id, "worker", SandboxStatus::Stopping);
+    let execution = execution_reference_for_handle(&mut handle, definition.generation, 0);
     manager
         .project_service_definition_execution_observation(
             &tenant_id,
             "worker",
             definition.generation,
             &definition.resource_version,
-            handle.id.as_str(),
+            &execution,
             handle.clone(),
         )
         .expect("canonical observation should project");
@@ -380,14 +381,15 @@ async fn force_delete_revalidates_generation_before_retirement_effect() {
             BTreeMap::new(),
         )
         .expect("definition should create");
-    let handle = backend.sandbox_handle(&tenant_id, "worker", SandboxStatus::Ready);
+    let mut handle = backend.sandbox_handle(&tenant_id, "worker", SandboxStatus::Ready);
+    let execution = execution_reference_for_handle(&mut handle, definition.generation, 0);
     manager
         .project_service_definition_execution_observation(
             &tenant_id,
             "worker",
             definition.generation,
             &definition.resource_version,
-            handle.id.as_str(),
+            &execution,
             handle.clone(),
         )
         .expect("canonical observation should project");

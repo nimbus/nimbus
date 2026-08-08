@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::SandboxHandle;
+use crate::{SandboxExecutionAttemptId, SandboxHandle};
 
 /// Read-only evidence returned by a sandbox backend.
 ///
@@ -11,6 +11,7 @@ use crate::SandboxHandle;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxInspection {
     pub handle: SandboxHandle,
+    pub execution_attempt: SandboxExecutionAttemptObservation,
     pub execution: SandboxExecutionObservation,
     pub restart: SandboxRestartAssessment,
     pub cleanup: SandboxCleanupObservation,
@@ -20,14 +21,21 @@ pub struct SandboxInspection {
 impl SandboxInspection {
     pub(crate) fn exact(
         handle: SandboxHandle,
+        execution_attempt: SandboxExecutionAttemptObservation,
         execution: SandboxExecutionObservation,
         restart: SandboxRestartAssessment,
         cleanup: SandboxCleanupObservation,
         snapshot_parts: &[&[u8]],
     ) -> Self {
-        let version = SandboxInspectionVersion::sha256(snapshot_parts);
+        let attempt_evidence = serde_json::to_vec(&execution_attempt)
+            .expect("execution attempt observation serialization is infallible");
+        let mut version_parts = Vec::with_capacity(snapshot_parts.len() + 1);
+        version_parts.extend_from_slice(snapshot_parts);
+        version_parts.push(&attempt_evidence);
+        let version = SandboxInspectionVersion::sha256(&version_parts);
         Self {
             handle,
+            execution_attempt,
             execution,
             restart,
             cleanup,
@@ -46,6 +54,7 @@ impl SandboxInspection {
             .expect("SandboxHandle serialization is infallible for observation evidence");
         Self::exact(
             handle,
+            SandboxExecutionAttemptObservation::Unknown,
             SandboxExecutionObservation::Unknown {
                 reason: SandboxObservationUnknownReason::ProviderReportedHandleOnly,
             },
@@ -56,6 +65,32 @@ impl SandboxInspection {
             // even when its projected status is terminal.
             SandboxCleanupObservation::Retained,
             &[&rendered],
+        )
+    }
+
+    /// Build an observation for a running execution attempt that the provider
+    /// authenticated from its own durable or runtime evidence.
+    ///
+    /// The caller must not derive `execution_attempt` from desired state
+    /// alone. `provider_evidence` must identify the provider snapshot that
+    /// proved the handle and attempt were running. This constructor records
+    /// read-only evidence; it does not grant lifecycle command authority.
+    pub fn provider_authenticated_running(
+        handle: SandboxHandle,
+        execution_attempt: SandboxExecutionAttemptId,
+        provider_evidence: &[u8],
+    ) -> Self {
+        let rendered = serde_json::to_vec(&handle)
+            .expect("SandboxHandle serialization is infallible for observation evidence");
+        Self::exact(
+            handle,
+            SandboxExecutionAttemptObservation::Exact(execution_attempt),
+            SandboxExecutionObservation::Present,
+            SandboxRestartAssessment::Ineligible {
+                reason: SandboxRestartIneligibility::RuntimePresent,
+            },
+            SandboxCleanupObservation::NotRequired,
+            &[&rendered, provider_evidence],
         )
     }
 
@@ -93,12 +128,22 @@ impl SandboxInspection {
             .expect("inspection projection serialization is infallible");
         Self::exact(
             handle,
+            self.execution_attempt,
             execution,
             restart,
             cleanup,
             &[self.version.as_bytes(), &rendered, provider_evidence],
         )
     }
+}
+
+/// Provider-authenticated execution-attempt evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "state", content = "attempt_id")]
+pub enum SandboxExecutionAttemptObservation {
+    Exact(SandboxExecutionAttemptId),
+    PlanOnly,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -239,9 +284,53 @@ mod tests {
     }
 
     #[test]
+    fn authenticated_running_provider_commits_exact_attempt_and_evidence() {
+        let attempt = SandboxExecutionAttemptId::new("wea_authenticated").unwrap();
+        let first = SandboxInspection::provider_authenticated_running(
+            handle(SandboxStatus::Ready),
+            attempt.clone(),
+            b"provider-snapshot=17",
+        );
+        let repeated = SandboxInspection::provider_authenticated_running(
+            handle(SandboxStatus::Ready),
+            attempt.clone(),
+            b"provider-snapshot=17",
+        );
+        let changed_attempt = SandboxInspection::provider_authenticated_running(
+            handle(SandboxStatus::Ready),
+            SandboxExecutionAttemptId::new("wea_changed").unwrap(),
+            b"provider-snapshot=17",
+        );
+        let changed_evidence = SandboxInspection::provider_authenticated_running(
+            handle(SandboxStatus::Ready),
+            attempt.clone(),
+            b"provider-snapshot=18",
+        );
+
+        assert_eq!(
+            first.execution_attempt,
+            SandboxExecutionAttemptObservation::Exact(attempt)
+        );
+        assert_eq!(first.execution, SandboxExecutionObservation::Present);
+        assert_eq!(
+            first.restart,
+            SandboxRestartAssessment::Ineligible {
+                reason: SandboxRestartIneligibility::RuntimePresent,
+            }
+        );
+        assert_eq!(first.cleanup, SandboxCleanupObservation::NotRequired);
+        assert_eq!(first.version, repeated.version);
+        assert_ne!(first.version, changed_attempt.version);
+        assert_ne!(first.version, changed_evidence.version);
+    }
+
+    #[test]
     fn inspection_contract_round_trips_every_evidence_field() {
         let inspection = SandboxInspection::exact(
             handle(SandboxStatus::Stopping),
+            SandboxExecutionAttemptObservation::Exact(
+                SandboxExecutionAttemptId::new("wea_exact").unwrap(),
+            ),
             SandboxExecutionObservation::Exited { exit_code: 42 },
             SandboxRestartAssessment::Candidate {
                 exit_code: 42,

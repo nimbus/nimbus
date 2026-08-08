@@ -14,6 +14,61 @@ use ulid::Ulid;
 use super::*;
 
 impl ContainerSandboxBackend {
+    /// Authenticate that the exact source creator can no longer materialize
+    /// provider effects for a coordinator-issued restart.
+    ///
+    /// This does not inspect or stop the runtime and does not remove the
+    /// conmon receipt. The restart phase owns those later checks and persists
+    /// the returned proof before it advances the workload execution attempt.
+    pub(super) fn authenticate_restart_creator_quiescence(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+    ) -> Result<CreatorQuiescenceProof> {
+        self.reconcile_pending_creator_before_cleanup(manifest)?;
+        match &manifest.creator_handoff {
+            ContainerCreatorHandoffState::NotSpawned => Ok(CreatorQuiescenceProof::never_spawned(
+                format!("restart-source:{}", manifest.execution_attempt_id),
+            )),
+            ContainerCreatorHandoffState::Quiesced { proof } => Ok(proof.clone()),
+            ContainerCreatorHandoffState::RuntimeObserved { receipt } => {
+                match observe_creator_containment(receipt) {
+                    CreatorContainmentObservation::DeadContained => {
+                        Ok(CreatorQuiescenceProof::dead_contained(receipt.clone()))
+                    }
+                    CreatorContainmentObservation::Live => Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "container creator attempt {} remains live; restart source quiescence remains fenced",
+                            receipt.attempt_id()
+                        ),
+                    }),
+                    CreatorContainmentObservation::Escaped { reason } => {
+                        Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "container creator attempt {} escaped its authenticated containment: {reason}; restart source quiescence remains fenced",
+                                receipt.attempt_id()
+                            ),
+                        })
+                    }
+                    CreatorContainmentObservation::Unknown { reason } => {
+                        Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "container creator attempt {} cannot be authenticated: {reason}; restart source quiescence remains fenced",
+                                receipt.attempt_id()
+                            ),
+                        })
+                    }
+                }
+            }
+            ContainerCreatorHandoffState::SpawnIntent { .. }
+            | ContainerCreatorHandoffState::Pending { .. } => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container creator handoff for {} remained pending after restart reconciliation",
+                    manifest.handle.id
+                ),
+            }),
+        }
+    }
+
     pub(super) fn spawn_creator_and_wait_for_runtime(
         &self,
         manifest: &mut ContainerSandboxManifest,
@@ -229,7 +284,7 @@ impl ContainerSandboxBackend {
         )
     }
 
-    fn persist_creator_quiescence(
+    pub(super) fn persist_creator_quiescence(
         &self,
         manifest: &mut ContainerSandboxManifest,
         proof: CreatorQuiescenceProof,

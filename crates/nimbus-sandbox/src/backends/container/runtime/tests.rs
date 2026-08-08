@@ -18,5 +18,3 @@ mod planning;
 mod preselected_identity;
 #[path = "tests/provision_phases.rs"]
 mod provision_phases;
-#[path = "support.rs"]
-mod support;

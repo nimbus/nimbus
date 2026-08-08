@@ -9,14 +9,15 @@ fn project_service_for_retirement(
     let definition = manager
         .service_definition_for_tenant(tenant_id, service_name)
         .expect("service definition should exist");
-    let handle = backend.sandbox_handle(tenant_id, service_name, SandboxStatus::Ready);
+    let mut handle = backend.sandbox_handle(tenant_id, service_name, SandboxStatus::Ready);
+    let execution = execution_reference_for_handle(&mut handle, definition.generation, 0);
     manager
         .project_service_definition_execution_observation(
             tenant_id,
             service_name,
             definition.generation,
             &definition.resource_version,
-            handle.id.as_str(),
+            &execution,
             handle.clone(),
         )
         .expect("service observation should project");
@@ -36,14 +37,15 @@ fn reserve_and_project_standalone_for_retirement(
         standalone_resource_spec(tenant_id, "task"),
         BTreeMap::new(),
     );
-    let handle = backend.sandbox_handle(tenant_id, "task", SandboxStatus::Ready);
+    let mut handle = backend.sandbox_handle(tenant_id, "task", SandboxStatus::Ready);
+    let execution = execution_reference_for_handle(&mut handle, source.generation, 0);
     manager
         .project_sandbox_resource_execution_observation(
             tenant_id,
             &source.id,
             source.generation,
             &source.resource_version,
-            handle.id.as_str(),
+            &execution,
             handle.clone(),
         )
         .expect("standalone observation should project");

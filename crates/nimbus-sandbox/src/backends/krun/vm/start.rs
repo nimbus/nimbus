@@ -2,6 +2,7 @@ use super::readiness::visible_published_endpoints;
 use super::*;
 
 struct KrunStartPlanningOptions<'a> {
+    execution_attempt_id: SandboxExecutionAttemptId,
     launch_defaults: Option<&'a OciImageLaunchDefaults>,
     launch_artifact: Option<KrunLaunchArtifact>,
     provision_network_plan: Option<&'a SandboxProvisionNetworkPlan>,
@@ -98,6 +99,7 @@ impl KrunSandboxBackend {
             spec,
             sandbox_id,
             KrunStartPlanningOptions {
+                execution_attempt_id: SandboxExecutionAttemptId::provider_initial(),
                 launch_defaults: Some(&prepared_launch.launch_defaults),
                 launch_artifact: Some(KrunLaunchArtifact::Rootfs(prepared_launch.artifact)),
                 provision_network_plan: None,
@@ -207,6 +209,7 @@ impl KrunSandboxBackend {
             spec,
             sandbox_id,
             KrunStartPlanningOptions {
+                execution_attempt_id: SandboxExecutionAttemptId::provider_initial(),
                 launch_defaults,
                 launch_artifact,
                 provision_network_plan: None,
@@ -223,6 +226,7 @@ impl KrunSandboxBackend {
         &self,
         spec: &SandboxSpec,
         sandbox_id: &SandboxId,
+        execution_attempt_id: SandboxExecutionAttemptId,
         network_plan: &SandboxProvisionNetworkPlan,
     ) -> Result<KrunStartPlan> {
         self.ensure_startup_network_reconciliation_ready()?;
@@ -236,6 +240,7 @@ impl KrunSandboxBackend {
             spec,
             sandbox_id,
             KrunStartPlanningOptions {
+                execution_attempt_id,
                 launch_defaults: None,
                 launch_artifact: None,
                 provision_network_plan: Some(network_plan),
@@ -261,6 +266,7 @@ impl KrunSandboxBackend {
             spec,
             sandbox_id,
             KrunStartPlanningOptions {
+                execution_attempt_id: SandboxExecutionAttemptId::provider_initial(),
                 launch_defaults: None,
                 launch_artifact: None,
                 provision_network_plan: None,
@@ -285,6 +291,7 @@ impl KrunSandboxBackend {
         After: FnOnce(&KrunSandboxManifest) -> Result<()>,
     {
         let KrunStartPlanningOptions {
+            execution_attempt_id,
             launch_defaults,
             launch_artifact,
             provision_network_plan,
@@ -382,6 +389,7 @@ impl KrunSandboxBackend {
         };
         let mut manifest = KrunSandboxManifest {
             handle,
+            execution_attempt_id,
             spec: resolved_launch.spec,
             image_metadata: resolved_launch.image_metadata,
             launch_artifact,

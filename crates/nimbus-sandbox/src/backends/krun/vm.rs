@@ -64,6 +64,7 @@ use crate::backends::oci::port_lifecycle::{
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::backends::readiness_probe::{ReadinessProbeProvider, SocketReadinessProbeProvider};
 use crate::error::{Result, SandboxError};
+use crate::execution_attempt::SandboxExecutionAttemptId;
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::provision::SandboxProvisionNetworkPlan;
 use crate::spec::{
@@ -80,6 +81,7 @@ mod manifest_publication;
 mod network_composition;
 mod provision;
 mod readiness;
+mod restart;
 
 impl OciHostManagedAttachmentBackend for KrunSandboxBackend {
     const ATTACHMENT_BACKEND_KIND: AttachmentBackendKind = AttachmentBackendKind::Krun;
@@ -283,14 +285,9 @@ impl KrunSandboxBackend {
     /// Open this provider's durable provision-attempt idempotency journal.
     pub fn attempt_idempotency_journal(
         &self,
-    ) -> std::result::Result<
-        crate::ProviderProvisionAttemptJournal,
-        crate::ProviderProvisionJournalError,
-    > {
-        crate::ProviderProvisionAttemptJournal::open(
-            &self.config.workload_state_root,
-            "krun-runtime",
-        )
+    ) -> std::result::Result<crate::ProviderCommandAttemptJournal, crate::ProviderCommandJournalError>
+    {
+        crate::ProviderCommandAttemptJournal::open(&self.config.workload_state_root, "krun-runtime")
     }
 
     /// Report conservative host-managed attachment evidence for this composition.
@@ -673,6 +670,8 @@ pub(crate) struct KrunStartPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct KrunSandboxManifest {
     handle: SandboxHandle,
+    /// Exact workload execution incarnation persisted before provider effects.
+    execution_attempt_id: SandboxExecutionAttemptId,
     spec: SandboxSpec,
     image_metadata: KrunImageMetadata,
     launch_artifact: Option<KrunLaunchArtifact>,
@@ -795,6 +794,22 @@ impl KrunCreatorHandoffState {
 }
 
 impl KrunSandboxManifest {
+    fn require_execution_attempt(
+        &self,
+        expected: &SandboxExecutionAttemptId,
+        operation: &str,
+    ) -> Result<()> {
+        if &self.execution_attempt_id == expected {
+            return Ok(());
+        }
+        Err(SandboxError::InvalidSpec {
+            message: format!(
+                "{operation} for {} crossed execution attempt {}; durable attempt is {}",
+                self.handle.id, expected, self.execution_attempt_id
+            ),
+        })
+    }
+
     fn has_terminal_network_finality(&self) -> bool {
         let launch_authority_released = match self.start_mode {
             KrunStartMode::PlanOnly => {

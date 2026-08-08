@@ -4,6 +4,7 @@ use std::fmt::{Display, Formatter};
 use nimbus_core::TenantId;
 use nimbus_sandbox::{SandboxHandle, SandboxSpec};
 use nimbus_tenant::TenantVolumePolicyDecision;
+use nimbus_workloads::WorkloadExecutionReference;
 use sha2::{Digest, Sha256};
 use ulid::Ulid;
 
@@ -102,12 +103,13 @@ pub struct SandboxResourceSource {
     pub labels: BTreeMap<String, String>,
 }
 
-/// Optional provider observation for one exact desired sandbox generation.
+/// Optional provider observation for one exact desired sandbox execution attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxResourceObservation {
     pub tenant_id: TenantId,
     pub id: String,
     pub observed_generation: u64,
+    pub execution: WorkloadExecutionReference,
     pub handle: SandboxHandle,
     pub observed_at_millis: u64,
 }
@@ -119,12 +121,13 @@ pub struct SandboxResourceSnapshot {
     pub observation: Option<SandboxResourceObservation>,
 }
 
-/// Generation-fenced observed projection for a sandbox-backed service definition.
+/// Attempt-fenced observed projection for a sandbox-backed service definition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceDefinitionObservation {
     pub tenant_id: TenantId,
     pub name: String,
     pub observed_generation: u64,
+    pub execution: WorkloadExecutionReference,
     pub handle: SandboxHandle,
     pub observed_at_millis: u64,
 }

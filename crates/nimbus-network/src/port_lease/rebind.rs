@@ -2,11 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use super::plan_batch::authenticate_complete_plan_batch_if_present;
+use super::plan_batch::{
+    authenticate_complete_plan_batch_if_present, authenticate_complete_plan_members,
+};
 use super::{
-    LocalPortLeaseAuthority, PortLeaseBinding, PortLeaseError, PortLeaseLifetime,
-    PortLeaseLifetimeGuard, PortLeaseOperation, PortLeaseOperationError, PortLeasePhase,
-    PortLeaseRecord, PortLeaseRequest, exact_record, exact_record_mut,
+    LocalPortLeaseAuthority, PortLeaseBinding, PortLeaseEffectScope, PortLeaseError,
+    PortLeaseLifetime, PortLeaseLifetimeGuard, PortLeaseOperation, PortLeaseOperationError,
+    PortLeasePhase, PortLeaseRecord, PortLeaseRequest, exact_record, exact_record_mut,
 };
 use crate::PortLeaseId;
 
@@ -45,7 +47,7 @@ impl LocalPortLeaseAuthority {
         &self,
         bindings: &[(PortLeaseRequest, PortLeaseBinding)],
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
-        self.prepare_rebind_batch_after_confirmed_stop_inner(bindings, None)
+        self.prepare_rebind_batch_after_confirmed_stop_inner(bindings, None, None)
     }
 
     /// Atomically retain an exact live-owner batch after confirmed stop.
@@ -59,64 +61,72 @@ impl LocalPortLeaseAuthority {
         bindings: &[(PortLeaseRequest, PortLeaseBinding)],
         lifetimes: &[PortLeaseLifetimeGuard],
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
-        if bindings.len() != lifetimes.len() {
-            let lease_id = bindings
-                .first()
-                .map(|(request, _)| request.lease_id().clone())
-                .or_else(|| {
-                    lifetimes
-                        .first()
-                        .map(|lifetime| lifetime.request().lease_id().clone())
-                })
-                .ok_or_else(|| PortLeaseError::CorruptAuthority {
-                    reason: "empty confirmed-stop lifetime batch has divergent lengths".to_owned(),
-                })?;
-            return Err(PortLeaseError::LifetimeMismatch { lease_id });
+        let required = exact_confirmed_stop_lifetimes(bindings, lifetimes)?;
+        self.prepare_rebind_batch_after_confirmed_stop_inner(bindings, Some(&required), None)
+    }
+
+    /// Atomically retain a live process-owned plan subset after confirmed stop.
+    ///
+    /// `plan_members` is the complete immutable durable plan witness while
+    /// `bindings` and `lifetimes` contain only the effects owned by this
+    /// adapter. Every selected request, stopped binding, and non-cloneable
+    /// process lifetime is authenticated before any record changes. Unrelated
+    /// members remain byte-for-byte unchanged.
+    pub fn prepare_rebind_plan_members_after_confirmed_stop_with_lifetimes(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        bindings: &[(PortLeaseRequest, PortLeaseBinding)],
+        lifetimes: &[PortLeaseLifetimeGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        if bindings.is_empty() {
+            return Err(PortLeaseError::CorruptAuthority {
+                reason: "planned confirmed-stop subset cannot be empty".to_owned(),
+            });
         }
-        let mut required = BTreeMap::new();
-        for lifetime in lifetimes {
-            if required
-                .insert(
-                    lifetime.request().lease_id().clone(),
-                    (lifetime.request(), lifetime.lifetime()),
-                )
+        let mut distinct = BTreeMap::new();
+        for (request, binding) in bindings {
+            if distinct
+                .insert(request.lease_id().clone(), (request, binding))
                 .is_some()
             {
                 return Err(PortLeaseError::IdentityConflict {
-                    lease_id: lifetime.request().lease_id().clone(),
+                    lease_id: request.lease_id().clone(),
                 });
             }
         }
+        let required = exact_confirmed_stop_lifetimes(bindings, lifetimes)?;
         for (request, _) in bindings {
-            let Some((guard_request, _)) = required.get(request.lease_id()) else {
-                return Err(PortLeaseError::LifetimeMismatch {
-                    lease_id: request.lease_id().clone(),
-                });
-            };
-            if *guard_request != request {
-                return Err(PortLeaseError::LifetimeMismatch {
+            if required[request.lease_id()].effect_scope() != PortLeaseEffectScope::ProcessBound {
+                return Err(PortLeaseError::LifetimeScopeMismatch {
                     lease_id: request.lease_id().clone(),
                 });
             }
         }
-        let required = required
-            .into_iter()
-            .map(|(lease_id, (_, lifetime))| (lease_id, lifetime))
-            .collect();
-        self.prepare_rebind_batch_after_confirmed_stop_inner(bindings, Some(&required))
+        self.prepare_rebind_batch_after_confirmed_stop_inner(
+            bindings,
+            Some(&required),
+            Some(plan_members),
+        )
     }
 
     fn prepare_rebind_batch_after_confirmed_stop_inner(
         &self,
         bindings: &[(PortLeaseRequest, PortLeaseBinding)],
         required_lifetimes: Option<&BTreeMap<PortLeaseId, PortLeaseLifetime>>,
+        plan_members: Option<&[PortLeaseRequest]>,
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
-            let planned = bindings
+            let requested = bindings
                 .iter()
                 .map(|(request, _)| request)
                 .collect::<Vec<_>>();
-            authenticate_complete_plan_batch_if_present(state, &planned)?;
+            match plan_members {
+                Some(plan_members) => {
+                    let witness = plan_members.iter().collect::<Vec<_>>();
+                    authenticate_complete_plan_members(state, &witness, &requested)?;
+                }
+                None => authenticate_complete_plan_batch_if_present(state, &requested)?,
+            }
 
             let mut distinct =
                 BTreeMap::<PortLeaseId, (&PortLeaseRequest, &PortLeaseBinding)>::new();
@@ -336,3 +346,57 @@ impl LocalPortLeaseAuthority {
         })
     }
 }
+
+fn exact_confirmed_stop_lifetimes(
+    bindings: &[(PortLeaseRequest, PortLeaseBinding)],
+    lifetimes: &[PortLeaseLifetimeGuard],
+) -> Result<BTreeMap<PortLeaseId, PortLeaseLifetime>, PortLeaseError> {
+    if bindings.len() != lifetimes.len() {
+        let lease_id = bindings
+            .first()
+            .map(|(request, _)| request.lease_id().clone())
+            .or_else(|| {
+                lifetimes
+                    .first()
+                    .map(|lifetime| lifetime.request().lease_id().clone())
+            })
+            .ok_or_else(|| PortLeaseError::CorruptAuthority {
+                reason: "empty confirmed-stop lifetime batch has divergent lengths".to_owned(),
+            })?;
+        return Err(PortLeaseError::LifetimeMismatch { lease_id });
+    }
+    let mut required = BTreeMap::new();
+    for lifetime in lifetimes {
+        if required
+            .insert(
+                lifetime.request().lease_id().clone(),
+                (lifetime.request(), lifetime.lifetime()),
+            )
+            .is_some()
+        {
+            return Err(PortLeaseError::IdentityConflict {
+                lease_id: lifetime.request().lease_id().clone(),
+            });
+        }
+    }
+    for (request, _) in bindings {
+        let Some((guard_request, _)) = required.get(request.lease_id()) else {
+            return Err(PortLeaseError::LifetimeMismatch {
+                lease_id: request.lease_id().clone(),
+            });
+        };
+        if *guard_request != request {
+            return Err(PortLeaseError::LifetimeMismatch {
+                lease_id: request.lease_id().clone(),
+            });
+        }
+    }
+    Ok(required
+        .into_iter()
+        .map(|(lease_id, (_, lifetime))| (lease_id, lifetime))
+        .collect())
+}
+
+#[cfg(test)]
+#[path = "rebind/tests.rs"]
+mod tests;

@@ -70,6 +70,8 @@ run_self_test() {
     "missing-command-transition-id|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
     "missing-command-desired-digest|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
     "missing-command-request-id|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
+    "missing-command-source-execution|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
+    "missing-command-target-execution|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
     "crossed-command-result|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
     "execute-on-confirmed-replay|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
     "ambiguity-infers-absence|restart-contract/ambiguity: ambiguous restart effects do not inspect before exact-absence retry"
@@ -87,6 +89,7 @@ run_self_test() {
     "restart-registry-first-available-fallback|restart-contract/capabilities: small Container and Krun restart substitutions are incomplete"
     "duplicate-restart-capability-registration|restart-contract/capabilities: small Container and Krun restart substitutions are incomplete"
     "unbounded-watch-page|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
+    "unbounded-watch-sweep|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
     "watch-busy-spin|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
     "watch-uses-system-clock|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
     "watch-effects-from-read-only-hint|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
@@ -122,12 +125,12 @@ run_self_test() {
       "${passed}" "${failures}"
     return 1
   fi
-  if [ "${passed}" -ne 68 ]; then
-    printf 'NNC6.4a restart contract self-test: expected 68 mutations, observed %d\n' \
+  if [ "${passed}" -ne 71 ]; then
+    printf 'NNC6.4a restart contract self-test: expected 71 mutations, observed %d\n' \
       "${passed}"
     return 1
   fi
-  printf 'NNC6.4a restart contract self-test: 68 passed, 0 failed\n'
+  printf 'NNC6.4a restart contract self-test: 71 passed, 0 failed\n'
 }
 
 case "${1:-}" in

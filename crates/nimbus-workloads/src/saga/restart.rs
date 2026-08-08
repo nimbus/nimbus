@@ -892,6 +892,7 @@ pub struct ActiveWorkloadRestart {
     pub(super) phase: WorkloadRestartPhase,
     pub(super) admission: WorkloadRestartAdmission,
     pub(super) disposition: WorkloadRestartDisposition,
+    pub(super) owner_observations: Vec<WorkloadOwnerObservation>,
 }
 
 impl ActiveWorkloadRestart {
@@ -900,6 +901,7 @@ impl ActiveWorkloadRestart {
             phase: WorkloadRestartPhase::Requested,
             admission,
             disposition: WorkloadRestartDisposition::initial_ready(),
+            owner_observations: Vec::new(),
         }
     }
 
@@ -913,6 +915,11 @@ impl ActiveWorkloadRestart {
 
     pub fn disposition(&self) -> &WorkloadRestartDisposition {
         &self.disposition
+    }
+
+    /// Exact role-owned evidence accumulated for the target execution attempt.
+    pub fn owner_observations(&self) -> &[WorkloadOwnerObservation] {
+        &self.owner_observations
     }
 
     pub(super) fn validate(&self) -> Result<(), WorkloadSagaError> {

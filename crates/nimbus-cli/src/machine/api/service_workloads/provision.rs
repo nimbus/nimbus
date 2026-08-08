@@ -24,10 +24,10 @@ use nimbus_network::{
 };
 use nimbus_node::{HostLifecycleRequest, HostLifecycleStatus, TenantWorkloadPhase};
 use nimbus_sandbox::{
-    ProviderProvisionAttemptJournal, ProviderProvisionClaim, ProviderProvisionClaimDecision,
-    ProviderProvisionClaimInput, ProviderProvisionObservation, ProviderProvisionObservationKind,
-    ProviderProvisionOperation, SandboxProvisionDependencyListener, SandboxProvisionListener,
-    SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation,
+    ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
+    ProviderCommandClaimInput, ProviderCommandObservation, ProviderCommandObservationKind,
+    ProviderCommandOperation, SandboxExecutionAttemptId, SandboxProvisionDependencyListener,
+    SandboxProvisionListener, SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation,
 };
 use nimbus_workloads::{
     WorkloadNetworkPortRequestMode, WorkloadOwnerEvidenceDigest, WorkloadProvisionCommandMode,
@@ -39,6 +39,7 @@ use super::{GuestNodeWorkloadService, MachineApiHttpError};
 pub(super) struct ValidatedGuestProvisionCommand {
     spec: SandboxSpec,
     sandbox_id: SandboxId,
+    execution_attempt_id: SandboxExecutionAttemptId,
     network_plan: SandboxProvisionNetworkPlan,
 }
 
@@ -50,6 +51,10 @@ impl ValidatedGuestProvisionCommand {
     pub(super) fn sandbox_id(&self) -> &SandboxId {
         &self.sandbox_id
     }
+
+    pub(super) fn execution_attempt_id(&self) -> &SandboxExecutionAttemptId {
+        &self.execution_attempt_id
+    }
 }
 
 impl GuestNodeWorkloadService {
@@ -60,8 +65,10 @@ impl GuestNodeWorkloadService {
     ) -> MachineApiWorkloadProvisionObservation {
         match self
             .bundle_materializer
-            .inspect_provision_activation_prerequisites(validated.sandbox_id())
-        {
+            .inspect_provision_activation_prerequisites(
+                validated.sandbox_id(),
+                validated.execution_attempt_id(),
+            ) {
             Ok(SandboxProvisionPhaseObservation::Succeeded { .. }) => {}
             other => return phase_result(other),
         }
@@ -172,16 +179,16 @@ pub(super) async fn dispatch(
 
     match command.mode() {
         WorkloadProvisionCommandMode::Execute => match decision {
-            ProviderProvisionClaimDecision::AdoptExactAttempt(observation) => {
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
                 Ok(journal_observation(&observation))
             }
-            ProviderProvisionClaimDecision::ExecuteClaimed(_) => {
+            ProviderCommandClaimDecision::ExecuteClaimed(_) => {
                 let effect = execute_phase(service, command, &validated, forwarder_authority).await;
                 Ok(record_effect(&journal, &claim, effect, false))
             }
         },
         WorkloadProvisionCommandMode::Inspect => {
-            if let ProviderProvisionClaimDecision::AdoptExactAttempt(observation) = &decision
+            if let ProviderCommandClaimDecision::AdoptExactAttempt(observation) = &decision
                 && terminal_without_live_reconciliation(
                     command.claim().attempt().step(),
                     observation.kind(),
@@ -237,6 +244,10 @@ fn validate_command(
     Ok(ValidatedGuestProvisionCommand {
         spec,
         sandbox_id: SandboxId::new(command.execution().execution_id().as_str()),
+        execution_attempt_id: SandboxExecutionAttemptId::new(
+            command.execution().attempt_id().to_string(),
+        )
+        .map_err(|error| definite_failure(format!("invalid execution attempt: {error}")))?,
         network_plan,
     })
 }
@@ -295,18 +306,19 @@ async fn execute_phase(
             handle_result(service.bundle_materializer.reserve_provision_network(
                 validated.spec.clone(),
                 validated.sandbox_id.clone(),
+                validated.execution_attempt_id.clone(),
                 validated.network_plan.clone(),
             ))
         }
         WorkloadProvisionStep::PrepareWorkload => handle_result(
             service
                 .bundle_materializer
-                .prepare_provision_workload(&validated.sandbox_id),
+                .prepare_provision_workload(&validated.sandbox_id, &validated.execution_attempt_id),
         ),
         WorkloadProvisionStep::AttachNetwork => phase_result(
             service
                 .bundle_materializer
-                .attach_provision_network(&validated.sandbox_id),
+                .attach_provision_network(&validated.sandbox_id, &validated.execution_attempt_id),
         ),
         WorkloadProvisionStep::ActivateWorkload => {
             service.activate_exact_provision(command, validated).await
@@ -316,6 +328,7 @@ async fn execute_phase(
                 .bundle_materializer
                 .publish_provision_machine_ingress(
                     &validated.sandbox_id,
+                    &validated.execution_attempt_id,
                     &validated.network_plan,
                     authority.provider_instance(),
                     authority.generation(),
@@ -341,19 +354,24 @@ async fn inspect_phase(
                 .bundle_materializer
                 .inspect_provision_network_reservation(
                     &validated.sandbox_id,
+                    &validated.execution_attempt_id,
                     &validated.network_plan,
                 ),
         ),
-        WorkloadProvisionStep::PrepareWorkload => optional_handle_result(
-            service
-                .bundle_materializer
-                .inspect_provision_preparation(&validated.sandbox_id),
-        ),
+        WorkloadProvisionStep::PrepareWorkload => {
+            optional_handle_result(service.bundle_materializer.inspect_provision_preparation(
+                &validated.sandbox_id,
+                &validated.execution_attempt_id,
+            ))
+        }
         WorkloadProvisionStep::AttachNetwork
         | WorkloadProvisionStep::InspectActivationPrerequisites => phase_result(
             service
                 .bundle_materializer
-                .inspect_provision_activation_prerequisites(&validated.sandbox_id),
+                .inspect_provision_activation_prerequisites(
+                    &validated.sandbox_id,
+                    &validated.execution_attempt_id,
+                ),
         ),
         WorkloadProvisionStep::ActivateWorkload => {
             service.inspect_exact_activation(command, validated).await
@@ -366,6 +384,7 @@ async fn inspect_phase(
                 .bundle_materializer
                 .inspect_provision_machine_ingress(
                     &validated.sandbox_id,
+                    &validated.execution_attempt_id,
                     &validated.network_plan,
                     authority.provider_instance(),
                     authority.generation(),
@@ -376,24 +395,26 @@ async fn inspect_phase(
 
 fn provider_claim(
     command: &MachineApiWorkloadProvisionCommandEnvelope,
-) -> Result<ProviderProvisionClaim, nimbus_sandbox::ProviderProvisionJournalError> {
+) -> Result<ProviderCommandClaim, nimbus_sandbox::ProviderCommandJournalError> {
     let attempt = command.claim().attempt();
     let effect_subject = serde_json::to_string(attempt.subjects()).map_err(|error| {
-        nimbus_sandbox::ProviderProvisionJournalError::InvalidClaim {
+        nimbus_sandbox::ProviderCommandJournalError::InvalidClaim {
             message: format!("confirmed provider subject cannot be encoded: {error}"),
         }
     })?;
     let target = serde_json::to_vec(command.provider_target()).map_err(|error| {
-        nimbus_sandbox::ProviderProvisionJournalError::InvalidClaim {
+        nimbus_sandbox::ProviderCommandJournalError::InvalidClaim {
             message: format!("confirmed provider target cannot be encoded: {error}"),
         }
     })?;
-    ProviderProvisionClaim::new(ProviderProvisionClaimInput {
+    ProviderCommandClaim::new(ProviderCommandClaimInput {
         authority_id: attempt.saga_id().as_str().to_owned(),
         effect_subject,
+        source_attempt_id: None,
         attempt_id: command.attempt_id().as_str().to_owned(),
         dispatch_epoch: command.dispatch_epoch().as_u64(),
-        generation: command.generation().as_u64(),
+        workload_generation: command.generation().as_u64(),
+        restart_ordinal: 0,
         desired_digest: command.desired_digest().to_string(),
         source_digest: command.source_digest().to_string(),
         network_plan_digest: command.network_plan_digest().to_string(),
@@ -402,47 +423,47 @@ fn provider_claim(
     })
 }
 
-const fn operation(step: WorkloadProvisionStep) -> ProviderProvisionOperation {
+const fn operation(step: WorkloadProvisionStep) -> ProviderCommandOperation {
     match step {
-        WorkloadProvisionStep::ReserveNetwork => ProviderProvisionOperation::ReserveNetwork,
-        WorkloadProvisionStep::PrepareWorkload => ProviderProvisionOperation::PrepareWorkload,
-        WorkloadProvisionStep::AttachNetwork => ProviderProvisionOperation::AttachNetwork,
+        WorkloadProvisionStep::ReserveNetwork => ProviderCommandOperation::ReserveNetwork,
+        WorkloadProvisionStep::PrepareWorkload => ProviderCommandOperation::PrepareWorkload,
+        WorkloadProvisionStep::AttachNetwork => ProviderCommandOperation::AttachNetwork,
         WorkloadProvisionStep::InspectActivationPrerequisites => {
-            ProviderProvisionOperation::InspectActivationPrerequisites
+            ProviderCommandOperation::InspectActivationPrerequisites
         }
-        WorkloadProvisionStep::ActivateWorkload => ProviderProvisionOperation::ActivateWorkload,
+        WorkloadProvisionStep::ActivateWorkload => ProviderCommandOperation::ActivateWorkload,
         WorkloadProvisionStep::InspectWorkloadReadiness => {
-            ProviderProvisionOperation::InspectWorkloadReadiness
+            ProviderCommandOperation::InspectWorkloadReadiness
         }
-        WorkloadProvisionStep::Publish => ProviderProvisionOperation::PublishIngress,
-        WorkloadProvisionStep::ObservePublication => ProviderProvisionOperation::ObserveIngress,
+        WorkloadProvisionStep::Publish => ProviderCommandOperation::PublishIngress,
+        WorkloadProvisionStep::ObservePublication => ProviderCommandOperation::ObserveIngress,
     }
 }
 
 fn record_effect(
-    journal: &ProviderProvisionAttemptJournal,
-    claim: &ProviderProvisionClaim,
+    journal: &ProviderCommandAttemptJournal,
+    claim: &ProviderCommandClaim,
     effect: MachineApiWorkloadProvisionObservation,
     reconcile_live_absence: bool,
 ) -> MachineApiWorkloadProvisionObservation {
     let kind = match &effect {
         MachineApiWorkloadProvisionObservation::Succeeded { .. } => {
-            ProviderProvisionObservationKind::Succeeded
+            ProviderCommandObservationKind::Succeeded
         }
         MachineApiWorkloadProvisionObservation::DefiniteFailure { .. } => {
-            ProviderProvisionObservationKind::DefiniteFailure
+            ProviderCommandObservationKind::DefiniteFailure
         }
         MachineApiWorkloadProvisionObservation::Absent { .. } => {
-            ProviderProvisionObservationKind::Absent
+            ProviderCommandObservationKind::Absent
         }
         MachineApiWorkloadProvisionObservation::InProgress { .. } => {
-            ProviderProvisionObservationKind::InProgress
+            ProviderCommandObservationKind::InProgress
         }
         MachineApiWorkloadProvisionObservation::Ambiguous { .. } => {
-            ProviderProvisionObservationKind::Ambiguous
+            ProviderCommandObservationKind::Ambiguous
         }
     };
-    let result = if reconcile_live_absence && kind == ProviderProvisionObservationKind::Absent {
+    let result = if reconcile_live_absence && kind == ProviderCommandObservationKind::Absent {
         journal.record_reconciled_absence(claim, effect.evidence())
     } else {
         journal.record_observation(claim, kind, effect.evidence())
@@ -455,21 +476,21 @@ fn record_effect(
 
 fn terminal_without_live_reconciliation(
     step: WorkloadProvisionStep,
-    kind: ProviderProvisionObservationKind,
+    kind: ProviderCommandObservationKind,
 ) -> bool {
     !matches!(
         step,
         WorkloadProvisionStep::Publish | WorkloadProvisionStep::ObservePublication
     ) && matches!(
         kind,
-        ProviderProvisionObservationKind::Succeeded
-            | ProviderProvisionObservationKind::DefiniteFailure
-            | ProviderProvisionObservationKind::Absent
+        ProviderCommandObservationKind::Succeeded
+            | ProviderCommandObservationKind::DefiniteFailure
+            | ProviderCommandObservationKind::Absent
     )
 }
 
 fn journal_observation(
-    observation: &ProviderProvisionObservation,
+    observation: &ProviderCommandObservation,
 ) -> MachineApiWorkloadProvisionObservation {
     let evidence = bounded_evidence(
         observation
@@ -477,20 +498,19 @@ fn journal_observation(
             .unwrap_or("provider_attempt_claimed"),
     );
     match observation.kind() {
-        ProviderProvisionObservationKind::Succeeded => {
+        ProviderCommandObservationKind::Succeeded => {
             MachineApiWorkloadProvisionObservation::Succeeded { evidence }
         }
-        ProviderProvisionObservationKind::DefiniteFailure => {
+        ProviderCommandObservationKind::DefiniteFailure => {
             MachineApiWorkloadProvisionObservation::DefiniteFailure { evidence }
         }
-        ProviderProvisionObservationKind::Absent => {
+        ProviderCommandObservationKind::Absent => {
             MachineApiWorkloadProvisionObservation::Absent { evidence }
         }
-        ProviderProvisionObservationKind::Claimed
-        | ProviderProvisionObservationKind::InProgress => {
+        ProviderCommandObservationKind::Claimed | ProviderCommandObservationKind::InProgress => {
             MachineApiWorkloadProvisionObservation::InProgress { evidence }
         }
-        ProviderProvisionObservationKind::Ambiguous => {
+        ProviderCommandObservationKind::Ambiguous => {
             MachineApiWorkloadProvisionObservation::Ambiguous { evidence }
         }
     }

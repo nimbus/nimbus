@@ -1,7 +1,6 @@
 //! Cross-facade machine-port lifecycle proof for the OCI network process.
 
 use super::support::*;
-use super::*;
 
 use std::net::{Ipv4Addr, TcpListener};
 use std::sync::Arc;

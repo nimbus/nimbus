@@ -13,6 +13,7 @@ mod natural_exit;
 mod network_composition;
 mod provider_failure_recovery;
 mod provision_phases;
+mod restart_phases;
 mod root_ownership;
 mod startup_fencing;
 mod support;
@@ -28,6 +29,11 @@ pub(super) fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
         .iter()
         .map(|value| value.as_str().expect("env entries should be strings"))
         .collect()
+}
+
+fn sample_execution_attempt_id(id: &SandboxId) -> crate::SandboxExecutionAttemptId {
+    crate::SandboxExecutionAttemptId::new(format!("test-execution-attempt:{id}"))
+        .expect("test execution attempt should validate")
 }
 
 // KME4 readiness gate: the execute path no longer fails closed unconditionally;
@@ -226,13 +232,18 @@ fn execute_start_denies_fail_closed_off_linux() {
     let activation_id = SandboxId::new("kme4-off-linux-activation");
     let network_plan = sample_provision_network_plan(&spec, &activation_id, "off-linux-activation");
     backend
-        .reserve_provision_network(spec, activation_id.clone(), network_plan)
+        .reserve_provision_network(
+            spec,
+            activation_id.clone(),
+            sample_execution_attempt_id(&activation_id),
+            network_plan,
+        )
         .expect("non-Linux reservation must not launch the VMM");
     backend
-        .prepare_provision_workload(&activation_id)
+        .prepare_provision_workload(&activation_id, &sample_execution_attempt_id(&activation_id))
         .expect("non-Linux preparation must not launch the VMM");
     let error = backend
-        .activate_provision_workload(&activation_id)
+        .activate_provision_workload(&activation_id, &sample_execution_attempt_id(&activation_id))
         .expect_err("krun activation must fail closed on a non-Linux host");
     assert!(
         matches!(error, crate::error::SandboxError::BackendUnavailable { .. })
@@ -1467,6 +1478,7 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
             "status": "starting",
             "published_endpoints": [],
         },
+        "execution_attempt_id": "test-execution-attempt:sandbox-01",
         "spec": {
             "tenant_id": "tenant",
             "owner": {

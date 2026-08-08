@@ -229,6 +229,7 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
             SandboxStatus::Starting,
             endpoints,
         ),
+        execution_attempt_id: crate::SandboxExecutionAttemptId::new("wea_test").unwrap(),
         spec,
         image_metadata: KrunImageMetadata::default(),
         launch_artifact: None,

@@ -171,7 +171,7 @@ pub(crate) async fn activation_command_for_record(
 
 fn adapter(root: &Path) -> ProviderProvisionPhaseAdapter {
     ProviderProvisionPhaseAdapter::new(
-        ProviderProvisionAttemptJournal::open(root, "test-container")
+        ProviderCommandAttemptJournal::open(root, "test-container")
             .expect("fixture journal should open"),
     )
 }

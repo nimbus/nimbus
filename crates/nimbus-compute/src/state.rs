@@ -43,8 +43,10 @@ use crate::node_workloads::NodeWorkloadCoordinator;
 use crate::runtime_manager::RuntimeManager;
 use crate::workload_projection::WorkloadProjectionSink;
 use crate::workload_provisioner::WorkloadProvisioner;
+use crate::workload_saga::restart_runtime::WorkloadRestartRuntime;
 use crate::workload_saga::{
-    WorkloadProvisionCapabilityRegistry, WorkloadProvisionSourceAuthority, WorkloadSagaCoordinator,
+    WorkloadProvisionCapabilityRegistry, WorkloadProvisionSourceAuthority,
+    WorkloadRestartCapabilityRegistry, WorkloadSagaCoordinator,
 };
 
 /// Explicit workload-lifecycle capabilities available to a compute state.
@@ -60,6 +62,7 @@ pub enum ComputeWorkloadComposition {
         saga_store: Arc<dyn WorkloadSagaStore>,
         source_authority: Arc<dyn WorkloadProvisionSourceAuthority>,
         provision_capabilities: Box<WorkloadProvisionCapabilityRegistry>,
+        restart_capabilities: Box<WorkloadRestartCapabilityRegistry>,
         projection_sink: Arc<dyn WorkloadProjectionSink>,
     },
 }
@@ -80,6 +83,7 @@ pub struct ComputeState {
     network_manager: Option<Arc<LocalNetworkManager>>,
     workload_saga_coordinator: Option<Arc<WorkloadSagaCoordinator>>,
     workload_provisioner: Option<Arc<WorkloadProvisioner>>,
+    _workload_restart_runtime: Option<WorkloadRestartRuntime>,
     system_convex_registry: Option<Arc<ConvexRegistry>>,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -97,11 +101,16 @@ impl ComputeState {
             node_services,
             runtime,
         } = config;
-        let (network_manager, workload_saga_coordinator, workload_provisioner) =
+        let (
+            network_manager,
+            workload_saga_coordinator,
+            workload_provisioner,
+            workload_restart_runtime,
+        ) =
             match workload_composition {
                 ComputeWorkloadComposition::ProtocolOnly => {
                     Self::require_protocol_only_node_services(&node_services);
-                    (None, None, None)
+                    (None, None, None, None)
                 }
                 ComputeWorkloadComposition::Managed {
                     network_manager,
@@ -111,6 +120,7 @@ impl ComputeState {
                     saga_store,
                     source_authority,
                     provision_capabilities,
+                    restart_capabilities,
                     projection_sink,
                 } => {
                     assert!(
@@ -119,20 +129,34 @@ impl ComputeState {
                     );
                     let coordinator = Arc::new(WorkloadSagaCoordinator::new(saga_store));
                     let provider_reports = network_manager.capability_registry().clone();
+                    let provision_capabilities = Arc::new(*provision_capabilities);
                     let provisioner = Arc::new(WorkloadProvisioner::new(
                         local_node,
-                        provider_reports,
+                        provider_reports.clone(),
                         capability_selection,
                         sovereignty,
                         Arc::clone(&coordinator),
-                        source_authority,
-                        *provision_capabilities,
+                        Arc::clone(&source_authority),
+                        (*provision_capabilities).clone(),
                         projection_sink,
                     )
                     .expect(
                         "managed workload composition requires an exact provider-report selection",
                     ));
-                    (Some(network_manager), Some(coordinator), Some(provisioner))
+                    let restart_runtime = WorkloadRestartRuntime::start(
+                        Arc::clone(&coordinator),
+                        source_authority,
+                        provider_reports,
+                        provision_capabilities,
+                        Arc::new(*restart_capabilities),
+                    )
+                    .expect("managed workload composition requires a retained restart watch");
+                    (
+                        Some(network_manager),
+                        Some(coordinator),
+                        Some(provisioner),
+                        Some(restart_runtime),
+                    )
                 }
             };
         let node_services = node_services.resolve(engine.clone());
@@ -176,6 +200,7 @@ impl ComputeState {
             network_manager,
             workload_saga_coordinator,
             workload_provisioner,
+            _workload_restart_runtime: workload_restart_runtime,
             system_convex_registry,
             control_plane,
             node_services,
@@ -547,6 +572,7 @@ mod tests {
     #[derive(Default)]
     struct EffectForbiddenWorkloadSagaStore {
         calls: AtomicUsize,
+        restart_watch_calls: AtomicUsize,
     }
 
     #[derive(Default)]
@@ -672,12 +698,12 @@ mod tests {
 
         fn list_restart_candidates<'a>(
             &'a self,
-            _request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
+            request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
         ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadRestartCandidatePage>
         {
             Box::pin(async move {
-                self.calls.fetch_add(1, Ordering::AcqRel);
-                Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+                self.restart_watch_calls.fetch_add(1, Ordering::AcqRel);
+                nimbus_workloads::WorkloadRestartCandidatePage::new(&request, Vec::new(), false)
             })
         }
 
@@ -929,6 +955,10 @@ mod tests {
                     WorkloadProvisionCapabilityRegistry::new([], [], [])
                         .expect("empty provision registry should validate"),
                 ),
+                restart_capabilities: Box::new(
+                    WorkloadRestartCapabilityRegistry::new([])
+                        .expect("empty restart registry should validate"),
+                ),
                 projection_sink: Arc::new(EffectForbiddenProjectionSink::default()),
             },
             deployment: DeploymentConfig::default(),
@@ -1119,6 +1149,10 @@ mod tests {
                 provision_capabilities: Box::new(
                     WorkloadProvisionCapabilityRegistry::new([], [], [])
                         .expect("empty provision registry should fail closed"),
+                ),
+                restart_capabilities: Box::new(
+                    WorkloadRestartCapabilityRegistry::new([])
+                        .expect("empty restart registry should fail closed"),
                 ),
                 projection_sink: projection_sink.clone(),
             },

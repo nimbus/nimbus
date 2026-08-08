@@ -22,9 +22,9 @@ use nimbus_network::{
 use nimbus_sandbox::backends::container::ContainerSandboxBackend;
 use nimbus_sandbox::backends::krun::KrunSandboxBackend;
 use nimbus_sandbox::{
-    SandboxHandle, SandboxId, SandboxProvisionDependencyListener, SandboxProvisionListener,
-    SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation, SandboxSpec,
-    sandbox_network_plan_requirements,
+    SandboxExecutionAttemptId, SandboxHandle, SandboxId, SandboxProvisionDependencyListener,
+    SandboxProvisionListener, SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation,
+    SandboxSpec, sandbox_network_plan_requirements,
 };
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
@@ -43,23 +43,24 @@ pub(crate) fn provision_container(
 ) -> nimbus_sandbox::Result<ProvisionedSandbox> {
     let id = fixture_id("container", spec.display_name());
     let plan = compiled_network_plan(&spec, &id);
-    backend.reserve_provision_network(spec, id.clone(), plan)?;
-    backend.prepare_provision_workload(&id)?;
+    let attempt = fixture_attempt_id(&id);
+    backend.reserve_provision_network(spec, id.clone(), attempt.clone(), plan)?;
+    backend.prepare_provision_workload(&id, &attempt)?;
     require_succeeded(
         "container attachment",
-        backend.attach_provision_network(&id)?,
+        backend.attach_provision_network(&id, &attempt)?,
     )?;
     require_succeeded(
         "container activation prerequisite",
-        backend.inspect_provision_activation_prerequisites(&id)?,
+        backend.inspect_provision_activation_prerequisites(&id, &attempt)?,
     )?;
     require_succeeded(
         "container activation",
-        backend.activate_provision_workload(&id)?,
+        backend.activate_provision_workload(&id, &attempt)?,
     )?;
     require_readiness_observation(
         "container readiness",
-        backend.inspect_provision_workload_readiness(&id)?,
+        backend.inspect_provision_workload_readiness(&id, &attempt)?,
     )?;
     let manifest = read_manifest(workload_state_root, &id)?;
     let (handle, ingress) = finish_fixture(manifest, install_ingress)?;
@@ -75,17 +76,24 @@ pub(crate) fn provision_krun(
 ) -> nimbus_sandbox::Result<ProvisionedSandbox> {
     let id = fixture_id("krun", spec.display_name());
     let plan = compiled_network_plan(&spec, &id);
-    backend.reserve_provision_network(spec, id.clone(), plan)?;
-    backend.prepare_provision_workload(&id)?;
-    require_succeeded("krun attachment", backend.attach_provision_network(&id)?)?;
+    let attempt = fixture_attempt_id(&id);
+    backend.reserve_provision_network(spec, id.clone(), attempt.clone(), plan)?;
+    backend.prepare_provision_workload(&id, &attempt)?;
+    require_succeeded(
+        "krun attachment",
+        backend.attach_provision_network(&id, &attempt)?,
+    )?;
     require_succeeded(
         "krun activation prerequisite",
-        backend.inspect_provision_activation_prerequisites(&id)?,
+        backend.inspect_provision_activation_prerequisites(&id, &attempt)?,
     )?;
-    require_succeeded("krun activation", backend.activate_provision_workload(&id)?)?;
+    require_succeeded(
+        "krun activation",
+        backend.activate_provision_workload(&id, &attempt)?,
+    )?;
     require_readiness_observation(
         "krun readiness",
-        backend.inspect_provision_workload_readiness(&id)?,
+        backend.inspect_provision_workload_readiness(&id, &attempt)?,
     )?;
     let manifest = read_manifest(workload_state_root, &id)?;
     let (handle, ingress) = finish_fixture(manifest, install_ingress)?;
@@ -105,6 +113,11 @@ fn fixture_id(provider: &str, display_name: &str) -> SandboxId {
         })
         .collect::<String>();
     SandboxId::new(format!("phase-{provider}-{label}-{sequence}"))
+}
+
+fn fixture_attempt_id(sandbox_id: &SandboxId) -> SandboxExecutionAttemptId {
+    SandboxExecutionAttemptId::new(format!("linux-smoke:{sandbox_id}"))
+        .expect("Linux smoke execution attempt should validate")
 }
 
 fn compiled_network_plan(spec: &SandboxSpec, id: &SandboxId) -> SandboxProvisionNetworkPlan {

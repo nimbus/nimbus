@@ -6,9 +6,9 @@
 //! the portable saga vocabulary.
 
 use nimbus_sandbox::{
-    ProviderProvisionAttemptJournal, ProviderProvisionClaim, ProviderProvisionClaimDecision,
-    ProviderProvisionClaimInput, ProviderProvisionJournalError, ProviderProvisionObservation,
-    ProviderProvisionObservationKind, ProviderProvisionOperation,
+    ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
+    ProviderCommandClaimInput, ProviderCommandJournalError, ProviderCommandObservation,
+    ProviderCommandObservationKind, ProviderCommandOperation,
 };
 use nimbus_workloads::{
     WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest, WorkloadProvisionInspectionResult,
@@ -28,11 +28,11 @@ pub enum ProviderProvisionEffectObservation {
 
 /// Shared idempotency composition used by small concrete provider adapters.
 pub struct ProviderProvisionPhaseAdapter {
-    attempt_idempotency_journal: ProviderProvisionAttemptJournal,
+    attempt_idempotency_journal: ProviderCommandAttemptJournal,
 }
 
 impl ProviderProvisionPhaseAdapter {
-    pub fn new(attempt_idempotency_journal: ProviderProvisionAttemptJournal) -> Self {
+    pub fn new(attempt_idempotency_journal: ProviderCommandAttemptJournal) -> Self {
         Self {
             attempt_idempotency_journal,
         }
@@ -52,10 +52,10 @@ impl ProviderProvisionPhaseAdapter {
             .attempt_idempotency_journal
             .claim_dispatch_epoch(&claim)
         {
-            Ok(ProviderProvisionClaimDecision::ExecuteClaimed(_)) => {
+            Ok(ProviderCommandClaimDecision::ExecuteClaimed(_)) => {
                 self.record_effect(command, &claim, effect())
             }
-            Ok(ProviderProvisionClaimDecision::AdoptExactAttempt(observation)) => {
+            Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation)) => {
                 observation_result(command, &observation)
             }
             Err(error) => journal_error_result(command, &error),
@@ -76,19 +76,19 @@ impl ProviderProvisionPhaseAdapter {
             .attempt_idempotency_journal
             .claim_dispatch_epoch(&claim)
         {
-            Ok(ProviderProvisionClaimDecision::AdoptExactAttempt(observation))
+            Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation))
                 if matches!(
                     observation.kind(),
-                    ProviderProvisionObservationKind::Succeeded
-                        | ProviderProvisionObservationKind::DefiniteFailure
-                        | ProviderProvisionObservationKind::Absent
+                    ProviderCommandObservationKind::Succeeded
+                        | ProviderCommandObservationKind::DefiniteFailure
+                        | ProviderCommandObservationKind::Absent
                 ) =>
             {
                 observation_result(command, &observation)
             }
             Ok(
-                ProviderProvisionClaimDecision::ExecuteClaimed(_)
-                | ProviderProvisionClaimDecision::AdoptExactAttempt(_),
+                ProviderCommandClaimDecision::ExecuteClaimed(_)
+                | ProviderCommandClaimDecision::AdoptExactAttempt(_),
             ) => self.record_effect(command, &claim, inspect()),
             Err(error) => journal_error_result(command, &error),
         }
@@ -130,28 +130,27 @@ impl ProviderProvisionPhaseAdapter {
     fn record_effect(
         &self,
         command: &ConfirmedWorkloadProvisionCommand,
-        claim: &ProviderProvisionClaim,
+        claim: &ProviderCommandClaim,
         effect: ProviderProvisionEffectObservation,
     ) -> WorkloadProvisionInspectionResult {
         let (kind, evidence) = match &effect {
             ProviderProvisionEffectObservation::Succeeded { evidence } => (
-                ProviderProvisionObservationKind::Succeeded,
+                ProviderCommandObservationKind::Succeeded,
                 evidence.as_slice(),
             ),
             ProviderProvisionEffectObservation::DefiniteFailure { evidence, .. } => (
-                ProviderProvisionObservationKind::DefiniteFailure,
+                ProviderCommandObservationKind::DefiniteFailure,
                 evidence.as_slice(),
             ),
-            ProviderProvisionEffectObservation::Absent { evidence } => (
-                ProviderProvisionObservationKind::Absent,
-                evidence.as_slice(),
-            ),
+            ProviderProvisionEffectObservation::Absent { evidence } => {
+                (ProviderCommandObservationKind::Absent, evidence.as_slice())
+            }
             ProviderProvisionEffectObservation::InProgress { evidence } => (
-                ProviderProvisionObservationKind::InProgress,
+                ProviderCommandObservationKind::InProgress,
                 evidence.as_slice(),
             ),
             ProviderProvisionEffectObservation::Ambiguous { evidence } => (
-                ProviderProvisionObservationKind::Ambiguous,
+                ProviderCommandObservationKind::Ambiguous,
                 evidence.as_slice(),
             ),
         };
@@ -168,23 +167,25 @@ impl ProviderProvisionPhaseAdapter {
 
 fn claim_for_command(
     command: &ConfirmedWorkloadProvisionCommand,
-) -> Result<ProviderProvisionClaim, ProviderProvisionJournalError> {
+) -> Result<ProviderCommandClaim, ProviderCommandJournalError> {
     let effect_subject = serde_json::to_string(command.subjects()).map_err(|error| {
-        ProviderProvisionJournalError::InvalidClaim {
+        ProviderCommandJournalError::InvalidClaim {
             message: format!("confirmed provider subject cannot be encoded: {error}"),
         }
     })?;
     let target = serde_json::to_vec(command.provider_target()).map_err(|error| {
-        ProviderProvisionJournalError::InvalidClaim {
+        ProviderCommandJournalError::InvalidClaim {
             message: format!("confirmed provider target cannot be encoded: {error}"),
         }
     })?;
-    ProviderProvisionClaim::new(ProviderProvisionClaimInput {
+    ProviderCommandClaim::new(ProviderCommandClaimInput {
         authority_id: command.saga_id().as_str().to_owned(),
         effect_subject,
+        source_attempt_id: None,
         attempt_id: command.attempt_id().as_str().to_owned(),
         dispatch_epoch: command.dispatch_epoch().as_u64(),
-        generation: command.generation().as_u64(),
+        workload_generation: command.generation().as_u64(),
+        restart_ordinal: 0,
         desired_digest: command.desired_digest().to_string(),
         source_digest: command.source_digest().to_string(),
         network_plan_digest: command.network_plan_digest().to_string(),
@@ -193,31 +194,30 @@ fn claim_for_command(
     })
 }
 
-const fn operation(step: WorkloadProvisionStep) -> ProviderProvisionOperation {
+const fn operation(step: WorkloadProvisionStep) -> ProviderCommandOperation {
     match step {
-        WorkloadProvisionStep::ReserveNetwork => ProviderProvisionOperation::ReserveNetwork,
-        WorkloadProvisionStep::PrepareWorkload => ProviderProvisionOperation::PrepareWorkload,
-        WorkloadProvisionStep::AttachNetwork => ProviderProvisionOperation::AttachNetwork,
+        WorkloadProvisionStep::ReserveNetwork => ProviderCommandOperation::ReserveNetwork,
+        WorkloadProvisionStep::PrepareWorkload => ProviderCommandOperation::PrepareWorkload,
+        WorkloadProvisionStep::AttachNetwork => ProviderCommandOperation::AttachNetwork,
         WorkloadProvisionStep::InspectActivationPrerequisites => {
-            ProviderProvisionOperation::InspectActivationPrerequisites
+            ProviderCommandOperation::InspectActivationPrerequisites
         }
-        WorkloadProvisionStep::ActivateWorkload => ProviderProvisionOperation::ActivateWorkload,
+        WorkloadProvisionStep::ActivateWorkload => ProviderCommandOperation::ActivateWorkload,
         WorkloadProvisionStep::InspectWorkloadReadiness => {
-            ProviderProvisionOperation::InspectWorkloadReadiness
+            ProviderCommandOperation::InspectWorkloadReadiness
         }
-        WorkloadProvisionStep::Publish => ProviderProvisionOperation::PublishIngress,
-        WorkloadProvisionStep::ObservePublication => ProviderProvisionOperation::ObserveIngress,
+        WorkloadProvisionStep::Publish => ProviderCommandOperation::PublishIngress,
+        WorkloadProvisionStep::ObservePublication => ProviderCommandOperation::ObserveIngress,
     }
 }
 
 fn observation_result(
     command: &ConfirmedWorkloadProvisionCommand,
-    observation: &ProviderProvisionObservation,
+    observation: &ProviderCommandObservation,
 ) -> WorkloadProvisionInspectionResult {
     let evidence = evidence_digest(observation);
     match observation.kind() {
-        ProviderProvisionObservationKind::Claimed
-        | ProviderProvisionObservationKind::InProgress => {
+        ProviderCommandObservationKind::Claimed | ProviderCommandObservationKind::InProgress => {
             WorkloadProvisionInspectionResult::InProgress {
                 attempt_id: command.attempt_id().clone(),
                 dispatch_epoch: command.dispatch_epoch(),
@@ -225,21 +225,19 @@ fn observation_result(
                 evidence,
             }
         }
-        ProviderProvisionObservationKind::Succeeded => {
-            WorkloadProvisionInspectionResult::Succeeded {
-                attempt_id: command.attempt_id().clone(),
-                dispatch_epoch: command.dispatch_epoch(),
-                provider_target: command.provider_target().clone(),
-                evidence: success_evidence(command, evidence),
-            }
-        }
-        ProviderProvisionObservationKind::DefiniteFailure => {
+        ProviderCommandObservationKind::Succeeded => WorkloadProvisionInspectionResult::Succeeded {
+            attempt_id: command.attempt_id().clone(),
+            dispatch_epoch: command.dispatch_epoch(),
+            provider_target: command.provider_target().clone(),
+            evidence: success_evidence(command, evidence),
+        },
+        ProviderCommandObservationKind::DefiniteFailure => {
             definite_failure_result(command, "provider_definite_failure", evidence)
         }
-        ProviderProvisionObservationKind::Absent => WorkloadProvisionInspectionResult::Absent {
+        ProviderCommandObservationKind::Absent => WorkloadProvisionInspectionResult::Absent {
             evidence: command.absence_evidence(evidence),
         },
-        ProviderProvisionObservationKind::Ambiguous => ambiguous_result(command),
+        ProviderCommandObservationKind::Ambiguous => ambiguous_result(command),
     }
 }
 
@@ -307,12 +305,9 @@ fn success_evidence(
     }
 }
 
-fn evidence_digest(observation: &ProviderProvisionObservation) -> WorkloadOwnerEvidenceDigest {
+fn evidence_digest(observation: &ProviderCommandObservation) -> WorkloadOwnerEvidenceDigest {
     let durable = observation.evidence_sha256().unwrap_or_else(|| {
-        debug_assert_eq!(
-            observation.kind(),
-            ProviderProvisionObservationKind::Claimed
-        );
+        debug_assert_eq!(observation.kind(), ProviderCommandObservationKind::Claimed);
         "provider_claimed_without_outcome_evidence"
     });
     WorkloadOwnerEvidenceDigest::sha256(
@@ -326,22 +321,25 @@ fn evidence_digest(observation: &ProviderProvisionObservation) -> WorkloadOwnerE
 
 fn journal_error_result(
     command: &ConfirmedWorkloadProvisionCommand,
-    error: &ProviderProvisionJournalError,
+    error: &ProviderCommandJournalError,
 ) -> WorkloadProvisionInspectionResult {
     match error {
-        ProviderProvisionJournalError::InvalidClaim { .. }
-        | ProviderProvisionJournalError::StaleGeneration { .. }
-        | ProviderProvisionJournalError::StaleDispatchEpoch { .. }
-        | ProviderProvisionJournalError::SkippedDispatchEpoch { .. }
-        | ProviderProvisionJournalError::CrossedClaim
-        | ProviderProvisionJournalError::RetryWithoutAbsence
-        | ProviderProvisionJournalError::PriorEffectUnresolved => definite_failure_result(
+        ProviderCommandJournalError::InvalidClaim { .. }
+        | ProviderCommandJournalError::StaleWorkloadGeneration { .. }
+        | ProviderCommandJournalError::StaleRestartOrdinal { .. }
+        | ProviderCommandJournalError::SkippedRestartOrdinal { .. }
+        | ProviderCommandJournalError::StaleDispatchEpoch { .. }
+        | ProviderCommandJournalError::SkippedDispatchEpoch { .. }
+        | ProviderCommandJournalError::CrossedClaim
+        | ProviderCommandJournalError::RetryWithoutAbsence
+        | ProviderCommandJournalError::PriorEffectUnresolved => definite_failure_result(
             command,
             "provider_claim_rejected",
             WorkloadOwnerEvidenceDigest::sha256(error.to_string()),
         ),
-        ProviderProvisionJournalError::Corrupt { .. }
-        | ProviderProvisionJournalError::Store { .. } => ambiguous_result(command),
+        ProviderCommandJournalError::Corrupt { .. } | ProviderCommandJournalError::Store { .. } => {
+            ambiguous_result(command)
+        }
     }
 }
 

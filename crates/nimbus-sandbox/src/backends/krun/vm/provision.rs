@@ -37,6 +37,7 @@ impl KrunSandboxBackend {
         &self,
         spec: SandboxSpec,
         sandbox_id: SandboxId,
+        execution_attempt_id: crate::SandboxExecutionAttemptId,
         network_plan: SandboxProvisionNetworkPlan,
     ) -> Result<SandboxHandle> {
         if network_plan.tenant_id() != &spec.tenant_id {
@@ -51,25 +52,32 @@ impl KrunSandboxBackend {
                 ),
             });
         }
-        self.plan_reserved_provision_with_id(&spec, &sandbox_id, &network_plan)
-            .map(|plan| plan.manifest.handle)
+        self.plan_reserved_provision_with_id(
+            &spec,
+            &sandbox_id,
+            execution_attempt_id,
+            &network_plan,
+        )
+        .map(|plan| plan.manifest.handle)
     }
 
     /// Inspect durable reservation evidence without allocating or repairing.
     pub fn inspect_provision_network_reservation(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
         expected_plan: &SandboxProvisionNetworkPlan,
     ) -> Result<Option<SandboxHandle>> {
         let Some(manifest) = self.read_manifest(sandbox_id)? else {
             return Ok(None);
         };
-        if manifest.provision_network_plan.as_ref() != Some(expected_plan)
+        if &manifest.execution_attempt_id != expected_attempt_id
+            || manifest.provision_network_plan.as_ref() != Some(expected_plan)
             || manifest.spec.tenant_id != *expected_plan.tenant_id()
         {
             return Err(SandboxError::OperationFailed {
                 message: format!(
-                    "krun provision reservation inspection for {sandbox_id} crossed its exact compiled network plan"
+                    "krun provision reservation inspection for {sandbox_id} crossed its exact execution attempt or compiled network plan"
                 ),
             });
         }
@@ -144,12 +152,17 @@ impl KrunSandboxBackend {
     }
 
     /// Materialize the already-reserved rootfs, bundle, and VM configuration.
-    pub fn prepare_provision_workload(&self, sandbox_id: &SandboxId) -> Result<SandboxHandle> {
+    pub fn prepare_provision_workload(
+        &self,
+        sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
+    ) -> Result<SandboxHandle> {
         let Some(mut manifest) = self.read_manifest(sandbox_id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             });
         };
+        manifest.require_execution_attempt(expected_attempt_id, "krun provision preparation")?;
         let _lifecycle = self.lock_launch_lifecycle(&manifest)?;
         self.require_current_launch_plan(&manifest)?;
         if manifest.network_config.is_none() || manifest.reservation_claim().is_none() {
@@ -211,10 +224,15 @@ impl KrunSandboxBackend {
     pub fn inspect_provision_preparation(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<Option<SandboxHandle>> {
         let Some(manifest) = self.read_manifest(sandbox_id)? else {
             return Ok(None);
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "krun provision preparation inspection",
+        )?;
         if manifest.provision_prepared && manifest.bundle_layout.config_path.is_file() {
             Ok(Some(manifest.handle))
         } else {
@@ -262,6 +280,7 @@ impl KrunSandboxBackend {
     fn recover_active_planned_pep_after_owner_death(
         &self,
         manifest: &KrunSandboxManifest,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
         reservation_claim: &nimbus_network::NetworkReservationClaim,
     ) -> Result<bool> {
         let never_bound =
@@ -283,7 +302,7 @@ impl KrunSandboxBackend {
             ),
         })?;
         self.start_planned_provision_pep(manifest, reservation_claim)?;
-        match self.inspect_provision_network_attachment(&manifest.handle.id)? {
+        match self.inspect_provision_network_attachment(&manifest.handle.id, expected_attempt_id)? {
             SandboxProvisionPhaseObservation::Succeeded { .. } => Ok(true),
             observation => Err(SandboxError::OperationFailed {
                 message: format!(
@@ -326,12 +345,14 @@ impl KrunSandboxBackend {
     pub fn attach_provision_network(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<SandboxProvisionPhaseObservation> {
         let Some(mut manifest) = self.read_manifest(sandbox_id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             });
         };
+        manifest.require_execution_attempt(expected_attempt_id, "krun provision attachment")?;
         let _lifecycle = self.lock_launch_lifecycle(&manifest)?;
         self.require_current_provision_attachment_plan(&manifest)?;
         if !manifest.provision_prepared {
@@ -348,7 +369,11 @@ impl KrunSandboxBackend {
                 ),
             }
         })?;
-        if self.recover_active_planned_pep_after_owner_death(&manifest, &reservation_claim)? {
+        if self.recover_active_planned_pep_after_owner_death(
+            &manifest,
+            expected_attempt_id,
+            &reservation_claim,
+        )? {
             return Ok(SandboxProvisionPhaseObservation::Succeeded {
                 evidence: phase_evidence("network_attachment_pep_recovered", sandbox_id)?,
             });
@@ -389,12 +414,17 @@ impl KrunSandboxBackend {
     pub fn inspect_provision_network_attachment(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<SandboxProvisionPhaseObservation> {
         let Some(manifest) = self.read_manifest(sandbox_id)? else {
             return Ok(SandboxProvisionPhaseObservation::Absent {
                 evidence: phase_evidence("network_attachment_absent", sandbox_id)?,
             });
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "krun provision attachment inspection",
+        )?;
         let readiness = self.non_routable_attachment_readiness(&manifest)?;
         let evidence = phase_evidence("network_attachment_inspection", &format!("{readiness:?}"))?;
         match readiness {
@@ -410,8 +440,9 @@ impl KrunSandboxBackend {
     pub fn inspect_provision_activation_prerequisites(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<SandboxProvisionPhaseObservation> {
-        self.inspect_provision_network_attachment(sandbox_id)
+        self.inspect_provision_network_attachment(sandbox_id, expected_attempt_id)
     }
 
     /// Activate the VMM after the private attachment is ready. This does not
@@ -419,13 +450,15 @@ impl KrunSandboxBackend {
     pub fn activate_provision_workload(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<SandboxProvisionPhaseObservation> {
-        ensure_linux_host("krun")?;
         let Some(mut manifest) = self.read_manifest(sandbox_id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             });
         };
+        manifest.require_execution_attempt(expected_attempt_id, "krun provision activation")?;
+        ensure_linux_host("krun")?;
         let _lifecycle = self.lock_launch_lifecycle(&manifest)?;
         self.require_current_launch_plan(&manifest)?;
         if !matches!(
@@ -460,12 +493,17 @@ impl KrunSandboxBackend {
     pub fn inspect_provision_workload_activation(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<SandboxProvisionPhaseObservation> {
         let Some(manifest) = self.read_manifest(sandbox_id)? else {
             return Ok(SandboxProvisionPhaseObservation::Absent {
                 evidence: phase_evidence("workload_activation_absent", sandbox_id)?,
             });
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "krun provision activation inspection",
+        )?;
         match runtime_state(
             &manifest.conmon_launch.state_command,
             manifest.handle.id.as_str(),
@@ -505,14 +543,19 @@ impl KrunSandboxBackend {
     pub fn inspect_provision_workload_readiness(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<SandboxProvisionPhaseObservation> {
         let Some(manifest) = self.read_manifest(sandbox_id)? else {
             return Ok(SandboxProvisionPhaseObservation::Absent {
                 evidence: phase_evidence("workload_readiness_absent", sandbox_id)?,
             });
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "krun provision readiness inspection",
+        )?;
         if !matches!(
-            self.inspect_provision_workload_activation(sandbox_id)?,
+            self.inspect_provision_workload_activation(sandbox_id, expected_attempt_id)?,
             SandboxProvisionPhaseObservation::Succeeded { .. }
         ) {
             return Ok(SandboxProvisionPhaseObservation::InProgress {
@@ -576,6 +619,7 @@ impl KrunSandboxBackend {
     pub fn inspect_provision_server_ingress_targets(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
         network_plan: &SandboxProvisionNetworkPlan,
     ) -> Result<crate::SandboxProvisionIngressTargetObservation> {
         let Some(manifest) = self.read_manifest(sandbox_id)? else {
@@ -583,6 +627,10 @@ impl KrunSandboxBackend {
                 evidence: phase_evidence("server_ingress_target_absent", sandbox_id)?,
             });
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "krun provision server-ingress target inspection",
+        )?;
         let config = manifest.require_network_config()?;
         let Some(durable_plan) = config.network_plan.as_ref() else {
             return Err(SandboxError::OperationFailed {

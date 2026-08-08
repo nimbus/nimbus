@@ -43,7 +43,7 @@ use nimbus_network::{
     NetworkSovereigntyRequirements, NetworkTlsBehavior, PortBindClaim, PortBindRealm,
     PortLeaseAccounting, PortLeaseBinding, PortLeaseLifetimeGuard, PortLeasePhase, PortProtocol,
 };
-use nimbus_sandbox::{ProviderProvisionAttemptJournal, SandboxId};
+use nimbus_sandbox::{ProviderCommandAttemptJournal, SandboxId};
 use nimbus_workloads::{
     NodeIdentity, WorkloadExecutableIntent, WorkloadExecutionProviderId,
     WorkloadExecutionReference, WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest,
@@ -333,7 +333,7 @@ impl ForwardedMachineProvisionAdapter {
     ) -> Result<Self, Error> {
         let publication_journal =
             ConfirmedMachinePublicationJournal::open(port_leases.state_root())?;
-        let phase_journal = ProviderProvisionAttemptJournal::open(
+        let phase_journal = ProviderCommandAttemptJournal::open(
             port_leases.state_root(),
             PROVIDER_JOURNAL_NAMESPACE,
         )

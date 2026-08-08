@@ -1,0 +1,278 @@
+//! Production composition for durable automatic workload restart.
+//!
+//! One retained watch discovers durable candidates. A compute-owned
+//! coordinator converts read-only exit evidence into the same admission and
+//! command driver used by explicit restart requests.
+
+use std::num::{NonZeroU64, NonZeroUsize};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use nimbus_network::NetworkCapabilityRegistry;
+use nimbus_sandbox::{
+    SandboxExecutionAttemptId, SandboxExecutionAttemptObservation, SandboxExecutionObservation,
+};
+use nimbus_workloads::{
+    WorkloadInspectionVersion, WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy,
+    WorkloadSagaRecord,
+};
+
+use super::restart_dispatcher::WorkloadRestartDispatcher;
+use super::restart_driver::WorkloadRestartDriver;
+use super::restart_provider::WorkloadRestartCapabilityRegistry;
+use super::restart_supervisor::{
+    RestartCandidateCoordinator, RestartCandidateFuture, RetainedRestartSupervisor,
+};
+use super::restart_watch::{
+    DurableRestartWatch, RestartClock, RestartHintHandle, RestartWait, RestartWaitFuture,
+};
+use super::{
+    WorkloadProvisionCapabilityRegistry, WorkloadProvisionSourceAuthority,
+    WorkloadRestartAdmissionError, WorkloadRestartAdmissionRequest,
+    WorkloadRestartCancellationToken, WorkloadSagaCoordinator,
+};
+use crate::workload_projection::{
+    WorkloadExecutionObservationRequest, WorkloadProviderObservation,
+};
+
+const RESTART_WATCH_PAGE_SIZE: usize = 64;
+const RESTART_WATCH_RESCAN_MILLIS: u64 = 1_000;
+const RESTART_BACKOFF_INITIAL_MILLIS: u64 = 1_000;
+const RESTART_BACKOFF_MAX_MILLIS: u64 = 60_000;
+
+struct SystemRestartClock;
+
+impl RestartClock for SystemRestartClock {
+    fn now_unix_millis(&self) -> WorkloadRestartNotBeforeUnixMillis {
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_millis();
+        WorkloadRestartNotBeforeUnixMillis::new(u64::try_from(millis).unwrap_or(u64::MAX))
+    }
+
+    fn wait_until(
+        &self,
+        deadline: WorkloadRestartNotBeforeUnixMillis,
+        cancellation: &WorkloadRestartCancellationToken,
+    ) -> RestartWaitFuture<'_> {
+        let now = self.now_unix_millis().as_u64();
+        let delay = Duration::from_millis(deadline.as_u64().saturating_sub(now));
+        let mut cancelled = cancellation.subscribe();
+        Box::pin(async move {
+            tokio::select! {
+                () = tokio::time::sleep(delay) => RestartWait::DeadlineReached,
+                changed = cancelled.changed() => {
+                    let _ = changed;
+                    RestartWait::Cancelled
+                }
+            }
+        })
+    }
+}
+
+struct AutomaticRestartCoordinator {
+    coordinator: Arc<WorkloadSagaCoordinator>,
+    driver: Arc<WorkloadRestartDriver>,
+    observations: Arc<WorkloadProvisionCapabilityRegistry>,
+    clock: Arc<dyn RestartClock>,
+}
+
+impl AutomaticRestartCoordinator {
+    async fn coordinate_record(&self, record: WorkloadSagaRecord) -> Result<(), String> {
+        let now = self.clock.now_unix_millis();
+        if record.restart_state().active().is_some() {
+            let key = record.key().clone();
+            self.driver
+                .resume(&key, now)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())?;
+            return Ok(());
+        }
+
+        let request = WorkloadExecutionObservationRequest::for_record(&record);
+        let observation = self
+            .observations
+            .observe_execution(
+                record.active_intent().source().execution_provider_id(),
+                &request,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let WorkloadProviderObservation::Present(inspection) = observation else {
+            // Absence, progress, and ambiguity are read-only hints. A later
+            // bounded sweep reinspects durable truth; none can admit work.
+            return Ok(());
+        };
+        let expected_attempt = SandboxExecutionAttemptId::new(
+            record
+                .current_execution_reference()
+                .attempt_id()
+                .to_string(),
+        )
+        .map_err(|error| error.to_string())?;
+        if !matches!(
+            &inspection.execution_attempt,
+            SandboxExecutionAttemptObservation::Exact(observed) if observed == &expected_attempt
+        ) {
+            return Err(
+                "automatic restart inspection crossed the current execution attempt".to_owned(),
+            );
+        }
+        let SandboxExecutionObservation::Exited { exit_code } = inspection.execution else {
+            return Ok(());
+        };
+        let policy = record.active_intent().restart_policy();
+        let completed = record.restart_state().completed_automatic_restart_count();
+        if !automatic_restart_eligible(policy, exit_code, completed) {
+            return Ok(());
+        }
+
+        let not_before = WorkloadRestartNotBeforeUnixMillis::new(
+            now.as_u64()
+                .checked_add(restart_backoff_millis(completed))
+                .ok_or_else(|| "automatic restart deadline overflow".to_owned())?,
+        );
+        let request = WorkloadRestartAdmissionRequest::for_automatic(
+            &record,
+            exit_code,
+            WorkloadInspectionVersion::sha256(inspection.version.as_bytes()),
+            not_before,
+        );
+        let cancellation = WorkloadRestartCancellationToken::new();
+        let admitted = match self
+            .coordinator
+            .compare_and_swap_restart_admission(&request, &cancellation)
+            .await
+        {
+            Ok(admitted) => admitted,
+            Err(WorkloadRestartAdmissionError::Saga(
+                nimbus_workloads::WorkloadSagaStoreError::Conflict { .. },
+            )) => return Ok(()),
+            Err(error) => return Err(error.to_string()),
+        };
+        self.driver
+            .drive_admitted(admitted.record().clone(), now)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl RestartCandidateCoordinator for AutomaticRestartCoordinator {
+    fn coordinate(&self, record: WorkloadSagaRecord) -> RestartCandidateFuture<'_> {
+        Box::pin(async move { self.coordinate_record(record).await })
+    }
+}
+
+/// Retained automatic-restart watch and its shared exact command driver.
+pub(crate) struct WorkloadRestartRuntime {
+    cancellation: WorkloadRestartCancellationToken,
+    watch_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
+    _hint_handle: RestartHintHandle,
+    _driver: Arc<WorkloadRestartDriver>,
+    _clock: Arc<dyn RestartClock>,
+}
+
+impl WorkloadRestartRuntime {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start(
+        coordinator: Arc<WorkloadSagaCoordinator>,
+        source_authority: Arc<dyn WorkloadProvisionSourceAuthority>,
+        provider_reports: NetworkCapabilityRegistry,
+        provision_capabilities: Arc<WorkloadProvisionCapabilityRegistry>,
+        restart_capabilities: Arc<WorkloadRestartCapabilityRegistry>,
+    ) -> Result<Self, String> {
+        let dispatcher = Arc::new(WorkloadRestartDispatcher::new(
+            source_authority,
+            provider_reports,
+            restart_capabilities,
+        ));
+        let driver = Arc::new(WorkloadRestartDriver::new(
+            Arc::clone(&coordinator),
+            dispatcher,
+        ));
+        let clock: Arc<dyn RestartClock> = Arc::new(SystemRestartClock);
+        let candidate_coordinator = Arc::new(AutomaticRestartCoordinator {
+            coordinator: Arc::clone(&coordinator),
+            driver: Arc::clone(&driver),
+            observations: provision_capabilities,
+            clock: Arc::clone(&clock),
+        });
+        let supervisor = Arc::new(RetainedRestartSupervisor::new(candidate_coordinator));
+        let cancellation = WorkloadRestartCancellationToken::new();
+        let watch = Arc::new(
+            DurableRestartWatch::new(
+                NonZeroUsize::new(RESTART_WATCH_PAGE_SIZE)
+                    .expect("restart watch page size is nonzero"),
+                NonZeroU64::new(RESTART_WATCH_RESCAN_MILLIS)
+                    .expect("restart watch interval is nonzero"),
+                Arc::clone(&clock),
+                cancellation.clone(),
+                coordinator,
+                supervisor,
+            )
+            .map_err(|error| error.to_string())?,
+        );
+        let hint_handle = watch.hint_handle();
+        let (started, ready) = std::sync::mpsc::sync_channel(1);
+        let watch_thread = std::thread::Builder::new()
+            .name("nimbus-workload-restart-watch".to_owned())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_time()
+                    .build()
+                    .map_err(|error| error.to_string());
+                let _ = started.send(runtime.as_ref().map(|_| ()).map_err(Clone::clone));
+                let runtime = runtime?;
+                runtime
+                    .block_on(watch.bounded_restart_watch())
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+            .map_err(|error| error.to_string())?;
+        ready.recv().map_err(|error| error.to_string())??;
+        Ok(Self {
+            cancellation,
+            watch_thread: Mutex::new(Some(watch_thread)),
+            _hint_handle: hint_handle,
+            _driver: driver,
+            _clock: clock,
+        })
+    }
+}
+
+impl Drop for WorkloadRestartRuntime {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+        let thread = self.watch_thread.get_mut().ok().and_then(Option::take);
+        if let Some(thread) = thread
+            && thread.join().is_err()
+        {
+            tracing::error!("workload restart watch thread panicked during shutdown");
+        }
+    }
+}
+
+fn automatic_restart_eligible(
+    policy: WorkloadRestartPolicy,
+    exit_code: i32,
+    completed: u32,
+) -> bool {
+    match policy {
+        WorkloadRestartPolicy::Never => false,
+        WorkloadRestartPolicy::OnFailure { max_restarts } => {
+            exit_code != 0 && completed < max_restarts
+        }
+        WorkloadRestartPolicy::Always { max_restarts } => completed < max_restarts,
+    }
+}
+
+fn restart_backoff_millis(completed: u32) -> u64 {
+    let multiplier = 1_u128 << completed.min(31);
+    u128::from(RESTART_BACKOFF_INITIAL_MILLIS)
+        .saturating_mul(multiplier)
+        .min(u128::from(RESTART_BACKOFF_MAX_MILLIS)) as u64
+}

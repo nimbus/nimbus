@@ -18,6 +18,11 @@ use crate::error::SandboxError;
 
 mod restart_fencing;
 
+fn sample_execution_attempt_id(id: &SandboxId) -> crate::SandboxExecutionAttemptId {
+    crate::SandboxExecutionAttemptId::new(format!("test-execution-attempt:{id}"))
+        .expect("test execution attempt should validate")
+}
+
 fn adopt_launch_network(
     backend: &KrunSandboxBackend,
     manifest: &mut KrunSandboxManifest,
@@ -918,7 +923,7 @@ fn stale_foreign_launch_plan_cannot_disturb_the_durable_winner() {
     assert!(
         error
             .to_string()
-            .contains("no longer owns the durable reserved launch plan"),
+            .contains("no longer owns the durable reserved or adopted launch plan"),
         "the preflight rejection must identify the stale owner: {error}"
     );
     assert!(
@@ -1340,10 +1345,15 @@ fn vm_config_materialization_failure_compensates_unstarted_launch_batch() {
     let network_plan =
         sample_provision_network_plan(&spec, &sandbox_id, "vm-config-materialization-failure");
     backend
-        .reserve_provision_network(spec.clone(), sandbox_id.clone(), network_plan)
+        .reserve_provision_network(
+            spec.clone(),
+            sandbox_id.clone(),
+            sample_execution_attempt_id(&sandbox_id),
+            network_plan,
+        )
         .expect("the exact network envelope should reserve before materialization");
     let error = backend
-        .prepare_provision_workload(&sandbox_id)
+        .prepare_provision_workload(&sandbox_id, &sample_execution_attempt_id(&sandbox_id))
         .expect_err("vm config write should fail before bind");
     assert!(
         error.to_string().contains("failed to write krun vm config"),
@@ -1505,7 +1515,12 @@ fn ambiguous_placement_failure_retains_reserved_authority_for_restart_cleanup() 
     );
 
     let error = backend
-        .plan_reserved_provision_with_id(&spec, &sandbox_id, &network_plan)
+        .plan_reserved_provision_with_id(
+            &spec,
+            &sandbox_id,
+            crate::SandboxExecutionAttemptId::new("wea_test").unwrap(),
+            &network_plan,
+        )
         .expect_err("ambiguous placement and exact cleanup failure must fail");
     assert!(
         error

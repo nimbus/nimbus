@@ -1,11 +1,22 @@
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::{SandboxHandle, SandboxOwnerSpec, SandboxSpec};
+use nimbus_workloads::{WorkloadExecutionAttemptId, WorkloadExecutionReference};
 
 use crate::{SandboxResourceObservation, SandboxResourceSnapshot, SandboxResourceSource};
 
 use super::ServiceManager;
 use super::clock::now_millis;
 use super::types::TenantSandboxResourceKey;
+
+struct SandboxResourceObservationProjection<'a> {
+    tenant_id: &'a TenantId,
+    stable_resource_id: &'a str,
+    observed_generation: u64,
+    expected_resource_version: Option<&'a str>,
+    expected_attempt_id: &'a WorkloadExecutionAttemptId,
+    exact_execution: Option<&'a WorkloadExecutionReference>,
+    handle: SandboxHandle,
+}
 
 impl ServiceManager {
     /// Project one exact provider observation without changing desired source.
@@ -14,51 +25,58 @@ impl ServiceManager {
         tenant_id: &TenantId,
         stable_resource_id: &str,
         observed_generation: u64,
+        expected_attempt_id: &WorkloadExecutionAttemptId,
         handle: SandboxHandle,
     ) -> Result<SandboxResourceObservation, Error> {
-        self.project_sandbox_resource_observation_inner(
+        self.project_sandbox_resource_observation_inner(SandboxResourceObservationProjection {
             tenant_id,
             stable_resource_id,
             observed_generation,
-            None,
-            None,
+            expected_resource_version: None,
+            expected_attempt_id,
+            exact_execution: None,
             handle,
-        )
+        })
     }
 
     /// Project the execution selected for one exact desired sandbox source.
     ///
-    /// Source version and deterministic execution identity are authenticated
-    /// while the source and first projection share the manager lock. Failed
-    /// evidence leaves the existing observed bytes unchanged.
+    /// Source version and the complete execution reference are authenticated
+    /// while the source and projection share the manager lock. Failed evidence
+    /// leaves the existing observed bytes unchanged.
     pub fn project_sandbox_resource_execution_observation(
         &self,
         tenant_id: &TenantId,
         stable_resource_id: &str,
         observed_generation: u64,
         expected_resource_version: &str,
-        expected_execution_id: &str,
+        execution: &WorkloadExecutionReference,
         handle: SandboxHandle,
     ) -> Result<SandboxResourceObservation, Error> {
-        self.project_sandbox_resource_observation_inner(
+        self.project_sandbox_resource_observation_inner(SandboxResourceObservationProjection {
             tenant_id,
             stable_resource_id,
             observed_generation,
-            Some(expected_resource_version),
-            Some(expected_execution_id),
+            expected_resource_version: Some(expected_resource_version),
+            expected_attempt_id: execution.attempt_id(),
+            exact_execution: Some(execution),
             handle,
-        )
+        })
     }
 
     fn project_sandbox_resource_observation_inner(
         &self,
-        tenant_id: &TenantId,
-        stable_resource_id: &str,
-        observed_generation: u64,
-        expected_resource_version: Option<&str>,
-        expected_execution_id: Option<&str>,
-        handle: SandboxHandle,
+        projection: SandboxResourceObservationProjection<'_>,
     ) -> Result<SandboxResourceObservation, Error> {
+        let SandboxResourceObservationProjection {
+            tenant_id,
+            stable_resource_id,
+            observed_generation,
+            expected_resource_version,
+            expected_attempt_id,
+            exact_execution,
+            handle,
+        } = projection;
         let mut state = self
             .state
             .lock()
@@ -87,17 +105,19 @@ impl ServiceManager {
             )));
         }
         validate_sandbox_observation_identity(source, &handle)?;
-        if expected_execution_id.is_some_and(|expected| handle.id.as_str() != expected) {
+        if exact_execution.is_some_and(|execution| {
+            execution.generation().as_u64() != observed_generation
+                || handle.id.as_str() != execution.execution_id().as_str()
+        }) {
             return Err(Error::InvalidInput(format!(
-                "sandbox resource `{stable_resource_id}` for tenant `{tenant_id}` rejected provider sandbox {} because the exact execution ID is {expected_execution_id:?}",
-                handle.id
+                "sandbox resource `{stable_resource_id}` for tenant `{tenant_id}` rejected provider sandbox {} because its exact execution reference is crossed",
+                handle.id,
             )));
         }
-        let exact_first_writer =
-            expected_resource_version.is_some() && expected_execution_id.is_some();
+        let exact_first_writer = expected_resource_version.is_some() && exact_execution.is_some();
         if !exact_first_writer && !state.sandbox_resource_observations.contains_key(&key) {
             return Err(Error::PreconditionFailed(format!(
-                "sandbox resource `{stable_resource_id}` for tenant `{tenant_id}` requires an exact source-version and execution-ID projection before transitional refreshes are accepted"
+                "sandbox resource `{stable_resource_id}` for tenant `{tenant_id}` requires an exact source-version and execution-reference projection before transitional refreshes are accepted"
             )));
         }
         if state
@@ -110,13 +130,6 @@ impl ServiceManager {
                 handle.id
             )));
         }
-        let observation = SandboxResourceObservation {
-            tenant_id: tenant_id.clone(),
-            id: stable_resource_id.to_owned(),
-            observed_generation,
-            handle,
-            observed_at_millis: now_millis(),
-        };
         if let Some(existing) = state.sandbox_resource_observations.get(&key) {
             if existing.observed_generation > observed_generation {
                 return Err(Error::PreconditionFailed(format!(
@@ -125,16 +138,40 @@ impl ServiceManager {
                 )));
             }
             if existing.observed_generation == observed_generation
-                && !same_provider_identity(&existing.handle, &observation.handle)
+                && !same_provider_identity(&existing.handle, &handle)
             {
                 return Err(Error::conflict(format!(
                     "sandbox resource `{stable_resource_id}` generation {observed_generation} already has a different provider observation"
                 )));
             }
-            if existing.handle == observation.handle {
+            validate_attempt_progression(
+                tenant_id,
+                stable_resource_id,
+                existing,
+                expected_attempt_id,
+                exact_execution,
+            )?;
+            if existing.handle == handle && existing.execution.attempt_id() == expected_attempt_id {
                 return Ok(existing.clone());
             }
         }
+        let execution = match exact_execution {
+            Some(execution) => execution.clone(),
+            None => state
+                .sandbox_resource_observations
+                .get(&key)
+                .expect("transitional projection requires an existing exact observation")
+                .execution
+                .clone(),
+        };
+        let observation = SandboxResourceObservation {
+            tenant_id: tenant_id.clone(),
+            id: stable_resource_id.to_owned(),
+            observed_generation,
+            execution,
+            handle,
+            observed_at_millis: now_millis(),
+        };
         state
             .sandbox_resource_observations
             .insert(key, observation.clone());
@@ -193,6 +230,53 @@ impl ServiceManager {
             })
             .collect()
     }
+}
+
+fn validate_attempt_progression(
+    tenant_id: &TenantId,
+    stable_resource_id: &str,
+    existing: &SandboxResourceObservation,
+    expected_attempt_id: &WorkloadExecutionAttemptId,
+    exact_execution: Option<&WorkloadExecutionReference>,
+) -> Result<(), Error> {
+    let Some(exact_execution) = exact_execution else {
+        if existing.execution.attempt_id() == expected_attempt_id {
+            return Ok(());
+        }
+        return Err(Error::PreconditionFailed(format!(
+            "sandbox resource `{stable_resource_id}` for tenant `{tenant_id}` rejected a transitional observation for a different execution attempt"
+        )));
+    };
+    if !same_execution_owner(&existing.execution, exact_execution) {
+        return Err(Error::InvalidInput(format!(
+            "sandbox resource `{stable_resource_id}` for tenant `{tenant_id}` rejected a crossed execution reference"
+        )));
+    }
+    if exact_execution.restart_epoch() < existing.execution.restart_epoch() {
+        return Err(Error::PreconditionFailed(format!(
+            "sandbox resource `{stable_resource_id}` for tenant `{tenant_id}` already has newer restart epoch {}",
+            existing.execution.restart_epoch()
+        )));
+    }
+    if exact_execution.restart_epoch() == existing.execution.restart_epoch()
+        && exact_execution.attempt_id() != existing.execution.attempt_id()
+    {
+        return Err(Error::InvalidInput(format!(
+            "sandbox resource `{stable_resource_id}` for tenant `{tenant_id}` rejected a crossed execution attempt"
+        )));
+    }
+    Ok(())
+}
+
+fn same_execution_owner(
+    left: &WorkloadExecutionReference,
+    right: &WorkloadExecutionReference,
+) -> bool {
+    left.workload_uid() == right.workload_uid()
+        && left.node_identity() == right.node_identity()
+        && left.execution_id() == right.execution_id()
+        && left.generation() == right.generation()
+        && left.desired_digest() == right.desired_digest()
 }
 
 pub(super) fn same_sandbox_resource_desire(

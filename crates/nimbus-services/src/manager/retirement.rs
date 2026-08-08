@@ -113,6 +113,7 @@ impl ServiceManager {
             tenant_id,
             resource_id,
             snapshot.source.generation,
+            observation.execution.attempt_id(),
             stopped,
         )?;
         self.sandbox_resource_snapshot_for_tenant(tenant_id, resource_id)

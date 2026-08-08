@@ -18,10 +18,16 @@ use nimbus_compute::workload_saga::{
     IngressProvisionCapabilities, IngressPublicationCapability,
     IngressPublicationInspectionCapability, NetworkAttachmentCapability,
     NetworkAttachmentProvisionCapabilities, NetworkReservationCapability,
+    NetworkRestartAttachmentCapability, RestartPublicationCapability,
+    RestartPublicationObservationCapability, RestartPublicationWithdrawalCapability,
     WorkloadActivationCapability, WorkloadActivationPrerequisiteCapability,
-    WorkloadExecutionProvisionCapabilities, WorkloadPreparationCapability,
-    WorkloadProvisionCapabilityRegistry, WorkloadProvisionCapabilityRegistryError,
-    WorkloadReadinessCapability,
+    WorkloadExecutionProvisionCapabilities, WorkloadExecutionQuiescenceCapability,
+    WorkloadPreparationCapability, WorkloadProvisionCapabilityRegistry,
+    WorkloadProvisionCapabilityRegistryError, WorkloadReadinessCapability,
+    WorkloadRestartActivationCapability, WorkloadRestartActivationPrerequisiteCapability,
+    WorkloadRestartCapabilities, WorkloadRestartCapabilityRegistry,
+    WorkloadRestartCapabilityRegistryError, WorkloadRestartPreparationCapability,
+    WorkloadRestartReadinessCapability,
 };
 use nimbus_compute::{
     ComputeResourceProvisioner, ServiceManagerWorkloadProjectionSink,
@@ -42,12 +48,12 @@ use thiserror::Error;
 
 use crate::workload_saga_store::EngineWorkloadSagaStore;
 
-/// Three concrete providers that have earned every narrow role required by a
-/// complete managed workload composition.
+/// Three concrete providers that have earned every narrow provision role
+/// required by a managed workload composition.
 ///
 /// IDs are explicit and validated against the frozen network selection.
-/// Trait bounds on [`ServerWorkloadComposition::new`] make missing effect or
-/// observation roles unrepresentable without exposing registry internals.
+/// Restart roles are registered separately, only after these same providers
+/// earn the complete restart capability set.
 pub struct ServerWorkloadProviders<Attachment, Execution, Ingress> {
     attachment_provider_id: NetworkProviderId,
     attachment: Arc<Attachment>,
@@ -55,6 +61,7 @@ pub struct ServerWorkloadProviders<Attachment, Execution, Ingress> {
     execution: Arc<Execution>,
     ingress_provider_id: NetworkProviderId,
     ingress: Arc<Ingress>,
+    restart_capabilities: Option<WorkloadRestartCapabilities>,
 }
 
 impl<Attachment, Execution, Ingress> ServerWorkloadProviders<Attachment, Execution, Ingress> {
@@ -73,7 +80,40 @@ impl<Attachment, Execution, Ingress> ServerWorkloadProviders<Attachment, Executi
             execution,
             ingress_provider_id,
             ingress,
+            restart_capabilities: None,
         }
+    }
+
+    /// Register the complete same-realm restart capability set.
+    ///
+    /// A provider realm that has not implemented restart leaves this unset.
+    /// Compute then fails restart dispatch closed with a missing exact
+    /// provider selection instead of advertising an unsupported effect path.
+    pub fn with_restart_capabilities(mut self) -> Self
+    where
+        Attachment: NetworkRestartAttachmentCapability + 'static,
+        Execution: WorkloadExecutionQuiescenceCapability
+            + WorkloadRestartPreparationCapability
+            + WorkloadRestartActivationPrerequisiteCapability
+            + WorkloadRestartActivationCapability
+            + WorkloadRestartReadinessCapability
+            + 'static,
+        Ingress: RestartPublicationWithdrawalCapability
+            + RestartPublicationCapability
+            + RestartPublicationObservationCapability
+            + 'static,
+    {
+        self.restart_capabilities = Some(WorkloadRestartCapabilities::new(
+            self.execution_provider_id.clone(),
+            Some(NetworkCapabilitySelection::new(
+                self.attachment_provider_id.clone(),
+                self.ingress_provider_id.clone(),
+            )),
+            Arc::clone(&self.attachment),
+            Arc::clone(&self.execution),
+            Arc::clone(&self.ingress),
+        ));
+        self
     }
 }
 
@@ -102,6 +142,8 @@ pub enum ServerWorkloadCompositionError {
     UnsatisfiedSovereignty(#[source] NetworkCapabilitySelectionError),
     #[error("workload capability registry rejected the complete provider set: {0}")]
     CapabilityRegistry(#[from] WorkloadProvisionCapabilityRegistryError),
+    #[error("workload restart capability registry rejected the complete provider set: {0}")]
+    RestartCapabilityRegistry(#[from] WorkloadRestartCapabilityRegistryError),
 }
 
 /// Complete server-owned input for one managed workload lifecycle realm.
@@ -113,6 +155,7 @@ pub struct ServerWorkloadComposition {
     capability_selection: NetworkCapabilitySelection,
     sovereignty: NetworkSovereigntyRequirements,
     provision_capabilities: WorkloadProvisionCapabilityRegistry,
+    restart_capabilities: WorkloadRestartCapabilityRegistry,
 }
 
 /// Transport-free lifetime carrier for foreground managed workload owners.
@@ -216,6 +259,8 @@ impl ServerWorkloadComposition {
                 )),
             };
         }
+        let restart_capabilities =
+            WorkloadRestartCapabilityRegistry::new(providers.restart_capabilities)?;
         let provision_capabilities = WorkloadProvisionCapabilityRegistry::new(
             [NetworkAttachmentProvisionCapabilities::new(
                 providers.attachment_provider_id,
@@ -238,6 +283,7 @@ impl ServerWorkloadComposition {
             capability_selection,
             sovereignty,
             provision_capabilities,
+            restart_capabilities,
         })
     }
 
@@ -283,6 +329,7 @@ impl ServerWorkloadComposition {
                 saga_store,
                 source_authority,
                 provision_capabilities: Box::new(self.provision_capabilities),
+                restart_capabilities: Box::new(self.restart_capabilities),
                 projection_sink,
             },
         }

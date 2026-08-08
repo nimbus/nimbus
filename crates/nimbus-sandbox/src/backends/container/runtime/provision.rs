@@ -80,11 +80,9 @@ impl ContainerSandboxBackend {
     /// Open this provider's durable provision-attempt idempotency journal.
     pub fn attempt_idempotency_journal(
         &self,
-    ) -> std::result::Result<
-        crate::ProviderProvisionAttemptJournal,
-        crate::ProviderProvisionJournalError,
-    > {
-        crate::ProviderProvisionAttemptJournal::open(
+    ) -> std::result::Result<crate::ProviderCommandAttemptJournal, crate::ProviderCommandJournalError>
+    {
+        crate::ProviderCommandAttemptJournal::open(
             &self.config.workload_state_root,
             "container-runtime",
         )
@@ -96,6 +94,7 @@ impl ContainerSandboxBackend {
         &self,
         spec: SandboxSpec,
         sandbox_id: SandboxId,
+        execution_attempt_id: crate::SandboxExecutionAttemptId,
         network_plan: SandboxProvisionNetworkPlan,
     ) -> Result<SandboxHandle> {
         self.ensure_startup_reconciliation_ready()?;
@@ -108,6 +107,7 @@ impl ContainerSandboxBackend {
         if let Some(mut manifest) = self.read_manifest(&sandbox_id)? {
             let resolved = resolve_start_spec(&spec, None)?;
             if manifest.spec != resolved.spec
+                || manifest.execution_attempt_id != execution_attempt_id
                 || manifest.provision_network_plan.as_ref() != Some(&network_plan)
                 || manifest.start_mode != self.config.start_mode
                 || manifest.provision_prepared
@@ -144,6 +144,7 @@ impl ContainerSandboxBackend {
             &spec,
             &sandbox_id,
             ContainerStartPlanningOptions {
+                execution_attempt_id,
                 launch_defaults: None,
                 launch_artifact: None,
                 provision_network_plan: Some(&network_plan),
@@ -158,17 +159,19 @@ impl ContainerSandboxBackend {
     pub fn inspect_provision_network_reservation(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
         expected_plan: &SandboxProvisionNetworkPlan,
     ) -> Result<Option<SandboxHandle>> {
         let Some(manifest) = self.read_manifest(sandbox_id)? else {
             return Ok(None);
         };
-        if manifest.provision_network_plan.as_ref() != Some(expected_plan)
+        if &manifest.execution_attempt_id != expected_attempt_id
+            || manifest.provision_network_plan.as_ref() != Some(expected_plan)
             || manifest.spec.tenant_id != *expected_plan.tenant_id()
         {
             return Err(SandboxError::OperationFailed {
                 message: format!(
-                    "container provision reservation inspection for {sandbox_id} crossed its exact compiled network plan"
+                    "container provision reservation inspection for {sandbox_id} crossed its exact execution attempt or compiled network plan"
                 ),
             });
         }
@@ -194,12 +197,18 @@ impl ContainerSandboxBackend {
     /// A PlanOnly workload also publishes the existing PreparedServiceRunner
     /// handoff and exact manifest pointer. Replays adopt that same pointer and
     /// never activate the runner.
-    pub fn prepare_provision_workload(&self, sandbox_id: &SandboxId) -> Result<SandboxHandle> {
+    pub fn prepare_provision_workload(
+        &self,
+        sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
+    ) -> Result<SandboxHandle> {
         let Some(mut manifest) = self.read_manifest(sandbox_id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             });
         };
+        manifest
+            .require_execution_attempt(expected_attempt_id, "container provision preparation")?;
         if manifest.network_config.is_none() || manifest.launch_reservation_claim.is_none() {
             return Err(SandboxError::OperationFailed {
                 message: format!(
@@ -247,10 +256,15 @@ impl ContainerSandboxBackend {
     pub fn inspect_provision_preparation(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<Option<SandboxHandle>> {
         let Some(manifest) = self.read_manifest(sandbox_id)? else {
             return Ok(None);
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "container provision preparation inspection",
+        )?;
         if !manifest.provision_prepared || !manifest.bundle_layout.config_path.is_file() {
             return Ok(None);
         }
@@ -311,6 +325,7 @@ impl ContainerSandboxBackend {
     fn prepared_provision_attachment(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<(
         ContainerSandboxManifest,
         nimbus_network::NetworkReservationClaim,
@@ -320,6 +335,8 @@ impl ContainerSandboxBackend {
             .ok_or_else(|| SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             })?;
+        manifest
+            .require_execution_attempt(expected_attempt_id, "container provision attachment")?;
         if !manifest.provision_prepared {
             return Err(SandboxError::OperationFailed {
                 message: format!(
@@ -360,6 +377,7 @@ impl ContainerSandboxBackend {
     fn recover_active_planned_pep_after_owner_death(
         &self,
         manifest: &ContainerSandboxManifest,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
         reservation_claim: &nimbus_network::NetworkReservationClaim,
     ) -> Result<bool> {
         let never_bound =
@@ -388,7 +406,7 @@ impl ContainerSandboxBackend {
                 plan_members: &plan_members,
             },
         )?;
-        match self.inspect_provision_network_attachment(&manifest.handle.id)? {
+        match self.inspect_provision_network_attachment(&manifest.handle.id, expected_attempt_id)? {
             crate::SandboxProvisionPhaseObservation::Succeeded { .. } => Ok(true),
             observation => Err(SandboxError::OperationFailed {
                 message: format!(
@@ -414,17 +432,23 @@ impl ContainerSandboxBackend {
     pub fn attach_provision_network(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
         if matches!(
-            self.inspect_provision_network_attachment(sandbox_id)?,
+            self.inspect_provision_network_attachment(sandbox_id, expected_attempt_id)?,
             crate::SandboxProvisionPhaseObservation::Succeeded { .. }
         ) {
             return Ok(crate::SandboxProvisionPhaseObservation::Succeeded {
                 evidence: phase_evidence("network_attachment_replayed", sandbox_id)?,
             });
         }
-        let (mut manifest, reservation_claim) = self.prepared_provision_attachment(sandbox_id)?;
-        if self.recover_active_planned_pep_after_owner_death(&manifest, &reservation_claim)? {
+        let (mut manifest, reservation_claim) =
+            self.prepared_provision_attachment(sandbox_id, expected_attempt_id)?;
+        if self.recover_active_planned_pep_after_owner_death(
+            &manifest,
+            expected_attempt_id,
+            &reservation_claim,
+        )? {
             return Ok(crate::SandboxProvisionPhaseObservation::Succeeded {
                 evidence: phase_evidence("network_attachment_pep_recovered", sandbox_id)?,
             });
@@ -460,9 +484,15 @@ impl ContainerSandboxBackend {
     pub(super) fn attach_provision_network_with_test_host(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
-        let (manifest, reservation_claim) = self.prepared_provision_attachment(sandbox_id)?;
-        if self.recover_active_planned_pep_after_owner_death(&manifest, &reservation_claim)? {
+        let (manifest, reservation_claim) =
+            self.prepared_provision_attachment(sandbox_id, expected_attempt_id)?;
+        if self.recover_active_planned_pep_after_owner_death(
+            &manifest,
+            expected_attempt_id,
+            &reservation_claim,
+        )? {
             return Ok(crate::SandboxProvisionPhaseObservation::Succeeded {
                 evidence: phase_evidence("network_attachment_pep_recovered", sandbox_id)?,
             });
@@ -509,12 +539,17 @@ impl ContainerSandboxBackend {
     pub fn inspect_provision_network_attachment(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
         let Some(manifest) = self.read_manifest(sandbox_id)? else {
             return Ok(crate::SandboxProvisionPhaseObservation::Absent {
                 evidence: phase_evidence("network_attachment_absent", sandbox_id)?,
             });
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "container provision attachment inspection",
+        )?;
         if manifest.network_config.is_none() || manifest.launch_reservation_claim.is_none() {
             return Ok(crate::SandboxProvisionPhaseObservation::Absent {
                 evidence: phase_evidence("network_attachment_unreserved", &manifest.handle)?,
@@ -539,8 +574,9 @@ impl ContainerSandboxBackend {
     pub fn inspect_provision_activation_prerequisites(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
-        self.inspect_provision_network_attachment(sandbox_id)
+        self.inspect_provision_network_attachment(sandbox_id, expected_attempt_id)
     }
 
     /// Start only a direct Execute-mode runtime. PlanOnly activation belongs
@@ -548,6 +584,7 @@ impl ContainerSandboxBackend {
     pub fn activate_provision_workload(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
         if self.config.start_mode != ContainerStartMode::Execute {
             return Err(SandboxError::InvalidSpec {
@@ -562,7 +599,9 @@ impl ContainerSandboxBackend {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             });
         };
-        match self.inspect_provision_activation_prerequisites(sandbox_id)? {
+        manifest
+            .require_execution_attempt(expected_attempt_id, "container provision activation")?;
+        match self.inspect_provision_activation_prerequisites(sandbox_id, expected_attempt_id)? {
             crate::SandboxProvisionPhaseObservation::Succeeded { .. } => {}
             observation => {
                 return Err(SandboxError::OperationFailed {
@@ -590,6 +629,7 @@ impl ContainerSandboxBackend {
     pub fn inspect_provision_workload_activation(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
         if self.config.start_mode != ContainerStartMode::Execute {
             return Err(SandboxError::InvalidSpec {
@@ -603,6 +643,10 @@ impl ContainerSandboxBackend {
                 evidence: phase_evidence("workload_activation_absent", sandbox_id)?,
             });
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "container provision activation inspection",
+        )?;
         match runtime_state(
             &manifest.conmon_launch.state_command,
             manifest.handle.id.as_str(),
@@ -643,6 +687,7 @@ impl ContainerSandboxBackend {
     pub fn inspect_provision_workload_readiness(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
         if self.config.start_mode != ContainerStartMode::Execute {
             return Err(SandboxError::InvalidSpec {
@@ -656,8 +701,12 @@ impl ContainerSandboxBackend {
                 evidence: phase_evidence("workload_readiness_absent", sandbox_id)?,
             });
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "container provision readiness inspection",
+        )?;
         if !matches!(
-            self.inspect_provision_workload_activation(sandbox_id)?,
+            self.inspect_provision_workload_activation(sandbox_id, expected_attempt_id)?,
             crate::SandboxProvisionPhaseObservation::Succeeded { .. }
         ) {
             return Ok(crate::SandboxProvisionPhaseObservation::InProgress {
@@ -819,6 +868,7 @@ impl ContainerSandboxBackend {
     fn publish_provision_machine_ingress_with(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
         network_plan: &SandboxProvisionNetworkPlan,
         provider_instance: &NetworkProviderHandle,
         provider_generation: NetworkResourceGeneration,
@@ -829,6 +879,10 @@ impl ContainerSandboxBackend {
             .ok_or_else(|| SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             })?;
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "container provision machine publication",
+        )?;
         self.authenticate_machine_publication_request(
             &manifest,
             network_plan,
@@ -871,12 +925,14 @@ impl ContainerSandboxBackend {
     pub fn publish_provision_machine_ingress(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
         network_plan: &SandboxProvisionNetworkPlan,
         provider_instance: &NetworkProviderHandle,
         provider_generation: NetworkResourceGeneration,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
         self.publish_provision_machine_ingress_with(
             sandbox_id,
+            expected_attempt_id,
             network_plan,
             provider_instance,
             provider_generation,
@@ -888,12 +944,14 @@ impl ContainerSandboxBackend {
     pub(super) fn publish_provision_machine_ingress_with_test_provider(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
         network_plan: &SandboxProvisionNetworkPlan,
         provider_instance: &NetworkProviderHandle,
         provider_generation: NetworkResourceGeneration,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
         self.publish_provision_machine_ingress_with(
             sandbox_id,
+            expected_attempt_id,
             network_plan,
             provider_instance,
             provider_generation,
@@ -906,6 +964,7 @@ impl ContainerSandboxBackend {
     pub fn inspect_provision_machine_ingress(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
         network_plan: &SandboxProvisionNetworkPlan,
         provider_instance: &NetworkProviderHandle,
         provider_generation: NetworkResourceGeneration,
@@ -915,6 +974,10 @@ impl ContainerSandboxBackend {
                 evidence: phase_evidence("machine_ingress_manifest_absent", sandbox_id)?,
             });
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "container provision machine publication inspection",
+        )?;
         self.authenticate_machine_publication_request(
             &manifest,
             network_plan,
@@ -1019,6 +1082,7 @@ impl ContainerSandboxBackend {
     pub fn inspect_provision_server_ingress_targets(
         &self,
         sandbox_id: &SandboxId,
+        expected_attempt_id: &crate::SandboxExecutionAttemptId,
         network_plan: &SandboxProvisionNetworkPlan,
     ) -> Result<crate::SandboxProvisionIngressTargetObservation> {
         let Some(manifest) = self.read_manifest(sandbox_id)? else {
@@ -1026,6 +1090,10 @@ impl ContainerSandboxBackend {
                 evidence: phase_evidence("server_ingress_target_absent", sandbox_id)?,
             });
         };
+        manifest.require_execution_attempt(
+            expected_attempt_id,
+            "container provision server ingress target inspection",
+        )?;
         if manifest
             .runner_config
             .validated_machine_port_forwarder(&manifest.handle.id)?

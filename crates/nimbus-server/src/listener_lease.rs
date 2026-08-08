@@ -25,6 +25,12 @@ use ulid::Ulid;
 
 use crate::network_composition::RetainedServerNetworkAuthority;
 
+#[path = "listener_lease/restart_retain.rs"]
+mod restart_retain;
+pub(crate) use restart_retain::{
+    RestartStoppingServerListener, stop_and_retain_server_listeners_for_restart,
+};
+
 const INITIAL_RESOURCE_GENERATION: NetworkResourceGeneration = NetworkResourceGeneration::new(1);
 const INITIAL_LEASE_EPOCH: NetworkLeaseEpoch = NetworkLeaseEpoch::new(1);
 pub(crate) const SERVER_LISTENER_PROVIDER_KEY: &str = "nimbus-server.tcp-listener";

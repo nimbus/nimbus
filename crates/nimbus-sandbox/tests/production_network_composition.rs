@@ -22,10 +22,10 @@ use nimbus_sandbox::backends::{
     SandboxAttachmentRegistrationError,
 };
 use nimbus_sandbox::{
-    OciNetworkProcess, OciNetworkProcessError, SandboxBackendKind, SandboxHandle, SandboxId,
-    SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxProvisionDependencyListener,
-    SandboxProvisionListener, SandboxProvisionNetworkPlan, SandboxRootSpec, SandboxRootfsSpec,
-    SandboxSpec, sandbox_network_plan_requirements,
+    OciNetworkProcess, OciNetworkProcessError, SandboxBackendKind, SandboxExecutionAttemptId,
+    SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
+    SandboxProvisionDependencyListener, SandboxProvisionListener, SandboxProvisionNetworkPlan,
+    SandboxRootSpec, SandboxRootfsSpec, SandboxSpec, sandbox_network_plan_requirements,
 };
 use serde_json::Value;
 use tempfile::tempdir;
@@ -35,6 +35,11 @@ static COMPOSITION_TEST_SERIALIZER: Mutex<()> = Mutex::new(());
 const ACTIVE_SUPERNET: &str = "10.44.0.0/16";
 const SUBSTITUTE_SUPERNET: &str = "10.45.0.0/16";
 const ACTIVE_TENANT_PREFIX: u8 = 24;
+
+fn composition_attempt_id(sandbox_id: &SandboxId) -> SandboxExecutionAttemptId {
+    SandboxExecutionAttemptId::new(format!("production-composition:{sandbox_id}"))
+        .expect("composition execution attempt should validate")
+}
 
 fn compiled_network_plan(
     spec: &SandboxSpec,
@@ -121,8 +126,9 @@ fn reserve_and_prepare_container(
 ) -> nimbus_sandbox::Result<SandboxHandle> {
     let id = SandboxId::new(format!("composition-container-{label}"));
     let plan = compiled_network_plan(&spec, &id, label);
-    backend.reserve_provision_network(spec, id.clone(), plan)?;
-    backend.prepare_provision_workload(&id)
+    let attempt = composition_attempt_id(&id);
+    backend.reserve_provision_network(spec, id.clone(), attempt.clone(), plan)?;
+    backend.prepare_provision_workload(&id, &attempt)
 }
 
 fn reserve_and_prepare_krun(
@@ -132,8 +138,9 @@ fn reserve_and_prepare_krun(
 ) -> nimbus_sandbox::Result<SandboxHandle> {
     let id = SandboxId::new(format!("composition-krun-{label}"));
     let plan = compiled_network_plan(&spec, &id, label);
-    backend.reserve_provision_network(spec, id.clone(), plan)?;
-    backend.prepare_provision_workload(&id)
+    let attempt = composition_attempt_id(&id);
+    backend.reserve_provision_network(spec, id.clone(), attempt.clone(), plan)?;
+    backend.prepare_provision_workload(&id, &attempt)
 }
 
 #[derive(Clone, Copy, Debug)]

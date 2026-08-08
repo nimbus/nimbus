@@ -14,8 +14,8 @@ use nimbus_network::{
     NetworkSovereigntyRequirements, NetworkTlsBehavior, PortBindTarget,
 };
 use nimbus_sandbox::{
-    SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
-    SandboxSpec, sandbox_network_plan_requirements,
+    SandboxBackendKind, SandboxExecutionAttemptId, SandboxOwnerSpec, SandboxPortBinding,
+    SandboxProcessSpec, SandboxRootSpec, SandboxSpec, sandbox_network_plan_requirements,
 };
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
@@ -366,16 +366,21 @@ fn fixture_with_endpoints(
 
 fn exact_inspection(record: &WorkloadSagaRecord) -> SandboxInspection {
     let intent = record.active_intent();
-    let execution = WorkloadExecutionReference::for_intent(intent);
+    let execution = record.current_execution_reference();
     let spec = decode_sandbox_spec(intent.executable()).expect("fixture executable should decode");
-    SandboxInspection::provider_reported(SandboxHandle::new(
-        record.key().tenant_id().clone(),
-        SandboxId::new(execution.execution_id().as_str()),
-        spec.display_name(),
-        spec.backend,
-        SandboxStatus::Ready,
-        Vec::new(),
-    ))
+    SandboxInspection::provider_authenticated_running(
+        SandboxHandle::new(
+            record.key().tenant_id().clone(),
+            SandboxId::new(execution.execution_id().as_str()),
+            spec.display_name(),
+            spec.backend,
+            SandboxStatus::Ready,
+            Vec::new(),
+        ),
+        SandboxExecutionAttemptId::new(execution.attempt_id().to_string())
+            .expect("fixture attempt ID should be valid"),
+        b"workload-projection-fixture",
+    )
 }
 
 fn lifetime(generation: u64) -> PortLeaseLifetime {
@@ -613,7 +618,9 @@ async fn observed_withheld_reads_execution_once_and_projects_exact_identity() {
     assert_eq!(projections.len(), 1);
     assert_eq!(
         projections[0].handle().id.as_str(),
-        WorkloadExecutionReference::for_intent(fixture.observed.active_intent())
+        fixture
+            .observed
+            .current_execution_reference()
             .execution_id()
             .as_str()
     );
@@ -621,10 +628,40 @@ async fn observed_withheld_reads_execution_once_and_projects_exact_identity() {
 }
 
 #[tokio::test]
-async fn crossed_execution_evidence_is_rejected_before_ingress_or_sink_access() {
+async fn crossed_execution_handle_is_rejected_before_ingress_or_sink_access() {
     let fixture = fixture(WorkloadPublicationIntent::PublishWhenReady);
     let mut crossed = exact_inspection(&fixture.observed);
     crossed.handle.id = SandboxId::new("crossed-execution");
+    let provider = RecordingProvider::new(
+        WorkloadProviderObservation::Present(crossed),
+        WorkloadProviderObservation::Present(vec![exact_ingress(&fixture.observed)]),
+    );
+    let sink = Arc::new(RecordingSink::default());
+
+    assert_eq!(
+        orchestrator(&fixture, provider.clone(), sink.clone())
+            .project_record(&fixture.observed, WorkloadProvisionRunDisposition::Observed)
+            .await,
+        WorkloadProjectionState::Rejected(
+            WorkloadProjectionRejectedReason::InvalidExecutionEvidence
+        )
+    );
+    assert_eq!(provider.execution_calls.load(Ordering::Acquire), 1);
+    assert_eq!(provider.ingress_calls.load(Ordering::Acquire), 0);
+    assert_eq!(provider.effect_calls.load(Ordering::Acquire), 0);
+    assert_eq!(sink.calls.load(Ordering::Acquire), 0);
+    assert!(sink.projections().is_empty());
+}
+
+#[tokio::test]
+async fn crossed_execution_attempt_is_rejected_before_ingress_or_sink_access() {
+    let fixture = fixture(WorkloadPublicationIntent::PublishWhenReady);
+    let exact = exact_inspection(&fixture.observed);
+    let crossed = SandboxInspection::provider_authenticated_running(
+        exact.handle,
+        SandboxExecutionAttemptId::new("wea_crossed").expect("crossed attempt ID should be valid"),
+        b"crossed-attempt-fixture",
+    );
     let provider = RecordingProvider::new(
         WorkloadProviderObservation::Present(crossed),
         WorkloadProviderObservation::Present(vec![exact_ingress(&fixture.observed)]),

@@ -7,9 +7,9 @@ use super::readiness::visible_published_endpoints;
 use super::*;
 use crate::backends::inspection::{RestartAssessmentInput, assess_restart};
 use crate::inspection::{
-    SandboxCleanupObservation, SandboxExecutionObservation, SandboxInspection,
-    SandboxObservationUnknownReason, SandboxRestartAssessment, SandboxRestartBlocker,
-    SandboxRestartIneligibility,
+    SandboxCleanupObservation, SandboxExecutionAttemptObservation, SandboxExecutionObservation,
+    SandboxInspection, SandboxObservationUnknownReason, SandboxRestartAssessment,
+    SandboxRestartBlocker, SandboxRestartIneligibility,
 };
 
 impl KrunSandboxBackend {
@@ -247,6 +247,11 @@ fn exact_inspection_with_provider_evidence(
         })?;
     Ok(SandboxInspection::exact(
         handle,
+        if manifest.start_mode == KrunStartMode::PlanOnly {
+            SandboxExecutionAttemptObservation::PlanOnly
+        } else {
+            SandboxExecutionAttemptObservation::Exact(manifest.execution_attempt_id.clone())
+        },
         execution,
         restart,
         cleanup,

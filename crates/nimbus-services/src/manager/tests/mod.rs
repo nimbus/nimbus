@@ -12,6 +12,11 @@ use nimbus_sandbox::{
     SandboxMountSpec, SandboxOwnerSpec, SandboxProcessSpec, SandboxRestartAssessment,
     SandboxRestartBlocker, SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
+use nimbus_workloads::{
+    NodeIdentity, WorkloadDesiredDigest, WorkloadExecutionAttemptId, WorkloadExecutionId,
+    WorkloadExecutionReference, WorkloadGeneration, WorkloadRestartEpoch,
+};
+use sha2::{Digest, Sha256};
 
 use crate::{
     ExternalAuthPolicy, HealthCheckPolicy, RuntimeServiceRegistry, ServiceBackend,
@@ -26,6 +31,36 @@ mod sandbox_resources;
 mod sessions;
 mod source_projection;
 mod tenant_teardown;
+
+fn execution_reference_for_handle(
+    handle: &mut SandboxHandle,
+    generation: u64,
+    restart_epoch: u64,
+) -> WorkloadExecutionReference {
+    let identity_seed = format!("{}\0{}", handle.tenant_id, handle.name);
+    let workload_uid = format!("twu_{:x}", Sha256::digest(identity_seed.as_bytes()))
+        .try_into()
+        .expect("fixture workload uid should validate");
+    let node_identity =
+        NodeIdentity::new("services-test-node").expect("fixture node identity should validate");
+    let generation = WorkloadGeneration::new(generation);
+    let restart_epoch = WorkloadRestartEpoch::new(restart_epoch);
+    let execution_id =
+        WorkloadExecutionId::for_execution(&workload_uid, &node_identity, generation);
+    let attempt_id = WorkloadExecutionAttemptId::for_execution(&execution_id, restart_epoch);
+    let desired_digest = WorkloadDesiredDigest::sha256(identity_seed);
+    handle.id = SandboxId::new(execution_id.as_str());
+    serde_json::from_value(serde_json::json!({
+        "workloadUid": workload_uid,
+        "nodeIdentity": node_identity,
+        "executionId": execution_id,
+        "restartEpoch": restart_epoch,
+        "attemptId": attempt_id,
+        "generation": generation,
+        "desiredDigest": desired_digest,
+    }))
+    .expect("fixture execution reference should validate")
+}
 
 struct StubServiceDefinitionCatalog {
     launches: BTreeMap<String, ServiceBackend>,

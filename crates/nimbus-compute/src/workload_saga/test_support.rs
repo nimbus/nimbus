@@ -337,7 +337,6 @@ fn succeed_restart_command(record: WorkloadSagaRecord, label: &str) -> WorkloadS
             WorkloadRestartEffectResult::Succeeded {
                 evidence: nimbus_workloads::WorkloadRestartEvidenceDigest::sha256(label),
             },
-            None,
         )
         .expect("restart fixture command should succeed")
 }
@@ -365,9 +364,8 @@ pub(crate) fn scheduled_restart_record(label: &str, not_before: u64) -> Workload
         .admission()
         .request_id()
         .clone();
-    let withdrawal = admitted
+    let quiescence = admitted
         .advance_restart_without_effect(&request_id)
-        .expect("restart fixture should enter withdrawal");
-    let withdrawn = succeed_restart_command(withdrawal, "restart-withdrawn");
-    succeed_restart_command(withdrawn, "restart-quiesced")
+        .expect("withheld restart fixture should enter quiescence");
+    succeed_restart_command(quiescence, "restart-quiesced")
 }

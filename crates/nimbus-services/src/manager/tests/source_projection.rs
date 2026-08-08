@@ -121,14 +121,15 @@ fn sandbox_projection_updates_status_and_rejects_stale_or_crossed_evidence_uncha
         standalone_resource_spec(&tenant_id, "task"),
         BTreeMap::new(),
     );
-    let starting = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Starting);
+    let mut starting = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Starting);
+    let execution = execution_reference_for_handle(&mut starting, source.generation, 0);
     manager
         .project_sandbox_resource_execution_observation(
             &tenant_id,
             &source.id,
             source.generation,
             &source.resource_version,
-            starting.id.as_str(),
+            &execution,
             starting.clone(),
         )
         .expect("exact execution observation should establish the first projection");
@@ -136,7 +137,13 @@ fn sandbox_projection_updates_status_and_rejects_stale_or_crossed_evidence_uncha
     let mut ready = starting.clone();
     ready.status = SandboxStatus::Ready;
     let projected = manager
-        .project_sandbox_resource_observation(&tenant_id, &source.id, source.generation, ready)
+        .project_sandbox_resource_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            execution.attempt_id(),
+            ready,
+        )
         .expect("same provider identity may advance observed status");
     assert_eq!(projected.handle.status, SandboxStatus::Ready);
     let after_update = manager
@@ -149,6 +156,7 @@ fn sandbox_projection_updates_status_and_rejects_stale_or_crossed_evidence_uncha
         &tenant_id,
         &source.id,
         source.generation + 1,
+        execution.attempt_id(),
         starting.clone(),
     );
     assert!(matches!(stale, Err(Error::PreconditionFailed(_))));
@@ -166,6 +174,7 @@ fn sandbox_projection_updates_status_and_rejects_stale_or_crossed_evidence_uncha
         &tenant_id,
         &source.id,
         source.generation,
+        execution.attempt_id(),
         crossed,
     );
     assert!(matches!(crossed_result, Err(Error::Conflict { .. })));
@@ -190,21 +199,28 @@ fn service_projection_is_generation_fenced_and_status_mutable() {
             BTreeMap::new(),
         )
         .expect("definition should create");
-    let starting = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Starting);
+    let mut starting = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Starting);
+    let execution = execution_reference_for_handle(&mut starting, definition.generation, 0);
     manager
         .project_service_definition_execution_observation(
             &tenant_id,
             "api",
             definition.generation,
             &definition.resource_version,
-            starting.id.as_str(),
+            &execution,
             starting.clone(),
         )
         .expect("exact execution observation should establish the first service projection");
     let mut ready = starting.clone();
     ready.status = SandboxStatus::Ready;
     let ready = manager
-        .project_service_definition_observation(&tenant_id, "api", definition.generation, ready)
+        .project_service_definition_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            execution.attempt_id(),
+            ready,
+        )
         .expect("same provider identity may advance service status");
     assert_eq!(ready.handle.status, SandboxStatus::Ready);
     let before_rejections = manager
@@ -215,6 +231,7 @@ fn service_projection_is_generation_fenced_and_status_mutable() {
         &tenant_id,
         "api",
         definition.generation + 1,
+        execution.attempt_id(),
         starting.clone(),
     );
     assert!(matches!(stale, Err(Error::PreconditionFailed(_))));
@@ -229,6 +246,7 @@ fn service_projection_is_generation_fenced_and_status_mutable() {
         &tenant_id,
         "api",
         definition.generation,
+        execution.attempt_id(),
         crossed,
     );
     assert!(matches!(crossed_result, Err(Error::Conflict { .. })));
@@ -250,14 +268,15 @@ fn exact_service_projection_is_immediately_visible_to_every_read_model_without_p
             BTreeMap::new(),
         )
         .expect("definition should create");
-    let handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let mut handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let execution = execution_reference_for_handle(&mut handle, definition.generation, 0);
     manager
         .project_service_definition_execution_observation(
             &tenant_id,
             "api",
             definition.generation,
             &definition.resource_version,
-            handle.id.as_str(),
+            &execution,
             handle.clone(),
         )
         .expect("exact service observation should project");
@@ -320,13 +339,19 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
         BTreeMap::new(),
     );
     let mut sandbox_handle = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Ready);
-    sandbox_handle.id = SandboxId::new("execution-sandbox-17");
+    let sandbox_execution =
+        execution_reference_for_handle(&mut sandbox_handle, sandbox_source.generation, 0);
+    let mut crossed_sandbox_handle =
+        backend.sandbox_handle(&tenant_id, "crossed-task", SandboxStatus::Ready);
+    let crossed_sandbox_execution =
+        execution_reference_for_handle(&mut crossed_sandbox_handle, sandbox_source.generation, 0);
 
     assert!(matches!(
         manager.project_sandbox_resource_observation(
             &tenant_id,
             &sandbox_source.id,
             sandbox_source.generation,
+            sandbox_execution.attempt_id(),
             sandbox_handle.clone(),
         ),
         Err(Error::PreconditionFailed(_))
@@ -347,7 +372,7 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
             &sandbox_source.id,
             sandbox_source.generation,
             "crossed-resource-version",
-            sandbox_handle.id.as_str(),
+            &sandbox_execution,
             sandbox_handle.clone(),
         ),
         manager.project_sandbox_resource_execution_observation(
@@ -355,7 +380,7 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
             &sandbox_source.id,
             sandbox_source.generation,
             &sandbox_source.resource_version,
-            "crossed-execution-id",
+            &crossed_sandbox_execution,
             sandbox_handle.clone(),
         ),
     ] {
@@ -376,12 +401,11 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
             &sandbox_source.id,
             sandbox_source.generation,
             &sandbox_source.resource_version,
-            sandbox_handle.id.as_str(),
+            &sandbox_execution,
             sandbox_handle.clone(),
         )
         .expect("exact sandbox execution should project");
     assert_eq!(sandbox_projection.handle, sandbox_handle);
-    let sandbox_execution_id = sandbox_handle.id.as_str().to_owned();
     assert_eq!(
         manager
             .project_sandbox_resource_execution_observation(
@@ -389,7 +413,7 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
                 &sandbox_source.id,
                 sandbox_source.generation,
                 &sandbox_source.resource_version,
-                &sandbox_execution_id,
+                &sandbox_execution,
                 sandbox_handle,
             )
             .expect("exact sandbox replay should be idempotent"),
@@ -405,12 +429,21 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
         )
         .expect("service definition should create");
     let mut service_handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
-    service_handle.id = SandboxId::new("execution-service-17");
+    let service_execution =
+        execution_reference_for_handle(&mut service_handle, service_definition.generation, 0);
+    let mut crossed_service_handle =
+        backend.sandbox_handle(&tenant_id, "crossed-api", SandboxStatus::Ready);
+    let crossed_service_execution = execution_reference_for_handle(
+        &mut crossed_service_handle,
+        service_definition.generation,
+        0,
+    );
     assert!(matches!(
         manager.project_service_definition_observation(
             &tenant_id,
             "api",
             service_definition.generation,
+            service_execution.attempt_id(),
             service_handle.clone(),
         ),
         Err(Error::PreconditionFailed(_))
@@ -425,7 +458,7 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
         "api",
         service_definition.generation,
         &service_definition.resource_version,
-        "crossed-execution-id",
+        &crossed_service_execution,
         service_handle.clone(),
     );
     assert!(matches!(rejected, Err(Error::InvalidInput(_))));
@@ -434,19 +467,235 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
         None,
         "crossed service first-write evidence must leave projection absent"
     );
-    let service_execution_id = service_handle.id.as_str().to_owned();
+    let expected_execution_id = service_execution.execution_id().as_str().to_owned();
     let service_projection = manager
         .project_service_definition_execution_observation(
             &tenant_id,
             "api",
             service_definition.generation,
             &service_definition.resource_version,
-            &service_execution_id,
+            &service_execution,
             service_handle,
         )
         .expect("exact service execution should project");
-    assert_eq!(
-        service_projection.handle.id.as_str(),
-        "execution-service-17"
+    assert_eq!(service_projection.handle.id.as_str(), expected_execution_id);
+}
+
+#[test]
+fn sandbox_projection_rejects_delayed_attempts_and_preserves_target_snapshot() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let (manager, backend) = manager_with_backend();
+    let source = reserve_standalone_source(
+        &manager,
+        &tenant_id,
+        "stable-resource",
+        "worker",
+        standalone_resource_spec(&tenant_id, "task"),
+        BTreeMap::new(),
     );
+    let mut source_handle = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Starting);
+    let source_execution = execution_reference_for_handle(&mut source_handle, source.generation, 0);
+    manager
+        .project_sandbox_resource_execution_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            &source.resource_version,
+            &source_execution,
+            source_handle.clone(),
+        )
+        .expect("source attempt should project");
+
+    let mut target_handle = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Ready);
+    let target_execution = execution_reference_for_handle(&mut target_handle, source.generation, 1);
+    let target = manager
+        .project_sandbox_resource_execution_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            &source.resource_version,
+            &target_execution,
+            target_handle.clone(),
+        )
+        .expect("newer target attempt should project");
+    let target_snapshot = manager
+        .sandbox_resource_snapshot_for_tenant(&tenant_id, &source.id)
+        .expect("target snapshot lookup should succeed")
+        .expect("target snapshot should exist");
+    assert_eq!(target.execution, target_execution);
+
+    let mut delayed_source = source_handle;
+    delayed_source.status = SandboxStatus::Failed;
+    for rejected in [
+        manager.project_sandbox_resource_execution_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            &source.resource_version,
+            &source_execution,
+            delayed_source,
+        ),
+        manager.project_sandbox_resource_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            source_execution.attempt_id(),
+            target_handle.clone(),
+        ),
+    ] {
+        assert!(matches!(rejected, Err(Error::PreconditionFailed(_))));
+        assert_eq!(
+            manager
+                .sandbox_resource_snapshot_for_tenant(&tenant_id, &source.id)
+                .expect("snapshot lookup should succeed")
+                .expect("snapshot should remain"),
+            target_snapshot,
+            "an old-attempt callback must leave target projection bytes unchanged"
+        );
+    }
+
+    assert_eq!(
+        manager
+            .project_sandbox_resource_execution_observation(
+                &tenant_id,
+                &source.id,
+                source.generation,
+                &source.resource_version,
+                &target_execution,
+                target_handle.clone(),
+            )
+            .expect("exact target replay should be idempotent"),
+        target
+    );
+    assert_eq!(
+        manager
+            .sandbox_resource_snapshot_for_tenant(&tenant_id, &source.id)
+            .expect("snapshot lookup should succeed")
+            .expect("snapshot should remain"),
+        target_snapshot
+    );
+
+    let crossed_attempt = WorkloadExecutionAttemptId::for_execution(
+        target_execution.execution_id(),
+        WorkloadRestartEpoch::new(2),
+    );
+    let mut crossed_workload_handle =
+        backend.sandbox_handle(&tenant_id, "other-task", SandboxStatus::Ready);
+    let crossed_workload =
+        execution_reference_for_handle(&mut crossed_workload_handle, source.generation, 2);
+    let mut crossed_generation_handle = target_handle.clone();
+    let crossed_generation =
+        execution_reference_for_handle(&mut crossed_generation_handle, source.generation + 1, 2);
+    for rejected in [
+        manager.project_sandbox_resource_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            &crossed_attempt,
+            target_handle.clone(),
+        ),
+        manager.project_sandbox_resource_execution_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            &source.resource_version,
+            &crossed_workload,
+            target_handle.clone(),
+        ),
+        manager.project_sandbox_resource_execution_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            &source.resource_version,
+            &crossed_generation,
+            target_handle.clone(),
+        ),
+    ] {
+        assert!(rejected.is_err());
+        assert_eq!(
+            manager
+                .sandbox_resource_snapshot_for_tenant(&tenant_id, &source.id)
+                .expect("snapshot lookup should succeed")
+                .expect("snapshot should remain"),
+            target_snapshot,
+            "crossed execution evidence must preserve the target snapshot"
+        );
+    }
+    assert_eq!(backend.image_starts.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.inspect_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn service_name_reads_only_the_newest_attempt_without_provider_io() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let (manager, backend) = manager_with_backend();
+    let definition = manager
+        .create_service_definition(
+            &tenant_id,
+            "api",
+            image_service_backend("api", "registry.example.com/api:1"),
+            BTreeMap::new(),
+        )
+        .expect("definition should create");
+    let mut source_handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Starting);
+    let source_execution =
+        execution_reference_for_handle(&mut source_handle, definition.generation, 0);
+    manager
+        .project_service_definition_execution_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &source_execution,
+            source_handle.clone(),
+        )
+        .expect("source attempt should project");
+    let mut target_handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let target_execution =
+        execution_reference_for_handle(&mut target_handle, definition.generation, 1);
+    let target = manager
+        .project_service_definition_execution_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &target_execution,
+            target_handle.clone(),
+        )
+        .expect("target attempt should project");
+
+    let delayed = manager.project_service_definition_execution_observation(
+        &tenant_id,
+        "api",
+        definition.generation,
+        &definition.resource_version,
+        &source_execution,
+        source_handle,
+    );
+    assert!(matches!(delayed, Err(Error::PreconditionFailed(_))));
+    assert_eq!(
+        manager.service_definition_observation_for_tenant(&tenant_id, "api"),
+        Some(target.clone())
+    );
+    assert_eq!(
+        manager
+            .project_service_definition_execution_observation(
+                &tenant_id,
+                "api",
+                definition.generation,
+                &definition.resource_version,
+                &target_execution,
+                target_handle.clone(),
+            )
+            .expect("exact target replay should be idempotent"),
+        target
+    );
+    assert_eq!(
+        ServiceInstanceCatalog::service_instance_for_name(&manager, &tenant_id, "api"),
+        Some(target_handle)
+    );
+    assert_eq!(backend.image_starts.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.inspect_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 0);
 }

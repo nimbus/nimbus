@@ -51,11 +51,11 @@ pub struct WorkloadExecutionObservationRequest {
 }
 
 impl WorkloadExecutionObservationRequest {
-    fn for_record(record: &WorkloadSagaRecord) -> Self {
+    pub(crate) fn for_record(record: &WorkloadSagaRecord) -> Self {
         let intent = record.active_intent();
         Self {
             key: record.key().clone(),
-            execution: WorkloadExecutionReference::for_intent(intent),
+            execution: record.current_execution_reference(),
             source: intent.source().clone(),
             executable: intent.executable().clone(),
         }
@@ -222,7 +222,7 @@ impl WorkloadIngressObservationRequest {
         let intent = record.active_intent();
         Self {
             key: record.key().clone(),
-            execution: WorkloadExecutionReference::for_intent(intent),
+            execution: record.current_execution_reference(),
             publication,
             compiled_plan: intent.network().compiled_plan().clone(),
         }
@@ -366,7 +366,7 @@ impl WorkloadProjectionSink for ServiceManagerWorkloadProjectionSink {
                         source.stable_name(),
                         projection.source_generation().as_u64(),
                         projection.source_resource_version().as_str(),
-                        projection.execution().execution_id().as_str(),
+                        projection.execution(),
                         projection.handle().clone(),
                     )
                     .map(|_| ()),
@@ -377,7 +377,7 @@ impl WorkloadProjectionSink for ServiceManagerWorkloadProjectionSink {
                         source.stable_name(),
                         projection.source_generation().as_u64(),
                         projection.source_resource_version().as_str(),
-                        projection.execution().execution_id().as_str(),
+                        projection.execution(),
                         projection.handle().clone(),
                     )
                     .map(|_| ()),
@@ -569,7 +569,7 @@ impl WorkloadProjectionOrchestrator {
             source_identity: intent.source().source_identity().clone(),
             source_generation: intent.source().source_generation(),
             source_resource_version: intent.source().resource_version().clone(),
-            execution: WorkloadExecutionReference::for_intent(intent),
+            execution: record.current_execution_reference(),
             handle,
         };
         match self.sink.project(&projection).await {
@@ -591,7 +591,17 @@ fn validate_execution_observation(
     inspection: SandboxInspection,
 ) -> Result<SandboxHandle, WorkloadProjectionRejectedReason> {
     let intent = record.active_intent();
-    let execution = WorkloadExecutionReference::for_intent(intent);
+    let execution = record.current_execution_reference();
+    let expected_attempt =
+        nimbus_sandbox::SandboxExecutionAttemptId::new(execution.attempt_id().to_string())
+            .map_err(|_| WorkloadProjectionRejectedReason::InvalidExecutionEvidence)?;
+    if !matches!(
+        &inspection.execution_attempt,
+        nimbus_sandbox::SandboxExecutionAttemptObservation::Exact(observed)
+            if observed == &expected_attempt
+    ) {
+        return Err(WorkloadProjectionRejectedReason::InvalidExecutionEvidence);
+    }
     let spec = decode_sandbox_spec(intent.executable())
         .map_err(|_| WorkloadProjectionRejectedReason::InvalidExecutionEvidence)?;
     let handle = inspection.handle;

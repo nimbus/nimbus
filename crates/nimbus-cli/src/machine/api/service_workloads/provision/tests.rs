@@ -13,15 +13,16 @@ use nimbus_network::{
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, NodeIdentity, TenantWorkloadUid, WorkloadActivationIntent,
     WorkloadDesiredDigest, WorkloadExecutableEncoding, WorkloadExecutableIntent,
-    WorkloadExecutionId, WorkloadExecutionReference, WorkloadGeneration,
-    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadNetworkReference,
-    WorkloadOwnerEvidenceDigest, WorkloadProvisionAttempt, WorkloadProvisionAttemptInput,
-    WorkloadProvisionCommandId, WorkloadProvisionCommandMode, WorkloadProvisionDispatchClaim,
-    WorkloadProvisionPrerequisiteEvidence, WorkloadProvisionProviderTarget,
-    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
-    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep,
-    WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent,
-    WorkloadPublicationReference, WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRevision,
+    WorkloadExecutionAttemptId, WorkloadExecutionId, WorkloadExecutionReference,
+    WorkloadGeneration, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
+    WorkloadNetworkReference, WorkloadOwnerEvidenceDigest, WorkloadProvisionAttempt,
+    WorkloadProvisionAttemptInput, WorkloadProvisionCommandId, WorkloadProvisionCommandMode,
+    WorkloadProvisionDispatchClaim, WorkloadProvisionPrerequisiteEvidence,
+    WorkloadProvisionProviderTarget, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep, WorkloadProvisionSubjects,
+    WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadPublicationReference,
+    WorkloadRestartEpoch, WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRevision,
     WorkloadSagaTransitionId,
 };
 
@@ -51,10 +52,14 @@ fn request_fixture_with_attachment(
         .try_into()
         .expect("fixture workload UID should validate");
     let execution_id = WorkloadExecutionId::for_execution(&workload_uid, &node, generation);
+    let restart_epoch = WorkloadRestartEpoch::new(0);
+    let attempt_id = WorkloadExecutionAttemptId::for_execution(&execution_id, restart_epoch);
     let execution: WorkloadExecutionReference = serde_json::from_value(serde_json::json!({
         "workloadUid": workload_uid,
         "nodeIdentity": node,
         "executionId": execution_id,
+        "restartEpoch": restart_epoch,
+        "attemptId": attempt_id,
         "generation": generation,
         "desiredDigest": desired_digest,
     }))
@@ -72,6 +77,7 @@ fn request_fixture_with_attachment(
             "http",
         )],
         "network": network,
+        "execution": execution,
     }))
     .expect("fixture publication should validate");
     let execution_provider =
@@ -283,15 +289,15 @@ fn readiness_running_is_in_progress_until_ready() {
 fn observe_publication_rechecks_cached_absence() {
     assert!(!super::terminal_without_live_reconciliation(
         WorkloadProvisionStep::Publish,
-        nimbus_sandbox::ProviderProvisionObservationKind::Absent,
+        nimbus_sandbox::ProviderCommandObservationKind::Absent,
     ));
     assert!(!super::terminal_without_live_reconciliation(
         WorkloadProvisionStep::ObservePublication,
-        nimbus_sandbox::ProviderProvisionObservationKind::Absent,
+        nimbus_sandbox::ProviderCommandObservationKind::Absent,
     ));
     assert!(super::terminal_without_live_reconciliation(
         WorkloadProvisionStep::PrepareWorkload,
-        nimbus_sandbox::ProviderProvisionObservationKind::Absent,
+        nimbus_sandbox::ProviderCommandObservationKind::Absent,
     ));
 }
 

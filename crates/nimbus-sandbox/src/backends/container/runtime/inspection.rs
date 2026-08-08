@@ -8,9 +8,9 @@ use super::*;
 use crate::backends::conmon::lifecycle::RuntimeStatusProbe;
 use crate::backends::inspection::{RestartAssessmentInput, assess_restart};
 use crate::inspection::{
-    SandboxCleanupObservation, SandboxExecutionObservation, SandboxInspection,
-    SandboxObservationUnknownReason, SandboxRestartAssessment, SandboxRestartBlocker,
-    SandboxRestartIneligibility,
+    SandboxCleanupObservation, SandboxExecutionAttemptObservation, SandboxExecutionObservation,
+    SandboxInspection, SandboxObservationUnknownReason, SandboxRestartAssessment,
+    SandboxRestartBlocker, SandboxRestartIneligibility,
 };
 
 impl ContainerSandboxBackend {
@@ -312,6 +312,11 @@ fn exact_inspection_with_provider_evidence(
     )?;
     Ok(SandboxInspection::exact(
         handle,
+        if manifest.start_mode == ContainerStartMode::PlanOnly {
+            SandboxExecutionAttemptObservation::PlanOnly
+        } else {
+            SandboxExecutionAttemptObservation::Exact(manifest.execution_attempt_id.clone())
+        },
         execution,
         restart,
         cleanup,

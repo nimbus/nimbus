@@ -12,6 +12,64 @@ use crate::backends::conmon::lifecycle::{
 use super::*;
 
 impl KrunSandboxBackend {
+    /// Convert a runtime-observed creator receipt into durable quiescence only
+    /// after the caller has independently confirmed runtime absence.
+    pub(super) fn persist_restart_creator_quiescence_after_runtime_absence(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+    ) -> Result<()> {
+        match manifest.creator_handoff.clone() {
+            KrunCreatorHandoffState::Quiesced { .. } => Ok(()),
+            KrunCreatorHandoffState::RuntimeObserved { receipt } => {
+                match observe_creator_containment(&receipt) {
+                    CreatorContainmentObservation::DeadContained => {}
+                    CreatorContainmentObservation::Live => {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "krun restart creator attempt {} remains live after runtime absence; target attempt remains fenced",
+                                receipt.attempt_id()
+                            ),
+                        });
+                    }
+                    CreatorContainmentObservation::Escaped { reason } => {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "krun restart creator attempt {} escaped its authenticated containment after runtime absence: {reason}; target attempt remains fenced",
+                                receipt.attempt_id()
+                            ),
+                        });
+                    }
+                    CreatorContainmentObservation::Unknown { reason } => {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "krun restart creator attempt {} cannot be authenticated after runtime absence: {reason}; target attempt remains fenced",
+                                receipt.attempt_id()
+                            ),
+                        });
+                    }
+                }
+                confirm_dead_conmon_receipt(&manifest.conmon_layout.conmon_pidfile)?;
+                self.persist_krun_creator_quiescence(
+                    manifest,
+                    CreatorQuiescenceProof::dead_contained(receipt),
+                )
+            }
+            KrunCreatorHandoffState::NotSpawned => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun restart for {} cannot quiesce provider-owned execution without a creator-attempt receipt",
+                    manifest.handle.id
+                ),
+            }),
+            KrunCreatorHandoffState::SpawnIntent { .. }
+            | KrunCreatorHandoffState::Pending { .. } => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun restart for {} cannot publish quiescence while creator handoff {:?} may still materialize provider effects",
+                    manifest.handle.id, manifest.creator_handoff
+                ),
+            }),
+        }
+    }
+
     pub(super) fn spawn_creator_and_wait_for_runtime(
         &self,
         manifest: &mut KrunSandboxManifest,

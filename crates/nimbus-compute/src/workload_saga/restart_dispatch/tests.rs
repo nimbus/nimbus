@@ -397,7 +397,8 @@ async fn definite_failure_stops_later_commands() {
         coordinator
             .compare_and_swap_restart_result(record, &failed)
             .await
-            .expect("exact result candidate should confirm"),
+            .expect("exact result candidate should confirm")
+            .confirmation(),
         WorkloadSagaConfirmation::AppliedByThisCall
     );
 
@@ -419,7 +420,6 @@ async fn crossed_restart_result_is_rejected() {
         command,
         WorkloadRestartCommandOutcome::Succeeded {
             evidence: WorkloadRestartEvidenceDigest::sha256("crossed-success"),
-            observed_detail: None,
         },
     );
     result.attempt_id = command.source_attempt_id().clone();
@@ -436,7 +436,6 @@ async fn reused_skipped_and_crossed_dispatch_epochs_fail_closed() {
             command,
             WorkloadRestartCommandOutcome::Succeeded {
                 evidence: WorkloadRestartEvidenceDigest::sha256("epoch-success"),
-                observed_detail: None,
             },
         )
     };
@@ -457,4 +456,53 @@ async fn reused_skipped_and_crossed_dispatch_epochs_fail_closed() {
     let mut crossed = success();
     crossed.attempt_id = command.source_attempt_id().clone();
     assert!(apply_restart_result(record, command, crossed).is_err());
+}
+
+#[tokio::test]
+async fn provider_journal_claim_binds_the_restart_attempt_chain_and_ordinal() {
+    let (confirmed, _) = directly_confirmed("provider-journal-claim").await;
+    let (_, command) = confirmed_parts(&confirmed);
+    let claim = crate::workload_saga::restart_provider_command::claim_for_command(command)
+        .expect("the exact confirmed restart command should produce one provider claim");
+
+    assert_eq!(
+        claim.source_attempt_id(),
+        Some(command.source_attempt_id().as_str())
+    );
+    assert_eq!(claim.attempt_id(), command.attempt_id().as_str());
+    assert_eq!(claim.restart_ordinal(), command.restart_epoch().as_u64());
+    assert_eq!(
+        claim.operation(),
+        nimbus_sandbox::ProviderCommandOperation::ResetWorkloadForRestart
+    );
+}
+
+#[tokio::test]
+async fn provider_journal_exact_replay_never_executes_the_effect_twice() {
+    let (confirmed, _) = directly_confirmed("provider-journal-replay").await;
+    let (_, command) = confirmed_parts(&confirmed);
+    let root = tempfile::tempdir().expect("temporary provider journal root should exist");
+    let journal =
+        nimbus_sandbox::ProviderCommandAttemptJournal::open(root.path(), "compute-restart-replay")
+            .expect("provider restart journal should open");
+    let adapter =
+        crate::workload_saga::restart_provider_command::ProviderRestartPhaseAdapter::new(journal);
+
+    let first = adapter.execute(command, || {
+        crate::workload_saga::restart_provider_command::ProviderRestartEffectObservation::Succeeded {
+            evidence: b"one exact provider effect".to_vec(),
+        }
+    });
+    assert!(matches!(
+        first.into_outcome(),
+        WorkloadRestartCommandOutcome::Succeeded { .. }
+    ));
+
+    let replay = adapter.execute(command, || {
+        panic!("an exact durable provider replay must not execute twice")
+    });
+    assert!(matches!(
+        replay.into_outcome(),
+        WorkloadRestartCommandOutcome::Succeeded { .. }
+    ));
 }
