@@ -279,50 +279,78 @@ impl WorkloadSagaCoordinator {
     "crates/nimbus-compute/src/workload_saga/restart_dispatch.rs":
       withoutCfgTestItems(`
 pub(crate) struct ConfirmedWorkloadRestartCommand {
+    command_id: WorkloadRestartCommandId,
+    key: WorkloadSagaKey,
     saga_id: WorkloadSagaId,
-    transition_id: WorkloadTransitionId,
+    transition_id: WorkloadSagaTransitionId,
     generation: WorkloadGeneration,
     desired_digest: WorkloadDesiredDigest,
+    source: WorkloadProvisionSourceEvidence,
     source_attempt_id: WorkloadExecutionAttemptId,
     attempt_id: WorkloadExecutionAttemptId,
     restart_epoch: WorkloadRestartEpoch,
     dispatch_epoch: WorkloadRestartDispatchEpoch,
     request_id: WorkloadRestartRequestId,
     issuing_revision: WorkloadSagaRevision,
-    inspection_version: SandboxInspectionVersion,
+    confirmed_revision: WorkloadSagaRevision,
+    inspection_version: Option<WorkloadInspectionVersion>,
     provider_selection: WorkloadExecutionProviderId,
-    result_transition_id: WorkloadTransitionId,
+    step: WorkloadRestartStep,
+    mode: WorkloadRestartCommandMode,
+    claim: WorkloadRestartCommandClaim,
+    executable: WorkloadExecutableIntent,
+    compiled_network_plan: CompiledWorkloadNetworkPlan,
 }
 impl ConfirmedWorkloadRestartCommand {
-    pub(crate) fn from_confirmation(confirmation: WorkloadSagaConfirmation) -> Result<Self, RestartDispatchError> {
-        authenticate_exact_restart_confirmation(&confirmation)?;
-        Self::try_from(confirmation)
+    fn from_confirmation(record: &WorkloadSagaRecord, confirmation: WorkloadSagaConfirmation) -> Result<Self, RestartDispatchError> {
+        authenticate_exact_restart_confirmation(record, claim, mode)?;
+        let mode = match confirmation { WorkloadSagaConfirmation::AppliedByThisCall => WorkloadRestartCommandMode::Execute, _ => WorkloadRestartCommandMode::Inspect };
+        Self::try_from((record, confirmation))
     }
 }
-fn claim_restart_command() {
-    match coordinator.compare_and_swap_restart_claim(command.issuing_revision(), command.dispatch_epoch())? {
-        RestartClaimConfirmation::DirectWinner(confirmation) => execute_confirmed_restart(ConfirmedWorkloadRestartCommand::from_confirmation(confirmation)?),
-        RestartClaimConfirmation::Replay(confirmation) => inspect_ambiguous_restart(ConfirmedWorkloadRestartCommand::from_confirmation(confirmation)?),
-        RestartClaimConfirmation::InspectionRequired(confirmation) => inspect_ambiguous_restart(ConfirmedWorkloadRestartCommand::from_confirmation(confirmation)?),
+fn authenticate_exact_restart_confirmation(record: &WorkloadSagaRecord, claim: &WorkloadRestartCommandClaim, mode: WorkloadRestartCommandMode) {
+    require_exact_admission(record, claim)?;
+    match mode { WorkloadRestartCommandMode::Execute => require_dispatch_pending(record), WorkloadRestartCommandMode::Inspect => require_inspection_required(record) }
+}
+enum WorkloadRestartCommandOutcome { AuthenticatedAbsent, Ambiguous, InProgress, DefiniteFailure, Succeeded }
+fn apply_restart_result(record: &WorkloadSagaRecord, command: &ConfirmedWorkloadRestartCommand, result: WorkloadRestartCommandResult) {
+    authenticate_result_transition(record, command, &result)?;
+    authenticate_result_attempt(record, command, &result)?;
+    authenticate_result_dispatch_epoch(record, command, &result)?;
+    match result.outcome {
+        WorkloadRestartCommandOutcome::AuthenticatedAbsent { evidence } => retry_after_authenticated_absence(record, command, evidence),
+        WorkloadRestartCommandOutcome::Ambiguous | WorkloadRestartCommandOutcome::InProgress { .. } => retain_restart_inspection(command),
+        WorkloadRestartCommandOutcome::DefiniteFailure { evidence } => stop_restart_dispatch(candidate),
+        WorkloadRestartCommandOutcome::Succeeded { evidence, observed_detail } => persist_restart_success(candidate),
     }
 }
-fn inspect_ambiguous_restart(command: &ConfirmedWorkloadRestartCommand) {
-    match inspect_exact_restart_attempt(command)? {
-        RestartEffectInspection::AuthenticatedAbsent => retry_after_authenticated_absence(command),
-        RestartEffectInspection::InProgress => RestartDispatchOutcome::Wait,
-        RestartEffectInspection::Succeeded(result) => apply_restart_result(command, result),
-        RestartEffectInspection::DefiniteFailure(error) => stop_restart_dispatch(command, error),
+fn authenticate_result_transition(record: &WorkloadSagaRecord, command: &ConfirmedWorkloadRestartCommand, result: &WorkloadRestartCommandResult) {}
+fn authenticate_result_attempt(record: &WorkloadSagaRecord, command: &ConfirmedWorkloadRestartCommand, result: &WorkloadRestartCommandResult) {}
+fn authenticate_result_dispatch_epoch(record: &WorkloadSagaRecord, command: &ConfirmedWorkloadRestartCommand, result: &WorkloadRestartCommandResult) {}
+fn retain_restart_inspection(command: &ConfirmedWorkloadRestartCommand) { WorkloadRestartDecision::InspectExact(command.claim()) }
+fn retry_after_authenticated_absence(record: &WorkloadSagaRecord, command: &ConfirmedWorkloadRestartCommand, evidence: WorkloadRestartEvidenceDigest) {
+    let absence = WorkloadRestartAbsenceEvidence::for_inspection(record, command.claim(), evidence)?;
+    let candidate = record.restart_inspection_to_retry(command.claim(), absence)?;
+    ProposedWorkloadRestartTransition::new(candidate, Some(WorkloadRestartSymbolicAction::StartExactAttempt))
+}
+fn stop_restart_dispatch(candidate: WorkloadSagaRecord) { WorkloadRestartDecision::DefiniteFailure(candidate) }
+impl WorkloadSagaCoordinator {
+    async fn claim_restart_command(loaded: &WorkloadSagaRecord, proposed: &ProposedWorkloadRestartTransition) {
+        let confirmation = self.confirm_transition(Some(loaded), candidate.clone()).await?;
+        if proposed.action_after_confirmation() == Some(WorkloadRestartSymbolicAction::StartExactAttempt)
+            && matches!(confirmation, WorkloadSagaConfirmation::ConfirmedAfterAmbiguity | WorkloadSagaConfirmation::ConfirmedReplay) {
+            return self.inspect_ambiguous_restart(&candidate).await;
+        }
+        ConfirmedWorkloadRestartCommand::from_confirmation(&candidate, action, confirmation)
     }
-}
-fn retry_after_authenticated_absence(command: &ConfirmedWorkloadRestartCommand) {
-    let next_dispatch_epoch = command.dispatch_epoch().checked_next()?;
-    coordinator.compare_and_swap_restart_claim(command.with_dispatch_epoch(next_dispatch_epoch))?;
-}
-fn apply_restart_result(command: &ConfirmedWorkloadRestartCommand, result: WorkloadRestartCommandResult) {
-    authenticate_result_transition(command.result_transition_id(), result.transition_id())?;
-    authenticate_result_attempt(command.attempt_id(), result.attempt_id())?;
-    authenticate_result_dispatch_epoch(command.dispatch_epoch(), result.dispatch_epoch())?;
-    coordinator.compare_and_swap_restart_result(command, result)?;
+    async fn inspect_ambiguous_restart(pending: &WorkloadSagaRecord) {
+        let inspection = pending.restart_dispatch_to_inspection(claim)?;
+        let confirmation = self.confirm_transition(Some(pending), inspection.clone()).await?;
+        ConfirmedWorkloadRestartCommand::from_confirmation(&inspection, WorkloadRestartSymbolicAction::InspectExactAttempt, confirmation)
+    }
+    async fn compare_and_swap_restart_result(loaded: &WorkloadSagaRecord, proposed: &ProposedWorkloadRestartTransition) {
+        self.confirm_transition(Some(loaded), proposed.candidate().clone()).await
+    }
 }
 `),
     "crates/nimbus-compute/src/workload_saga/restart_driver.rs":
@@ -801,7 +829,7 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "missing-command-transition-id": [
       dispatchFile,
-      "transition_id: WorkloadTransitionId,",
+      "transition_id: WorkloadSagaTransitionId,",
       "",
     ],
     "missing-command-desired-digest": [
@@ -816,37 +844,37 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "crossed-command-result": [
       dispatchFile,
-      "authenticate_result_transition(command.result_transition_id(), result.transition_id())?;",
-      "accept_crossed_result_transition(result.transition_id())?;",
+      "authenticate_result_transition(record, command, &result)?;",
+      "accept_crossed_result_transition(record, command, &result)?;",
     ],
     "execute-on-confirmed-replay": [
       dispatchFile,
-      "RestartClaimConfirmation::Replay(confirmation) => inspect_ambiguous_restart",
-      "RestartClaimConfirmation::Replay(confirmation) => execute_confirmed_restart",
+      "WorkloadSagaConfirmation::ConfirmedAfterAmbiguity | WorkloadSagaConfirmation::ConfirmedReplay",
+      "WorkloadSagaConfirmation::ConfirmedAfterAmbiguity",
     ],
     "ambiguity-infers-absence": [
       dispatchFile,
-      "match inspect_exact_restart_attempt(command)?",
-      "match RestartEffectInspection::AuthenticatedAbsent",
+      "WorkloadRestartCommandOutcome::AuthenticatedAbsent { evidence } => retry_after_authenticated_absence(record, command, evidence)",
+      "WorkloadRestartCommandOutcome::AuthenticatedAbsent { evidence } => retry_without_inspection(record, command, evidence)",
     ],
     "absence-retry-changes-attempt": [
       dispatchFile,
-      "command.with_dispatch_epoch(next_dispatch_epoch)",
-      "command.with_new_attempt(next_dispatch_epoch)",
+      "record.restart_inspection_to_retry(command.claim(), absence)?;",
+      "record.restart_with_new_attempt(command.claim(), absence)?;",
     ],
     "absence-retry-reuses-dispatch-epoch": [
       dispatchFile,
-      "command.dispatch_epoch().checked_next()?",
-      "command.dispatch_epoch()",
+      "record.restart_inspection_to_retry(command.claim(), absence)?;",
+      "record.restart_retry_same_epoch(command.claim(), absence)?;",
     ],
     "absence-retry-skips-dispatch-epoch": [
       dispatchFile,
-      "command.dispatch_epoch().checked_next()?",
-      "command.dispatch_epoch().checked_add(2)?",
+      "record.restart_inspection_to_retry(command.claim(), absence)?;",
+      "record.restart_retry_skipped_epoch(command.claim(), absence)?;",
     ],
     "definite-failure-continues": [
       dispatchFile,
-      "stop_restart_dispatch(command, error)",
+      "stop_restart_dispatch(candidate)",
       "retry_after_authenticated_absence(command)",
     ],
     "quiesce-before-publication-withdrawal": [
@@ -1018,7 +1046,7 @@ function applyFixtureMutation(sources, mutation) {
     replaceOnceInFile(
       sources,
       dispatchFile,
-      "pub(crate) fn from_confirmation",
+      "fn from_confirmation",
       "pub fn new",
     );
   } else if (mutation === "bypass-admission-cas") {
@@ -1290,36 +1318,59 @@ export function verifyWorkloadRestartContract() {
     restartDispatchSource,
     "fn apply_restart_result",
   );
+  const compareAndSwapRestartResult = extractItem(
+    restartDispatchSource,
+    "fn compare_and_swap_restart_result",
+  );
   const commandFields = [
+    ["command_id", "WorkloadRestartCommandId"],
+    ["key", "WorkloadSagaKey"],
     ["saga_id", "WorkloadSagaId"],
-    ["transition_id", "WorkloadTransitionId"],
+    ["transition_id", "WorkloadSagaTransitionId"],
     ["generation", "WorkloadGeneration"],
     ["desired_digest", "WorkloadDesiredDigest"],
+    ["source", "WorkloadProvisionSourceEvidence"],
     ["source_attempt_id", "WorkloadExecutionAttemptId"],
     ["attempt_id", "WorkloadExecutionAttemptId"],
     ["restart_epoch", "WorkloadRestartEpoch"],
     ["dispatch_epoch", "WorkloadRestartDispatchEpoch"],
     ["request_id", "WorkloadRestartRequestId"],
     ["issuing_revision", "WorkloadSagaRevision"],
-    ["inspection_version", "SandboxInspectionVersion"],
+    ["confirmed_revision", "WorkloadSagaRevision"],
+    ["inspection_version", "Option<WorkloadInspectionVersion>"],
     ["provider_selection", "WorkloadExecutionProviderId"],
-    ["result_transition_id", "WorkloadTransitionId"],
+    ["step", "WorkloadRestartStep"],
+    ["mode", "WorkloadRestartCommandMode"],
+    ["claim", "WorkloadRestartCommandClaim"],
+    ["executable", "WorkloadExecutableIntent"],
+    ["compiled_network_plan", "CompiledWorkloadNetworkPlan"],
   ];
   requireContract(
     commandFields.every(([name, type]) => hasField(command, name, type)) &&
       hasAll(commandImpl, [
-        "pub(crate) fn from_confirmation",
+        "fn from_confirmation",
         "authenticate_exact_restart_confirmation",
+        "WorkloadSagaConfirmation::AppliedByThisCall",
+        "WorkloadRestartCommandMode::Execute",
       ]) &&
-      !/\bpub\s+fn\s+(?:new|from_confirmation)\b/u.test(commandImpl) &&
-      claimRestartCommand.includes(
-        "RestartClaimConfirmation::Replay(confirmation) => inspect_ambiguous_restart",
+      !/\bpub(?:\([^)]*\))?\s+fn\s+(?:new|from_confirmation)\b/u.test(
+        commandImpl,
       ) &&
+      hasAll(claimRestartCommand, [
+        "confirm_transition",
+        "WorkloadSagaConfirmation::ConfirmedAfterAmbiguity",
+        "WorkloadSagaConfirmation::ConfirmedReplay",
+        "inspect_ambiguous_restart",
+        "WorkloadRestartSymbolicAction::StartExactAttempt",
+      ]) &&
       hasAll(applyRestartResult, [
         "authenticate_result_transition",
         "authenticate_result_attempt",
         "authenticate_result_dispatch_epoch",
-        "compare_and_swap_restart_result",
+      ]) &&
+      hasAll(compareAndSwapRestartResult, [
+        "confirm_transition",
+        "proposed.candidate()",
       ]) &&
       hasTestsAt(
         sources,
@@ -1339,26 +1390,32 @@ export function verifyWorkloadRestartContract() {
   );
   requireContract(
     hasAll(claimRestartCommand, [
-      "compare_and_swap_restart_claim",
-      "DirectWinner",
-      "Replay",
-      "InspectionRequired",
+      "confirm_transition",
+      "inspect_ambiguous_restart",
     ]) &&
       hasAll(inspectAmbiguousRestart, [
-        "inspect_exact_restart_attempt",
-        "AuthenticatedAbsent",
-        "InProgress",
-        "Succeeded",
-        "DefiniteFailure",
+        "restart_dispatch_to_inspection",
+        "confirm_transition",
+        "InspectExactAttempt",
+        "from_confirmation",
+      ]) &&
+      hasAll(applyRestartResult, [
+        "WorkloadRestartCommandOutcome::AuthenticatedAbsent",
+        "WorkloadRestartCommandOutcome::Ambiguous",
+        "WorkloadRestartCommandOutcome::InProgress",
+        "WorkloadRestartCommandOutcome::Succeeded",
+        "WorkloadRestartCommandOutcome::DefiniteFailure",
         "retry_after_authenticated_absence",
         "stop_restart_dispatch",
       ]) &&
       hasAll(retryAfterAbsence, [
-        "checked_next",
-        "with_dispatch_epoch",
-        "compare_and_swap_restart_claim",
+        "WorkloadRestartAbsenceEvidence::for_inspection",
+        "restart_inspection_to_retry",
+        "StartExactAttempt",
       ]) &&
-      !hasAll(retryAfterAbsence, ["with_new_attempt", "checked_add(2)"]) &&
+      !/restart_(?:with_new_attempt|retry_same_epoch|retry_skipped_epoch)/u.test(
+        retryAfterAbsence,
+      ) &&
       hasTestsAt(
         sources,
         "crates/nimbus-compute/src/workload_saga/restart_dispatch/tests.rs",

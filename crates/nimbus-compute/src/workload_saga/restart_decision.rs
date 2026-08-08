@@ -156,7 +156,7 @@ pub struct ProposedWorkloadRestartTransition {
 }
 
 impl ProposedWorkloadRestartTransition {
-    fn new(
+    pub(super) fn new(
         candidate: WorkloadSagaRecord,
         action_after_confirmation: Option<WorkloadRestartSymbolicAction>,
     ) -> Self {
