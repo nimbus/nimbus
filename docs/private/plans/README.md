@@ -242,14 +242,21 @@ extension-registry seam before the second concern edits `extensions.rs`.
   inspection; only exact absence advances the same attempt by one dispatch
   epoch; crossed results fail closed; and definite failure stops. Focused
   command/ambiguity behavior passes `10/10`; full compute passes `251` with one
-  declared child-only ignore; strict Clippy passes. NNCV034 remains `68/68`
-  and its live contract now has exactly seven later-owned diagnostics. The
-  next slice is the capability registry, dispatcher, bounded driver, and
-  durable watch. R2 then generalizes the
-  existing provider journal with a monotonic restart ordinal and earns small
-  Container/Krun capabilities. Service/SDK, machine transport, scheduler
-  deletion, and full live convergence remain R3/R4, and no structured review
-  runs on this partial work.
+  declared child-only ignore. R2 provider orchestration is durable at
+  `5826dff6019d453f9eba575ecf67850ac3b19e6a`: compute owns the exact
+  registry, dispatcher, driver, supervisor, deterministic clock, and bounded
+  durable watch; the shared provider journal owns restart ordinals and exact
+  attempt fences; and real Container/Krun plus server ingress/listener
+  capabilities are green. A provider realm opts into restart only after it
+  earns the complete set, so forwarded machine remains truthfully unregistered
+  until R3. Focused restart behavior is `55 + 69 + 20`; full
+  compute/sandbox/server/services is `289 + 1 ignore`, `1,005 + 27 ignores`,
+  `594 + 31 ignores`, and `82`; final composition/CLI adaptation is
+  `10 + 6 + 3`. Affected all-target, strict Clippy, warning-denied rustdoc,
+  format/diff/syntax, and NNCV034 `71/71` pass. The live contract is red only
+  for service, machine, scheduler, and final behavior. R3 starts by extracting
+  the verifier fixture before adding service/SDK, Compose, machine, and
+  scheduler cutovers. No structured review has run on this partial work.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,

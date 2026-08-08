@@ -1,6 +1,6 @@
 # NNC6.4a Fenced Restart Substitution Audit
 
-Status: `audit, R0, R1, and R2 portable/store/admission/command durable; R2 provider/watch and R3-R4 expected red`
+Status: `audit and R0-R2 durable; R3-R4 expected red`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -15,14 +15,16 @@ restart state, compute coordination, provider commands, service surface,
 failure behavior, and deletion gates before a product edit.
 
 The original audit and R0 checkpoints did not restart a workload, change a
-provider, add a route, change the SDK, or alter the workload store. R1 now
-adds the portable restart model and its exact durable store content. It still
-adds no provider effect, route, SDK method, or caller cutover.
+provider, add a route, change the SDK, or alter the workload store. R1 added
+the portable restart model and its exact durable store content. R2 now adds
+the sole compute orchestration and real Container/Krun capability adapters.
+It adds no service route, SDK method, forwarded-machine restart transport,
+provider-local scheduler deletion, or final caller cutover.
 
-## Audit Result
+## Audit Baseline Result
 
-Nimbus has no active production tenant-workload restart loop. This is the safe
-intermediate state:
+At the read-only audit checkpoint, Nimbus had no active production
+tenant-workload restart loop. This was the safe baseline state:
 
 - Container and Krun inspection report exact exit, restart, cleanup, and
   snapshot-version evidence without effects.
@@ -37,7 +39,7 @@ intermediate state:
 - Tenant-workload systemd requests use `Restart=No` and reject an external
   restart policy before provider effects.
 
-NNC6.4a can therefore add one authority directly. It needs no compatibility
+NNC6.4a could therefore add one authority directly. It needs no compatibility
 bridge and must not create a second scheduler in sandbox, services, server,
 CLI, node, machine, or network code.
 
@@ -66,9 +68,10 @@ CLI, node, machine, or network code.
 | A19 | NNCV034 and its mutation suite pass. Existing NNCV000-NNCV033, the `nimbus-network -> nimbus-core` edge, sovereignty tripwire, bind census, and side-effect-free inspection contract remain green. |
 | A20 | All affected behavior, all-target check, strict Clippy, warning-denied rustdoc, format, diff, SDK, docs, and modularity gates pass. One Sol/xhigh/fast structured review runs only after A1-A20 are green and the item is candidate-frozen. |
 
-## Current Source Census
+## Audit Baseline Source Census
 
-The census is product source unless a row says `test-only`.
+This census records the pre-implementation product source unless a row says
+`test-only`. The R1-R2 checkpoint table below records the implemented delta.
 
 | Concern | Current source-derived result |
 | --- | --- |
@@ -547,14 +550,33 @@ to A1-A20:
 - `crates/nimbus-compute/src/workload_saga.rs` and concept-owned restart
   reducer, confirmation, dispatcher, driver, provider, watch, and tests.
 - `crates/nimbus-compute/src/workload_projection.rs` and tests.
+- `crates/nimbus-compute/src/state.rs` only to retain the one complete restart
+  registry, driver, supervisor, and bounded watch in the existing managed
+  workload composition. It gains no provider effect or second coordinator.
 - `crates/nimbus-compute/src/workload_provisioner.rs` and tests only where R2
   generalizes the shared cancellation and tracked-work seam.
 - `crates/nimbus-compute/src/services.rs` and tests.
+- `crates/nimbus-services/src/catalog.rs`, exact sandbox projection and
+  retirement paths under `src/manager`, and their concept-owned tests only
+  for attempt-fenced read models. These paths keep logical names and
+  projections read-only; they gain no restart decision, schedule, or provider
+  effect.
 - `crates/nimbus-server/src/workload_saga_store.rs`, its codec/schema/recovery
   children, and exact process tests.
 - `crates/nimbus-server/src/http/services.rs`, `router.rs`,
   `workload_composition.rs`, `state.rs`, and focused tests.
+- `crates/nimbus-server/src/listener_lease.rs` and its restart-retention child
+  only for stop-and-join plus exact lease retention before same-port rebind.
+- `crates/nimbus-server/src/workload_ingress.rs` and its concept-owned tests
+  only for source-attempt withdrawal, retained listener ownership, target
+  attempt publication, and read-only observation through the existing ingress
+  owner.
 - `crates/nimbus-sandbox/src/inspection.rs` and the pure classifier/tests.
+- `crates/nimbus-sandbox/src/lib.rs`, `execution_attempt.rs`,
+  `provider_command.rs`, and `provision.rs` plus their concept-owned tests and
+  exact provision integration callers only to add the provider-neutral attempt
+  fence and generalize the one existing provider-command journal. These paths
+  cannot add restart policy, scheduling, or a second journal.
 - Container and Krun manifest, inspection, restart, provision, attachment,
   readiness, PEP, machine-forwarding, state-summary, and concept-owned tests.
 - `crates/nimbus-machine/src/api.rs` only if the existing generic workload
@@ -567,6 +589,10 @@ to A1-A20:
 - `packages/nimbus/src/control-plane/client.ts`, route table, public types,
   self-test, package tests, and `packages/nimbus/README.md`.
 - `crates/nimbus-system/src/inventory.rs` and service status projections.
+- `crates/nimbus-network/src/port_lease/lifetime.rs` and the rebind owner/tests
+  only for an atomic authenticated subset transition from confirmed-stopped
+  listeners to restart-retained leases. This is portable lease state, not a
+  socket or restart effect; unrelated plan members remain unchanged.
 - the NNCV034 helper, aggregate verifier, this proof, plan, and routing index.
 - The workload network-plan durability contract script, for v4 assertions
   only.
@@ -665,10 +691,19 @@ paths are forbidden.
 | R2 portable/store quality | The product checkpoint is `14e6236d4e3d1199a7ae40674bcdedd50b98fd58`; tree `1b36f0de809d52b3b07ed42bce0686af24e7b50b`; patch SHA-256 `2287a498552e12b4b15d828e95b29bdc85bbcc6b08e9b800d5a5be7499d22b08`; `33` paths. Server workload-store behavior passes `52` with `5` declared child-only ignores. Workloads, compute, server, and CLI pass all-target checks and strict Clippy; workloads/server pass warning-denied rustdoc; Rustfmt, Prettier, JavaScript syntax, and diff checks pass. Known vendored Brotli warnings are unchanged. |
 | R2 compute admission | Checkpoint `8935e0c77dd188f50566b72c917b2005a213ecdd` adds one normalized automatic/explicit reducer and sole-coordinator CAS. Its tree is `324e36e979a54645c280edf9f4b136f1c9ed21fa`; its patch from the prior ledger checkpoint is SHA-256 `11b8bf2cb4fd94d79ce84f814c1fffd7917f10d92948407bc912a1b5a7ebeeb1` across `5` paths. The logic landed at `51653a091e457ae1950a91425fdea764829bae11`; the final checkpoint adds only canonical Rust formatting. Exact source revision, source generation, workload generation, desired digest, inspection version, provider selection, saga, request, withdrawal, and successor fences fail before CAS. Exact contention admits one epoch and adopts the idempotent loser. Cancellation before submission makes zero store calls. Reducer/progress behavior passes `8/8`; full compute passes `241` with one declared child-only ignore; strict compute Clippy passes. |
 | R2 confirmed command and result | Checkpoint `e1e9c95167972c2566a468d01aa0b91e559dd9be`; tree `48f14195cfebd71e6ecaca0e012d83d6deefac56`; patch from the prior ledger checkpoint SHA-256 `3d5ed0766c5d4dcbbace69b4a1c69cb16662de499ad3d9f881accd7dc6238853`; `5` paths. One private constructor accepts only exact coordinator confirmation. The command retains stable key/saga/transition, desired/source, source and target attempts, restart and dispatch epochs, request, revisions, optional exit inspection, provider, step, claim, executable, and compiled network plan. Only the direct claim-CAS winner receives execute mode. Replay, confirmed ambiguity, and fresh-process recovery persist `InspectionRequired` before provider reads. Results authenticate durable transition, attempt, source, provider, claim, and epoch. Ambiguous or in-progress inspection never retries; authenticated absence retains the same attempt and advances exactly one dispatch epoch; definite failure is terminal. Focused behavior passes `10/10`; full compute passes `251` with one declared child-only ignore; strict compute Clippy passes. |
-| R2 verifier state | NNCV034 passes `68/68` sole-diagnostic mutations after replacing speculative `WorkloadTransitionId`, mandatory `SandboxInspectionVersion`, and precomputed result-transition checks with the actual durable `WorkloadSagaTransitionId`, optional admission inspection version, and confirmed source-transition fence. Its live contract exits `1` on exactly readiness, capabilities, service, watch, machine, scheduler, and behavior. The path contract is green. No final live, aggregate, docs, or R4 completion claim is made at this partial checkpoint. |
-| R2 modularity | `workload-restart-source-contract.mjs` is `1,754` lines in the explicit-reason band. It is one deep NNCV034 owner for the production scan, green fixture, and sole-diagnostic mutations. Keeping one lexical contract prevents parser and fixture drift. R3 must extract fixture data before any growth reaches `2,000` lines and must not add a second parser. The `620`-line command/result owner and `460`-line concept-owned test child stay below the threshold. The `1,565`-line shared store conformance matrix keeps its two reference adapters on one contract; restart-candidate tests live in a concept-owned child. |
-| Review cadence | No structured review ran for this partial audit. NNC6.4a receives one review only after A1-A20 are green and the complete item is candidate-frozen. |
-| Next action | Implement the exact capability registry, dispatcher, bounded driver, deterministic clock, and durable watch against the confirmed command/result seam. Then generalize the existing provider journal and implement real Container/Krun substitutions. Do not add a service route or SDK method before R3. |
+| R2 provider journal | One generalized sandbox provider-command journal replaces the provision-only owner. Its key authenticates source attempt when present, target attempt, workload generation, restart ordinal, provider realm, command operation, and exact durable observation. Provision uses ordinal zero; same-generation restart advances monotonically. Ambiguous effects retain inspect-before-retry behavior, and exact live absence is the only retry authority. |
+| R2 compute orchestration | Compute owns one exact provider registry with no first-available fallback, one dispatcher, one phase-explicit driver, one deterministic clock, one retained supervisor, and one durable watch. Each sweep is bounded to `64` pages and retains its cursor; cancellation drops only waiters, not durable submitted work. Driver tests prove withdrawal before quiescence, retained detach before reattach, activation prerequisites before activation, readiness before publication, crossed callback rejection, ambiguity, exact absence, cancellation, and recovery. |
+| R2 real provider substitution | Container and Krun implement the same small restart capabilities. Both authenticate exact source/target attempts and retained network generation before effects. Restart-retained detach preserves network allocation, lease, attachment, and PEP authority. Server ingress owns publication withdrawal/republish/observation and a concept-owned retained-listener authority. `nimbus-network` gains only attempt-fenced port-lease rebind and no provider effect or new workspace edge. |
+| R2 provider capability truth | `ServerWorkloadProviders` requires every provision role and registers restart separately through `with_restart_capabilities`. Local Krun opts in after its real providers earn every role. A forwarded-machine realm remains unregistered until R3 adds its exact transport; it therefore fails restart dispatch closed instead of advertising a false capability. No compatibility shim or god provider is present. |
+| R2 exact projection | `SandboxInspection::provider_authenticated_running` carries the exact execution attempt and provider-evidence digest. Service and standalone sandbox projections store the complete `WorkloadExecutionReference`, reject crossed owner/attempt/epoch evidence, and use small projection input records instead of parameter bags. Logical service naming remains read-only and services-owned. |
+| R2 behavior | Focused restart behavior passes compute `55/55`, sandbox `69/69`, and server `20/20`. Full compute passes `289` with one declared child-only ignore; full sandbox passes `1,005` with `27` declared ignores; full server passes `594` with `31` declared ignores; full services passes `82/82`. Final post-adaptation evidence passes server composition `10/10`, CLI Compose lifecycle `6/6`, and guest provision `3/3`. |
+| R2 quality | Affected all-target check passes across network, workloads, sandbox, services, compute, server, and CLI. Strict affected Clippy passes after correcting four exact local findings: redundant tuple parentheses, two eight-argument projection parameter bags, one `get(...).is_none()` assertion, and one clone of a copy digest. Warning-denied rustdoc passes for the six public affected crates. Rustfmt, diff, Bash syntax, and JavaScript syntax pass. Known vendored Brotli warnings are unchanged. |
+| R2 integration failure dispositions | The first full Sandbox run found one direct cleanup-enum mismatch and two stale Krun error strings; all were corrected and the full suite passed. The first full Server run found `13` managed-fixture 500 responses because fake inspection evidence had no exact attempt; the shared fixture was corrected and focused plus full suites passed. CLI all-target compilation then exposed honest capability-reporting, provider-claim, and exact projection fixture drift; restart registration became explicit, provision claims use ordinal zero, and exact fixture fields were added. The first CLI guest test exposed two more strict execution/publication fixture fields; both were added and `3/3` passed. These were direct R2 convergence defects, not review findings. |
+| R2 durable checkpoint | Product commit `5826dff6019d453f9eba575ecf67850ac3b19e6a`; tree `0a78ba83822755b9a0c730eee19fa0de5c077305`; patch from the prior ledger commit SHA-256 `59b5ee9e59b40f979d6cdbc0f0d832f5a3d9d5307f937409e293b48b36a37ae9`; `93` product/script paths. |
+| R2 verifier state | NNCV034 passes `71/71` sole-diagnostic mutations. Its live contract exits `1` on exactly service, machine, scheduler, and behavior. Readiness, capabilities, watch, and paths are green. No final aggregate, docs, R4, or item-completion claim is made at this partial checkpoint. |
+| R2 modularity | `workload-restart-source-contract.mjs` is `1,968` lines in the explicit-reason band. It remains the one deep NNCV034 owner for the production scan, green fixture, and sole-diagnostic mutations. R3 must extract fixture data before any other verifier growth reaches `2,000` lines and must reuse the existing parser. Lifecycle implementations and tests use concept-owned children; the generalized provider journal owns one coherent command-idempotency state machine. |
+| Review cadence | No structured review ran for R0-R2 partial work. NNC6.4a receives one full Sol/xhigh/fast review only after A1-A20 are green and the complete item is candidate-frozen. |
+| Next action | Start R3 with verifier fixture extraction. Then add the exact service facade/route and SDK method, Compose cutover, forwarded-machine command, and provider scheduler-state deletion in that dependency order. |
 
 ## Audit Acceptance Traceability
 
@@ -676,7 +711,7 @@ paths are forbidden.
 | --- | --- |
 | A1 | Frozen by the source census, evidence locations, and current call graphs. |
 | A2-A3 | R1 implements the closed portable vocabulary, nested same-generation state, and exact attempt-fenced execution and publication evidence. Final integration remains open. |
-| A4-A6 | R1 implements strict admission content and automatic/explicit count semantics. R2 now owns exact record claim, inspection, absence-retry, result, and failure transitions. The sole compute writer, normalized admission reducer, idempotent contention, pre-submit cancellation, private confirmed command, and exact result reducer are green. Dispatcher, driver, and watch integration remain open. |
-| A7-A13 | R1 freezes legal phases, withdrawal vetoes, deadline/count durability, attempt fencing, and pure recovery decisions. R2-R3 retain provider choreography, retained-resource behavior, and obsolete provider-state deletion. |
-| A14-A17 | The bounded candidate query is green at its portable and Engine seams. The compute watch, service, machine, cancellation, and final recovery contracts remain open. |
-| A18-A20 | Portable/store/admission/command behavior and affected quality gates are green: workloads `165/165`, compute `251` with one declared child-only ignore, server store `52` with `5` declared child-only ignores, and NNCV034 `68/68`. Seven later-band groups remain expected red. Final behavior, live convergence, complete aggregate, docs, and the one-review gate require R2-R4; no item-completion claim is made. |
+| A4-A6 | R1 implements strict admission content and automatic/explicit count semantics. R2 owns exact record claim, inspection, absence-retry, result, failure, registry, dispatch, driver, supervisor, and bounded-watch transitions. The sole compute writer, idempotent contention, pre-submit cancellation, private confirmed command, exact result reducer, and inspect-before-retry provider journal are green. |
+| A7-A13 | R1 freezes legal phases, withdrawal vetoes, deadline/count durability, attempt fencing, and pure recovery decisions. R2 proves provider choreography and retained-resource behavior for Container/Krun plus server ingress. R3 retains obsolete provider scheduler-state deletion. |
+| A14-A17 | The bounded candidate query and 64-page compute watch are green. Exact cancellation is green at admission, driver, watch, and supervisor seams. Service and forwarded-machine ingress remain open in R3; final distinct-process convergence remains R4. |
+| A18-A20 | R2 focused/full behavior, affected all-target check, strict Clippy, warning-denied rustdoc, format/diff/syntax, and NNCV034 `71/71` are green. Four later-band groups remain expected red. Final service/SDK/machine/scheduler behavior, aggregate/docs convergence, and the one item review require R3-R4; no item-completion claim is made. |
