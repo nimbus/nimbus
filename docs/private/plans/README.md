@@ -235,8 +235,17 @@ extension-registry seam before the second concern edits `extensions.rs`.
   compute admission reducer and sole-coordinator CAS are durable at
   `8935e0c77dd188f50566b72c917b2005a213ecdd`: all `8/8` reducer, race,
   idempotency, deadline, and cancellation tests pass, and full compute passes
-  `241` with one declared child-only ignore. The next slice is private command
-  confirmation, result reduction, driver, and watch. R2 then generalizes the
+  `241` with one declared child-only ignore. Private confirmed command and
+  exact result reduction are durable at
+  `e1e9c95167972c2566a468d01aa0b91e559dd9be`: only the direct claim-CAS
+  winner executes; replay, ambiguity, and fresh-process recovery first persist
+  inspection; only exact absence advances the same attempt by one dispatch
+  epoch; crossed results fail closed; and definite failure stops. Focused
+  command/ambiguity behavior passes `10/10`; full compute passes `251` with one
+  declared child-only ignore; strict Clippy passes. NNCV034 remains `68/68`
+  and its live contract now has exactly seven later-owned diagnostics. The
+  next slice is the capability registry, dispatcher, bounded driver, and
+  durable watch. R2 then generalizes the
   existing provider journal with a monotonic restart ordinal and earns small
   Container/Krun capabilities. Service/SDK, machine transport, scheduler
   deletion, and full live convergence remain R3/R4, and no structured review
