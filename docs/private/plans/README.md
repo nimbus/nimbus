@@ -231,8 +231,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
   `165/165`. Server workload-store behavior passes `52` with `5` declared
   child-only ignores. Affected all-target, strict Clippy, warning-denied
   rustdoc, format, and static gates pass. NNCV034 remains `68/68`, with exactly
-  the intended ten R2-R4 diagnostics red and no path violation. The next slice
-  is compute reducer/confirmation/driver/watch. R2 then generalizes the
+  the intended nine R2-R4 diagnostics red and no path violation. The normalized
+  compute admission reducer and sole-coordinator CAS are durable at
+  `8935e0c77dd188f50566b72c917b2005a213ecdd`: all `8/8` reducer, race,
+  idempotency, deadline, and cancellation tests pass, and full compute passes
+  `241` with one declared child-only ignore. The next slice is private command
+  confirmation, result reduction, driver, and watch. R2 then generalizes the
   existing provider journal with a monotonic restart ordinal and earns small
   Container/Krun capabilities. Service/SDK, machine transport, scheduler
   deletion, and full live convergence remain R3/R4, and no structured review
