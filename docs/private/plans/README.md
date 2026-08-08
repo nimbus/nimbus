@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.3b complete; NNC6.4
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.4 complete; NNC6.4a
   in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
@@ -195,23 +195,21 @@ extension-registry seam before the second concern edits `extensions.rs`.
   validation claim is source-rejected. Review cadence is exhausted. The final
   pre-ledger executable patch SHA-256 is
   `ff0551ba284866427b2a62fc147e94ab1695f68f1089f2238bb97f0c81be1de3`.
-  NNC6.4 owns the atomic provider-command and caller replacement. Its source
-  census is frozen in
+  NNC6.4 completed the atomic provider-command and caller replacement at
+  `6f4f909a06a20de1003d5aafc2f5ffcba43cf0bd`. Its evidence is in
   `proof/nimbus-network-control-plane/nnc6.4-atomic-provision-caller-cutover.md`.
-  The census adds the hidden node executor and requires direct-winner dispatch
-  plus exact-absence retry.
+  NNCV033 passes `40/40` direct checks and `50/50` mutations. The aggregate
+  passes `34/34` and `327/327`. Affected non-CLI passes `2,502/2,502` with `79`
+  skips, and CLI passes `936/936` with one skip.
 
-  Its closed provider target follows the actual authority. Network steps bind
-  exact Attachment or Ingress selection evidence. Workload steps bind a neutral
-  execution-provider identity. Resource-free network steps create no target or
-  command.
+  The completed item has one full Sol/xhigh/fast review and one narrow
+  correction review. The proof records every finding disposition. The plan
+  authorizes no further NNC6.4 review.
 
-  NNCV033 is the active expected-red checkpoint: self-test `48/48`, current
-  product `4/40`. NNCV032 reads completion commit `c42c61fb2` and stays green
-  at `32/32` plus `36/36`. The live aggregate is expected red at `33/34` with
-  only NNCV033 failing. Its bounded self-test passes `325/325`. Docs pass `108`
-  pages and site verification passes `17/17`. One atomic candidate replaces
-  and deletes every caller without temporary dual authority.
+  NNC6.4a is active. It starts with a read-only substitution audit of
+  Container, Krun, service, compute, node, inspection, exit, withdrawal, and
+  restart authority. Product edits start only after that audit freezes the
+  fail-before contract and exact path allowlist.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
