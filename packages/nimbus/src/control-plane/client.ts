@@ -20,6 +20,8 @@ import type {
   NimbusServiceDeleteRequest,
   NimbusServiceLifecycleRequest,
   NimbusServiceListRequest,
+  NimbusServiceRestartRequest,
+  NimbusServiceRestartSubmission,
   NimbusServiceSelector,
   NimbusServiceStartRequest,
   NimbusServiceStopRequest,
@@ -145,6 +147,18 @@ export class NimbusServices {
       name: input.name,
       tenantId: input.tenantId,
       until: input.waitUntil,
+    });
+  }
+
+  restart(
+    input: NimbusServiceRestartRequest,
+  ): Promise<NimbusServiceRestartSubmission> {
+    return this.sendControlPlaneRequest("services.restart", {
+      params: serviceResourceParams(this.client, input),
+      body: {
+        sourceGeneration: input.sourceGeneration,
+        requestId: input.requestId,
+      },
     });
   }
 

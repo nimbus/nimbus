@@ -858,6 +858,10 @@ fn build_service_control_router() -> Router<Arc<AppState>> {
             "/api/tenants/{tenant_id}/services/{service_name}/stop",
             post(http::stop_service),
         )
+        .route(
+            "/api/tenants/{tenant_id}/services/{service_name}/restart",
+            post(http::restart_service),
+        )
 }
 
 fn build_deploy_router() -> Router<Arc<AppState>> {

@@ -21,11 +21,16 @@ use nimbus_workloads::{
 use super::restart_dispatcher::WorkloadRestartDispatcher;
 use super::restart_driver::WorkloadRestartDriver;
 use super::restart_provider::WorkloadRestartCapabilityRegistry;
+use super::restart_submission::{
+    ExplicitWorkloadRestartError, ExplicitWorkloadRestartRequest,
+    ExplicitWorkloadRestartSubmission, ExplicitWorkloadRestartSubmitter,
+};
 use super::restart_supervisor::{
     RestartCandidateCoordinator, RestartCandidateFuture, RetainedRestartSupervisor,
 };
 use super::restart_watch::{
-    DurableRestartWatch, RestartClock, RestartHintHandle, RestartWait, RestartWaitFuture,
+    DurableRestartWatch, RestartClock, RestartHintHandle, RestartSupervisor, RestartWait,
+    RestartWaitFuture,
 };
 use super::{
     WorkloadProvisionCapabilityRegistry, WorkloadProvisionSourceAuthority,
@@ -172,6 +177,7 @@ pub(crate) struct WorkloadRestartRuntime {
     cancellation: WorkloadRestartCancellationToken,
     watch_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
     _hint_handle: RestartHintHandle,
+    explicit_submitter: ExplicitWorkloadRestartSubmitter,
     _driver: Arc<WorkloadRestartDriver>,
     _clock: Arc<dyn RestartClock>,
 }
@@ -202,6 +208,11 @@ impl WorkloadRestartRuntime {
             clock: Arc::clone(&clock),
         });
         let supervisor = Arc::new(RetainedRestartSupervisor::new(candidate_coordinator));
+        let explicit_submitter = ExplicitWorkloadRestartSubmitter::new(
+            Arc::clone(&coordinator),
+            Arc::clone(&supervisor),
+        );
+        let watch_supervisor: Arc<dyn RestartSupervisor> = supervisor.clone();
         let cancellation = WorkloadRestartCancellationToken::new();
         let watch = Arc::new(
             DurableRestartWatch::new(
@@ -212,7 +223,7 @@ impl WorkloadRestartRuntime {
                 Arc::clone(&clock),
                 cancellation.clone(),
                 coordinator,
-                supervisor,
+                watch_supervisor,
             )
             .map_err(|error| error.to_string())?,
         );
@@ -238,9 +249,18 @@ impl WorkloadRestartRuntime {
             cancellation,
             watch_thread: Mutex::new(Some(watch_thread)),
             _hint_handle: hint_handle,
+            explicit_submitter,
             _driver: driver,
             _clock: clock,
         })
+    }
+
+    pub(crate) async fn submit_explicit(
+        &self,
+        request: &ExplicitWorkloadRestartRequest,
+        cancellation: &WorkloadRestartCancellationToken,
+    ) -> Result<ExplicitWorkloadRestartSubmission, ExplicitWorkloadRestartError> {
+        self.explicit_submitter.submit(request, cancellation).await
     }
 }
 

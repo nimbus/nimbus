@@ -19,8 +19,6 @@ export const NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS = [
   "sessions.create",
   "sessions.renew",
   "sessions.extend",
-  "restart(input",
-  "services.restart",
   "async request(path",
   "async resolveRestClient",
 ];
@@ -28,6 +26,7 @@ export const NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS = [
 export const NIMBUS_ROOT_SDK_METHOD_FRAGMENTS = [
   "start(input",
   "stop(input",
+  "restart(input",
   "get(selector",
   "wait(input",
   "open(input",
@@ -48,6 +47,7 @@ export const NIMBUS_ROOT_SDK_CONTROL_PLANE_ROUTE_FRAGMENTS = [
   "services.list",
   "services.start",
   "services.stop",
+  "services.restart",
   "sandboxes.create",
   "sandboxes.get",
   "sandboxes.list",
@@ -57,6 +57,7 @@ export const NIMBUS_ROOT_SDK_CONTROL_PLANE_ROUTE_FRAGMENTS = [
   "sessions.list",
   "sessions.close",
   "/api/tenants/{tenant_id}/services/{service_name}",
+  "/api/tenants/{tenant_id}/services/{service_name}/restart",
   "/api/tenants/{tenant_id}/services",
   "/api/tenants/{tenant_id}/sandboxes/{sandbox_id}",
   "/api/tenants/{tenant_id}/sandboxes",

@@ -83,7 +83,7 @@ pub struct ComputeState {
     network_manager: Option<Arc<LocalNetworkManager>>,
     workload_saga_coordinator: Option<Arc<WorkloadSagaCoordinator>>,
     workload_provisioner: Option<Arc<WorkloadProvisioner>>,
-    _workload_restart_runtime: Option<WorkloadRestartRuntime>,
+    workload_restart_runtime: Option<WorkloadRestartRuntime>,
     system_convex_registry: Option<Arc<ConvexRegistry>>,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -200,7 +200,7 @@ impl ComputeState {
             network_manager,
             workload_saga_coordinator,
             workload_provisioner,
-            _workload_restart_runtime: workload_restart_runtime,
+            workload_restart_runtime,
             system_convex_registry,
             control_plane,
             node_services,
@@ -233,6 +233,12 @@ impl ComputeState {
     /// The sole product-level workload provision authority for this realm.
     pub fn workload_provisioner(&self) -> Option<Arc<WorkloadProvisioner>> {
         self.workload_provisioner.clone()
+    }
+
+    /// The sole compute-owned restart runtime, when workload lifecycle is
+    /// enabled. Callers use its transport-free explicit submission seam.
+    pub(crate) fn workload_restart_runtime(&self) -> Option<&WorkloadRestartRuntime> {
+        self.workload_restart_runtime.as_ref()
     }
 
     fn require_protocol_only_node_services(node_services: &NodeServicesConfig) {

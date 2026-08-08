@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use nimbus_compute::workload_saga::provision_provider::{
     ProviderProvisionEffectObservation, ProviderProvisionPhaseAdapter,
 };
+use nimbus_compute::workload_saga::restart_provider_command::{
+    ProviderRestartEffectObservation, ProviderRestartPhaseAdapter,
+};
 use nimbus_compute::workload_saga::{
     ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadRestartCommand,
     IngressPublicationCapability, IngressPublicationInspectionCapability,
@@ -17,6 +20,7 @@ use nimbus_compute::workload_saga::{
     WorkloadRestartActivationCapability, WorkloadRestartActivationPrerequisiteCapability,
     WorkloadRestartCapabilityFuture, WorkloadRestartPreparationCapability,
     WorkloadRestartReadinessCapability, sandbox_execution_provider_id,
+    validate_sandbox_restart_command,
 };
 use nimbus_compute::{
     WorkloadExecutionObservationCapability, WorkloadExecutionObservationFuture,
@@ -100,6 +104,7 @@ impl TestSandboxActivation for EffectForbiddenSandboxBackend {
 struct ManagedTestWorkloadProvider<Backend> {
     backend: Arc<Backend>,
     phases: ProviderProvisionPhaseAdapter,
+    restart_phases: ProviderRestartPhaseAdapter,
 }
 
 macro_rules! managed_restart_capability {
@@ -110,16 +115,26 @@ macro_rules! managed_restart_capability {
         {
             fn execute(
                 &self,
-                _command: &ConfirmedWorkloadRestartCommand,
+                command: &ConfirmedWorkloadRestartCommand,
             ) -> WorkloadRestartCapabilityFuture<'_> {
-                panic!("managed provision fixture must not execute restart effects")
+                let observation = self.restart_phases.execute(command, || {
+                    ProviderRestartEffectObservation::Succeeded {
+                        evidence: format!("managed-test-restart:{:?}", command.step()).into_bytes(),
+                    }
+                });
+                Box::pin(std::future::ready(observation))
             }
 
             fn inspect(
                 &self,
-                _command: &ConfirmedWorkloadRestartCommand,
+                command: &ConfirmedWorkloadRestartCommand,
             ) -> WorkloadRestartCapabilityFuture<'_> {
-                panic!("managed provision fixture must not inspect restart effects")
+                let observation = self.restart_phases.inspect(command, || {
+                    ProviderRestartEffectObservation::Succeeded {
+                        evidence: format!("managed-test-restart:{:?}", command.step()).into_bytes(),
+                    }
+                });
+                Box::pin(std::future::ready(observation))
             }
         }
     };
@@ -133,9 +148,14 @@ macro_rules! managed_restart_inspection_capability {
         {
             fn inspect(
                 &self,
-                _command: &ConfirmedWorkloadRestartCommand,
+                command: &ConfirmedWorkloadRestartCommand,
             ) -> WorkloadRestartCapabilityFuture<'_> {
-                panic!("managed provision fixture must not inspect restart effects")
+                let observation = self.restart_phases.inspect(command, || {
+                    ProviderRestartEffectObservation::Succeeded {
+                        evidence: format!("managed-test-restart:{:?}", command.step()).into_bytes(),
+                    }
+                });
+                Box::pin(std::future::ready(observation))
             }
         }
     };
@@ -145,7 +165,6 @@ managed_restart_capability!(NetworkRestartAttachmentCapability);
 managed_restart_capability!(WorkloadExecutionQuiescenceCapability);
 managed_restart_capability!(WorkloadRestartPreparationCapability);
 managed_restart_inspection_capability!(WorkloadRestartActivationPrerequisiteCapability);
-managed_restart_capability!(WorkloadRestartActivationCapability);
 managed_restart_inspection_capability!(WorkloadRestartReadinessCapability);
 managed_restart_capability!(RestartPublicationWithdrawalCapability);
 managed_restart_capability!(RestartPublicationCapability);
@@ -155,8 +174,12 @@ impl<Backend> ManagedTestWorkloadProvider<Backend>
 where
     Backend: TestSandboxActivation,
 {
-    fn new(backend: Arc<Backend>, phases: ProviderProvisionPhaseAdapter) -> Self {
-        Self { backend, phases }
+    fn new(backend: Arc<Backend>, journal: ProviderCommandAttemptJournal) -> Self {
+        Self {
+            backend,
+            phases: ProviderProvisionPhaseAdapter::new(journal.clone()),
+            restart_phases: ProviderRestartPhaseAdapter::new(journal),
+        }
     }
 
     fn execute_success(
@@ -233,6 +256,70 @@ where
                 evidence: b"managed-test:activation-absent".to_vec(),
             }
         }
+    }
+
+    fn restart_activation(
+        &self,
+        command: &ConfirmedWorkloadRestartCommand,
+    ) -> ProviderRestartEffectObservation {
+        let validated = match validate_sandbox_restart_command(command, self.backend.kind()) {
+            Ok(validated) => validated,
+            Err(observation) => return observation,
+        };
+        match self
+            .backend
+            .activate_for_test(validated.spec().clone(), validated.sandbox_id().clone())
+        {
+            Ok(handle) if &handle.id == validated.sandbox_id() => {
+                ProviderRestartEffectObservation::Succeeded {
+                    evidence: b"managed-test-restart:activated".to_vec(),
+                }
+            }
+            Ok(handle) => ProviderRestartEffectObservation::DefiniteFailure {
+                evidence: handle.id.as_str().as_bytes().to_vec(),
+            },
+            Err(error) => ProviderRestartEffectObservation::DefiniteFailure {
+                evidence: error.to_string().into_bytes(),
+            },
+        }
+    }
+}
+
+impl<Backend> WorkloadRestartActivationCapability for ManagedTestWorkloadProvider<Backend>
+where
+    Backend: TestSandboxActivation,
+{
+    fn execute(
+        &self,
+        command: &ConfirmedWorkloadRestartCommand,
+    ) -> WorkloadRestartCapabilityFuture<'_> {
+        let observation = self
+            .restart_phases
+            .execute(command, || self.restart_activation(command));
+        Box::pin(std::future::ready(observation))
+    }
+
+    fn inspect(
+        &self,
+        command: &ConfirmedWorkloadRestartCommand,
+    ) -> WorkloadRestartCapabilityFuture<'_> {
+        let sandbox_id = SandboxId::new(command.execution().execution_id().as_str());
+        let observation = self.restart_phases.inspect(command, || {
+            if self
+                .backend
+                .activated_handle_for_test(&sandbox_id)
+                .is_some()
+            {
+                ProviderRestartEffectObservation::Succeeded {
+                    evidence: b"managed-test-restart:activation-present".to_vec(),
+                }
+            } else {
+                ProviderRestartEffectObservation::Absent {
+                    evidence: b"managed-test-restart:activation-absent".to_vec(),
+                }
+            }
+        });
+        Box::pin(std::future::ready(observation))
     }
 }
 
@@ -471,10 +558,7 @@ where
         "server-managed-test-provider",
     )
     .expect("managed test provider journal should open");
-    let provider = Arc::new(ManagedTestWorkloadProvider::new(
-        backend,
-        ProviderProvisionPhaseAdapter::new(journal),
-    ));
+    let provider = Arc::new(ManagedTestWorkloadProvider::new(backend, journal));
     let execution_provider_id = sandbox_execution_provider_id(backend_kind);
     let providers = ServerWorkloadProviders::new(
         attachment_provider_id,

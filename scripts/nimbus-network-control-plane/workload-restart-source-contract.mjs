@@ -59,7 +59,10 @@ const ALLOWED_EXACT_PATHS = new Set([
   "crates/nimbus-server/src/workload_saga_store.rs",
   "crates/nimbus-server/src/workload_composition/tests.rs",
   "crates/nimbus-server/src/http/services.rs",
+  "crates/nimbus-server/src/http/mod.rs",
   "crates/nimbus-server/src/router.rs",
+  "crates/nimbus-server/src/tests/service_manager.rs",
+  "crates/nimbus-server/src/tests/service_manager/restart.rs",
   "crates/nimbus-server/src/workload_composition.rs",
   "crates/nimbus-server/src/state.rs",
   "crates/nimbus-sandbox/src/inspection.rs",
@@ -73,7 +76,10 @@ const ALLOWED_EXACT_PATHS = new Set([
   "crates/nimbus-node/src/systemd_transient.rs",
   "crates/nimbus-system/src/inventory.rs",
   "packages/nimbus/src/selftest.mjs",
+  "packages/nimbus/src/capability_surface_contract.mjs",
+  "packages/nimbus/src/control_plane_routes.ts",
   "packages/nimbus/README.md",
+  "scripts/nimbus-root-sdk-artifact-policy.mjs",
   "scripts/verify-nimbus-network-control-plane.sh",
   "scripts/verify-nimbus-network-source-contract.mjs",
   "scripts/nimbus-network-control-plane/source-contract-scanner.mjs",
@@ -213,6 +219,29 @@ const R2_ALLOWED_PREFIXES = [
 ];
 
 const R3_ALLOWED_EXACT_PATHS = new Set([
+  "crates/nimbus-compute/src/services.rs",
+  "crates/nimbus-compute/src/state.rs",
+  "crates/nimbus-compute/src/workload_saga.rs",
+  "crates/nimbus-compute/src/workload_saga/restart_runtime.rs",
+  "crates/nimbus-compute/src/workload_saga/restart_submission.rs",
+  "crates/nimbus-compute/src/workload_saga/restart_submission/tests.rs",
+  "crates/nimbus-server/src/http/mod.rs",
+  "crates/nimbus-server/src/http/services.rs",
+  "crates/nimbus-server/src/router.rs",
+  "crates/nimbus-server/src/tests/managed_workload.rs",
+  "crates/nimbus-server/src/tests/service_manager.rs",
+  "crates/nimbus-server/src/tests/service_manager/restart.rs",
+  "crates/nimbus-workloads/src/saga/state/restart.rs",
+  "crates/nimbus-workloads/src/saga/tests/restart_state.rs",
+  "docs/private/plans/README.md",
+  "docs/private/plans/nimbus-network-control-plane-plan.md",
+  "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",
+  "packages/nimbus/src/capability_surface_contract.mjs",
+  "packages/nimbus/src/control-plane/client.ts",
+  "packages/nimbus/src/control-plane/types.ts",
+  "packages/nimbus/src/control_plane_routes.ts",
+  "packages/nimbus/src/selftest.mjs",
+  "scripts/nimbus-root-sdk-artifact-policy.mjs",
   "scripts/nimbus-network-control-plane/workload-restart-contract-fixture.mjs",
   "scripts/nimbus-network-control-plane/workload-restart-source-contract.mjs",
 ]);
@@ -346,7 +375,7 @@ function productionSources(root) {
     ),
     sdk: [
       readText(root, "packages/nimbus/src/control-plane/client.ts"),
-      readText(root, "packages/nimbus/src/control-plane/routes.ts"),
+      readText(root, "packages/nimbus/src/control_plane_routes.ts"),
       readText(root, "packages/nimbus/src/selftest.mjs"),
       readText(root, "packages/nimbus/README.md"),
     ].join("\n"),
@@ -472,8 +501,16 @@ function applyFixtureMutation(sources, mutation) {
   const sandboxFile =
     "crates/nimbus-compute/src/workload_saga/restart_sandbox.rs";
   const watchFile = "crates/nimbus-compute/src/workload_saga/restart_watch.rs";
+  const serviceFacadeFile = "crates/nimbus-compute/src/services.rs";
+  const serviceRouteFile = "crates/nimbus-server/src/http/services.rs";
 
   const fileMutations = {
+    "local-stop-start": [
+      serviceFacadeFile,
+      "async fn submit_service_restart() {",
+      "async fn submit_service_restart() { stop_service(); start_service();",
+    ],
+    "missing-api-idempotency": [serviceRouteFile, "request_id: String,", ""],
     "separate-explicit-reducer": [
       decisionFile,
       "admit_explicit_restart(record, request)",
@@ -689,16 +726,6 @@ function applyFixtureMutation(sources, mutation) {
       "network",
       "pub struct NetworkAttachmentId(String);",
       "pub struct NetworkAttachmentId(String); fn restart() { TcpListener::bind(); }",
-    ],
-    "local-stop-start": [
-      "server",
-      "fn submit_service_restart() {}",
-      "fn submit_service_restart() { stop_service(); start_service(); }",
-    ],
-    "missing-api-idempotency": [
-      "server",
-      "request_id: WorkloadRestartRequestId,",
-      "",
     ],
     "node-restart": [
       "node",
@@ -1343,24 +1370,56 @@ export function verifyWorkloadRestartContract() {
     DIAGNOSTICS.capabilities,
   );
 
+  const explicitSubmissionSource = sourceAt(
+    sources,
+    "crates/nimbus-compute/src/workload_saga/restart_submission.rs",
+  );
+  const submitExplicitRestart = extractItem(
+    explicitSubmissionSource,
+    "async fn submit",
+  );
+  const serviceFacadeSource = sourceAt(
+    sources,
+    "crates/nimbus-compute/src/services.rs",
+  );
+  const submitServiceRestart = extractItem(
+    serviceFacadeSource,
+    "async fn submit_service_restart",
+  );
+  const serviceRouteSource = sourceAt(
+    sources,
+    "crates/nimbus-server/src/http/services.rs",
+  );
   requireContract(
-    hasAll(sources.server, [
-      "source_generation: WorkloadGeneration",
-      "request_id: WorkloadRestartRequestId",
-      "submit_service_restart",
+    hasAll(serviceRouteSource, [
+      "source_generation: u64",
+      "request_id: String",
+      "StatusCode::ACCEPTED",
     ]) &&
+      hasAll(submitExplicitRestart, [
+        "compare_and_swap_restart_admission",
+        ".track(",
+      ]) &&
+      hasAll(submitServiceRestart, [
+        "WorkloadProvisionSourceGeneration",
+        "WorkloadProvisionSourceIdentity::sandbox_backed_service",
+        "WorkloadSagaKey::new",
+        "ExplicitWorkloadRestartRequest::new",
+        "submit_explicit",
+        "submit_service_restart",
+      ]) &&
       hasAll(sources.sdk, [
         "services.restart",
         "/restart",
         "sourceGeneration",
         "requestId",
       ]) &&
-      sources.tests.includes(
+      hasAll(sources.tests, [
+        "completed_explicit_request_replay_returns_the_same_restart_epoch",
+        "completed_explicit_request_rejects_crossed_admission_content",
         "duplicate_service_request_returns_same_restart_epoch",
-      ) &&
-      !/submit_service_restart[\s\S]{0,300}\bstop_service\b[\s\S]{0,200}\bstart_service\b/u.test(
-        sources.server,
-      ),
+      ]) &&
+      !/\bstop_service\b|\bstart_service\b/u.test(submitServiceRestart),
     DIAGNOSTICS.service,
   );
 

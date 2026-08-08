@@ -807,6 +807,21 @@ impl WorkloadSagaRecord {
                 ))
             };
         }
+        if let Some(completed) = &self.restart.last_completed
+            && completed.request_id() == &input.request_id
+        {
+            let admission = completed.admission();
+            return if admission.trigger() == input.trigger
+                && admission.inspection_version() == input.inspection_version
+                && admission.not_before_unix_millis() == input.not_before_unix_millis
+            {
+                Ok(WorkloadRestartAdmissionUpdate::Unchanged)
+            } else {
+                Err(WorkloadSagaError::InvalidTransition(
+                    "completed restart request has crossed admission content",
+                ))
+            };
+        }
         if input.expected_revision != self.revision {
             return Err(WorkloadSagaError::InvalidTransition(
                 "restart admission revision is stale or crossed",

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use axum::http::HeaderMap;
 use nimbus_compute::services::{
     ServiceBackendInput, ServiceDefinitionCollectionResponse, ServiceDefinitionResourceResponse,
-    ServiceLifecycleVerb, ServiceResourceResponse,
+    ServiceLifecycleVerb, ServiceResourceResponse, ServiceRestartResponse,
 };
 use serde::Deserialize;
 
@@ -290,6 +290,53 @@ pub(crate) async fn stop_service(
         ServiceLifecycleVerb::Stop,
     )
     .await
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ServiceRestartRequest {
+    source_generation: u64,
+    request_id: String,
+}
+
+pub(crate) async fn restart_service(
+    State(state): State<Arc<AppState>>,
+    Path((tenant_id, service_name)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(request): Json<ServiceRestartRequest>,
+) -> Result<(StatusCode, Json<ServiceRestartResponse>), AppError> {
+    let authorization = authorize_service_route(
+        &state,
+        &headers,
+        tenant_id,
+        &service_name,
+        "native_http.service.restart",
+    )
+    .await?;
+    let tenant_context = authorization.tenant_context;
+    let response = nimbus_compute::services::submit_service_restart(
+        &state,
+        &tenant_context,
+        &service_name,
+        request.source_generation,
+        &request.request_id,
+    )
+    .await?;
+    record_operator_authorization_audit(
+        &state,
+        &headers,
+        tenant_context.tenant_id().as_str(),
+        OperatorAuthScope::Service,
+        authorization.principal_class,
+        authorization.auth_method,
+        true,
+        format!(
+            "{} principal admitted fenced service restart with exact service grant or operator authority",
+            authorization.principal_class.as_str()
+        ),
+    );
+
+    Ok((StatusCode::ACCEPTED, Json(response)))
 }
 
 async fn service_lifecycle_route(

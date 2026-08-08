@@ -24,6 +24,7 @@ mod restart_provider;
 pub mod restart_provider_command;
 pub(super) mod restart_runtime;
 pub mod restart_sandbox;
+mod restart_submission;
 mod restart_supervisor;
 mod restart_watch;
 
@@ -77,6 +78,11 @@ pub use restart_provider::{
     WorkloadRestartCapabilityFuture, WorkloadRestartCapabilityRegistry,
     WorkloadRestartCapabilityRegistryError, WorkloadRestartPreparationCapability,
     WorkloadRestartProviderObservation, WorkloadRestartReadinessCapability,
+};
+pub use restart_sandbox::{ValidatedSandboxRestartCommand, validate_sandbox_restart_command};
+pub(crate) use restart_submission::{
+    ExplicitWorkloadRestartDisposition, ExplicitWorkloadRestartError,
+    ExplicitWorkloadRestartRequest,
 };
 /// Sole cross-domain writer of portable workload-saga transitions.
 pub struct WorkloadSagaCoordinator {

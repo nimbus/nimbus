@@ -253,13 +253,19 @@ extension-registry seam before the second concern edits `extensions.rs`.
   compute/sandbox/server/services is `289 + 1 ignore`, `1,005 + 27 ignores`,
   `594 + 31 ignores`, and `82`; final composition/CLI adaptation is
   `10 + 6 + 3`. Affected all-target, strict Clippy, warning-denied rustdoc,
-  format/diff/syntax, and NNCV034 `71/71` pass. The live contract is red only
-  for service, machine, scheduler, and final behavior. R3 verifier extraction
+  format/diff/syntax, and NNCV034 `71/71` pass. R3 verifier extraction
   is durable at `e1c57ce9eba823b8dc7d0a5a4ab02d58fe4c0030`: the `1,527`-line
   production contract and `471`-line fixture sibling reuse one scanner, and
-  R2/R3 now have separate frozen path ranges. Service/SDK is next, followed by
-  Compose, machine, and scheduler cutovers. No structured review has run on
-  this partial work.
+  R2/R3 now have separate frozen path ranges. The R3 service/SDK candidate now
+  routes authorized explicit restart through one compute submitter and the
+  existing retained supervisor. Exact completed replay, source-generation
+  rejection, provider convergence, and zero coarse stop calls pass. Full
+  workloads, compute, and serial process-global-authority Server behavior pass
+  `167`, `292 + 1` ignore, and `596 + 31` ignores; strict affected Clippy is
+  green. The Nimbus package build/test/typecheck passes with `24`-route parity.
+  NNCV034 remains `71/71`, and the live contract is red only for machine,
+  scheduler, and final behavior. Compose, machine, and scheduler cutovers are
+  next. No structured review has run on this partial work.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,

@@ -67,7 +67,7 @@ pub(crate) use scheduling::{
 pub(crate) use schema::{delete_table_schema, get_schema, get_table_schema, set_table_schema};
 pub(crate) use services::{
     create_service_definition, delete_service_definition, get_service, list_service_definitions,
-    start_service, stop_service, update_service_definition,
+    restart_service, start_service, stop_service, update_service_definition,
 };
 pub(crate) use sessions::{close_session, get_session, list_sessions, open_session};
 pub(crate) use source::module_source;

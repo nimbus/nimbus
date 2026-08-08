@@ -446,6 +446,40 @@ fn duplicate_restart_request_requires_exact_admission_content() {
 }
 
 #[test]
+fn completed_explicit_request_replay_returns_the_same_restart_epoch() {
+    let record = observed_record(WorkloadRestartPolicy::Never);
+    let first = explicit_input(&record, "completed-replay", 0);
+    let completed = complete(&advance_to_observation(admitted(&record, first)));
+    let completed_epoch = completed.restart_state().completed_restart_epoch();
+
+    assert!(matches!(
+        completed.admit_restart(explicit_input(&completed, "completed-replay", 0)),
+        Ok(WorkloadRestartAdmissionUpdate::Unchanged)
+    ));
+    assert_eq!(
+        completed.restart_state().completed_restart_epoch(),
+        completed_epoch,
+        "an exact completed replay must not admit another restart epoch"
+    );
+}
+
+#[test]
+fn completed_explicit_request_rejects_crossed_admission_content() {
+    let record = observed_record(WorkloadRestartPolicy::Never);
+    let first = explicit_input(&record, "completed-crossed-content", 0);
+    let completed = complete(&advance_to_observation(admitted(&record, first.clone())));
+    let mut crossed_deadline = explicit_input(&completed, "completed-crossed-content", 1);
+    crossed_deadline.request_id = first.request_id;
+
+    assert!(matches!(
+        completed.admit_restart(crossed_deadline),
+        Err(WorkloadSagaError::InvalidTransition(
+            "completed restart request has crossed admission content"
+        ))
+    ));
+}
+
+#[test]
 fn automatic_request_id_must_bind_the_inspection_version() {
     let record = observed_record(WorkloadRestartPolicy::Always { max_restarts: 2 });
     let mut input = automatic_input(&record, 7, 0, 0x62);

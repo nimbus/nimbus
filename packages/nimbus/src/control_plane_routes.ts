@@ -27,6 +27,10 @@ export const NIMBUS_CONTROL_PLANE_ROUTES = {
     verb: "POST",
     path: "/api/tenants/{tenant_id}/services/{service_name}/stop",
   },
+  "services.restart": {
+    verb: "POST",
+    path: "/api/tenants/{tenant_id}/services/{service_name}/restart",
+  },
   "sandboxes.create": {
     verb: "POST",
     path: "/api/tenants/{tenant_id}/sandboxes",

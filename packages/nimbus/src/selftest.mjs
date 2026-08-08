@@ -42,6 +42,7 @@ async function main() {
   await assertRestClientRouteParity(restBundle);
   await assertExplicitOptionsBypassLocalCredentialFile(indexBundle);
   await assertLifecycleWaitValidation(indexBundle);
+  await assertServiceRestartRoute(indexBundle);
   await assertServiceWaitUsesMonotonicTime(controlPlaneBundle);
   await assertServiceDefinitionRoutes(indexBundle);
   await assertSandboxRoutes(indexBundle);
@@ -163,6 +164,10 @@ async function assertControlPlaneRouteManifest(controlPlaneRoutesBundle) {
     "services.stop": {
       verb: "POST",
       path: "/api/tenants/{tenant_id}/services/{service_name}/stop",
+    },
+    "services.restart": {
+      verb: "POST",
+      path: "/api/tenants/{tenant_id}/services/{service_name}/restart",
     },
     "sandboxes.create": {
       verb: "POST",
@@ -308,6 +313,51 @@ async function assertLifecycleWaitValidation(indexBundle) {
     2,
     "start with healthy wait should POST then poll GET",
   );
+}
+
+async function assertServiceRestartRoute(indexBundle) {
+  const { Nimbus } = await import(
+    `${pathToFileURL(indexBundle).href}?restart=${Date.now()}`
+  );
+  const observed = [];
+  const client = new Nimbus({
+    endpoint: "http://localhost:8080",
+    tenantId: "tenant",
+    token: "explicit-token",
+    fetch: async (input, init = {}) => {
+      observed.push({
+        url: String(input),
+        method: init.method ?? "GET",
+        body: typeof init.body === "string" ? JSON.parse(init.body) : null,
+      });
+      return new Response(
+        JSON.stringify({
+          tenantId: "tenant",
+          name: "db",
+          sourceGeneration: 7,
+          requestId: "deploy-42",
+          workloadRestartRequestId: "wrr_test",
+          restartEpoch: 3,
+          disposition: "applied",
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const response = await client.services.restart({
+    name: "db",
+    sourceGeneration: 7,
+    requestId: "deploy-42",
+  });
+  assert.deepEqual(observed, [
+    {
+      url: "http://localhost:8080/api/tenants/tenant/services/db/restart",
+      method: "POST",
+      body: { sourceGeneration: 7, requestId: "deploy-42" },
+    },
+  ]);
+  assert.equal(response.restartEpoch, 3);
 }
 
 async function assertServiceWaitUsesMonotonicTime(controlPlaneBundle) {
@@ -737,8 +787,11 @@ const _serviceStop = _sdk.services.stop({ name: "db" });
 const _serviceStopStopped = _sdk.services.stop({ name: "db", waitUntil: "stopped" });
 // @ts-expect-error service stop waits for stopped, not readiness.
 _sdk.services.stop({ name: "db", waitUntil: "ready" });
-// @ts-expect-error restart is absent until it is backed by the fenced saga.
-_sdk.services.restart({ name: "db" });
+const _serviceRestart = _sdk.services.restart({
+  name: "db",
+  sourceGeneration: 7,
+  requestId: "deploy-42",
+});
 const _serviceGet = _sdk.services.get({ name: "db" });
 const _serviceWait = _sdk.services.wait({ name: "db", until: "healthy" });
 const _serviceCreateBuiltIn = _sdk.services.create({

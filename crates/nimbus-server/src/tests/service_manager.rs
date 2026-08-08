@@ -33,6 +33,8 @@ use crate::local_server::{
 mod definitions;
 #[path = "service_manager/redaction.rs"]
 mod redaction;
+#[path = "service_manager/restart.rs"]
+mod restart;
 #[path = "service_manager/sandboxes.rs"]
 mod sandboxes;
 #[path = "service_manager/sessions.rs"]

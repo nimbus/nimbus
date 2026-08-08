@@ -265,6 +265,32 @@ async fn bounded_restart_watch(&self) {
 }
 fn read_only_exit_hint() -> RestartHint { RestartHint::ReadOnly }
 `),
+    "crates/nimbus-compute/src/workload_saga/restart_submission.rs":
+      withoutCfgTestItems(`
+struct ExplicitWorkloadRestartSubmitter { explicit_submitter: () }
+impl ExplicitWorkloadRestartSubmitter {
+    async fn submit() {
+        self.coordinator.compare_and_swap_restart_admission(&admission, cancellation).await?;
+        self.supervisor.track(confirmed.record().clone())?;
+    }
+}
+`),
+    "crates/nimbus-compute/src/services.rs": withoutCfgTestItems(`
+async fn submit_service_restart() {
+    let source_generation = WorkloadProvisionSourceGeneration::new(source_generation);
+    let source_identity = WorkloadProvisionSourceIdentity::sandbox_backed_service(service_name)?;
+    let key = WorkloadSagaKey::new(tenant_id, workload_id);
+    let request = ExplicitWorkloadRestartRequest::new(key, source_identity, source_generation, request_id);
+    runtime.submit_explicit(&request, cancellation).await?;
+}
+`),
+    "crates/nimbus-server/src/http/services.rs": withoutCfgTestItems(`
+pub struct ServiceRestartRequest {
+    source_generation: u64,
+    request_id: String,
+}
+const ACCEPTED: StatusCode = StatusCode::ACCEPTED;
+`),
   };
   const testEntries = fixtureTestEntries({
     "crates/nimbus-compute/src/workload_saga/restart_decision/tests.rs": `
@@ -333,6 +359,8 @@ fn count_survives_engine_reopen() {}
 fn withdrawal_vetoes_unissued_restart() {}
 fn successor_vetoes_restart_before_admission() {}
 fn duplicate_service_request_returns_same_restart_epoch() {}
+fn completed_explicit_request_replay_returns_the_same_restart_epoch() {}
+fn completed_explicit_request_rejects_crossed_admission_content() {}
 fn reconciler_rejects_provider_restart_and_duplicates_before_backend_validation() {}
 fn machine_restart_wire_rejects_crossed_fences() {}
 fn fresh_process_restart_reopens_engine() {}
@@ -397,7 +425,9 @@ pub struct WorkloadSagaRecord {
 struct TransitionIdentityPayload { restart: &'a WorkloadRestartState }
 `),
     compute: joinSources(
-      Object.entries(files).map(([file, source]) => ({ file, source })),
+      Object.entries(files)
+        .filter(([file]) => file.startsWith("crates/nimbus-compute/"))
+        .map(([file, source]) => ({ file, source })),
     ),
     files,
     providers: withoutCfgTestItems(`
@@ -407,13 +437,7 @@ fn retain_port_lease() {}
 fn retain_attachment_identity() {}
 fn retain_pep_authority() {}
 `),
-    server: withoutCfgTestItems(`
-pub struct ServiceRestartRequest {
-    source_generation: WorkloadGeneration,
-    request_id: WorkloadRestartRequestId,
-}
-fn submit_service_restart() {}
-`),
+    server: files["crates/nimbus-server/src/http/services.rs"],
     sdk: `services.restart({ sourceGeneration, requestId });\n/api/tenants/:tenant/services/:service/restart`,
     codec: `
 const REQUIRED_FIELDS: [&str; 2] = ["restartPolicy", "restartState"];
