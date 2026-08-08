@@ -44,7 +44,7 @@ const RECOVERY_MATRIX_WRITE_MODE: &str = "write";
 const RECOVERY_MATRIX_READ_MODE: &str = "recover";
 const RECOVERY_MATRIX_BOUNDARY: &str = "workload-saga.phase-matrix-durable";
 const RECOVERY_MATRIX_OBSERVATION: &str =
-    "matrix-30-ef6ae486407c530e8e37aec6950291c9a6e098efd20b8e979709cd9318cf3098";
+    "matrix-30-c63d5c0e5f6c7029e80a74f42bd4cb782b52c7a45ec95599f4c5d57d63ad1956";
 const RECOVERY_MATRIX_TIMEOUT: Duration = Duration::from_secs(20);
 const RECOVERY_MATRIX_PID_PREFIX: &str = "NIMBUS_NNC61E_PROCESS_ID";
 

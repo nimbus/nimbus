@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use crate::{DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadUid};
 
 /// Portable saga format understood by this crate.
-pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 3;
+pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 4;
 
 /// A rejected workload-saga value or transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +31,7 @@ pub enum WorkloadSagaError {
     EqualGenerationConflict(WorkloadGeneration),
     GenerationOverflow,
     RevisionOverflow,
+    RestartEpochOverflow,
 }
 
 impl Display for WorkloadSagaError {
@@ -52,6 +53,7 @@ impl Display for WorkloadSagaError {
             ),
             Self::GenerationOverflow => formatter.write_str("workload generation overflow"),
             Self::RevisionOverflow => formatter.write_str("workload saga revision overflow"),
+            Self::RestartEpochOverflow => formatter.write_str("workload restart epoch overflow"),
         }
     }
 }
@@ -219,7 +221,7 @@ macro_rules! define_sha256_digest {
 
 define_sha256_digest!(
     WorkloadDesiredDigest,
-    b"nimbus.workloads.desired.digest.v3\0",
+    b"nimbus.workloads.desired.digest.v4\0",
     "workload desired digest must be 64 lowercase hexadecimal characters"
 );
 define_sha256_digest!(
@@ -424,6 +426,7 @@ pub struct WorkloadSagaIntent {
     desired_digest: WorkloadDesiredDigest,
     executable: WorkloadExecutableIntent,
     source: WorkloadProvisionSourceEvidence,
+    restart_policy: WorkloadRestartPolicy,
     network: WorkloadNetworkIntent,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -439,6 +442,7 @@ struct WorkloadSagaIntentWire {
     desired_digest: WorkloadDesiredDigest,
     executable: WorkloadExecutableIntent,
     source: WorkloadProvisionSourceEvidence,
+    restart_policy: WorkloadRestartPolicy,
     network: WorkloadNetworkIntent,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -452,12 +456,13 @@ impl<'de> Deserialize<'de> for WorkloadSagaIntent {
     {
         let wire = WorkloadSagaIntentWire::deserialize(deserializer)?;
         let expected_digest = wire.desired_digest;
-        let intent = Self::new(
+        let intent = Self::new_with_restart_policy(
             wire.kind,
             wire.desired_state,
             wire.generation,
             wire.executable,
             wire.source,
+            wire.restart_policy,
             wire.network,
             wire.activation,
             wire.publication,
@@ -486,6 +491,33 @@ impl WorkloadSagaIntent {
         publication: WorkloadPublicationIntent,
         admission: WorkloadAdmissionEvidence,
     ) -> Result<Self, WorkloadSagaError> {
+        Self::new_with_restart_policy(
+            kind,
+            desired_state,
+            generation,
+            executable,
+            source,
+            WorkloadRestartPolicy::Never,
+            network,
+            activation,
+            publication,
+            admission,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_restart_policy(
+        kind: DesiredWorkloadKind,
+        desired_state: DesiredWorkloadState,
+        generation: WorkloadGeneration,
+        executable: WorkloadExecutableIntent,
+        source: WorkloadProvisionSourceEvidence,
+        restart_policy: WorkloadRestartPolicy,
+        network: WorkloadNetworkIntent,
+        activation: WorkloadActivationIntent,
+        publication: WorkloadPublicationIntent,
+        admission: WorkloadAdmissionEvidence,
+    ) -> Result<Self, WorkloadSagaError> {
         executable.validate()?;
         source.validate(executable.content_digest())?;
         let desired_digest = derive_desired_digest(
@@ -494,6 +526,7 @@ impl WorkloadSagaIntent {
             generation,
             &executable,
             &source,
+            restart_policy,
             &network,
             activation,
             publication,
@@ -506,6 +539,7 @@ impl WorkloadSagaIntent {
             desired_digest,
             executable,
             source,
+            restart_policy,
             network,
             activation,
             publication,
@@ -530,6 +564,7 @@ impl WorkloadSagaIntent {
                 self.generation,
                 &self.executable,
                 &self.source,
+                self.restart_policy,
                 &self.network,
                 self.activation,
                 self.publication,
@@ -617,6 +652,10 @@ impl WorkloadSagaIntent {
         &self.source
     }
 
+    pub fn restart_policy(&self) -> WorkloadRestartPolicy {
+        self.restart_policy
+    }
+
     pub fn network(&self) -> &WorkloadNetworkIntent {
         &self.network
     }
@@ -642,6 +681,7 @@ struct WorkloadDesiredDigestPayload<'a> {
     generation: WorkloadGeneration,
     executable: &'a WorkloadExecutableIntent,
     source: &'a WorkloadProvisionSourceEvidence,
+    restart_policy: WorkloadRestartPolicy,
     network: &'a WorkloadNetworkIntent,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -655,6 +695,7 @@ fn derive_desired_digest(
     generation: WorkloadGeneration,
     executable: &WorkloadExecutableIntent,
     source: &WorkloadProvisionSourceEvidence,
+    restart_policy: WorkloadRestartPolicy,
     network: &WorkloadNetworkIntent,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -666,6 +707,7 @@ fn derive_desired_digest(
         generation,
         executable,
         source,
+        restart_policy,
         network,
         activation,
         publication,
@@ -684,6 +726,8 @@ pub struct WorkloadExecutionReference {
     workload_uid: TenantWorkloadUid,
     node_identity: NodeIdentity,
     execution_id: WorkloadExecutionId,
+    restart_epoch: WorkloadRestartEpoch,
+    attempt_id: WorkloadExecutionAttemptId,
     generation: WorkloadGeneration,
     desired_digest: WorkloadDesiredDigest,
 }
@@ -694,6 +738,8 @@ struct WorkloadExecutionReferenceWire {
     workload_uid: TenantWorkloadUid,
     node_identity: NodeIdentity,
     execution_id: WorkloadExecutionId,
+    restart_epoch: WorkloadRestartEpoch,
+    attempt_id: WorkloadExecutionAttemptId,
     generation: WorkloadGeneration,
     desired_digest: WorkloadDesiredDigest,
 }
@@ -708,6 +754,8 @@ impl<'de> Deserialize<'de> for WorkloadExecutionReference {
             workload_uid: wire.workload_uid,
             node_identity: wire.node_identity,
             execution_id: wire.execution_id,
+            restart_epoch: wire.restart_epoch,
+            attempt_id: wire.attempt_id,
             generation: wire.generation,
             desired_digest: wire.desired_digest,
         };
@@ -720,14 +768,21 @@ impl<'de> Deserialize<'de> for WorkloadExecutionReference {
 
 impl WorkloadExecutionReference {
     pub fn for_intent(intent: &WorkloadSagaIntent) -> Self {
+        Self::for_restart_epoch(intent, WorkloadRestartEpoch::new(0))
+    }
+
+    pub fn for_restart_epoch(
+        intent: &WorkloadSagaIntent,
+        restart_epoch: WorkloadRestartEpoch,
+    ) -> Self {
         let node_identity = intent.admission.assigned_node.clone();
         let workload_uid = intent.admission.workload_uid.clone();
+        let execution_id =
+            WorkloadExecutionId::for_execution(&workload_uid, &node_identity, intent.generation);
         Self {
-            execution_id: WorkloadExecutionId::for_execution(
-                &workload_uid,
-                &node_identity,
-                intent.generation,
-            ),
+            attempt_id: WorkloadExecutionAttemptId::for_execution(&execution_id, restart_epoch),
+            execution_id,
+            restart_epoch,
             workload_uid,
             node_identity,
             generation: intent.generation,
@@ -745,6 +800,14 @@ impl WorkloadExecutionReference {
 
     pub fn execution_id(&self) -> &WorkloadExecutionId {
         &self.execution_id
+    }
+
+    pub fn attempt_id(&self) -> &WorkloadExecutionAttemptId {
+        &self.attempt_id
+    }
+
+    pub fn restart_epoch(&self) -> WorkloadRestartEpoch {
+        self.restart_epoch
     }
 
     pub fn generation(&self) -> WorkloadGeneration {
@@ -767,13 +830,29 @@ impl WorkloadExecutionReference {
                 "execution reference id does not match its workload, node, and generation",
             ));
         }
+        if self.attempt_id
+            != WorkloadExecutionAttemptId::for_execution(&self.execution_id, self.restart_epoch)
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "execution attempt id does not match its execution and restart epoch",
+            ));
+        }
         Ok(())
     }
 
     fn validate_for(&self, intent: &WorkloadSagaIntent) -> Result<(), WorkloadSagaError> {
         self.validate_intrinsic()?;
-        let expected = Self::for_intent(intent);
-        if self == &expected {
+        if self.workload_uid == *intent.admission.workload_uid()
+            && self.node_identity == *intent.admission.assigned_node()
+            && self.execution_id
+                == WorkloadExecutionId::for_execution(
+                    intent.admission.workload_uid(),
+                    intent.admission.assigned_node(),
+                    intent.generation,
+                )
+            && self.generation == intent.generation
+            && self.desired_digest == intent.desired_digest
+        {
             Ok(())
         } else {
             Err(WorkloadSagaError::InvalidEvidence(
@@ -789,6 +868,7 @@ impl WorkloadExecutionReference {
 pub struct WorkloadPublicationReference {
     endpoints: Vec<PublishedEndpointId>,
     network: WorkloadNetworkReference,
+    execution: WorkloadExecutionReference,
 }
 
 #[derive(Deserialize)]
@@ -796,6 +876,7 @@ pub struct WorkloadPublicationReference {
 struct WorkloadPublicationReferenceWire {
     endpoints: Vec<PublishedEndpointId>,
     network: WorkloadNetworkReference,
+    execution: WorkloadExecutionReference,
 }
 
 impl<'de> Deserialize<'de> for WorkloadPublicationReference {
@@ -807,6 +888,7 @@ impl<'de> Deserialize<'de> for WorkloadPublicationReference {
         let reference = Self {
             endpoints: wire.endpoints,
             network: wire.network,
+            execution: wire.execution,
         };
         reference
             .validate_intrinsic()
@@ -819,6 +901,18 @@ impl WorkloadPublicationReference {
     pub fn new(
         endpoints: impl IntoIterator<Item = PublishedEndpointId>,
         intent: &WorkloadSagaIntent,
+    ) -> Result<Self, WorkloadSagaError> {
+        Self::for_execution(
+            endpoints,
+            intent,
+            WorkloadExecutionReference::for_intent(intent),
+        )
+    }
+
+    pub fn for_execution(
+        endpoints: impl IntoIterator<Item = PublishedEndpointId>,
+        intent: &WorkloadSagaIntent,
+        execution: WorkloadExecutionReference,
     ) -> Result<Self, WorkloadSagaError> {
         let mut endpoints: Vec<_> = endpoints.into_iter().collect();
         if endpoints.is_empty() {
@@ -834,9 +928,11 @@ impl WorkloadPublicationReference {
                 "publication reference contains a duplicate endpoint",
             ));
         }
+        execution.validate_for(intent)?;
         Ok(Self {
             endpoints,
             network: WorkloadNetworkReference::for_intent(intent),
+            execution,
         })
     }
 
@@ -846,6 +942,10 @@ impl WorkloadPublicationReference {
 
     pub fn network(&self) -> &WorkloadNetworkReference {
         &self.network
+    }
+
+    pub fn execution(&self) -> &WorkloadExecutionReference {
+        &self.execution
     }
 
     fn validate_intrinsic(&self) -> Result<(), WorkloadSagaError> {
@@ -864,6 +964,7 @@ impl WorkloadPublicationReference {
                 "publication reference is crossed with another network intent",
             ));
         }
+        self.execution.validate_for(intent)?;
         Ok(())
     }
 }
@@ -1477,6 +1578,7 @@ impl WorkloadFailureEvidence {
 }
 mod executable;
 mod provision;
+mod restart;
 mod state;
 
 mod network;
@@ -1499,6 +1601,15 @@ pub use provision::{
     WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
     WorkloadProvisionSourceKind, WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep,
     WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence,
+};
+pub use restart::{
+    ActiveWorkloadRestart, WorkloadExecutionAttemptId, WorkloadInspectionVersion,
+    WorkloadRestartAdmission, WorkloadRestartAdmissionInput, WorkloadRestartAdmissionUpdate,
+    WorkloadRestartCommandClaim, WorkloadRestartCommandId, WorkloadRestartDispatchEpoch,
+    WorkloadRestartDisposition, WorkloadRestartEffectResult, WorkloadRestartEpoch,
+    WorkloadRestartEvidenceDigest, WorkloadRestartHistory, WorkloadRestartNotBeforeUnixMillis,
+    WorkloadRestartPhase, WorkloadRestartPolicy, WorkloadRestartRecoveryDecision,
+    WorkloadRestartRequestId, WorkloadRestartState, WorkloadRestartStep, WorkloadRestartTrigger,
 };
 use state::validate_phase_detail;
 pub use state::{WorkloadSagaIntentUpdate, WorkloadSagaRecord, WorkloadSagaTransition};

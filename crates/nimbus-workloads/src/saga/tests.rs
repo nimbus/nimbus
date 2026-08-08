@@ -171,6 +171,29 @@ fn intent_with(
     publication: WorkloadPublicationIntent,
     seed: u8,
 ) -> WorkloadSagaIntent {
+    intent_with_restart_policy(
+        tenant_label,
+        workload_label,
+        generation,
+        desired_state,
+        activation,
+        publication,
+        seed,
+        WorkloadRestartPolicy::Never,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn intent_with_restart_policy(
+    tenant_label: &str,
+    workload_label: &str,
+    generation: u64,
+    desired_state: DesiredWorkloadState,
+    activation: WorkloadActivationIntent,
+    publication: WorkloadPublicationIntent,
+    seed: u8,
+    restart_policy: WorkloadRestartPolicy,
+) -> WorkloadSagaIntent {
     let tenant_id = tenant(tenant_label);
     let executable = WorkloadExecutableIntent::new(
         WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
@@ -209,7 +232,7 @@ fn intent_with(
         )
     }
     .expect("source evidence should validate");
-    WorkloadSagaIntent::new(
+    WorkloadSagaIntent::new_with_restart_policy(
         if seed.is_multiple_of(2) {
             DesiredWorkloadKind::Service
         } else {
@@ -219,6 +242,7 @@ fn intent_with(
         WorkloadGeneration::new(generation),
         executable,
         source,
+        restart_policy,
         WorkloadNetworkIntent::new(compiled_network_plan(
             &tenant_id,
             workload_label,
@@ -582,6 +606,7 @@ struct RehashedTransitionPayload {
     successor_intent: Option<WorkloadSagaIntent>,
     phase_detail: WorkloadPhaseDetail,
     provision_disposition: Option<WorkloadProvisionDisposition>,
+    restart: WorkloadRestartState,
     failure: Option<WorkloadFailureEvidence>,
 }
 
@@ -604,12 +629,13 @@ fn rehash_encoded_record(record: &mut serde_json::Value) {
         phase_detail: serde_json::from_value(record["phaseDetail"].clone()).unwrap(),
         provision_disposition: serde_json::from_value(record["provisionDisposition"].clone())
             .unwrap(),
+        restart: serde_json::from_value(record["restart"].clone()).unwrap(),
         failure: serde_json::from_value(record["failure"].clone()).unwrap(),
     };
     let encoded_payload = serde_json::to_vec(&payload).unwrap();
     record["lastTransition"]["transitionId"] = json!(derive_id(
         WorkloadSagaTransitionId::PREFIX,
-        b"nimbus.workloads.saga.transition.v3",
+        b"nimbus.workloads.saga.transition.v4",
         &[std::str::from_utf8(&encoded_payload).unwrap()],
     ));
 }
@@ -1874,6 +1900,7 @@ fn record_deserialization_rejects_forged_illegal_source_edge() {
         successor_intent: Option<&'a WorkloadSagaIntent>,
         phase_detail: &'a WorkloadPhaseDetail,
         provision_disposition: Option<&'a WorkloadProvisionDisposition>,
+        restart: &'a WorkloadRestartState,
         failure: Option<&'a WorkloadFailureEvidence>,
     }
 
@@ -1894,12 +1921,13 @@ fn record_deserialization_rejects_forged_illegal_source_edge() {
         successor_intent: reserved.successor_intent(),
         phase_detail: reserved.phase_detail(),
         provision_disposition: reserved.provision_disposition(),
+        restart: reserved.restart_state(),
         failure: reserved.failure(),
     };
     let encoded_payload = serde_json::to_vec(&payload).unwrap();
     let transition_id = derive_id(
         WorkloadSagaTransitionId::PREFIX,
-        b"nimbus.workloads.saga.transition.v3",
+        b"nimbus.workloads.saga.transition.v4",
         &[std::str::from_utf8(&encoded_payload).unwrap()],
     );
     let mut forged_record = serde_json::to_value(&reserved).unwrap();
@@ -1929,3 +1957,5 @@ fn failure_evidence_is_stable_bounded_and_cleanup_only() {
 
 #[path = "tests/provision_state.rs"]
 mod provision_state;
+#[path = "tests/restart_state.rs"]
+mod restart_state;

@@ -83,16 +83,15 @@ fn validate_attempt_for_record(
         ));
     }
     let references = record.phase_detail.references();
+    let current_execution = record.current_execution_reference();
     let subjects_match = match attempt.subjects() {
         WorkloadProvisionSubjects::Network(reference) => {
             reference == &WorkloadNetworkReference::for_intent(intent)
         }
-        WorkloadProvisionSubjects::Execution(reference) => {
-            reference == &WorkloadExecutionReference::for_intent(intent)
-        }
+        WorkloadProvisionSubjects::Execution(reference) => reference == &current_execution,
         WorkloadProvisionSubjects::Readiness { network, execution } => {
             network == &WorkloadNetworkReference::for_intent(intent)
-                && execution == &WorkloadExecutionReference::for_intent(intent)
+                && execution == &current_execution
         }
         WorkloadProvisionSubjects::Publication(reference) => {
             references.publication() == Some(reference)
@@ -104,7 +103,7 @@ fn validate_attempt_for_record(
         ));
     }
     if attempt.step() == WorkloadProvisionStep::ActivateWorkload
-        && !activation_prerequisite_matches_intent(attempt, intent)
+        && !activation_prerequisite_matches_intent(attempt, intent, &current_execution)
     {
         return Err(WorkloadSagaError::InvalidEvidence(
             "activation prerequisite is crossed with durable lifecycle references",
@@ -116,6 +115,7 @@ fn validate_attempt_for_record(
 fn activation_prerequisite_matches_intent(
     attempt: &WorkloadProvisionAttempt,
     intent: &WorkloadSagaIntent,
+    current_execution: &WorkloadExecutionReference,
 ) -> bool {
     matches!(
         (attempt.subjects(), attempt.prerequisite().map(WorkloadProvisionPrerequisiteEvidence::evidence)),
@@ -128,7 +128,7 @@ fn activation_prerequisite_matches_intent(
             })
         ) if activation_execution == execution
             && network == &WorkloadNetworkReference::for_intent(intent)
-            && execution == &WorkloadExecutionReference::for_intent(intent)
+            && execution == current_execution
     )
 }
 
@@ -206,6 +206,13 @@ pub(super) fn validate_provision_disposition_transition(
                 candidate.phase,
                 WorkloadSagaPhase::CleanupPending | WorkloadSagaPhase::WithdrawalCommitted
             ) =>
+        {
+            Ok(())
+        }
+        (Some(WorkloadProvisionDisposition::Ready), Some(WorkloadProvisionDisposition::Ready))
+            if current.phase == WorkloadSagaPhase::Observed
+                && candidate.phase == current.phase
+                && current.restart_state() != candidate.restart_state() =>
         {
             Ok(())
         }

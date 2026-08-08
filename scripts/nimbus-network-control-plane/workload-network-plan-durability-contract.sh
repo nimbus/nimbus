@@ -103,7 +103,7 @@ NODE
   fi
 }
 
-verify_v2_and_correlations() {
+verify_current_format_and_correlations() {
   if ! require_nonempty_file "${SAGA}" "portable workload saga" ||
     ! require_nonempty_file "${SAGA_STATE}" "portable workload saga state"; then
     return
@@ -112,17 +112,17 @@ verify_v2_and_correlations() {
   state_source="$(source_without_comments "${SAGA_STATE}")"
   if [ "${NIMBUS_NETWORK_NNC62A_TEST_MUTATION:-}" = "wrong-version" ] ||
     ! printf '%s\n' "${saga_source}" |
-      rg -q 'WORKLOAD_SAGA_FORMAT_VERSION:[[:space:]]*u32[[:space:]]*=[[:space:]]*3'; then
-    add_error "workload saga format version is not the current strict v3"
+      rg -q 'WORKLOAD_SAGA_FORMAT_VERSION:[[:space:]]*u32[[:space:]]*=[[:space:]]*4'; then
+    add_error "workload saga format version is not the current strict v4"
   else
     pass_check
   fi
   if ! printf '%s\n' "${state_source}" |
-    rg -q 'nimbus\.workloads\.saga\.transition\.v3'; then
-    add_error "transition identity does not use the v3 complete-payload domain"
+    rg -q 'nimbus\.workloads\.saga\.transition\.v4'; then
+    add_error "transition identity does not use the v4 complete-payload domain"
   elif printf '%s\n' "${state_source}" |
-    rg -q 'nimbus\.workloads\.saga\.transition\.v[12]'; then
-    add_error "production transition identity retains a pre-v3 domain"
+    rg -q 'nimbus\.workloads\.saga\.transition\.v[123]'; then
+    add_error "production transition identity retains a pre-v4 domain"
   else
     pass_check
   fi
@@ -303,7 +303,7 @@ run_contract() {
     fi
   done
   verify_complete_carrier
-  verify_v2_and_correlations
+  verify_current_format_and_correlations
   verify_physical_codec
   verify_pure_action_and_process_proof
   verify_owner_and_allowlist
@@ -344,7 +344,7 @@ run_self_test() {
     case "${mutation}" in
       missing-carrier) expected='missing or empty workloads-owned compiled-plan carrier' ;;
       tuple-authority) expected='compiled-plan carrier retains caller-supplied tuple authority' ;;
-      wrong-version) expected='workload saga format version is not the current strict v3' ;;
+      wrong-version) expected='workload saga format version is not the current strict v4' ;;
       physical-tuple) expected='physical codec/schema retains flattened network tuple authority' ;;
       missing-action-plan) expected='pure reserve attempt does not bind the exact durable compiled-plan digest' ;;
       snapshot-handoff) expected='distinct-process proof permits snapshot/payload handoff' ;;

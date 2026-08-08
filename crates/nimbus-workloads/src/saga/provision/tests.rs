@@ -29,10 +29,14 @@ fn execution_reference() -> WorkloadExecutionReference {
     let generation = WorkloadGeneration::new(1);
     let execution_id =
         WorkloadExecutionId::for_execution(&workload_uid, &node_identity, generation);
+    let restart_epoch = WorkloadRestartEpoch::new(0);
+    let attempt_id = WorkloadExecutionAttemptId::for_execution(&execution_id, restart_epoch);
     serde_json::from_value(json!({
         "workloadUid": workload_uid,
         "nodeIdentity": node_identity,
         "executionId": execution_id,
+        "restartEpoch": "0",
+        "attemptId": attempt_id,
         "generation": "1",
         "desiredDigest": "44".repeat(32)
     }))
@@ -237,10 +241,15 @@ fn prerequisite_accepts_only_activation_readiness() {
     let generation = WorkloadGeneration::new(1);
     let execution_id =
         WorkloadExecutionId::for_execution(&workload_uid, &node_identity, generation);
+    let restart_epoch = WorkloadRestartEpoch::new(0);
+    let attempt_id_for_execution =
+        WorkloadExecutionAttemptId::for_execution(&execution_id, restart_epoch);
     let reference = serde_json::from_value(json!({
         "workloadUid": workload_uid,
         "nodeIdentity": node_identity,
         "executionId": execution_id,
+        "restartEpoch": "0",
+        "attemptId": attempt_id_for_execution,
         "generation": "1",
         "desiredDigest": "44".repeat(32)
     }))

@@ -11,8 +11,12 @@ import {
 const AUDIT_CHECKPOINT =
   process.env.NIMBUS_NETWORK_NNC64A_AUDIT_CHECKPOINT ??
   "8723bc9a8ac27abc8ecbbd59d5f8d8d159e98cc1";
+const R1_CHECKPOINT =
+  process.env.NIMBUS_NETWORK_NNC64A_R1_CHECKPOINT ??
+  "6d8961bd6d4da819b2524128cb398e22e0a9382f";
 
 const ALLOWED_EXACT_PATHS = new Set([
+  "crates/nimbus-workloads/src/lib.rs",
   "crates/nimbus-workloads/src/saga.rs",
   "crates/nimbus-workloads/src/store.rs",
   "crates/nimbus-compute/src/workload_saga.rs",
@@ -36,6 +40,7 @@ const ALLOWED_EXACT_PATHS = new Set([
   "scripts/verify-nimbus-network-control-plane.sh",
   "scripts/verify-nimbus-network-source-contract.mjs",
   "scripts/nimbus-network-control-plane/source-contract-scanner.mjs",
+  "scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh",
   "scripts/nimbus-network-control-plane/workload-restart-contract.sh",
   "scripts/nimbus-network-control-plane/workload-restart-source-contract.mjs",
   "docs/private/plans/nimbus-network-control-plane-plan.md",
@@ -59,6 +64,36 @@ const ALLOWED_PREFIXES = [
   "packages/nimbus/src/control-plane/",
   "packages/nimbus/tests/",
 ];
+
+const R1_ALLOWED_EXACT_PATHS = new Set([
+  "crates/nimbus-workloads/src/lib.rs",
+  "crates/nimbus-workloads/src/saga.rs",
+  "crates/nimbus-workloads/src/saga/network/tests.rs",
+  "crates/nimbus-workloads/src/saga/provision/tests.rs",
+  "crates/nimbus-workloads/src/saga/provision.rs",
+  "crates/nimbus-workloads/src/saga/restart.rs",
+  "crates/nimbus-workloads/src/saga/restart/tests.rs",
+  "crates/nimbus-workloads/src/saga/state.rs",
+  "crates/nimbus-workloads/src/saga/state/provision.rs",
+  "crates/nimbus-workloads/src/saga/state/restart.rs",
+  "crates/nimbus-workloads/src/saga/tests.rs",
+  "crates/nimbus-workloads/src/saga/tests/restart_state.rs",
+  "crates/nimbus-server/src/workload_saga_store/codec.rs",
+  "crates/nimbus-server/src/workload_saga_store/schema.rs",
+  "crates/nimbus-server/src/workload_saga_store/tests/codec.rs",
+  "crates/nimbus-server/src/workload_saga_store/tests/composition.rs",
+  "crates/nimbus-server/src/workload_saga_store/tests/durability.rs",
+  "crates/nimbus-server/src/workload_saga_store/tests/mod.rs",
+  "crates/nimbus-server/src/workload_saga_store/tests/restart.rs",
+  "crates/nimbus-compute/src/workload_saga/recovery.rs",
+  "scripts/nimbus-network-control-plane/workload-restart-contract.sh",
+  "scripts/nimbus-network-control-plane/workload-restart-source-contract.mjs",
+  "scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh",
+  "scripts/verify-nimbus-network-control-plane.sh",
+  "docs/private/plans/nimbus-network-control-plane-plan.md",
+  "docs/private/plans/README.md",
+  "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",
+]);
 
 const DIAGNOSTICS = {
   vocabulary:
@@ -133,8 +168,13 @@ function collectTestSources(root, directories) {
           .relative(root, absolute)
           .split(path.sep)
           .join("/");
-        if (relative.includes("/tests/") || entry.name === "tests.rs") {
-          sources.push(maskNonCode(fs.readFileSync(absolute, "utf8")));
+        const source = fs.readFileSync(absolute, "utf8");
+        if (
+          relative.includes("/tests/") ||
+          entry.name === "tests.rs" ||
+          /#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/u.test(source)
+        ) {
+          sources.push(maskNonCode(source));
         }
       }
     }
@@ -182,7 +222,7 @@ pub struct WorkloadRestartAdmission {
     desired_digest: WorkloadDesiredDigest,
     revision: WorkloadSagaRevision,
     trigger: WorkloadRestartTrigger,
-    inspection_version: SandboxInspectionVersion,
+    inspection_version: Option<WorkloadInspectionVersion>,
     provider_selection: WorkloadExecutionProviderId,
     restart_epoch: WorkloadRestartEpoch,
     policy_attempt_count: u32,
@@ -190,14 +230,15 @@ pub struct WorkloadRestartAdmission {
     attempt_id: WorkloadExecutionAttemptId,
 }
 pub struct WorkloadRestartState {
+    current_execution_attempt_id: WorkloadExecutionAttemptId,
     phase: WorkloadRestartPhase,
     not_before_unix_millis: u64,
     completed_automatic_restart_count: u32,
 }
 pub struct WorkloadSagaRecord {
     restart: WorkloadRestartState,
-    current_execution_attempt_id: WorkloadExecutionAttemptId,
 }
+struct TransitionIdentityPayload { restart: &'a WorkloadRestartState }
 `),
     compute: withoutCfgTestItems(`
 fn compare_and_swap_restart_admission() {}
@@ -244,8 +285,13 @@ pub struct ServiceRestartRequest {
 fn submit_service_restart() {}
 `),
     sdk: `services.restart({ sourceGeneration, requestId });\n/api/tenants/:tenant/services/:service/restart`,
+    codec: `
+const REQUIRED_FIELDS: [&str; 2] = ["restartPolicy", "restartState"];
+fn validate_physical_shape() {}
+`,
     node: withoutCfgTestItems(`
-fn tenant_unit() { HostLifecycleProperty::Restart(HostRestartPolicy::No); }
+fn into_host_lifecycle_request() { HostLifecycleProperty::Restart(HostRestartPolicy::No); }
+fn ensure_external_restart_disabled() { policy != HostRestartPolicy::No; }
 `),
     machine: withoutCfgTestItems(`
 pub struct MachineRestartCommand {
@@ -261,10 +307,12 @@ pub struct MachineRestartCommand {
     network: withoutCfgTestItems("pub struct NetworkAttachmentId(String);"),
     tests: maskNonCode(`
 fn same_generation_restart_keeps_desired_generation() {}
+fn restart_recovery_eligibility_is_exhaustive() {}
 fn explicit_restart_does_not_consume_automatic_count() {}
 fn concurrent_triggers_admit_one_restart_epoch() {}
-fn deadline_survives_fresh_process_and_clock_rollback() {}
-fn count_survives_fresh_process() {}
+fn deadline_survives_clock_rollback_without_early_admission() {}
+fn deadline_survives_engine_reopen() {}
+fn count_survives_engine_reopen() {}
 fn withdrawal_vetoes_unissued_restart() {}
 fn successor_vetoes_restart_before_admission() {}
 fn activation_waits_for_same_generation_attachment_and_pep() {}
@@ -272,7 +320,7 @@ fn old_attempt_callback_is_rejected() {}
 fn duplicate_service_request_returns_same_restart_epoch() {}
 fn get_and_name_resolution_make_zero_restart_effects() {}
 fn automatic_watch_is_bounded_and_does_not_busy_spin() {}
-fn external_node_restart_is_rejected_before_effects() {}
+fn reconciler_rejects_provider_restart_and_duplicates_before_backend_validation() {}
 fn machine_restart_wire_rejects_crossed_fences() {}
 fn fresh_process_restart_reopens_engine() {}
 fn crash_after_restart_effect_inspects_before_retry() {}
@@ -290,6 +338,11 @@ fn compose_local_and_forwarded_restart_use_compute() {}
       "docs/private/plans/README.md",
       "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",
     ],
+    r1ChangedPaths: [
+      "crates/nimbus-workloads/src/saga/restart.rs",
+      "crates/nimbus-workloads/src/saga/state/restart.rs",
+      "crates/nimbus-server/src/workload_saga_store/codec.rs",
+    ],
   };
 }
 
@@ -301,6 +354,10 @@ function productionSources(root) {
     compute: crate("nimbus-compute"),
     providers: crate("nimbus-sandbox"),
     server: crate("nimbus-server"),
+    codec: readText(
+      root,
+      "crates/nimbus-server/src/workload_saga_store/codec.rs",
+    ),
     sdk: [
       readText(root, "packages/nimbus/src/control-plane/client.ts"),
       readText(root, "packages/nimbus/src/control-plane/routes.ts"),
@@ -330,14 +387,23 @@ function productionSources(root) {
         "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",
       ),
     ].join("\n"),
-    changedPaths: execFileSync(
-      "git",
-      ["diff", "--name-only", AUDIT_CHECKPOINT, "--"],
-      { cwd: root, encoding: "utf8" },
-    )
-      .split("\n")
-      .filter(Boolean),
+    changedPaths: changedPathsSince(root, AUDIT_CHECKPOINT),
+    r1ChangedPaths: changedPathsSince(root, R1_CHECKPOINT),
   };
+}
+
+function changedPathsSince(root, checkpoint) {
+  const tracked = execFileSync(
+    "git",
+    ["diff", "--name-only", checkpoint, "--"],
+    { cwd: root, encoding: "utf8" },
+  );
+  const untracked = execFileSync(
+    "git",
+    ["ls-files", "--others", "--exclude-standard"],
+    { cwd: root, encoding: "utf8" },
+  );
+  return [...new Set(`${tracked}\n${untracked}`.split("\n").filter(Boolean))];
 }
 
 function replaceOnce(sources, area, before, after) {
@@ -356,7 +422,7 @@ function applyFixtureMutation(sources, mutation) {
     "missing-revision": "revision: WorkloadSagaRevision,",
     "missing-trigger": "trigger: WorkloadRestartTrigger,",
     "missing-inspection-version":
-      "inspection_version: SandboxInspectionVersion,",
+      "inspection_version: Option<WorkloadInspectionVersion>,",
     "missing-provider-selection":
       "provider_selection: WorkloadExecutionProviderId,",
     "missing-restart-epoch": "restart_epoch: WorkloadRestartEpoch,",
@@ -401,12 +467,12 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "reset-count": [
       "tests",
-      "count_survives_fresh_process",
+      "count_survives_engine_reopen",
       "count_resets_after_process_restart",
     ],
     "reset-deadline": [
       "tests",
-      "deadline_survives_fresh_process_and_clock_rollback",
+      "deadline_survives_engine_reopen",
       "deadline_recomputed_from_process_start",
     ],
     "withdrawal-loses": [
@@ -468,6 +534,40 @@ function applyFixtureMutation(sources, mutation) {
   };
   if (mutation === "unexpected-path") {
     sources.changedPaths.push("crates/nimbus-tenant/src/restart.rs");
+  } else if (mutation === "missing-restart-codec-field") {
+    replaceOnce(sources, "codec", '"restartState"', '"removedRestartState"');
+  } else if (mutation === "accept-unknown-restart-codec-field") {
+    replaceOnce(
+      sources,
+      "codec",
+      "validate_physical_shape",
+      "accept_unknown_physical_shape",
+    );
+  } else if (mutation === "restart-transition-id-omits-state") {
+    replaceOnce(
+      sources,
+      "workloads",
+      "struct TransitionIdentityPayload { restart: &'a WorkloadRestartState }",
+      "struct TransitionIdentityPayload { omitted_restart: () }",
+    );
+  } else if (mutation === "restart-phase-not-recoverable") {
+    replaceOnce(
+      sources,
+      "tests",
+      "restart_recovery_eligibility_is_exhaustive",
+      "restart_phase_is_not_recoverable",
+    );
+  } else if (mutation === "explicit-consumes-automatic-count") {
+    replaceOnce(
+      sources,
+      "tests",
+      "explicit_restart_does_not_consume_automatic_count",
+      "explicit_restart_consumes_automatic_count",
+    );
+  } else if (mutation === "r1-scope-broadening") {
+    sources.r1ChangedPaths.push(
+      "crates/nimbus-compute/src/workload_saga/restart.rs",
+    );
   } else if (mutation in replacements) {
     replaceOnce(sources, ...replacements[mutation]);
   } else if (mutation) {
@@ -506,6 +606,10 @@ function isAllowedPath(candidate) {
   );
 }
 
+function isR1AllowedPath(candidate) {
+  return R1_ALLOWED_EXACT_PATHS.has(candidate);
+}
+
 export function verifyWorkloadRestartContract() {
   const fixture = process.env.NIMBUS_NETWORK_VERIFY_RESTART_FIXTURE === "1";
   const root = path.resolve(
@@ -539,7 +643,12 @@ export function verifyWorkloadRestartContract() {
     ]) &&
       policyVariants.join(" ") === "Never OnFailure Always" &&
       phaseVariants.join(" ") ===
-        "Idle Requested PublicationWithdrawalPending ExecutionQuiescencePending Scheduled PreparationPending AttachmentPending ActivationPrerequisitePending ActivationPending ReadinessPending PublicationPending ObservationPending",
+        "Idle Requested PublicationWithdrawalPending ExecutionQuiescencePending Scheduled PreparationPending AttachmentPending ActivationPrerequisitePending ActivationPending ReadinessPending PublicationPending ObservationPending" &&
+      hasAll(sources.codec, [
+        '"restartPolicy"',
+        '"restartState"',
+        "validate_physical_shape",
+      ]),
     DIAGNOSTICS.vocabulary,
   );
 
@@ -548,9 +657,14 @@ export function verifyWorkloadRestartContract() {
       "restart: WorkloadRestartState",
       "current_execution_attempt_id: WorkloadExecutionAttemptId",
     ]) &&
+      hasAll(
+        extractItem(sources.workloads, "struct TransitionIdentityPayload"),
+        ["restart:", "WorkloadRestartState"],
+      ) &&
       sources.tests.includes(
         "same_generation_restart_keeps_desired_generation",
-      ),
+      ) &&
+      sources.tests.includes("restart_recovery_eligibility_is_exhaustive"),
     DIAGNOSTICS.nestedState,
   );
 
@@ -566,7 +680,7 @@ export function verifyWorkloadRestartContract() {
       "desired_digest: WorkloadDesiredDigest",
       "revision: WorkloadSagaRevision",
       "trigger: WorkloadRestartTrigger",
-      "inspection_version: SandboxInspectionVersion",
+      "inspection_version: Option<WorkloadInspectionVersion>",
       "provider_selection: WorkloadExecutionProviderId",
       "restart_epoch: WorkloadRestartEpoch",
       "policy_attempt_count: u32",
@@ -580,11 +694,7 @@ export function verifyWorkloadRestartContract() {
     hasAll(sources.compute, [
       "compare_and_swap_restart_admission",
       "automatic_and_explicit_restart_use_same_reducer",
-    ]) &&
-      sources.tests.includes(
-        "explicit_restart_does_not_consume_automatic_count",
-      ) &&
-      sources.tests.includes("concurrent_triggers_admit_one_restart_epoch"),
+    ]) && sources.tests.includes("concurrent_triggers_admit_one_restart_epoch"),
     DIAGNOSTICS.reducer,
   );
 
@@ -626,8 +736,10 @@ export function verifyWorkloadRestartContract() {
       "completed_automatic_restart_count",
     ]) &&
       hasAll(sources.tests, [
-        "deadline_survives_fresh_process_and_clock_rollback",
-        "count_survives_fresh_process",
+        "explicit_restart_does_not_consume_automatic_count",
+        "deadline_survives_clock_rollback_without_early_admission",
+        "deadline_survives_engine_reopen",
+        "count_survives_engine_reopen",
       ]),
     DIAGNOSTICS.schedule,
   );
@@ -696,11 +808,19 @@ export function verifyWorkloadRestartContract() {
     DIAGNOSTICS.watch,
   );
 
+  const nodeLowering = extractItem(
+    sources.node,
+    "fn into_host_lifecycle_request",
+  );
+  const nodeRestartGuard = extractItem(
+    sources.node,
+    "fn ensure_external_restart_disabled",
+  );
   requireContract(
-    sources.node.includes("HostRestartPolicy::No") &&
-      !/HostRestartPolicy::(?:OnFailure|Always)/u.test(sources.node) &&
-      sources.tests.includes(
-        "external_node_restart_is_rejected_before_effects",
+    nodeLowering.includes("HostRestartPolicy::No") &&
+      nodeRestartGuard.includes("!= HostRestartPolicy::No") &&
+      `${sources.tests}\n${sources.node}`.includes(
+        "reconciler_rejects_provider_restart_and_duplicates_before_backend_validation",
       ),
     DIAGNOSTICS.node,
   );
@@ -753,7 +873,11 @@ export function verifyWorkloadRestartContract() {
     DIAGNOSTICS.network,
   );
 
-  requireContract(sources.changedPaths.every(isAllowedPath), DIAGNOSTICS.paths);
+  requireContract(
+    sources.changedPaths.every(isAllowedPath) &&
+      sources.r1ChangedPaths.every(isR1AllowedPath),
+    DIAGNOSTICS.paths,
+  );
 
   requireContract(
     hasAll(sources.plan, [

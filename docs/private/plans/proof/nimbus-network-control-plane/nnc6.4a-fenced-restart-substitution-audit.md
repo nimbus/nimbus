@@ -1,6 +1,6 @@
 # NNC6.4a Fenced Restart Substitution Audit
 
-Status: `audit and R0 complete; expected-red contract frozen; product source unchanged`
+Status: `audit and R0 complete; R1 candidate-complete; R2-R4 expected red`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -14,9 +14,10 @@ service `stop` then `start` restart path. This audit defines the portable
 restart state, compute coordination, provider commands, service surface,
 failure behavior, and deletion gates before a product edit.
 
-This checkpoint does not restart a workload, change a provider, add a route,
-change the SDK, or alter the workload store. It records the expected-red
-contract that the implementation must satisfy.
+The original audit and R0 checkpoints did not restart a workload, change a
+provider, add a route, change the SDK, or alter the workload store. R1 now
+adds the portable restart model and its exact durable store content. It still
+adds no provider effect, route, SDK method, or caller cutover.
 
 ## Audit Result
 
@@ -193,8 +194,8 @@ An effect result never advances two arrows.
 
 ### Portable intent
 
-`WorkloadSagaIntent` gains a closed `WorkloadRestartPolicy` that is derived
-from the admitted sandbox spec and covered by the desired digest. Compute must
+`WorkloadSagaIntent` gains a closed `WorkloadRestartPolicy`. Compute derives
+it from the admitted sandbox spec. The desired digest covers it. Compute must
 cross-check the portable policy with the decoded executable before submission.
 `nimbus-workloads` must not depend on `nimbus-sandbox`.
 
@@ -340,7 +341,7 @@ does not fall back to the first available implementation.
 1. A definite error leaves the last completed restart phase durable and emits
    no later command.
 2. An ambiguous store CAS reloads the exact record. It never calls a provider
-   until the transition is confirmed.
+   until a fresh read confirms the transition.
 3. An ambiguous provider effect changes the command disposition to inspection
    required. It never authorizes a new attempt ID or a direct retry.
 4. Exact absence can authorize the same stable command at the next dispatch
@@ -362,9 +363,9 @@ does not fall back to the first available implementation.
 
 ## Fail-Before Test Packet
 
-NNCV034 is the first executable change after this audit checkpoint. Its live
-contract must be expected red on the audit base and its mutation suite must be
-green. It extends the existing source scanner and aggregate verifier rather
+NNCV034 is the first executable change after this audit checkpoint. The audit
+base must fail its live contract. Its mutation suite must pass. It extends the
+existing source scanner and aggregate verifier rather
 than adding a second Rust parser.
 
 The live contract checks these groups:
@@ -385,8 +386,8 @@ The live contract checks these groups:
    request ID, and no stop/start composition.
 8. bounded automatic watch with effect-free GET and logical resolution.
 9. forwarded-machine fence preservation and `Restart=No` node enforcement.
-10. deletion of provider-local scheduler fields, dormant decision helpers,
-    coarse restart routes, and network-crate effects.
+10. delete provider-local scheduler fields, dormant decision helpers, coarse
+    restart routes, and network-crate effects.
 11. required behavior, crash, process, race, cancellation, and SDK tests.
 12. exact plan/proof/ledger completion tokens.
 
@@ -418,8 +419,8 @@ NNCV034: red only because the frozen restart contract is not implemented
 NNCV034 mutation suite: green
 ```
 
-No product edit starts until the helper, aggregate integration, exact summary
-count, and expected-red proof are committed.
+No product edit starts until the owner commits the helper, aggregate
+integration, exact summary count, and expected-red proof.
 
 ### R0 expected-red evidence
 
@@ -432,7 +433,8 @@ count, and expected-red proof are committed.
 - NNCV034 has `19` contract groups. Its fixture proves the frozen green target.
   Its `33/33` mutations each change the fixture and produce one exact named
   diagnostic.
-- The live aggregate is expected red at `34` passed and `1` failed. NNCV034 is
+- The live aggregate has the expected-red result: `34` passed and `1` failed.
+  NNCV034 is
   the only failure. Its diagnostics name the absent state, command, provider,
   route, SDK, watch, machine, and behavior contracts.
 - The aggregate mutation suite passes `360/360`, including all retained
@@ -535,8 +537,8 @@ to A1-A20:
 - `crates/nimbus-compute/src/workload_saga.rs` and concept-owned restart
   reducer, confirmation, dispatcher, driver, provider, watch, and tests.
 - `crates/nimbus-compute/src/workload_projection.rs` and tests.
-- `crates/nimbus-compute/src/workload_provisioner.rs` and tests only where the
-  shared cancellation/tracked-work seam is generalized.
+- `crates/nimbus-compute/src/workload_provisioner.rs` and tests only where R2
+  generalizes the shared cancellation and tracked-work seam.
 - `crates/nimbus-compute/src/services.rs` and tests.
 - `crates/nimbus-server/src/workload_saga_store.rs`, its codec/schema/recovery
   children, and exact process tests.
@@ -556,6 +558,23 @@ to A1-A20:
   self-test, package tests, and `packages/nimbus/README.md`.
 - `crates/nimbus-system/src/inventory.rs` and service status projections.
 - the NNCV034 helper, aggregate verifier, this proof, plan, and routing index.
+- The workload network-plan durability contract script, for v4 assertions
+  only.
+
+This amendment aligns its strict wire and transition-domain assertions with
+the v4 durable record. It does not change NNC6.2a ownership or behavior. It
+also does not change the frozen source diff or completion checkpoint.
+- `crates/nimbus-workloads/src/saga/provision.rs` only for an explicit
+  concept-owned `large_enum_variant` reason on the existing closed provision
+  result. The execution-attempt fence makes its success evidence cross
+  Clippy's size heuristic. The pure reducer and strict portable wire keep the
+  value inline. Allocation would touch all provision producers and broaden R1
+  without improving restart behavior.
+- `crates/nimbus-compute/src/workload_saga/recovery.rs` only for the same
+  explicit size-heuristic reason on the existing low-rate pure recovery
+  action. The larger execution reference crosses the heuristic. Its complete
+  provider-neutral evidence remains inline. R1 adds no R2 coordinator or
+  effect.
 
 Any path outside this allowlist requires a recorded proof amendment before the
 edit. Generated, vendored, unrelated adapter, cluster, and storage-data-plane
@@ -620,15 +639,23 @@ paths are forbidden.
 | Current green baseline | NNC6.4 item commit `6f4f909a06a20de1003d5aafc2f5ffcba43cf0bd`: NNCV033 `40/40` and `50/50`, aggregate `34/34` and `327/327`, affected behavior, SDK, docs, quality, static, and modularity gates green. |
 | Audit checkpoint verification | On the audit candidate, the live static verifier passes `34/34`, its fail-closed mutation self-test passes `327/327`, docs pass `108`, the site gate passes `17/17`, and this proof passes technical-writing lint with zero errors. |
 | R0 fail-before checkpoint | NNCV034 owns `19` contract groups and `33/33` exact named mutations. The live aggregate has only the intended NNCV034 failure at `34` passed and `1` failed. The aggregate mutation suite passes `360/360`. Product source is unchanged. |
+| R1 portable-state candidate | Workloads format v4 owns the closed restart policy, trigger, admission, request, epoch, dispatch, attempt, phase, claim, result, disposition, full completed admission history, and recovery-decision vocabulary. The nested state retains one desired and network generation while execution and publication evidence bind the new attempt. Pure restart behavior passes `17/17`; exact server-store behavior passes `9/9`. |
+| R1 persistence and recovery boundary | The Engine-backed store requires `restartPolicy` and `restartState`, rejects missing, null, unknown, duplicate, crossed-identity, crossed-digest, crossed-epoch, and crossed-attempt content, preserves the absolute deadline and policy count across Engine reopen, admits one epoch under CAS contention, and returns bounded stable completed pages. These are Engine-reopen proofs, not distinct-process proofs; R4 retains the required distinct-process restart case. |
+| R1 static checkpoint | Nine NNCV034 groups are green: vocabulary, nested state, admission identity, schedule, withdrawal, node, network, paths, and ledger. The ten planned R2-R4 groups remain red: reducer, command, ambiguity, readiness, capabilities, service, watch, machine, scheduler, and behavior. NNCV034 mutations pass `39/39`; the live aggregate has the required intermediate shape at `34` passed and `1` expected NNCV034 failure. The complete aggregate mutation suite passes `366/366` with zero `SELFTEST FAIL` lines. |
+| R1 compatibility and quality | The retained NNC6.2a contract passes `24` direct checks and `10/10` mutations after its strict format assertion advances from v3 to v4. Full workloads behavior passes `155/155`; server workload-store behavior passes `48/48` with `5` declared child-only ignores; affected all-target check, strict Clippy, warning-denied rustdoc, Rustfmt, Prettier, diff, Bash syntax, and scoped ShellCheck pass. Proof lint has zero diagnostics. Docs pass `108`; the site gate passes `17/17`. Known vendored Brotli warnings are unchanged. |
+| R1 scheduling semantics | A future durable deadline remains discoverable because the active record still requires recovery, but the pure recovery decision returns `WaitingUntil`; this prevents early effects and busy retry. Automatic request identity is rederived from saga and inspection evidence. Explicit restarts do not consume the automatic-policy count. |
+| R1 strict-change posture | Nimbus is pre-launch. Format v4 is a direct strict replacement, with no v3 migration or compatibility shim. The temporary `WorkloadSagaIntent::new` default of `Never` exists only until R3 caller cutover and must be deleted or renamed before NNC6.4a completes. |
+| R1 modularity | `saga.rs` (`1,618` lines) and `saga/state.rs` (`1,627` lines) are concept-owned composition roots in the explicit 1,500-1,999-line reason band. Restart invariants and transitions live in the `restart` children (`657`, `20`, and `555` lines); store behavior lives in its `485`-line concept-owned test child. No handwritten R1 file reaches 2,000 lines. |
 | Review cadence | No structured review ran for this partial audit. NNC6.4a receives one review only after A1-A20 are green and the complete item is candidate-frozen. |
-| Next action | Commit the exact R0 checkpoint. Then implement R1 portable restart state and pure decisions only. |
+| Next action | Commit the exact R1 checkpoint, then start R2 confirmed commands and provider adapters. Do not add a service route or SDK method before R3. |
 
 ## Audit Acceptance Traceability
 
 | Clause | Audit status |
 | --- | --- |
 | A1 | Frozen by the source census, evidence locations, and current call graphs. |
-| A2-A6 | Target portable model and identity decisions are frozen; implementation is expected red. |
-| A7-A13 | Target lifecycle, capability, race, clock, and deletion rules are frozen; implementation is expected red. |
+| A2-A3 | R1 implements the closed portable vocabulary, nested same-generation state, and exact attempt-fenced execution and publication evidence. Final integration remains open. |
+| A4-A6 | R1 implements strict admission content, automatic/explicit count semantics, idempotent request validation, and CAS contention proof. R2 retains the sole compute writer, command confirmation, and live reducer integration. |
+| A7-A13 | R1 freezes legal phases, withdrawal vetoes, deadline/count durability, attempt fencing, and pure recovery decisions. R2-R3 retain provider choreography, retained-resource behavior, and obsolete provider-state deletion. |
 | A14-A17 | Service, watch, node, machine, cancellation, and recovery contracts are frozen; implementation is expected red. |
-| A18-A20 | R0 installs NNCV034 expected red with `33/33` named mutations and `360/360` aggregate mutations green. Final behavior, live NNCV034, quality, and one-review gates require R1-R4; no item-completion claim is made. |
+| A18-A20 | R1 behavior and strict-store proofs are green at the portable seam. NNCV034 passes `39/39` mutations and the aggregate mutation suite passes `366/366`. Ten later-band groups remain expected red. Final behavior, live NNCV034, quality, and the one-review gate require R2-R4; no item-completion claim is made. |

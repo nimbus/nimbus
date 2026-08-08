@@ -4,7 +4,7 @@ use nimbus_core::{Document, DocumentId};
 use nimbus_workloads::{WorkloadSagaRecord, WorkloadSagaStoreError};
 use serde_json::{Map, Value, json};
 
-const REQUIRED_FIELDS: [&str; 19] = [
+const REQUIRED_FIELDS: [&str; 21] = [
     "formatVersion",
     "sagaId",
     "tenantId",
@@ -15,10 +15,12 @@ const REQUIRED_FIELDS: [&str; 19] = [
     "desiredDigest",
     "executable",
     "source",
+    "restartPolicy",
     "sagaRevision",
     "phase",
     "recoveryEligible",
     "phaseDetail",
+    "restartState",
     "compiledNetworkPlan",
     "activationIntent",
     "publicationIntent",
@@ -50,6 +52,7 @@ pub(crate) fn encode_workload_saga_record(
     copy(&mut fields, "desiredDigest", active, "desiredDigest")?;
     copy(&mut fields, "executable", active, "executable")?;
     copy(&mut fields, "source", active, "source")?;
+    copy(&mut fields, "restartPolicy", active, "restartPolicy")?;
     copy(&mut fields, "sagaRevision", portable, "revision")?;
     copy(&mut fields, "phase", portable, "phase")?;
     fields.insert(
@@ -57,6 +60,7 @@ pub(crate) fn encode_workload_saga_record(
         Value::Bool(record.requires_recovery()),
     );
     copy(&mut fields, "phaseDetail", portable, "phaseDetail")?;
+    copy(&mut fields, "restartState", portable, "restart")?;
     copy_optional(
         &mut fields,
         "provisionDisposition",
@@ -96,6 +100,7 @@ pub(crate) fn decode_workload_saga_record(
             "desiredDigest": required(fields, "desiredDigest")?,
             "executable": required(fields, "executable")?,
             "source": required(fields, "source")?,
+            "restartPolicy": required(fields, "restartPolicy")?,
             "network": required(fields, "compiledNetworkPlan")?,
             "activation": required(fields, "activationIntent")?,
             "publication": required(fields, "publicationIntent")?,
@@ -105,6 +110,7 @@ pub(crate) fn decode_workload_saga_record(
         "revision": required(fields, "sagaRevision")?,
         "phase": required(fields, "phase")?,
         "phaseDetail": required(fields, "phaseDetail")?,
+        "restart": required(fields, "restartState")?,
         "provisionDisposition": fields.get("provisionDisposition").cloned(),
         "lastTransition": required(fields, "lastTransition")?,
         "failure": fields.get("failure").cloned(),

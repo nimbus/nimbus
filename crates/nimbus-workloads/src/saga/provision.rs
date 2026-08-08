@@ -872,6 +872,10 @@ fn validate_attempt_input(input: &WorkloadProvisionAttemptInput) -> Result<(), W
 }
 
 /// Closed provider-effect outcome accepted by the pure reducer.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "strict portable success evidence stays inline at this low-rate reducer boundary"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",

@@ -1855,7 +1855,7 @@ NODE
     printf 'SELFTEST FAIL NNCV034 workload restart mutation suite failed\n'
     sed -n '1,220p' "${temporary}/nnc64a-contract-self-test.out"
     self_fail=$((self_fail + 1))
-  elif ! rg -q '^NNC6\.4a restart contract self-test: 33 passed, 0 failed$' \
+  elif ! rg -q '^NNC6\.4a restart contract self-test: 39 passed, 0 failed$' \
     "${temporary}/nnc64a-contract-self-test.out"; then
     printf 'SELFTEST FAIL NNCV034 workload restart mutation count is not exact\n'
     self_fail=$((self_fail + 1))
@@ -1867,7 +1867,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 360 passed, 0 failed\n'
+  printf 'self-test: 366 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then

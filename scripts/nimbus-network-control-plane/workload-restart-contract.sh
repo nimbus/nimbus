@@ -57,6 +57,12 @@ run_self_test() {
     "missing-behavior-proof|restart-contract/behavior: required restart behavior and recovery proofs are incomplete"
     "missing-ledger-token|restart-contract/ledger: plan and proof do not retain the NNC6.4a acceptance and review tokens"
     "unexpected-path|restart-contract/paths: NNC6.4a changed a path outside the frozen allowlist"
+    "missing-restart-codec-field|restart-contract/vocabulary: portable restart vocabulary is missing or open"
+    "accept-unknown-restart-codec-field|restart-contract/vocabulary: portable restart vocabulary is missing or open"
+    "restart-transition-id-omits-state|restart-contract/nested-state: same-generation restart state or attempt identity is incomplete"
+    "restart-phase-not-recoverable|restart-contract/nested-state: same-generation restart state or attempt identity is incomplete"
+    "explicit-consumes-automatic-count|restart-contract/schedule: durable count, deadline, or deterministic-clock behavior is incomplete"
+    "r1-scope-broadening|restart-contract/paths: NNC6.4a changed a path outside the frozen allowlist"
   )
 
   for entry in "${cases[@]}"; do
@@ -87,12 +93,12 @@ run_self_test() {
       "${passed}" "${failures}"
     return 1
   fi
-  if [ "${passed}" -ne 33 ]; then
-    printf 'NNC6.4a restart contract self-test: expected 33 mutations, observed %d\n' \
+  if [ "${passed}" -ne 39 ]; then
+    printf 'NNC6.4a restart contract self-test: expected 39 mutations, observed %d\n' \
       "${passed}"
     return 1
   fi
-  printf 'NNC6.4a restart contract self-test: 33 passed, 0 failed\n'
+  printf 'NNC6.4a restart contract self-test: 39 passed, 0 failed\n'
 }
 
 case "${1:-}" in

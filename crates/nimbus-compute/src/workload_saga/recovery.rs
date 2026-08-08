@@ -12,6 +12,10 @@ use nimbus_workloads::{
 use super::{WorkloadProvisionDecision, WorkloadSagaCoordinator};
 
 /// One provider-neutral operation required to recover a durable workload saga.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "complete provider-neutral evidence stays inline at this low-rate pure decision seam"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkloadSagaAction {
     /// The one pure provision reducer owns every provision-phase decision.

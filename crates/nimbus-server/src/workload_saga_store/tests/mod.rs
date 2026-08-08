@@ -35,6 +35,7 @@ mod ingress;
 mod provision_driver_process;
 mod provision_fixture;
 mod recovery;
+mod restart;
 mod store;
 mod tenant_enumeration;
 

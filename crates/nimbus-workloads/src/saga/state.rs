@@ -4,10 +4,15 @@ use super::*;
 
 #[path = "state/provision.rs"]
 mod provision_state;
+#[path = "state/restart.rs"]
+mod restart_state;
 
 use provision_state::{
     initial_provision_disposition, validate_provision_disposition,
     validate_provision_disposition_transition,
+};
+use restart_state::{
+    initial_restart_state, validate_restart_state, validate_restart_state_transition,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,6 +57,7 @@ pub struct WorkloadSagaRecord {
     phase: WorkloadSagaPhase,
     phase_detail: WorkloadPhaseDetail,
     provision_disposition: Option<WorkloadProvisionDisposition>,
+    restart: WorkloadRestartState,
     last_transition: WorkloadSagaTransition,
     failure: Option<WorkloadFailureEvidence>,
 }
@@ -68,6 +74,7 @@ struct WorkloadSagaRecordWire {
     phase: WorkloadSagaPhase,
     phase_detail: WorkloadPhaseDetail,
     provision_disposition: Option<WorkloadProvisionDisposition>,
+    restart: WorkloadRestartState,
     last_transition: WorkloadSagaTransition,
     failure: Option<WorkloadFailureEvidence>,
 }
@@ -88,6 +95,7 @@ impl<'de> Deserialize<'de> for WorkloadSagaRecord {
             phase: wire.phase,
             phase_detail: wire.phase_detail,
             provision_disposition: wire.provision_disposition,
+            restart: wire.restart,
             last_transition: wire.last_transition,
             failure: wire.failure,
         };
@@ -108,6 +116,7 @@ struct TransitionIdentityPayload<'a> {
     successor_intent: &'a Option<WorkloadSagaIntent>,
     phase_detail: &'a WorkloadPhaseDetail,
     provision_disposition: &'a Option<WorkloadProvisionDisposition>,
+    restart: &'a WorkloadRestartState,
     failure: &'a Option<WorkloadFailureEvidence>,
 }
 
@@ -116,7 +125,7 @@ fn transition_id(payload: &TransitionIdentityPayload<'_>) -> WorkloadSagaTransit
         .expect("closed validated workload transition payload always serializes");
     WorkloadSagaTransitionId(derive_id(
         WorkloadSagaTransitionId::PREFIX,
-        b"nimbus.workloads.saga.transition.v3",
+        b"nimbus.workloads.saga.transition.v4",
         &[std::str::from_utf8(&encoded).expect("JSON is valid UTF-8")],
     ))
 }
@@ -139,6 +148,7 @@ impl WorkloadSagaRecord {
         let successor_intent = None;
         let failure = None;
         let provision_disposition = initial_provision_disposition(&active_intent);
+        let restart = initial_restart_state(&active_intent);
         let payload = TransitionIdentityPayload {
             saga_id: &saga_id,
             expected_revision: None,
@@ -149,6 +159,7 @@ impl WorkloadSagaRecord {
             successor_intent: &successor_intent,
             phase_detail: &phase_detail,
             provision_disposition: &provision_disposition,
+            restart: &restart,
             failure: &failure,
         };
         let transition_id = transition_id(&payload);
@@ -163,6 +174,7 @@ impl WorkloadSagaRecord {
             phase,
             phase_detail,
             provision_disposition,
+            restart,
             last_transition: WorkloadSagaTransition {
                 transition_id,
                 source_phase: None,
@@ -227,6 +239,9 @@ impl WorkloadSagaRecord {
     }
 
     pub fn requires_recovery(&self) -> bool {
+        if self.restart.active().is_some() {
+            return true;
+        }
         if self
             .provision_disposition
             .as_ref()
@@ -757,6 +772,7 @@ impl WorkloadSagaRecord {
             ));
         }
         validate_provision_disposition_transition(self, candidate, active_changed)?;
+        validate_restart_state_transition(self, candidate, active_changed)?;
         validate_successor_intent_change(self, candidate, active_changed)?;
         validate_evidence_continuity(self, candidate, active_changed)?;
         if let Some(successor) = &candidate.successor_intent {
@@ -810,6 +826,85 @@ impl WorkloadSagaRecord {
         provision_disposition: Option<WorkloadProvisionDisposition>,
         failure: Option<WorkloadFailureEvidence>,
     ) -> Result<Self, WorkloadSagaError> {
+        let restart = self.restart_for_outer_transition(&active_intent, &successor_intent)?;
+        self.build_next_complete(
+            active_intent,
+            successor_intent,
+            phase,
+            phase_detail,
+            provision_disposition,
+            restart,
+            failure,
+        )
+    }
+
+    fn restart_for_outer_transition(
+        &self,
+        active_intent: &WorkloadSagaIntent,
+        successor_intent: &Option<WorkloadSagaIntent>,
+    ) -> Result<WorkloadRestartState, WorkloadSagaError> {
+        if active_intent != &self.active_intent {
+            return Ok(initial_restart_state(active_intent));
+        }
+        let mut restart = self.restart.clone();
+        if successor_intent.is_some()
+            && self.successor_intent.is_none()
+            && let Some(active) = &restart.active
+        {
+            if active.phase() != WorkloadRestartPhase::Requested
+                || active.disposition() != &WorkloadRestartDisposition::Ready
+            {
+                return Err(WorkloadSagaError::InvalidTransition(
+                    "issued restart work must be fenced or inspected before successor withdrawal",
+                ));
+            }
+            restart.active = None;
+        }
+        Ok(restart)
+    }
+
+    pub(super) fn build_next_with_restart_state(
+        &self,
+        restart: WorkloadRestartState,
+    ) -> Result<Self, WorkloadSagaError> {
+        self.build_next_complete(
+            self.active_intent.clone(),
+            self.successor_intent.clone(),
+            self.phase,
+            self.phase_detail.clone(),
+            self.provision_disposition.clone(),
+            restart,
+            self.failure.clone(),
+        )
+    }
+
+    pub(super) fn build_next_with_restart_state_and_detail(
+        &self,
+        restart: WorkloadRestartState,
+        phase_detail: WorkloadPhaseDetail,
+    ) -> Result<Self, WorkloadSagaError> {
+        self.build_next_complete(
+            self.active_intent.clone(),
+            self.successor_intent.clone(),
+            self.phase,
+            phase_detail,
+            self.provision_disposition.clone(),
+            restart,
+            self.failure.clone(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_next_complete(
+        &self,
+        active_intent: WorkloadSagaIntent,
+        successor_intent: Option<WorkloadSagaIntent>,
+        phase: WorkloadSagaPhase,
+        phase_detail: WorkloadPhaseDetail,
+        provision_disposition: Option<WorkloadProvisionDisposition>,
+        restart: WorkloadRestartState,
+        failure: Option<WorkloadFailureEvidence>,
+    ) -> Result<Self, WorkloadSagaError> {
         let revision = self
             .revision
             .checked_next()
@@ -824,6 +919,7 @@ impl WorkloadSagaRecord {
             successor_intent: &successor_intent,
             phase_detail: &phase_detail,
             provision_disposition: &provision_disposition,
+            restart: &restart,
             failure: &failure,
         };
         let candidate = Self {
@@ -844,6 +940,7 @@ impl WorkloadSagaRecord {
             phase,
             phase_detail,
             provision_disposition,
+            restart,
             failure,
         };
         self.validate_successor(&candidate)?;
@@ -902,6 +999,7 @@ impl WorkloadSagaRecord {
         }
         validate_phase_detail(self.phase, &self.active_intent, &self.phase_detail)?;
         validate_provision_disposition(self)?;
+        validate_restart_state(self)?;
         if let Some(failure) = &self.failure {
             failure.validate()?;
             if self.phase != WorkloadSagaPhase::CleanupPending {
@@ -935,6 +1033,7 @@ impl WorkloadSagaRecord {
                 || self.successor_intent.is_some()
                 || self.failure.is_some()
                 || self.provision_disposition != initial_provision_disposition(&self.active_intent)
+                || self.restart != initial_restart_state(&self.active_intent)
             {
                 return Err(WorkloadSagaError::InvalidTransition(
                     "initial revision must contain exact initial intent state",
@@ -994,6 +1093,7 @@ impl WorkloadSagaRecord {
             successor_intent: &self.successor_intent,
             phase_detail: &self.phase_detail,
             provision_disposition: &self.provision_disposition,
+            restart: &self.restart,
             failure: &self.failure,
         };
         if self.last_transition.transition_id != transition_id(&payload) {
@@ -1070,10 +1170,23 @@ fn validate_evidence_continuity(
         return Ok(());
     }
     if current.phase == candidate.phase {
+        let completes_restart = current
+            .restart
+            .active()
+            .is_some_and(|active| active.phase() == WorkloadRestartPhase::ObservationPending)
+            && candidate.restart.active().is_none()
+            && current.restart.current_execution_attempt_id()
+                != candidate.restart.current_execution_attempt_id();
+        if completes_restart {
+            return Ok(());
+        }
         if current.phase_detail != candidate.phase_detail || current.failure != candidate.failure {
             return Err(WorkloadSagaError::InvalidEvidence(
                 "same-phase transition cannot rewrite lifecycle evidence",
             ));
+        }
+        if current.restart != candidate.restart {
+            return Ok(());
         }
         if current.successor_intent == candidate.successor_intent
             && current.provision_disposition == candidate.provision_disposition
