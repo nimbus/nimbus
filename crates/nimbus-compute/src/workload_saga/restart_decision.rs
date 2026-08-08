@@ -414,14 +414,14 @@ pub fn decide_restart_progress(
         | nimbus_workloads::WorkloadRestartPhase::ActivationPending
         | nimbus_workloads::WorkloadRestartPhase::ReadinessPending
         | nimbus_workloads::WorkloadRestartPhase::PublicationPending
-        | nimbus_workloads::WorkloadRestartPhase::ObservationPending => record
-            .claim_restart_command(request_id)
-            .map(|candidate| {
+        | nimbus_workloads::WorkloadRestartPhase::ObservationPending => {
+            record.claim_restart_command(request_id).map(|candidate| {
                 WorkloadRestartDecision::Proposed(ProposedWorkloadRestartTransition::new(
                     candidate,
                     Some(WorkloadRestartSymbolicAction::StartExactAttempt),
                 ))
-            }),
+            })
+        }
     }
 }
 
