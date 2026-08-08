@@ -15,6 +15,7 @@ mod provision_driver;
 pub mod provision_provider;
 mod provision_sandbox;
 mod recovery;
+mod restart_decision;
 
 pub use ingress::{ConfirmedWorkloadSagaIntent, WorkloadSagaIngressDisposition};
 pub use nimbus_workloads::{WorkloadProvisionCommandId, WorkloadProvisionCommandMode};
@@ -46,6 +47,13 @@ pub use provision_sandbox::{
     sandbox_execution_provider_id, validate_sandbox_provision_command,
 };
 pub use recovery::{WorkloadSagaAction, WorkloadSagaDecision, WorkloadSagaDecisionPage};
+pub use restart_decision::{
+    ConfirmedWorkloadRestartAdmission, ProposedWorkloadRestartTransition,
+    WorkloadRestartAdmissionDecision, WorkloadRestartAdmissionDisposition,
+    WorkloadRestartAdmissionError, WorkloadRestartAdmissionRequest,
+    WorkloadRestartCancellationToken, WorkloadRestartDecision, WorkloadRestartSymbolicAction,
+    decide_restart_admission, decide_restart_progress,
+};
 
 /// Sole cross-domain writer of portable workload-saga transitions.
 pub struct WorkloadSagaCoordinator {

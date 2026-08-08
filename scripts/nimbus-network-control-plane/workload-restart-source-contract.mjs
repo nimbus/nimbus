@@ -254,15 +254,10 @@ function fixtureTestEntries(entries) {
 
 function greenFixture() {
   const files = {
-    "crates/nimbus-compute/src/workload_saga.rs": withoutCfgTestItems(`
-fn compare_and_swap_restart_admission() {
-    let proposed = decide_restart_admission(&record, &request, clock.now_unix_millis())?;
-    coordinator.compare_and_swap(confirmation, proposed)?;
-}
-`),
+    "crates/nimbus-compute/src/workload_saga.rs": withoutCfgTestItems(``),
     "crates/nimbus-compute/src/workload_saga/restart_decision.rs":
       withoutCfgTestItems(`
-fn decide_restart_admission(record: &WorkloadSagaRecord, request: &WorkloadRestartRequest, now_unix_millis: u64) -> RestartAdmissionDecision {
+fn decide_restart_admission(record: &WorkloadSagaRecord, request: &WorkloadRestartRequest) -> RestartAdmissionDecision {
     require_exact_revision(record.revision(), request.source_revision())?;
     require_exact_generation(record.generation(), request.generation())?;
     require_exact_desired_digest(record.desired_digest(), request.desired_digest())?;
@@ -272,6 +267,12 @@ fn decide_restart_admission(record: &WorkloadSagaRecord, request: &WorkloadResta
     match request.trigger() {
         WorkloadRestartTrigger::Automatic => admit_automatic_restart(record, request, now_unix_millis),
         WorkloadRestartTrigger::Explicit => admit_explicit_restart(record, request),
+    }
+}
+impl WorkloadSagaCoordinator {
+    async fn compare_and_swap_restart_admission() {
+        let candidate = decide_restart_admission(&current, request)?;
+        self.commit_loaded(Some(&current), candidate.clone()).await?;
     }
 }
 `),
@@ -767,7 +768,6 @@ function applyFixtureMutation(sources, mutation) {
   }
   const decisionFile =
     "crates/nimbus-compute/src/workload_saga/restart_decision.rs";
-  const sagaFile = "crates/nimbus-compute/src/workload_saga.rs";
   const dispatchFile =
     "crates/nimbus-compute/src/workload_saga/restart_dispatch.rs";
   const driverFile =
@@ -790,9 +790,9 @@ function applyFixtureMutation(sources, mutation) {
       "let _stale_revision = request.source_revision();",
     ],
     "double-admission-winner": [
-      sagaFile,
-      "coordinator.compare_and_swap(confirmation, proposed)?;",
-      "coordinator.write_without_compare(confirmation, proposed)?;",
+      decisionFile,
+      "self.commit_loaded(Some(&current), candidate.clone()).await?;",
+      "self.write_without_compare(Some(&current), candidate.clone()).await?;",
     ],
     "withdrawal-race-after-read": [
       decisionFile,
@@ -1024,7 +1024,7 @@ function applyFixtureMutation(sources, mutation) {
   } else if (mutation === "bypass-admission-cas") {
     replaceOnceInFile(
       sources,
-      sagaFile,
+      decisionFile,
       "compare_and_swap_restart_admission",
       "restart_without_admission",
     );
@@ -1233,7 +1233,7 @@ export function verifyWorkloadRestartContract() {
     "fn decide_restart_admission",
   );
   const restartAdmissionCas = extractItem(
-    sourceAt(sources, "crates/nimbus-compute/src/workload_saga.rs"),
+    restartDecisionSource,
     "fn compare_and_swap_restart_admission",
   );
   requireContract(
@@ -1251,7 +1251,7 @@ export function verifyWorkloadRestartContract() {
     ]) &&
       hasAll(restartAdmissionCas, [
         "decide_restart_admission",
-        "coordinator.compare_and_swap",
+        "commit_loaded",
       ]) &&
       hasTestsAt(
         sources,
