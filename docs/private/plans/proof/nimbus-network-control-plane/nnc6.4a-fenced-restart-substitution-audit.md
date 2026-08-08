@@ -1,6 +1,6 @@
 # NNC6.4a Fenced Restart Substitution Audit
 
-Status: `audit complete; target and fail-before contract frozen; product source unchanged`
+Status: `audit and R0 complete; expected-red contract frozen; product source unchanged`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -421,6 +421,26 @@ NNCV034 mutation suite: green
 No product edit starts until the helper, aggregate integration, exact summary
 count, and expected-red proof are committed.
 
+### R0 expected-red evidence
+
+- `scripts/verify-nimbus-network-source-contract.mjs` extends its existing
+  mode router with `workload-restart-contract`. It uses the same extracted
+  lexical scanner as every retained source mode. No second Rust parser exists.
+- The extraction leaves the original mode router at `1,749` lines. The shared
+  lexical module is `227` lines, and the restart-specific checker is `772`
+  lines. Each file remains below the repository decomposition threshold.
+- NNCV034 has `19` contract groups. Its fixture proves the frozen green target.
+  Its `33/33` mutations each change the fixture and produce one exact named
+  diagnostic.
+- The live aggregate is expected red at `34` passed and `1` failed. NNCV034 is
+  the only failure. Its diagnostics name the absent state, command, provider,
+  route, SDK, watch, machine, and behavior contracts.
+- The aggregate mutation suite passes `360/360`, including all retained
+  NNCV000-NNCV033 cases and the `33` additive NNCV034 cases.
+- `git diff` from audit checkpoint
+  `8723bc9a8ac27abc8ecbbd59d5f8d8d159e98cc1` contains only the R0 verifier,
+  proof, plan, and routing paths. Product source remains byte-identical.
+
 ## Behavioral Proof Matrix
 
 | Proof family | Required cases |
@@ -496,6 +516,10 @@ R0 may edit only:
 
 - `scripts/nimbus-network-control-plane/workload-restart-contract.sh`.
 - its concept-owned self-test if separate.
+- `scripts/verify-nimbus-network-source-contract.mjs` and a concept-owned
+  scanner child or shared lexical module. The child keeps the existing scanner
+  below the repository decomposition threshold. The extension uses one source
+  scanner. It must not add a second Rust parser.
 - `scripts/verify-nimbus-network-control-plane.sh`.
 - this proof.
 - the canonical plan.
@@ -595,8 +619,9 @@ paths are forbidden.
 | Architecture decision | Use one nested same-generation restart state, separate execution-attempt identity, compute-owned durable schedule/count, a bounded compute watch, exact retained provider commands, and one explicit service ingress. Do not use a higher desired generation, local stop/start, or a god provider. |
 | Current green baseline | NNC6.4 item commit `6f4f909a06a20de1003d5aafc2f5ffcba43cf0bd`: NNCV033 `40/40` and `50/50`, aggregate `34/34` and `327/327`, affected behavior, SDK, docs, quality, static, and modularity gates green. |
 | Audit checkpoint verification | On the audit candidate, the live static verifier passes `34/34`, its fail-closed mutation self-test passes `327/327`, docs pass `108`, the site gate passes `17/17`, and this proof passes technical-writing lint with zero errors. |
+| R0 fail-before checkpoint | NNCV034 owns `19` contract groups and `33/33` exact named mutations. The live aggregate has only the intended NNCV034 failure at `34` passed and `1` failed. The aggregate mutation suite passes `360/360`. Product source is unchanged. |
 | Review cadence | No structured review ran for this partial audit. NNC6.4a receives one review only after A1-A20 are green and the complete item is candidate-frozen. |
-| Next action | Implement R0 only: add NNCV034, its fail-closed mutation suite, aggregate integration, exact expected-red evidence, and the source-derived allowlist. Commit that fail-before checkpoint before product changes. |
+| Next action | Commit the exact R0 checkpoint. Then implement R1 portable restart state and pure decisions only. |
 
 ## Audit Acceptance Traceability
 
@@ -606,4 +631,4 @@ paths are forbidden.
 | A2-A6 | Target portable model and identity decisions are frozen; implementation is expected red. |
 | A7-A13 | Target lifecycle, capability, race, clock, and deletion rules are frozen; implementation is expected red. |
 | A14-A17 | Service, watch, node, machine, cancellation, and recovery contracts are frozen; implementation is expected red. |
-| A18-A20 | Exact proof families, NNCV034 gate, quality gates, and one-review cadence are frozen; no completion claim is made. |
+| A18-A20 | R0 installs NNCV034 expected red with `33/33` named mutations and `360/360` aggregate mutations green. Final behavior, live NNCV034, quality, and one-review gates require R1-R4; no item-completion claim is made. |
