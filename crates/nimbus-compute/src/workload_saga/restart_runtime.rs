@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use nimbus_network::NetworkCapabilityRegistry;
 use nimbus_sandbox::{
     SandboxExecutionAttemptId, SandboxExecutionAttemptObservation, SandboxExecutionObservation,
+    SandboxInspection, SandboxRestartAssessment,
 };
 use nimbus_workloads::{
     WorkloadInspectionVersion, WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy,
@@ -126,7 +127,7 @@ impl AutomaticRestartCoordinator {
                 "automatic restart inspection crossed the current execution attempt".to_owned(),
             );
         }
-        let SandboxExecutionObservation::Exited { exit_code } = inspection.execution else {
+        let Some(exit_code) = authenticated_restart_exit(&inspection)? else {
             return Ok(());
         };
         let policy = record.active_intent().restart_policy();
@@ -164,6 +165,26 @@ impl AutomaticRestartCoordinator {
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
+}
+
+fn authenticated_restart_exit(inspection: &SandboxInspection) -> Result<Option<i32>, String> {
+    let SandboxExecutionObservation::Exited { exit_code } = inspection.execution else {
+        return Ok(None);
+    };
+    let SandboxRestartAssessment::Candidate {
+        exit_code: assessed_exit_code,
+        blocker: None,
+    } = inspection.restart
+    else {
+        // Provider-authenticated shutdown, cleanup, and startup
+        // reconciliation evidence veto admission. Compute owns policy and
+        // scheduling, but it cannot ignore physical provider blockers.
+        return Ok(None);
+    };
+    if assessed_exit_code != exit_code {
+        return Err("automatic restart inspection crossed exit evidence".to_owned());
+    }
+    Ok(Some(exit_code))
 }
 
 impl RestartCandidateCoordinator for AutomaticRestartCoordinator {
@@ -232,10 +253,7 @@ impl WorkloadRestartRuntime {
         let watch_thread = std::thread::Builder::new()
             .name("nimbus-workload-restart-watch".to_owned())
             .spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_time()
-                    .build()
-                    .map_err(|error| error.to_string());
+                let runtime = build_restart_runtime();
                 let _ = started.send(runtime.as_ref().map(|_| ()).map_err(Clone::clone));
                 let runtime = runtime?;
                 runtime
@@ -264,14 +282,25 @@ impl WorkloadRestartRuntime {
     }
 }
 
+fn build_restart_runtime() -> Result<tokio::runtime::Runtime, String> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())
+}
+
 impl Drop for WorkloadRestartRuntime {
     fn drop(&mut self) {
         self.cancellation.cancel();
         let thread = self.watch_thread.get_mut().ok().and_then(Option::take);
-        if let Some(thread) = thread
-            && thread.join().is_err()
-        {
-            tracing::error!("workload restart watch thread panicked during shutdown");
+        if let Some(thread) = thread {
+            match thread.join() {
+                Err(_) => tracing::error!("workload restart watch thread panicked during shutdown"),
+                Ok(Err(message)) => {
+                    tracing::error!(%message, "workload restart watch stopped with an error")
+                }
+                Ok(Ok(())) => {}
+            }
         }
     }
 }
@@ -296,3 +325,7 @@ fn restart_backoff_millis(completed: u32) -> u64 {
         .saturating_mul(multiplier)
         .min(u128::from(RESTART_BACKOFF_MAX_MILLIS)) as u64
 }
+
+#[cfg(test)]
+#[path = "restart_runtime/tests.rs"]
+mod tests;

@@ -17,11 +17,11 @@ use nimbus_workloads::{
     WorkloadExecutionAttemptId, WorkloadGeneration, WorkloadNetworkIntent,
     WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadProvisionSourceEvidence,
     WorkloadProvisionSourceIdentity, WorkloadPublicationIntent, WorkloadRestartCandidatePage,
-    WorkloadRestartCandidatePageRequest, WorkloadRestartEvidenceDigest,
-    WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy, WorkloadRestartStep,
-    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaIntent,
-    WorkloadSagaIntentUpdate, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase,
-    WorkloadSagaStore, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    WorkloadRestartCandidatePageRequest, WorkloadRestartDispatchEpoch, WorkloadRestartEffectResult,
+    WorkloadRestartEvidenceDigest, WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy,
+    WorkloadRestartStep, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
+    WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaPage, WorkloadSagaPageRequest,
+    WorkloadSagaPhase, WorkloadSagaStore, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
 };
 
 use super::*;
@@ -152,7 +152,7 @@ impl WorkloadProvisionSourceAuthority for ExactSourceAuthority {
 #[derive(Debug, Clone, Copy)]
 enum ScriptedOutcome {
     Succeeded,
-    Ambiguous,
+    AuthenticatedAbsent,
     InProgress,
     DefiniteFailure,
 }
@@ -162,11 +162,13 @@ struct ProviderCall {
     step: WorkloadRestartStep,
     mode: WorkloadRestartCommandMode,
     attempt_id: WorkloadExecutionAttemptId,
+    dispatch_epoch: WorkloadRestartDispatchEpoch,
 }
 
 struct ScriptedProvider {
     outcomes: Mutex<VecDeque<ScriptedOutcome>>,
     calls: Mutex<Vec<ProviderCall>>,
+    successor_race: Mutex<Option<Arc<DurableStore>>>,
 }
 
 impl ScriptedProvider {
@@ -174,6 +176,18 @@ impl ScriptedProvider {
         Arc::new(Self {
             outcomes: Mutex::new(outcomes.into_iter().collect()),
             calls: Mutex::new(Vec::new()),
+            successor_race: Mutex::new(None),
+        })
+    }
+
+    fn with_successor_race(
+        outcomes: impl IntoIterator<Item = ScriptedOutcome>,
+        store: Arc<DurableStore>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            outcomes: Mutex::new(outcomes.into_iter().collect()),
+            calls: Mutex::new(Vec::new()),
+            successor_race: Mutex::new(Some(store)),
         })
     }
 
@@ -189,6 +203,7 @@ impl ScriptedProvider {
                 step: command.step(),
                 mode,
                 attempt_id: command.attempt_id().clone(),
+                dispatch_epoch: command.dispatch_epoch(),
             });
         let outcome = self
             .outcomes
@@ -200,7 +215,11 @@ impl ScriptedProvider {
             ScriptedOutcome::Succeeded => WorkloadRestartCommandOutcome::Succeeded {
                 evidence: WorkloadRestartEvidenceDigest::sha256("scripted-success"),
             },
-            ScriptedOutcome::Ambiguous => WorkloadRestartCommandOutcome::Ambiguous,
+            ScriptedOutcome::AuthenticatedAbsent => {
+                WorkloadRestartCommandOutcome::AuthenticatedAbsent {
+                    evidence: WorkloadRestartEvidenceDigest::sha256("scripted-absence"),
+                }
+            }
             ScriptedOutcome::InProgress => WorkloadRestartCommandOutcome::InProgress {
                 evidence: WorkloadRestartEvidenceDigest::sha256("scripted-progress"),
             },
@@ -222,6 +241,28 @@ impl ScriptedProvider {
                 provider_selection: command.provider_selection().clone(),
                 outcome,
             });
+        if mode == WorkloadRestartCommandMode::Execute
+            && let Some(store) = self
+                .successor_race
+                .lock()
+                .expect("successor race should be healthy")
+                .take()
+        {
+            let mut current = store
+                .record
+                .lock()
+                .expect("durable store lock should be healthy");
+            let WorkloadSagaIntentUpdate::Transition(next) = current
+                .apply_intent(stopped_successor(&current))
+                .expect("racing successor should durably veto issued work")
+            else {
+                panic!("racing successor must transition");
+            };
+            current
+                .validate_successor(&next)
+                .expect("racing successor must remain a valid CAS candidate");
+            *current = *next;
+        }
         Box::pin(async move { observation })
     }
 
@@ -573,6 +614,53 @@ async fn completed_published_restart(label: &str) -> (WorkloadRestartRun, Arc<Sc
 }
 
 #[tokio::test]
+async fn observe_publication_absence_republishes_before_exact_observation() {
+    let admitted = published_admitted_record("observe-publication-absence");
+    let store = DurableStore::new(admitted.clone());
+    let provider = ScriptedProvider::new([ScriptedOutcome::Succeeded; 8].into_iter().chain([
+        ScriptedOutcome::AuthenticatedAbsent,
+        ScriptedOutcome::Succeeded,
+        ScriptedOutcome::Succeeded,
+    ]));
+
+    let run = driver(store, provider.clone())
+        .drive_admitted(admitted, WorkloadRestartNotBeforeUnixMillis::new(0))
+        .await
+        .expect("authenticated observation absence should republish before observing again");
+
+    assert_eq!(run.disposition(), WorkloadRestartRunDisposition::Completed);
+    let calls = provider.calls();
+    assert_eq!(calls.len(), 11);
+    assert_eq!(
+        step_modes(&calls[8..]),
+        vec![
+            (
+                WorkloadRestartStep::ObservePublication,
+                WorkloadRestartCommandMode::Inspect,
+            ),
+            (
+                WorkloadRestartStep::Publish,
+                WorkloadRestartCommandMode::Execute,
+            ),
+            (
+                WorkloadRestartStep::ObservePublication,
+                WorkloadRestartCommandMode::Inspect,
+            ),
+        ]
+    );
+    assert_eq!(
+        calls[8].dispatch_epoch.checked_next(),
+        Some(calls[9].dispatch_epoch)
+    );
+    assert_eq!(
+        calls[10].dispatch_epoch,
+        WorkloadRestartDispatchEpoch::new(0)
+    );
+    assert_eq!(calls[8].attempt_id, calls[9].attempt_id);
+    assert_eq!(calls[9].attempt_id, calls[10].attempt_id);
+}
+
+#[tokio::test]
 async fn publication_withdrawal_precedes_execution_quiescence() {
     let (_, provider) = completed_published_restart("restart-withdrawal-order").await;
     let calls = provider.calls();
@@ -714,15 +802,18 @@ async fn withdrawal_after_admission_vetoes_unissued_command() {
 }
 
 #[tokio::test]
-async fn withdrawal_after_ambiguous_effect_requires_inspection() {
+async fn successor_after_effect_before_result_cas_allows_inspection_only() {
     let admitted = admitted_record("restart-ambiguous-withdrawal");
     let store = DurableStore::new(admitted.clone());
-    let provider = ScriptedProvider::new([ScriptedOutcome::Ambiguous, ScriptedOutcome::InProgress]);
+    let provider = ScriptedProvider::with_successor_race(
+        [ScriptedOutcome::Succeeded, ScriptedOutcome::Succeeded],
+        store.clone(),
+    );
 
     let run = driver(store, provider.clone())
         .drive_admitted(admitted, WorkloadRestartNotBeforeUnixMillis::new(0))
         .await
-        .expect("ambiguous effect should persist and inspect exact work");
+        .expect("result-CAS conflict should adopt the successor veto and inspect exact work");
 
     assert_eq!(run.disposition(), WorkloadRestartRunDisposition::Waiting);
     let calls = provider.calls();
@@ -740,9 +831,16 @@ async fn withdrawal_after_ambiguous_effect_requires_inspection() {
         ]
     );
     assert_eq!(calls[0].attempt_id, calls[1].attempt_id);
-    assert!(
+    assert!(run.record().successor_intent().is_some());
+    assert!(matches!(
         run.record()
-            .apply_intent(stopped_successor(run.record()))
-            .is_err()
-    );
+            .restart_state()
+            .active()
+            .expect("issued evidence must remain durable")
+            .disposition(),
+        nimbus_workloads::WorkloadRestartDisposition::SuccessorVetoed {
+            result: WorkloadRestartEffectResult::Succeeded { .. },
+            ..
+        }
+    ));
 }

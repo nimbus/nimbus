@@ -9,10 +9,17 @@ use nimbus_workloads::{
     WorkloadProvisionSourceDigest,
 };
 use nimbus_workloads::{
-    WorkloadExecutionReference, WorkloadProvisionDispatchClaim, WorkloadProvisionProviderTarget,
-    WorkloadProvisionStep, WorkloadProvisionSubjects,
+    WorkloadExecutionAttemptId, WorkloadExecutionReference, WorkloadProvisionDispatchClaim,
+    WorkloadProvisionProviderTarget, WorkloadProvisionStep, WorkloadProvisionSubjects,
 };
 use serde::Serialize;
+
+#[path = "host_lifecycle/activation_fence.rs"]
+mod activation_fence;
+pub(crate) use activation_fence::HostActivationFence;
+#[path = "host_lifecycle/restart.rs"]
+mod restart;
+pub use restart::{HostRestartProviderClaim, HostRestartProviderClaimInput};
 
 use super::{
     LocalEnforcementBinding, NodeStatusAuthorizer, TenantWorkloadCondition,
@@ -74,6 +81,58 @@ pub trait HostLifecycleBackend: Send + Sync + 'static {
         Box::pin(async {
             Err(Error::PermissionDenied(
                 "host lifecycle backend does not implement exact activation inspection".to_owned(),
+            ))
+        })
+    }
+
+    /// Stop one exact source attempt under a compute-confirmed restart claim.
+    fn quiesce_restart_exact<'a>(
+        &'a self,
+        _claim: HostRestartProviderClaim,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async {
+            Err(Error::PermissionDenied(
+                "host lifecycle backend does not implement exact restart quiescence".to_owned(),
+            ))
+        })
+    }
+
+    /// Inspect source-attempt quiescence without granting a stop effect.
+    fn inspect_restart_quiescence<'a>(
+        &'a self,
+        _claim: HostRestartProviderClaim,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async {
+            Err(Error::PermissionDenied(
+                "host lifecycle backend does not implement restart quiescence inspection"
+                    .to_owned(),
+            ))
+        })
+    }
+
+    /// Activate one exact target attempt under a compute-confirmed restart claim.
+    fn activate_restart_exact<'a>(
+        &'a self,
+        _claim: HostRestartProviderClaim,
+        _request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async {
+            Err(Error::PermissionDenied(
+                "host lifecycle backend does not implement exact restart activation".to_owned(),
+            ))
+        })
+    }
+
+    /// Inspect target-attempt activation without granting an activation effect.
+    fn inspect_restart_activation<'a>(
+        &'a self,
+        _claim: HostRestartProviderClaim,
+        _request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async {
+            Err(Error::PermissionDenied(
+                "host lifecycle backend does not implement restart activation inspection"
+                    .to_owned(),
             ))
         })
     }
@@ -736,12 +795,13 @@ impl HostProviderPlan {
     }
 }
 
-/// Provider-local activation identity retained beside one physical effect.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct HostActivationFence {
+pub(crate) struct HostProvisionActivationFence {
     workload_uid: String,
     node_identity: String,
     execution_id: WorkloadExecutionId,
+    execution_attempt_id: WorkloadExecutionAttemptId,
+    execution_provider_id: String,
     attempt_id: String,
     dispatch_epoch: u64,
     claimed_revision: u64,
@@ -751,12 +811,14 @@ pub(crate) struct HostActivationFence {
     network_plan_digest: String,
 }
 
-impl HostActivationFence {
+impl HostProvisionActivationFence {
     #[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
-    const JOURNAL_FIELD_NAMES: [&'static str; 10] = [
+    const JOURNAL_FIELD_NAMES: [&'static str; 12] = [
         "NIMBUS_WORKLOAD_UID",
         "NIMBUS_NODE_IDENTITY",
         "NIMBUS_WORKLOAD_EXECUTION_ID",
+        "NIMBUS_WORKLOAD_EXECUTION_ATTEMPT_ID",
+        "NIMBUS_WORKLOAD_EXECUTION_PROVIDER_ID",
         "NIMBUS_PROVISION_ATTEMPT_ID",
         "NIMBUS_PROVISION_DISPATCH_EPOCH",
         "NIMBUS_PROVISION_CLAIMED_REVISION",
@@ -805,14 +867,13 @@ impl HostActivationFence {
                 "host activation requires an activate_workload dispatch claim".to_owned(),
             ));
         }
-        if !matches!(
-            claim.provider_target(),
-            WorkloadProvisionProviderTarget::Execution { .. }
-        ) {
+        let WorkloadProvisionProviderTarget::Execution { provider_id, .. } =
+            claim.provider_target()
+        else {
             return Err(Error::PermissionDenied(
                 "host activation requires execution-provider authority".to_owned(),
             ));
-        }
+        };
         let WorkloadProvisionSubjects::Execution(subject) = attempt.subjects() else {
             return Err(Error::PermissionDenied(
                 "host activation claim must name one exact execution".to_owned(),
@@ -831,6 +892,8 @@ impl HostActivationFence {
             workload_uid: execution.workload_uid().as_str().to_owned(),
             node_identity: execution.node_identity().as_str().to_owned(),
             execution_id: execution.execution_id().clone(),
+            execution_attempt_id: execution.attempt_id().clone(),
+            execution_provider_id: provider_id.to_string(),
             attempt_id: attempt.attempt_id().as_str().to_owned(),
             dispatch_epoch: claim.dispatch_epoch().as_u64(),
             claimed_revision: claim.claimed_revision().as_u64(),
@@ -846,6 +909,14 @@ impl HostActivationFence {
             format!("NIMBUS_WORKLOAD_UID={}", self.workload_uid),
             format!("NIMBUS_NODE_IDENTITY={}", self.node_identity),
             format!("NIMBUS_WORKLOAD_EXECUTION_ID={}", self.execution_id),
+            format!(
+                "NIMBUS_WORKLOAD_EXECUTION_ATTEMPT_ID={}",
+                self.execution_attempt_id
+            ),
+            format!(
+                "NIMBUS_WORKLOAD_EXECUTION_PROVIDER_ID={}",
+                self.execution_provider_id
+            ),
             format!("NIMBUS_PROVISION_ATTEMPT_ID={}", self.attempt_id),
             format!("NIMBUS_PROVISION_DISPATCH_EPOCH={}", self.dispatch_epoch),
             format!(
@@ -867,7 +938,7 @@ impl HostActivationFence {
     /// fence fails closed. Callers compare the reconstructed value with the
     /// compute-issued fence before adopting an existing unit.
     #[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
-    pub(crate) fn from_log_extra_fields(fields: &[Vec<u8>]) -> Result<Option<Self>> {
+    fn from_log_extra_fields(fields: &[Vec<u8>]) -> Result<Option<Self>> {
         let mut retained = BTreeMap::<&'static str, &str>::new();
         for field in fields {
             if !field.starts_with(b"NIMBUS_") {
@@ -930,6 +1001,21 @@ impl HostActivationFence {
             .map_err(|_| {
                 invalid_activation_fence("systemd activation fence has an invalid execution ID")
             })?;
+        let execution_attempt_id = field("NIMBUS_WORKLOAD_EXECUTION_ATTEMPT_ID")?
+            .parse::<WorkloadExecutionAttemptId>()
+            .map_err(|_| {
+                invalid_activation_fence(
+                    "systemd activation fence has an invalid execution attempt ID",
+                )
+            })?;
+        let execution_provider_id = field("NIMBUS_WORKLOAD_EXECUTION_PROVIDER_ID")?.to_owned();
+        execution_provider_id
+            .parse::<nimbus_workloads::WorkloadExecutionProviderId>()
+            .map_err(|_| {
+                invalid_activation_fence(
+                    "systemd activation fence has an invalid execution provider ID",
+                )
+            })?;
         let attempt_id = field("NIMBUS_PROVISION_ATTEMPT_ID")?.to_owned();
         attempt_id
             .parse::<WorkloadProvisionAttemptId>()
@@ -963,6 +1049,8 @@ impl HostActivationFence {
             workload_uid,
             node_identity,
             execution_id,
+            execution_attempt_id,
+            execution_provider_id,
             attempt_id,
             dispatch_epoch,
             claimed_revision,
@@ -985,6 +1073,11 @@ impl HostActivationFence {
                 .as_str()
                 .to_owned(),
             execution_id: plan.execution_id().clone(),
+            execution_attempt_id: WorkloadExecutionAttemptId::for_execution(
+                plan.execution_id(),
+                nimbus_workloads::WorkloadRestartEpoch::new(0),
+            ),
+            execution_provider_id: format!("wep_{}", digest(5)),
             attempt_id: format!("wpa_{}", digest(1)),
             dispatch_epoch,
             claimed_revision: dispatch_epoch + 1,
@@ -993,6 +1086,19 @@ impl HostActivationFence {
             source_digest: digest(3),
             network_plan_digest: digest(4),
         }
+    }
+
+    fn matches_restart_source(&self, claim: &HostRestartProviderClaim) -> bool {
+        let source = claim.source_execution();
+        self.workload_uid == source.workload_uid().as_str()
+            && self.node_identity == source.node_identity().as_str()
+            && self.execution_id == *source.execution_id()
+            && self.execution_attempt_id == *source.attempt_id()
+            && self.execution_provider_id == claim.provider_selection.to_string()
+            && self.generation == source.generation().as_u64()
+            && self.desired_digest == source.desired_digest().to_string()
+            && self.source_digest == claim.source_digest.to_string()
+            && self.network_plan_digest == claim.network_plan_digest.as_str()
     }
 }
 

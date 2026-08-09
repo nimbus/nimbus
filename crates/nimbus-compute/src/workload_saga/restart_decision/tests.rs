@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nimbus_workloads::{
@@ -14,6 +15,7 @@ use super::{
     decide_restart_admission, decide_restart_progress,
 };
 use crate::workload_saga::{WorkloadSagaCoordinator, test_support};
+use tokio::sync::Barrier;
 
 #[derive(Default)]
 struct RestartStoreState {
@@ -39,15 +41,6 @@ impl RestartStore {
     fn calls(&self) -> (usize, usize) {
         let state = self.state.lock().expect("restart store lock is healthy");
         (state.loads, state.compare_and_swaps)
-    }
-
-    fn record(&self) -> WorkloadSagaRecord {
-        self.state
-            .lock()
-            .expect("restart store lock is healthy")
-            .record
-            .clone()
-            .expect("restart store retains one record")
     }
 }
 
@@ -86,6 +79,95 @@ impl WorkloadSagaStore for RestartStore {
             }
             if state.record.as_ref() == Some(&next) {
                 return Ok(WorkloadSagaCommit::Unchanged);
+            }
+            state.record = Some(next);
+            Ok(WorkloadSagaCommit::Applied)
+        })
+    }
+
+    fn list_recoverable<'a>(
+        &'a self,
+        request: WorkloadSagaPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaPage> {
+        Box::pin(async move { WorkloadSagaPage::new(&request, Vec::new(), false) })
+    }
+
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: WorkloadRestartCandidatePageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadRestartCandidatePage> {
+        Box::pin(async move { WorkloadRestartCandidatePage::new(&request, Vec::new(), false) })
+    }
+
+    fn list_for_tenant<'a>(
+        &'a self,
+        tenant_id: &'a nimbus_core::TenantId,
+        request: WorkloadSagaTenantPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
+        Box::pin(async move { WorkloadSagaTenantPage::new(tenant_id, &request, Vec::new(), false) })
+    }
+}
+
+struct ContendedRestartStore {
+    state: Mutex<RestartStoreState>,
+    initial_loads: AtomicUsize,
+    same_revision: Barrier,
+}
+
+impl ContendedRestartStore {
+    fn new(record: WorkloadSagaRecord) -> Self {
+        Self {
+            state: Mutex::new(RestartStoreState {
+                record: Some(record),
+                ..RestartStoreState::default()
+            }),
+            initial_loads: AtomicUsize::new(0),
+            same_revision: Barrier::new(2),
+        }
+    }
+
+    fn calls(&self) -> (usize, usize) {
+        let state = self.state.lock().expect("restart store lock is healthy");
+        (state.loads, state.compare_and_swaps)
+    }
+}
+
+impl WorkloadSagaStore for ContendedRestartStore {
+    fn load<'a>(
+        &'a self,
+        key: &'a WorkloadSagaKey,
+    ) -> WorkloadSagaFuture<'a, Option<WorkloadSagaRecord>> {
+        Box::pin(async move {
+            let record = {
+                let mut state = self.state.lock().expect("restart store lock is healthy");
+                state.loads += 1;
+                state.record.clone()
+            };
+            if record.as_ref().is_some_and(|record| record.key() != key) {
+                return Err(WorkloadSagaStoreError::Corrupt);
+            }
+            if self.initial_loads.fetch_add(1, Ordering::AcqRel) < 2 {
+                self.same_revision.wait().await;
+            }
+            Ok(record)
+        })
+    }
+
+    fn compare_and_swap<'a>(
+        &'a self,
+        expected: WorkloadSagaExpected,
+        next: WorkloadSagaRecord,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaCommit> {
+        Box::pin(async move {
+            let mut state = self.state.lock().expect("restart store lock is healthy");
+            state.compare_and_swaps += 1;
+            let observed = state.record.as_ref().map(WorkloadSagaRecord::revision);
+            let expected_revision = match expected {
+                WorkloadSagaExpected::Missing => None,
+                WorkloadSagaExpected::Revision(revision) => Some(revision),
+            };
+            if observed != expected_revision {
+                return Err(WorkloadSagaStoreError::Conflict { expected, observed });
             }
             state.record = Some(next);
             Ok(WorkloadSagaCommit::Applied)
@@ -172,13 +254,13 @@ fn automatic_and_explicit_restart_use_same_reducer() {
 }
 
 #[tokio::test]
-async fn concurrent_triggers_admit_one_restart_epoch() {
+async fn concurrent_triggers_force_same_revision_before_competing_cas() {
     let record = test_support::restart_observed_record(
         "concurrent",
         WorkloadRestartPolicy::Always { max_restarts: 2 },
     );
     let request = automatic_request(&record, 0x32);
-    let store = Arc::new(RestartStore::new(record));
+    let store = Arc::new(ContendedRestartStore::new(record));
     let coordinator = Arc::new(WorkloadSagaCoordinator::new(store.clone()));
     let cancellation = WorkloadRestartCancellationToken::new();
 
@@ -187,19 +269,10 @@ async fn concurrent_triggers_admit_one_restart_epoch() {
         coordinator.compare_and_swap_restart_admission(&request, &cancellation),
     );
 
-    let accepted = [first, second]
-        .into_iter()
-        .filter(|result| result.is_ok())
-        .count();
-    assert_eq!(
-        accepted, 2,
-        "the loser must adopt the exact idempotent request"
-    );
-    assert_eq!(
-        store.record().restart_state().phase(),
-        nimbus_workloads::WorkloadRestartPhase::Requested
-    );
-    assert_eq!(store.calls().1, 1, "only one writer needs a CAS");
+    let dispositions = [first.unwrap().disposition(), second.unwrap().disposition()];
+    assert!(dispositions.contains(&super::WorkloadRestartAdmissionDisposition::Applied));
+    assert!(dispositions.contains(&super::WorkloadRestartAdmissionDisposition::ConfirmedReplay));
+    assert_eq!(store.calls(), (3, 2));
 }
 
 #[test]

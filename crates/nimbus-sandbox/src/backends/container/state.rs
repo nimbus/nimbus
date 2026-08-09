@@ -148,7 +148,6 @@ pub struct ContainerSandboxSummary {
     pub service_name: String,
     pub status: SandboxStatus,
     pub published_endpoints: Vec<PublishedEndpoint>,
-    pub restart_count: u32,
     pub last_exit_code: Option<i32>,
     pub shutdown_requested: bool,
 }
@@ -196,7 +195,6 @@ impl ContainerPersistedSandboxRecord {
             service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints,
-            restart_count: self.manifest.restart_count,
             last_exit_code: self.manifest.last_exit_code,
             shutdown_requested: self.manifest.shutdown_requested,
         }
@@ -210,7 +208,6 @@ impl ContainerPersistedSandboxRecord {
             service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints.clone(),
-            restart_count: self.manifest.restart_count,
             last_exit_code: self.manifest.last_exit_code,
             shutdown_requested: self.manifest.shutdown_requested,
         };
@@ -236,8 +233,6 @@ struct ContainerPersistedManifest {
     spec: SandboxSpec,
     conmon_layout: ContainerPersistedConmonLayout,
     last_exit_code: Option<i32>,
-    #[serde(default)]
-    restart_count: u32,
     shutdown_requested: bool,
     status: SandboxStatus,
 }
@@ -302,14 +297,13 @@ mod tests {
     #[test]
     fn state_view_lists_manifest_backed_summaries_and_skips_missing_manifest_dirs() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
-        write_manifest_with_restart_count(
+        write_manifest(
             temp_dir.path(),
             "db-01aaa",
             "svc-demo",
             "db",
             SandboxStatus::Ready,
             Some(137),
-            2,
         );
         write_manifest(
             temp_dir.path(),
@@ -346,7 +340,6 @@ mod tests {
         assert_eq!(summaries[0].status, SandboxStatus::Stopped);
         assert_eq!(summaries[1].status, SandboxStatus::Ready);
         assert_eq!(summaries[1].last_exit_code, Some(137));
-        assert_eq!(summaries[1].restart_count, 2);
     }
 
     #[test]
@@ -516,26 +509,6 @@ mod tests {
         status: SandboxStatus,
         last_exit_code: Option<i32>,
     ) {
-        write_manifest_with_restart_count(
-            state_root,
-            sandbox_id,
-            tenant_id,
-            service_name,
-            status,
-            last_exit_code,
-            0,
-        );
-    }
-
-    fn write_manifest_with_restart_count(
-        state_root: &Path,
-        sandbox_id: &str,
-        tenant_id: &str,
-        service_name: &str,
-        status: SandboxStatus,
-        last_exit_code: Option<i32>,
-        restart_count: u32,
-    ) {
         write_manifest_with_owner(ManifestFixture {
             state_root,
             sandbox_id,
@@ -547,7 +520,6 @@ mod tests {
             }),
             status,
             last_exit_code,
-            restart_count,
         });
     }
 
@@ -569,7 +541,6 @@ mod tests {
             }),
             status,
             last_exit_code: None,
-            restart_count: 0,
         });
     }
 
@@ -581,7 +552,6 @@ mod tests {
         owner: serde_json::Value,
         status: SandboxStatus,
         last_exit_code: Option<i32>,
-        restart_count: u32,
     }
 
     fn write_manifest_with_owner(fixture: ManifestFixture<'_>) {
@@ -635,7 +605,6 @@ mod tests {
                 "oci_log": container_dir.join("oci.log")
             },
             "last_exit_code": fixture.last_exit_code,
-            "restart_count": fixture.restart_count,
             "shutdown_requested": matches!(fixture.status, SandboxStatus::Stopped),
             "status": fixture.status
         });

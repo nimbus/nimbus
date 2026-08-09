@@ -1,12 +1,13 @@
 use nimbus_core::WorkloadId;
 use nimbus_network::{NetworkPlanDigest, NetworkPlanId};
 use nimbus_workloads::{
-    NodeIdentity, WorkloadDesiredDigest, WorkloadExecutionProviderId, WorkloadExecutionReference,
-    WorkloadNetworkReference, WorkloadOwnerEvidenceDigest, WorkloadProvisionAttempt,
-    WorkloadProvisionAttemptInput, WorkloadProvisionDispatchClaim,
+    NodeIdentity, WorkloadDesiredDigest, WorkloadExecutionAttemptId, WorkloadExecutionProviderId,
+    WorkloadExecutionReference, WorkloadNetworkReference, WorkloadOwnerEvidenceDigest,
+    WorkloadProvisionAttempt, WorkloadProvisionAttemptInput, WorkloadProvisionDispatchClaim,
     WorkloadProvisionPrerequisiteEvidence, WorkloadProvisionProviderTarget,
     WorkloadProvisionSourceDigest, WorkloadProvisionStep, WorkloadProvisionSubjects,
-    WorkloadProvisionSuccessEvidence, WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRevision,
+    WorkloadProvisionSuccessEvidence, WorkloadRestartEpoch, WorkloadSagaKey, WorkloadSagaPhase,
+    WorkloadSagaRevision,
 };
 use serde_json::json;
 
@@ -23,10 +24,14 @@ pub(crate) fn activation_command_for_plan(
         .assigned_node_id()
         .expect("fixture plan should retain an assigned node")
         .clone();
+    let restart_epoch = WorkloadRestartEpoch::new(0);
+    let execution_id = plan.execution_id();
     let execution: WorkloadExecutionReference = serde_json::from_value(json!({
         "workloadUid": plan.spec().workload_uid(),
         "nodeIdentity": node_identity,
-        "executionId": plan.execution_id(),
+        "executionId": execution_id,
+        "restartEpoch": restart_epoch,
+        "attemptId": WorkloadExecutionAttemptId::for_execution(execution_id, restart_epoch),
         "generation": generation,
         "desiredDigest": desired_digest,
     }))

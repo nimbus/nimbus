@@ -356,7 +356,7 @@ fn populated_record() -> (WorkloadSagaRecord, SandboxSpec) {
         GENERATION,
         nimbus_network::NetworkProviderId::for_registration_key("fixture-attachment"),
     );
-    let intent = WorkloadSagaIntent::new(
+    let intent = WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         WorkloadGeneration::new(GENERATION),

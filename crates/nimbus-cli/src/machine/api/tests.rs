@@ -27,6 +27,56 @@ use tempfile::{Builder, TempDir};
 
 mod provision_phase;
 mod publication_evidence;
+#[path = "tests/restart.rs"]
+mod restart;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_route_rejects_invalid_wire_before_guest_effects_and_has_no_coarse_peer() {
+    let temp_dir = short_socket_tempdir();
+    let socket_path = temp_dir.path().join("nimbus.sock");
+    let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+    let state = MachineApiState {
+        control_data_dir: temp_dir.path().join("control"),
+        listen_mode: MachineApiListenMode::DirectSocket,
+        binary_lookup_path: None,
+        helper_binary_dirs: Vec::new(),
+        service_workloads: Some(Arc::new(CapabilityNodeWorkloadFacade::ready_with_restart())),
+        machine_port_forwarder: None,
+        forwarder_authority: Some(test_forwarder_authority("invalid-restart-wire")),
+    };
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(serve_machine_api(listener, state, async move {
+        let _ = shutdown_rx.await;
+    }));
+    wait_for_socket_path(&socket_path);
+
+    let invalid = unix_http_post_json(
+        &socket_path,
+        nimbus_machine::api::MACHINE_API_WORKLOAD_RESTART_PHASE_PATH,
+        "{}",
+    );
+    assert!(invalid.contains("422 Unprocessable Entity"), "{invalid}");
+    assert!(
+        !temp_dir.path().join("control").exists(),
+        "invalid restart wire must fail before journal or provider artifacts"
+    );
+
+    let coarse = unix_http_post_json(
+        &socket_path,
+        "/v1/machine-api/service-sandboxes/restart",
+        "{}",
+    );
+    assert!(
+        coarse.contains("405 Method Not Allowed"),
+        "the existing inspect-only sandbox-id route must reject a coarse restart POST: {coarse}"
+    );
+
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("machine API server task should join")
+        .expect("machine API server should shut down");
+}
 
 pub(crate) fn test_forwarder_authority(provider_instance: &str) -> MachineForwarderAuthority {
     let config = OciMachinePortForwarderConfig::for_provider_instance(
@@ -437,6 +487,58 @@ fn capability_response_reports_unavailable_node_workload_driver_when_lifecycle_i
             && !status.available
             && status.blockers == capabilities.service_execution_blockers
     }));
+}
+
+#[test]
+fn restart_capability_fails_closed_until_the_exact_sink_is_installed() {
+    let temp_dir = short_socket_tempdir();
+    for requirement in STANDARD_CONTAINER_BINARY_REQUIREMENTS {
+        write_fake_binary(&temp_dir, requirement.name);
+    }
+    let authority = test_forwarder_authority("restart-capability");
+    let state = |service_workloads: Arc<dyn MachineApiNodeWorkloadFacade>| MachineApiState {
+        control_data_dir: temp_dir.path().join("control"),
+        listen_mode: MachineApiListenMode::DirectSocket,
+        binary_lookup_path: Some(fake_runtime_path(&temp_dir)),
+        helper_binary_dirs: Vec::new(),
+        service_workloads: Some(service_workloads),
+        machine_port_forwarder: None,
+        forwarder_authority: Some(authority.clone()),
+    };
+
+    let unavailable =
+        machine_api_capability_response(&state(Arc::new(CapabilityNodeWorkloadFacade::ready())));
+    let unavailable_status = unavailable
+        .operation_statuses
+        .iter()
+        .find(|status| status.name == MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION)
+        .expect("restart operation status should be reported");
+    assert!(!unavailable_status.available);
+    assert!(
+        unavailable_status
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("no strict restart-phase sink"))
+    );
+    assert!(
+        !unavailable
+            .supported_operations
+            .iter()
+            .any(|operation| operation == MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION)
+    );
+
+    let available = machine_api_capability_response(&state(Arc::new(
+        CapabilityNodeWorkloadFacade::ready_with_restart(),
+    )));
+    assert!(available.operation_statuses.iter().any(|status| {
+        status.name == MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION && status.available
+    }));
+    assert!(
+        available
+            .supported_operations
+            .iter()
+            .any(|operation| operation == MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION)
+    );
 }
 
 #[test]
@@ -1058,18 +1160,28 @@ impl SandboxBackend for RefreshingInspectBackend {
 
 struct CapabilityNodeWorkloadFacade {
     blockers: Vec<String>,
+    restart_sink: bool,
 }
 
 impl CapabilityNodeWorkloadFacade {
     fn ready() -> Self {
         Self {
             blockers: Vec::new(),
+            restart_sink: false,
+        }
+    }
+
+    fn ready_with_restart() -> Self {
+        Self {
+            blockers: Vec::new(),
+            restart_sink: true,
         }
     }
 
     fn blocked(blocker: impl Into<String>) -> Self {
         Self {
             blockers: vec![blocker.into()],
+            restart_sink: false,
         }
     }
 }
@@ -1081,6 +1193,14 @@ impl MachineApiNodeWorkloadFacade for CapabilityNodeWorkloadFacade {
 
     fn service_execution_blockers(&self) -> Vec<String> {
         self.blockers.clone()
+    }
+
+    fn restart_execution_blockers(&self) -> Vec<String> {
+        if self.restart_sink {
+            self.blockers.clone()
+        } else {
+            vec!["machine API workload facade has no strict restart-phase sink".to_owned()]
+        }
     }
 
     fn inspect<'a>(

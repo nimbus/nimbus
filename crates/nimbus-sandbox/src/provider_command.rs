@@ -99,6 +99,7 @@ impl ProviderCommandOperation {
                 | Self::AttachRetainedNetwork
                 | Self::ActivateRestartedWorkload
                 | Self::PublishRestartIngress
+                | Self::ObserveRestartPublication
         )
     }
 }

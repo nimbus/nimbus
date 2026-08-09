@@ -18,7 +18,9 @@ use nimbus_workloads::{
 use super::restart_provider::{
     WorkloadRestartProviderObservation, WorkloadRestartProviderObservationInput,
 };
-use super::{ConfirmedWorkloadRestartCommand, WorkloadRestartCommandOutcome};
+use super::{
+    ConfirmedWorkloadRestartCommand, WorkloadRestartCommandMode, WorkloadRestartCommandOutcome,
+};
 
 /// One real provider role observation before portable result translation.
 pub enum ProviderRestartEffectObservation {
@@ -135,27 +137,8 @@ impl ProviderRestartPhaseAdapter {
         claim: &ProviderCommandClaim,
         effect: ProviderRestartEffectObservation,
     ) -> WorkloadRestartProviderObservation {
-        let (kind, evidence) = match &effect {
-            ProviderRestartEffectObservation::Succeeded { evidence } => (
-                ProviderCommandObservationKind::Succeeded,
-                evidence.as_slice(),
-            ),
-            ProviderRestartEffectObservation::DefiniteFailure { evidence } => (
-                ProviderCommandObservationKind::DefiniteFailure,
-                evidence.as_slice(),
-            ),
-            ProviderRestartEffectObservation::Absent { evidence } => {
-                (ProviderCommandObservationKind::Absent, evidence.as_slice())
-            }
-            ProviderRestartEffectObservation::InProgress { evidence } => (
-                ProviderCommandObservationKind::InProgress,
-                evidence.as_slice(),
-            ),
-            ProviderRestartEffectObservation::Ambiguous { evidence } => (
-                ProviderCommandObservationKind::Ambiguous,
-                evidence.as_slice(),
-            ),
-        };
+        let kind = observation_kind(command.mode(), &effect);
+        let evidence = effect_evidence(&effect);
         match self
             .attempt_idempotency_journal
             .record_observation(claim, kind, evidence)
@@ -163,6 +146,45 @@ impl ProviderRestartPhaseAdapter {
             Ok(observation) => provider_observation(command, observation_outcome(&observation)),
             Err(_) => provider_observation(command, WorkloadRestartCommandOutcome::Ambiguous),
         }
+    }
+}
+
+const fn observation_kind(
+    mode: WorkloadRestartCommandMode,
+    effect: &ProviderRestartEffectObservation,
+) -> ProviderCommandObservationKind {
+    match effect {
+        ProviderRestartEffectObservation::Succeeded { .. } => {
+            ProviderCommandObservationKind::Succeeded
+        }
+        ProviderRestartEffectObservation::DefiniteFailure { .. } => {
+            ProviderCommandObservationKind::DefiniteFailure
+        }
+        // Absence observed while holding execute authority is not retry
+        // authority. Persist uncertainty so the coordinator must issue the
+        // exact inspection command before it can advance the dispatch epoch.
+        ProviderRestartEffectObservation::Absent { .. }
+            if matches!(mode, WorkloadRestartCommandMode::Execute) =>
+        {
+            ProviderCommandObservationKind::Ambiguous
+        }
+        ProviderRestartEffectObservation::Absent { .. } => ProviderCommandObservationKind::Absent,
+        ProviderRestartEffectObservation::InProgress { .. } => {
+            ProviderCommandObservationKind::InProgress
+        }
+        ProviderRestartEffectObservation::Ambiguous { .. } => {
+            ProviderCommandObservationKind::Ambiguous
+        }
+    }
+}
+
+fn effect_evidence(effect: &ProviderRestartEffectObservation) -> &[u8] {
+    match effect {
+        ProviderRestartEffectObservation::Succeeded { evidence }
+        | ProviderRestartEffectObservation::DefiniteFailure { evidence }
+        | ProviderRestartEffectObservation::Absent { evidence }
+        | ProviderRestartEffectObservation::InProgress { evidence }
+        | ProviderRestartEffectObservation::Ambiguous { evidence } => evidence,
     }
 }
 
@@ -299,4 +321,24 @@ fn provider_observation(
         provider_selection: command.provider_selection().clone(),
         outcome,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_exact_inspection_records_authenticated_absence() {
+        let absent = ProviderRestartEffectObservation::Absent {
+            evidence: b"provider proves absence".to_vec(),
+        };
+        assert_eq!(
+            observation_kind(WorkloadRestartCommandMode::Execute, &absent),
+            ProviderCommandObservationKind::Ambiguous
+        );
+        assert_eq!(
+            observation_kind(WorkloadRestartCommandMode::Inspect, &absent),
+            ProviderCommandObservationKind::Absent
+        );
+    }
 }

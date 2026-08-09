@@ -1051,7 +1051,7 @@ async fn confirm_transition(
         .expect("fixture transition should confirm")
 }
 
-fn advance_to_phase(
+pub(super) fn advance_to_phase(
     mut record: WorkloadSagaRecord,
     target: WorkloadSagaPhase,
 ) -> WorkloadSagaRecord {
@@ -1130,11 +1130,24 @@ fn success_for(
             execution: execution.clone(),
             evidence,
         },
+        (WorkloadProvisionStep::Publish, WorkloadProvisionSubjects::Publication(reference)) => {
+            WorkloadProvisionSuccessEvidence::Published {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        (
+            WorkloadProvisionStep::ObservePublication,
+            WorkloadProvisionSubjects::Publication(reference),
+        ) => WorkloadProvisionSuccessEvidence::PublicationObserved {
+            reference: reference.clone(),
+            evidence,
+        },
         _ => panic!("unexpected fixture provision step"),
     }
 }
 
-fn workload_intent(
+pub(super) fn workload_intent(
     authority: &MachineForwarderAuthority,
 ) -> (
     WorkloadSagaIntent,
@@ -1212,7 +1225,7 @@ fn workload_intent(
         source_plan.execution_provider_id().clone(),
     )
     .expect("fixture source evidence should validate");
-    let intent = WorkloadSagaIntent::new(
+    let intent = WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         nimbus_workloads::WorkloadGeneration::new(generation),
@@ -1239,14 +1252,14 @@ fn tenant() -> TenantId {
     TenantId::new("tenant-machine-provision").expect("fixture tenant should validate")
 }
 
-fn workload_key() -> WorkloadSagaKey {
+pub(super) fn workload_key() -> WorkloadSagaKey {
     WorkloadSagaKey::new(
         tenant(),
         WorkloadId::new("machine-workload").expect("fixture workload should validate"),
     )
 }
 
-fn forwarder_authority() -> MachineForwarderAuthority {
+pub(super) fn forwarder_authority() -> MachineForwarderAuthority {
     MachineForwarderAuthority::new(
         NetworkProviderHandle::new(
             NetworkProviderId::for_registration_key("machine-forwarded-ingress-test"),
@@ -1269,7 +1282,7 @@ fn source_connectivity() -> MachineConnectivityCapabilities {
     )
 }
 
-fn source_plan(
+pub(super) fn source_plan(
     provider: MachineProvider,
     authority: MachineForwarderAuthority,
 ) -> ForwardedMachineProvisionSourcePlan {

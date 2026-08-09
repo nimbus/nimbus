@@ -132,7 +132,8 @@ impl PreparedForwardedServerWorkload {
             Arc::clone(&adapter),
             selection.ingress_provider_id().clone(),
             adapter,
-        );
+        )
+        .with_restart_capabilities();
         ServerWorkloadComposition::new(
             engine,
             self.network.manager(),

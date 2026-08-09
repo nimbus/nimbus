@@ -151,7 +151,7 @@ async fn dropping_watch_facing_clone_does_not_cancel_retained_work() {
 }
 
 #[tokio::test]
-async fn coordinator_failure_requires_explicit_retry_acknowledgement() {
+async fn acknowledged_failure_retries_once_and_rejects_stale_completion() {
     let coordinator =
         ScriptedCoordinator::new([Err("durable coordinator unavailable".to_owned()), Ok(())]);
     let supervisor = supervisor(Arc::clone(&coordinator));
@@ -171,18 +171,22 @@ async fn coordinator_failure_requires_explicit_retry_acknowledgement() {
         .expect("failure lookup succeeds")
         .expect("coordinator failure remains observable");
     assert_eq!(failure.message(), "durable coordinator unavailable");
-    assert!(
-        supervisor
-            .track(record.clone())
-            .expect_err("watch rescan cannot busy-retry a retained failure")
-            .contains("durable coordinator unavailable")
+    assert_eq!(
+        supervisor.track(record.clone()),
+        Ok(RestartTrack::Failed(failure.clone())),
+        "watch rescan observes the retained failure without retrying it"
     );
     assert_eq!(coordinator.calls.load(Ordering::Acquire), 1);
 
     assert!(
         supervisor
-            .clear_failure_for_retry(&failure)
+            .retire_failure(&failure)
             .expect("exact failure acknowledgement succeeds")
+    );
+    assert!(
+        !supervisor
+            .retire_failure(&failure)
+            .expect("stale failure acknowledgement is harmless")
     );
     assert_eq!(supervisor.track(record.clone()), Ok(RestartTrack::Started));
     coordinator.wait_for_calls(1).await;

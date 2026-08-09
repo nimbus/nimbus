@@ -1,29 +1,42 @@
 use super::*;
 
-fn observed_record(policy: WorkloadRestartPolicy) -> WorkloadSagaRecord {
+fn observed_record_with_publication(
+    policy: WorkloadRestartPolicy,
+    publication: WorkloadPublicationIntent,
+) -> WorkloadSagaRecord {
     let intent = intent_with_restart_policy(
         "tenant-a",
         "workload-a",
         1,
         DesiredWorkloadState::Running,
         WorkloadActivationIntent::ActivateWhenAttached,
-        WorkloadPublicationIntent::Withheld,
+        publication,
         1,
         policy,
     );
     let mut record = WorkloadSagaRecord::new(key("tenant-a", "workload-a"), intent)
         .expect("restart fixture should initialize");
-    for phase in [
+    let publication = (publication == WorkloadPublicationIntent::PublishWhenReady)
+        .then(|| publication_reference(record.active_intent(), 0x52));
+    let mut phases = vec![
         WorkloadSagaPhase::NetworkReserved,
         WorkloadSagaPhase::WorkloadPrepared,
         WorkloadSagaPhase::NetworkAttached,
         WorkloadSagaPhase::WorkloadActivated,
         WorkloadSagaPhase::Ready,
-        WorkloadSagaPhase::Observed,
-    ] {
-        record = advance_provision(&record, phase, None);
+    ];
+    if publication.is_some() {
+        phases.push(WorkloadSagaPhase::Published);
+    }
+    phases.push(WorkloadSagaPhase::Observed);
+    for phase in phases {
+        record = advance_provision(&record, phase, publication.as_ref());
     }
     record
+}
+
+fn observed_record(policy: WorkloadRestartPolicy) -> WorkloadSagaRecord {
+    observed_record_with_publication(policy, WorkloadPublicationIntent::Withheld)
 }
 
 fn explicit_input(
@@ -156,6 +169,61 @@ fn advance_to_observation(mut record: WorkloadSagaRecord) -> WorkloadSagaRecord 
         .expect("withheld publication should advance without an ingress effect")
 }
 
+fn published_observation_inspection(
+    request_key: &str,
+) -> (
+    WorkloadSagaRecord,
+    WorkloadRestartCommandClaim,
+    WorkloadRestartAbsenceEvidence,
+) {
+    let observed = observed_record_with_publication(
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let admitted = admitted(&observed, explicit_input(&observed, request_key, 0));
+    let request_id = active_request_id(&admitted);
+    let mut record = admitted
+        .advance_restart_without_effect(&request_id)
+        .expect("published restart should withdraw publication first");
+    for label in ["withdrawn", "quiesced"] {
+        record = succeed_current_command(record, label);
+    }
+    let due = record
+        .restart_state()
+        .active()
+        .expect("restart should be active")
+        .admission()
+        .not_before_unix_millis();
+    record = record
+        .advance_scheduled_restart(&request_id, due)
+        .expect("due published restart should advance");
+    for label in [
+        "prepared",
+        "attached",
+        "prerequisites",
+        "activated",
+        "ready",
+        "published",
+    ] {
+        record = succeed_current_command(record, label);
+    }
+    let pending = record
+        .claim_restart_command(&request_id)
+        .expect("publication observation should claim");
+    let claim = active_claim(&pending);
+    assert_eq!(claim.step(), WorkloadRestartStep::ObservePublication);
+    let inspection = pending
+        .restart_dispatch_to_inspection(&claim)
+        .expect("publication observation should require exact inspection");
+    let absence = WorkloadRestartAbsenceEvidence::for_inspection(
+        &inspection,
+        &claim,
+        WorkloadRestartEvidenceDigest::sha256("publication-absent"),
+    )
+    .expect("exact publication observation should authenticate absence");
+    (inspection, claim, absence)
+}
+
 fn complete(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
     if record.active_intent().publication() == WorkloadPublicationIntent::Withheld {
         return record
@@ -175,6 +243,13 @@ fn complete(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
             },
         )
         .expect("restart should complete")
+}
+
+fn complete_explicit(record: &WorkloadSagaRecord, key: &str) -> WorkloadSagaRecord {
+    complete(&advance_to_observation(admitted(
+        record,
+        explicit_input(record, key, 0),
+    )))
 }
 
 #[test]
@@ -464,6 +539,67 @@ fn completed_explicit_request_replay_returns_the_same_restart_epoch() {
 }
 
 #[test]
+fn nonadjacent_completed_request_replay_returns_original_epoch() {
+    let record = observed_record(WorkloadRestartPolicy::Never);
+    let first_request = explicit_input(&record, "history-first", 0);
+    let first_id = first_request.request_id.clone();
+    let first = complete(&advance_to_observation(admitted(&record, first_request)));
+    let completed = complete_explicit(&first, "history-second");
+
+    assert_eq!(completed.restart_state().completion_history().len(), 2);
+    let first_receipt = completed
+        .restart_state()
+        .completion_for_request(&first_id)
+        .expect("nonadjacent receipt must remain durable");
+    assert_eq!(first_receipt.restart_epoch(), WorkloadRestartEpoch::new(1));
+    assert!(matches!(
+        completed.admit_restart(explicit_input(&completed, "history-first", 0)),
+        Ok(WorkloadRestartAdmissionUpdate::Unchanged)
+    ));
+}
+
+#[test]
+fn completion_history_is_bounded_ordered_strict_and_non_evicting() {
+    let mut record = observed_record(WorkloadRestartPolicy::Never);
+    for index in 0..MAX_WORKLOAD_RESTART_COMPLETION_HISTORY {
+        record = complete_explicit(&record, &format!("history-{index:03}"));
+    }
+    assert_eq!(
+        record.restart_state().completion_history().len(),
+        MAX_WORKLOAD_RESTART_COMPLETION_HISTORY
+    );
+    assert!(
+        record
+            .admit_restart(explicit_input(&record, "history-overflow", 0))
+            .is_err(),
+        "history exhaustion must reject admission before a new effect"
+    );
+    let reopened: WorkloadSagaRecord =
+        serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+    assert_eq!(reopened, record);
+
+    let mut truncated = serde_json::to_value(&record).unwrap();
+    truncated["restart"]["completionHistory"]
+        .as_array_mut()
+        .unwrap()
+        .remove(0);
+    assert!(serde_json::from_value::<WorkloadSagaRecord>(truncated).is_err());
+
+    let mut duplicate_request = serde_json::to_value(&record).unwrap();
+    let first_request =
+        duplicate_request["restart"]["completionHistory"][0]["admission"]["requestId"].clone();
+    duplicate_request["restart"]["completionHistory"][1]["admission"]["requestId"] = first_request;
+    assert!(serde_json::from_value::<WorkloadSagaRecord>(duplicate_request).is_err());
+
+    let mut reordered = serde_json::to_value(record).unwrap();
+    reordered["restart"]["completionHistory"]
+        .as_array_mut()
+        .unwrap()
+        .swap(0, 1);
+    assert!(serde_json::from_value::<WorkloadSagaRecord>(reordered).is_err());
+}
+
+#[test]
 fn completed_explicit_request_rejects_crossed_admission_content() {
     let record = observed_record(WorkloadRestartPolicy::Never);
     let first = explicit_input(&record, "completed-crossed-content", 0);
@@ -528,6 +664,105 @@ fn withdrawal_vetoes_unissued_restart() {
     };
     assert_eq!(withdrawal.phase(), WorkloadSagaPhase::WithdrawalCommitted);
     assert!(withdrawal.restart_state().active().is_none());
+}
+
+#[test]
+fn successor_durably_vetoes_every_issued_restart_state() {
+    let base = observed_record(WorkloadRestartPolicy::Always { max_restarts: 2 });
+    let no_effect_input = explicit_input(&base, "successor-after-no-effect", 0);
+    let no_effect_request = no_effect_input.request_id.clone();
+    let advanced_without_effect = admitted(&base, no_effect_input)
+        .advance_restart_without_effect(&no_effect_request)
+        .expect("restart should advance before its first provider effect");
+    let (pending, claim) = pending_withdrawal_command(
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+        "successor-issued",
+    );
+    let inspection = pending
+        .restart_dispatch_to_inspection(&claim)
+        .expect("issued command can require inspection");
+    let failed = pending
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Failed {
+                evidence: WorkloadRestartEvidenceDigest::sha256("issued-failure"),
+            },
+        )
+        .expect("issued failure remains durable");
+    let ready = pending
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Succeeded {
+                evidence: WorkloadRestartEvidenceDigest::sha256("issued-success"),
+            },
+        )
+        .expect("issued success remains durable");
+
+    for (source, expected) in [
+        (&advanced_without_effect, "ready"),
+        (&pending, "inspection_required"),
+        (&inspection, "inspection_required"),
+        (&failed, "definite_failure"),
+        (&ready, "ready"),
+    ] {
+        let WorkloadSagaIntentUpdate::Transition(vetoed) = source
+            .apply_intent(stopped_intent(2))
+            .expect("successor must durably veto issued restart work")
+        else {
+            panic!("successor must transition");
+        };
+        assert_eq!(vetoed.phase(), WorkloadSagaPhase::Observed);
+        assert_eq!(
+            vetoed
+                .restart_state()
+                .active()
+                .expect("issued restart evidence must remain active")
+                .successor_veto_generation(),
+            Some(WorkloadGeneration::new(2))
+        );
+        assert_eq!(
+            serde_json::to_value(vetoed.restart_state().active().unwrap().disposition()).unwrap()["disposition"],
+            expected
+        );
+        let reopened: WorkloadSagaRecord =
+            serde_json::from_slice(&serde_json::to_vec(&vetoed).unwrap()).unwrap();
+        assert_eq!(reopened, *vetoed);
+    }
+}
+
+#[test]
+fn later_successor_advances_the_durable_restart_veto() {
+    let (pending, _) = pending_withdrawal_command(
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+        "successor-replacement",
+    );
+    let WorkloadSagaIntentUpdate::Transition(first) = pending
+        .apply_intent(stopped_intent(2))
+        .expect("first successor should veto issued restart work")
+    else {
+        panic!("first successor must transition");
+    };
+    let WorkloadSagaIntentUpdate::Transition(second) = first
+        .apply_intent(stopped_intent(3))
+        .expect("later successor should replace the queued generation")
+    else {
+        panic!("later successor must transition");
+    };
+
+    assert_eq!(
+        second
+            .successor_intent()
+            .map(WorkloadSagaIntent::generation),
+        Some(WorkloadGeneration::new(3))
+    );
+    assert_eq!(
+        second
+            .restart_state()
+            .active()
+            .expect("issued restart evidence remains active")
+            .successor_veto_generation(),
+        Some(WorkloadGeneration::new(3))
+    );
 }
 
 #[test]
@@ -677,6 +912,101 @@ fn restart_ambiguity_requires_exact_absence_before_same_attempt_retry() {
     assert!(
         next_inspection
             .restart_inspection_to_retry(&retry_claim, absence)
+            .is_err()
+    );
+}
+
+#[test]
+fn publication_observation_absence_authorizes_one_exact_republish() {
+    let (inspection, observation_claim, absence) =
+        published_observation_inspection("republish-after-observation-absence");
+    let active = inspection
+        .restart_state()
+        .active()
+        .expect("publication restart should remain active");
+    let restart_epoch = active.admission().restart_epoch();
+    let attempt_id = active.admission().attempt_id().clone();
+    assert!(
+        inspection
+            .restart_inspection_to_retry(&observation_claim, absence.clone())
+            .is_err()
+    );
+    let republish = inspection
+        .restart_observation_absence_to_publication_retry(&observation_claim, absence.clone())
+        .expect("exact observation absence should authorize republish");
+    let active = republish
+        .restart_state()
+        .active()
+        .expect("republish should retain the active restart");
+    let claim = active
+        .disposition()
+        .claim()
+        .expect("republish should issue one exact claim");
+
+    assert_eq!(republish.active_intent(), inspection.active_intent());
+    assert_eq!(active.phase(), WorkloadRestartPhase::PublicationPending);
+    assert_eq!(active.admission().restart_epoch(), restart_epoch);
+    assert_eq!(active.admission().attempt_id(), &attempt_id);
+    assert_eq!(claim.request_id(), observation_claim.request_id());
+    assert_eq!(claim.restart_epoch(), observation_claim.restart_epoch());
+    assert_eq!(claim.attempt_id(), observation_claim.attempt_id());
+    assert_eq!(claim.step(), WorkloadRestartStep::Publish);
+    assert_eq!(
+        claim.dispatch_epoch(),
+        observation_claim.dispatch_epoch().checked_next().unwrap()
+    );
+    assert_eq!(claim.issuing_revision(), inspection.revision());
+    assert!(matches!(
+        claim.authorization(),
+        WorkloadRestartDispatchAuthorization::RepublishAfterObservationAbsence(retained)
+            if retained == &absence
+    ));
+    assert_eq!(
+        serde_json::from_slice::<WorkloadSagaRecord>(&serde_json::to_vec(&republish).unwrap())
+            .unwrap(),
+        republish
+    );
+    let mut crossed_authorization = serde_json::to_value(claim).unwrap();
+    crossed_authorization["authorization"]["authorization"] = json!("retry_after_absence");
+    assert!(serde_json::from_value::<WorkloadRestartCommandClaim>(crossed_authorization).is_err());
+
+    assert!(
+        republish
+            .restart_observation_absence_to_publication_retry(&observation_claim, absence.clone(),)
+            .is_err()
+    );
+    let (other_inspection, other_claim, other_absence) =
+        published_observation_inspection("crossed-republish-absence");
+    assert!(
+        inspection
+            .restart_observation_absence_to_publication_retry(&observation_claim, other_absence,)
+            .is_err()
+    );
+    assert!(
+        other_inspection
+            .restart_observation_absence_to_publication_retry(&other_claim, absence)
+            .is_err()
+    );
+
+    let (pending, non_observation_claim) = pending_withdrawal_command(
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+        "non-observation-republish",
+    );
+    let non_observation_inspection = pending
+        .restart_dispatch_to_inspection(&non_observation_claim)
+        .unwrap();
+    let non_observation_absence = WorkloadRestartAbsenceEvidence::for_inspection(
+        &non_observation_inspection,
+        &non_observation_claim,
+        WorkloadRestartEvidenceDigest::sha256("non-observation-absence"),
+    )
+    .unwrap();
+    assert!(
+        non_observation_inspection
+            .restart_observation_absence_to_publication_retry(
+                &non_observation_claim,
+                non_observation_absence,
+            )
             .is_err()
     );
 }

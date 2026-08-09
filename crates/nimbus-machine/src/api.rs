@@ -27,6 +27,16 @@ use std::path::PathBuf;
 use crate::MachineForwarderAuthority;
 
 #[cfg(unix)]
+mod restart;
+#[cfg(unix)]
+pub use restart::{
+    MachineApiWorkloadRestartCommandEnvelope, MachineApiWorkloadRestartCommandMode,
+    MachineApiWorkloadRestartObservation, MachineApiWorkloadRestartPhaseRequest,
+    MachineApiWorkloadRestartPhaseResponse, MachineApiWorkloadRestartRequestDigest,
+    MachineApiWorkloadRestartWireError,
+};
+
+#[cfg(unix)]
 pub const MACHINE_API_PROTOCOL_VERSION: &str = "v1alpha2";
 #[cfg(unix)]
 pub const PROTOCOL_VERSION: &str = MACHINE_API_PROTOCOL_VERSION;
@@ -40,6 +50,7 @@ pub const MACHINE_API_BOOTC_UPGRADE_PATH: &str = "/v1/machine-api/os/bootc/upgra
 pub const MACHINE_API_BOOTC_ROLLBACK_PATH: &str = "/v1/machine-api/os/bootc/rollback";
 pub const MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH: &str =
     "/v1/machine-api/workload-provision/phase";
+pub const MACHINE_API_WORKLOAD_RESTART_PHASE_PATH: &str = "/v1/machine-api/workload-restart/phase";
 pub const MACHINE_API_SERVICE_SANDBOXES_PATH: &str = "/v1/machine-api/service-sandboxes";
 pub const MACHINE_API_CURRENT_SERVICE_SANDBOX_PATH: &str =
     "/v1/machine-api/service-sandboxes/current";
@@ -51,6 +62,7 @@ pub const MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH: &str =
 pub const MACHINE_API_SERVICE_SANDBOX_STOP_PATH: &str =
     "/v1/machine-api/service-sandboxes/{sandbox_id}/stop";
 pub const MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION: &str = "workload-provision.phase";
+pub const MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION: &str = "workload-restart.phase";
 pub const MACHINE_API_LIST_OPERATION: &str = "service-sandboxes.list";
 pub const MACHINE_API_INSPECT_OPERATION: &str = "service-sandboxes.inspect";
 pub const MACHINE_API_INSPECT_CURRENT_OPERATION: &str = "service-sandboxes.inspect-current";
@@ -942,7 +954,6 @@ pub struct MachineApiServiceSandboxSummary {
     pub service_name: String,
     pub status: SandboxStatus,
     pub published_endpoints: Vec<PublishedEndpoint>,
-    pub restart_count: u32,
     pub last_exit_code: Option<i32>,
     pub shutdown_requested: bool,
 }

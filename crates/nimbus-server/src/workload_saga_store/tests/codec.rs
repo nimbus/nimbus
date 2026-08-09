@@ -9,7 +9,7 @@ fn provision_source_round_trips_through_physical_codec() {
     let record = initial_record_with_counters("codec-max", u64::MAX, u64::MAX);
     let fields = encode_workload_saga_record(&record).expect("record should encode");
 
-    assert_eq!(WORKLOAD_SAGA_FORMAT_VERSION, 4);
+    assert_eq!(WORKLOAD_SAGA_FORMAT_VERSION, 5);
     assert_eq!(fields.len(), 23);
     assert_eq!(
         fields.get("desiredGeneration"),
@@ -239,7 +239,7 @@ fn strict_codec_rejects_crossed_and_unknown_compiled_plan_content() {
 #[test]
 fn strict_codec_rejects_legacy_unknown_saga_and_inner_plan_versions() {
     let record = initial_record("codec-versions");
-    for candidate in [1, 2, 3, 5] {
+    for candidate in [1, 2, 3, 4, 6] {
         let mut document = document_for(&record);
         document
             .fields

@@ -182,7 +182,7 @@ fn initial_record(label: &str) -> WorkloadSagaRecord {
         nimbus_workloads::WorkloadExecutionProviderId::for_registration_key("fixture-execution"),
     )
     .expect("fixture source evidence is valid");
-    let intent = nimbus_workloads::WorkloadSagaIntent::new(
+    let intent = nimbus_workloads::WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         nimbus_workloads::WorkloadGeneration::new(1),

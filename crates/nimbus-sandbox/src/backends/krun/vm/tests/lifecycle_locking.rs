@@ -288,7 +288,7 @@ fn concurrent_and_fresh_krun_inspectors_return_exact_equal_evidence() {
         "process-local construction cannot change authenticated evidence"
     );
 
-    manifest.next_restart_at_millis = Some(7_000);
+    manifest.last_exit_code = Some(7);
     backend
         .write_manifest(&manifest)
         .expect("durable evidence substitution should persist");
@@ -791,7 +791,6 @@ fn nnc0_6a_krun_inspect_must_not_restart_after_withdrawal() {
             manifest.handle.id
         ),
     ]);
-    manifest.next_restart_at_millis = Some(0);
     fs::write(&manifest.conmon_layout.exit_status_file, "42\n")
         .expect("failed exit should persist");
     backend
@@ -819,9 +818,6 @@ fn nnc0_6a_krun_inspect_must_not_restart_after_withdrawal() {
         inspected.restart,
         SandboxRestartAssessment::Candidate {
             exit_code: 42,
-            completed_restarts: 0,
-            retry_delay_millis: 1_000,
-            persisted_not_before_millis: Some(0),
             blocker: None,
         }
     );
@@ -868,7 +864,6 @@ fn nnc0_6a_krun_inspect_must_not_restart_after_withdrawal() {
 
     let mut withdrawn = manifest;
     withdrawn.shutdown_requested = true;
-    withdrawn.next_restart_at_millis = None;
     withdrawn.status = SandboxStatus::Stopping;
     withdrawn.handle.status = SandboxStatus::Stopping;
     withdrawn.handle.published_endpoints.clear();

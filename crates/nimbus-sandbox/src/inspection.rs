@@ -168,9 +168,6 @@ pub enum SandboxRestartAssessment {
     },
     Candidate {
         exit_code: i32,
-        completed_restarts: u32,
-        retry_delay_millis: u64,
-        persisted_not_before_millis: Option<u64>,
         blocker: Option<SandboxRestartBlocker>,
     },
 }
@@ -181,9 +178,6 @@ pub enum SandboxRestartIneligibility {
     PlanOnly,
     RuntimePresent,
     ShutdownRequested,
-    PolicyNever,
-    SuccessfulExitExcluded,
-    AttemptsExhausted,
     CleanupPending,
     RuntimeAbsenceUnproven,
     ObservationUnknown,
@@ -334,9 +328,6 @@ mod tests {
             SandboxExecutionObservation::Exited { exit_code: 42 },
             SandboxRestartAssessment::Candidate {
                 exit_code: 42,
-                completed_restarts: 1,
-                retry_delay_millis: 2_000,
-                persisted_not_before_millis: Some(9_000),
                 blocker: Some(SandboxRestartBlocker::StartupReconciliationUnavailable),
             },
             SandboxCleanupObservation::Retained,

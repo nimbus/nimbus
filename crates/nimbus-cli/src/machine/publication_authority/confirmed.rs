@@ -15,7 +15,10 @@ use std::time::{Duration, Instant};
 use fs2::FileExt as _;
 use nimbus::{Error, SandboxId, SandboxPortBinding};
 use nimbus_core::TenantId;
-use nimbus_machine::{MachineForwarderAuthority, api::MachineApiWorkloadProvisionCommandEnvelope};
+use nimbus_machine::{
+    MachineForwarderAuthority,
+    api::{MachineApiWorkloadProvisionCommandEnvelope, MachineApiWorkloadRestartCommandEnvelope},
+};
 use nimbus_network::{
     ListenerId, NetworkLeaseEpoch, NetworkProviderHandle, NetworkProviderId,
     NetworkResourceGeneration, PortBindClaim, PortBindRealm, PortBindingProvenance,
@@ -23,10 +26,10 @@ use nimbus_network::{
     PortLeaseFence, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
 use nimbus_workloads::{
-    WorkloadDesiredDigest, WorkloadExecutionReference, WorkloadGeneration,
-    WorkloadNetworkPortRequestMode, WorkloadProvisionAttemptId, WorkloadProvisionCommandMode,
-    WorkloadProvisionDispatchEpoch, WorkloadProvisionProviderTarget, WorkloadProvisionSourceDigest,
-    WorkloadProvisionStep, WorkloadSagaId, WorkloadSagaKey,
+    CompiledWorkloadNetworkPlan, WorkloadDesiredDigest, WorkloadExecutionReference,
+    WorkloadGeneration, WorkloadNetworkPortRequestMode, WorkloadProvisionAttemptId,
+    WorkloadProvisionCommandMode, WorkloadProvisionDispatchEpoch, WorkloadProvisionProviderTarget,
+    WorkloadProvisionSourceDigest, WorkloadProvisionStep, WorkloadSagaId, WorkloadSagaKey,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -273,7 +276,7 @@ impl ConfirmedMachinePublicationJournal {
                 || witness.retired != first.retired
                 || first.commands.iter().any(|command| {
                     !matches!(
-                        canonical_machine_guest_bindings(command),
+                        canonical_machine_guest_bindings(command.compiled_network_plan()),
                         Ok(bindings) if bindings == witness.expected_guest_bindings
                     )
                 })
@@ -554,15 +557,37 @@ pub(crate) fn canonical_machine_publication_members(
     command: &MachineApiWorkloadProvisionCommandEnvelope,
     authority: &MachineForwarderAuthority,
 ) -> Result<Vec<ConfirmedMachinePublicationMember>, Error> {
-    if authority.generation() != command.machine_provider_generation() {
+    canonical_machine_publication_members_for(
+        command.compiled_network_plan(),
+        command.machine_provider_generation(),
+        authority,
+    )
+}
+
+pub(crate) fn canonical_machine_restart_publication_members(
+    command: &MachineApiWorkloadRestartCommandEnvelope,
+    authority: &MachineForwarderAuthority,
+) -> Result<Vec<ConfirmedMachinePublicationMember>, Error> {
+    canonical_machine_publication_members_for(
+        command.compiled_network_plan(),
+        command.machine_provider_generation(),
+        authority,
+    )
+}
+
+fn canonical_machine_publication_members_for(
+    compiled: &CompiledWorkloadNetworkPlan,
+    machine_provider_generation: NetworkResourceGeneration,
+    authority: &MachineForwarderAuthority,
+) -> Result<Vec<ConfirmedMachinePublicationMember>, Error> {
+    if authority.generation() != machine_provider_generation {
         return Err(Error::PreconditionFailed(
             "canonical machine publication authority generation is crossed".to_owned(),
         ));
     }
-    let compiled = command.compiled_network_plan();
     let content = compiled.content();
     let plan = compiled.plan();
-    let guest_bindings = canonical_machine_guest_bindings(command)?;
+    let guest_bindings = canonical_machine_guest_bindings(compiled)?;
     let mut members = Vec::with_capacity(content.listeners().len());
     for (blueprint, binding) in content.listeners().iter().zip(guest_bindings) {
         let WorkloadNetworkPortRequestMode::Exact { port } = blueprint.port_request() else {
@@ -628,10 +653,9 @@ pub(crate) fn canonical_machine_publication_members(
 }
 
 fn canonical_machine_guest_bindings(
-    command: &MachineApiWorkloadProvisionCommandEnvelope,
+    compiled: &CompiledWorkloadNetworkPlan,
 ) -> Result<Vec<SandboxPortBinding>, Error> {
-    command
-        .compiled_network_plan()
+    compiled
         .content()
         .listeners()
         .iter()
@@ -738,7 +762,9 @@ impl ConfirmedMachineRetirementWitness {
             generation: command.generation(),
             source_digest: command.source_digest(),
             forwarder_authority: authority.clone(),
-            expected_guest_bindings: canonical_machine_guest_bindings(command)?,
+            expected_guest_bindings: canonical_machine_guest_bindings(
+                command.compiled_network_plan(),
+            )?,
             retired: false,
         })
     }
@@ -1073,7 +1099,7 @@ impl ConfirmedMachinePublicationBody {
                 || witness.retired != record.retired
                 || record.commands.iter().any(|command| {
                     !matches!(
-                        canonical_machine_guest_bindings(command),
+                        canonical_machine_guest_bindings(command.compiled_network_plan()),
                         Ok(bindings) if bindings == witness.expected_guest_bindings
                     )
                 })

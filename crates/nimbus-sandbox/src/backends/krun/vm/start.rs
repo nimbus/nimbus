@@ -406,8 +406,6 @@ impl KrunSandboxBackend {
             egress_proxy: None,
             conmon_launch,
             last_exit_code: None,
-            restart_count: 0,
-            next_restart_at_millis: None,
             start_mode: self.config.start_mode,
             shutdown_requested: false,
             status: SandboxStatus::Starting,

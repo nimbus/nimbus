@@ -46,7 +46,7 @@ mod confirmed;
 pub(crate) use confirmed::{
     ConfirmedMachinePublicationJournal, ConfirmedMachinePublicationMember,
     ConfirmedMachinePublicationObservation, ConfirmedMachinePublicationRetirement,
-    canonical_machine_publication_members,
+    canonical_machine_publication_members, canonical_machine_restart_publication_members,
 };
 
 #[derive(Clone)]

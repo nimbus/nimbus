@@ -962,7 +962,6 @@ fn terminal_pre_effect_cleanup_rejects_substituted_desired_authority() {
         .expect("confirmed no-effect fixture should release exact launch authority");
     terminal.shutdown_requested = true;
     terminal.last_exit_code = Some(0);
-    terminal.next_restart_at_millis = None;
     synchronize_handle_status(&mut terminal, SandboxStatus::Stopped);
     terminal.spec.egress = nimbus_egress::EgressPolicy::new([nimbus_egress::EgressRule::new(
         "substituted-pre-effect-policy",
@@ -1396,7 +1395,6 @@ fn terminal_pre_effect_cleanup_reopen_publishes_lifecycle_once() {
         .expect("no-effect cleanup should converge before the simulated crash");
     terminal.shutdown_requested = true;
     terminal.last_exit_code = Some(0);
-    terminal.next_restart_at_millis = None;
     synchronize_handle_status(&mut terminal, SandboxStatus::Stopped);
     backend
         .write_manifest(&terminal)

@@ -28,6 +28,12 @@ define_derived_id!(WorkloadRestartRequestId, "wrr");
 define_derived_id!(WorkloadExecutionAttemptId, "wea");
 define_derived_id!(WorkloadRestartCommandId, "wrc");
 
+/// Maximum durable restart receipts retained for one desired generation.
+///
+/// Nimbus rejects a new restart before it can create an effect when this
+/// bound is exhausted. Completed receipts are never evicted.
+pub const MAX_WORKLOAD_RESTART_COMPLETION_HISTORY: usize = 64;
+
 impl WorkloadRestartRequestId {
     /// Derive the stable identity for one explicit idempotency key.
     pub fn for_explicit(
@@ -180,6 +186,18 @@ pub enum WorkloadRestartStep {
     ObservePublication,
 }
 
+impl WorkloadRestartStep {
+    /// Whether this command is intrinsically a read-only observation.
+    pub const fn is_inspection(self) -> bool {
+        matches!(
+            self,
+            Self::InspectActivationPrerequisites
+                | Self::InspectReadiness
+                | Self::ObservePublication
+        )
+    }
+}
+
 /// Proof that inspection found no effect for one exact restart dispatch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -298,6 +316,7 @@ impl WorkloadRestartAbsenceEvidence {
 pub enum WorkloadRestartDispatchAuthorization {
     Initial,
     RetryAfterAbsence(WorkloadRestartAbsenceEvidence),
+    RepublishAfterObservationAbsence(WorkloadRestartAbsenceEvidence),
 }
 
 /// Durable command claim identity. This value is not provider authority by itself.
@@ -455,6 +474,37 @@ impl WorkloadRestartCommandClaim {
         )
     }
 
+    pub(super) fn republish_after_observation_absence(
+        observation: &Self,
+        issuing_revision: WorkloadSagaRevision,
+        absence: WorkloadRestartAbsenceEvidence,
+    ) -> Result<Self, WorkloadSagaError> {
+        if observation.step != WorkloadRestartStep::ObservePublication
+            || !absence.matches_claim(observation)
+            || absence.confirmed_revision != issuing_revision
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart republish requires exact publication-observation absence",
+            ));
+        }
+        let dispatch_epoch =
+            observation
+                .dispatch_epoch
+                .checked_next()
+                .ok_or(WorkloadSagaError::InvalidCounter(
+                    "workload restart dispatch epoch overflow",
+                ))?;
+        Self::new(
+            observation.request_id.clone(),
+            observation.restart_epoch,
+            observation.attempt_id.clone(),
+            WorkloadRestartStep::Publish,
+            dispatch_epoch,
+            issuing_revision,
+            WorkloadRestartDispatchAuthorization::RepublishAfterObservationAbsence(absence),
+        )
+    }
+
     pub fn command_id(&self) -> &WorkloadRestartCommandId {
         &self.command_id
     }
@@ -501,11 +551,26 @@ impl WorkloadRestartCommandClaim {
                     || absence.restart_epoch != self.restart_epoch
                     || absence.attempt_id != self.attempt_id
                     || absence.step != self.step
+                    || self.step == WorkloadRestartStep::ObservePublication
                     || absence.dispatch_epoch.checked_next() != Some(self.dispatch_epoch)
                     || absence.confirmed_revision != self.issuing_revision
                 {
                     return Err(WorkloadSagaError::InvalidEvidence(
                         "restart retry is not authorized by exact prior absence",
+                    ));
+                }
+            }
+            WorkloadRestartDispatchAuthorization::RepublishAfterObservationAbsence(absence) => {
+                if absence.request_id != self.request_id
+                    || absence.restart_epoch != self.restart_epoch
+                    || absence.attempt_id != self.attempt_id
+                    || absence.step != WorkloadRestartStep::ObservePublication
+                    || self.step != WorkloadRestartStep::Publish
+                    || absence.dispatch_epoch.checked_next() != Some(self.dispatch_epoch)
+                    || absence.confirmed_revision != self.issuing_revision
+                {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "restart republish is not authorized by exact publication-observation absence",
                     ));
                 }
             }
@@ -633,6 +698,10 @@ pub enum WorkloadRestartDisposition {
         claim: WorkloadRestartCommandClaim,
         result: WorkloadRestartEffectResult,
     },
+    SuccessorVetoed {
+        claim: WorkloadRestartCommandClaim,
+        result: WorkloadRestartEffectResult,
+    },
 }
 
 #[derive(Deserialize)]
@@ -656,6 +725,10 @@ enum WorkloadRestartDispositionWire {
         claim: WorkloadRestartCommandClaim,
         result: WorkloadRestartEffectResult,
     },
+    SuccessorVetoed {
+        claim: WorkloadRestartCommandClaim,
+        result: WorkloadRestartEffectResult,
+    },
 }
 
 impl<'de> Deserialize<'de> for WorkloadRestartDisposition {
@@ -674,6 +747,9 @@ impl<'de> Deserialize<'de> for WorkloadRestartDisposition {
             }
             WorkloadRestartDispositionWire::DefiniteFailure { claim, result } => {
                 Self::DefiniteFailure { claim, result }
+            }
+            WorkloadRestartDispositionWire::SuccessorVetoed { claim, result } => {
+                Self::SuccessorVetoed { claim, result }
             }
         };
         disposition.validate().map_err(serde::de::Error::custom)?;
@@ -695,7 +771,8 @@ impl WorkloadRestartDisposition {
             Self::Ready { receipt } => receipt.as_ref(),
             Self::DispatchPending { .. }
             | Self::InspectionRequired { .. }
-            | Self::DefiniteFailure { .. } => None,
+            | Self::DefiniteFailure { .. }
+            | Self::SuccessorVetoed { .. } => None,
         }
     }
 
@@ -704,7 +781,8 @@ impl WorkloadRestartDisposition {
             Self::Ready { receipt } => receipt.as_ref().map(WorkloadRestartCommandReceipt::claim),
             Self::DispatchPending { claim }
             | Self::InspectionRequired { claim }
-            | Self::DefiniteFailure { claim, .. } => Some(claim),
+            | Self::DefiniteFailure { claim, .. }
+            | Self::SuccessorVetoed { claim, .. } => Some(claim),
         }
     }
 
@@ -729,6 +807,7 @@ impl WorkloadRestartDisposition {
                     ))
                 }
             }
+            Self::SuccessorVetoed { claim, .. } => claim.validate(),
         }
     }
 }
@@ -893,6 +972,7 @@ pub struct ActiveWorkloadRestart {
     pub(super) admission: WorkloadRestartAdmission,
     pub(super) disposition: WorkloadRestartDisposition,
     pub(super) owner_observations: Vec<WorkloadOwnerObservation>,
+    pub(super) successor_veto_generation: Option<WorkloadGeneration>,
 }
 
 impl ActiveWorkloadRestart {
@@ -902,6 +982,7 @@ impl ActiveWorkloadRestart {
             admission,
             disposition: WorkloadRestartDisposition::initial_ready(),
             owner_observations: Vec::new(),
+            successor_veto_generation: None,
         }
     }
 
@@ -922,6 +1003,11 @@ impl ActiveWorkloadRestart {
         &self.owner_observations
     }
 
+    /// Queued generation that permanently revokes new restart effects.
+    pub const fn successor_veto_generation(&self) -> Option<WorkloadGeneration> {
+        self.successor_veto_generation
+    }
+
     pub(super) fn validate(&self) -> Result<(), WorkloadSagaError> {
         if self.phase.is_idle() {
             return Err(WorkloadSagaError::InvalidTransition(
@@ -929,11 +1015,19 @@ impl ActiveWorkloadRestart {
             ));
         }
         self.admission.validate_intrinsic()?;
+        if self
+            .successor_veto_generation
+            .is_some_and(|generation| generation <= self.admission.generation())
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart successor veto must name a later desired generation",
+            ));
+        }
         self.disposition.validate()
     }
 }
 
-/// Durable evidence for the last completed restart.
+/// Durable evidence for one completed restart.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct WorkloadRestartHistory {
@@ -983,7 +1077,7 @@ pub struct WorkloadRestartState {
     pub(super) completed_restart_epoch: WorkloadRestartEpoch,
     pub(super) completed_automatic_restart_count: u32,
     pub(super) active: Option<ActiveWorkloadRestart>,
-    pub(super) last_completed: Option<WorkloadRestartHistory>,
+    pub(super) completion_history: Vec<WorkloadRestartHistory>,
 }
 
 impl WorkloadRestartState {
@@ -997,7 +1091,7 @@ impl WorkloadRestartState {
             completed_restart_epoch,
             completed_automatic_restart_count: 0,
             active: None,
-            last_completed: None,
+            completion_history: Vec::new(),
         }
     }
 
@@ -1024,7 +1118,22 @@ impl WorkloadRestartState {
     }
 
     pub fn last_completed(&self) -> Option<&WorkloadRestartHistory> {
-        self.last_completed.as_ref()
+        self.completion_history.last()
+    }
+
+    /// Ordered, non-evicting receipts for this desired generation.
+    pub fn completion_history(&self) -> &[WorkloadRestartHistory] {
+        &self.completion_history
+    }
+
+    /// Find the original receipt for an exact completed request.
+    pub fn completion_for_request(
+        &self,
+        request_id: &WorkloadRestartRequestId,
+    ) -> Option<&WorkloadRestartHistory> {
+        self.completion_history
+            .iter()
+            .find(|history| history.request_id() == request_id)
     }
 }
 

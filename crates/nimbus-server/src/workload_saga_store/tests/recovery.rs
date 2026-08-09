@@ -514,7 +514,7 @@ fn recovery_fixtures() -> RecoveryFixtures {
     }
 }
 
-fn provision_history(
+pub(super) fn provision_history(
     label: &str,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -769,7 +769,7 @@ fn workload_intent(
         generation,
         nimbus_network::NetworkProviderId::for_registration_key("fixture-attachment"),
     );
-    WorkloadSagaIntent::new(
+    WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Sandbox,
         desired_state,
         WorkloadGeneration::new(generation),

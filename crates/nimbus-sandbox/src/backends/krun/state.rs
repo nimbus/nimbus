@@ -148,7 +148,6 @@ pub struct KrunSandboxSummary {
     pub service_name: String,
     pub status: SandboxStatus,
     pub published_endpoints: Vec<PublishedEndpoint>,
-    pub restart_count: u32,
     pub last_exit_code: Option<i32>,
     pub shutdown_requested: bool,
 }
@@ -196,7 +195,6 @@ impl KrunPersistedSandboxRecord {
             service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints,
-            restart_count: self.manifest.restart_count,
             last_exit_code: self.manifest.last_exit_code,
             shutdown_requested: self.manifest.shutdown_requested,
         }
@@ -210,7 +208,6 @@ impl KrunPersistedSandboxRecord {
             service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints.clone(),
-            restart_count: self.manifest.restart_count,
             last_exit_code: self.manifest.last_exit_code,
             shutdown_requested: self.manifest.shutdown_requested,
         };
@@ -236,8 +233,6 @@ struct KrunPersistedManifest {
     spec: SandboxSpec,
     conmon_layout: KrunPersistedConmonLayout,
     last_exit_code: Option<i32>,
-    #[serde(default)]
-    restart_count: u32,
     shutdown_requested: bool,
     status: SandboxStatus,
 }
@@ -605,7 +600,6 @@ mod tests {
                 "oci_log": container_dir.join("oci.log")
             },
             "last_exit_code": last_exit_code,
-            "restart_count": 2,
             "shutdown_requested": matches!(status, SandboxStatus::Stopped),
             "status": status
         });

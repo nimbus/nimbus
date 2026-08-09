@@ -10,7 +10,12 @@ function joinSources(sources) {
 function fixtureTestEntries(entries) {
   return Object.entries(entries).map(([file, source]) => ({
     file,
-    source: maskNonCode(source),
+    source: maskNonCode(
+      source.replace(
+        /^(\s*)fn\s+([a-zA-Z0-9_]+)\(\)\s*\{\}/gmu,
+        "$1#[test]\n$1fn $2() { assert_eq!(observed, expected); }",
+      ),
+    ),
   }));
 }
 
@@ -57,6 +62,7 @@ pub(crate) struct ConfirmedWorkloadRestartCommand {
     confirmed_revision: WorkloadSagaRevision,
     inspection_version: Option<WorkloadInspectionVersion>,
     provider_selection: WorkloadExecutionProviderId,
+    successor_veto_generation: Option<WorkloadGeneration>,
     step: WorkloadRestartStep,
     mode: WorkloadRestartCommandMode,
     claim: WorkloadRestartCommandClaim,
@@ -82,8 +88,24 @@ fn apply_restart_result(record: &WorkloadSagaRecord, command: &ConfirmedWorkload
     authenticate_result_attempt(record, command, &result)?;
     authenticate_result_dispatch_epoch(record, command, &result)?;
     match result.outcome {
-        WorkloadRestartCommandOutcome::AuthenticatedAbsent { evidence } => retry_after_authenticated_absence(record, command, evidence),
-        WorkloadRestartCommandOutcome::Ambiguous | WorkloadRestartCommandOutcome::InProgress { .. } => retain_restart_inspection(command),
+        WorkloadRestartCommandOutcome::AuthenticatedAbsent { evidence } => {
+            if command.mode == WorkloadRestartCommandMode::Execute {
+                require_restart_inspection(record, command)
+            } else if active.successor_veto_generation().is_some() {
+                apply_authenticated_absence(candidate)
+            } else if command.step() == WorkloadRestartStep::ObservePublication {
+                republish_after_authenticated_observation_absence(record, command, evidence)
+            } else {
+                retry_after_authenticated_absence(record, command, evidence)
+            }
+        },
+        WorkloadRestartCommandOutcome::Ambiguous | WorkloadRestartCommandOutcome::InProgress { .. } => {
+            if command.mode == WorkloadRestartCommandMode::Execute {
+                require_restart_inspection(record, command)
+            } else {
+                retain_restart_inspection(command)
+            }
+        },
         WorkloadRestartCommandOutcome::DefiniteFailure { evidence } => stop_restart_dispatch(candidate),
         WorkloadRestartCommandOutcome::Succeeded { evidence, observed_detail } => persist_restart_success(candidate),
     }
@@ -92,7 +114,18 @@ fn authenticate_result_transition(record: &WorkloadSagaRecord, command: &Confirm
 fn authenticate_result_attempt(record: &WorkloadSagaRecord, command: &ConfirmedWorkloadRestartCommand, result: &WorkloadRestartCommandResult) {}
 fn authenticate_result_dispatch_epoch(record: &WorkloadSagaRecord, command: &ConfirmedWorkloadRestartCommand, result: &WorkloadRestartCommandResult) {}
 fn retain_restart_inspection(command: &ConfirmedWorkloadRestartCommand) { WorkloadRestartDecision::InspectExact(command.claim()) }
+fn require_restart_inspection(record: &WorkloadSagaRecord, command: &ConfirmedWorkloadRestartCommand) {
+    let candidate = record.restart_dispatch_to_inspection(command.claim())?;
+    ProposedWorkloadRestartTransition::new(candidate, Some(WorkloadRestartSymbolicAction::InspectExactAttempt))
+}
+fn republish_after_authenticated_observation_absence(record: &WorkloadSagaRecord, command: &ConfirmedWorkloadRestartCommand, evidence: WorkloadRestartEvidenceDigest) {
+    if command.mode != WorkloadRestartCommandMode::Inspect || command.step() != WorkloadRestartStep::ObservePublication { return Err(InvalidEvidence); }
+    let absence = WorkloadRestartAbsenceEvidence::for_inspection(record, command.claim(), evidence)?;
+    let candidate = record.restart_observation_absence_to_publication_retry(command.claim(), absence)?;
+    ProposedWorkloadRestartTransition::new(candidate, Some(WorkloadRestartSymbolicAction::StartExactAttempt))
+}
 fn retry_after_authenticated_absence(record: &WorkloadSagaRecord, command: &ConfirmedWorkloadRestartCommand, evidence: WorkloadRestartEvidenceDigest) {
+    if command.mode != WorkloadRestartCommandMode::Inspect { return Err(InvalidEvidence); }
     let absence = WorkloadRestartAbsenceEvidence::for_inspection(record, command.claim(), evidence)?;
     let candidate = record.restart_inspection_to_retry(command.claim(), absence)?;
     ProposedWorkloadRestartTransition::new(candidate, Some(WorkloadRestartSymbolicAction::StartExactAttempt))
@@ -150,6 +183,8 @@ fn restart_target_for_step(step: WorkloadRestartStep) -> Option<WorkloadRestartP
 async fn drive_confirmed_restart(record: WorkloadSagaRecord) {
     let decision = decide_restart_progress(&record, now_unix_millis)?;
     let confirmed = self.dispatcher.confirm_transition(&self.coordinator, &record, &proposed).await?;
+    let durable = confirmed.confirmed_record().cloned()?;
+    let command = transition.command().cloned()?;
     let result = self.dispatcher.dispatch_confirmed(&confirmed).await?;
     let result_decision = apply_restart_result(&durable, &command, result)?;
     self.coordinator.compare_and_swap_restart_result(&durable, &proposed).await?;
@@ -162,7 +197,12 @@ async fn dispatch_confirmed(command: &ConfirmedWorkloadRestartCommand) {
     if !observation.matches_command(command) {
         return Err(WorkloadRestartDispatchError::CrossedProviderObservation);
     }
+    WorkloadRestartCommandResult::for_command(command, observation.into_outcome())
 }
+`),
+    "crates/nimbus-compute/src/workload_saga/restart_runtime.rs":
+      withoutCfgTestItems(`
+async fn submit_explicit() { coordinator.compare_and_swap_restart_admission().await; }
 `),
     "crates/nimbus-compute/src/workload_saga/restart_provider.rs":
       withoutCfgTestItems(`
@@ -291,11 +331,14 @@ pub struct ServiceRestartRequest {
 }
 const ACCEPTED: StatusCode = StatusCode::ACCEPTED;
 `),
+    "crates/nimbus-services/src/manager/restart.rs": withoutCfgTestItems(`
+fn resolve_service_name() { resolve_catalog_entry(); }
+`),
   };
   const testEntries = fixtureTestEntries({
     "crates/nimbus-compute/src/workload_saga/restart_decision/tests.rs": `
 fn automatic_and_explicit_restart_use_same_reducer() {}
-fn concurrent_triggers_admit_one_restart_epoch() {}
+fn concurrent_triggers_force_same_revision_before_competing_cas() {}
 fn crossed_admission_fences_fail_before_cas() {}
 fn withdrawal_winning_before_admission_vetoes_cas() {}
 fn successor_winning_before_admission_vetoes_cas() {}
@@ -310,6 +353,8 @@ fn confirmed_replay_does_not_execute() {}
 fn ambiguous_claim_cas_fresh_reads_before_effect() {}
 fn crash_after_restart_effect_inspects_before_retry() {}
 fn authenticated_absence_retries_same_attempt_at_next_dispatch_epoch() {}
+fn fresh_process_observation_absence_republishes_once_before_observing_again() {}
+fn execute_absence_with_successor_requires_exact_inspection_before_terminal_veto() {}
 fn in_progress_never_retries() {}
 fn definite_failure_stops_later_commands() {}
 fn crossed_restart_result_is_rejected() {}
@@ -325,7 +370,7 @@ fn activation_waits_for_same_generation_attachment_and_pep() {}
 fn readiness_binds_the_new_execution_attempt() {}
 fn publication_waits_for_new_attempt_readiness() {}
 fn withdrawal_after_admission_vetoes_unissued_command() {}
-fn withdrawal_after_ambiguous_effect_requires_inspection() {}
+fn successor_after_effect_before_result_cas_allows_inspection_only() {}
 `,
     "crates/nimbus-compute/src/workload_saga/restart_provider/tests.rs": `
 fn restart_registry_rejects_duplicate_provider_selection() {}
@@ -346,7 +391,6 @@ fn automatic_watch_dispatches_each_due_epoch_once() {}
 fn automatic_watch_caps_each_sweep_and_rotates_cursor() {}
 fn read_only_exit_hint_cannot_submit_or_execute_restart() {}
 fn watch_cancellation_cancels_waiter_not_durable_work() {}
-fn get_and_name_resolution_make_zero_restart_effects() {}
 `,
     "__fixture__/legacy_tests.rs": `
 fn same_generation_restart_keeps_desired_generation() {}
@@ -363,6 +407,7 @@ fn completed_explicit_request_replay_returns_the_same_restart_epoch() {}
 fn completed_explicit_request_rejects_crossed_admission_content() {}
 fn reconciler_rejects_provider_restart_and_duplicates_before_backend_validation() {}
 fn machine_restart_wire_rejects_crossed_fences() {}
+fn restart_retained_attach_must_retain_network_allocation_retain_port_lease_retain_attachment_identity_retain_pep_authority() {}
 fn fresh_process_restart_reopens_engine() {}
 fn cancellation_after_submission_preserves_durable_work() {}
 fn compose_local_and_forwarded_restart_use_compute() {}
@@ -432,11 +477,8 @@ struct TransitionIdentityPayload { restart: &'a WorkloadRestartState }
     files,
     providers: withoutCfgTestItems(`
 enum AttachmentDisposition { RestartRetained, Terminal }
-fn retain_network_allocation() {}
-fn retain_port_lease() {}
-fn retain_attachment_identity() {}
-fn retain_pep_authority() {}
 `),
+    services: files["crates/nimbus-services/src/manager/restart.rs"],
     server: files["crates/nimbus-server/src/http/services.rs"],
     sdk: `services.restart({ sourceGeneration, requestId });\n/api/tenants/:tenant/services/:service/restart`,
     codec: `
@@ -448,14 +490,31 @@ fn into_host_lifecycle_request() { HostLifecycleProperty::Restart(HostRestartPol
 fn ensure_external_restart_disabled() { policy != HostRestartPolicy::No; }
 `),
     machine: withoutCfgTestItems(`
-pub struct MachineRestartCommand {
+pub struct MachineApiWorkloadRestartCommandEnvelope {
+    key: WorkloadSagaKey,
     saga_id: WorkloadSagaId,
+    transition_id: WorkloadSagaTransitionId,
     generation: WorkloadGeneration,
+    desired_digest: WorkloadDesiredDigest,
+    source: WorkloadProvisionSourceEvidence,
+    source_execution: WorkloadExecutionReference,
+    execution: WorkloadExecutionReference,
+    source_attempt_id: WorkloadExecutionAttemptId,
     attempt_id: WorkloadExecutionAttemptId,
     restart_epoch: WorkloadRestartEpoch,
     dispatch_epoch: WorkloadRestartDispatchEpoch,
-    inspection_version: SandboxInspectionVersion,
+    request_id: WorkloadRestartRequestId,
+    issuing_revision: WorkloadSagaRevision,
+    confirmed_revision: WorkloadSagaRevision,
+    inspection_version: Option<WorkloadInspectionVersion>,
     provider_selection: WorkloadExecutionProviderId,
+    step: WorkloadRestartStep,
+    claim: WorkloadRestartCommandClaim,
+    executable: WorkloadExecutableIntent,
+    network_plan_digest: NetworkPlanDigest,
+    compiled_network_plan: CompiledWorkloadNetworkPlan,
+    machine_forwarder_authority: MachineForwarderAuthority,
+    machine_provider_generation: NetworkResourceGeneration,
 }
 `),
     network: withoutCfgTestItems("pub struct NetworkAttachmentId(String);"),

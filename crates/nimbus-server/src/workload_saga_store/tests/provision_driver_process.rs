@@ -609,7 +609,7 @@ fn process_record() -> WorkloadSagaRecord {
         execution_provider_id(),
     )
     .expect("process source should validate");
-    let intent = WorkloadSagaIntent::new(
+    let intent = WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         WorkloadGeneration::new(1),

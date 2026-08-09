@@ -15,18 +15,30 @@ use nimbus_sandbox::{
 };
 #[cfg(unix)]
 use nimbus_workloads::{
-    CompiledWorkloadNetworkPlan, NodeIdentity, TenantWorkloadUid, WorkloadActivationIntent,
-    WorkloadExecutableEncoding, WorkloadExecutableIntent, WorkloadExecutionId,
-    WorkloadExecutionProviderId, WorkloadExecutionReference, WorkloadGeneration,
-    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadProvisionAttempt,
-    WorkloadProvisionAttemptInput, WorkloadProvisionDispatchClaim, WorkloadProvisionProviderTarget,
-    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
-    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep,
-    WorkloadProvisionSubjects, WorkloadPublicationIntent, WorkloadSagaKey, WorkloadSagaPhase,
-    WorkloadSagaRevision, WorkloadSagaTransitionId,
+    CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
+    TenantWorkloadUid, WorkloadActivationIntent, WorkloadAdmissionEvidence,
+    WorkloadEffectReferences, WorkloadExecutableEncoding, WorkloadExecutableIntent,
+    WorkloadExecutionAttemptId, WorkloadExecutionId, WorkloadExecutionProviderId,
+    WorkloadExecutionReference, WorkloadGeneration, WorkloadInspectionVersion,
+    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
+    WorkloadNetworkReference, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
+    WorkloadPhaseDetail, WorkloadProvisionAttempt, WorkloadProvisionAttemptInput,
+    WorkloadProvisionDispatchClaim, WorkloadProvisionPrerequisiteEvidence,
+    WorkloadProvisionProviderTarget, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep, WorkloadProvisionSubjects,
+    WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadRestartAdmissionInput,
+    WorkloadRestartAdmissionUpdate, WorkloadRestartCommandClaim, WorkloadRestartEpoch,
+    WorkloadRestartEvidenceDigest, WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy,
+    WorkloadRestartRequestId, WorkloadRestartTrigger, WorkloadSagaIntent, WorkloadSagaKey,
+    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaRevision, WorkloadSagaTransitionId,
 };
 
 use super::*;
+
+// Ownership reason: this 1,500-line test module keeps every strict Machine API
+// wire DTO under one private contract suite; production owners stay split by
+// concept, and no test fixture becomes a reusable runtime authority.
 
 #[test]
 fn machine_api_query_path_percent_encodes_query_delimiters() {
@@ -139,9 +151,6 @@ fn service_sandbox_retirement_dtos_are_strict_and_preserve_exact_evidence() {
         SandboxExecutionObservation::Exited { exit_code: 42 },
         SandboxRestartAssessment::Candidate {
             exit_code: 42,
-            completed_restarts: 1,
-            retry_delay_millis: 2_000,
-            persisted_not_before_millis: Some(9_000),
             blocker: Some(SandboxRestartBlocker::StartupReconciliationUnavailable),
         },
         SandboxCleanupObservation::Retained,
@@ -613,6 +622,730 @@ fn workload_provision_phase_response_correlates_fences_and_closed_observations()
 }
 
 #[cfg(unix)]
+#[test]
+fn workload_restart_phase_wire_round_trips_automatic_and_explicit_requests_strictly() {
+    let automatic =
+        restart_request_fixture('a', true, MachineApiWorkloadRestartCommandMode::Execute);
+    let explicit =
+        restart_request_fixture('b', false, MachineApiWorkloadRestartCommandMode::Execute);
+
+    for request in [&automatic, &explicit] {
+        let value = serde_json::to_value(request).expect("restart request should serialize");
+        let round_trip = serde_json::from_value::<MachineApiWorkloadRestartPhaseRequest>(value)
+            .expect("restart request should deserialize");
+        assert_eq!(&round_trip, request);
+    }
+    assert!(automatic.command().inspection_version().is_some());
+    assert_eq!(explicit.command().inspection_version(), None);
+    assert_ne!(automatic.request_digest(), explicit.request_digest());
+
+    let inspection =
+        restart_request_fixture('c', false, MachineApiWorkloadRestartCommandMode::Inspect);
+    assert_eq!(
+        inspection.command().mode(),
+        MachineApiWorkloadRestartCommandMode::Inspect
+    );
+    assert_eq!(
+        inspection.command().confirmed_revision(),
+        inspection
+            .command()
+            .issuing_revision()
+            .checked_next()
+            .and_then(WorkloadSagaRevision::checked_next)
+            .expect("inspection fixture revision should advance twice")
+    );
+
+    let mut later_veto =
+        serde_json::to_value(inspection.command()).expect("inspection command should serialize");
+    let successor_generation = inspection
+        .command()
+        .generation()
+        .checked_next()
+        .expect("fixture generation should have a successor");
+    let later_revision = inspection
+        .command()
+        .confirmed_revision()
+        .checked_next()
+        .expect("fixture inspection revision should advance");
+    later_veto["successor_veto_generation"] =
+        serde_json::to_value(successor_generation).expect("successor generation should serialize");
+    later_veto["confirmed_revision"] =
+        serde_json::to_value(later_revision).expect("later revision should serialize");
+    let later_veto = serde_json::from_value::<MachineApiWorkloadRestartCommandEnvelope>(later_veto)
+        .expect("later successor-veto inspection should authenticate");
+    assert_eq!(
+        later_veto.successor_veto_generation(),
+        Some(successor_generation)
+    );
+
+    let later_veto_value =
+        serde_json::to_value(&later_veto).expect("successor-veto request should serialize");
+    let mut unauthenticated_later_revision = later_veto_value.clone();
+    unauthenticated_later_revision["successor_veto_generation"] = serde_json::Value::Null;
+    assert!(
+        serde_json::from_value::<MachineApiWorkloadRestartCommandEnvelope>(
+            unauthenticated_later_revision
+        )
+        .is_err(),
+        "a later inspection revision without exact veto evidence must fail closed"
+    );
+
+    let mut crossed_veto_generation = later_veto_value.clone();
+    crossed_veto_generation["successor_veto_generation"] =
+        serde_json::to_value(later_veto.generation()).expect("crossed generation should serialize");
+    assert!(
+        serde_json::from_value::<MachineApiWorkloadRestartCommandEnvelope>(crossed_veto_generation)
+            .is_err(),
+        "a veto that does not name a later generation must fail closed"
+    );
+
+    let mut execute_with_veto = later_veto_value;
+    execute_with_veto["mode"] = serde_json::json!("execute");
+    execute_with_veto["confirmed_revision"] = serde_json::to_value(
+        later_veto
+            .issuing_revision()
+            .checked_next()
+            .expect("execute revision should exist"),
+    )
+    .expect("execute revision should serialize");
+    assert!(
+        serde_json::from_value::<MachineApiWorkloadRestartCommandEnvelope>(execute_with_veto)
+            .is_err(),
+        "execute authority must reject successor-veto evidence"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn machine_restart_wire_rejects_crossed_fences() {
+    let request = restart_request_fixture('a', true, MachineApiWorkloadRestartCommandMode::Execute);
+    let other = restart_request_fixture('b', true, MachineApiWorkloadRestartCommandMode::Execute);
+    let value = serde_json::to_value(&request).expect("restart request should serialize");
+    let other_value = serde_json::to_value(&other).expect("other request should serialize");
+
+    for pointer in [
+        "/forwarder_authority",
+        "/command/command_id",
+        "/command/key",
+        "/command/saga_id",
+        "/command/transition_id",
+        "/command/desired_digest",
+        "/command/source",
+        "/command/source_execution",
+        "/command/execution",
+        "/command/source_attempt_id",
+        "/command/attempt_id",
+        "/command/request_id",
+        "/command/inspection_version",
+        "/command/provider_selection",
+        "/command/claim",
+        "/command/executable",
+        "/command/network_plan_digest",
+        "/command/compiled_network_plan",
+        "/command/machine_forwarder_authority",
+    ] {
+        assert_crossed_restart_request_rejected(&value, pointer, &other_value);
+    }
+    for (pointer, replacement) in [
+        ("/command/generation", serde_json::json!("2")),
+        ("/command/restart_epoch", serde_json::json!("2")),
+        ("/command/dispatch_epoch", serde_json::json!("1")),
+        ("/command/issuing_revision", serde_json::json!("999")),
+        ("/command/confirmed_revision", serde_json::json!("999")),
+        ("/command/step", serde_json::json!("prepare_execution")),
+        ("/command/mode", serde_json::json!("inspect")),
+        ("/command/machine_provider_generation", serde_json::json!(8)),
+    ] {
+        let mut crossed = value.clone();
+        *crossed
+            .pointer_mut(pointer)
+            .expect("restart request pointer should resolve") = replacement;
+        assert!(
+            serde_json::from_value::<MachineApiWorkloadRestartPhaseRequest>(crossed).is_err(),
+            "crossed restart field {pointer} must fail closed"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn workload_restart_phase_wire_rejects_unknown_and_missing_content() {
+    let request =
+        restart_request_fixture('a', false, MachineApiWorkloadRestartCommandMode::Execute);
+    let value = serde_json::to_value(request).expect("restart request should serialize");
+
+    for pointer in ["", "/command", "/command/claim"] {
+        let mut unknown = value.clone();
+        unknown
+            .pointer_mut(pointer)
+            .expect("restart object pointer should resolve")
+            .as_object_mut()
+            .expect("restart pointer should name an object")
+            .insert("unexpected".to_owned(), serde_json::json!(true));
+        assert!(
+            serde_json::from_value::<MachineApiWorkloadRestartPhaseRequest>(unknown).is_err(),
+            "unknown field at {pointer} must fail closed"
+        );
+    }
+
+    for field in ["request_digest", "forwarder_authority", "command"] {
+        let mut missing = value.clone();
+        missing
+            .as_object_mut()
+            .expect("restart request should be an object")
+            .remove(field);
+        assert!(
+            serde_json::from_value::<MachineApiWorkloadRestartPhaseRequest>(missing).is_err(),
+            "missing restart request field {field} must fail closed"
+        );
+    }
+    for field in [
+        "transition_id",
+        "source_attempt_id",
+        "attempt_id",
+        "inspection_version",
+        "successor_veto_generation",
+        "machine_forwarder_authority",
+    ] {
+        let mut missing = value.clone();
+        missing["command"]
+            .as_object_mut()
+            .expect("restart command should be an object")
+            .remove(field);
+        assert!(
+            serde_json::from_value::<MachineApiWorkloadRestartPhaseRequest>(missing).is_err(),
+            "missing restart command field {field} must fail closed"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn workload_restart_phase_response_binds_the_complete_request_and_fences() {
+    let request = restart_request_fixture('a', true, MachineApiWorkloadRestartCommandMode::Execute);
+    let other = restart_request_fixture('b', false, MachineApiWorkloadRestartCommandMode::Inspect);
+    let response = MachineApiWorkloadRestartPhaseResponse::for_request(
+        &request,
+        MachineApiWorkloadRestartObservation::Succeeded {
+            evidence: WorkloadRestartEvidenceDigest::sha256("guest-restart-succeeded"),
+        },
+    )
+    .expect("restart response should correlate");
+    let value = serde_json::to_value(&response).expect("restart response should serialize");
+    let round_trip =
+        serde_json::from_value::<MachineApiWorkloadRestartPhaseResponse>(value.clone())
+            .expect("restart response should deserialize");
+    round_trip
+        .validate_for_request(&request)
+        .expect("restart response should retain exact request authority");
+    assert_eq!(round_trip, response);
+    assert_eq!(response.request_digest(), request.request_digest());
+    assert_eq!(
+        response.validate_for_request(&other),
+        Err(MachineApiWorkloadRestartWireError::ResponseRequestDigestMismatch)
+    );
+
+    let other_response = MachineApiWorkloadRestartPhaseResponse::for_request(
+        &other,
+        MachineApiWorkloadRestartObservation::Ambiguous,
+    )
+    .expect("other restart response should correlate");
+    let other_value =
+        serde_json::to_value(other_response).expect("other restart response should serialize");
+    for (field, expected) in [
+        (
+            "request_digest",
+            MachineApiWorkloadRestartWireError::ResponseRequestDigestMismatch,
+        ),
+        (
+            "forwarder_authority",
+            MachineApiWorkloadRestartWireError::ResponseAuthorityMismatch,
+        ),
+        (
+            "command_id",
+            MachineApiWorkloadRestartWireError::ResponseCommandMismatch,
+        ),
+        (
+            "transition_id",
+            MachineApiWorkloadRestartWireError::ResponseTransitionMismatch,
+        ),
+        (
+            "request_id",
+            MachineApiWorkloadRestartWireError::ResponseRestartRequestMismatch,
+        ),
+        (
+            "source_attempt_id",
+            MachineApiWorkloadRestartWireError::ResponseSourceAttemptMismatch,
+        ),
+        (
+            "attempt_id",
+            MachineApiWorkloadRestartWireError::ResponseAttemptMismatch,
+        ),
+        (
+            "provider_selection",
+            MachineApiWorkloadRestartWireError::ResponseProviderSelectionMismatch,
+        ),
+    ] {
+        let mut crossed = value.clone();
+        crossed[field] = other_value[field].clone();
+        let decoded = serde_json::from_value::<MachineApiWorkloadRestartPhaseResponse>(crossed)
+            .expect("crossed response should remain structurally valid");
+        assert_eq!(decoded.validate_for_request(&request), Err(expected));
+    }
+    for (field, replacement, expected) in [
+        (
+            "restart_epoch",
+            serde_json::json!("2"),
+            MachineApiWorkloadRestartWireError::ResponseRestartEpochMismatch,
+        ),
+        (
+            "dispatch_epoch",
+            serde_json::json!("1"),
+            MachineApiWorkloadRestartWireError::ResponseDispatchEpochMismatch,
+        ),
+    ] {
+        let mut crossed = value.clone();
+        crossed[field] = replacement;
+        let decoded = serde_json::from_value::<MachineApiWorkloadRestartPhaseResponse>(crossed)
+            .expect("crossed response epoch should remain structurally valid");
+        assert_eq!(decoded.validate_for_request(&request), Err(expected));
+    }
+
+    let mut unknown = value.clone();
+    unknown["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<MachineApiWorkloadRestartPhaseResponse>(unknown).is_err());
+    let mut unknown_observation = value;
+    unknown_observation["observation"]["unexpected"] = serde_json::json!(true);
+    assert!(
+        serde_json::from_value::<MachineApiWorkloadRestartPhaseResponse>(unknown_observation)
+            .is_err()
+    );
+}
+
+#[cfg(unix)]
+fn restart_request_fixture(
+    hex: char,
+    automatic: bool,
+    mode: MachineApiWorkloadRestartCommandMode,
+) -> MachineApiWorkloadRestartPhaseRequest {
+    let observed = restart_observed_record_fixture(hex);
+    let inspection_version =
+        automatic.then(|| WorkloadInspectionVersion::from_bytes([hex as u8; 32]));
+    let request_id = inspection_version.map_or_else(
+        || {
+            WorkloadRestartRequestId::for_explicit(
+                observed.saga_id(),
+                observed.active_intent().source().source_generation(),
+                &format!("restart-wire-{hex}"),
+            )
+            .expect("explicit restart request should validate")
+        },
+        |version| WorkloadRestartRequestId::for_automatic(observed.saga_id(), version),
+    );
+    let input = WorkloadRestartAdmissionInput {
+        expected_revision: observed.revision(),
+        trigger: if automatic {
+            WorkloadRestartTrigger::Automatic { exit_code: 17 }
+        } else {
+            WorkloadRestartTrigger::Explicit
+        },
+        inspection_version,
+        request_id,
+        not_before_unix_millis: WorkloadRestartNotBeforeUnixMillis::new(0),
+    };
+    let WorkloadRestartAdmissionUpdate::Transition(admitted) = observed
+        .admit_restart(input)
+        .expect("restart fixture should admit")
+    else {
+        panic!("new restart fixture should create a transition");
+    };
+    let request_id = admitted
+        .restart_state()
+        .active()
+        .expect("restart fixture should be active")
+        .admission()
+        .request_id()
+        .clone();
+    let quiescence = admitted
+        .advance_restart_without_effect(&request_id)
+        .expect("withheld restart fixture should enter quiescence");
+    let pending = quiescence
+        .claim_restart_command(&request_id)
+        .expect("restart fixture should claim quiescence");
+    let claim = active_restart_claim(&pending);
+    let confirmed = match mode {
+        MachineApiWorkloadRestartCommandMode::Execute => pending,
+        MachineApiWorkloadRestartCommandMode::Inspect => pending
+            .restart_dispatch_to_inspection(&claim)
+            .expect("restart fixture should retain exact inspection claim"),
+    };
+    let active = confirmed
+        .restart_state()
+        .active()
+        .expect("confirmed restart fixture should stay active");
+    let admission = active.admission();
+    let claim = active
+        .disposition()
+        .claim()
+        .expect("confirmed restart fixture should retain a claim")
+        .clone();
+    let source_execution = confirmed.current_execution_reference();
+    let execution = WorkloadExecutionReference::for_restart_epoch(
+        confirmed.active_intent(),
+        admission.restart_epoch(),
+    );
+    let machine_generation = NetworkResourceGeneration::new(7);
+    let authority = MachineForwarderAuthority::new(
+        NetworkProviderHandle::new(
+            NetworkProviderId::for_registration_key(&format!("machine-restart-{hex}")),
+            format!("machine-restart-instance-{hex}"),
+        )
+        .expect("restart forwarder provider should validate"),
+        machine_generation,
+    );
+    let intent = confirmed.active_intent();
+    let compiled_network_plan = intent.network().compiled_plan().clone();
+    let command = MachineApiWorkloadRestartCommandEnvelope::new(
+        claim.command_id().clone(),
+        confirmed.key().clone(),
+        confirmed.saga_id().clone(),
+        confirmed.last_transition().transition_id().clone(),
+        admission.generation(),
+        admission.desired_digest(),
+        admission.source().clone(),
+        source_execution.clone(),
+        execution.clone(),
+        source_execution.attempt_id().clone(),
+        execution.attempt_id().clone(),
+        admission.restart_epoch(),
+        claim.dispatch_epoch(),
+        admission.request_id().clone(),
+        claim.issuing_revision(),
+        confirmed.revision(),
+        admission.inspection_version(),
+        admission.provider_selection().clone(),
+        claim.step(),
+        mode,
+        None,
+        claim,
+        intent.executable().clone(),
+        compiled_network_plan.plan().digest(),
+        compiled_network_plan,
+        authority.clone(),
+        machine_generation,
+    )
+    .expect("restart command should validate");
+    MachineApiWorkloadRestartPhaseRequest::new(authority, command)
+        .expect("restart request should validate")
+}
+
+#[cfg(unix)]
+fn restart_observed_record_fixture(hex: char) -> WorkloadSagaRecord {
+    let intent = restart_intent_fixture(hex);
+    let key = WorkloadSagaKey::new(
+        intent
+            .network()
+            .compiled_plan()
+            .content()
+            .identity()
+            .tenant_id()
+            .clone(),
+        WorkloadId::new(format!("workload-restart-{hex}"))
+            .expect("restart workload should validate"),
+    );
+    let mut record = WorkloadSagaRecord::new(key, intent).expect("restart saga should initialize");
+    for phase in [
+        WorkloadSagaPhase::NetworkReserved,
+        WorkloadSagaPhase::WorkloadPrepared,
+        WorkloadSagaPhase::NetworkAttached,
+        WorkloadSagaPhase::WorkloadActivated,
+        WorkloadSagaPhase::Ready,
+        WorkloadSagaPhase::Observed,
+    ] {
+        record = confirm_restart_provision_edge(&record, phase);
+    }
+    record
+}
+
+#[cfg(unix)]
+fn restart_intent_fixture(hex: char) -> WorkloadSagaIntent {
+    let tenant_id =
+        TenantId::new(format!("tenant-restart-{hex}")).expect("restart tenant should validate");
+    let executable = WorkloadExecutableIntent::new(
+        WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(r#"{{"fixture":"machine-restart-{hex}"}}"#),
+    )
+    .expect("restart executable should validate");
+    let attachment_provider =
+        NetworkProviderId::for_registration_key(&format!("restart-attachment-{hex}"));
+    let execution_provider =
+        WorkloadExecutionProviderId::for_registration_key(&format!("restart-execution-{hex}"));
+    let source = WorkloadProvisionSourceEvidence::standalone_sandbox(
+        WorkloadProvisionSourceIdentity::standalone_sandbox(
+            format!("workload-restart-{hex}"),
+            format!("profile-restart-{hex}"),
+        )
+        .expect("restart source identity should validate"),
+        WorkloadProvisionSourceGeneration::new(1),
+        WorkloadProvisionSourceResourceVersion::new(format!("restart-version-{hex}"))
+            .expect("restart source version should validate"),
+        executable.content_digest(),
+        attachment_provider,
+        execution_provider,
+    )
+    .expect("restart source should validate");
+    let generation = WorkloadGeneration::new(1);
+    WorkloadSagaIntent::new_with_restart_policy(
+        DesiredWorkloadKind::Sandbox,
+        DesiredWorkloadState::Running,
+        generation,
+        executable,
+        source,
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+        WorkloadNetworkIntent::new(compiled_network_plan_fixture_with_lifecycle(
+            &tenant_id,
+            hex,
+            generation,
+            WorkloadActivationIntent::ActivateWhenAttached,
+        )),
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::Withheld,
+        WorkloadAdmissionEvidence::new(
+            format!("tid_{}", hex.to_string().repeat(64))
+                .try_into()
+                .expect("restart decision should validate"),
+            format!("twu_{}", hex.to_string().repeat(64))
+                .try_into()
+                .expect("restart workload uid should validate"),
+            NodeIdentity::new(format!("node-restart-{hex}")).expect("restart node should validate"),
+        ),
+    )
+    .expect("restart intent should validate")
+}
+
+#[cfg(unix)]
+fn confirm_restart_provision_edge(
+    record: &WorkloadSagaRecord,
+    target_phase: WorkloadSagaPhase,
+) -> WorkloadSagaRecord {
+    let detail = restart_provision_detail(target_phase, record.active_intent());
+    if record.phase() == WorkloadSagaPhase::Ready && target_phase == WorkloadSagaPhase::Observed {
+        return record
+            .advance(target_phase, detail, None)
+            .expect("withheld publication should observe without an effect");
+    }
+    let intent = record.active_intent();
+    let network = WorkloadNetworkReference::for_intent(intent);
+    let execution = WorkloadExecutionReference::for_intent(intent);
+    if record.phase() == WorkloadSagaPhase::NetworkAttached
+        && target_phase == WorkloadSagaPhase::WorkloadActivated
+    {
+        let inspection = restart_provision_attempt(
+            record,
+            WorkloadProvisionStep::InspectActivationPrerequisites,
+            WorkloadSagaPhase::NetworkAttached,
+            WorkloadProvisionSubjects::Readiness {
+                network: network.clone(),
+                execution: execution.clone(),
+            },
+            None,
+        );
+        let inspection_pending = persist_restart_provision_attempt(record, inspection.clone());
+        let prerequisite = WorkloadProvisionPrerequisiteEvidence::new(
+            inspection.attempt_id().clone(),
+            WorkloadProvisionSuccessEvidence::ActivationPrerequisitesReady {
+                network,
+                execution: execution.clone(),
+                evidence: WorkloadOwnerEvidenceDigest::sha256("restart-prerequisites"),
+            },
+        )
+        .expect("restart prerequisite should validate");
+        let activation = restart_provision_attempt(
+            &inspection_pending,
+            WorkloadProvisionStep::ActivateWorkload,
+            target_phase,
+            WorkloadProvisionSubjects::Execution(execution),
+            Some(prerequisite),
+        );
+        let provider_target = WorkloadProvisionProviderTarget::for_attempt(&activation)
+            .expect("activation target should validate")
+            .expect("activation should have one execution provider");
+        return inspection_pending
+            .dispatch_to_activation(activation, provider_target)
+            .expect("activation should follow exact prerequisite")
+            .dispatch_to_success(target_phase, detail)
+            .expect("activation should complete");
+    }
+    let (step, subjects) = match (record.phase(), target_phase) {
+        (WorkloadSagaPhase::IntentCommitted, WorkloadSagaPhase::NetworkReserved) => (
+            WorkloadProvisionStep::ReserveNetwork,
+            WorkloadProvisionSubjects::Network(network),
+        ),
+        (WorkloadSagaPhase::NetworkReserved, WorkloadSagaPhase::WorkloadPrepared) => (
+            WorkloadProvisionStep::PrepareWorkload,
+            WorkloadProvisionSubjects::Execution(execution),
+        ),
+        (WorkloadSagaPhase::WorkloadPrepared, WorkloadSagaPhase::NetworkAttached) => (
+            WorkloadProvisionStep::AttachNetwork,
+            WorkloadProvisionSubjects::Network(network),
+        ),
+        (WorkloadSagaPhase::WorkloadActivated, WorkloadSagaPhase::Ready) => (
+            WorkloadProvisionStep::InspectWorkloadReadiness,
+            WorkloadProvisionSubjects::Readiness { network, execution },
+        ),
+        edge => panic!("unsupported restart provision fixture edge {edge:?}"),
+    };
+    let attempt = restart_provision_attempt(record, step, target_phase, subjects, None);
+    match WorkloadProvisionProviderTarget::for_attempt(&attempt)
+        .expect("restart provision target should validate")
+    {
+        Some(_) => persist_restart_provision_attempt(record, attempt)
+            .dispatch_to_success(target_phase, detail)
+            .expect("restart provision effect should complete"),
+        None => record
+            .record_resource_free_network_step(step, target_phase, detail)
+            .expect("resource-free restart network step should complete"),
+    }
+}
+
+#[cfg(unix)]
+fn restart_provision_attempt(
+    record: &WorkloadSagaRecord,
+    step: WorkloadProvisionStep,
+    target_phase: WorkloadSagaPhase,
+    subjects: WorkloadProvisionSubjects,
+    prerequisite: Option<WorkloadProvisionPrerequisiteEvidence>,
+) -> WorkloadProvisionAttempt {
+    let intent = record.active_intent();
+    WorkloadProvisionAttempt::new(WorkloadProvisionAttemptInput {
+        key: record.key().clone(),
+        saga_id: record.saga_id().clone(),
+        issuing_revision: record.revision(),
+        generation: intent.generation(),
+        desired_digest: intent.desired_digest(),
+        required_node: intent.admission().assigned_node().clone(),
+        source_digest: intent.source().source_digest(),
+        execution_provider_id: intent.source().execution_provider_id().clone(),
+        network_plan_digest: intent.network().digest(),
+        selection_evidence: intent
+            .network()
+            .compiled_plan()
+            .content()
+            .capability_selection_evidence()
+            .cloned(),
+        source_phase: record.phase(),
+        target_phase,
+        step,
+        subjects,
+        prerequisite,
+    })
+    .expect("restart provision attempt should validate")
+}
+
+#[cfg(unix)]
+fn persist_restart_provision_attempt(
+    record: &WorkloadSagaRecord,
+    attempt: WorkloadProvisionAttempt,
+) -> WorkloadSagaRecord {
+    let provider_target = WorkloadProvisionProviderTarget::for_attempt(&attempt)
+        .expect("restart provision target should validate")
+        .expect("effectful restart provision should name a provider");
+    record
+        .ready_to_initial_dispatch(attempt, provider_target)
+        .expect("restart provision attempt should persist")
+}
+
+#[cfg(unix)]
+fn restart_provision_detail(
+    phase: WorkloadSagaPhase,
+    intent: &WorkloadSagaIntent,
+) -> WorkloadPhaseDetail {
+    let references = WorkloadEffectReferences::provision(intent, None)
+        .expect("restart references should validate");
+    let network = references
+        .network()
+        .expect("restart fixture should retain network")
+        .clone();
+    let execution = references
+        .execution()
+        .expect("restart fixture should retain execution")
+        .clone();
+    let rank = match phase {
+        WorkloadSagaPhase::NetworkReserved => 1,
+        WorkloadSagaPhase::WorkloadPrepared => 2,
+        WorkloadSagaPhase::NetworkAttached => 3,
+        WorkloadSagaPhase::WorkloadActivated => 4,
+        WorkloadSagaPhase::Ready | WorkloadSagaPhase::Observed => 5,
+        _ => panic!("phase is not restart provision evidence"),
+    };
+    let mut observations = Vec::new();
+    if rank >= 1 {
+        observations.push(WorkloadOwnerObservation::NetworkReserved {
+            reference: network.clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("restart-network-reserved"),
+        });
+    }
+    if rank >= 2 {
+        observations.push(WorkloadOwnerObservation::ExecutionPrepared {
+            reference: execution.clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("restart-execution-prepared"),
+        });
+    }
+    if rank >= 3 {
+        observations.push(WorkloadOwnerObservation::NetworkAttached {
+            reference: network.clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("restart-network-attached"),
+        });
+    }
+    if rank >= 4 {
+        observations.push(WorkloadOwnerObservation::ExecutionActivated {
+            reference: execution.clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("restart-execution-activated"),
+        });
+    }
+    if rank >= 5 {
+        observations.push(WorkloadOwnerObservation::Ready {
+            network,
+            execution,
+            evidence: WorkloadOwnerEvidenceDigest::sha256("restart-ready"),
+        });
+    }
+    WorkloadPhaseDetail::provision(phase, intent, references, observations)
+        .expect("restart provision detail should validate")
+}
+
+#[cfg(unix)]
+fn active_restart_claim(record: &WorkloadSagaRecord) -> WorkloadRestartCommandClaim {
+    record
+        .restart_state()
+        .active()
+        .expect("restart fixture should be active")
+        .disposition()
+        .claim()
+        .expect("restart fixture should retain a claim")
+        .clone()
+}
+
+#[cfg(unix)]
+fn assert_crossed_restart_request_rejected(
+    baseline: &serde_json::Value,
+    pointer: &str,
+    source: &serde_json::Value,
+) {
+    let mut crossed = baseline.clone();
+    *crossed
+        .pointer_mut(pointer)
+        .expect("baseline restart pointer should resolve") = source
+        .pointer(pointer)
+        .expect("source restart pointer should resolve")
+        .clone();
+    assert!(
+        serde_json::from_value::<MachineApiWorkloadRestartPhaseRequest>(crossed).is_err(),
+        "crossed restart field {pointer} must fail closed"
+    );
+}
+
+#[cfg(unix)]
 fn provision_request_fixture(
     hex: char,
     step: WorkloadProvisionStep,
@@ -651,10 +1384,14 @@ fn provision_request_fixture(
         .expect("fixture workload uid should validate");
     let execution_id =
         WorkloadExecutionId::for_execution(&workload_uid, &node_identity, generation);
+    let restart_epoch = WorkloadRestartEpoch::new(0);
+    let attempt_id = WorkloadExecutionAttemptId::for_execution(&execution_id, restart_epoch);
     let execution: WorkloadExecutionReference = serde_json::from_value(serde_json::json!({
         "workloadUid": workload_uid,
         "nodeIdentity": node_identity,
         "executionId": execution_id,
+        "restartEpoch": restart_epoch,
+        "attemptId": attempt_id,
         "generation": generation,
         "desiredDigest": desired_digest,
     }))
@@ -774,6 +1511,21 @@ fn compiled_network_plan_fixture(
     hex: char,
     generation: WorkloadGeneration,
 ) -> CompiledWorkloadNetworkPlan {
+    compiled_network_plan_fixture_with_lifecycle(
+        tenant_id,
+        hex,
+        generation,
+        WorkloadActivationIntent::PrepareOnly,
+    )
+}
+
+#[cfg(unix)]
+fn compiled_network_plan_fixture_with_lifecycle(
+    tenant_id: &TenantId,
+    hex: char,
+    generation: WorkloadGeneration,
+    activation: WorkloadActivationIntent,
+) -> CompiledWorkloadNetworkPlan {
     let identity = WorkloadNetworkPlanIdentity::new(
         tenant_id.clone(),
         format!("workload-incarnation-{hex}"),
@@ -800,7 +1552,7 @@ fn compiled_network_plan_fixture(
         [],
         [],
         [],
-        WorkloadActivationIntent::PrepareOnly,
+        activation,
         WorkloadPublicationIntent::Withheld,
     )
     .expect("fixture network content should validate");

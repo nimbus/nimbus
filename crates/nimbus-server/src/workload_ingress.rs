@@ -35,8 +35,9 @@ use nimbus_compute::{
     WorkloadObservedIngressEndpoint, WorkloadProviderObservation,
 };
 use nimbus_network::{
-    ListenerId, LocalNetworkAuthority, NetworkCapabilityRole, NetworkPlanDigest, NetworkPlanId,
-    NetworkResourceGeneration, NetworkResourceId, PortBindRealm, PortLeaseAccounting, PortLeaseId,
+    ListenerId, LocalNetworkAuthority, LocalPortLeaseAuthority, NetworkCapabilityRole,
+    NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, NetworkResourceId, PortBindRealm,
+    PortLeaseAccounting, PortLeaseError, PortLeaseId, PortLeasePhase, PortLeaseRequest,
     PortProtocol, PublishedEndpointId,
 };
 use nimbus_sandbox::backends::container::ContainerSandboxBackend;
@@ -116,6 +117,7 @@ pub struct ServerIngressPublicationAdapter {
     phases: ProviderProvisionPhaseAdapter,
     restart_phases: ProviderRestartPhaseAdapter,
     listeners: ServerListenerLeaseAuthority,
+    port_leases: LocalPortLeaseAuthority,
     running: Mutex<BTreeMap<PublicationKey, RunningIngressBatch>>,
 }
 
@@ -131,11 +133,13 @@ impl ServerIngressPublicationAdapter {
             network_authority.state_root(),
             SERVER_INGRESS_JOURNAL_NAMESPACE,
         )?;
+        let port_leases = network_authority.port_leases();
         Ok(Self {
             source,
             phases: ProviderProvisionPhaseAdapter::new(journal.clone()),
             restart_phases: ProviderRestartPhaseAdapter::new(journal),
             listeners: ServerListenerLeaseAuthority::new(network_authority),
+            port_leases,
             running: Mutex::new(BTreeMap::new()),
         })
     }
@@ -283,7 +287,7 @@ impl ServerIngressPublicationAdapter {
             Err(_) => return restart_ambiguous("server ingress registry lock is poisoned"),
         };
         let Some(batch) = running.remove(&validated.source_key) else {
-            return self.inspect_restart_withdrawal_locked(&running, validated);
+            return self.reconcile_restart_withdrawal_locked(&running, validated);
         };
         if !batch.matches_plan(&validated.source_key.execution_id, &validated.network_plan) {
             running.insert(validated.source_key.clone(), batch);
@@ -324,15 +328,137 @@ impl ServerIngressPublicationAdapter {
         {
             return restart_ambiguous("a crossed publication attempt exists for the restart saga");
         }
-        ProviderRestartEffectObservation::Succeeded {
-            evidence: format!(
-                "withdrawn:{}:{}:{}",
-                validated.source_key.saga_id,
-                validated.source_key.attempt_id,
-                validated.source_key.network_plan_digest
-            )
-            .into_bytes(),
+        match self.inspect_retained_restart_listeners(validated) {
+            Ok(true) => restart_withdrawal_succeeded(validated),
+            Ok(false) => ProviderRestartEffectObservation::Absent {
+                evidence: b"durable server listener retention is absent".to_vec(),
+            },
+            Err(observation) => observation,
         }
+    }
+
+    fn reconcile_restart_withdrawal_locked(
+        &self,
+        running: &BTreeMap<PublicationKey, RunningIngressBatch>,
+        validated: &ValidatedRestartPublication,
+    ) -> ProviderRestartEffectObservation {
+        let inspected = self.inspect_restart_withdrawal_locked(running, validated);
+        if !matches!(inspected, ProviderRestartEffectObservation::Absent { .. }) {
+            return inspected;
+        }
+        let (plan_members, requests) = match self.restart_listener_plan(validated) {
+            Ok(plan) => plan,
+            Err(observation) => return observation,
+        };
+        if requests.is_empty() {
+            return restart_withdrawal_succeeded(validated);
+        }
+        let recoveries = match self
+            .port_leases
+            .recover_dead_plan_members(&plan_members, &requests)
+        {
+            Ok(recoveries) => recoveries,
+            Err(PortLeaseError::LifetimeOwnerLive { .. }) => {
+                return ProviderRestartEffectObservation::InProgress {
+                    evidence: b"server listener remains owned by a live process".to_vec(),
+                };
+            }
+            Err(error) => return restart_ambiguous(error.to_string()),
+        };
+        let records = match self.port_leases.list_plan(validated.network_plan.plan_id()) {
+            Ok(records) => records,
+            Err(error) => return restart_ambiguous(error.to_string()),
+        };
+        if records.iter().any(|record| {
+            requests.contains(record.request()) && record.phase() != PortLeasePhase::CleanupPending
+        }) && let Err(error) = self
+            .port_leases
+            .mark_cleanup_pending_plan_members_after_owner_death(
+                &plan_members,
+                &requests,
+                &recoveries,
+            )
+        {
+            return restart_ambiguous(error.to_string());
+        }
+        if let Err(error) = self
+            .port_leases
+            .prepare_rebind_process_bound_plan_members_after_owner_death(
+                &plan_members,
+                &requests,
+                &recoveries,
+            )
+        {
+            return restart_ambiguous(error.to_string());
+        }
+        drop(recoveries);
+        match self.inspect_retained_restart_listeners(validated) {
+            Ok(true) => restart_withdrawal_succeeded(validated),
+            Ok(false) => restart_ambiguous(
+                "server listener recovery did not produce durable restart-retention evidence",
+            ),
+            Err(observation) => observation,
+        }
+    }
+
+    fn inspect_retained_restart_listeners(
+        &self,
+        validated: &ValidatedRestartPublication,
+    ) -> Result<bool, ProviderRestartEffectObservation> {
+        let (_, requests) = self.restart_listener_plan(validated)?;
+        if requests.is_empty() {
+            return Ok(true);
+        }
+        let records = self
+            .port_leases
+            .list_plan(validated.network_plan.plan_id())
+            .map_err(|error| restart_ambiguous(error.to_string()))?;
+        let plan_members = records
+            .iter()
+            .map(|record| record.request().clone())
+            .collect::<Vec<_>>();
+        let mut exact = Vec::with_capacity(requests.len());
+        for request in &requests {
+            exact.push(
+                self.port_leases
+                    .inspect_plan_member(&plan_members, request)
+                    .map_err(|error| restart_definite_failure(error.to_string()))?,
+            );
+        }
+        Ok(exact.iter().all(|record| {
+            record.phase() == PortLeasePhase::Reserved
+                && record.binding().is_none()
+                && record.bind_claim().is_none()
+                && record.active_lifetime().is_none()
+                && record.confirmed_stopped_binding().is_some()
+        }))
+    }
+
+    fn restart_listener_plan(
+        &self,
+        validated: &ValidatedRestartPublication,
+    ) -> Result<(Vec<PortLeaseRequest>, Vec<PortLeaseRequest>), ProviderRestartEffectObservation>
+    {
+        let records = self
+            .port_leases
+            .list_plan(validated.network_plan.plan_id())
+            .map_err(|error| restart_ambiguous(error.to_string()))?;
+        let plan_members = records
+            .iter()
+            .map(|record| record.request().clone())
+            .collect::<Vec<_>>();
+        let requests = validated
+            .network_plan
+            .listeners()
+            .iter()
+            .map(|listener| listener.port_lease().clone())
+            .collect::<Vec<_>>();
+        for request in &requests {
+            self.port_leases
+                .inspect_plan_member(&plan_members, request)
+                .map_err(|error| restart_definite_failure(error.to_string()))?;
+        }
+        Ok((plan_members, requests))
     }
 
     fn publish_restart_publication(
@@ -1342,6 +1468,20 @@ fn bind_error(error: io::Error) -> ProviderProvisionEffectObservation {
 fn restart_ambiguous(evidence: impl Into<Vec<u8>>) -> ProviderRestartEffectObservation {
     ProviderRestartEffectObservation::Ambiguous {
         evidence: evidence.into(),
+    }
+}
+
+fn restart_withdrawal_succeeded(
+    validated: &ValidatedRestartPublication,
+) -> ProviderRestartEffectObservation {
+    ProviderRestartEffectObservation::Succeeded {
+        evidence: format!(
+            "withdrawn:{}:{}:{}",
+            validated.source_key.saga_id,
+            validated.source_key.attempt_id,
+            validated.source_key.network_plan_digest
+        )
+        .into_bytes(),
     }
 }
 

@@ -19,9 +19,10 @@ const paths = {
   providerCleanup:
     "crates/nimbus-sandbox/src/backends/container/runtime/tests/provider_cleanup.rs",
   portLifecycle: "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+  forwardedMachine: "crates/nimbus-cli/src/machine/backend/provision.rs",
 };
 const modularityProofPath =
-  "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4-atomic-provision-caller-cutover.md";
+  "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md";
 
 const legacyPaths = [
   "crates/nimbus-sandbox/src/backends/container/runtime/machine_port_evidence.rs",
@@ -430,6 +431,16 @@ const modularityExpectations = {
       "child",
     ],
   },
+  forwardedMachine: {
+    sourceTokens: ["mod restart;"],
+    rationaleTokens: [
+      "parent-host exact-phase adapter",
+      "parent ingress lease/lifetime reconciliation",
+      "restart.rs",
+      "Compute owns lifecycle order",
+      "before this owner reaches 2,000 lines",
+    ],
+  },
 };
 
 for (const [name, sourcePath, source] of [
@@ -438,6 +449,7 @@ for (const [name, sourcePath, source] of [
   ["providerCleanup", paths.providerCleanup, sources.providerCleanup],
   ["portLifecycle", paths.portLifecycle, sources.portLifecycle],
   ["forwarding", paths.forwarding, sources.forwarding],
+  ["forwardedMachine", paths.forwardedMachine, sources.forwardedMachine],
 ]) {
   const lines = source.split("\n").length - 1;
   if (lines >= 2000) {
@@ -451,7 +463,7 @@ for (const [name, sourcePath, source] of [
       .find((line) => line.startsWith(exactPrefix));
     if (!disposition) {
       failures.push(
-        `${name} composition owner is ${lines} lines without an exact NNC6.4 ownership disposition`,
+        `${name} composition owner is ${lines} lines without an exact current ownership disposition`,
       );
       continue;
     }

@@ -479,7 +479,6 @@ fn lifecycle_published_anchor_survives_mutable_lifecycle_evolution() {
         .join(super::super::runner::RUNNER_HANDOFF_DECISION_FILE);
     let decision_before = std::fs::read(&decision_path).expect("published decision should read");
 
-    manifest.restart_count = manifest.restart_count.saturating_add(1);
     manifest.spec.egress = nimbus_egress::EgressPolicy::new([nimbus_egress::EgressRule::new(
         "mutable-desired-policy",
         nimbus_egress::EgressProtocol::Https,

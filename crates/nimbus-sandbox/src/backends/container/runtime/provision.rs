@@ -616,7 +616,6 @@ impl ContainerSandboxBackend {
             run_status_checked(&manifest.conmon_launch.start_command)?;
         }
         manifest.shutdown_requested = false;
-        manifest.next_restart_at_millis = None;
         manifest.last_exit_code = None;
         synchronize_handle_status(&mut manifest, SandboxStatus::Starting);
         self.write_manifest(&manifest)?;

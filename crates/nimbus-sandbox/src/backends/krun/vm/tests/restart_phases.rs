@@ -1,11 +1,15 @@
 //! Exact-attempt proofs for the krun restart provider phases.
 
+use std::net::TcpListener;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::backends::conmon::creator::OwnedConmonCreator;
 use crate::backends::oci::command::CommandSpec;
 use crate::backends::oci::conmon::OciConmonLayout;
-use crate::backends::oci::network::OciNetworkLayout;
+use crate::backends::oci::network::{
+    AttachmentAttachAuthority, FixedOciEgressPinProvider, OciNetworkLayout,
+};
 use crate::{SandboxExecutionAttemptId, SandboxRestartAttemptFence};
 
 use super::support::*;
@@ -345,6 +349,190 @@ fn exact_restart_quiescence_and_target_switch_replay_across_fresh_backends() {
         fs::read(&switched.conmon_layout.manifest_path)
             .expect("target manifest should remain readable"),
         target_before
+    );
+}
+
+#[test]
+fn fresh_backend_execute_repairs_process_local_retained_network_state() {
+    let root = TempDir::new().expect("temporary root should exist");
+    let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
+    let pep_port = pep_reservation
+        .local_addr()
+        .expect("PEP tripwire should expose its address")
+        .port();
+    let mut config = KrunSandboxBackendConfig::under_root(root.path().to_path_buf());
+    config.node_network_supernet = "127.0.0.0/24".to_owned();
+    config.published_port_range = pep_port..=pep_port;
+    let backend = KrunSandboxBackend::new(config.clone())
+        .with_egress_pin_provider(Arc::new(FixedOciEgressPinProvider::ready()));
+    let sandbox_id = SandboxId::new("krun-restart-process-local-network");
+    let spec = sample_spec_for_tenant("krun-restart-process-local-network", "api");
+    let source_attempt = attempt("wea_process_local_source");
+    let network_plan =
+        sample_provision_network_plan(&spec, &sandbox_id, "krun-process-local-restart");
+    backend
+        .reserve_provision_network(
+            spec,
+            sandbox_id.clone(),
+            source_attempt.clone(),
+            network_plan,
+        )
+        .expect("fixture should reserve exact network authority");
+    backend
+        .prepare_provision_workload(&sandbox_id, &source_attempt)
+        .expect("fixture should prepare before private attachment");
+    let mut manifest = backend
+        .read_manifest(&sandbox_id)
+        .expect("prepared manifest should read")
+        .expect("prepared manifest should exist");
+    let reservation_claim = manifest
+        .require_reserved_claim()
+        .expect("prepared manifest should retain its reservation")
+        .clone();
+    manifest
+        .mark_adopting()
+        .expect("fixture should persist attachment-adoption intent");
+    backend
+        .persist_effect_barrier(&manifest, "test restart attachment-adoption intent")
+        .expect("attachment-adoption intent should persist");
+    let network_config = manifest
+        .require_network_config()
+        .expect("prepared manifest should retain network config")
+        .clone();
+    backend
+        .segment_allocator
+        .adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &network_config.attachment_id,
+            &reservation_claim,
+        )
+        .expect("fixture should adopt the exact attachment");
+    manifest
+        .mark_adopted()
+        .expect("fixture should retain adopted authority");
+    backend
+        .persist_effect_barrier(&manifest, "test restart adopted attachment")
+        .expect("adopted attachment should persist");
+    {
+        let ports = backend.port_lease_coordinator();
+        let hostname = super::super::start::hostname_for(&manifest.spec);
+        backend
+            .non_routable_attachment_adapter(&manifest, &network_config, &hostname)
+            .attach_with_test_host(
+                &backend.attachment_lifecycle(&ports),
+                AttachmentAttachAuthority::FreshLaunch(&reservation_claim),
+                |_| {
+                    backend.egress_pin_provider.apply(
+                        &manifest.network_layout,
+                        manifest
+                            .egress_proxy
+                            .as_ref()
+                            .expect("PEP assignment should persist"),
+                    )
+                },
+            )
+            .expect("fixture should realize the private attachment");
+    }
+    drop(pep_reservation);
+    backend
+        .start_planned_provision_pep(&manifest, &reservation_claim)
+        .expect("fixture should start its process-local PEP");
+
+    let mut creator = OwnedConmonCreator::spawn(&CommandSpec::new("/usr/bin/true"))
+        .expect("creator fixture should spawn");
+    let receipt = creator
+        .attempt_receipt("krun-process-local-restart-creator")
+        .expect("creator receipt should capture");
+    creator
+        .reap_after_runtime_observed(Duration::from_secs(1))
+        .expect("creator fixture should quiesce");
+    manifest.creator_handoff = KrunCreatorHandoffState::RuntimeObserved { receipt };
+    manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
+    manifest.conmon_launch.state_command =
+        explicit_runtime_state_command(&sandbox_id, &root.path().join("absent-runtime-marker"));
+    fs::write(
+        &manifest.conmon_layout.conmon_pidfile,
+        format!("{}\n", i32::MAX),
+    )
+    .expect("dead conmon receipt should persist");
+    backend
+        .write_manifest(&manifest)
+        .expect("provider-owned source fixture should persist");
+
+    let fence =
+        SandboxRestartAttemptFence::new(source_attempt, attempt("wea_process_local_target"), 1)
+            .expect("restart fence should validate");
+    assert!(matches!(
+        backend
+            .quiesce_restart_source(&sandbox_id, &fence)
+            .expect("source should quiesce"),
+        crate::SandboxProvisionPhaseObservation::Succeeded { .. }
+    ));
+    assert!(matches!(
+        backend
+            .prepare_restart_target(&sandbox_id, &fence)
+            .expect("target should prepare"),
+        crate::SandboxProvisionPhaseObservation::Succeeded { .. }
+    ));
+    assert!(matches!(
+        backend
+            .attach_restart_retained_network_with_test_host(&sandbox_id, &fence)
+            .expect("first process should attach retained network state"),
+        crate::SandboxProvisionPhaseObservation::Succeeded { .. }
+    ));
+    let before = backend
+        .read_manifest(&sandbox_id)
+        .expect("attached manifest should read")
+        .expect("attached manifest should exist");
+    let segments_before = backend
+        .segment_allocator
+        .inspect_segments(&before.spec.tenant_id)
+        .expect("segment authority should inspect");
+    let pep_lease_before = before
+        .egress_proxy
+        .as_ref()
+        .expect("PEP assignment should remain")
+        .port_lease
+        .lease_id()
+        .clone();
+    drop(backend);
+
+    let fresh = KrunSandboxBackend::new(config)
+        .with_egress_pin_provider(Arc::new(FixedOciEgressPinProvider::ready()));
+    assert!(matches!(
+        fresh
+            .inspect_restart_retained_network(&sandbox_id, &fence)
+            .expect("inspection should report missing process-local PEP state"),
+        crate::SandboxProvisionPhaseObservation::InProgress { .. }
+    ));
+    assert!(matches!(
+        fresh
+            .attach_restart_retained_network_with_test_host(&sandbox_id, &fence)
+            .expect("execute should repair retained process-local state"),
+        crate::SandboxProvisionPhaseObservation::Succeeded { .. }
+    ));
+    let repaired = fresh
+        .read_manifest(&sandbox_id)
+        .expect("repaired manifest should read")
+        .expect("repaired manifest should exist");
+    assert_eq!(repaired.network_config, before.network_config);
+    assert_eq!(
+        repaired
+            .egress_proxy
+            .as_ref()
+            .expect("repaired PEP assignment should remain")
+            .port_lease
+            .lease_id(),
+        &pep_lease_before,
+        "repair must retain the stable PEP lease identity"
+    );
+    assert_eq!(
+        fresh
+            .segment_allocator
+            .inspect_segments(&repaired.spec.tenant_id)
+            .expect("segments should reinspect"),
+        segments_before,
+        "repair must not release or reallocate the retained segment"
     );
 }
 

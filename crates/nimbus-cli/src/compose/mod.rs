@@ -446,7 +446,6 @@ fn render_service_list_for_selection(
                     service_name: summary.service_name,
                     status: summary.status,
                     published_endpoints: summary.published_endpoints,
-                    restart_count: summary.restart_count,
                     last_exit_code: summary.last_exit_code,
                     shutdown_requested: summary.shutdown_requested,
                 })
@@ -475,7 +474,6 @@ fn render_service_list_for_selection(
                     service_name: summary.service_name,
                     status: summary.status,
                     published_endpoints: summary.published_endpoints,
-                    restart_count: summary.restart_count,
                     last_exit_code: summary.last_exit_code,
                     shutdown_requested: summary.shutdown_requested,
                 })

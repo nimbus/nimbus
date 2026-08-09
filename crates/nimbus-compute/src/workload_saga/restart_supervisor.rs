@@ -34,6 +34,14 @@ pub(super) struct RestartCandidateFailure {
 }
 
 impl RestartCandidateFailure {
+    pub(super) fn retained(key: WorkloadSagaKey, token: u64, message: impl Into<String>) -> Self {
+        Self {
+            key,
+            token,
+            message: message.into(),
+        }
+    }
+
     pub(super) fn key(&self) -> &WorkloadSagaKey {
         &self.key
     }
@@ -91,13 +99,16 @@ impl RetainedRestartState {
                 entries.remove(&key);
             }
             Err(message) => {
+                tracing::error!(
+                    saga_id = %key.saga_id(),
+                    %message,
+                    "retained restart candidate failed"
+                );
                 entries.insert(
                     key.clone(),
-                    RetainedRestartEntry::Failed(RestartCandidateFailure {
-                        key,
-                        token,
-                        message,
-                    }),
+                    RetainedRestartEntry::Failed(RestartCandidateFailure::retained(
+                        key, token, message,
+                    )),
                 );
             }
         }
@@ -154,12 +165,8 @@ impl RetainedRestartSupervisor {
         })
     }
 
-    /// Permit a later durable sweep to retry one exact observed failure.
-    #[cfg(test)]
-    pub(super) fn clear_failure_for_retry(
-        &self,
-        failure: &RestartCandidateFailure,
-    ) -> Result<bool, String> {
+    /// Retire one exact observed failure so only a later sweep can retry it.
+    fn retire_failure(&self, failure: &RestartCandidateFailure) -> Result<bool, String> {
         let mut entries = self.state.lock_entries()?;
         let is_same_failure = matches!(
             entries.get(failure.key()),
@@ -199,11 +206,7 @@ impl RetainedRestartSupervisor {
         match entries.get(&key) {
             Some(RetainedRestartEntry::Active { .. }) => return Ok(RestartTrack::Joined),
             Some(RetainedRestartEntry::Failed(failure)) => {
-                return Err(format!(
-                    "retained restart candidate {} failed: {}",
-                    failure.key().saga_id(),
-                    failure.message()
-                ));
+                return Ok(RestartTrack::Failed(failure.clone()));
             }
             None => {}
         }
@@ -238,6 +241,10 @@ impl RetainedRestartSupervisor {
 impl RestartSupervisor for RetainedRestartSupervisor {
     fn track(&self, record: WorkloadSagaRecord) -> Result<RestartTrack, String> {
         self.start(record)
+    }
+
+    fn acknowledge_failure(&self, failure: &RestartCandidateFailure) -> Result<bool, String> {
+        self.retire_failure(failure)
     }
 }
 

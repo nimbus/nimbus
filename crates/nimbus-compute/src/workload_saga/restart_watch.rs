@@ -17,6 +17,7 @@ use nimbus_workloads::{
 use thiserror::Error;
 use tokio::sync::{Mutex, Notify};
 
+use super::restart_supervisor::RestartCandidateFailure;
 use super::{WorkloadRestartCancellationToken, WorkloadSagaCoordinator};
 
 /// Hard work bound before the watch yields to its injected clock.
@@ -78,15 +79,19 @@ impl RestartHintHandle {
 }
 
 /// Whether one exact durable candidate started or joined retained work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum RestartTrack {
     Started,
     Joined,
+    Failed(RestartCandidateFailure),
 }
 
 /// Keyed retained-work boundary. The watch grants no provider authority.
 pub(super) trait RestartSupervisor: Send + Sync {
     fn track(&self, record: WorkloadSagaRecord) -> Result<RestartTrack, String>;
+
+    /// Retire one exact failure only after the current sweep observed it.
+    fn acknowledge_failure(&self, failure: &RestartCandidateFailure) -> Result<bool, String>;
 }
 
 /// Durable page, supervision, or configuration failure.
@@ -174,6 +179,7 @@ impl DurableRestartWatch {
         let mut pages = 0;
         let mut candidates = 0;
         let mut earliest_deadline: Option<WorkloadRestartNotBeforeUnixMillis> = None;
+        let mut observed_failures = Vec::new();
 
         while pages < MAX_RESTART_PAGES_PER_SWEEP {
             if self.cancellation.is_cancelled() {
@@ -193,9 +199,13 @@ impl DurableRestartWatch {
                     }
                     WorkloadRestartRecoveryDecision::Ready
                     | WorkloadRestartRecoveryDecision::Quiescent => {
-                        self.supervisor
+                        let track = self
+                            .supervisor
                             .track(record.clone())
                             .map_err(|message| RestartWatchError::Supervisor { message })?;
+                        if let RestartTrack::Failed(failure) = track {
+                            observed_failures.push(failure);
+                        }
                     }
                 }
             }
@@ -206,6 +216,19 @@ impl DurableRestartWatch {
             cursor = Some(next);
         }
         *retained_cursor = cursor;
+        for failure in observed_failures {
+            if self
+                .supervisor
+                .acknowledge_failure(&failure)
+                .map_err(|message| RestartWatchError::Supervisor { message })?
+            {
+                tracing::warn!(
+                    saga_id = %failure.key().saga_id(),
+                    message = failure.message(),
+                    "retained restart failure will be retried by a later durable sweep"
+                );
+            }
+        }
 
         Ok(RestartSweep {
             earliest_deadline,

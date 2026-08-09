@@ -202,7 +202,7 @@ fn intent(
         nimbus_workloads::WorkloadExecutionProviderId::for_registration_key("fixture-execution"),
     )
     .expect("fixture source evidence is valid");
-    WorkloadSagaIntent::new(
+    WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Sandbox,
         desired_state,
         WorkloadGeneration::new(generation),

@@ -696,6 +696,48 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
+    pub(crate) fn require_planned_machine_publication_withdrawal_fence(
+        &self,
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        plan_members: &[PortLeaseRequest],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        self.require_planned_machine_binding_leases(tenant_id, bindings, leases, plan_members)?;
+        let records =
+            self.port_lease_records_snapshot(leases, "planned machine publication withdrawal")?;
+        for ((binding, request), record) in bindings.iter().zip(leases).zip(records) {
+            let expected = provider_binding(
+                request,
+                planned_machine_forwarded_binding_addr(request, binding),
+                OciPortProvider::MachinePortProxy,
+            )?;
+            let live_or_ambiguous_effect = matches!(
+                record.phase(),
+                PortLeasePhase::Active
+                    | PortLeasePhase::Withdrawing
+                    | PortLeasePhase::CleanupPending
+            ) && record.binding() == Some(&expected)
+                && record.confirmed_stopped_binding().is_none();
+            let restart_retained = record.phase() == PortLeasePhase::Reserved
+                && record.binding().is_none()
+                && record.active_lifetime().is_none()
+                && record.failure().is_none()
+                && record.confirmed_stopped_binding() == Some(&expected);
+            if !(live_or_ambiguous_effect || restart_retained) {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "planned machine publication withdrawal for tenant {tenant_id} lacks exact compiler-owned MachinePortProxy authority for lease {} in phase {:?}",
+                        request.lease_id(),
+                        record.phase()
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Authenticate the immutable listener identities carried by terminal
     /// machine-publication evidence without reinterpreting the current lease
     /// phase as provider truth.
@@ -708,6 +750,17 @@ impl OciPortLeaseCoordinator {
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
         self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)
+    }
+
+    pub(crate) fn require_planned_machine_publication_identity(
+        &self,
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        plan_members: &[PortLeaseRequest],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        self.require_planned_machine_binding_leases(tenant_id, bindings, leases, plan_members)
     }
 
     #[cfg(test)]

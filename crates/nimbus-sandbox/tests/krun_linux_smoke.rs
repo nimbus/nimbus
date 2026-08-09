@@ -14,7 +14,7 @@ use nimbus_network::EndpointProtocol;
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
 use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
-    SandboxResourceLimits, SandboxRestartPolicy, SandboxRootSpec, SandboxSpec, SandboxStatus,
+    SandboxResourceLimits, SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
 
 #[path = "support/provision.rs"]
@@ -28,7 +28,5 @@ mod inspect;
 mod launch;
 #[path = "krun_linux_smoke/published_endpoints.rs"]
 mod published_endpoints;
-#[path = "krun_linux_smoke/restart.rs"]
-mod restart;
 #[path = "krun_linux_smoke/support.rs"]
 mod support;

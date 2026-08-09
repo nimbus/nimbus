@@ -17,12 +17,8 @@ use crate::backends::poll::poll_until_deadline;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxStatus;
 use crate::process::pid_is_alive;
-#[cfg(test)]
-use crate::spec::SandboxRestartPolicy;
 use crate::spec::SandboxSpec;
 
-const DEFAULT_RESTART_BACKOFF_INITIAL_MILLIS: u64 = 1_000;
-const DEFAULT_RESTART_BACKOFF_MAX_MILLIS: u64 = 60_000;
 pub(crate) const CREATOR_ATTEMPT_ANNOTATION: &str = "com.nimbus.creator-attempt";
 const RUNTIME_STATE_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -87,29 +83,6 @@ impl RestartLaunchTestProbe {
             .expect("restart launch test probe lock should not be poisoned")
             .effects
     }
-}
-
-#[cfg(test)]
-pub(crate) fn restart_policy_allows_restart(
-    policy: SandboxRestartPolicy,
-    exit_code: i32,
-    restart_count: u32,
-) -> bool {
-    match policy {
-        SandboxRestartPolicy::Never => false,
-        SandboxRestartPolicy::OnFailure { max_restarts } => {
-            exit_code != 0 && restart_count < max_restarts
-        }
-        SandboxRestartPolicy::Always { max_restarts } => restart_count < max_restarts,
-    }
-}
-
-pub(crate) fn restart_backoff_delay(restart_count: u32) -> Duration {
-    let initial = u128::from(DEFAULT_RESTART_BACKOFF_INITIAL_MILLIS);
-    let max = u128::from(DEFAULT_RESTART_BACKOFF_MAX_MILLIS);
-    let multiplier = 1_u128 << restart_count.min(31);
-    let millis = initial.saturating_mul(multiplier).min(max);
-    Duration::from_millis(millis as u64)
 }
 
 pub(crate) fn ensure_linux_host(backend_name: &str) -> Result<()> {

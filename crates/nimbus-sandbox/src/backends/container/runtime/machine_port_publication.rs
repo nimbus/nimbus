@@ -255,20 +255,50 @@ impl MachinePortPublicationExpectation {
                 }
             }
             Some(MachinePortPublicationPhase::Withdrawing) => {
-                port_leases.require_machine_publication_withdrawal_fence(
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                    &manifest.spec.port_bindings,
-                    &manifest.port_leases,
-                )?;
+                if manifest
+                    .port_leases
+                    .first()
+                    .is_some_and(|request| request.plan_id().is_some())
+                {
+                    let plan_members =
+                        ContainerSandboxBackend::provision_port_plan_witness(manifest);
+                    port_leases.require_planned_machine_publication_withdrawal_fence(
+                        &manifest.spec.tenant_id,
+                        &manifest.spec.port_bindings,
+                        &manifest.port_leases,
+                        &plan_members,
+                    )?;
+                } else {
+                    port_leases.require_machine_publication_withdrawal_fence(
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                        &manifest.spec.port_bindings,
+                        &manifest.port_leases,
+                    )?;
+                }
             }
             Some(MachinePortPublicationPhase::Absent) => {
-                port_leases.require_machine_publication_identity(
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                    &manifest.spec.port_bindings,
-                    &manifest.port_leases,
-                )?;
+                if manifest
+                    .port_leases
+                    .first()
+                    .is_some_and(|request| request.plan_id().is_some())
+                {
+                    let plan_members =
+                        ContainerSandboxBackend::provision_port_plan_witness(manifest);
+                    port_leases.require_planned_machine_publication_identity(
+                        &manifest.spec.tenant_id,
+                        &manifest.spec.port_bindings,
+                        &manifest.port_leases,
+                        &plan_members,
+                    )?;
+                } else {
+                    port_leases.require_machine_publication_identity(
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                        &manifest.spec.port_bindings,
+                        &manifest.port_leases,
+                    )?;
+                }
             }
             #[cfg(test)]
             None => {

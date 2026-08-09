@@ -125,7 +125,6 @@ pub(super) fn write_manifest(
             "oci_log": container_dir.join("oci.log")
         },
         "last_exit_code": null,
-        "restart_count": 0,
         "shutdown_requested": matches!(status, SandboxStatus::Stopped),
         "status": status
     });
@@ -187,7 +186,6 @@ pub(super) fn write_container_manifest(
             "oci_log": container_dir.join("oci.log")
         },
         "last_exit_code": null,
-        "restart_count": 0,
         "shutdown_requested": matches!(status, SandboxStatus::Stopped),
         "status": status
     });

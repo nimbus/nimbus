@@ -6,12 +6,14 @@ use std::{
 use nimbus_core::TenantId;
 use nimbus_workloads::{
     WorkloadRestartCandidatePage, WorkloadRestartCandidatePageRequest, WorkloadRestartDisposition,
-    WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy, WorkloadSagaCommit,
-    WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaPage, WorkloadSagaPageRequest,
-    WorkloadSagaStore, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    WorkloadRestartEffectResult, WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPhase,
+    WorkloadRestartPolicy, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
+    WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaStore,
+    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
 };
 
 use super::*;
+use crate::workload_saga::recovery::tests::provision_record;
 use crate::workload_saga::{decide_restart_admission, decide_restart_progress, test_support};
 
 #[derive(Debug, Default)]
@@ -137,6 +139,96 @@ fn pending_command(label: &str) -> (WorkloadSagaRecord, ProposedWorkloadRestartT
     (withdrawal, pending)
 }
 
+fn succeed_restart_command(record: WorkloadSagaRecord, label: &str) -> WorkloadSagaRecord {
+    let active = record
+        .restart_state()
+        .active()
+        .expect("restart should remain active");
+    let request_id = active.admission().request_id().clone();
+    let pending = record
+        .claim_restart_command(&request_id)
+        .expect("restart step should claim");
+    let claim = pending
+        .restart_state()
+        .active()
+        .and_then(|active| active.disposition().claim())
+        .expect("restart step should retain its claim")
+        .clone();
+    pending
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Succeeded {
+                evidence: WorkloadRestartEvidenceDigest::sha256(label),
+            },
+        )
+        .expect("restart step should succeed")
+}
+
+fn published_observation_inspection(label: &str) -> WorkloadSagaRecord {
+    let observed = provision_record(
+        label,
+        WorkloadSagaPhase::Observed,
+        nimbus_workloads::WorkloadActivationIntent::ActivateWhenAttached,
+        nimbus_workloads::WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let request = super::super::WorkloadRestartAdmissionRequest::for_explicit(
+        &observed,
+        label,
+        WorkloadRestartNotBeforeUnixMillis::new(0),
+    )
+    .expect("published restart request should validate");
+    let super::super::WorkloadRestartAdmissionDecision::Transition(admitted) =
+        decide_restart_admission(&observed, &request).expect("published restart should admit")
+    else {
+        panic!("published restart should transition");
+    };
+    let request_id = admitted
+        .restart_state()
+        .active()
+        .expect("published restart should remain active")
+        .admission()
+        .request_id()
+        .clone();
+    let mut record = admitted
+        .advance_restart_without_effect(&request_id)
+        .expect("published restart should withdraw publication first");
+    for step in ["withdrawn", "quiesced"] {
+        record = succeed_restart_command(record, step);
+    }
+    let due = record
+        .restart_state()
+        .active()
+        .expect("published restart should remain active")
+        .admission()
+        .not_before_unix_millis();
+    record = record
+        .advance_scheduled_restart(&request_id, due)
+        .expect("published restart should become due");
+    for step in [
+        "prepared",
+        "attached",
+        "prerequisites",
+        "activated",
+        "ready",
+        "published",
+    ] {
+        record = succeed_restart_command(record, step);
+    }
+    let pending = record
+        .claim_restart_command(&request_id)
+        .expect("publication observation should claim");
+    let claim = pending
+        .restart_state()
+        .active()
+        .and_then(|active| active.disposition().claim())
+        .expect("publication observation should retain its claim")
+        .clone();
+    assert_eq!(claim.step(), WorkloadRestartStep::ObservePublication);
+    pending
+        .restart_dispatch_to_inspection(&claim)
+        .expect("fresh-process recovery should persist observation inspection")
+}
+
 async fn directly_confirmed(label: &str) -> (ConfirmedWorkloadRestartTransition, Arc<TestStore>) {
     let (loaded, proposed) = pending_command(label);
     let store = TestStore::sequenced(vec![Ok(None)], vec![Ok(WorkloadSagaCommit::Applied)]);
@@ -211,6 +303,7 @@ async fn confirmed_restart_command_is_private_and_complete() {
     assert_eq!(command.confirmed_revision(), record.revision());
     assert_eq!(command.inspection_version(), None);
     assert_eq!(command.provider_selection(), admission.provider_selection());
+    assert_eq!(command.successor_veto_generation(), None);
     assert_eq!(command.step(), command.claim().step());
     assert_eq!(command.mode(), WorkloadRestartCommandMode::Execute);
     assert_eq!(command.executable(), record.active_intent().executable());
@@ -346,6 +439,261 @@ async fn authenticated_absence_retries_same_attempt_at_next_dispatch_epoch() {
         retry_claim.dispatch_epoch(),
         command.dispatch_epoch().checked_next().unwrap()
     );
+}
+
+#[tokio::test]
+async fn fresh_process_observation_absence_republishes_once_before_observing_again() {
+    let inspection = published_observation_inspection("fresh-observation-absence");
+    let recovery_store = TestStore::sequenced(
+        vec![Ok(Some(inspection.clone()))],
+        vec![Ok(WorkloadSagaCommit::Applied)],
+    );
+    let recovery_coordinator = WorkloadSagaCoordinator::new(recovery_store.clone());
+    let recovered = recovery_coordinator
+        .inspect_confirmed_restart(inspection.key())
+        .await
+        .expect("fresh process should recover exact observation inspection");
+    let (record, observe) = confirmed_parts(&recovered);
+    assert_eq!(observe.step(), WorkloadRestartStep::ObservePublication);
+    assert_eq!(observe.mode(), WorkloadRestartCommandMode::Inspect);
+    let observe_epoch = observe.dispatch_epoch();
+    let attempt_id = observe.attempt_id().clone();
+    let result = WorkloadRestartCommandResult::for_command(
+        observe,
+        WorkloadRestartCommandOutcome::AuthenticatedAbsent {
+            evidence: WorkloadRestartEvidenceDigest::sha256("fresh-observation-absence"),
+        },
+    );
+    let WorkloadRestartDecision::Proposed(republish) =
+        apply_restart_result(record, observe, result).expect("absence should require republish")
+    else {
+        panic!("observation absence should propose one republish");
+    };
+    assert_eq!(
+        republish.action_after_confirmation(),
+        Some(WorkloadRestartSymbolicAction::StartExactAttempt)
+    );
+    assert_eq!(
+        republish
+            .candidate()
+            .restart_state()
+            .active()
+            .expect("republish should remain active")
+            .phase(),
+        WorkloadRestartPhase::PublicationPending
+    );
+
+    let convergence_store =
+        TestStore::sequenced(vec![Ok(None)], vec![Ok(WorkloadSagaCommit::Applied); 5]);
+    let convergence_coordinator = WorkloadSagaCoordinator::new(convergence_store.clone());
+    let confirmed = convergence_coordinator
+        .compare_and_swap_restart_result(record, &republish)
+        .await
+        .expect("republish should confirm");
+    let publish = confirmed
+        .command()
+        .expect("republish should issue a command");
+    assert_eq!(publish.step(), WorkloadRestartStep::Publish);
+    assert_eq!(publish.mode(), WorkloadRestartCommandMode::Execute);
+    assert_eq!(publish.attempt_id(), &attempt_id);
+    assert_eq!(
+        publish.dispatch_epoch(),
+        observe_epoch.checked_next().unwrap()
+    );
+    let publish_result = WorkloadRestartCommandResult::for_command(
+        publish,
+        WorkloadRestartCommandOutcome::Succeeded {
+            evidence: WorkloadRestartEvidenceDigest::sha256("republished"),
+        },
+    );
+    let WorkloadRestartDecision::Proposed(published) = apply_restart_result(
+        confirmed.confirmed_record().unwrap(),
+        publish,
+        publish_result,
+    )
+    .expect("republish should produce observation state") else {
+        panic!("republish success should produce a durable candidate");
+    };
+    let published = convergence_coordinator
+        .compare_and_swap_restart_result(confirmed.confirmed_record().unwrap(), &published)
+        .await
+        .expect("republish success should confirm");
+    let published_record = published
+        .confirmed_record()
+        .expect("republish success should expose durable truth");
+    let WorkloadRestartDecision::Proposed(observation) =
+        decide_restart_progress(published_record, WorkloadRestartNotBeforeUnixMillis::new(0))
+            .expect("republished endpoint should require observation")
+    else {
+        panic!("republished endpoint should claim observation");
+    };
+    let observed = convergence_coordinator
+        .claim_restart_command(published_record, &observation)
+        .await
+        .expect("publication observation should confirm as inspection");
+    let observation_command = observed
+        .command()
+        .expect("publication observation should issue a command");
+    assert_eq!(
+        observation_command.step(),
+        WorkloadRestartStep::ObservePublication
+    );
+    assert_eq!(
+        observation_command.mode(),
+        WorkloadRestartCommandMode::Inspect
+    );
+    let observation_result = WorkloadRestartCommandResult::for_command(
+        observation_command,
+        WorkloadRestartCommandOutcome::Succeeded {
+            evidence: WorkloadRestartEvidenceDigest::sha256("republish-observed"),
+        },
+    );
+    let WorkloadRestartDecision::Proposed(completed) = apply_restart_result(
+        observed.confirmed_record().unwrap(),
+        observation_command,
+        observation_result,
+    )
+    .expect("publication observation should complete the restart") else {
+        panic!("publication observation should produce one completion candidate");
+    };
+    let completed = convergence_coordinator
+        .compare_and_swap_restart_result(observed.confirmed_record().unwrap(), &completed)
+        .await
+        .expect("publication observation completion should confirm");
+    assert!(
+        completed
+            .confirmed_record()
+            .expect("restart completion should expose durable truth")
+            .restart_state()
+            .active()
+            .is_none()
+    );
+    assert_eq!(convergence_store.counts(), (0, 5));
+
+    let replay_store = TestStore::sequenced(
+        vec![Ok(None)],
+        vec![
+            Ok(WorkloadSagaCommit::Unchanged),
+            Ok(WorkloadSagaCommit::Applied),
+        ],
+    );
+    let replay_coordinator = WorkloadSagaCoordinator::new(replay_store.clone());
+    let replay = replay_coordinator
+        .compare_and_swap_restart_result(record, &republish)
+        .await
+        .expect("republish replay should inspect");
+    let replay_command = replay.command().expect("replay should issue inspection");
+    assert_eq!(replay_command.step(), WorkloadRestartStep::Publish);
+    assert_eq!(replay_command.mode(), WorkloadRestartCommandMode::Inspect);
+    assert_eq!(replay_command.dispatch_epoch(), publish.dispatch_epoch());
+    assert_eq!(recovery_store.counts(), (1, 0));
+    assert_eq!(replay_store.counts(), (0, 2));
+}
+
+#[tokio::test]
+async fn execute_absence_with_successor_requires_exact_inspection_before_terminal_veto() {
+    let (confirmed, _) = directly_confirmed("execute-absence-successor").await;
+    let (record, execute) = confirmed_parts(&confirmed);
+    assert_eq!(execute.mode(), WorkloadRestartCommandMode::Execute);
+    assert_eq!(execute.successor_veto_generation(), None);
+    let successor = test_support::record_with_successor(record, "execute-absence-successor-next");
+    assert!(matches!(
+        successor
+            .restart_state()
+            .active()
+            .expect("successor should retain issued restart evidence")
+            .disposition(),
+        WorkloadRestartDisposition::InspectionRequired { claim }
+            if claim == execute.claim()
+    ));
+    assert_eq!(
+        decide_restart_progress(&successor, WorkloadRestartNotBeforeUnixMillis::new(0)).unwrap(),
+        WorkloadRestartDecision::InspectExact(Box::new(execute.claim().clone()))
+    );
+    let execute_absence = WorkloadRestartCommandResult::for_command(
+        execute,
+        WorkloadRestartCommandOutcome::AuthenticatedAbsent {
+            evidence: WorkloadRestartEvidenceDigest::sha256("execute-time-absence"),
+        },
+    );
+    let WorkloadRestartDecision::Proposed(inspection) =
+        apply_restart_result(record, execute, execute_absence)
+            .expect("execute-time absence should remain ambiguous")
+    else {
+        panic!("execute-time absence should persist inspection state");
+    };
+    assert_eq!(
+        inspection.action_after_confirmation(),
+        Some(WorkloadRestartSymbolicAction::InspectExactAttempt)
+    );
+    assert!(matches!(
+        inspection
+            .candidate()
+            .restart_state()
+            .active()
+            .expect("inspection should retain active restart")
+            .disposition(),
+        WorkloadRestartDisposition::InspectionRequired { claim }
+            if claim == execute.claim()
+    ));
+    assert!(
+        apply_restart_result(
+            &successor,
+            execute,
+            WorkloadRestartCommandResult::for_command(
+                execute,
+                WorkloadRestartCommandOutcome::AuthenticatedAbsent {
+                    evidence: WorkloadRestartEvidenceDigest::sha256("stale-execute-absence"),
+                },
+            ),
+        )
+        .is_err()
+    );
+
+    let store = TestStore::sequenced(
+        vec![Ok(Some(successor.clone()))],
+        vec![Ok(WorkloadSagaCommit::Applied)],
+    );
+    let coordinator = WorkloadSagaCoordinator::new(store.clone());
+    let recovered = coordinator
+        .inspect_confirmed_restart(successor.key())
+        .await
+        .expect("successor should retain exact inspection authority");
+    let (record, inspect) = confirmed_parts(&recovered);
+    assert_eq!(inspect.mode(), WorkloadRestartCommandMode::Inspect);
+    assert_eq!(inspect.dispatch_epoch(), execute.dispatch_epoch());
+    assert_eq!(
+        inspect.successor_veto_generation(),
+        successor
+            .successor_intent()
+            .map(|intent| intent.generation())
+    );
+    let inspected_absence = WorkloadRestartCommandResult::for_command(
+        inspect,
+        WorkloadRestartCommandOutcome::AuthenticatedAbsent {
+            evidence: WorkloadRestartEvidenceDigest::sha256("inspected-absence"),
+        },
+    );
+    let WorkloadRestartDecision::Proposed(terminal) =
+        apply_restart_result(record, inspect, inspected_absence)
+            .expect("exact inspection absence should complete the successor fence")
+    else {
+        panic!("inspected absence should produce one terminal candidate");
+    };
+    assert!(terminal.action_after_confirmation().is_none());
+    assert!(matches!(
+        terminal
+            .candidate()
+            .restart_state()
+            .active()
+            .expect("terminal veto should retain issued evidence")
+            .disposition(),
+        WorkloadRestartDisposition::SuccessorVetoed {
+            claim,
+            result: WorkloadRestartEffectResult::AuthenticatedAbsent { .. },
+        } if claim == inspect.claim()
+    ));
+    assert_eq!(store.counts(), (1, 0));
 }
 
 #[tokio::test]

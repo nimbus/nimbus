@@ -361,6 +361,17 @@ pub fn decide_restart_progress(
     let Some(active) = record.restart_state().active() else {
         return Ok(WorkloadRestartDecision::Wait);
     };
+    if active.successor_veto_generation().is_some() {
+        return Ok(match active.disposition() {
+            WorkloadRestartDisposition::DispatchPending { claim }
+            | WorkloadRestartDisposition::InspectionRequired { claim } => {
+                WorkloadRestartDecision::InspectExact(Box::new(claim.clone()))
+            }
+            WorkloadRestartDisposition::Ready { .. }
+            | WorkloadRestartDisposition::DefiniteFailure { .. }
+            | WorkloadRestartDisposition::SuccessorVetoed { .. } => WorkloadRestartDecision::Wait,
+        });
+    }
     match active.disposition() {
         WorkloadRestartDisposition::DispatchPending { claim }
         | WorkloadRestartDisposition::InspectionRequired { claim } => {
@@ -370,6 +381,9 @@ pub fn decide_restart_progress(
         }
         WorkloadRestartDisposition::DefiniteFailure { .. } => {
             return Ok(WorkloadRestartDecision::DefiniteFailure);
+        }
+        WorkloadRestartDisposition::SuccessorVetoed { .. } => {
+            return Ok(WorkloadRestartDecision::Wait);
         }
         WorkloadRestartDisposition::Ready { .. } => {}
     }
@@ -426,9 +440,20 @@ pub fn decide_restart_progress(
         | nimbus_workloads::WorkloadRestartPhase::PublicationPending
         | nimbus_workloads::WorkloadRestartPhase::ObservationPending => {
             record.claim_restart_command(request_id).map(|candidate| {
+                let action = candidate
+                    .restart_state()
+                    .active()
+                    .and_then(|active| active.disposition().claim())
+                    .map_or(WorkloadRestartSymbolicAction::StartExactAttempt, |claim| {
+                        if claim.step().is_inspection() {
+                            WorkloadRestartSymbolicAction::InspectExactAttempt
+                        } else {
+                            WorkloadRestartSymbolicAction::StartExactAttempt
+                        }
+                    });
                 WorkloadRestartDecision::Proposed(ProposedWorkloadRestartTransition::new(
                     candidate,
-                    Some(WorkloadRestartSymbolicAction::StartExactAttempt),
+                    Some(action),
                 ))
             })
         }

@@ -11,8 +11,9 @@ pub use host_lifecycle::{
     HostLifecycleBackendCapabilities, HostLifecycleBackendKind, HostLifecycleFuture,
     HostLifecycleJournalSelectorEvidence, HostLifecyclePlan, HostLifecycleProperty,
     HostLifecyclePropertySet, HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason,
-    HostRestartPolicy, RunnerKind, RunnerSpec, RuntimePoolTrustClass, RuntimePoolTrustState,
-    SystemdUnitKind, SystemdUnitName, TenantWorkloadLifecycleEvidence,
+    HostRestartPolicy, HostRestartProviderClaim, HostRestartProviderClaimInput, RunnerKind,
+    RunnerSpec, RuntimePoolTrustClass, RuntimePoolTrustState, SystemdUnitKind, SystemdUnitName,
+    TenantWorkloadLifecycleEvidence,
 };
 pub use memory_pressure::{
     CgroupV2CpuPressureThresholds, CgroupV2HostPressureSource, CgroupV2MemoryPressureSource,

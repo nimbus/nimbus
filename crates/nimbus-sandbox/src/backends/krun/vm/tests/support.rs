@@ -25,8 +25,7 @@ pub(super) use super::super::{
     KrunProviderFailureCleanupState, KrunRuntimeAbsenceProof, KrunSandboxBackend,
     KrunSandboxBackendConfig, KrunSandboxManifest, KrunStartMode, KrunStartPlan,
     configured_stop_signal, configured_stop_timeout, desired_krun_vm_config, krun_vm_config_path,
-    parse_guest_user, published_endpoints, restart_backoff_delay, restart_policy_allows_restart,
-    running_status, slugify, visible_published_endpoints,
+    parse_guest_user, published_endpoints, running_status, slugify, visible_published_endpoints,
 };
 pub(super) use crate::backend::{SandboxBackend, SandboxBackendKind};
 pub(super) use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
@@ -261,8 +260,6 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
             delete_command: CommandSpec::new("/bin/true"),
         },
         last_exit_code: None,
-        restart_count: 0,
-        next_restart_at_millis: None,
         start_mode,
         shutdown_requested: false,
         status: SandboxStatus::Starting,

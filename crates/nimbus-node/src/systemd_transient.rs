@@ -11,7 +11,7 @@ use super::{
     HostLifecycleStatusReason, HostRestartPolicy, LocalEnforcementBinding, SystemdUnitKind,
     SystemdUnitName, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase, WorkloadExecutionId,
 };
-use crate::host_lifecycle::{HostActivationFence, HostProviderPlan};
+use crate::host_lifecycle::{HostActivationFence, HostProviderPlan, HostRestartProviderClaim};
 
 const WORKLOAD_EXECUTION_JOURNAL_FIELD: &str = "NIMBUS_WORKLOAD_EXECUTION_ID";
 
@@ -169,6 +169,70 @@ where
         }
         observed.to_host_lifecycle_status()
     }
+
+    async fn inspect_restart_source(
+        &self,
+        claim: &HostRestartProviderClaim,
+    ) -> Result<SystemdUnitStatus> {
+        self.ensure_capable()?;
+        let observed = self
+            .client
+            .inspect_unit(SystemdInspectUnitRequest::for_execution(
+                claim.source_execution().execution_id().clone(),
+            )?)
+            .await?;
+        if observed.is_absent() {
+            claim.require_step(nimbus_workloads::WorkloadRestartStep::QuiesceExecution)?;
+            return Ok(observed);
+        }
+        observed
+            .activation_fence()
+            .ok_or_else(|| {
+                Error::PermissionDenied(format!(
+                    "systemd restart source unit {} has no retained activation fence",
+                    observed.unit_name().as_str()
+                ))
+            })?
+            .authenticate_restart_source(claim)?;
+        Ok(observed)
+    }
+
+    async fn inspect_restart_target(
+        &self,
+        claim: &HostRestartProviderClaim,
+        request: HostLifecycleRequest,
+    ) -> Result<HostLifecycleStatus> {
+        let plan = HostProviderPlan::from_restart(claim, request)?;
+        if plan.backend() != HostLifecycleBackendKind::SystemdTransientUnit {
+            return Err(Error::InvalidInput(
+                "SystemdTransientUnitBackend exact restart inspection requires a systemd_transient_unit request"
+                    .to_owned(),
+            ));
+        }
+        self.ensure_capable()?;
+        let observed = self
+            .client
+            .inspect_unit(SystemdInspectUnitRequest::for_execution(
+                plan.execution_id().clone(),
+            )?)
+            .await?;
+        if observed.is_absent() {
+            return Err(Error::NotFound(format!(
+                "systemd unit {} is absent",
+                plan.unit_name().as_str()
+            )));
+        }
+        observed
+            .activation_fence()
+            .ok_or_else(|| {
+                Error::PermissionDenied(format!(
+                    "systemd restart target unit {} has no retained activation fence",
+                    observed.unit_name().as_str()
+                ))
+            })?
+            .authenticate_restart_target(claim)?;
+        observed.to_host_lifecycle_status()
+    }
 }
 
 impl<C> HostLifecycleBackend for SystemdTransientUnitBackend<C>
@@ -264,6 +328,68 @@ where
             }
             self.inspect_provider(&plan).await
         })
+    }
+
+    fn quiesce_restart_exact<'a>(
+        &'a self,
+        claim: HostRestartProviderClaim,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            claim.require_execute_authority()?;
+            let observed = self.inspect_restart_source(&claim).await?;
+            if observed.active_state() == "inactive" {
+                return observed.to_host_lifecycle_status();
+            }
+            let request = SystemdStopUnitRequest::for_execution(
+                claim.source_execution().execution_id().clone(),
+            )?;
+            match self.client.stop_unit(request).await {
+                Ok(response) => response.status().to_host_lifecycle_status(),
+                Err(stop_error) => match self.inspect_restart_source(&claim).await {
+                    Ok(observed) if observed.active_state() == "inactive" => {
+                        observed.to_host_lifecycle_status()
+                    }
+                    _ => Err(stop_error),
+                },
+            }
+        })
+    }
+
+    fn inspect_restart_quiescence<'a>(
+        &'a self,
+        claim: HostRestartProviderClaim,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            self.inspect_restart_source(&claim)
+                .await?
+                .to_host_lifecycle_status()
+        })
+    }
+
+    fn activate_restart_exact<'a>(
+        &'a self,
+        claim: HostRestartProviderClaim,
+        request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            claim.require_execute_authority()?;
+            let plan = HostProviderPlan::from_restart(&claim, request)?;
+            if plan.backend() != HostLifecycleBackendKind::SystemdTransientUnit {
+                return Err(Error::InvalidInput(
+                    "SystemdTransientUnitBackend exact restart activation requires a systemd_transient_unit request"
+                        .to_owned(),
+                ));
+            }
+            self.activate_provider_exact(&plan).await
+        })
+    }
+
+    fn inspect_restart_activation<'a>(
+        &'a self,
+        claim: HostRestartProviderClaim,
+        request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move { self.inspect_restart_target(&claim, request).await })
     }
 }
 
@@ -817,6 +943,14 @@ pub struct SystemdUnitStatus {
     cgroup_path: String,
     journal_selectors: Vec<SystemdJournalSelector>,
     activation_fence: Option<HostActivationFence>,
+    #[serde(skip)]
+    presence: SystemdUnitPresence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SystemdUnitPresence {
+    Present,
+    ExplicitlyAbsent,
 }
 
 impl SystemdUnitStatus {
@@ -841,7 +975,18 @@ impl SystemdUnitStatus {
             cgroup_path,
             journal_selectors,
             activation_fence: None,
+            presence: SystemdUnitPresence::Present,
         })
+    }
+
+    #[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
+    pub(crate) fn explicitly_absent(
+        execution_id: WorkloadExecutionId,
+        unit_name: SystemdUnitName,
+    ) -> Result<Self> {
+        let mut status = Self::new(execution_id, unit_name, "inactive", "dead")?;
+        status.presence = SystemdUnitPresence::ExplicitlyAbsent;
+        Ok(status)
     }
 
     pub fn with_job_path(mut self, job_path: impl Into<String>) -> Result<Self> {
@@ -918,9 +1063,7 @@ impl SystemdUnitStatus {
     }
 
     fn is_absent(&self) -> bool {
-        self.active_state == "inactive"
-            && self.sub_state == "dead"
-            && self.activation_fence.is_none()
+        self.presence == SystemdUnitPresence::ExplicitlyAbsent
     }
 }
 

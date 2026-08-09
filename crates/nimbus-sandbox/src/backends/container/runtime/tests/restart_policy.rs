@@ -6,64 +6,6 @@ use crate::inspection::{
     SandboxRestartIneligibility,
 };
 
-#[test]
-fn restart_decision_keeps_failed_container_starting_until_backoff_elapses() {
-    let temp_dir = TempDir::new().expect("tempdir should build");
-    let backend =
-        ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
-    let mut manifest = backend
-        .plan_start_with_id(
-            &sample_spec().with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 1 }),
-            &sandbox_id(),
-            None,
-            None,
-        )
-        .expect("plan should lower")
-        .manifest;
-    std::fs::write(&manifest.conmon_layout.exit_status_file, "42\n")
-        .expect("exit status should write");
-    manifest.next_restart_at_millis = Some(1_500);
-
-    let decision =
-        mark_restart_decision_after_exit(&mut manifest, 1_000).expect("restart should evaluate");
-
-    assert_eq!(decision, ContainerRestartDecision::WaitingForBackoff);
-    assert_eq!(manifest.last_exit_code, Some(42));
-    assert_eq!(manifest.restart_count, 0);
-    assert_eq!(manifest.next_restart_at_millis, Some(1_500));
-    assert_eq!(manifest.status, SandboxStatus::Starting);
-    assert_eq!(manifest.handle.status, SandboxStatus::Starting);
-}
-
-#[test]
-fn restart_decision_counts_due_failed_container_restart() {
-    let temp_dir = TempDir::new().expect("tempdir should build");
-    let backend =
-        ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
-    let mut manifest = backend
-        .plan_start_with_id(
-            &sample_spec().with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 2 }),
-            &sandbox_id(),
-            None,
-            None,
-        )
-        .expect("plan should lower")
-        .manifest;
-    std::fs::write(&manifest.conmon_layout.exit_status_file, "42\n")
-        .expect("exit status should write");
-    manifest.next_restart_at_millis = Some(0);
-
-    let decision =
-        mark_restart_decision_after_exit(&mut manifest, 1_000).expect("restart should evaluate");
-
-    assert_eq!(decision, ContainerRestartDecision::RestartNow);
-    assert_eq!(manifest.last_exit_code, Some(42));
-    assert_eq!(manifest.restart_count, 1);
-    assert_eq!(manifest.next_restart_at_millis, None);
-    assert_eq!(manifest.status, SandboxStatus::Starting);
-    assert_eq!(manifest.handle.status, SandboxStatus::Starting);
-}
-
 /// NNC0.6a regression for NNCF20. Inspection races a durable withdrawal and
 /// must return the coordinator's current retained snapshot without entering
 /// the provider-launch authority that the historical fail-before exposed.
@@ -118,7 +60,6 @@ fn nnc0_6a_container_inspect_must_not_restart_after_withdrawal() {
             manifest.handle.id
         ),
     ]);
-    manifest.next_restart_at_millis = Some(0);
     std::fs::write(&manifest.conmon_layout.exit_status_file, "42\n")
         .expect("failed exit should persist");
     backend
@@ -146,9 +87,6 @@ fn nnc0_6a_container_inspect_must_not_restart_after_withdrawal() {
         inspected.restart,
         SandboxRestartAssessment::Candidate {
             exit_code: 42,
-            completed_restarts: 0,
-            retry_delay_millis: 1_000,
-            persisted_not_before_millis: Some(0),
             blocker: None,
         }
     );
@@ -195,7 +133,6 @@ fn nnc0_6a_container_inspect_must_not_restart_after_withdrawal() {
 
     let mut withdrawn = manifest;
     withdrawn.shutdown_requested = true;
-    withdrawn.next_restart_at_millis = None;
     withdrawn.status = SandboxStatus::Stopping;
     withdrawn.handle.status = SandboxStatus::Stopping;
     withdrawn.handle.published_endpoints.clear();

@@ -42,6 +42,9 @@ run_self_test() {
     "forgeable-constructor|restart-contract/command: confirmed restart commands are forgeable or incompletely fenced"
     "bypass-admission-cas|restart-contract/reducer: compute is not the sole CAS restart admission authority"
     "direct-ambiguity-retry|restart-contract/ambiguity: ambiguous restart effects do not inspect before exact-absence retry"
+    "swapped-ambiguity-outcomes|restart-contract/ambiguity: ambiguous restart effects do not inspect before exact-absence retry"
+    "result-cas-before-provider-effect|restart-contract/readiness: activation or callback fencing can bypass attachment and PEP readiness"
+    "duplicate-restart-authority|restart-contract/reducer: compute is not the sole CAS restart admission authority"
     "reset-count|restart-contract/schedule: durable count, deadline, or deterministic-clock behavior is incomplete"
     "reset-deadline|restart-contract/schedule: durable count, deadline, or deterministic-clock behavior is incomplete"
     "withdrawal-loses|restart-contract/withdrawal: withdrawal or successor does not veto restart effects"
@@ -54,6 +57,18 @@ run_self_test() {
     "node-restart|restart-contract/node: tenant workload node providers do not enforce Restart=No"
     "machine-fence-discard|restart-contract/machine: forwarded restart command drops a saga or inspection fence"
     "backend-local-scheduler|restart-contract/scheduler: provider-local restart scheduling or obsolete deadline state remains"
+    "service-local-scheduler|restart-contract/scheduler: provider-local restart scheduling or obsolete deadline state remains"
+    "node-local-scheduler|restart-contract/scheduler: provider-local restart scheduling or obsolete deadline state remains"
+    "cli-local-scheduler|restart-contract/scheduler: provider-local restart scheduling or obsolete deadline state remains"
+    "server-local-scheduler|restart-contract/scheduler: provider-local restart scheduling or obsolete deadline state remains"
+    "missing-test-attribute|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "empty-test-body|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "helper-only-test-body|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "declaration-only-test-body|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "identifier-only-test-body|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "tautological-test-assertion|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "comment-only-test-assertion|restart-contract/reducer: compute is not the sole CAS restart admission authority"
+    "string-only-test-assertion|restart-contract/reducer: compute is not the sole CAS restart admission authority"
     "missing-behavior-proof|restart-contract/behavior: required restart behavior and recovery proofs are incomplete"
     "missing-ledger-token|restart-contract/ledger: plan and proof do not retain the NNC6.4a acceptance and review tokens"
     "unexpected-path|restart-contract/paths: NNC6.4a changed a path outside the frozen allowlist"
@@ -125,12 +140,12 @@ run_self_test() {
       "${passed}" "${failures}"
     return 1
   fi
-  if [ "${passed}" -ne 71 ]; then
-    printf 'NNC6.4a restart contract self-test: expected 71 mutations, observed %d\n' \
+  if [ "${passed}" -ne 86 ]; then
+    printf 'NNC6.4a restart contract self-test: expected 86 mutations, observed %d\n' \
       "${passed}"
     return 1
   fi
-  printf 'NNC6.4a restart contract self-test: 71 passed, 0 failed\n'
+  printf 'NNC6.4a restart contract self-test: 86 passed, 0 failed\n'
 }
 
 case "${1:-}" in

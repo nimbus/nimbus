@@ -320,24 +320,19 @@ impl PreparedMachinePortProxy {
             route,
             release_authority,
         } = preparation;
-        match release_authority {
-            MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { plan_members, .. } => {
-                port_lease_coordinator.require_planned_machine_binding_leases(
-                    tenant_id,
-                    std::slice::from_ref(binding),
-                    std::slice::from_ref(port_lease),
-                    plan_members,
-                )?;
-            }
-            MachinePortPreparationReleaseAuthority::Retain
-            | MachinePortPreparationReleaseAuthority::FreshLaunch(_) => {
-                port_lease_coordinator.require_binding_leases(
-                    tenant_id,
-                    sandbox_id,
-                    std::slice::from_ref(binding),
-                    std::slice::from_ref(port_lease),
-                )?;
-            }
+        match release_authority.plan_members() {
+            Some(plan_members) => port_lease_coordinator.require_planned_machine_binding_leases(
+                tenant_id,
+                std::slice::from_ref(binding),
+                std::slice::from_ref(port_lease),
+                plan_members,
+            )?,
+            None => port_lease_coordinator.require_binding_leases(
+                tenant_id,
+                sandbox_id,
+                std::slice::from_ref(binding),
+                std::slice::from_ref(port_lease),
+            )?,
         }
         let MachinePortProxyRoute {
             guest_listener_addr,
@@ -529,6 +524,9 @@ pub(crate) fn panicking_machine_port_proxy_for_test(bind_addr: SocketAddr) -> Ma
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MachinePortPreparationReleaseAuthority<'a> {
     Retain,
+    RetainPlanned {
+        plan_members: &'a [PortLeaseRequest],
+    },
     FreshLaunch(&'a NetworkReservationClaim),
     FreshPlannedLaunch {
         reservation_claim: &'a NetworkReservationClaim,
@@ -539,7 +537,7 @@ pub(crate) enum MachinePortPreparationReleaseAuthority<'a> {
 impl<'a> MachinePortPreparationReleaseAuthority<'a> {
     fn reservation_claim(self) -> Option<&'a NetworkReservationClaim> {
         match self {
-            Self::Retain => None,
+            Self::Retain | Self::RetainPlanned { .. } => None,
             Self::FreshLaunch(claim) => Some(claim),
             Self::FreshPlannedLaunch {
                 reservation_claim, ..
@@ -549,7 +547,8 @@ impl<'a> MachinePortPreparationReleaseAuthority<'a> {
 
     fn plan_members(self) -> Option<&'a [PortLeaseRequest]> {
         match self {
-            Self::FreshPlannedLaunch { plan_members, .. } => Some(plan_members),
+            Self::RetainPlanned { plan_members }
+            | Self::FreshPlannedLaunch { plan_members, .. } => Some(plan_members),
             Self::Retain | Self::FreshLaunch(_) => None,
         }
     }
@@ -572,7 +571,7 @@ impl<'a> MachinePortPreparationReleaseAuthority<'a> {
         lifetime: &PortLeaseLifetimeGuard,
     ) -> Result<()> {
         match self {
-            Self::Retain => Ok(()),
+            Self::Retain | Self::RetainPlanned { .. } => Ok(()),
             Self::FreshLaunch(_) => coordinator.record_machine_proxy_bind_failure_with_lifetime(
                 request,
                 claim,
@@ -655,6 +654,14 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
         }
     };
     let claim_result = match release_authority {
+        MachinePortPreparationReleaseAuthority::RetainPlanned { plan_members } => {
+            port_lease_coordinator.claim_rebind_planned_machine_bindings_with_lifetimes(
+                tenant_id,
+                port_bindings,
+                port_leases,
+                plan_members,
+            )
+        }
         MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
             reservation_claim,
             plan_members,
@@ -675,16 +682,24 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
             ),
     };
     let (bind_authority, planned_rebind) = match claim_result {
-        Ok(authority) => (authority, false),
+        Ok(authority) => (
+            authority,
+            matches!(
+                release_authority,
+                MachinePortPreparationReleaseAuthority::RetainPlanned { .. }
+            ),
+        ),
         Err(claim_error)
             if matches!(
                 release_authority,
                 MachinePortPreparationReleaseAuthority::Retain
+                    | MachinePortPreparationReleaseAuthority::RetainPlanned { .. }
                     | MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { .. }
             ) =>
         {
             let recovered = match release_authority {
-                MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                MachinePortPreparationReleaseAuthority::RetainPlanned { plan_members }
+                | MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
                     plan_members, ..
                 } => port_lease_coordinator.recover_planned_machine_bindings_after_owner_death(
                     tenant_id,
@@ -711,7 +726,8 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
                     ),
                 })?;
             match release_authority {
-                MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                MachinePortPreparationReleaseAuthority::RetainPlanned { plan_members }
+                | MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
                     plan_members, ..
                 } => port_lease_coordinator.prepare_recovered_planned_machine_bindings_for_rebind(
                     plan_members,
@@ -737,7 +753,8 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
             })?;
             drop(recoveries);
             let retry = match release_authority {
-                MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
+                MachinePortPreparationReleaseAuthority::RetainPlanned { plan_members }
+                | MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
                     plan_members, ..
                 } => port_lease_coordinator.claim_rebind_planned_machine_bindings_with_lifetimes(
                     tenant_id,
@@ -767,7 +784,8 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
                 retry,
                 matches!(
                     release_authority,
-                    MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { .. }
+                    MachinePortPreparationReleaseAuthority::RetainPlanned { .. }
+                        | MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { .. }
                 ),
             )
         }
@@ -800,10 +818,7 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
                 // that no-effect evidence while retiring Reserved siblings.
                 drop(proxies);
                 let abandon = if planned_rebind
-                    && let MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
-                        plan_members,
-                        ..
-                    } = release_authority
+                    && let Some(plan_members) = release_authority.plan_members()
                 {
                     port_lease_coordinator
                         .abandon_rebind_planned_machine_bind_claims_with_lifetimes_without_effect(
@@ -937,7 +952,8 @@ pub(crate) fn start_machine_port_proxies_with_recovery(
         });
     }
     let active = match release_authority {
-        MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { plan_members, .. } => {
+        MachinePortPreparationReleaseAuthority::RetainPlanned { plan_members }
+        | MachinePortPreparationReleaseAuthority::FreshPlannedLaunch { plan_members, .. } => {
             port_lease_coordinator.require_active_planned_machine_bindings_with_lifetimes(
                 tenant_id,
                 port_bindings,
@@ -959,10 +975,7 @@ pub(crate) fn start_machine_port_proxies_with_recovery(
     if let Err(error) = active {
         let (proxies, bind_authority) = prepared.into_parts();
         drop(proxies);
-        let abandon = if planned_rebind
-            && let MachinePortPreparationReleaseAuthority::FreshPlannedLaunch {
-                plan_members, ..
-            } = release_authority
+        let abandon = if planned_rebind && let Some(plan_members) = release_authority.plan_members()
         {
             port_lease_coordinator
                 .abandon_rebind_planned_machine_bind_claims_with_lifetimes_without_effect(

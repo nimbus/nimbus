@@ -18,7 +18,9 @@ use nimbus_machine::api::{
     MACHINE_API_SERVICE_SANDBOX_LOGS_PATH, MACHINE_API_SERVICE_SANDBOX_PATH,
     MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH, MACHINE_API_SERVICE_SANDBOX_STOP_PATH,
     MACHINE_API_SERVICE_SANDBOXES_PATH, MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH,
-    MachineApiWorkloadProvisionPhaseRequest, MachineApiWorkloadProvisionPhaseResponse,
+    MACHINE_API_WORKLOAD_RESTART_PHASE_PATH, MachineApiWorkloadProvisionPhaseRequest,
+    MachineApiWorkloadProvisionPhaseResponse, MachineApiWorkloadRestartPhaseRequest,
+    MachineApiWorkloadRestartPhaseResponse,
 };
 
 pub(super) fn machine_api_router(state: MachineApiState) -> Router {
@@ -41,6 +43,10 @@ pub(super) fn machine_api_router(state: MachineApiState) -> Router {
         .route(
             MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH,
             post(machine_api_workload_provision_phase),
+        )
+        .route(
+            MACHINE_API_WORKLOAD_RESTART_PHASE_PATH,
+            post(machine_api_workload_restart_phase),
         )
         .route(
             MACHINE_API_SERVICE_SANDBOXES_PATH,
@@ -86,6 +92,26 @@ async fn machine_api_workload_provision_phase(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: format!(
                 "machine API workload provision response violated its exact wire contract: {error}"
+            ),
+        })?;
+    Ok(Json(response))
+}
+
+async fn machine_api_workload_restart_phase(
+    State(state): State<MachineApiState>,
+    Json(request): Json<MachineApiWorkloadRestartPhaseRequest>,
+) -> Result<Json<MachineApiWorkloadRestartPhaseResponse>, MachineApiHttpError> {
+    // Authentication precedes facade lookup, journal access, inspection, and
+    // every provider effect. The request digest already binds this authority
+    // to the complete compute-confirmed command.
+    require_forwarder_authority(&state, request.forwarder_authority())?;
+    let workloads = require_service_workloads(&state)?;
+    let observation = workloads.restart_phase(request.command()).await?;
+    let response = MachineApiWorkloadRestartPhaseResponse::for_request(&request, observation)
+        .map_err(|error| MachineApiHttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!(
+                "machine API workload restart response violated its exact wire contract: {error}"
             ),
         })?;
     Ok(Json(response))

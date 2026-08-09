@@ -8,13 +8,14 @@ use nimbus_network::{
     NetworkSovereigntyRequirements, PortProtocol,
 };
 use nimbus_sandbox::{
-    SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
-    sandbox_network_plan_requirements,
+    SandboxBackendKind, SandboxLifecycleSpec, SandboxOwnerSpec, SandboxProcessSpec,
+    SandboxRestartPolicy, SandboxRootSpec, SandboxSpec, sandbox_network_plan_requirements,
 };
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
     TenantServiceGrantPolicyDecision, WorkloadAttributes, WorkloadLocation,
 };
+use nimbus_workloads::WorkloadRestartPolicy;
 
 use super::*;
 
@@ -51,6 +52,11 @@ fn sandbox_spec() -> SandboxSpec {
         SandboxRootSpec::rootfs("/fixture/rootfs"),
         SandboxProcessSpec::new(["/bin/true"]),
     )
+}
+
+fn sandbox_spec_with_restart_policy(restart_policy: SandboxRestartPolicy) -> SandboxSpec {
+    sandbox_spec()
+        .with_lifecycle(SandboxLifecycleSpec::default().with_restart_policy(restart_policy))
 }
 
 fn lifecycle() -> NetworkLifecycleCapabilitySet {
@@ -160,6 +166,53 @@ fn pure_composition_binds_node_source_and_selected_reports() {
             .selection(),
         &selection
     );
+}
+
+#[test]
+fn pure_composition_preserves_restart_policy_from_executable() {
+    let decision = decision(Some("node-a"));
+    let (registry, selection) = registry();
+    let local_node = NodeIdentity::new("node-a").expect("node should validate");
+    let source_version = version();
+
+    for (sandbox_policy, expected_policy) in [
+        (SandboxRestartPolicy::Never, WorkloadRestartPolicy::Never),
+        (
+            SandboxRestartPolicy::OnFailure { max_restarts: 3 },
+            WorkloadRestartPolicy::OnFailure { max_restarts: 3 },
+        ),
+        (
+            SandboxRestartPolicy::Always { max_restarts: 5 },
+            WorkloadRestartPolicy::Always { max_restarts: 5 },
+        ),
+    ] {
+        let spec = sandbox_spec_with_restart_policy(sandbox_policy);
+        let composed = compose_workload_provision(WorkloadProvisionCompositionInput {
+            decision: &decision,
+            local_node: &local_node,
+            execution_provider_id: &execution_provider(),
+            source: WorkloadProvisionSourceSnapshot::StandaloneSandbox {
+                stable_resource_id: "sandbox-a",
+                profile: "python",
+                source_generation: WorkloadProvisionSourceGeneration::new(91),
+                resource_version: &source_version,
+                sandbox_spec: &spec,
+            },
+            capability_selection: &selection,
+            capability_registry: &registry,
+            sovereignty: NetworkSovereigntyRequirements::new(
+                NetworkControlPlaneLocality::LocalOnly,
+                [],
+                true,
+            ),
+            endpoint_semantics: &[],
+            activation: WorkloadActivationIntent::ActivateWhenAttached,
+            publication: WorkloadPublicationIntent::Withheld,
+        })
+        .expect("exact composition should succeed");
+
+        assert_eq!(composed.intent().restart_policy(), expected_policy);
+    }
 }
 
 #[test]

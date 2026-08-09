@@ -13,7 +13,6 @@ impl KrunSandboxBackend {
     pub(super) fn stop_adopting_launch(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
         let reservation_claim = manifest.require_reserved_claim()?.clone();
         manifest.shutdown_requested = true;
-        manifest.next_restart_at_millis = None;
         synchronize_handle_status(manifest, SandboxStatus::Stopping);
         self.persist_effect_barrier(manifest, "adopting krun stop intent")?;
 

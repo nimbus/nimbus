@@ -408,6 +408,7 @@ fn live_restart_operations_may_reconcile_provider_proven_absence() {
         ProviderCommandOperation::AttachRetainedNetwork,
         ProviderCommandOperation::ActivateRestartedWorkload,
         ProviderCommandOperation::PublishRestartIngress,
+        ProviderCommandOperation::ObserveRestartPublication,
     ] {
         let journal = journal(&root.path().join(operation.as_str()));
         let claim = restart_claim(operation, 1, 0);

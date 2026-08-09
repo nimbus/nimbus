@@ -42,6 +42,7 @@ SERVER_CONVEX_CONTEXT_READ_ONLY_TESTS="crates/nimbus-server/src/adapters/convex/
 SERVER_CONVEX_LOOKUP_READ_ONLY_TESTS="crates/nimbus-server/src/adapters/convex/host_bridge/function_ops/ctx_ops/runtime_calls/read_only_tests.rs"
 SANDBOX_BACKEND="crates/nimbus-sandbox/src/backend.rs"
 SANDBOX_PROVISION="crates/nimbus-sandbox/src/provision.rs"
+SANDBOX_PROVIDER_COMMAND="crates/nimbus-sandbox/src/provider_command.rs"
 SANDBOX_CONTAINER_PROVIDER="crates/nimbus-sandbox/src/backends/container/runtime.rs"
 SANDBOX_CONTAINER_PROVIDER_JOURNAL="crates/nimbus-sandbox/src/backends/container/runtime/provision.rs"
 SANDBOX_KRUN_PROVIDER="crates/nimbus-sandbox/src/backends/krun/vm.rs"
@@ -326,6 +327,7 @@ $(source_without_comments "${REPO_ROOT}/${SERVER_WORKLOAD_COMPOSITION}")"
   convex_lookup_tests_source="$(source_without_comments "${REPO_ROOT}/${SERVER_CONVEX_LOOKUP_READ_ONLY_TESTS}")"
   sandbox_backend_source="$(source_without_comments "${REPO_ROOT}/${SANDBOX_BACKEND}")"
   sandbox_provision_source="$(source_without_comments "${REPO_ROOT}/${SANDBOX_PROVISION}")"
+  sandbox_provider_command_source="$(source_without_comments "${REPO_ROOT}/${SANDBOX_PROVIDER_COMMAND}")"
   sandbox_container_provider_source="$(source_without_comments "${REPO_ROOT}/${SANDBOX_CONTAINER_PROVIDER}")
 $(source_without_comments "${REPO_ROOT}/${SANDBOX_CONTAINER_PROVIDER_JOURNAL}")"
   sandbox_krun_provider_source="$(source_without_comments "${REPO_ROOT}/${SANDBOX_KRUN_PROVIDER}")"
@@ -560,6 +562,7 @@ verify_contract() {
     workload_provision_source workload_state_source workload_store_source \
     compute_saga_source compute_decision_source compute_state_source server_state_source \
     compute_phase_provider_source compute_provider_source sandbox_backend_source sandbox_provision_source \
+    sandbox_provider_command_source \
     sandbox_container_provider_source sandbox_krun_provider_source \
     services_registry_source compose_lifecycle_source \
     node_reconciler_source cloud_functions_host_source network_manifest_source \
@@ -813,8 +816,14 @@ ${compute_dispatch_tests_source}" 'validate_current_provider_report' \
       add_error "provider-local-attempt-idempotency: shared phase adapter missing ${literal}"
     fi
   done
+  provider_journal_impl="$(printf '%s\n' "${sandbox_provider_command_source}" |
+    extract_rust_item 'impl ProviderCommandAttemptJournal')"
+  if ! printf '%s\n' "${sandbox_provider_command_source}" |
+    rg -q -F 'pub struct ProviderCommandAttemptJournal'; then
+    add_error "provider-local-attempt-idempotency: generalized sandbox journal owner is missing"
+  fi
   for literal in claim_dispatch_epoch reject_stale_dispatch_epoch adopt_exact_attempt; do
-    if ! printf '%s\n' "${sandbox_provision_source}" | rg -q -F "${literal}"; then
+    if ! printf '%s\n' "${provider_journal_impl}" | rg -q -F "${literal}"; then
       add_error "provider-local-attempt-idempotency: sandbox journal missing ${literal}"
     fi
   done
@@ -826,13 +835,19 @@ ${compute_dispatch_tests_source}" 'validate_current_provider_report' \
     extract_rust_item 'pub fn attempt_idempotency_journal(')"
   krun_journal_connector="$(printf '%s\n' "${sandbox_krun_provider_source}" |
     extract_rust_item 'pub fn attempt_idempotency_journal(')"
-  if ! printf '%s\n' "${container_adapter_impl}" |
-    rg -q -F 'ProviderProvisionPhaseAdapter::new(backend.attempt_idempotency_journal()?)'; then
-    add_error "provider-local-attempt-idempotency: Container adapter does not open its backend journal"
+  container_journal_open_count="$(printf '%s\n' "${container_adapter_impl}" |
+    rg -o -F 'backend.attempt_idempotency_journal()?' | awk 'END { print NR + 0 }')"
+  krun_journal_open_count="$(printf '%s\n' "${krun_adapter_impl}" |
+    rg -o -F 'backend.attempt_idempotency_journal()?' | awk 'END { print NR + 0 }')"
+  if [ "${container_journal_open_count}" -ne 1 ] ||
+    ! printf '%s\n' "${container_adapter_impl}" |
+      rg -q -F 'ProviderProvisionPhaseAdapter::new(journal.clone())'; then
+    add_error "provider-local-attempt-idempotency: Container adapter must open exactly one backend journal"
   fi
-  if ! printf '%s\n' "${krun_adapter_impl}" |
-    rg -q -F 'ProviderProvisionPhaseAdapter::new(backend.attempt_idempotency_journal()?)'; then
-    add_error "provider-local-attempt-idempotency: Krun adapter does not open its backend journal"
+  if [ "${krun_journal_open_count}" -ne 1 ] ||
+    ! printf '%s\n' "${krun_adapter_impl}" |
+      rg -q -F 'ProviderProvisionPhaseAdapter::new(journal.clone())'; then
+    add_error "provider-local-attempt-idempotency: Krun adapter must open exactly one backend journal"
   fi
   for provider_connector in \
     "container|${container_journal_connector}|container-runtime" \
@@ -842,7 +857,7 @@ ${compute_dispatch_tests_source}" 'validate_current_provider_report' \
     connector="${connector_and_namespace%|*}"
     namespace="${provider_connector##*|}"
     for literal in \
-      'ProviderProvisionAttemptJournal::open' 'config.workload_state_root' "${namespace}"; do
+      'ProviderCommandAttemptJournal::open' 'config.workload_state_root' "${namespace}"; do
       if ! printf '%s\n' "${connector}" | rg -q -F "${literal}"; then
         add_error "provider-local-attempt-idempotency: ${provider} backend journal connector missing ${literal}"
       fi
@@ -941,7 +956,7 @@ ${compute_services_source}"
     fi
   done
   if ! printf '%s\n' "${compose_caller_tests_source}" |
-    rg -q 'fn[[:space:]]+compose_local_and_forwarded_use_compute_dispatch[[:space:]]*\('; then
+    rg -q 'fn[[:space:]]+compose_local_and_forwarded_provision_use_compute_dispatch[[:space:]]*\('; then
     add_error "positive-and-read-only-caller-census: missing Compose behavior test"
   fi
   for seam in 'MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH' \

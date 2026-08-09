@@ -213,7 +213,7 @@ impl ComposeServiceProvision for RecordingComposeProvision {
 }
 
 #[tokio::test]
-async fn compose_local_and_forwarded_use_compute_dispatch() {
+async fn compose_local_and_forwarded_provision_use_compute_dispatch() {
     for backend in [SandboxBackendKind::Krun, SandboxBackendKind::Container] {
         let provision = RecordingComposeProvision::new(backend);
         let tenant = provision.definition.tenant_id.clone();
@@ -233,6 +233,29 @@ async fn compose_local_and_forwarded_use_compute_dispatch() {
             *provision.calls.lock().expect("call counter lock"),
             1,
             "both provider realms must dispatch exactly once and then adopt exact projection"
+        );
+    }
+}
+
+#[test]
+fn compose_local_and_forwarded_restart_use_compute() {
+    let local = include_str!("../../network_composition.rs");
+    let forwarded_server = include_str!("../../network_composition/forwarded.rs");
+    let forwarded_foreground = include_str!("../provision.rs");
+
+    for (owner, source) in [
+        ("local server profile", local),
+        ("forwarded server profile", forwarded_server),
+        ("forwarded foreground Compose", forwarded_foreground),
+    ] {
+        assert_eq!(
+            source.matches(".with_restart_capabilities()").count(),
+            1,
+            "{owner} must register exactly one complete restart capability set with the compute composition"
+        );
+        assert!(
+            !source.contains("submit_service_restart") && !source.contains("stop_service_sandbox"),
+            "{owner} must not compose an explicit or stop/start restart path"
         );
     }
 }

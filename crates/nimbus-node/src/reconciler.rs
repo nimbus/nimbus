@@ -794,13 +794,11 @@ mod tests {
                     .expect("fake systemd client lock should not be poisoned")
                     .clone()
                     .unwrap_or_else(|| {
-                        SystemdUnitStatus::new(
+                        SystemdUnitStatus::explicitly_absent(
                             request.execution_id().clone(),
                             request.unit_name().clone(),
-                            "inactive",
-                            "dead",
                         )
-                        .expect("inactive status should build")
+                        .expect("absent status should build")
                     }))
             })
         }

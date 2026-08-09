@@ -161,9 +161,17 @@ impl ExplicitWorkloadRestartSubmitter {
         // await point. Caller cancellation can drop only its waiter; the task
         // and the bounded durable watch retain recovery authority.
         if active {
-            self.supervisor
+            let track = self
+                .supervisor
                 .track(confirmed.record().clone())
                 .map_err(ExplicitWorkloadRestartError::Supervision)?;
+            if let super::restart_watch::RestartTrack::Failed(failure) = track {
+                return Err(ExplicitWorkloadRestartError::Supervision(format!(
+                    "retained restart candidate {} failed: {}",
+                    failure.key().saga_id(),
+                    failure.message()
+                )));
+            }
         }
 
         Ok(ExplicitWorkloadRestartSubmission {
@@ -192,8 +200,7 @@ fn durable_receipt(
     }
     record
         .restart_state()
-        .last_completed()
-        .filter(|completed| completed.request_id() == request_id)
+        .completion_for_request(request_id)
         .map(|completed| (completed.restart_epoch(), false))
 }
 

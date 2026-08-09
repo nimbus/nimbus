@@ -188,8 +188,7 @@ impl ContainerSandboxBackend {
                         "refusing terminal container manifest publication for {} while local \
                          launch or cleanup authority remains: shutdown_requested={}, \
                          status={:?}, handle_status={:?}, network_cleanup_complete={}, \
-                         launch_reservation_claim_present={}, launch_artifact_present={}, \
-                         next_restart_at_millis={:?}",
+                         launch_reservation_claim_present={}, launch_artifact_present={}",
                         manifest.handle.id,
                         manifest.shutdown_requested,
                         manifest.status,
@@ -197,7 +196,6 @@ impl ContainerSandboxBackend {
                         manifest.network_cleanup_complete,
                         manifest.launch_reservation_claim.is_some(),
                         manifest.launch_artifact.is_some(),
-                        manifest.next_restart_at_millis,
                     ),
                 });
             }
@@ -347,10 +345,6 @@ pub(super) struct ContainerSandboxManifest {
     pub(super) conmon_launch: OciConmonLaunchPlan,
     pub(super) runner_config: ContainerRunnerExecutionConfig,
     pub(super) last_exit_code: Option<i32>,
-    #[serde(default)]
-    pub(super) restart_count: u32,
-    #[serde(default)]
-    pub(super) next_restart_at_millis: Option<u64>,
     /// Immutable owner of this manifest's workload lifecycle.
     ///
     /// `start_mode` changes from `PlanOnly` to `Execute` when a prepared
@@ -517,7 +511,6 @@ impl ContainerSandboxManifest {
             && self.network_cleanup_complete
             && self.launch_reservation_claim.is_none()
             && self.launch_artifact.is_none()
-            && self.next_restart_at_millis.is_none()
     }
 
     pub(super) fn require_lifecycle_coordinator(

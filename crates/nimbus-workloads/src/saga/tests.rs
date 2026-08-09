@@ -1319,7 +1319,7 @@ fn desired_digest_binds_complete_intent() {
         }
     }
     .expect("replacement source evidence should validate");
-    let divergent = WorkloadSagaIntent::new(
+    let divergent = WorkloadSagaIntent::new_without_automatic_restart(
         intent.kind(),
         intent.desired_state(),
         intent.generation(),

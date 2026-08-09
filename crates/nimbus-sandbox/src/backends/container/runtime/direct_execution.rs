@@ -242,7 +242,6 @@ impl ContainerSandboxBackend {
         cleanup: Option<SandboxError>,
     ) -> SandboxError {
         manifest.shutdown_requested = true;
-        manifest.next_restart_at_millis = None;
         manifest.last_exit_code = None;
         synchronize_handle_status(
             manifest,

@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use nimbus_core::TenantId;
 use nimbus_workloads::{
@@ -8,6 +8,7 @@ use nimbus_workloads::{
     WorkloadSagaFuture, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
     WorkloadSagaStore, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
 };
+use tokio::sync::Semaphore;
 
 use super::*;
 use crate::workload_saga::test_support;
@@ -16,6 +17,8 @@ struct FakeClock {
     now: AtomicU64,
     waits: Mutex<Vec<u64>>,
     wake: Notify,
+    wait_registered: Semaphore,
+    wake_observed: Semaphore,
 }
 
 impl FakeClock {
@@ -24,12 +27,14 @@ impl FakeClock {
             now: AtomicU64::new(now),
             waits: Mutex::new(Vec::new()),
             wake: Notify::new(),
+            wait_registered: Semaphore::new(0),
+            wake_observed: Semaphore::new(0),
         })
     }
 
     fn advance_to(&self, now: u64) {
         self.now.store(now, Ordering::Release);
-        self.wake.notify_waiters();
+        self.wake.notify_one();
     }
 
     fn waits(&self) -> Vec<u64> {
@@ -37,6 +42,22 @@ impl FakeClock {
             .lock()
             .expect("fake clock wait log should be healthy")
             .clone()
+    }
+
+    async fn wait_until_registered(&self) {
+        self.wait_registered
+            .acquire()
+            .await
+            .expect("fake clock registration signal remains open")
+            .forget();
+    }
+
+    async fn wait_until_wake_observed(&self) {
+        self.wake_observed
+            .acquire()
+            .await
+            .expect("fake clock wake signal remains open")
+            .forget();
     }
 }
 
@@ -54,6 +75,7 @@ impl RestartClock for FakeClock {
             .lock()
             .expect("fake clock wait log should be healthy")
             .push(deadline.as_u64());
+        self.wait_registered.add_permits(1);
         let mut cancellation = cancellation.subscribe();
         Box::pin(async move {
             loop {
@@ -69,7 +91,9 @@ impl RestartClock for FakeClock {
                             return RestartWait::Cancelled;
                         }
                     }
-                    () = self.wake.notified() => {}
+                    () = self.wake.notified() => {
+                        self.wake_observed.add_permits(1);
+                    }
                 }
             }
         })
@@ -187,6 +211,72 @@ struct KeyedSupervisor {
     keys: Mutex<BTreeSet<String>>,
 }
 
+struct IsolatedFailureSupervisor {
+    failure: RestartCandidateFailure,
+    acknowledged: AtomicBool,
+    retry_active: AtomicBool,
+    sibling_active: AtomicBool,
+    failed_tracks: AtomicUsize,
+    acknowledgements: AtomicUsize,
+    retry_starts: AtomicUsize,
+    sibling_starts: AtomicUsize,
+}
+
+impl IsolatedFailureSupervisor {
+    fn new(failed: &WorkloadSagaRecord) -> Arc<Self> {
+        Arc::new(Self {
+            failure: RestartCandidateFailure::retained(
+                failed.key().clone(),
+                1,
+                "one candidate failed",
+            ),
+            acknowledged: AtomicBool::new(false),
+            retry_active: AtomicBool::new(false),
+            sibling_active: AtomicBool::new(false),
+            failed_tracks: AtomicUsize::new(0),
+            acknowledgements: AtomicUsize::new(0),
+            retry_starts: AtomicUsize::new(0),
+            sibling_starts: AtomicUsize::new(0),
+        })
+    }
+}
+
+impl RestartSupervisor for IsolatedFailureSupervisor {
+    fn track(&self, record: WorkloadSagaRecord) -> Result<RestartTrack, String> {
+        if record.key() == self.failure.key() {
+            if !self.acknowledged.load(Ordering::Acquire) {
+                self.failed_tracks.fetch_add(1, Ordering::AcqRel);
+                return Ok(RestartTrack::Failed(self.failure.clone()));
+            }
+            if self.retry_active.swap(true, Ordering::AcqRel) {
+                Ok(RestartTrack::Joined)
+            } else {
+                self.retry_starts.fetch_add(1, Ordering::AcqRel);
+                Ok(RestartTrack::Started)
+            }
+        } else if self.sibling_active.swap(true, Ordering::AcqRel) {
+            Ok(RestartTrack::Joined)
+        } else {
+            self.sibling_starts.fetch_add(1, Ordering::AcqRel);
+            Ok(RestartTrack::Started)
+        }
+    }
+
+    fn acknowledge_failure(&self, failure: &RestartCandidateFailure) -> Result<bool, String> {
+        if failure != &self.failure {
+            return Ok(false);
+        }
+        let acknowledged = self
+            .acknowledged
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
+        if acknowledged {
+            self.acknowledgements.fetch_add(1, Ordering::AcqRel);
+        }
+        Ok(acknowledged)
+    }
+}
+
 impl RestartSupervisor for KeyedSupervisor {
     fn track(&self, record: WorkloadSagaRecord) -> Result<RestartTrack, String> {
         self.calls.fetch_add(1, Ordering::AcqRel);
@@ -206,6 +296,10 @@ impl RestartSupervisor for KeyedSupervisor {
         } else {
             Ok(RestartTrack::Joined)
         }
+    }
+
+    fn acknowledge_failure(&self, _failure: &RestartCandidateFailure) -> Result<bool, String> {
+        Ok(false)
     }
 }
 
@@ -227,16 +321,6 @@ fn watch(
         )
         .expect("test restart watch should validate"),
     )
-}
-
-async fn wait_for_wait(clock: &FakeClock) {
-    for _ in 0..100 {
-        if !clock.waits().is_empty() {
-            return;
-        }
-        tokio::task::yield_now().await;
-    }
-    panic!("watch did not enter its injected clock wait");
 }
 
 #[tokio::test]
@@ -289,11 +373,7 @@ async fn automatic_watch_does_not_busy_spin_before_deadline() {
         let watch = watch.clone();
         async move { watch.bounded_restart_watch().await }
     });
-    wait_for_wait(&clock).await;
-
-    for _ in 0..20 {
-        tokio::task::yield_now().await;
-    }
+    clock.wait_until_registered().await;
     assert_eq!(clock.waits(), vec![500]);
     assert_eq!(store.page_calls.load(Ordering::Acquire), 1);
     assert_eq!(supervisor.calls.load(Ordering::Acquire), 0);
@@ -327,6 +407,48 @@ async fn automatic_watch_dispatches_each_due_epoch_once() {
 
     assert_eq!(supervisor.calls.load(Ordering::Acquire), 2);
     assert_eq!(supervisor.started.load(Ordering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn one_candidate_failure_does_not_starve_sibling_candidates() {
+    let first = test_support::scheduled_restart_record("watch-failed-candidate", 0);
+    let second = test_support::scheduled_restart_record("watch-healthy-candidate", 0);
+    let store = WatchStore::repeating(PageSpec {
+        records: vec![first.clone(), second],
+        has_more: false,
+    });
+    let supervisor = IsolatedFailureSupervisor::new(&first);
+    let watch = DurableRestartWatch::new(
+        NonZeroUsize::new(8).unwrap(),
+        NonZeroU64::new(1_000).unwrap(),
+        FakeClock::new(0),
+        WorkloadRestartCancellationToken::new(),
+        Arc::new(WorkloadSagaCoordinator::new(store)),
+        supervisor.clone(),
+    )
+    .expect("watch should validate");
+
+    let first_sweep = watch
+        .dispatch_each_due_epoch_once()
+        .await
+        .expect("retained candidate failure must stay local");
+
+    assert_eq!(first_sweep.candidates, 2);
+    assert_eq!(supervisor.failed_tracks.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.retry_starts.load(Ordering::Acquire), 0);
+    assert_eq!(supervisor.sibling_starts.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.acknowledgements.load(Ordering::Acquire), 1);
+
+    let second_sweep = watch
+        .dispatch_each_due_epoch_once()
+        .await
+        .expect("a later sweep may retry the acknowledged candidate");
+
+    assert_eq!(second_sweep.candidates, 2);
+    assert_eq!(supervisor.failed_tracks.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.retry_starts.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.sibling_starts.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.acknowledgements.load(Ordering::Acquire), 1);
 }
 
 #[tokio::test]
@@ -431,38 +553,13 @@ async fn watch_cancellation_cancels_waiter_not_durable_work() {
         let watch = watch.clone();
         async move { watch.bounded_restart_watch().await }
     });
-    wait_for_wait(&clock).await;
+    clock.wait_until_registered().await;
     assert_eq!(supervisor.started.load(Ordering::Acquire), 1);
 
     cancellation.cancel();
     assert_eq!(task.await.unwrap().unwrap(), RestartWait::Cancelled);
     assert_eq!(store.cas_calls.load(Ordering::Acquire), 0);
     assert!(durable.restart_state().active().is_some());
-}
-
-#[test]
-fn get_and_name_resolution_make_zero_restart_effects() {
-    let store = WatchStore::repeating(PageSpec {
-        records: Vec::new(),
-        has_more: false,
-    });
-    let supervisor = Arc::new(KeyedSupervisor::default());
-    let _watch = watch(
-        store.clone(),
-        supervisor.clone(),
-        FakeClock::new(0),
-        WorkloadRestartCancellationToken::new(),
-        8,
-    );
-
-    let get_snapshot = || "read-only-workload-snapshot";
-    let resolve_logical_name = || "read-only-logical-binding";
-    assert_eq!(get_snapshot(), "read-only-workload-snapshot");
-    assert_eq!(resolve_logical_name(), "read-only-logical-binding");
-    assert_eq!(store.page_calls.load(Ordering::Acquire), 0);
-    assert_eq!(store.load_calls.load(Ordering::Acquire), 0);
-    assert_eq!(store.cas_calls.load(Ordering::Acquire), 0);
-    assert_eq!(supervisor.calls.load(Ordering::Acquire), 0);
 }
 
 #[tokio::test]
@@ -478,9 +575,9 @@ async fn clock_rollback_delays_existing_deadline() {
                 .await
         }
     });
-    wait_for_wait(&clock).await;
+    clock.wait_until_registered().await;
     clock.advance_to(400);
-    tokio::task::yield_now().await;
+    clock.wait_until_wake_observed().await;
     assert!(!wait.is_finished());
     clock.advance_to(500);
     assert_eq!(wait.await.unwrap(), RestartWait::DeadlineReached);

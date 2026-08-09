@@ -213,7 +213,7 @@ fn populated_record() -> (WorkloadSagaRecord, CompiledWorkloadNetworkPlan) {
             .attachment_provider_id()
             .clone(),
     );
-    let intent = WorkloadSagaIntent::new(
+    let intent = WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         WorkloadGeneration::new(NETWORK_GENERATION),

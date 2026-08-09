@@ -156,9 +156,12 @@ fn activation_claim_binds_complete_fence_and_rejects_crossed_execution() {
         .clone()
         .with_activation_claim(&claim)
         .expect("exact activation claim should bind");
-    let fence = fenced
+    let activation_fence = fenced
         .activation_fence()
         .expect("exact activation fence should be retained");
+    let HostActivationFence::Provision(fence) = activation_fence else {
+        panic!("provision activation should retain a provision fence");
+    };
     assert_eq!(fence.execution_id, *plan.execution_id());
     assert_eq!(fence.attempt_id, claim.attempt().attempt_id().as_str());
     assert_eq!(fence.dispatch_epoch, claim.dispatch_epoch().as_u64());
@@ -205,7 +208,7 @@ fn activation_claim_binds_complete_fence_and_rejects_crossed_execution() {
     let reconstructed = HostActivationFence::from_log_extra_fields(&persisted_fields)
         .expect("complete systemd activation metadata should decode")
         .expect("complete systemd activation metadata should be fenced");
-    assert_eq!(reconstructed, *fence);
+    assert_eq!(reconstructed, activation_fence.clone());
 
     let crossed_binding = AdmittedDecisionScenario::new()
         .with_generation(10)
@@ -260,7 +263,11 @@ fn systemd_activation_fence_decoder_rejects_partial_duplicate_and_noncanonical_f
         .iter()
         .map(|field| field.as_bytes().to_vec())
         .collect::<Vec<_>>();
-    noncanonical[4] = b"NIMBUS_PROVISION_DISPATCH_EPOCH=01".to_vec();
+    let dispatch_epoch = fields
+        .iter()
+        .position(|field| field.starts_with("NIMBUS_PROVISION_DISPATCH_EPOCH="))
+        .expect("fixture fence should retain the provision dispatch epoch");
+    noncanonical[dispatch_epoch] = b"NIMBUS_PROVISION_DISPATCH_EPOCH=01".to_vec();
     let noncanonical_error = HostActivationFence::from_log_extra_fields(&noncanonical)
         .expect_err("noncanonical exact metadata must fail closed");
     assert!(noncanonical_error.to_string().contains("canonical"));

@@ -98,7 +98,7 @@ fn saga_intent(
         NetworkProviderId::for_registration_key(&format!("provider-{seed}")),
         WorkloadExecutionProviderId::for_registration_key(&format!("execution-{seed}")),
     )?;
-    WorkloadSagaIntent::new(
+    WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         WorkloadGeneration::new(workload_generation),
@@ -317,7 +317,7 @@ fn saga_intent_rejects_activation_and_publication_crossings() {
     )
     .expect("source evidence should validate");
     let build = |activation, publication| {
-        WorkloadSagaIntent::new(
+        WorkloadSagaIntent::new_without_automatic_restart(
             DesiredWorkloadKind::Sandbox,
             DesiredWorkloadState::Running,
             WorkloadGeneration::new(11),
@@ -545,7 +545,7 @@ fn record_tenant_and_transition_identity_bind_complete_compiled_content() {
 }
 
 #[test]
-fn saga_v4_rejects_older_and_future_record_versions() {
+fn saga_v5_rejects_older_and_future_record_versions() {
     let tenant_id = tenant("tenant-network-version");
     let intent = saga_intent(
         &tenant_id,
@@ -565,9 +565,9 @@ fn saga_v4_rejects_older_and_future_record_versions() {
         intent,
     )
     .unwrap();
-    assert_eq!(record.format_version(), 4);
+    assert_eq!(record.format_version(), 5);
 
-    for version in [1, 2, 3, 5] {
+    for version in [1, 2, 3, 4, 6] {
         let mut wire = serde_json::to_value(&record).unwrap();
         wire["formatVersion"] = json!(version);
         assert!(serde_json::from_value::<WorkloadSagaRecord>(wire).is_err());

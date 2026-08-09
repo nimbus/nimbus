@@ -8,15 +8,15 @@ use nimbus_core::WorkloadId;
 use nimbus_network::{
     NetworkCapabilityRegistry, NetworkCapabilitySelection, NetworkSovereigntyRequirements,
 };
-use nimbus_sandbox::SandboxSpec;
+use nimbus_sandbox::{SandboxRestartPolicy, SandboxSpec};
 use nimbus_tenant::TenantIsolationDecision;
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadSpec,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadExecutionProviderId,
     WorkloadGeneration, WorkloadNetworkIntent, WorkloadProvisionSourceEvidence,
     WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
-    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent, WorkloadSagaIntent,
-    WorkloadSagaKey,
+    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent, WorkloadRestartPolicy,
+    WorkloadSagaIntent, WorkloadSagaKey,
 };
 use thiserror::Error;
 
@@ -67,6 +67,18 @@ impl<'source> WorkloadProvisionSourceSnapshot<'source> {
         match self {
             Self::StandaloneSandbox { .. } => DesiredWorkloadKind::Sandbox,
             Self::SandboxBackedService { .. } => DesiredWorkloadKind::Service,
+        }
+    }
+
+    fn restart_policy(self) -> WorkloadRestartPolicy {
+        match self.sandbox_spec().lifecycle.restart_policy {
+            SandboxRestartPolicy::Never => WorkloadRestartPolicy::Never,
+            SandboxRestartPolicy::OnFailure { max_restarts } => {
+                WorkloadRestartPolicy::OnFailure { max_restarts }
+            }
+            SandboxRestartPolicy::Always { max_restarts } => {
+                WorkloadRestartPolicy::Always { max_restarts }
+            }
         }
     }
 }
@@ -225,12 +237,13 @@ pub fn compose_workload_provision(
         }
     })?;
     let key = WorkloadSagaKey::new(workload.tenant_id().clone(), workload_id);
-    let intent = WorkloadSagaIntent::new(
+    let intent = WorkloadSagaIntent::new_with_restart_policy(
         input.source.desired_kind(),
         DesiredWorkloadState::Running,
         workload.generation(),
         executable,
         source,
+        input.source.restart_policy(),
         WorkloadNetworkIntent::new(compiled_network),
         input.activation,
         input.publication,

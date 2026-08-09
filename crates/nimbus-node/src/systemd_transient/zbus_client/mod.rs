@@ -277,7 +277,7 @@ impl SystemdDbusClient for ZbusSystemdClient {
                 // An unloaded unit (never started, or already GC'd after stop)
                 // is reported as inactive/dead rather than an error.
                 Err(err) if is_no_such_unit(&err) => {
-                    return SystemdUnitStatus::new(execution_id, unit_name, "inactive", "dead");
+                    return SystemdUnitStatus::explicitly_absent(execution_id, unit_name);
                 }
                 Err(err) => return Err(map_zbus(err)),
             };

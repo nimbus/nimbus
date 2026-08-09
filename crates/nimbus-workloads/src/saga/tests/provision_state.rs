@@ -269,7 +269,7 @@ fn workload_kind_must_match_provision_source_variant() {
         ),
     ] {
         assert!(
-            WorkloadSagaIntent::new(
+            WorkloadSagaIntent::new_without_automatic_restart(
                 crossed_kind,
                 intent.desired_state(),
                 intent.generation(),

@@ -87,8 +87,9 @@ fn natural_execute_exit_is_observed_read_only_then_explicit_stop_releases_author
     );
     assert_eq!(
         inspected.restart,
-        SandboxRestartAssessment::Ineligible {
-            reason: SandboxRestartIneligibility::PolicyNever,
+        SandboxRestartAssessment::Candidate {
+            exit_code: 0,
+            blocker: None,
         }
     );
     assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);

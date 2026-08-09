@@ -19,14 +19,12 @@ use crate::backends::capabilities::{
 use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
 #[cfg(test)]
 use crate::backends::conmon::lifecycle::detect_runtime_status as detect_conmon_runtime_status;
+#[cfg(test)]
+use crate::backends::conmon::lifecycle::remove_if_exists;
 use crate::backends::conmon::lifecycle::{
     RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout, ensure_linux_host,
     read_exit_code, read_pid, run_status_best_effort, run_status_checked, runtime_state,
     signal_process, wait_for_path,
-};
-#[cfg(test)]
-use crate::backends::conmon::lifecycle::{
-    remove_if_exists, restart_backoff_delay, restart_policy_allows_restart,
 };
 use crate::backends::conmon::spec_resolve::{
     merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,
@@ -711,10 +709,6 @@ struct KrunSandboxManifest {
     egress_proxy: Option<EgressProxyAssignment>,
     conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,
-    #[serde(default)]
-    restart_count: u32,
-    #[serde(default)]
-    next_restart_at_millis: Option<u64>,
     start_mode: KrunStartMode,
     shutdown_requested: bool,
     status: SandboxStatus,
@@ -826,7 +820,6 @@ impl KrunSandboxManifest {
             && self.launch_artifact.is_none()
             && !self.provider_failure_cleanup.is_active()
             && self.creator_handoff.authorizes_provider_cleanup()
-            && self.next_restart_at_millis.is_none()
             && launch_authority_released
     }
 

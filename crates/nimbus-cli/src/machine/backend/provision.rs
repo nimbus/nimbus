@@ -13,6 +13,7 @@ use nimbus::{Error, SandboxBackendKind};
 use nimbus_compute::workload_saga::provision_provider::{
     ProviderProvisionEffectObservation, ProviderProvisionPhaseAdapter,
 };
+use nimbus_compute::workload_saga::restart_provider_command::ProviderRestartPhaseAdapter;
 use nimbus_compute::workload_saga::{
     ConfirmedWorkloadProvisionCommand, IngressPublicationCapability,
     IngressPublicationInspectionCapability, NetworkAttachmentCapability,
@@ -57,11 +58,12 @@ use super::super::network_composition::HostMachineNetworkAuthority;
 use super::super::publication_authority::{
     ConfirmedMachinePublicationJournal, ConfirmedMachinePublicationMember,
     ConfirmedMachinePublicationObservation, ConfirmedMachinePublicationRetirement,
-    authenticate_exact_durable_plan, canonical_machine_publication_members, port_authority_error,
-    recover_dead_batch,
+    authenticate_exact_durable_plan, canonical_machine_publication_members,
+    canonical_machine_restart_publication_members, port_authority_error, recover_dead_batch,
 };
 
 const PROVIDER_JOURNAL_NAMESPACE: &str = "forwarded-machine-provision";
+const RESTART_PROVIDER_JOURNAL_NAMESPACE: &str = "forwarded-machine-restart";
 const FORWARDED_ATTACHMENT_PROVIDER_KEY: &str = "nimbus-machine.forwarded-container-attachment";
 const FORWARDED_EXECUTION_PROVIDER_KEY: &str = "nimbus-machine.forwarded-container-execution";
 
@@ -310,6 +312,7 @@ pub(crate) struct ForwardedMachineProvisionAdapter {
     port_leases: LocalPortLeaseAuthority,
     publication_journal: ConfirmedMachinePublicationJournal,
     phases: ProviderProvisionPhaseAdapter,
+    restart_phases: ProviderRestartPhaseAdapter,
     live: Mutex<BTreeMap<NetworkPlanId, LivePublicationBatch>>,
     source_plan: ForwardedMachineProvisionSourcePlan,
 }
@@ -342,12 +345,22 @@ impl ForwardedMachineProvisionAdapter {
                 "failed to open forwarded machine provision journal: {error}"
             ))
         })?;
+        let restart_phase_journal = ProviderCommandAttemptJournal::open(
+            port_leases.state_root(),
+            RESTART_PROVIDER_JOURNAL_NAMESPACE,
+        )
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to open forwarded machine restart journal: {error}"
+            ))
+        })?;
         Ok(Self {
             client,
             _parent_network: parent_network,
             port_leases,
             publication_journal,
             phases: ProviderProvisionPhaseAdapter::new(phase_journal),
+            restart_phases: ProviderRestartPhaseAdapter::new(restart_phase_journal),
             live: Mutex::new(BTreeMap::new()),
             source_plan,
         })
@@ -815,11 +828,18 @@ impl ForwardedMachineProvisionAdapter {
         &self,
         validated: &ValidatedForwardedPublication,
     ) -> Result<(), ProviderProvisionEffectObservation> {
-        if validated.members.is_empty() {
+        self.reserve_parent_batch_for(&validated.plan_id, &validated.members)
+    }
+
+    fn reserve_parent_batch_for(
+        &self,
+        plan_id: &NetworkPlanId,
+        members: &[ConfirmedMachinePublicationMember],
+    ) -> Result<(), ProviderProvisionEffectObservation> {
+        if members.is_empty() {
             return Ok(());
         }
-        let claims = validated
-            .members
+        let claims = members
             .iter()
             .map(|member| (member.request().clone(), member.bind_claim().clone()))
             .collect::<Vec<_>>();
@@ -830,14 +850,14 @@ impl ForwardedMachineProvisionAdapter {
                 definite_failure("machine_parent_port_lease_rejected", error.to_string())
             })?;
         let live = LivePublicationBatch {
-            members: validated.members.clone(),
+            members: members.to_vec(),
             lifetimes: reservation.into_parts().1,
         };
         let mut batches = self
             .live
             .lock()
             .map_err(|_| ambiguous("forwarded machine publication runtime registry is poisoned"))?;
-        match batches.entry(validated.plan_id.clone()) {
+        match batches.entry(plan_id.clone()) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(live);
                 Ok(())
@@ -853,16 +873,23 @@ impl ForwardedMachineProvisionAdapter {
         &self,
         validated: &ValidatedForwardedPublication,
     ) -> Result<(), ProviderProvisionEffectObservation> {
-        if validated.members.is_empty() {
+        self.activate_parent_batch_for(&validated.plan_id, &validated.members)
+    }
+
+    fn activate_parent_batch_for(
+        &self,
+        plan_id: &NetworkPlanId,
+        members: &[ConfirmedMachinePublicationMember],
+    ) -> Result<(), ProviderProvisionEffectObservation> {
+        if members.is_empty() {
             return Ok(());
         }
-        let live = self
+        let batches = self
             .live
             .lock()
-            .map_err(|_| ambiguous("forwarded machine publication runtime registry is poisoned"))?
-            .remove(&validated.plan_id);
-        if let Some(live) = live {
-            if live.members != validated.members {
+            .map_err(|_| ambiguous("forwarded machine publication runtime registry is poisoned"))?;
+        if let Some(live) = batches.get(plan_id) {
+            if live.members != members {
                 return Err(definite_failure(
                     "machine_parent_publication_live_mismatch",
                     "live parent publication members differ from the canonical command",
@@ -870,16 +897,16 @@ impl ForwardedMachineProvisionAdapter {
             }
             let records = self
                 .port_leases
-                .list_plan(&validated.plan_id)
+                .list_plan(plan_id)
                 .map_err(|error| ambiguous(port_authority_error(error).to_string()))?;
-            let requests = publication_requests(&validated.members);
+            let requests = publication_requests(members);
             authenticate_exact_durable_plan(&requests, &records).map_err(|error| {
                 definite_failure("machine_parent_plan_mismatch", error.to_string())
             })?;
-            let result = if exact_active_batch(&records, &validated.members) {
+            let result = if exact_active_batch(&records, members) {
                 Ok(())
             } else {
-                let bindings = activation_batch(&validated.members);
+                let bindings = activation_batch(members);
                 self.port_leases
                     .adopt_claimed_and_activate_batch_with_lifetimes(
                         &bindings,
@@ -889,20 +916,15 @@ impl ForwardedMachineProvisionAdapter {
                     .map(|_| ())
                     .map_err(|error| ambiguous(port_authority_error(error).to_string()))
             };
-            self.live
-                .lock()
-                .map_err(|_| {
-                    ambiguous("forwarded machine publication runtime registry is poisoned")
-                })?
-                .insert(validated.plan_id.clone(), live);
             return result;
         }
+        drop(batches);
 
         let records = self
             .port_leases
-            .list_plan(&validated.plan_id)
+            .list_plan(plan_id)
             .map_err(|error| ambiguous(port_authority_error(error).to_string()))?;
-        let requests = publication_requests(&validated.members);
+        let requests = publication_requests(members);
         if records.is_empty() {
             return Err(definite_failure(
                 "machine_parent_publication_untracked",
@@ -911,7 +933,7 @@ impl ForwardedMachineProvisionAdapter {
         }
         authenticate_exact_durable_plan(&requests, &records)
             .map_err(|error| definite_failure("machine_parent_plan_mismatch", error.to_string()))?;
-        if exact_active_batch(&records, &validated.members) {
+        if exact_active_batch(&records, members) {
             // The durable binding is exact. A fresh process still needs to
             // reclaim the provider-managed lifetime below.
         } else if !records.iter().all(|record| {
@@ -923,8 +945,8 @@ impl ForwardedMachineProvisionAdapter {
         }
         let recoveries = recover_dead_batch(&self.port_leases, &requests)
             .map_err(|error| ambiguous(error.to_string()))?;
-        let mut lifetimes = Vec::with_capacity(validated.members.len());
-        for (member, recovery) in validated.members.iter().zip(recoveries) {
+        let mut lifetimes = Vec::with_capacity(members.len());
+        for (member, recovery) in members.iter().zip(recoveries) {
             let lifetime = self
                 .port_leases
                 .reclaim_provider_managed_binding_after_owner_death(
@@ -939,9 +961,9 @@ impl ForwardedMachineProvisionAdapter {
             .lock()
             .map_err(|_| ambiguous("forwarded machine publication runtime registry is poisoned"))?
             .insert(
-                validated.plan_id.clone(),
+                plan_id.clone(),
                 LivePublicationBatch {
-                    members: validated.members.clone(),
+                    members: members.to_vec(),
                     lifetimes,
                 },
             );
@@ -952,15 +974,23 @@ impl ForwardedMachineProvisionAdapter {
         &self,
         validated: &ValidatedForwardedPublication,
     ) -> Result<(), ProviderProvisionEffectObservation> {
-        if validated.members.is_empty() {
+        self.observe_parent_batch_for(&validated.plan_id, &validated.members)
+    }
+
+    fn observe_parent_batch_for(
+        &self,
+        plan_id: &NetworkPlanId,
+        members: &[ConfirmedMachinePublicationMember],
+    ) -> Result<(), ProviderProvisionEffectObservation> {
+        if members.is_empty() {
             return Ok(());
         }
         let mut batches = self
             .live
             .lock()
             .map_err(|_| ambiguous("forwarded machine publication runtime registry is poisoned"))?;
-        if let Some(live) = batches.get(&validated.plan_id) {
-            return if live.members == validated.members {
+        if let Some(live) = batches.get(plan_id) {
+            return if live.members == members {
                 Ok(())
             } else {
                 Err(definite_failure(
@@ -971,20 +1001,20 @@ impl ForwardedMachineProvisionAdapter {
         }
         let records = self
             .port_leases
-            .list_plan(&validated.plan_id)
+            .list_plan(plan_id)
             .map_err(|error| ambiguous(port_authority_error(error).to_string()))?;
-        let requests = publication_requests(&validated.members);
+        let requests = publication_requests(members);
         authenticate_exact_durable_plan(&requests, &records)
             .map_err(|error| definite_failure("machine_parent_plan_mismatch", error.to_string()))?;
-        if !exact_active_batch(&records, &validated.members) {
+        if !exact_active_batch(&records, members) {
             return Err(ProviderProvisionEffectObservation::InProgress {
                 evidence: b"parent machine publication leases are not all active".to_vec(),
             });
         }
         let recoveries = recover_dead_batch(&self.port_leases, &requests)
             .map_err(|error| ambiguous(error.to_string()))?;
-        let mut lifetimes = Vec::with_capacity(validated.members.len());
-        for (member, recovery) in validated.members.iter().zip(recoveries) {
+        let mut lifetimes = Vec::with_capacity(members.len());
+        for (member, recovery) in members.iter().zip(recoveries) {
             let lifetime = self
                 .port_leases
                 .reclaim_provider_managed_binding_after_owner_death(
@@ -996,9 +1026,9 @@ impl ForwardedMachineProvisionAdapter {
             lifetimes.push(lifetime);
         }
         batches.insert(
-            validated.plan_id.clone(),
+            plan_id.clone(),
             LivePublicationBatch {
-                members: validated.members.clone(),
+                members: members.to_vec(),
                 lifetimes,
             },
         );
@@ -1009,7 +1039,15 @@ impl ForwardedMachineProvisionAdapter {
         &self,
         validated: &ValidatedForwardedPublication,
     ) -> Result<(), ProviderProvisionEffectObservation> {
-        if validated.members.is_empty() {
+        self.reconcile_parent_absence_for(&validated.plan_id, &validated.members)
+    }
+
+    fn reconcile_parent_absence_for(
+        &self,
+        plan_id: &NetworkPlanId,
+        members: &[ConfirmedMachinePublicationMember],
+    ) -> Result<(), ProviderProvisionEffectObservation> {
+        if members.is_empty() {
             return Ok(());
         }
         // Dropping the live batch first releases its non-cloneable lifetime
@@ -1018,25 +1056,31 @@ impl ForwardedMachineProvisionAdapter {
         self.live
             .lock()
             .map_err(|_| ambiguous("forwarded machine publication runtime registry is poisoned"))?
-            .remove(&validated.plan_id);
+            .remove(plan_id);
         let records = self
             .port_leases
-            .list_plan(&validated.plan_id)
+            .list_plan(plan_id)
             .map_err(|error| ambiguous(port_authority_error(error).to_string()))?;
         if records.is_empty() {
             return Ok(());
         }
-        let requests = publication_requests(&validated.members);
+        let requests = publication_requests(members);
         authenticate_exact_durable_plan(&requests, &records)
             .map_err(|error| definite_failure("machine_parent_plan_mismatch", error.to_string()))?;
+        if records.iter().all(|record| {
+            record.phase() == PortLeasePhase::Reserved
+                && record.binding().is_none()
+                && record.bind_claim().is_none()
+        }) {
+            return Ok(());
+        }
         let recoveries = recover_dead_batch(&self.port_leases, &requests)
             .map_err(|error| ambiguous(error.to_string()))?;
         self.port_leases
             .mark_cleanup_pending_batch_after_owner_death(&requests, &recoveries)
             .map_err(|error| ambiguous(port_authority_error(error).to_string()))?;
         if records.iter().all(|record| record.binding().is_some()) {
-            let bindings = validated
-                .members
+            let bindings = members
                 .iter()
                 .map(|member| (member.request().clone(), member.expected_binding().clone()))
                 .collect::<Vec<_>>();
@@ -1568,6 +1612,19 @@ fn direct_result(
             provider_target: command.provider_target().clone(),
         },
     }
+}
+
+#[path = "provision/restart.rs"]
+mod restart;
+
+#[cfg(test)]
+pub(crate) use restart::tests::{
+    confirmed_automatic_restart_command_for_test, confirmed_restart_command_for_test,
+};
+
+#[cfg(test)]
+pub(crate) fn forwarder_authority_for_test() -> MachineForwarderAuthority {
+    tests::forwarder_authority()
 }
 
 #[cfg(test)]

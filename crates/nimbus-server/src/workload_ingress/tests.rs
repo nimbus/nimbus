@@ -11,12 +11,16 @@ use nimbus_compute::workload_saga::{
 };
 use nimbus_network::{
     ListenerId, LocalNetworkAuthority, LocalNetworkManager, LocalPortLeaseAuthority,
-    NetworkAttachmentId, NetworkCapabilityRegistry, NetworkLeaseEpoch, NetworkPlanDigest,
-    NetworkPlanId, NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim,
-    NetworkResourceGeneration, NetworkResourceId, PortBindRealm, PortBindTarget,
-    PortBindingProvenance, PortBindingSpec, PortExposure, PortLeaseAccounting, PortLeaseFence,
-    PortLeaseId, PortLeaseLifetime, PortLeaseRequest, PortProtocol, PortPublicationIntent,
-    PortRequestMode, PublishedEndpointId,
+    NetworkAttachmentCapabilitySet, NetworkAttachmentId, NetworkCapabilityRegistry,
+    NetworkCapabilityRequirements, NetworkControlPlaneLocality, NetworkEndpointCapabilitySet,
+    NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet, NetworkLeaseEpoch,
+    NetworkLifecycleCapabilitySet, NetworkLifecycleRequirements, NetworkManagementMode,
+    NetworkPlan, NetworkPlanContentDigest, NetworkPlanDigest, NetworkPlanId, NetworkProviderHandle,
+    NetworkProviderId, NetworkReservationClaim, NetworkResourceGeneration, NetworkResourceId,
+    NetworkSovereigntyRequirements, PortBindRealm, PortBindTarget, PortBindingProvenance,
+    PortBindingSpec, PortExposure, PortLeaseAccounting, PortLeaseFence, PortLeaseId,
+    PortLeaseLifetime, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+    PublishedEndpointId,
 };
 
 use super::*;
@@ -311,6 +315,65 @@ fn snapshot_regular_files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     snapshot
 }
 
+fn restart_publication_for(
+    key: &PublicationKey,
+    batch: &RunningIngressBatch,
+) -> ValidatedRestartPublication {
+    let requirements = NetworkCapabilityRequirements::new(
+        NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []),
+        NetworkEndpointCapabilitySet::new([], [], [], [], []),
+        NetworkIngressCapabilitySet::new([]),
+        NetworkForwardingCapabilitySet::new([]),
+        NetworkLifecycleRequirements::new(
+            NetworkLifecycleCapabilitySet::new([]),
+            NetworkLifecycleCapabilitySet::new([]),
+        ),
+        NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+    );
+    let network_plan = NetworkPlan::new(
+        batch.plan_id.clone(),
+        batch.generation,
+        NetworkPlanContentDigest::sha256(b"restart-listener-retention-fixture"),
+        requirements,
+    );
+    let listeners = batch.routes.iter().enumerate().map(|(ordinal, route)| {
+        nimbus_sandbox::SandboxProvisionListener::new(
+            route.expected.listener_id.clone(),
+            nimbus_sandbox::SandboxPortBinding::tcp(format!("listener-{ordinal}"), 0, 9),
+            route.expected.request.clone(),
+        )
+    });
+    let network_plan = SandboxProvisionNetworkPlan::new(
+        network_plan,
+        batch.tenant_id.clone(),
+        batch.generation,
+        batch.attachment_id.clone(),
+        listeners,
+        [],
+    )
+    .expect("restart fixture network plan should validate");
+    let source_attempt = nimbus_sandbox::SandboxExecutionAttemptId::new(key.attempt_id.clone())
+        .expect("source attempt should validate");
+    let target_attempt = nimbus_sandbox::SandboxExecutionAttemptId::new("restart-target")
+        .expect("target attempt should validate");
+    let attempt_fence =
+        nimbus_sandbox::SandboxRestartAttemptFence::new(source_attempt, target_attempt, 1)
+            .expect("restart attempt fence should validate");
+    ValidatedRestartPublication {
+        source_key: key.clone(),
+        target_key: PublicationKey {
+            saga_id: key.saga_id.clone(),
+            attempt_id: attempt_fence.attempt_id().as_str().to_owned(),
+            execution_id: key.execution_id.clone(),
+            generation: key.generation,
+            network_plan_digest: key.network_plan_digest.clone(),
+        },
+        sandbox_id: nimbus_sandbox::SandboxId::new(key.execution_id.clone()),
+        attempt_fence,
+        network_plan,
+    }
+}
+
 fn expect_present(
     observation: WorkloadProviderObservation<Vec<WorkloadObservedIngressEndpoint>>,
 ) -> Vec<WorkloadObservedIngressEndpoint> {
@@ -483,6 +546,56 @@ fn restart_withdrawal_joins_listener_and_rebinds_the_same_retained_port() {
             .expect("fixture registry lock should remain healthy")
             .contains_key(&key),
         "the source attempt must stay withdrawn"
+    );
+}
+
+#[test]
+fn restart_withdrawal_inspection_requires_durable_retention_and_never_recovers() {
+    let fixture = live_observation_fixture(&["http"]);
+    let (key, mut batch) = fixture
+        .adapter
+        .running
+        .lock()
+        .expect("fixture registry lock should remain healthy")
+        .pop_first()
+        .expect("fixture should retain one exact publication");
+    let validated = restart_publication_for(&key, &batch);
+    for route in &mut batch.routes {
+        drop(
+            route
+                .take_for_restart()
+                .expect("fixture route should retain its listener effect"),
+        );
+    }
+    drop(batch);
+
+    let before = snapshot_regular_files(fixture.state_root.path());
+    let inspected = fixture.adapter.inspect_restart_withdrawal(&validated);
+    assert!(
+        matches!(inspected, ProviderRestartEffectObservation::Absent { .. }),
+        "active durable state without a live owner is not retained withdrawal evidence"
+    );
+    assert_eq!(snapshot_regular_files(fixture.state_root.path()), before);
+
+    let recovered = fixture.adapter.withdraw_restart_publication(&validated);
+    assert!(
+        matches!(
+            recovered,
+            ProviderRestartEffectObservation::Succeeded { .. }
+        ),
+        "execute-time recovery must durably retain the dead listener"
+    );
+    let after_recovery = snapshot_regular_files(fixture.state_root.path());
+    assert!(
+        matches!(
+            fixture.adapter.inspect_restart_withdrawal(&validated),
+            ProviderRestartEffectObservation::Succeeded { .. }
+        ),
+        "exact retained records must be sufficient withdrawal evidence"
+    );
+    assert_eq!(
+        snapshot_regular_files(fixture.state_root.path()),
+        after_recovery
     );
 }
 

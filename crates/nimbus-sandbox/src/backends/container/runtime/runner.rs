@@ -1922,7 +1922,6 @@ pub(super) fn try_converge_runner_cleanup_with(
         authoritative_runner_cleanup_outcome(manifest, terminal_status, last_exit_code);
     manifest.shutdown_requested = true;
     manifest.last_exit_code = last_exit_code;
-    manifest.next_restart_at_millis = None;
     synchronize_handle_status(manifest, crate::instance::SandboxStatus::Stopping);
     converge_runner_cleanup_stage_with(
         RunnerCleanupConvergenceStage::StoppingPersistence,

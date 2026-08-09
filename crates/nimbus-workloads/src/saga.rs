@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use crate::{DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadUid};
 
 /// Portable saga format understood by this crate.
-pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 4;
+pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 5;
 
 /// A rejected workload-saga value or transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -480,7 +480,7 @@ impl<'de> Deserialize<'de> for WorkloadSagaIntent {
 
 impl WorkloadSagaIntent {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new_without_automatic_restart(
         kind: DesiredWorkloadKind,
         desired_state: DesiredWorkloadState,
         generation: WorkloadGeneration,
@@ -1603,10 +1603,10 @@ pub use provision::{
     WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence,
 };
 pub use restart::{
-    ActiveWorkloadRestart, WorkloadExecutionAttemptId, WorkloadInspectionVersion,
-    WorkloadRestartAbsenceEvidence, WorkloadRestartAdmission, WorkloadRestartAdmissionInput,
-    WorkloadRestartAdmissionUpdate, WorkloadRestartCommandClaim, WorkloadRestartCommandId,
-    WorkloadRestartCommandReceipt, WorkloadRestartDispatchAuthorization,
+    ActiveWorkloadRestart, MAX_WORKLOAD_RESTART_COMPLETION_HISTORY, WorkloadExecutionAttemptId,
+    WorkloadInspectionVersion, WorkloadRestartAbsenceEvidence, WorkloadRestartAdmission,
+    WorkloadRestartAdmissionInput, WorkloadRestartAdmissionUpdate, WorkloadRestartCommandClaim,
+    WorkloadRestartCommandId, WorkloadRestartCommandReceipt, WorkloadRestartDispatchAuthorization,
     WorkloadRestartDispatchEpoch, WorkloadRestartDisposition, WorkloadRestartEffectResult,
     WorkloadRestartEpoch, WorkloadRestartEvidenceDigest, WorkloadRestartHistory,
     WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPhase, WorkloadRestartPolicy,

@@ -168,10 +168,7 @@ fn exited_inspection(
         );
     }
     let restart = assess_restart(RestartAssessmentInput {
-        policy: manifest.spec.lifecycle.restart_policy,
         exit_code,
-        completed_restarts: manifest.restart_count,
-        persisted_not_before_millis: manifest.next_restart_at_millis,
         shutdown_requested: manifest.shutdown_requested,
         blocker: backend
             .startup_network_reconciliation_error

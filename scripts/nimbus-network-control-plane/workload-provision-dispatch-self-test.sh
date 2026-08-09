@@ -328,12 +328,14 @@ pub struct KrunProvisionAdapter;
 pub struct ForwardedMachineProvisionAdapter;
 impl ContainerProvisionAdapter {
     pub fn new(backend: ContainerSandboxBackend) {
-        let phases = ProviderProvisionPhaseAdapter::new(backend.attempt_idempotency_journal()?);
+        let journal = backend.attempt_idempotency_journal()?;
+        let phases = ProviderProvisionPhaseAdapter::new(journal.clone());
     }
 }
 impl KrunProvisionAdapter {
     pub fn new(backend: KrunSandboxBackend) {
-        let phases = ProviderProvisionPhaseAdapter::new(backend.attempt_idempotency_journal()?);
+        let journal = backend.attempt_idempotency_journal()?;
+        let phases = ProviderProvisionPhaseAdapter::new(journal.clone());
     }
 }
 RUST
@@ -350,7 +352,7 @@ RUST
   cat >"${fixture_root}/${SANDBOX_CONTAINER_PROVIDER_JOURNAL}" <<'RUST'
 impl ContainerSandboxBackend {
     pub fn attempt_idempotency_journal(&self) {
-        ProviderProvisionAttemptJournal::open(
+        ProviderCommandAttemptJournal::open(
             &self.config.workload_state_root,
             "container-runtime",
         )
@@ -361,7 +363,7 @@ RUST
 struct KrunSandboxBackend;
 impl KrunSandboxBackend {
     pub fn attempt_idempotency_journal(&self) {
-        ProviderProvisionAttemptJournal::open(
+        ProviderCommandAttemptJournal::open(
             &self.config.workload_state_root,
             "krun-runtime",
         )
@@ -371,9 +373,14 @@ RUST
 
   cat >"${fixture_root}/${SANDBOX_PROVISION}" <<'RUST'
 fn exact_sandbox_provision_plan() {}
-fn claim_dispatch_epoch() {}
-fn reject_stale_dispatch_epoch() {}
-fn adopt_exact_attempt() {}
+RUST
+  cat >"${fixture_root}/${SANDBOX_PROVIDER_COMMAND}" <<'RUST'
+pub struct ProviderCommandAttemptJournal;
+impl ProviderCommandAttemptJournal {
+    fn claim_dispatch_epoch() {}
+    fn reject_stale_dispatch_epoch() {}
+    fn adopt_exact_attempt() {}
+}
 RUST
 
   cat >"${fixture_root}/${SERVICES_REGISTRY}" <<'RUST'
@@ -398,7 +405,7 @@ RUST
 fn exact_compose_provider_realm() {}
 RUST
   cat >"${fixture_root}/${COMPOSE_LIFECYCLE_TESTS}" <<'RUST'
-fn compose_local_and_forwarded_use_compute_dispatch() {}
+fn compose_local_and_forwarded_provision_use_compute_dispatch() {}
 RUST
   cat >"${fixture_root}/${COMPOSE_FORWARDED_TESTS}" <<'RUST'
 fn forwarded_compose_uses_exact_provider() {}

@@ -95,7 +95,6 @@ fn delayed_ready_callback_preserves_published_terminal_execute_bytes() {
 
     manifest.shutdown_requested = true;
     manifest.last_exit_code = Some(0);
-    manifest.next_restart_at_millis = None;
     manifest.launch_reservation_claim = None;
     manifest.launch_artifact = None;
     manifest.network_cleanup_complete = true;
@@ -152,7 +151,6 @@ fn delayed_ready_callback_preserves_cleanup_pending_execute_bytes() {
 
     manifest.shutdown_requested = true;
     manifest.last_exit_code = Some(0);
-    manifest.next_restart_at_millis = None;
     manifest.network_cleanup_complete = false;
     synchronize_handle_status(&mut manifest, SandboxStatus::Stopping);
     assert!(!manifest.has_terminal_network_finality());
@@ -341,7 +339,6 @@ fn stopped_retry_preserves_nonzero_execute_outcome_as_failed() {
 
     manifest.shutdown_requested = true;
     manifest.last_exit_code = Some(23);
-    manifest.next_restart_at_millis = None;
     manifest.network_cleanup_complete = false;
     synchronize_handle_status(&mut manifest, SandboxStatus::Stopping);
     backend

@@ -596,8 +596,6 @@ fn effects_started_phase_remains_verifiable_after_manifest_progress() {
     manifest.launch_reservation_claim = None;
     manifest.launch_artifact = None;
     manifest.last_exit_code = Some(0);
-    manifest.restart_count = 2;
-    manifest.next_restart_at_millis = Some(42);
     manifest.shutdown_requested = true;
     synchronize_handle_status(&mut manifest, SandboxStatus::Stopping);
     backend

@@ -210,7 +210,8 @@ impl PreparedComposeProvision {
                     Arc::clone(&adapter),
                     selection.ingress_provider_id().clone(),
                     adapter,
-                );
+                )
+                .with_restart_capabilities();
                 let composition = ServerWorkloadComposition::new(
                     engine,
                     network.manager(),

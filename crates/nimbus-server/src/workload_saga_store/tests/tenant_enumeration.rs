@@ -563,7 +563,7 @@ fn workload_intent(
         generation,
         nimbus_network::NetworkProviderId::for_registration_key("fixture-attachment"),
     );
-    WorkloadSagaIntent::new(
+    WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Sandbox,
         desired_state,
         WorkloadGeneration::new(generation),

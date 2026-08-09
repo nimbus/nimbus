@@ -1439,36 +1439,7 @@ fn visible_published_endpoints_hide_execute_mode_endpoints_until_ready() {
 }
 
 #[test]
-fn restart_policy_allows_expected_restart_shapes() {
-    assert!(
-        !restart_policy_allows_restart(SandboxRestartPolicy::Never, 42, 0),
-        "never policy should not restart"
-    );
-    assert!(
-        restart_policy_allows_restart(SandboxRestartPolicy::OnFailure { max_restarts: 1 }, 42, 0),
-        "on-failure should restart non-zero exits within budget"
-    );
-    assert!(
-        !restart_policy_allows_restart(SandboxRestartPolicy::OnFailure { max_restarts: 1 }, 0, 0),
-        "on-failure should not restart clean exits"
-    );
-    assert!(
-        !restart_policy_allows_restart(SandboxRestartPolicy::Always { max_restarts: 1 }, 42, 1),
-        "restart budget should cap repeated restarts"
-    );
-}
-
-#[test]
-fn restart_backoff_delay_grows_and_caps() {
-    assert_eq!(restart_backoff_delay(0), Duration::from_secs(1));
-    assert_eq!(restart_backoff_delay(1), Duration::from_secs(2));
-    assert_eq!(restart_backoff_delay(2), Duration::from_secs(4));
-    assert_eq!(restart_backoff_delay(6), Duration::from_secs(60));
-    assert_eq!(restart_backoff_delay(12), Duration::from_secs(60));
-}
-
-#[test]
-fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() {
+fn manifest_deserialization_defaults_lifecycle_for_pre_restart_manifests() {
     let manifest: KrunSandboxManifest = serde_json::from_value(json!({
         "handle": {
             "tenant_id": "tenant",
@@ -1575,7 +1546,6 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
     }))
     .expect("manifest should deserialize with restart defaults");
 
-    assert_eq!(manifest.restart_count, 0);
     assert_eq!(
         manifest.spec.lifecycle.restart_policy,
         SandboxRestartPolicy::Never

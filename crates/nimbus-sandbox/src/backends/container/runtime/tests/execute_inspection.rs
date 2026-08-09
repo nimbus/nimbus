@@ -232,7 +232,7 @@ fn concurrent_and_fresh_container_inspectors_return_exact_equal_evidence() {
         "process-local construction cannot change authenticated evidence"
     );
 
-    manifest.next_restart_at_millis = Some(7_000);
+    manifest.last_exit_code = Some(7);
     backend
         .write_manifest(&manifest)
         .expect("durable evidence substitution should persist");
@@ -620,7 +620,6 @@ fn container_terminal_inspection_versions_commit_to_exact_runner_handoff_evidenc
         .expect("exit receipt should be removable");
     manifest.shutdown_requested = true;
     manifest.last_exit_code = Some(0);
-    manifest.next_restart_at_millis = None;
     manifest.network_cleanup_complete = true;
     manifest.launch_reservation_claim = None;
     manifest.launch_artifact = None;

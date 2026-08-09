@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.4 complete; NNC6.4a
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.4a complete; NNC6.5
   in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
@@ -206,7 +206,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
   correction review. The proof records every finding disposition. The plan
   authorizes no further NNC6.4 review.
 
-  NNC6.4a is active. Its read-only substitution audit is complete at
+  NNC6.4a is complete. Its read-only substitution audit is complete at
   `proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md`.
   A1-A20 freeze one nested same-generation restart state, a separate
   execution-attempt identity, compute-owned schedule/count/watch and command
@@ -266,7 +266,20 @@ extension-registry seam before the second concern edits `extensions.rs`.
   green. The Nimbus package build/test/typecheck passes with `24`-route parity.
   NNCV034 remains `71/71`, and the live contract is red only for machine,
   scheduler, and final behavior. Compose, machine, and scheduler cutovers are
-  next. No structured review has run on this partial work.
+  next. No structured review ran on that partial checkpoint.
+
+  Final NNC6.4a closeout satisfies A1-A20. The narrow-review corrections prove
+  observation-absence republish, inspect-before-terminal successor veto,
+  later-veto read-only node inspection across every machine boundary, and
+  assertion-quality verifier enforcement. Final affected behavior passes
+  workloads `172`, compute `303 + 1 ignore`, sandbox `1,004 + 27 ignores`,
+  machine `34`, node `72`, server `692 + 32 ignores`, CLI `948 + 1 ignore`, and
+  services `82`. NNCV033 passes `40/40 + 50/50`; NNCV034 passes `86/86`; the
+  aggregate passes `35/35 + 413/413`; docs pass `108`; and the site gate passes
+  `17/17`. One full and one narrow Sol/xhigh/fast review are fully
+  dispositioned. No third review ran or is warranted. NNC6.5 teardown caller
+  cutover is active at its read-only audit boundary; its first source change
+  waits for the exact NNC6.4a closeout commit.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,

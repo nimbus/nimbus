@@ -14,7 +14,10 @@ use axum::http::StatusCode;
 use nimbus::{Error, SandboxBackendKind, SandboxId, SandboxStatus};
 use nimbus_machine::{
     MachineForwarderAuthority,
-    api::{MachineApiWorkloadProvisionCommandEnvelope, MachineApiWorkloadProvisionObservation},
+    api::{
+        MachineApiWorkloadProvisionCommandEnvelope, MachineApiWorkloadProvisionObservation,
+        MachineApiWorkloadRestartCommandEnvelope, MachineApiWorkloadRestartObservation,
+    },
 };
 use nimbus_node::{
     HostLifecycleBackend, HostLifecycleBackendKind, HostLifecycleRequest,
@@ -32,6 +35,7 @@ use nimbus_workloads::WorkloadExecutionId;
 use super::{MachineApiHttpError, sandbox_error_to_http_error};
 
 pub(super) mod provision;
+pub(super) mod restart;
 
 const SERVICE_WORKLOAD_DEFAULT_CPU_WEIGHT: u64 = 100;
 const SERVICE_WORKLOAD_CPU_WEIGHT_PER_VCPU: u64 = 100;
@@ -44,13 +48,21 @@ pub(super) type MachineApiServiceFuture<'a, T> =
 /// Narrow Machine API surface implemented by the guest workload owner.
 ///
 /// `inspect` and `stop` are retained read/retirement operations. Provisioning
-/// is possible only through `provision_phase`; there is intentionally no
-/// coarse `start` operation.
+/// and restart are possible only through their exact phase commands; there
+/// are intentionally no coarse `start` or `restart` operations.
 pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
     fn kind(&self) -> SandboxBackendKind;
 
     fn service_execution_blockers(&self) -> Vec<String> {
         Vec::new()
+    }
+
+    /// Operation-specific blockers for the strict restart phase sink.
+    ///
+    /// A generic facade must fail closed. Only the real guest owner overrides
+    /// this method together with `restart_phase`.
+    fn restart_execution_blockers(&self) -> Vec<String> {
+        vec!["machine API workload facade has no strict restart-phase sink".to_owned()]
     }
 
     fn inspect<'a>(
@@ -75,6 +87,18 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
                 status: StatusCode::SERVICE_UNAVAILABLE,
                 message: "machine API workload facade has no strict provision-phase sink"
                     .to_owned(),
+            })
+        })
+    }
+
+    fn restart_phase<'a>(
+        &'a self,
+        _command: &'a MachineApiWorkloadRestartCommandEnvelope,
+    ) -> MachineApiServiceFuture<'a, MachineApiWorkloadRestartObservation> {
+        Box::pin(async move {
+            Err(MachineApiHttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: "machine API workload facade has no strict restart-phase sink".to_owned(),
             })
         })
     }
@@ -138,6 +162,10 @@ impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {
     }
 
     fn service_execution_blockers(&self) -> Vec<String> {
+        self.lifecycle_blockers.clone()
+    }
+
+    fn restart_execution_blockers(&self) -> Vec<String> {
         self.lifecycle_blockers.clone()
     }
 
@@ -229,6 +257,13 @@ impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {
         forwarder_authority: &'a MachineForwarderAuthority,
     ) -> MachineApiServiceFuture<'a, MachineApiWorkloadProvisionObservation> {
         Box::pin(provision::dispatch(self, command, forwarder_authority))
+    }
+
+    fn restart_phase<'a>(
+        &'a self,
+        command: &'a MachineApiWorkloadRestartCommandEnvelope,
+    ) -> MachineApiServiceFuture<'a, MachineApiWorkloadRestartObservation> {
+        Box::pin(restart::dispatch(self, command))
     }
 }
 
@@ -444,6 +479,7 @@ mod lifecycle_projection_tests {
                 "status": "ready",
                 "published_endpoints": [],
             },
+            "execution_attempt": { "state": "plan_only" },
             "execution": { "state": "plan_only" },
             "restart": { "assessment": "ineligible", "reason": "plan_only" },
             "cleanup": "not_required",

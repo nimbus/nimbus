@@ -41,49 +41,78 @@ pub(super) fn validate_restart_state(record: &WorkloadSagaRecord) -> Result<(), 
             "publication evidence is crossed with the current execution attempt",
         ));
     }
+    if state.completion_history.len() > MAX_WORKLOAD_RESTART_COMPLETION_HISTORY {
+        return Err(WorkloadSagaError::InvalidEvidence(
+            "completed restart history exceeds its durable bound",
+        ));
+    }
     if state.completed_restart_epoch.as_u64() == 0 {
-        if state.last_completed.is_some() {
+        if !state.completion_history.is_empty() {
             return Err(WorkloadSagaError::InvalidEvidence(
                 "initial execution attempt cannot retain completed restart history",
             ));
         }
     } else {
-        let history = state
-            .last_completed
-            .as_ref()
-            .ok_or(WorkloadSagaError::InvalidEvidence(
-                "completed restart epoch requires exact last-completed history",
-            ))?;
-        let source_epoch = WorkloadRestartEpoch::new(
-            state
-                .completed_restart_epoch
-                .as_u64()
-                .checked_sub(1)
-                .ok_or(WorkloadSagaError::InvalidEvidence(
-                    "completed restart history cannot use epoch zero",
-                ))?,
-        );
-        let expected_source_attempt =
-            WorkloadExecutionAttemptId::for_execution(&execution_id, source_epoch);
-        validate_restart_admission_for_record(
-            record,
-            history.admission(),
-            state.completed_restart_epoch,
-            &expected_source_attempt,
-            &state.current_execution_attempt_id,
-            state.completed_automatic_restart_count,
-        )?;
+        if u64::try_from(state.completion_history.len()).ok()
+            != Some(state.completed_restart_epoch.as_u64())
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "completed restart epoch requires contiguous non-evicting history",
+            ));
+        }
+        let mut expected_policy_count = 0_u32;
+        let mut completed_requests = std::collections::BTreeSet::new();
+        for (index, history) in state.completion_history.iter().enumerate() {
+            if !completed_requests.insert(history.request_id().clone()) {
+                return Err(WorkloadSagaError::InvalidEvidence(
+                    "completed restart history contains a duplicate request",
+                ));
+            }
+            let source_epoch = WorkloadRestartEpoch::new(index as u64);
+            let target_epoch = WorkloadRestartEpoch::new(index as u64 + 1);
+            let expected_source_attempt =
+                WorkloadExecutionAttemptId::for_execution(&execution_id, source_epoch);
+            let expected_target_attempt =
+                WorkloadExecutionAttemptId::for_execution(&execution_id, target_epoch);
+            if history.trigger().is_automatic() {
+                expected_policy_count = expected_policy_count.checked_add(1).ok_or(
+                    WorkloadSagaError::InvalidCounter("automatic restart count overflow"),
+                )?;
+            }
+            validate_restart_admission_for_record(
+                record,
+                history.admission(),
+                target_epoch,
+                &expected_source_attempt,
+                &expected_target_attempt,
+                expected_policy_count,
+            )?;
+        }
+        if expected_policy_count != state.completed_automatic_restart_count {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "completed restart policy count does not match durable history",
+            ));
+        }
     }
 
     if let Some(active) = &state.active {
         active.validate()?;
         if record.phase != WorkloadSagaPhase::Observed
             || record.active_intent.desired_state() != DesiredWorkloadState::Running
-            || record.successor_intent.is_some()
             || record.failure.is_some()
         {
             return Err(WorkloadSagaError::InvalidTransition(
                 "active restart requires an observed running generation without withdrawal",
+            ));
+        }
+        if record
+            .successor_intent
+            .as_ref()
+            .map(WorkloadSagaIntent::generation)
+            != active.successor_veto_generation
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "active restart successor veto is crossed with queued desired state",
             ));
         }
         let admission = &active.admission;
@@ -409,15 +438,14 @@ fn validate_restart_disposition_for_record(
                     "terminal restart observation cannot remain active as ready",
                 ))?;
             validate_claim(claim, claim.step())?;
-            if target != active.phase
-                || !matches!(
-                    revision_after(claim.issuing_revision(), 2),
-                    Some(revision) if revision == record.revision
-                ) && !matches!(
-                    revision_after(claim.issuing_revision(), 3),
-                    Some(revision) if revision == record.revision
-                )
-            {
+            let exact_revision = [2, 3].into_iter().any(|distance| {
+                revision_after(claim.issuing_revision(), distance)
+                    .is_some_and(|revision| revision == record.revision)
+            });
+            let retained_after_veto = active.successor_veto_generation.is_some()
+                && revision_after(claim.issuing_revision(), 2)
+                    .is_some_and(|revision| revision < record.revision);
+            if target != active.phase || (!exact_revision && !retained_after_veto) {
                 return Err(WorkloadSagaError::InvalidEvidence(
                     "restart success receipt is crossed with its target phase or revision",
                 ));
@@ -441,7 +469,11 @@ fn validate_restart_disposition_for_record(
                     "restart inspection claim cannot exist at a non-effect phase",
                 ))?;
             validate_claim(claim, expected_step)?;
-            if revision_after(claim.issuing_revision(), 2) != Some(record.revision) {
+            if revision_after(claim.issuing_revision(), 2) != Some(record.revision)
+                && !(active.successor_veto_generation.is_some()
+                    && revision_after(claim.issuing_revision(), 2)
+                        .is_some_and(|revision| revision < record.revision))
+            {
                 return Err(WorkloadSagaError::InvalidEvidence(
                     "restart inspection state does not exactly follow its dispatch claim",
                 ));
@@ -453,15 +485,31 @@ fn validate_restart_disposition_for_record(
                     "restart failure claim cannot exist at a non-effect phase",
                 ))?;
             validate_claim(claim, expected_step)?;
-            if !matches!(
-                revision_after(claim.issuing_revision(), 2),
-                Some(revision) if revision == record.revision
-            ) && !matches!(
-                revision_after(claim.issuing_revision(), 3),
-                Some(revision) if revision == record.revision
-            ) {
+            let exact_revision = [2, 3].into_iter().any(|distance| {
+                revision_after(claim.issuing_revision(), distance)
+                    .is_some_and(|revision| revision == record.revision)
+            });
+            let retained_after_veto = active.successor_veto_generation.is_some()
+                && revision_after(claim.issuing_revision(), 2)
+                    .is_some_and(|revision| revision < record.revision);
+            if !exact_revision && !retained_after_veto {
                 return Err(WorkloadSagaError::InvalidEvidence(
                     "restart failure does not exactly follow its command claim",
+                ));
+            }
+        }
+        WorkloadRestartDisposition::SuccessorVetoed { claim, .. } => {
+            let expected_step =
+                restart_step_for_phase(active.phase).ok_or(WorkloadSagaError::InvalidEvidence(
+                    "restart successor veto evidence cannot exist at a non-effect phase",
+                ))?;
+            validate_claim(claim, expected_step)?;
+            if active.successor_veto_generation.is_none()
+                || revision_after(claim.issuing_revision(), 2)
+                    .is_none_or(|revision| revision > record.revision)
+            {
+                return Err(WorkloadSagaError::InvalidEvidence(
+                    "restart successor veto result lacks an exact issued command fence",
                 ));
             }
         }
@@ -534,8 +582,9 @@ pub(super) fn validate_restart_state_transition(
                 || candidate.restart.completed_restart_epoch
                     != current.restart.completed_restart_epoch
                 || candidate.restart.completed_automatic_restart_count != expected_automatic_count
-                || candidate.restart.last_completed != current.restart.last_completed
+                || candidate.restart.completion_history != current.restart.completion_history
                 || !next.owner_observations.is_empty()
+                || next.successor_veto_generation.is_some()
             {
                 return Err(WorkloadSagaError::InvalidTransition(
                     "restart admission must create one exact requested state",
@@ -550,7 +599,7 @@ pub(super) fn validate_restart_state_transition(
                     != candidate.restart.completed_restart_epoch
                 || current.restart.completed_automatic_restart_count
                     != candidate.restart.completed_automatic_restart_count
-                || current.restart.last_completed != candidate.restart.last_completed
+                || current.restart.completion_history != candidate.restart.completion_history
             {
                 return Err(WorkloadSagaError::InvalidTransition(
                     "active restart transition must retain identity, count, and schedule",
@@ -569,7 +618,7 @@ pub(super) fn validate_restart_state_transition(
                     == current.restart.completed_restart_epoch
                 && candidate.restart.completed_automatic_restart_count
                     == current.restart.completed_automatic_restart_count
-                && candidate.restart.last_completed == current.restart.last_completed;
+                && candidate.restart.completion_history == current.restart.completion_history;
             let completed = previous.phase == WorkloadRestartPhase::ObservationPending
                 && (matches!(
                     previous.disposition,
@@ -587,8 +636,8 @@ pub(super) fn validate_restart_state_transition(
                     == previous.admission.policy_attempt_count()
                 && candidate
                     .restart
-                    .last_completed
-                    .as_ref()
+                    .completion_history
+                    .last()
                     .is_some_and(|history| history.admission == previous.admission);
             if !vetoed_for_successor && !completed {
                 return Err(WorkloadSagaError::InvalidTransition(
@@ -612,6 +661,48 @@ fn validate_active_restart_transition(
     next: &ActiveWorkloadRestart,
 ) -> Result<(), WorkloadSagaError> {
     let owner_observations_unchanged = previous.owner_observations == next.owner_observations;
+    let successor_vetoed = previous.successor_veto_generation.is_none()
+        && next.successor_veto_generation
+            == candidate
+                .successor_intent
+                .as_ref()
+                .map(WorkloadSagaIntent::generation)
+        && next.successor_veto_generation.is_some()
+        && owner_observations_unchanged
+        && match (&previous.disposition, &next.disposition) {
+            (
+                WorkloadRestartDisposition::DispatchPending { claim: previous },
+                WorkloadRestartDisposition::InspectionRequired { claim: next },
+            ) => previous == next,
+            (previous, next) => previous == next,
+        };
+    if successor_vetoed {
+        return Ok(());
+    }
+    let successor_veto_advanced = previous.successor_veto_generation
+        == current
+            .successor_intent
+            .as_ref()
+            .map(WorkloadSagaIntent::generation)
+        && next.successor_veto_generation
+            == candidate
+                .successor_intent
+                .as_ref()
+                .map(WorkloadSagaIntent::generation)
+        && previous
+            .successor_veto_generation
+            .zip(next.successor_veto_generation)
+            .is_some_and(|(previous, next)| next > previous)
+        && owner_observations_unchanged
+        && previous.disposition == next.disposition;
+    if successor_veto_advanced {
+        return Ok(());
+    }
+    if previous.successor_veto_generation != next.successor_veto_generation {
+        return Err(WorkloadSagaError::InvalidTransition(
+            "restart transition cannot rewrite its durable successor veto",
+        ));
+    }
     if previous.phase == next.phase {
         return if !owner_observations_unchanged {
             Err(WorkloadSagaError::InvalidTransition(
@@ -643,6 +734,13 @@ fn validate_active_restart_transition(
                         result,
                     },
                 ) if previous == next && result.is_failed() => Ok(()),
+                (
+                    WorkloadRestartDisposition::DispatchPending { claim: previous }
+                    | WorkloadRestartDisposition::InspectionRequired { claim: previous },
+                    WorkloadRestartDisposition::SuccessorVetoed {
+                        claim: next_claim, ..
+                    },
+                ) if previous == next_claim && next.successor_veto_generation.is_some() => Ok(()),
                 (
                     WorkloadRestartDisposition::InspectionRequired { claim: previous },
                     WorkloadRestartDisposition::DispatchPending { claim: next },
@@ -716,7 +814,40 @@ fn validate_active_restart_transition(
         && next.disposition.is_ready()
         && next.disposition.receipt().is_none()
         && owner_observations_unchanged;
-    if exact_success || requested_without_effect || scheduled_due || withheld_publication {
+    let republish_after_observation_absence = previous.phase
+        == WorkloadRestartPhase::ObservationPending
+        && next.phase == WorkloadRestartPhase::PublicationPending
+        && current.active_intent.publication == WorkloadPublicationIntent::PublishWhenReady
+        && previous.successor_veto_generation.is_none()
+        && next.successor_veto_generation.is_none()
+        && previous.owner_observations.len() == next.owner_observations.len() + 1
+        && previous
+            .owner_observations
+            .split_last()
+            .is_some_and(|(last, prefix)| {
+                matches!(last, WorkloadOwnerObservation::PublicationPresent { .. })
+                    && prefix == next.owner_observations
+            })
+        && matches!(
+            (&previous.disposition, &next.disposition),
+            (
+                WorkloadRestartDisposition::InspectionRequired {
+                    claim: observation,
+                },
+                WorkloadRestartDisposition::DispatchPending { claim: publish },
+            ) if republish_claim_follows_observation_absence(
+                current,
+                observation,
+                publish,
+                candidate.revision,
+            )
+        );
+    if exact_success
+        || requested_without_effect
+        || scheduled_due
+        || withheld_publication
+        || republish_after_observation_absence
+    {
         Ok(())
     } else {
         Err(WorkloadSagaError::InvalidTransition(
@@ -745,6 +876,28 @@ fn retry_claim_follows_inspection(
         && absence.matches_inspection(current, previous)
 }
 
+fn republish_claim_follows_observation_absence(
+    current: &WorkloadSagaRecord,
+    observation: &WorkloadRestartCommandClaim,
+    publish: &WorkloadRestartCommandClaim,
+    resulting_revision: WorkloadSagaRevision,
+) -> bool {
+    let WorkloadRestartDispatchAuthorization::RepublishAfterObservationAbsence(absence) =
+        publish.authorization()
+    else {
+        return false;
+    };
+    observation.request_id() == publish.request_id()
+        && observation.restart_epoch() == publish.restart_epoch()
+        && observation.attempt_id() == publish.attempt_id()
+        && observation.step() == WorkloadRestartStep::ObservePublication
+        && publish.step() == WorkloadRestartStep::Publish
+        && observation.dispatch_epoch().checked_next() == Some(publish.dispatch_epoch())
+        && publish.issuing_revision() == current.revision
+        && current.revision.checked_next() == Some(resulting_revision)
+        && absence.matches_inspection(current, observation)
+}
+
 impl WorkloadSagaRecord {
     pub fn restart_state(&self) -> &WorkloadRestartState {
         &self.restart
@@ -764,6 +917,15 @@ impl WorkloadSagaRecord {
         let Some(active) = &self.restart.active else {
             return WorkloadRestartRecoveryDecision::Quiescent;
         };
+        if active.successor_veto_generation.is_some()
+            && !matches!(
+                active.disposition,
+                WorkloadRestartDisposition::DispatchPending { .. }
+                    | WorkloadRestartDisposition::InspectionRequired { .. }
+            )
+        {
+            return WorkloadRestartRecoveryDecision::Quiescent;
+        }
         if active.phase == WorkloadRestartPhase::Scheduled
             && now_unix_millis < active.admission.not_before_unix_millis()
         {
@@ -775,8 +937,13 @@ impl WorkloadSagaRecord {
 
     /// Whether the global restart watch must discover this record.
     pub fn requires_restart_watch(&self) -> bool {
-        if self.restart.active.is_some() {
-            return true;
+        if let Some(active) = &self.restart.active {
+            return active.successor_veto_generation.is_none()
+                || matches!(
+                    active.disposition,
+                    WorkloadRestartDisposition::DispatchPending { .. }
+                        | WorkloadRestartDisposition::InspectionRequired { .. }
+                );
         }
         self.phase == WorkloadSagaPhase::Observed
             && self.active_intent.desired_state() == DesiredWorkloadState::Running
@@ -807,9 +974,7 @@ impl WorkloadSagaRecord {
                 ))
             };
         }
-        if let Some(completed) = &self.restart.last_completed
-            && completed.request_id() == &input.request_id
-        {
+        if let Some(completed) = self.restart.completion_for_request(&input.request_id) {
             let admission = completed.admission();
             return if admission.trigger() == input.trigger
                 && admission.inspection_version() == input.inspection_version
@@ -825,6 +990,11 @@ impl WorkloadSagaRecord {
         if input.expected_revision != self.revision {
             return Err(WorkloadSagaError::InvalidTransition(
                 "restart admission revision is stale or crossed",
+            ));
+        }
+        if self.restart.completion_history.len() == MAX_WORKLOAD_RESTART_COMPLETION_HISTORY {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "completed restart history is exhausted for this desired generation",
             ));
         }
         if self.phase != WorkloadSagaPhase::Observed
@@ -1021,7 +1191,8 @@ impl WorkloadSagaRecord {
             &active.disposition,
             WorkloadRestartDisposition::InspectionRequired { claim: retained }
                 if retained == claim
-        ) || !absence.matches_inspection(self, claim)
+        ) || claim.step() == WorkloadRestartStep::ObservePublication
+            || !absence.matches_inspection(self, claim)
         {
             return Err(WorkloadSagaError::InvalidEvidence(
                 "restart retry requires exact durable absence evidence",
@@ -1029,6 +1200,49 @@ impl WorkloadSagaRecord {
         }
         let next = WorkloadRestartCommandClaim::retry_after_absence(claim, self.revision, absence)?;
         active.disposition = WorkloadRestartDisposition::DispatchPending { claim: next };
+        self.build_next_with_restart_state(restart)
+    }
+
+    /// Republish only after exact inspection proves the published endpoint absent.
+    pub fn restart_observation_absence_to_publication_retry(
+        &self,
+        observation: &WorkloadRestartCommandClaim,
+        absence: WorkloadRestartAbsenceEvidence,
+    ) -> Result<Self, WorkloadSagaError> {
+        let mut restart = self.restart.clone();
+        let active = restart
+            .active
+            .as_mut()
+            .ok_or(WorkloadSagaError::InvalidTransition(
+                "restart republish requires an active request",
+            ))?;
+        if self.active_intent.publication != WorkloadPublicationIntent::PublishWhenReady
+            || active.phase != WorkloadRestartPhase::ObservationPending
+            || active.successor_veto_generation.is_some()
+            || observation.step() != WorkloadRestartStep::ObservePublication
+            || !matches!(
+                &active.disposition,
+                WorkloadRestartDisposition::InspectionRequired { claim: retained }
+                    if retained == observation
+            )
+            || !absence.matches_inspection(self, observation)
+            || !matches!(
+                active.owner_observations.last(),
+                Some(WorkloadOwnerObservation::PublicationPresent { .. })
+            )
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart republish requires exact publication-observation absence",
+            ));
+        }
+        let publish = WorkloadRestartCommandClaim::republish_after_observation_absence(
+            observation,
+            self.revision,
+            absence,
+        )?;
+        active.owner_observations.pop();
+        active.phase = WorkloadRestartPhase::PublicationPending;
+        active.disposition = WorkloadRestartDisposition::DispatchPending { claim: publish };
         self.build_next_with_restart_state(restart)
     }
 
@@ -1054,6 +1268,18 @@ impl WorkloadSagaRecord {
             return Err(WorkloadSagaError::InvalidTransition(
                 "restart effect result is stale or crossed",
             ));
+        }
+        if active.successor_veto_generation.is_some() {
+            let mut restart = self.restart.clone();
+            restart
+                .active
+                .as_mut()
+                .expect("active restart checked above")
+                .disposition = WorkloadRestartDisposition::SuccessorVetoed {
+                claim: claim.clone(),
+                result,
+            };
+            return self.build_next_with_restart_state(restart);
         }
         match result {
             WorkloadRestartEffectResult::AuthenticatedAbsent { .. } => {
@@ -1179,7 +1405,7 @@ impl WorkloadSagaRecord {
         restart.current_execution_attempt_id = admission.attempt_id().clone();
         restart.completed_restart_epoch = admission.restart_epoch();
         restart.completed_automatic_restart_count = admission.policy_attempt_count();
-        restart.last_completed = Some(WorkloadRestartHistory {
+        restart.completion_history.push(WorkloadRestartHistory {
             admission,
             evidence,
         });
@@ -1221,7 +1447,7 @@ impl WorkloadSagaRecord {
         restart.current_execution_attempt_id = admission.attempt_id().clone();
         restart.completed_restart_epoch = admission.restart_epoch();
         restart.completed_automatic_restart_count = admission.policy_attempt_count();
-        restart.last_completed = Some(WorkloadRestartHistory {
+        restart.completion_history.push(WorkloadRestartHistory {
             admission,
             evidence,
         });

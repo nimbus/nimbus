@@ -12,16 +12,18 @@ use nimbus_machine::MachineForwarderAuthority;
 use nimbus_machine::api::{
     MACHINE_API_BOOTC_ROLLBACK_PATH, MACHINE_API_BOOTC_STATUS_PATH, MACHINE_API_BOOTC_SWITCH_PATH,
     MACHINE_API_BOOTC_UPGRADE_PATH, MACHINE_API_CAPABILITIES_PATH, MACHINE_API_HEALTH_PATH,
-    MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH, MachineApiBootcOperationResponse,
-    MachineApiBootcRollbackRequest, MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest,
-    MachineApiBootcUpgradeRequest, MachineApiCapabilityResponse, MachineApiErrorResponse,
-    MachineApiHealthResponse, MachineApiServiceProcessSnapshot,
-    MachineApiServiceProcessSnapshotResponse, MachineApiServiceSandboxInspectResponse,
-    MachineApiServiceSandboxListResponse, MachineApiServiceSandboxLogChunkResponse,
-    MachineApiServiceSandboxLookupResponse, MachineApiServiceSandboxStopRequest,
-    MachineApiServiceSandboxStopResponse, MachineApiServiceSandboxSummary,
-    MachineApiWorkloadProvisionCommandEnvelope, MachineApiWorkloadProvisionPhaseRequest,
-    MachineApiWorkloadProvisionPhaseResponse, PROTOCOL_VERSION,
+    MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH, MACHINE_API_WORKLOAD_RESTART_PHASE_PATH,
+    MachineApiBootcOperationResponse, MachineApiBootcRollbackRequest,
+    MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest, MachineApiBootcUpgradeRequest,
+    MachineApiCapabilityResponse, MachineApiErrorResponse, MachineApiHealthResponse,
+    MachineApiServiceProcessSnapshot, MachineApiServiceProcessSnapshotResponse,
+    MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
+    MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
+    MachineApiServiceSandboxStopRequest, MachineApiServiceSandboxStopResponse,
+    MachineApiServiceSandboxSummary, MachineApiWorkloadProvisionCommandEnvelope,
+    MachineApiWorkloadProvisionPhaseRequest, MachineApiWorkloadProvisionPhaseResponse,
+    MachineApiWorkloadRestartCommandEnvelope, MachineApiWorkloadRestartPhaseRequest,
+    MachineApiWorkloadRestartPhaseResponse, PROTOCOL_VERSION,
     machine_api_current_service_sandbox_path, machine_api_service_sandbox_list_path,
     machine_api_service_sandbox_logs_path, machine_api_service_sandbox_path,
     machine_api_service_sandbox_process_snapshot_path, machine_api_service_sandbox_stop_path,
@@ -161,6 +163,34 @@ impl MachineApiClient {
         response.validate_for_request(&request).map_err(|error| {
             Error::Internal(format!(
                 "machine API workload provision response did not authenticate the exact command fences; the outcome remains ambiguous: {error}"
+            ))
+        })?;
+        Ok(response)
+    }
+
+    /// Dispatch one restart phase that compute has already durably confirmed.
+    ///
+    /// The client authenticates the complete command with the current
+    /// parent-issued machine authority and rejects a crossed response as an
+    /// ambiguous outcome. It owns no restart policy, order, or retry loop.
+    pub(crate) fn restart_workload_phase(
+        &self,
+        command: MachineApiWorkloadRestartCommandEnvelope,
+    ) -> Result<MachineApiWorkloadRestartPhaseResponse, Error> {
+        let request = MachineApiWorkloadRestartPhaseRequest::new(
+            self.service_forwarder_authority()?.clone(),
+            command,
+        )
+        .map_err(|error| {
+            Error::InvalidInput(format!(
+                "machine API workload restart request is crossed: {error}"
+            ))
+        })?;
+        let response: MachineApiWorkloadRestartPhaseResponse =
+            self.post_json(MACHINE_API_WORKLOAD_RESTART_PHASE_PATH, &request)?;
+        response.validate_for_request(&request).map_err(|error| {
+            Error::Internal(format!(
+                "machine API workload restart response did not authenticate the exact command fences; the outcome remains ambiguous: {error}"
             ))
         })?;
         Ok(response)

@@ -373,6 +373,45 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
         fence: &SandboxRestartAttemptFence,
     ) -> Result<SandboxProvisionPhaseObservation> {
+        self.attach_restart_retained_network_with(sandbox_id, fence, |backend, manifest| {
+            backend.configure_network(manifest, AttachmentAttachAuthority::RestartRetained, false)
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn attach_restart_retained_network_with_test_host(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        self.attach_restart_retained_network_with(sandbox_id, fence, |backend, manifest| {
+            let network_config = manifest.require_network_config()?;
+            let ports = backend.port_lease_coordinator();
+            let hostname = hostname_for(&manifest.spec);
+            backend
+                .non_routable_attachment_adapter(manifest, network_config, &hostname)
+                .attach_with_test_host(
+                    &backend.attachment_lifecycle(&ports),
+                    AttachmentAttachAuthority::RestartRetained,
+                    |_| {
+                        if let Some(proxy) = manifest.egress_proxy.as_ref() {
+                            backend
+                                .egress_pin_provider
+                                .apply(&manifest.network_layout, proxy)?;
+                        }
+                        Ok(())
+                    },
+                )
+                .map(|_| ())
+        })
+    }
+
+    fn attach_restart_retained_network_with(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        attach: impl FnOnce(&Self, &KrunSandboxManifest) -> Result<()>,
+    ) -> Result<SandboxProvisionPhaseObservation> {
         let Some(observed) = self.read_manifest(sandbox_id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
@@ -400,19 +439,43 @@ impl KrunSandboxBackend {
             });
         }
         if durable.phase == KrunRestartProviderPhase::NetworkAttached {
-            return self.inspect_restart_retained_network_locked(&manifest, &durable);
+            let observed = self.inspect_restart_retained_network_locked(&manifest, &durable)?;
+            if matches!(observed, SandboxProvisionPhaseObservation::Succeeded { .. }) {
+                return Ok(observed);
+            }
         }
 
+        let retained_plan_members = Self::provision_port_plan_witness(&manifest);
         self.ensure_egress_proxy_running_with_release_authority(
             &manifest,
-            PepPreAdoptionReleaseAuthority::Retain,
+            PepPreAdoptionReleaseAuthority::PlannedRebind {
+                plan_members: &retained_plan_members,
+            },
         )?;
-        self.configure_network(&manifest, AttachmentAttachAuthority::RestartRetained, false)?;
+        let observation = self.inspect_restart_retained_network_provider(&manifest, &durable)?;
+        if matches!(
+            observation,
+            SandboxProvisionPhaseObservation::Succeeded { .. }
+        ) {
+            if durable.phase == KrunRestartProviderPhase::NetworkAttached {
+                return Ok(observation);
+            }
+            let record = self.persist_and_read_restart_provider_record(
+                &manifest,
+                KrunRestartProviderRecord::new(fence, KrunRestartProviderPhase::NetworkAttached),
+            )?;
+            return self.inspect_restart_retained_network_provider(&manifest, &record);
+        }
+
+        attach(self, &manifest)?;
         let observation = self.inspect_restart_retained_network_provider(&manifest, &durable)?;
         if !matches!(
             observation,
             SandboxProvisionPhaseObservation::Succeeded { .. }
         ) {
+            return Ok(observation);
+        }
+        if durable.phase == KrunRestartProviderPhase::NetworkAttached {
             return Ok(observation);
         }
         let record = self.persist_and_read_restart_provider_record(

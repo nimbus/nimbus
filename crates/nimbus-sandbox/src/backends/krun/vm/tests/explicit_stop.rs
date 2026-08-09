@@ -201,21 +201,6 @@ fn terminal_projection_rejects_every_retained_krun_launch_authority() {
             "terminal-authority-matrix",
         ),
     };
-    terminal.next_restart_at_millis = Some(1);
-    let error = backend
-        .write_manifest(&terminal)
-        .expect_err("retained restart authority must veto terminal projection");
-    assert!(
-        error.to_string().contains("next_restart_at_millis=Some(1)"),
-        "diagnostic must name retained restart authority: {error}"
-    );
-    assert_eq!(
-        fs::read(&terminal.conmon_layout.manifest_path)
-            .expect("rejected restart publication must preserve prior bytes"),
-        checkpoint
-    );
-
-    terminal.next_restart_at_millis = None;
     backend
         .write_manifest(&terminal)
         .expect("fully released terminal authority should publish");
@@ -603,6 +588,76 @@ fn adopting_stop_promotes_exact_allocator_adoption_before_cleanup() {
         once,
         "terminal replay must not reconstruct never-realized compensation"
     );
+}
+
+#[test]
+fn adopted_not_spawned_stop_uses_provider_cleanup_without_pid_effects() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    config.netavark_path = PathBuf::from("/usr/bin/true");
+    let backend = KrunSandboxBackend::new(config.clone());
+    let mut manifest = backend
+        .plan_start_with_id(
+            &sample_spec_for_tenant("krun-adopted-not-spawned-stop", "api"),
+            &SandboxId::new("krun-adopted-not-spawned-stop"),
+            None,
+            None,
+        )
+        .expect("execute planning should reserve exact launch authority")
+        .manifest;
+    let claim = manifest
+        .require_reserved_claim()
+        .expect("reserved launch should retain its coordinator")
+        .clone();
+    backend
+        .segment_allocator
+        .adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+            &claim,
+        )
+        .expect("fixture should commit allocator adoption");
+    manifest.launch_authority = KrunLaunchAuthority::Adopted {
+        reservation_claim: claim,
+    };
+    assert_eq!(
+        manifest.creator_handoff,
+        KrunCreatorHandoffState::NotSpawned
+    );
+    assert!(!manifest.conmon_layout.pidfile.exists());
+    backend
+        .write_manifest(&manifest)
+        .expect("adopted never-spawned fixture should persist");
+
+    backend
+        .stop_sync(&manifest.handle.id)
+        .expect("authorized stop should clean provider state without reading a PID");
+    let stopped = backend
+        .read_manifest(&manifest.handle.id)
+        .expect("stopped manifest should inspect")
+        .expect("stopped manifest should remain durable");
+    assert!(stopped.shutdown_requested);
+    assert_eq!(stopped.status, SandboxStatus::Failed);
+    assert_eq!(stopped.handle.status, SandboxStatus::Failed);
+    assert_eq!(stopped.launch_authority, KrunLaunchAuthority::Released);
+    assert_eq!(
+        stopped.provider_failure_cleanup,
+        KrunProviderFailureCleanupState::Inactive
+    );
+    assert!(
+        backend
+            .segment_allocator
+            .inspect_segments(&manifest.spec.tenant_id)
+            .expect("segment authority should inspect")
+            .unwrap_or_default()
+            .is_empty(),
+        "authorized cleanup must release the retained attachment exactly once"
+    );
+
+    let recovery = KrunSandboxBackend::new(config);
+    recovery
+        .stop_sync(&manifest.handle.id)
+        .expect("terminal provider cleanup should replay idempotently");
 }
 
 #[test]

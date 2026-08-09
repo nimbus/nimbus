@@ -666,6 +666,22 @@ impl WorkloadSagaRecord {
                     .map(WorkloadSagaIntentUpdate::Transition)
             }
             std::cmp::Ordering::Greater => {
+                if self.restart.active.as_ref().is_some_and(|active| {
+                    active.phase() != WorkloadRestartPhase::Requested
+                        || !active.disposition().is_ready()
+                        || active.disposition().receipt().is_some()
+                }) {
+                    return self
+                        .build_next(
+                            self.active_intent.clone(),
+                            Some(candidate),
+                            self.phase,
+                            self.phase_detail.clone(),
+                            self.failure.clone(),
+                        )
+                        .map(Box::new)
+                        .map(WorkloadSagaIntentUpdate::Transition);
+                }
                 let (phase, detail) = if self.phase.is_teardown() {
                     (self.phase, self.phase_detail.clone())
                 } else {
@@ -848,18 +864,27 @@ impl WorkloadSagaRecord {
         }
         let mut restart = self.restart.clone();
         if successor_intent.is_some()
-            && self.successor_intent.is_none()
+            && successor_intent != &self.successor_intent
             && let Some(active) = &restart.active
         {
-            if active.phase() != WorkloadRestartPhase::Requested
-                || !active.disposition().is_ready()
-                || active.disposition().receipt().is_some()
+            if active.phase() == WorkloadRestartPhase::Requested
+                && active.disposition().is_ready()
+                && active.disposition().receipt().is_none()
             {
-                return Err(WorkloadSagaError::InvalidTransition(
-                    "issued restart work must be fenced or inspected before successor withdrawal",
-                ));
+                restart.active = None;
+            } else {
+                let successor_generation = successor_intent
+                    .as_ref()
+                    .expect("successor presence checked")
+                    .generation();
+                let active = restart.active.as_mut().expect("active restart checked");
+                active.successor_veto_generation = Some(successor_generation);
+                if let WorkloadRestartDisposition::DispatchPending { claim } =
+                    active.disposition.clone()
+                {
+                    active.disposition = WorkloadRestartDisposition::InspectionRequired { claim };
+                }
             }
-            restart.active = None;
         }
         Ok(restart)
     }
@@ -992,7 +1017,11 @@ impl WorkloadSagaRecord {
                     "successor generation must be higher than active generation",
                 ));
             }
-            if self.phase.is_provision() {
+            if self.phase.is_provision()
+                && !self.restart.active.as_ref().is_some_and(|active| {
+                    active.successor_veto_generation == Some(successor.generation)
+                })
+            {
                 return Err(WorkloadSagaError::InvalidTransition(
                     "queued successor requires active-generation withdrawal",
                 ));
@@ -1151,7 +1180,17 @@ fn validate_successor_intent_change(
                 && candidate.phase_detail == current.phase_detail
                 && candidate.failure == current.failure)
                 || (candidate.phase == WorkloadSagaPhase::WithdrawalCommitted
-                    && current.phase.is_provision()) =>
+                    && current.phase.is_provision())
+                || (candidate.phase == current.phase
+                    && candidate.phase_detail == current.phase_detail
+                    && candidate.failure == current.failure
+                    && candidate.restart.active.as_ref().is_some_and(|active| {
+                        active.successor_veto_generation
+                            == candidate
+                                .successor_intent
+                                .as_ref()
+                                .map(WorkloadSagaIntent::generation)
+                    })) =>
         {
             Ok(())
         }

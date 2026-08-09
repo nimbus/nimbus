@@ -1506,7 +1506,7 @@ fn intent_with_publication(
         WorkloadExecutionProviderId::for_registration_key("fixture-execution"),
     )
     .unwrap();
-    WorkloadSagaIntent::new(
+    WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Service,
         desired_state,
         WorkloadGeneration::new(1),

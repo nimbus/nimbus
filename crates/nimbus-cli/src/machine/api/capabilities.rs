@@ -29,6 +29,18 @@ pub(super) fn machine_api_capability_response(
             MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION,
         ),
     );
+    let mut restart_blockers = merge_operation_blockers(
+        &shared_blockers,
+        missing_restart_binary_blockers(&binary_statuses),
+    );
+    if state.forwarder_authority.is_none() {
+        restart_blockers.push(
+            "workload-restart.phase requires parent-issued machine forwarder authority".to_owned(),
+        );
+    }
+    if let Some(workloads) = state.service_workloads.as_ref() {
+        restart_blockers.extend(workloads.restart_execution_blockers());
+    }
     let bootc_status_blockers =
         missing_binary_blockers(&binary_statuses, MACHINE_API_BOOTC_STATUS_OPERATION);
     let bootc_switch_blockers =
@@ -68,6 +80,10 @@ pub(super) fn machine_api_capability_response(
         machine_api_operation_status(
             MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION,
             provision_blockers.clone(),
+        ),
+        machine_api_operation_status(
+            MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION,
+            restart_blockers,
         ),
         machine_api_operation_status(
             MACHINE_API_STOP_OPERATION,
@@ -160,6 +176,25 @@ fn missing_binary_blockers(
             format!(
                 "missing guest binary required for {}: {}",
                 operation_name, binary.name
+            )
+        })
+        .collect()
+}
+
+fn missing_restart_binary_blockers(binary_statuses: &[MachineApiBinaryStatus]) -> Vec<String> {
+    binary_statuses
+        .iter()
+        .filter(|binary| {
+            !binary.present
+                && binary
+                    .required_for_operations
+                    .iter()
+                    .any(|required| required == MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION)
+        })
+        .map(|binary| {
+            format!(
+                "missing guest binary required for {}: {}",
+                MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION, binary.name
             )
         })
         .collect()

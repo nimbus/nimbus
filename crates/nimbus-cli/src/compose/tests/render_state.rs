@@ -108,7 +108,6 @@ fn render_service_list_can_omit_headings() {
         service_name: "db".to_owned(),
         status: SandboxStatus::Ready,
         published_endpoints: Vec::new(),
-        restart_count: 1,
         last_exit_code: None,
         shutdown_requested: false,
     }];

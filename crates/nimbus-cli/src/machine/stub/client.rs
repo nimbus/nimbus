@@ -9,6 +9,7 @@ use nimbus_machine::api::{
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
     MachineApiServiceSandboxStopResponse, MachineApiServiceSandboxSummary,
     MachineApiWorkloadProvisionCommandEnvelope, MachineApiWorkloadProvisionPhaseResponse,
+    MachineApiWorkloadRestartCommandEnvelope, MachineApiWorkloadRestartPhaseResponse,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +53,14 @@ impl MachineApiClient {
         &self,
         _command: MachineApiWorkloadProvisionCommandEnvelope,
     ) -> Result<MachineApiWorkloadProvisionPhaseResponse, Error> {
+        Err(unsupported_machine_api_client_error(&self.socket_path))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn restart_workload_phase(
+        &self,
+        _command: MachineApiWorkloadRestartCommandEnvelope,
+    ) -> Result<MachineApiWorkloadRestartPhaseResponse, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 

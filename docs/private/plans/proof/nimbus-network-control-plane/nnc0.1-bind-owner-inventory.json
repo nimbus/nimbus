@@ -626,7 +626,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve_machine_api",
       "ordinal": 1,
-      "line": 171
+      "line": 172
     },
     {
       "site_id": "machine-api-unix-consumer",
@@ -890,7 +890,7 @@
       "kind": "tcp-bind",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 347
+      "line": 342
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -898,7 +898,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "accept_machine_port_proxy",
       "ordinal": 1,
-      "line": 1029
+      "line": 1042
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -906,7 +906,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "accept_machine_port_proxy_with",
       "ordinal": 1,
-      "line": 1044
+      "line": 1057
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -914,7 +914,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "accept_machine_port_proxy_with_listener_observer",
       "ordinal": 1,
-      "line": 1068
+      "line": 1081
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -922,7 +922,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 2,
-      "line": 1136
+      "line": 1149
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -930,7 +930,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "new",
       "ordinal": 1,
-      "line": 1142
+      "line": 1155
     },
     {
       "site_id": "sandbox-manifest-port-allocation",
@@ -1034,7 +1034,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt",
       "ordinal": 1,
-      "line": 193
+      "line": 199
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1042,7 +1042,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_std",
       "ordinal": 1,
-      "line": 220
+      "line": 226
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1050,7 +1050,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_after_failed_adoption",
       "ordinal": 1,
-      "line": 310
+      "line": 316
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1058,7 +1058,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_std_after_failed_adoption",
       "ordinal": 1,
-      "line": 328
+      "line": 334
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1066,7 +1066,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 1,
-      "line": 387
+      "line": 393
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1074,7 +1074,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 2,
-      "line": 399
+      "line": 405
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1082,7 +1082,7 @@
       "kind": "tcp-from-std",
       "symbol": "into_leased",
       "ordinal": 1,
-      "line": 454
+      "line": 460
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1090,7 +1090,7 @@
       "kind": "listener-return-handoff",
       "symbol": "into_parts",
       "ordinal": 1,
-      "line": 511
+      "line": 517
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1098,7 +1098,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_external_main",
       "ordinal": 1,
-      "line": 825
+      "line": 831
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1106,7 +1106,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "abandon_prepared_after_guard_failure",
       "ordinal": 1,
-      "line": 1548
+      "line": 1554
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1130,7 +1130,7 @@
       "kind": "listener-return-handoff",
       "symbol": "into_std_parts",
       "ordinal": 1,
-      "line": 478
+      "line": 484
     },
     {
       "site_id": "server-workload-ingress-listener",
@@ -1138,7 +1138,7 @@
       "kind": "tcp-bind",
       "symbol": "start",
       "ordinal": 1,
-      "line": 520
+      "line": 982
     }
   ],
   "non_authority_occurrences": [
@@ -1315,7 +1315,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "ambiguous_mutation_error",
       "ordinal": 1,
-      "line": 1565,
+      "line": 1595,
       "reason": "Formats a joined mutation/inspection diagnostic from an already-admitted exact binding; it performs no bind, allocation, provider mutation, or authority transition."
     },
     {
@@ -1371,7 +1371,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 351,
+      "line": 346,
       "reason": "Formats the error from the separately classified TcpListener bind; it does not create a second bind or allocation authority."
     },
     {
@@ -1513,9 +1513,9 @@
         },
         {
           "path": "crates/nimbus-sandbox/src/backends/container/runtime/support.rs",
-          "declared_from": "crates/nimbus-sandbox/src/backends/container/runtime/tests.rs",
+          "declared_from": "crates/nimbus-sandbox/src/backends/container/runtime.rs",
           "cfg_owner": "crates/nimbus-sandbox/src/backends/container/runtime.rs",
-          "owner_module": "tests",
+          "owner_module": "support",
           "module": "support"
         },
         {

@@ -2,9 +2,20 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nimbus_testing::AdmittedDecisionScenario;
+use nimbus_workloads::{
+    WorkloadExecutionAttemptId, WorkloadExecutionReference, WorkloadGeneration,
+    WorkloadProvisionDispatchClaim, WorkloadProvisionProviderTarget,
+    WorkloadProvisionSourceGeneration, WorkloadRestartCommandId, WorkloadRestartDispatchEpoch,
+    WorkloadRestartEpoch, WorkloadRestartRequestId, WorkloadRestartStep, WorkloadSagaRevision,
+    WorkloadSagaTransitionId,
+};
+use serde_json::json;
 
 use super::*;
-use crate::host_lifecycle::test_support::activation_command_for_plan;
+use crate::host_lifecycle::{
+    HostRestartProviderClaim, HostRestartProviderClaimInput,
+    test_support::activation_command_for_plan,
+};
 use crate::{HostExecutable, HostLifecyclePropertySet, HostRestartPolicy, TenantWorkloadPhase};
 
 #[derive(Clone)]
@@ -14,6 +25,10 @@ struct FakeSystemdDbusClient {
     last_stop: Arc<Mutex<Option<SystemdStopUnitRequest>>>,
     status: Arc<Mutex<Option<SystemdUnitStatus>>>,
     start_effects: Arc<AtomicUsize>,
+    stop_effects: Arc<AtomicUsize>,
+    lose_next_start_response: Arc<AtomicUsize>,
+    lose_next_stop_response: Arc<AtomicUsize>,
+    collect_unit_after_lost_stop_response: Arc<AtomicUsize>,
 }
 
 impl FakeSystemdDbusClient {
@@ -24,6 +39,10 @@ impl FakeSystemdDbusClient {
             last_stop: Arc::new(Mutex::new(None)),
             status: Arc::new(Mutex::new(None)),
             start_effects: Arc::new(AtomicUsize::new(0)),
+            stop_effects: Arc::new(AtomicUsize::new(0)),
+            lose_next_start_response: Arc::new(AtomicUsize::new(0)),
+            lose_next_stop_response: Arc::new(AtomicUsize::new(0)),
+            collect_unit_after_lost_stop_response: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -34,6 +53,10 @@ impl FakeSystemdDbusClient {
             last_stop: Arc::new(Mutex::new(None)),
             status: Arc::new(Mutex::new(None)),
             start_effects: Arc::new(AtomicUsize::new(0)),
+            stop_effects: Arc::new(AtomicUsize::new(0)),
+            lose_next_start_response: Arc::new(AtomicUsize::new(0)),
+            lose_next_stop_response: Arc::new(AtomicUsize::new(0)),
+            collect_unit_after_lost_stop_response: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -47,6 +70,31 @@ impl FakeSystemdDbusClient {
 
     fn start_effect_count(&self) -> usize {
         self.start_effects.load(Ordering::SeqCst)
+    }
+
+    fn stop_effect_count(&self) -> usize {
+        self.stop_effects.load(Ordering::SeqCst)
+    }
+
+    fn clear_unit(&self) {
+        *self
+            .status
+            .lock()
+            .expect("fake client lock should not be poisoned") = None;
+    }
+
+    fn lose_next_start_response(&self) {
+        self.lose_next_start_response.store(1, Ordering::SeqCst);
+    }
+
+    fn lose_next_stop_response(&self) {
+        self.lose_next_stop_response.store(1, Ordering::SeqCst);
+    }
+
+    fn lose_next_stop_response_and_collect_unit(&self) {
+        self.collect_unit_after_lost_stop_response
+            .store(1, Ordering::SeqCst);
+        self.lose_next_stop_response();
     }
 }
 
@@ -109,6 +157,11 @@ impl SystemdDbusClient for FakeSystemdDbusClient {
                 .status
                 .lock()
                 .expect("fake client lock should not be poisoned") = Some(status);
+            if self.lose_next_start_response.swap(0, Ordering::SeqCst) == 1 {
+                return Err(Error::ResourceExhausted(
+                    "systemd start response was lost after the effect".to_owned(),
+                ));
+            }
             Ok(response)
         })
     }
@@ -118,20 +171,43 @@ impl SystemdDbusClient for FakeSystemdDbusClient {
         request: SystemdStopUnitRequest,
     ) -> HostLifecycleFuture<'a, SystemdStopUnitResponse> {
         Box::pin(async move {
+            let activation_fence = self
+                .status
+                .lock()
+                .expect("fake client lock should not be poisoned")
+                .as_ref()
+                .and_then(SystemdUnitStatus::activation_fence)
+                .cloned();
             *self
                 .last_stop
                 .lock()
                 .expect("fake client lock should not be poisoned") = Some(request.clone());
-            let status = SystemdUnitStatus::new(
+            let mut status = SystemdUnitStatus::new(
                 request.execution_id().clone(),
                 request.unit_name().clone(),
                 "inactive",
                 "dead",
             )?;
+            if let Some(activation_fence) = activation_fence {
+                status = status.with_activation_fence(activation_fence);
+            }
+            self.stop_effects.fetch_add(1, Ordering::SeqCst);
             *self
                 .status
                 .lock()
                 .expect("fake client lock should not be poisoned") = Some(status.clone());
+            if self.lose_next_stop_response.swap(0, Ordering::SeqCst) == 1 {
+                if self
+                    .collect_unit_after_lost_stop_response
+                    .swap(0, Ordering::SeqCst)
+                    == 1
+                {
+                    self.clear_unit();
+                }
+                return Err(Error::ResourceExhausted(
+                    "systemd stop response was lost after the effect".to_owned(),
+                ));
+            }
             SystemdStopUnitResponse::new("/org/freedesktop/systemd1/job/43", status)
         })
     }
@@ -147,11 +223,9 @@ impl SystemdDbusClient for FakeSystemdDbusClient {
                 .expect("fake client lock should not be poisoned")
                 .clone()
                 .unwrap_or_else(|| {
-                    SystemdUnitStatus::new(
+                    SystemdUnitStatus::explicitly_absent(
                         request.execution_id().clone(),
                         request.unit_name().clone(),
-                        "inactive",
-                        "dead",
                     )
                     .expect("absent status should build")
                 });
@@ -188,6 +262,254 @@ fn request() -> HostLifecycleRequest {
         ])
         .expect("properties should parse"),
     )
+}
+
+fn execution_for_restart_epoch(
+    source: &WorkloadExecutionReference,
+    restart_epoch: WorkloadRestartEpoch,
+) -> WorkloadExecutionReference {
+    let mut value = serde_json::to_value(source).expect("execution reference should serialize");
+    value["restartEpoch"] = json!(restart_epoch.to_string());
+    value["attemptId"] = json!(
+        WorkloadExecutionAttemptId::for_execution(source.execution_id(), restart_epoch).to_string()
+    );
+    serde_json::from_value(value).expect("restart execution reference should validate")
+}
+
+fn restart_claim_input(
+    source: &WorkloadExecutionReference,
+    provision_claim: &WorkloadProvisionDispatchClaim,
+    restart_epoch: WorkloadRestartEpoch,
+    step: WorkloadRestartStep,
+    seed: u8,
+) -> HostRestartProviderClaimInput {
+    let execution = execution_for_restart_epoch(source, restart_epoch);
+    let WorkloadProvisionProviderTarget::Execution { provider_id, .. } =
+        provision_claim.provider_target()
+    else {
+        panic!("activation fixture should select one execution provider");
+    };
+    let digest = |offset: u8| format!("{:02x}", seed.wrapping_add(offset)).repeat(32);
+    HostRestartProviderClaimInput {
+        saga_id: provision_claim.attempt().saga_id().clone(),
+        transition_id: format!("wst_{}", digest(1))
+            .parse::<WorkloadSagaTransitionId>()
+            .expect("restart transition ID should validate"),
+        command_id: format!("wrc_{}", digest(2))
+            .parse::<WorkloadRestartCommandId>()
+            .expect("restart command ID should validate"),
+        request_id: format!("wrr_{}", digest(3))
+            .parse::<WorkloadRestartRequestId>()
+            .expect("restart request ID should validate"),
+        source_execution: source.clone(),
+        execution,
+        restart_epoch,
+        dispatch_epoch: WorkloadRestartDispatchEpoch::new(0),
+        issuing_revision: WorkloadSagaRevision::new(10),
+        confirmed_revision: WorkloadSagaRevision::new(11),
+        source_generation: WorkloadProvisionSourceGeneration::new(1),
+        source_digest: provision_claim.attempt().source_digest(),
+        network_plan_digest: provision_claim.attempt().network_plan_digest().to_string(),
+        provider_selection: provider_id.clone(),
+        step,
+        mode: HostRestartProviderClaimInput::execute_mode(),
+    }
+}
+
+fn restart_claim(
+    source: &WorkloadExecutionReference,
+    provision_claim: &WorkloadProvisionDispatchClaim,
+    restart_epoch: WorkloadRestartEpoch,
+    step: WorkloadRestartStep,
+    seed: u8,
+) -> HostRestartProviderClaim {
+    HostRestartProviderClaim::new(restart_claim_input(
+        source,
+        provision_claim,
+        restart_epoch,
+        step,
+        seed,
+    ))
+    .expect("restart provider claim should validate")
+}
+
+#[test]
+fn host_restart_claim_requires_mode_exact_confirmation_revision() {
+    let plan = HostLifecyclePlan::from_binding(&binding(), request()).expect("plan should build");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x40);
+    let mut equal = restart_claim_input(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::QuiesceExecution,
+        0x41,
+    );
+    equal.confirmed_revision = equal.issuing_revision;
+    let error = HostRestartProviderClaim::new(equal)
+        .expect_err("an unconfirmed restart claim must fail closed");
+    assert!(error.to_string().contains("confirmation revision"));
+
+    let mut skipped = restart_claim_input(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::QuiesceExecution,
+        0x42,
+    );
+    skipped.confirmed_revision = WorkloadSagaRevision::new(13);
+    let error = HostRestartProviderClaim::new(skipped)
+        .expect_err("a skipped confirmation revision must fail closed");
+    assert!(error.to_string().contains("confirmation revision"));
+}
+
+#[test]
+fn host_restart_claim_accepts_later_successor_veto_inspection_revision() {
+    let plan = HostLifecyclePlan::from_binding(&binding(), request()).expect("plan should build");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x43);
+    let mut input = restart_claim_input(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::QuiesceExecution,
+        0x44,
+    );
+    input.confirmed_revision = WorkloadSagaRevision::new(13);
+    input.mode = HostRestartProviderClaimInput::inspect_mode_after_successor_veto(
+        source
+            .generation()
+            .checked_next()
+            .expect("fixture generation should have a successor"),
+    );
+    HostRestartProviderClaim::new(input)
+        .expect("a later durable successor-veto inspection should validate");
+}
+
+#[test]
+fn host_restart_claim_rejects_later_execute_and_unauthenticated_inspection() {
+    let plan = HostLifecyclePlan::from_binding(&binding(), request()).expect("plan should build");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x45);
+    let later_revision = WorkloadSagaRevision::new(13);
+
+    let mut execute = restart_claim_input(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x46,
+    );
+    execute.confirmed_revision = later_revision;
+    let execute_error = HostRestartProviderClaim::new(execute)
+        .expect_err("a later revision must not grant execute authority");
+    assert!(execute_error.to_string().contains("confirmation revision"));
+
+    let mut missing_veto = restart_claim_input(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x47,
+    );
+    missing_veto.confirmed_revision = later_revision;
+    missing_veto.mode = HostRestartProviderClaimInput::inspect_mode();
+    let missing_veto_error = HostRestartProviderClaim::new(missing_veto)
+        .expect_err("a later inspection requires durable successor-veto evidence");
+    assert!(
+        missing_veto_error
+            .to_string()
+            .contains("confirmation revision")
+    );
+
+    let mut crossed_veto = restart_claim_input(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x48,
+    );
+    crossed_veto.confirmed_revision = later_revision;
+    crossed_veto.mode =
+        HostRestartProviderClaimInput::inspect_mode_after_successor_veto(source.generation());
+    let crossed_veto_error = HostRestartProviderClaim::new(crossed_veto)
+        .expect_err("a successor veto crossed with the active generation must fail closed");
+    assert!(
+        crossed_veto_error
+            .to_string()
+            .contains("later workload generation")
+    );
+
+    let mut stale_inspection = restart_claim_input(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x49,
+    );
+    stale_inspection.confirmed_revision = WorkloadSagaRevision::new(11);
+    stale_inspection.mode = HostRestartProviderClaimInput::inspect_mode_after_successor_veto(
+        WorkloadGeneration::new(source.generation().as_u64() + 1),
+    );
+    let stale_error = HostRestartProviderClaim::new(stale_inspection)
+        .expect_err("an inspection revision before the inspection transition must fail closed");
+    assert!(stale_error.to_string().contains("confirmation revision"));
+}
+
+#[tokio::test]
+async fn host_restart_inspection_authority_cannot_apply_provider_effects() {
+    let client = FakeSystemdDbusClient::available();
+    let backend = SystemdTransientUnitBackend::new(client.clone());
+    let plan = backend
+        .validate(&binding(), request())
+        .expect("systemd plan should validate");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x43);
+    backend
+        .activate_exact(source.clone(), provision_claim.clone(), request())
+        .await
+        .expect("initial activation should start");
+
+    let mut quiesce_input = restart_claim_input(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::QuiesceExecution,
+        0x44,
+    );
+    quiesce_input.confirmed_revision = WorkloadSagaRevision::new(13);
+    quiesce_input.mode = HostRestartProviderClaimInput::inspect_mode_after_successor_veto(
+        source
+            .generation()
+            .checked_next()
+            .expect("fixture generation should have a successor"),
+    );
+    let quiesce = HostRestartProviderClaim::new(quiesce_input)
+        .expect("exact inspection authority should validate");
+    let error = backend
+        .quiesce_restart_exact(quiesce)
+        .await
+        .expect_err("inspection authority must not invoke StopUnit");
+    assert!(error.to_string().contains("execute authority"));
+    assert_eq!(client.stop_effect_count(), 0);
+
+    let mut activate_input = restart_claim_input(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x45,
+    );
+    activate_input.confirmed_revision = WorkloadSagaRevision::new(12);
+    activate_input.mode = HostRestartProviderClaimInput::inspect_mode();
+    let activate = HostRestartProviderClaim::new(activate_input)
+        .expect("exact inspection authority should validate");
+    let error = backend
+        .activate_restart_exact(activate, request())
+        .await
+        .expect_err("inspection authority must not invoke StartTransientUnit");
+    assert!(error.to_string().contains("execute authority"));
+    assert_eq!(
+        client.start_effect_count(),
+        1,
+        "only the initial provision activation may create a unit"
+    );
 }
 
 #[test]
@@ -295,6 +617,8 @@ fn activation_fence_is_complete_in_inspectable_systemd_properties() {
     for required in [
         "NIMBUS_WORKLOAD_UID=",
         "NIMBUS_NODE_IDENTITY=",
+        "NIMBUS_WORKLOAD_EXECUTION_ATTEMPT_ID=",
+        "NIMBUS_WORKLOAD_EXECUTION_PROVIDER_ID=",
         "NIMBUS_PROVISION_ATTEMPT_ID=",
         "NIMBUS_PROVISION_DISPATCH_EPOCH=",
         "NIMBUS_PROVISION_CLAIMED_REVISION=",
@@ -407,6 +731,331 @@ async fn fresh_backend_systemd_exact_replay_adopts_without_another_start_effect(
     );
     assert_eq!(inspected.reason(), HostLifecycleStatusReason::Submitted);
     assert_eq!(client.start_effect_count(), 1);
+}
+
+#[tokio::test]
+async fn restart_quiescence_rejects_crossed_source_before_stop() {
+    let client = FakeSystemdDbusClient::available();
+    let backend = SystemdTransientUnitBackend::new(client.clone());
+    let plan = backend
+        .validate(&binding(), request())
+        .expect("systemd plan should validate");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x42);
+    backend
+        .activate_exact(source.clone(), provision_claim.clone(), request())
+        .await
+        .expect("initial activation should start");
+
+    let crossed_source = execution_for_restart_epoch(&source, WorkloadRestartEpoch::new(1));
+    let crossed = restart_claim(
+        &crossed_source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(2),
+        WorkloadRestartStep::QuiesceExecution,
+        0x43,
+    );
+    let error = backend
+        .quiesce_restart_exact(crossed)
+        .await
+        .expect_err("crossed source attempt should fail closed");
+
+    assert!(error.to_string().contains("crossed"));
+    assert_eq!(
+        client.stop_effect_count(),
+        0,
+        "crossed source authority must fail before StopUnit"
+    );
+}
+
+#[tokio::test]
+async fn restart_quiescence_and_activation_replay_each_provider_effect_once() {
+    let client = FakeSystemdDbusClient::available();
+    let backend = SystemdTransientUnitBackend::new(client.clone());
+    let plan = backend
+        .validate(&binding(), request())
+        .expect("systemd plan should validate");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x44);
+    backend
+        .activate_exact(source.clone(), provision_claim.clone(), request())
+        .await
+        .expect("initial activation should start");
+
+    let quiesce = restart_claim(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::QuiesceExecution,
+        0x45,
+    );
+    backend
+        .quiesce_restart_exact(quiesce.clone())
+        .await
+        .expect("first exact quiescence should stop the source");
+    backend
+        .quiesce_restart_exact(quiesce)
+        .await
+        .expect("equal quiescence replay should adopt the stopped source");
+    assert_eq!(client.stop_effect_count(), 1);
+
+    client.clear_unit();
+    let activate = restart_claim(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x45,
+    );
+    backend
+        .activate_restart_exact(activate.clone(), request())
+        .await
+        .expect("first exact restart activation should start the target");
+    backend
+        .activate_restart_exact(activate, request())
+        .await
+        .expect("equal restart activation replay should adopt the target");
+    assert_eq!(
+        client.start_effect_count(),
+        2,
+        "initial and restarted attempts should each create one unit"
+    );
+}
+
+#[tokio::test]
+async fn restart_ambiguous_provider_results_are_inspected_without_retry() {
+    let client = FakeSystemdDbusClient::available();
+    let backend = SystemdTransientUnitBackend::new(client.clone());
+    let plan = backend
+        .validate(&binding(), request())
+        .expect("systemd plan should validate");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x4d);
+    backend
+        .activate_exact(source.clone(), provision_claim.clone(), request())
+        .await
+        .expect("initial activation should start");
+
+    let quiesce = restart_claim(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::QuiesceExecution,
+        0x4e,
+    );
+    client.lose_next_stop_response();
+    backend
+        .quiesce_restart_exact(quiesce)
+        .await
+        .expect("ambiguous stop should adopt the exact stopped source");
+    assert_eq!(
+        client.stop_effect_count(),
+        1,
+        "ambiguous stop recovery must inspect without another StopUnit"
+    );
+
+    client.clear_unit();
+    let activate = restart_claim(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x4e,
+    );
+    client.lose_next_start_response();
+    backend
+        .activate_restart_exact(activate, request())
+        .await
+        .expect("ambiguous start should adopt the exact target unit");
+    assert_eq!(
+        client.start_effect_count(),
+        2,
+        "ambiguous start recovery must inspect without another StartTransientUnit"
+    );
+}
+
+#[tokio::test]
+async fn fresh_backend_restart_quiescence_authenticates_gc_absence_after_ambiguous_stop() {
+    let client = FakeSystemdDbusClient::available();
+    let backend = SystemdTransientUnitBackend::new(client.clone());
+    let plan = backend
+        .validate(&binding(), request())
+        .expect("systemd plan should validate");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x54);
+    backend
+        .activate_exact(source.clone(), provision_claim.clone(), request())
+        .await
+        .expect("initial activation should start");
+    let quiesce = restart_claim(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::QuiesceExecution,
+        0x55,
+    );
+
+    client.lose_next_stop_response_and_collect_unit();
+    let stopped = backend
+        .quiesce_restart_exact(quiesce)
+        .await
+        .expect("authoritative systemd absence should resolve the lost stop response");
+
+    assert_eq!(stopped.phase(), TenantWorkloadPhase::Deleting);
+    assert_eq!(client.stop_effect_count(), 1);
+}
+
+#[tokio::test]
+async fn restart_activation_rejects_crossed_target_before_another_start() {
+    let client = FakeSystemdDbusClient::available();
+    let backend = SystemdTransientUnitBackend::new(client.clone());
+    let plan = backend
+        .validate(&binding(), request())
+        .expect("systemd plan should validate");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x46);
+    let first = restart_claim(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x47,
+    );
+    backend
+        .activate_restart_exact(first, request())
+        .await
+        .expect("first restart target should start");
+
+    let crossed = restart_claim(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x48,
+    );
+    let error = backend
+        .activate_restart_exact(crossed, request())
+        .await
+        .expect_err("crossed target claim should fail closed");
+
+    assert!(error.to_string().contains("crossed"));
+    assert_eq!(
+        client.start_effect_count(),
+        1,
+        "crossed target authority must fail before another StartTransientUnit"
+    );
+}
+
+#[tokio::test]
+async fn fresh_backend_adopts_exact_restart_target_with_restart_disabled() {
+    let client = FakeSystemdDbusClient::available();
+    let first_backend = SystemdTransientUnitBackend::new(client.clone());
+    let plan = first_backend
+        .validate(&binding(), request())
+        .expect("systemd plan should validate");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x49);
+    let claim = restart_claim(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x4a,
+    );
+    first_backend
+        .activate_restart_exact(claim.clone(), request())
+        .await
+        .expect("first restart activation should start");
+    let start = client.last_start();
+    assert!(start.properties().iter().any(|property| matches!(
+        property,
+        SystemdDbusProperty::Restart(HostRestartPolicy::No)
+    )));
+    drop(first_backend);
+
+    let recovered_backend = SystemdTransientUnitBackend::new(client.clone());
+    let mut inspection_input = restart_claim_input(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x4a,
+    );
+    inspection_input.confirmed_revision = WorkloadSagaRevision::new(12);
+    inspection_input.mode = HostRestartProviderClaimInput::inspect_mode();
+    inspection_input.transition_id = format!("wst_{}", "ab".repeat(32))
+        .parse()
+        .expect("inspection transition ID should validate");
+    let inspection_claim = HostRestartProviderClaim::new(inspection_input)
+        .expect("exact inspection claim should validate");
+    recovered_backend
+        .inspect_restart_activation(inspection_claim, request())
+        .await
+        .expect("fresh backend should inspect the stable target effect identity");
+    recovered_backend
+        .activate_restart_exact(claim, request())
+        .await
+        .expect("fresh backend replay should adopt the target");
+    assert_eq!(client.start_effect_count(), 1);
+}
+
+#[tokio::test]
+async fn restart_activation_fence_decoder_rejects_partial_mixed_and_noncanonical_fields() {
+    let client = FakeSystemdDbusClient::available();
+    let backend = SystemdTransientUnitBackend::new(client.clone());
+    let plan = backend
+        .validate(&binding(), request())
+        .expect("systemd plan should validate");
+    let (source, provision_claim) = activation_command_for_plan(&plan, 0x4b);
+    let claim = restart_claim(
+        &source,
+        &provision_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x4c,
+    );
+    backend
+        .activate_restart_exact(claim, request())
+        .await
+        .expect("restart activation should start");
+    let start = client.last_start();
+    let fields = start
+        .properties()
+        .iter()
+        .find_map(|property| match property {
+            SystemdDbusProperty::LogExtraFields(fields) => Some(fields.clone()),
+            _ => None,
+        })
+        .expect("restart activation should retain LogExtraFields");
+
+    let partial = fields[..4]
+        .iter()
+        .map(|field| field.as_bytes().to_vec())
+        .collect::<Vec<_>>();
+    let partial_error = HostActivationFence::from_log_extra_fields(&partial)
+        .expect_err("partial restart metadata must fail closed");
+    assert!(partial_error.to_string().contains("incomplete"));
+
+    let mut mixed = fields
+        .iter()
+        .map(|field| field.as_bytes().to_vec())
+        .collect::<Vec<_>>();
+    mixed.push(b"NIMBUS_PROVISION_ATTEMPT_ID=wpa_crossed".to_vec());
+    let mixed_error = HostActivationFence::from_log_extra_fields(&mixed)
+        .expect_err("mixed provision and restart metadata must fail closed");
+    assert!(mixed_error.to_string().contains("mixed"));
+
+    let mut noncanonical = fields
+        .iter()
+        .map(|field| field.as_bytes().to_vec())
+        .collect::<Vec<_>>();
+    let restart_epoch = fields
+        .iter()
+        .position(|field| field.starts_with("NIMBUS_RESTART_EPOCH="))
+        .expect("restart fence should retain its epoch");
+    noncanonical[restart_epoch] = b"NIMBUS_RESTART_EPOCH=01".to_vec();
+    let noncanonical_error = HostActivationFence::from_log_extra_fields(&noncanonical)
+        .expect_err("noncanonical restart metadata must fail closed");
+    assert!(noncanonical_error.to_string().contains("canonical"));
+
+    let unknown = vec![b"NIMBUS_RESTART_UNKNOWN=value".to_vec()];
+    let unknown_error = HostActivationFence::from_log_extra_fields(&unknown)
+        .expect_err("an unknown restart marker must not become an unfenced unit");
+    assert!(unknown_error.to_string().contains("incomplete"));
 }
 
 #[tokio::test]

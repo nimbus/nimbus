@@ -425,7 +425,6 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
     manifest.network_cleanup_complete = true;
     manifest.launch_reservation_claim = None;
     manifest.launch_artifact = None;
-    manifest.next_restart_at_millis = None;
     synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
     assert!(manifest.has_terminal_network_finality());
 

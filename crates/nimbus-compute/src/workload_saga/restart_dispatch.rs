@@ -48,6 +48,7 @@ pub struct ConfirmedWorkloadRestartCommand {
     confirmed_revision: WorkloadSagaRevision,
     inspection_version: Option<WorkloadInspectionVersion>,
     provider_selection: WorkloadExecutionProviderId,
+    successor_veto_generation: Option<WorkloadGeneration>,
     step: WorkloadRestartStep,
     mode: WorkloadRestartCommandMode,
     claim: WorkloadRestartCommandClaim,
@@ -74,6 +75,12 @@ impl ConfirmedWorkloadRestartCommand {
         )?;
 
         let mode = match (confirmation, action) {
+            (
+                WorkloadSagaConfirmation::AppliedByThisCall
+                | WorkloadSagaConfirmation::ConfirmedAfterAmbiguity
+                | WorkloadSagaConfirmation::ConfirmedReplay,
+                _,
+            ) if claim.step().is_inspection() => WorkloadRestartCommandMode::Inspect,
             (
                 WorkloadSagaConfirmation::AppliedByThisCall,
                 WorkloadRestartSymbolicAction::StartExactAttempt,
@@ -120,6 +127,7 @@ impl ConfirmedWorkloadRestartCommand {
             confirmed_revision: record.revision(),
             inspection_version: admission.inspection_version(),
             provider_selection: admission.provider_selection().clone(),
+            successor_veto_generation: active.successor_veto_generation(),
             step: claim.step(),
             mode,
             claim: claim.clone(),
@@ -204,6 +212,10 @@ impl ConfirmedWorkloadRestartCommand {
         &self.provider_selection
     }
 
+    pub const fn successor_veto_generation(&self) -> Option<WorkloadGeneration> {
+        self.successor_veto_generation
+    }
+
     pub const fn step(&self) -> WorkloadRestartStep {
         self.step
     }
@@ -245,11 +257,13 @@ fn authenticate_exact_restart_confirmation(
             claim.issuing_revision().checked_next() == Some(record.revision())
         }
         WorkloadRestartCommandMode::Inspect => {
-            claim
+            let inspection_revision = claim
                 .issuing_revision()
                 .checked_next()
-                .and_then(WorkloadSagaRevision::checked_next)
-                == Some(record.revision())
+                .and_then(WorkloadSagaRevision::checked_next);
+            inspection_revision == Some(record.revision())
+                || (active.successor_veto_generation().is_some()
+                    && inspection_revision.is_some_and(|revision| revision < record.revision()))
         }
     };
     let exact = record.saga_id() == admission.saga_id()
@@ -260,7 +274,9 @@ fn authenticate_exact_restart_confirmation(
         && claim.request_id() == admission.request_id()
         && claim.restart_epoch() == admission.restart_epoch()
         && claim.attempt_id() == admission.attempt_id()
-        && claim_revision_matches;
+        && claim_revision_matches
+        && !(mode == WorkloadRestartCommandMode::Execute
+            && active.successor_veto_generation().is_some());
     if !exact {
         return Err(nimbus_workloads::WorkloadSagaError::InvalidEvidence(
             "restart command confirmation is crossed with its durable admission",
@@ -349,18 +365,30 @@ pub fn apply_restart_result(
 
     match result.outcome {
         WorkloadRestartCommandOutcome::AuthenticatedAbsent { evidence } => {
-            retry_after_authenticated_absence(record, command, evidence)
+            if command.mode == WorkloadRestartCommandMode::Execute {
+                require_restart_inspection(record, command)
+            } else if record
+                .restart_state()
+                .active()
+                .is_some_and(|active| active.successor_veto_generation().is_some())
+            {
+                let candidate = record.apply_restart_effect_result(
+                    command.claim(),
+                    WorkloadRestartEffectResult::AuthenticatedAbsent { evidence },
+                )?;
+                Ok(WorkloadRestartDecision::Proposed(
+                    ProposedWorkloadRestartTransition::new(candidate, None),
+                ))
+            } else if command.step() == WorkloadRestartStep::ObservePublication {
+                republish_after_authenticated_observation_absence(record, command, evidence)
+            } else {
+                retry_after_authenticated_absence(record, command, evidence)
+            }
         }
         WorkloadRestartCommandOutcome::Ambiguous
         | WorkloadRestartCommandOutcome::InProgress { .. } => {
             if command.mode == WorkloadRestartCommandMode::Execute {
-                let candidate = record.restart_dispatch_to_inspection(command.claim())?;
-                Ok(WorkloadRestartDecision::Proposed(
-                    ProposedWorkloadRestartTransition::new(
-                        candidate,
-                        Some(WorkloadRestartSymbolicAction::InspectExactAttempt),
-                    ),
-                ))
+                require_restart_inspection(record, command)
             } else {
                 Ok(retain_restart_inspection(command))
             }
@@ -460,6 +488,44 @@ fn retain_restart_inspection(command: &ConfirmedWorkloadRestartCommand) -> Workl
     WorkloadRestartDecision::InspectExact(Box::new(command.claim.clone()))
 }
 
+fn require_restart_inspection(
+    record: &WorkloadSagaRecord,
+    command: &ConfirmedWorkloadRestartCommand,
+) -> Result<WorkloadRestartDecision, WorkloadSagaStoreError> {
+    let candidate = record.restart_dispatch_to_inspection(command.claim())?;
+    Ok(WorkloadRestartDecision::Proposed(
+        ProposedWorkloadRestartTransition::new(
+            candidate,
+            Some(WorkloadRestartSymbolicAction::InspectExactAttempt),
+        ),
+    ))
+}
+
+fn republish_after_authenticated_observation_absence(
+    record: &WorkloadSagaRecord,
+    command: &ConfirmedWorkloadRestartCommand,
+    evidence: WorkloadRestartEvidenceDigest,
+) -> Result<WorkloadRestartDecision, WorkloadSagaStoreError> {
+    if command.mode != WorkloadRestartCommandMode::Inspect
+        || command.step() != WorkloadRestartStep::ObservePublication
+    {
+        return Err(nimbus_workloads::WorkloadSagaError::InvalidEvidence(
+            "only exact publication observation may authorize restart republish",
+        )
+        .into());
+    }
+    let absence =
+        WorkloadRestartAbsenceEvidence::for_inspection(record, command.claim(), evidence)?;
+    let candidate =
+        record.restart_observation_absence_to_publication_retry(command.claim(), absence)?;
+    Ok(WorkloadRestartDecision::Proposed(
+        ProposedWorkloadRestartTransition::new(
+            candidate,
+            Some(WorkloadRestartSymbolicAction::StartExactAttempt),
+        ),
+    ))
+}
+
 fn retry_after_authenticated_absence(
     record: &WorkloadSagaRecord,
     command: &ConfirmedWorkloadRestartCommand,
@@ -474,11 +540,13 @@ fn retry_after_authenticated_absence(
     let absence =
         WorkloadRestartAbsenceEvidence::for_inspection(record, command.claim(), evidence)?;
     let candidate = record.restart_inspection_to_retry(command.claim(), absence)?;
+    let action = if command.step().is_inspection() {
+        WorkloadRestartSymbolicAction::InspectExactAttempt
+    } else {
+        WorkloadRestartSymbolicAction::StartExactAttempt
+    };
     Ok(WorkloadRestartDecision::Proposed(
-        ProposedWorkloadRestartTransition::new(
-            candidate,
-            Some(WorkloadRestartSymbolicAction::StartExactAttempt),
-        ),
+        ProposedWorkloadRestartTransition::new(candidate, Some(action)),
     ))
 }
 
@@ -519,6 +587,19 @@ impl WorkloadSagaCoordinator {
         let confirmation = self
             .confirm_transition(Some(loaded), candidate.clone())
             .await?;
+        if proposed.action_after_confirmation()
+            == Some(WorkloadRestartSymbolicAction::InspectExactAttempt)
+            && confirmation_is_durable(confirmation)
+            && matches!(
+                candidate
+                    .restart_state()
+                    .active()
+                    .map(|active| active.disposition()),
+                Some(nimbus_workloads::WorkloadRestartDisposition::DispatchPending { .. })
+            )
+        {
+            return self.inspect_ambiguous_restart(&candidate).await;
+        }
         if proposed.action_after_confirmation()
             == Some(WorkloadRestartSymbolicAction::StartExactAttempt)
             && matches!(
@@ -621,6 +702,19 @@ impl WorkloadSagaCoordinator {
         let confirmation = self
             .confirm_transition(Some(loaded), candidate.clone())
             .await?;
+        if proposed.action_after_confirmation()
+            == Some(WorkloadRestartSymbolicAction::InspectExactAttempt)
+            && confirmation_is_durable(confirmation)
+            && matches!(
+                candidate
+                    .restart_state()
+                    .active()
+                    .map(|active| active.disposition()),
+                Some(nimbus_workloads::WorkloadRestartDisposition::DispatchPending { .. })
+            )
+        {
+            return self.inspect_ambiguous_restart(&candidate).await;
+        }
         if proposed.action_after_confirmation()
             == Some(WorkloadRestartSymbolicAction::StartExactAttempt)
             && matches!(

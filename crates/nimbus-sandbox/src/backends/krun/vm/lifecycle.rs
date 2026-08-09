@@ -97,12 +97,26 @@ impl KrunSandboxBackend {
                     KrunLaunchAuthority::Adopting { .. } => {
                         self.stop_adopting_launch(&mut manifest)
                     }
+                    KrunLaunchAuthority::Adopted { .. }
+                        if manifest.creator_handoff == KrunCreatorHandoffState::NotSpawned =>
+                    {
+                        match manifest.conmon_layout.exit_status_file.try_exists() {
+                            Ok(true) => self.execute_stop(&mut manifest),
+                            Ok(false) => self.stop_adopted_never_spawned(&mut manifest),
+                            Err(error) => Err(SandboxError::OperationFailed {
+                                message: format!(
+                                    "failed to inspect krun exit receipt {} before explicit stop: \
+                                     {error}",
+                                    manifest.conmon_layout.exit_status_file.display()
+                                ),
+                            }),
+                        }
+                    }
                     KrunLaunchAuthority::Adopted { .. } | KrunLaunchAuthority::ProviderOwned => {
                         self.execute_stop(&mut manifest)
                     }
                     KrunLaunchAuthority::Released => {
                         manifest.shutdown_requested = true;
-                        manifest.next_restart_at_millis = None;
                         let terminal_status = if manifest.status == SandboxStatus::Failed {
                             SandboxStatus::Failed
                         } else {
@@ -124,7 +138,6 @@ impl KrunSandboxBackend {
 
     pub(super) fn stop_reserved_launch(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
         manifest.shutdown_requested = true;
-        manifest.next_restart_at_millis = None;
         synchronize_handle_status(manifest, SandboxStatus::Stopping);
         self.persist_effect_barrier(manifest, "reserved krun stop intent")?;
         self.release_reserved_launch(manifest)?;
@@ -133,6 +146,14 @@ impl KrunSandboxBackend {
         manifest.launch_authority = KrunLaunchAuthority::Released;
         synchronize_handle_status(manifest, SandboxStatus::Stopped);
         self.persist_effect_barrier(manifest, "reserved krun stop completion")
+    }
+
+    fn stop_adopted_never_spawned(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
+        manifest.shutdown_requested = true;
+        synchronize_handle_status(manifest, SandboxStatus::Stopping);
+        manifest.provider_failure_cleanup = KrunProviderFailureCleanupState::Requested;
+        self.persist_effect_barrier(manifest, "adopted never-spawned krun stop intent")?;
+        self.resume_provider_failure_cleanup(manifest)
     }
 
     #[cfg(test)]
@@ -354,7 +375,6 @@ impl KrunSandboxBackend {
         reservations: Option<&ReservedLaunchPorts>,
     ) -> SandboxError {
         manifest.shutdown_requested = true;
-        manifest.next_restart_at_millis = None;
         manifest.last_exit_code = None;
         synchronize_handle_status(manifest, SandboxStatus::Stopping);
         if let Err(barrier) =
@@ -418,7 +438,6 @@ impl KrunSandboxBackend {
 
     fn execute_stop(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
         manifest.shutdown_requested = true;
-        manifest.next_restart_at_millis = None;
         synchronize_handle_status(manifest, SandboxStatus::Stopping);
         self.persist_effect_barrier(manifest, "explicit krun stop intent")?;
 
@@ -613,7 +632,6 @@ impl KrunSandboxBackend {
             }
             probe.intercept_provider_launch()?;
             manifest.shutdown_requested = false;
-            manifest.next_restart_at_millis = None;
             synchronize_handle_status(manifest, SandboxStatus::Starting);
             return self.write_manifest(manifest);
         }
@@ -660,7 +678,6 @@ impl KrunSandboxBackend {
         }
 
         manifest.shutdown_requested = true;
-        manifest.next_restart_at_millis = None;
         synchronize_handle_status(manifest, SandboxStatus::Stopping);
         if !manifest.provider_failure_cleanup.is_active() {
             manifest.provider_failure_cleanup = KrunProviderFailureCleanupState::Requested;
@@ -914,7 +931,6 @@ impl KrunSandboxBackend {
         }
 
         manifest.shutdown_requested = false;
-        manifest.next_restart_at_millis = None;
         if clear_last_exit_code {
             manifest.last_exit_code = None;
             manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
@@ -1365,8 +1381,7 @@ impl KrunSandboxBackend {
                         "refusing terminal krun manifest publication for {} while local launch or \
                          cleanup authority remains: shutdown_requested={}, status={:?}, \
                          handle_status={:?}, launch_authority={:?}, creator_handoff={:?}, \
-                         provider_failure_cleanup={:?}, launch_artifact_present={}, \
-                         next_restart_at_millis={:?}",
+                         provider_failure_cleanup={:?}, launch_artifact_present={}",
                         manifest.handle.id,
                         manifest.shutdown_requested,
                         manifest.status,
@@ -1375,7 +1390,6 @@ impl KrunSandboxBackend {
                         manifest.creator_handoff,
                         manifest.provider_failure_cleanup,
                         manifest.launch_artifact.is_some(),
-                        manifest.next_restart_at_millis,
                     ),
                 });
             }

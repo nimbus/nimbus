@@ -336,9 +336,6 @@ fn startup_reconciliation_failure_keeps_restart_eligible_inspection_read_only() 
         inspected.restart,
         SandboxRestartAssessment::Candidate {
             exit_code: 17,
-            completed_restarts: 0,
-            retry_delay_millis: 1_000,
-            persisted_not_before_millis: None,
             blocker: Some(SandboxRestartBlocker::StartupReconciliationUnavailable),
         }
     );

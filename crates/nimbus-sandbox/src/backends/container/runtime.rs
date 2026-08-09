@@ -85,8 +85,6 @@ use manifest::{
     ContainerNetworkPublicationMode, ContainerRunnerExecutionConfig, ContainerSandboxManifest,
     ContainerStartPlan,
 };
-#[cfg(test)]
-use restart::{ContainerRestartDecision, mark_restart_decision_after_exit};
 use runner::RUNNER_MANIFEST_POINTER_FILE;
 #[cfg(test)]
 use runner::RunnerLifecycleLockTestProbe;
@@ -371,7 +369,6 @@ impl ContainerSandboxBackend {
         if cleanup.is_none() {
             manifest.last_exit_code = Some(0);
         }
-        manifest.next_restart_at_millis = None;
         synchronize_handle_status(
             manifest,
             if cleanup.is_none() {
@@ -466,7 +463,6 @@ impl ContainerSandboxBackend {
                 SandboxStatus::Failed => manifest.last_exit_code.filter(|exit| *exit != 0),
                 _ => unreachable!("terminal callback status is normalized above"),
             };
-            manifest.next_restart_at_millis = None;
             match manifest.start_mode {
                 ContainerStartMode::PlanOnly => {
                     self.release_plan_only_execution_artifacts(&mut manifest)?;
@@ -670,7 +666,6 @@ impl ContainerSandboxBackend {
                         self.release_unstarted_launch_artifacts(&mut manifest)?;
                         manifest.shutdown_requested = true;
                         manifest.last_exit_code = Some(0);
-                        manifest.next_restart_at_millis = None;
                         synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
                         self.write_existing_workload_manifest(&manifest)?;
                     }
@@ -711,7 +706,6 @@ impl ContainerSandboxBackend {
                 self.release_unstarted_launch_artifacts(&mut manifest)?;
                 manifest.shutdown_requested = true;
                 manifest.last_exit_code = Some(0);
-                manifest.next_restart_at_millis = None;
                 synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
                 return self.write_existing_workload_manifest(&manifest);
             }
@@ -732,7 +726,6 @@ impl ContainerSandboxBackend {
                     .transpose()?;
                 manifest.shutdown_requested = true;
                 manifest.last_exit_code = Some(0);
-                manifest.next_restart_at_millis = None;
                 synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
                 self.release_plan_only_execution_artifacts(&mut manifest)?;
                 self.write_existing_workload_manifest(&manifest)
@@ -962,8 +955,6 @@ impl ContainerSandboxBackend {
                 conmon_launch,
                 runner_config: ContainerRunnerExecutionConfig::from_backend_config(&self.config),
                 last_exit_code: None,
-                restart_count: 0,
-                next_restart_at_millis: None,
                 lifecycle_coordinator: ContainerLifecycleCoordinator::DirectBackend,
                 start_mode: self.config.start_mode,
                 shutdown_requested: false,
@@ -1206,7 +1197,6 @@ impl ContainerSandboxBackend {
             }
             probe.intercept_provider_launch()?;
             manifest.shutdown_requested = false;
-            manifest.next_restart_at_millis = None;
             synchronize_handle_status(manifest, SandboxStatus::Starting);
             return self.write_manifest(manifest);
         }
@@ -1240,7 +1230,6 @@ impl ContainerSandboxBackend {
         }
 
         manifest.shutdown_requested = false;
-        manifest.next_restart_at_millis = None;
         if clear_last_exit_code {
             manifest.last_exit_code = None;
             manifest.launch_reservation_claim = None;

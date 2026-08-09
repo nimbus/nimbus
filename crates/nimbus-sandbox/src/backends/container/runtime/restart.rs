@@ -3,6 +3,7 @@
 //! This adapter owns only provider effects. Restart admission, policy,
 //! scheduling, and phase order remain above `nimbus-sandbox`.
 
+use nimbus_network::{NetworkProviderHandle, NetworkResourceGeneration};
 use serde::Serialize;
 
 use crate::backends::conmon::creator::{CreatorQuiescenceProof, confirm_dead_conmon_receipt};
@@ -13,12 +14,13 @@ use crate::backends::conmon::lifecycle::{
 };
 use crate::backends::oci::egress::PepPreAdoptionReleaseAuthority;
 use crate::backends::oci::network::{
-    AttachmentAttachAuthority, MachinePortPreparationReleaseAuthority,
-    OciAttachmentBaseReadinessState,
+    AttachmentAttachAuthority, MachinePortForwardReceipt, MachinePortForwardingProvider,
+    MachinePortPreparationReleaseAuthority, OciAttachmentBaseReadinessState,
+    OciMachinePortForwarderConfig,
 };
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxId, SandboxStatus};
-use crate::provision::SandboxProvisionPhaseObservation;
+use crate::provision::{SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation};
 
 #[cfg(test)]
 use super::hostname_for;
@@ -103,6 +105,129 @@ fn require_execute_restart(manifest: &ContainerSandboxManifest, operation: &str)
             manifest.handle.id, manifest.start_mode, manifest.shutdown_requested
         ),
     })
+}
+
+fn authenticate_restart_machine_plan<'a>(
+    backend: &ContainerSandboxBackend,
+    manifest: &'a ContainerSandboxManifest,
+    network_plan: &SandboxProvisionNetworkPlan,
+    provider_instance: &NetworkProviderHandle,
+    provider_generation: NetworkResourceGeneration,
+    operation: &str,
+) -> Result<&'a OciMachinePortForwarderConfig> {
+    backend.validate_manifest_execution_context(manifest)?;
+    require_execute_restart(manifest, operation)?;
+    let config = manifest.require_network_config()?;
+    let durable_plan =
+        config
+            .network_plan
+            .as_ref()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "{operation} for {} lacks a compiled network plan",
+                    manifest.handle.id
+                ),
+            })?;
+    if network_plan.tenant_id() != &manifest.spec.tenant_id
+        || network_plan.network_plan() != durable_plan
+        || network_plan.generation() != durable_plan.generation()
+        || network_plan.attachment_id() != &config.attachment_id
+        || network_plan.bindings() != manifest.spec.port_bindings
+        || network_plan.port_leases() != manifest.port_leases
+    {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "{operation} for {} crossed its exact plan, attachment, listener, lease, or network generation authority",
+                manifest.handle.id
+            ),
+        });
+    }
+    let forwarder = manifest
+        .runner_config
+        .validated_machine_port_forwarder(&manifest.handle.id)?
+        .ok_or_else(|| SandboxError::InvalidSpec {
+            message: format!(
+                "{operation} for {} lacks machine-forwarder authority",
+                manifest.handle.id
+            ),
+        })?;
+    if forwarder.provider_instance() != provider_instance
+        || forwarder.provider_generation() != provider_generation
+    {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "{operation} for {} crossed its machine-forwarder provider instance or generation",
+                manifest.handle.id
+            ),
+        });
+    }
+    Ok(forwarder)
+}
+
+fn current_absence_receipts(
+    provider: &impl MachinePortForwardingProvider,
+    manifest: &ContainerSandboxManifest,
+) -> Result<Vec<MachinePortForwardReceipt>> {
+    let current = provider.inspect(
+        &manifest.spec.tenant_id,
+        &manifest.handle.id,
+        &manifest.spec.port_bindings,
+    )?;
+    if current.provider_instance() != provider.provider_instance()
+        || current.provider_generation() != provider.provider_generation()
+    {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "container restart machine publication for {} returned crossed provider evidence",
+                manifest.handle.id
+            ),
+        });
+    }
+    current
+        .slots()
+        .iter()
+        .map(|slot| {
+            slot.absent_receipt().cloned().ok_or_else(|| {
+                SandboxError::OperationFailed {
+                    message: format!(
+                        "container restart machine publication for {} is not exactly absent at the current provider",
+                        manifest.handle.id
+                    ),
+                }
+            })
+        })
+        .collect()
+}
+
+fn require_restart_machine_ingress_withdrawn(
+    backend: &ContainerSandboxBackend,
+    manifest: &ContainerSandboxManifest,
+) -> Result<()> {
+    let Some(forwarder) = manifest
+        .runner_config
+        .validated_machine_port_forwarder(&manifest.handle.id)?
+    else {
+        return Ok(());
+    };
+    backend.require_restart_machine_port_proxies_absent(manifest)?;
+    let durable = backend
+        .absent_machine_port_evidence(&manifest.handle.id)?
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "container restart source {} cannot quiesce before machine-ingress withdrawal is durably absent",
+                manifest.handle.id
+            ),
+        })?;
+    let current = current_absence_receipts(forwarder, manifest)?;
+    if current != durable.receipts {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "container restart source {} cannot quiesce because current machine-ingress absence differs from durable evidence",
+                manifest.handle.id
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn source_runtime_state(
@@ -212,6 +337,7 @@ impl ContainerSandboxBackend {
             fence.source_attempt_id(),
             "container restart source quiescence",
         )?;
+        require_restart_machine_ingress_withdrawn(self, &manifest)?;
 
         if let Some(transition) = manifest.restart_transition.as_ref() {
             if transition.fence() != fence {
@@ -574,6 +700,508 @@ impl ContainerSandboxBackend {
         }
     }
 
+    fn withdraw_restart_machine_ingress_with(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        network_plan: &SandboxProvisionNetworkPlan,
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+        withdraw: impl FnOnce(&ContainerSandboxManifest) -> Result<()>,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        let manifest = self
+            .read_manifest(sandbox_id)?
+            .ok_or_else(|| SandboxError::NotFound {
+                sandbox_id: sandbox_id.as_str().to_owned(),
+            })?;
+        let (_lifecycle, manifest) =
+            super::runner::lock_current_execute_lifecycle_for_backend(self, &manifest)?;
+        manifest.require_execution_attempt(
+            fence.source_attempt_id(),
+            "container restart machine-ingress withdrawal",
+        )?;
+        if let Some(transition) = manifest.restart_transition.as_ref()
+            && !is_completed_predecessor(transition, fence)
+        {
+            return Err(crossed_fence_error(
+                &manifest,
+                "container restart machine-ingress withdrawal",
+                fence,
+            ));
+        }
+        authenticate_restart_machine_plan(
+            self,
+            &manifest,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            "container restart machine-ingress withdrawal",
+        )?;
+
+        let cleanup = self.begin_machine_port_proxy_restart_for_manifest(&manifest)?;
+        withdraw(&manifest)?;
+        if let Some(cleanup) = cleanup.as_ref() {
+            self.complete_machine_port_proxy_cleanup(cleanup)?;
+        }
+        self.require_restart_machine_port_proxies_absent(&manifest)?;
+        let absence = self
+            .absent_machine_port_evidence(sandbox_id)?
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "container restart machine-ingress withdrawal for {sandbox_id} lacks durable exact absence"
+                ),
+            })?;
+        Ok(SandboxProvisionPhaseObservation::Succeeded {
+            evidence: phase_evidence(
+                "machine_ingress_withdrawn",
+                &manifest,
+                fence,
+                &(
+                    network_plan.plan_id(),
+                    network_plan.generation(),
+                    provider_instance,
+                    provider_generation,
+                    absence.receipts,
+                ),
+            )?,
+        })
+    }
+
+    /// Withdraw one exact source-attempt machine ingress publication while
+    /// retaining its listener leases and network authority for the target.
+    pub fn withdraw_restart_machine_ingress(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        network_plan: &SandboxProvisionNetworkPlan,
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        self.withdraw_restart_machine_ingress_with(
+            sandbox_id,
+            fence,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            |manifest| self.converge_absent_machine_port_publication_for_restart(manifest),
+        )
+    }
+
+    #[cfg(test)]
+    fn withdraw_restart_machine_ingress_with_test_provider(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        network_plan: &SandboxProvisionNetworkPlan,
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        self.withdraw_restart_machine_ingress_with(
+            sandbox_id,
+            fence,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            |manifest| self.converge_absent_machine_port_publication_for_test(manifest),
+        )
+    }
+
+    fn inspect_restart_machine_ingress_with_provider(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        network_plan: &SandboxProvisionNetworkPlan,
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+        provider: &impl MachinePortForwardingProvider,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        let Some(manifest) = self.read_manifest(sandbox_id)? else {
+            return Ok(SandboxProvisionPhaseObservation::Absent {
+                evidence: serde_json::to_vec(&(
+                    "restart_machine_ingress_manifest_absent",
+                    sandbox_id,
+                    fence,
+                ))
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to encode absent restart machine-ingress evidence: {error}"
+                    ),
+                })?,
+            });
+        };
+        manifest.require_execution_attempt(
+            fence.source_attempt_id(),
+            "container restart machine-ingress withdrawal inspection",
+        )?;
+        authenticate_restart_machine_plan(
+            self,
+            &manifest,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            "container restart machine-ingress withdrawal inspection",
+        )?;
+        let Some(absence) = self.absent_machine_port_evidence(sandbox_id)? else {
+            return Ok(SandboxProvisionPhaseObservation::InProgress {
+                evidence: phase_evidence(
+                    "machine_ingress_withdrawal_not_durable",
+                    &manifest,
+                    fence,
+                    &(network_plan.plan_id(), network_plan.generation()),
+                )?,
+            });
+        };
+        if self
+            .require_restart_machine_port_proxies_absent(&manifest)
+            .is_err()
+        {
+            return Ok(SandboxProvisionPhaseObservation::InProgress {
+                evidence: phase_evidence(
+                    "machine_ingress_local_withdrawal_in_progress",
+                    &manifest,
+                    fence,
+                    &(network_plan.plan_id(), network_plan.generation()),
+                )?,
+            });
+        }
+        let current = match current_absence_receipts(provider, &manifest) {
+            Ok(receipts) => receipts,
+            Err(error) => {
+                return Ok(SandboxProvisionPhaseObservation::Ambiguous {
+                    evidence: phase_evidence(
+                        "machine_ingress_absence_observation_ambiguous",
+                        &manifest,
+                        fence,
+                        &error.to_string(),
+                    )?,
+                });
+            }
+        };
+        if current != absence.receipts {
+            return Ok(SandboxProvisionPhaseObservation::Ambiguous {
+                evidence: phase_evidence(
+                    "machine_ingress_absence_receipt_mismatch",
+                    &manifest,
+                    fence,
+                    &(current, absence.receipts),
+                )?,
+            });
+        }
+        Ok(SandboxProvisionPhaseObservation::Succeeded {
+            evidence: phase_evidence(
+                "machine_ingress_withdrawn_current",
+                &manifest,
+                fence,
+                &(
+                    network_plan.plan_id(),
+                    network_plan.generation(),
+                    provider_instance,
+                    provider_generation,
+                    current,
+                ),
+            )?,
+        })
+    }
+
+    /// Inspect withdrawal without stopping a worker, changing a listener
+    /// lease, or mutating the external machine forwarder.
+    pub fn inspect_restart_machine_ingress_withdrawal(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        network_plan: &SandboxProvisionNetworkPlan,
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        let manifest = self
+            .read_manifest(sandbox_id)?
+            .ok_or_else(|| SandboxError::NotFound {
+                sandbox_id: sandbox_id.as_str().to_owned(),
+            })?;
+        let forwarder = authenticate_restart_machine_plan(
+            self,
+            &manifest,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            "container restart machine-ingress withdrawal inspection",
+        )?;
+        self.inspect_restart_machine_ingress_with_provider(
+            sandbox_id,
+            fence,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            forwarder,
+        )
+    }
+
+    #[cfg(test)]
+    fn inspect_restart_machine_ingress_withdrawal_with_test_provider(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        network_plan: &SandboxProvisionNetworkPlan,
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        let provider =
+            crate::backends::oci::network::DeterministicMachinePortForwardingProvider::absent(
+                self.read_manifest(sandbox_id)?
+                    .ok_or_else(|| SandboxError::NotFound {
+                        sandbox_id: sandbox_id.as_str().to_owned(),
+                    })?
+                    .runner_config
+                    .machine_port_forwarder
+                    .as_ref()
+                    .ok_or_else(|| SandboxError::InvalidSpec {
+                        message: format!("container {sandbox_id} has no machine forwarder"),
+                    })?,
+            );
+        self.inspect_restart_machine_ingress_with_provider(
+            sandbox_id,
+            fence,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            &provider,
+        )
+    }
+
+    fn publish_restart_machine_ingress_with(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        network_plan: &SandboxProvisionNetworkPlan,
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+        publish: impl FnOnce(&ContainerSandboxManifest) -> Result<()>,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        let manifest = self
+            .read_manifest(sandbox_id)?
+            .ok_or_else(|| SandboxError::NotFound {
+                sandbox_id: sandbox_id.as_str().to_owned(),
+            })?;
+        let (_lifecycle, manifest) =
+            super::runner::lock_current_execute_lifecycle_for_backend(self, &manifest)?;
+        manifest.require_execution_attempt(
+            fence.attempt_id(),
+            "container restart machine-ingress publication",
+        )?;
+        authenticate_restart_machine_plan(
+            self,
+            &manifest,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            "container restart machine-ingress publication",
+        )?;
+        let transition = require_exact_transition(
+            &manifest,
+            fence,
+            "container restart machine-ingress publication",
+        )?;
+        if !matches!(
+            transition,
+            ContainerRestartTransition::RetainedNetworkAttached { .. }
+        ) {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container restart machine-ingress publication for {sandbox_id} requires exact retained-network readiness; found {transition:?}"
+                ),
+            });
+        }
+        let assigned_ip = self.ready_machine_publication_address(&manifest)?;
+        let plan_members = Self::provision_port_plan_witness(&manifest);
+        self.ensure_machine_port_proxies_running_with_publication(
+            sandbox_id,
+            &[assigned_ip],
+            &manifest,
+            MachinePortPreparationReleaseAuthority::RetainPlanned {
+                plan_members: &plan_members,
+            },
+            || publish(&manifest),
+        )?;
+        let receipts = self.exposed_machine_port_receipts(sandbox_id)?;
+        Ok(SandboxProvisionPhaseObservation::Succeeded {
+            evidence: phase_evidence(
+                "machine_ingress_published_for_target",
+                &manifest,
+                fence,
+                &(
+                    network_plan.plan_id(),
+                    network_plan.generation(),
+                    provider_instance,
+                    provider_generation,
+                    receipts,
+                ),
+            )?,
+        })
+    }
+
+    /// Publish the retained listeners for one exact prepared target attempt.
+    pub fn publish_restart_machine_ingress(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        network_plan: &SandboxProvisionNetworkPlan,
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        self.publish_restart_machine_ingress_with(
+            sandbox_id,
+            fence,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            |manifest| self.converge_exposed_machine_port_publication(manifest),
+        )
+    }
+
+    /// Inspect the target-attempt publication without starting listeners or
+    /// repairing either the local proxy owner or the external forwarder.
+    pub fn inspect_restart_machine_ingress_publication(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        network_plan: &SandboxProvisionNetworkPlan,
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        let Some(manifest) = self.read_manifest(sandbox_id)? else {
+            return Ok(SandboxProvisionPhaseObservation::Absent {
+                evidence: serde_json::to_vec(&(
+                    "restart_machine_ingress_manifest_absent",
+                    sandbox_id,
+                    fence,
+                ))
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to encode absent restart machine-ingress evidence: {error}"
+                    ),
+                })?,
+            });
+        };
+        manifest.require_execution_attempt(
+            fence.attempt_id(),
+            "container restart machine-ingress publication inspection",
+        )?;
+        authenticate_restart_machine_plan(
+            self,
+            &manifest,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            "container restart machine-ingress publication inspection",
+        )?;
+        let transition = require_exact_transition(
+            &manifest,
+            fence,
+            "container restart machine-ingress publication inspection",
+        )?;
+        if !matches!(
+            transition,
+            ContainerRestartTransition::RetainedNetworkAttached { .. }
+        ) {
+            return Ok(SandboxProvisionPhaseObservation::InProgress {
+                evidence: phase_evidence(
+                    "machine_ingress_waiting_for_retained_network",
+                    &manifest,
+                    fence,
+                    &format!("{transition:?}"),
+                )?,
+            });
+        }
+        let assigned_ip = match self.ready_machine_publication_address(&manifest) {
+            Ok(address) => address,
+            Err(error) => {
+                return Ok(SandboxProvisionPhaseObservation::InProgress {
+                    evidence: phase_evidence(
+                        "machine_ingress_waiting_for_private_attachment",
+                        &manifest,
+                        fence,
+                        &error.to_string(),
+                    )?,
+                });
+            }
+        };
+        match self.inspect_durable_machine_port_publication(&manifest) {
+            Ok(super::machine_port_publication::DurableMachinePortPublicationObservation::Exposed {
+                receipts,
+            }) => match self.inspect_machine_forwarded_publication(&manifest, &[assigned_ip]) {
+                Ok(current) => Ok(SandboxProvisionPhaseObservation::Succeeded {
+                    evidence: phase_evidence(
+                        "machine_ingress_current_for_target",
+                        &manifest,
+                        fence,
+                        &(
+                            network_plan.plan_id(),
+                            network_plan.generation(),
+                            current.provider_instance(),
+                            current.provider_generation(),
+                            receipts,
+                        ),
+                    )?,
+                }),
+                Err(error) => Ok(SandboxProvisionPhaseObservation::Ambiguous {
+                    evidence: phase_evidence(
+                        "machine_ingress_target_observation_ambiguous",
+                        &manifest,
+                        fence,
+                        &error.to_string(),
+                    )?,
+                }),
+            },
+            Ok(super::machine_port_publication::DurableMachinePortPublicationObservation::Absent) => {
+                Ok(SandboxProvisionPhaseObservation::Absent {
+                    evidence: phase_evidence(
+                        "machine_ingress_target_absent",
+                        &manifest,
+                        fence,
+                        &(network_plan.plan_id(), network_plan.generation()),
+                    )?,
+                })
+            }
+            Ok(super::machine_port_publication::DurableMachinePortPublicationObservation::InProgress {
+                generation,
+            }) => Ok(SandboxProvisionPhaseObservation::InProgress {
+                evidence: phase_evidence(
+                    "machine_ingress_target_publication_in_progress",
+                    &manifest,
+                    fence,
+                    &(network_plan.plan_id(), generation),
+                )?,
+            }),
+            Err(error) => Ok(SandboxProvisionPhaseObservation::Ambiguous {
+                evidence: phase_evidence(
+                    "machine_ingress_target_durable_observation_ambiguous",
+                    &manifest,
+                    fence,
+                    &error.to_string(),
+                )?,
+            }),
+        }
+    }
+
+    #[cfg(test)]
+    fn publish_restart_machine_ingress_with_test_provider(
+        &self,
+        sandbox_id: &SandboxId,
+        fence: &SandboxRestartAttemptFence,
+        network_plan: &SandboxProvisionNetworkPlan,
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+    ) -> Result<SandboxProvisionPhaseObservation> {
+        self.publish_restart_machine_ingress_with(
+            sandbox_id,
+            fence,
+            network_plan,
+            provider_instance,
+            provider_generation,
+            |manifest| self.converge_exposed_machine_port_publication_for_test(manifest),
+        )
+    }
+
     /// Reattach only the retained private network and PEP for the exact target
     /// attempt. Ingress publication remains a separate owner phase.
     pub fn attach_restart_retained_network(
@@ -848,55 +1476,13 @@ impl ContainerSandboxBackend {
     }
 }
 
-// The historical provider-local policy machinery remains test-only until the
-// NNC6.4a deletion band removes its characterization fixtures. Production
-// restart authority is exclusively the explicit phase API above.
 #[cfg(test)]
 use crate::backends::conmon::lifecycle::{
     delete_runtime_and_confirm_absent as legacy_delete_runtime_and_confirm_absent,
-    remove_if_exists as legacy_remove_if_exists, restart_backoff_delay,
-    restart_policy_allows_restart,
+    remove_if_exists as legacy_remove_if_exists,
 };
 #[cfg(test)]
 use crate::backends::oci::network::{AttachmentAuxiliaryDisposition, AttachmentTeardownMode};
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ContainerRestartDecision {
-    NotRestarting,
-    WaitingForBackoff,
-    RestartNow,
-}
-
-#[cfg(test)]
-pub(super) fn mark_restart_decision_after_exit(
-    manifest: &mut ContainerSandboxManifest,
-    now_millis: u64,
-) -> Result<ContainerRestartDecision> {
-    if manifest.shutdown_requested || !manifest.conmon_layout.exit_status_file.exists() {
-        return Ok(ContainerRestartDecision::NotRestarting);
-    }
-    let exit_code = read_exit_code(&manifest.conmon_layout.exit_status_file)?;
-    if !restart_policy_allows_restart(
-        manifest.spec.lifecycle.restart_policy,
-        exit_code,
-        manifest.restart_count,
-    ) {
-        return Ok(ContainerRestartDecision::NotRestarting);
-    }
-    manifest.last_exit_code = Some(exit_code);
-    let next_restart_at_millis = manifest.next_restart_at_millis.get_or_insert_with(|| {
-        now_millis.saturating_add(restart_backoff_delay(manifest.restart_count).as_millis() as u64)
-    });
-    if now_millis < *next_restart_at_millis {
-        synchronize_handle_status(manifest, SandboxStatus::Starting);
-        return Ok(ContainerRestartDecision::WaitingForBackoff);
-    }
-    manifest.restart_count += 1;
-    manifest.next_restart_at_millis = None;
-    synchronize_handle_status(manifest, SandboxStatus::Starting);
-    Ok(ContainerRestartDecision::RestartNow)
-}
 
 #[cfg(test)]
 impl ContainerSandboxBackend {

@@ -41,7 +41,6 @@ pub(super) fn machine_api_summary_from_container_summary(
         service_name: summary.service_name,
         status: summary.status,
         published_endpoints: summary.published_endpoints,
-        restart_count: summary.restart_count,
         last_exit_code: summary.last_exit_code,
         shutdown_requested: summary.shutdown_requested,
     }

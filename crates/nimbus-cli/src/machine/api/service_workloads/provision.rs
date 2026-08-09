@@ -656,13 +656,21 @@ fn bounded_bytes(mut evidence: Vec<u8>) -> Vec<u8> {
     evidence
 }
 
-fn sandbox_network_plan(
+pub(super) fn sandbox_network_plan(
     command: &MachineApiWorkloadProvisionCommandEnvelope,
     spec: &SandboxSpec,
 ) -> Result<SandboxProvisionNetworkPlan, MachineApiWorkloadProvisionObservation> {
-    let content = command.compiled_network_plan().content();
+    sandbox_network_plan_for(command.compiled_network_plan(), command.generation(), spec)
+}
+
+pub(super) fn sandbox_network_plan_for(
+    compiled_network_plan: &nimbus_workloads::CompiledWorkloadNetworkPlan,
+    generation: nimbus_workloads::WorkloadGeneration,
+    spec: &SandboxSpec,
+) -> Result<SandboxProvisionNetworkPlan, MachineApiWorkloadProvisionObservation> {
+    let content = compiled_network_plan.content();
     if content.identity().tenant_id() != &spec.tenant_id
-        || content.identity().generation().as_u64() != command.generation().as_u64()
+        || content.identity().generation().as_u64() != generation.as_u64()
     {
         return Err(definite_failure(
             "compiled network-plan tenant or generation is crossed",
@@ -729,7 +737,7 @@ fn sandbox_network_plan(
         )
     });
     SandboxProvisionNetworkPlan::new(
-        command.compiled_network_plan().plan().clone(),
+        compiled_network_plan.plan().clone(),
         spec.tenant_id.clone(),
         content.identity().generation(),
         attachment.attachment_id().clone(),
@@ -739,14 +747,17 @@ fn sandbox_network_plan(
     .map_err(|error| definite_failure(error.to_string()))
 }
 
-fn port_request_matches(host_port: u16, request: WorkloadNetworkPortRequestMode) -> bool {
+pub(super) fn port_request_matches(
+    host_port: u16,
+    request: WorkloadNetworkPortRequestMode,
+) -> bool {
     match request {
         WorkloadNetworkPortRequestMode::Exact { port } => host_port == port.get(),
         WorkloadNetworkPortRequestMode::ProviderAssigned => host_port == 0,
     }
 }
 
-fn port_bind_target(
+pub(super) fn port_bind_target(
     address: IpAddr,
 ) -> Result<PortBindTarget, MachineApiWorkloadProvisionObservation> {
     match address {
@@ -762,7 +773,7 @@ fn port_bind_target(
     }
 }
 
-fn port_exposure(address: IpAddr) -> PortExposure {
+pub(super) fn port_exposure(address: IpAddr) -> PortExposure {
     match address {
         address if address.is_loopback() => PortExposure::Loopback,
         IpAddr::V4(address) if address.is_private() || address.is_link_local() => {

@@ -25,7 +25,6 @@ fn terminal_manifest_publication_rejects_each_local_authority_until_released() {
 
     terminal.shutdown_requested = true;
     terminal.last_exit_code = Some(0);
-    terminal.next_restart_at_millis = None;
     terminal.network_cleanup_complete = true;
     terminal.launch_reservation_claim = None;
     terminal.launch_artifact = None;
@@ -43,8 +42,6 @@ fn terminal_manifest_publication_rejects_each_local_authority_until_released() {
     retained_artifact.launch_artifact = Some(sample_rootfs_artifact(
         temp_dir.path().join("retained-rootfs"),
     ));
-    let mut retained_restart = terminal.clone();
-    retained_restart.next_restart_at_millis = Some(1);
     let mut retained_shutdown = terminal.clone();
     retained_shutdown.shutdown_requested = false;
     let mut mismatched_projection = terminal.clone();
@@ -53,7 +50,6 @@ fn terminal_manifest_publication_rejects_each_local_authority_until_released() {
         ("network_cleanup_complete=false", retained_cleanup),
         ("launch_reservation_claim_present=true", retained_claim),
         ("launch_artifact_present=true", retained_artifact),
-        ("next_restart_at_millis=Some(1)", retained_restart),
         ("shutdown_requested=false", retained_shutdown),
         ("handle_status=Stopping", mismatched_projection),
     ];
@@ -152,7 +148,6 @@ fn terminal_manifest_publication_rejects_a_retained_port_lease() {
 
     manifest.shutdown_requested = true;
     manifest.last_exit_code = Some(0);
-    manifest.next_restart_at_millis = None;
     manifest.network_cleanup_complete = true;
     manifest.launch_reservation_claim = None;
     manifest.launch_artifact = None;
