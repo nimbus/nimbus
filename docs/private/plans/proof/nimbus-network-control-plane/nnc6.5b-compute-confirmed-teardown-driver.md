@@ -1,6 +1,6 @@
 # NNC6.5b Compute-Confirmed Teardown Driver
 
-Status: `acceptance frozen; fail-before pending`
+Status: `fail-before recorded; implementation pending`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -267,6 +267,37 @@ The first fail-before tests are:
 - `cancellation_before_runtime_submission_makes_zero_calls`
 - `teardown_driver_process_crash_after_each_claim_inspects_before_retry`
 
+### Recorded Fail-Before Evidence
+
+Checkpoint `76626d33541a126d32fb9aa694429f4a93b44292` had none of the six
+module paths or these four root APIs:
+
+- `WorkloadTeardownCapabilityRegistry`
+- `WorkloadTeardownDispatcher`
+- `WorkloadTeardownDriver`
+- `WorkloadTeardownRuntime`
+
+The same snapshot retained all eight raw recovery actions:
+`WithdrawPublication`, `DrainWorkload`, `StopWorkload`, `DetachNetwork`,
+`ReleaseNetwork`, `RecordTerminalEvidence`, `InspectCleanup`, and
+`AdvanceWithoutEffect`.
+
+Each named test then failed for its intended missing production seam:
+
+| Test | Exact result | First failure | Output |
+| --- | --- | --- | --- |
+| `teardown_recovery_delegates_to_workloads_reducer` | `0/1`, 309 filtered, exit 101 | missing `decide_teardown` delegation | `/tmp/nnc65b-fail-before-decision.out` |
+| `only_direct_claim_cas_winner_receives_execute` | `0/1`, 309 filtered, exit 101 | missing `ConfirmedWorkloadTeardownCommand` | `/tmp/nnc65b-fail-before-command.out` |
+| `registry_rejects_duplicate_role_provider_registration` | `0/1`, 309 filtered, exit 101 | missing `WorkloadTeardownCapabilityRegistry` | `/tmp/nnc65b-fail-before-registry.out` |
+| `stale_execute_evidence_makes_zero_capability_calls` | `0/1`, 309 filtered, exit 101 | missing `WorkloadTeardownDispatcher` | `/tmp/nnc65b-fail-before-dispatch.out` |
+| `teardown_driver_records_exact_five_step_order` | `0/1`, 309 filtered, exit 101 | missing first `decide_teardown` step | `/tmp/nnc65b-fail-before-driver.out` |
+| `cancellation_before_runtime_submission_makes_zero_calls` | `0/1`, 309 filtered, exit 101 | missing `WorkloadTeardownRuntime` | `/tmp/nnc65b-fail-before-runtime.out` |
+| `teardown_driver_process_crash_after_each_claim_inspects_before_retry` | `0/1`, 634 filtered, exit 101 | missing public runtime for process recovery | `/tmp/nnc65b-fail-before-process.out` |
+
+These are test-only source assertions. Implementation must replace them with
+observable contract tests. It must not make them pass with token-only product
+markers.
+
 ## Owned Paths
 
 Product and compute tests:
@@ -363,7 +394,7 @@ review. No review runs for docs-only closeout or ledger wording.
 | Written contract B1-B24 | `green` | Frozen in this proof before product edits. |
 | Exact owned/forbidden paths | `green` | Frozen above. Server additions are test-only and avoid a dependency cycle. |
 | Acceptance-freeze gates | `green` | NNCV035 is current exact `0/11`; self-test is `55/55`; aggregate is `35/36` with only NNCV035 red; NNCV008 and NNCV009 pass. Technical-writing lint has zero diagnostics. Docs pass `108`, and the site passes `17/17`. |
-| Fail-before | `red` | The seven first failing tests and exact absence scans remain to run. |
+| Fail-before | `green` | The exact absence/presence census and seven named `0/1` failures are recorded above at checkpoint `76626d33541a126d32fb9aa694429f4a93b44292`. |
 | Implementation | `red` | No NNC6.5b product source has changed. |
 | Final behavior and process proof | `red` | Roster and ten-cut matrix remain. |
 | Static, quality, docs, and review | `red` | Candidate does not exist. |

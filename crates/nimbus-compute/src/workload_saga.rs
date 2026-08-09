@@ -27,6 +27,12 @@ pub mod restart_sandbox;
 mod restart_submission;
 mod restart_supervisor;
 mod restart_watch;
+mod teardown_command;
+mod teardown_decision;
+mod teardown_dispatch;
+mod teardown_driver;
+mod teardown_registry;
+mod teardown_runtime;
 
 pub use ingress::{ConfirmedWorkloadSagaIntent, WorkloadSagaIngressDisposition};
 pub use nimbus_workloads::{WorkloadProvisionCommandId, WorkloadProvisionCommandMode};
@@ -134,6 +140,9 @@ impl WorkloadSagaCoordinator {
 
 #[cfg(test)]
 pub(crate) mod test_support;
+
+#[cfg(test)]
+mod teardown_test_support;
 
 #[cfg(test)]
 #[path = "workload_saga/tests.rs"]
