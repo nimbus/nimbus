@@ -1,6 +1,6 @@
 # NNC6.5a Strict Portable Teardown Protocol And Durable Reducer
 
-Status: `acceptance green; full and narrow review findings corrected; item commit pending`
+Status: `complete at eefbb7178e304450632f266bdfec35ada2a55d71`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -401,7 +401,7 @@ Those warnings do not change the expected missing-test result.
 | Static and seams | Corrected manifest, forbidden-effect-token, direct-teardown-advance, and network-edge scans pass. NNCV029 passes `24/24` plus `10/10`. NNCV035 passes `55/55` mutation tests and remains exact `0/11`. The corrected aggregate is `35/36` with only NNCV035 red. Strict Clippy and warning-denied Rustdoc pass for all three affected crates. Rustfmt, Bash syntax, scoped ShellCheck, diff, and proof lint with zero diagnostics pass. Docs pass `108` pages, and the site passes `17/17`. |
 | Candidate review | The sole full GPT-5.6 Sol/xhigh/fast review completed at overall confidence `0.98`; its one P1 and four P2 findings are corrected. The one permitted narrow review completed at overall confidence `0.98`; its one P1 and two P2 findings are corrected. Review cadence is exhausted; no third review ran. |
 | Final candidate identity | Acceptance-green staged tree before identity-only ledger insertion `9fb35e90d7f3fdcf09931dd822650dccd8c1c1d0`; complete patch SHA-256 `0d82c4566734884b09f610c35e2ea526669bf09895e221eb88ebe079857dbb86`; final executable/script patch SHA-256 `af284c1f7687c801a13aec5528fb3c03e9116828e828f1a54ef2edf7443fcb91`; 32 paths. |
-| Final commit | Pending one reviewed, evidence-backed NNC6.5a item commit. No push or PR. |
+| Final commit | Item commit `eefbb7178e304450632f266bdfec35ada2a55d71`; tree `036c5077cd70e4b2a30ad6a3f57f0ea155f8fd94`. No push or PR. |
 
 ## Acceptance Status
 
@@ -411,4 +411,4 @@ Those warnings do not change the expected missing-test result.
 | T24 fail-before and freeze | `green` | The written contract, four absence checks, and first named compile-red proof are recorded before implementation. |
 | T24 implementation and review closeout | `green` | The exact 47-name roster, final affected suites, static scans, expected-red verifier state, strict Clippy, Rustdoc, format, and both required reviews pass. All eight accepted findings have exact correction evidence. Review cadence is exhausted. |
 | T24 documentation closeout | `green` | Proof lint passes with zero diagnostics. Docs pass `108` pages, and the site passes `17/17`. |
-| T24 item commit | `red` | Exact final tree/patch identities and the NNC6.5a item commit remain. |
+| T24 item commit | `green` | Exact item commit `eefbb7178e304450632f266bdfec35ada2a55d71` has tree `036c5077cd70e4b2a30ad6a3f57f0ea155f8fd94`. |

@@ -74,13 +74,15 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.5 complete; NNC6.5a
-  acceptance green; commit pending`. NNC6.5 froze the source-derived teardown owner, caller, failure,
-  path, and verification contract. NNC6.5a now owns the strict portable
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5a complete; NNC6.5b
+  in progress`. NNC6.5 froze the source-derived teardown owner, caller, failure,
+  path, and verification contract. NNC6.5a completed the strict portable
   protocol, reducer, exact provision/restart handoff validators, server
-  codec/schema, and named compile-green test fixtures. It owns no provider
-  effect or caller cutover. NNC6.5b-NNC6.5g retain compute driver,
-  ingress/node adapters, sandbox drain/stop and detach/release adapters, native
+  codec/schema, and named behavioral proofs at item commit
+  `eefbb7178e304450632f266bdfec35ada2a55d71`. It owns no provider effect or
+  caller cutover. NNC6.5b now owns only the compute confirmed-command driver
+  and registry seam. NNC6.5c-NNC6.5g retain ingress/node adapters, sandbox
+  drain/stop and detach/release adapters, native
   caller cutover, Compose/machine cutover, and final compensation,
   tenant-retirement, and deletion convergence. NNCV035 remains the sole
   expected-red implementation condition until NNC6.5g. NNC6.1e's R1-R15
