@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.5c complete; NNC6.5d
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5d complete; NNC6.5d1
   in progress`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,
   path, and verification contract. NNC6.5a completed the strict portable
@@ -90,10 +90,16 @@ extension-registry seam before the second concern edits `extensions.rs`.
   exact final-ingress and DirectProcess/Systemd teardown substitution. Its one
   full and one narrow Sol/xhigh/fast review found seven accepted defects; all
   are corrected and proven, and no third review ran. NNC6.5b owns only the
-  compute confirmed-command driver and registry seam. NNC6.5d starts with the
-  read-only Container/Krun and machine-network substitution audit.
-  NNC6.5d-NNC6.5g retain sandbox drain/stop and detach/release adapters, native
-  caller cutover, Compose/machine cutover, and final compensation,
+  compute confirmed-command driver and registry seam. NNC6.5d completed the
+  read-only Container/Krun and machine-network substitution audit. It freezes
+  honest provider-admission drain, exact execution stop, retained `Deleting`
+  detach evidence, release-only terminal authority, authenticated process identity,
+  one provider-command journal, and direct-versus-forwarded provider realms.
+  The original provider item is prospectively split into NNC6.5d1-NNC6.5d4.
+  NNC6.5d1 is now the sole active item. The four implementation units cover
+  Container execution, Krun execution, shared host-managed attachment, and
+  end-to-end forwarded-machine provider substitution. NNC6.5e-NNC6.5g retain
+  native caller cutover, Compose/machine cutover, and final compensation,
   tenant-retirement, and deletion convergence. NNCV035 remains the sole
   expected-red implementation condition until NNC6.5g. NNC6.1e's R1-R15
   portable discovery, pure recovery decisions,
