@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use nimbus_core::{Error, Result};
@@ -12,6 +13,15 @@ use super::{
     SystemdUnitName, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase, WorkloadExecutionId,
 };
 use crate::host_lifecycle::{HostActivationFence, HostProviderPlan, HostRestartProviderClaim};
+#[path = "systemd_transient/teardown.rs"]
+mod teardown;
+#[path = "systemd_transient/teardown_store.rs"]
+mod teardown_store;
+use teardown_store::SystemdTeardownStore;
+
+#[cfg(test)]
+#[path = "systemd_transient/teardown/tests.rs"]
+mod teardown_fail_before_tests;
 
 const WORKLOAD_EXECUTION_JOURNAL_FIELD: &str = "NIMBUS_WORKLOAD_EXECUTION_ID";
 
@@ -34,6 +44,25 @@ pub trait SystemdDbusClient: Send + Sync + 'static {
         request: SystemdStopUnitRequest,
     ) -> HostLifecycleFuture<'a, SystemdStopUnitResponse>;
 
+    /// Submit one stop while retaining every ambiguity boundary.
+    ///
+    /// Clients that cannot classify transport stages conservatively report an
+    /// unknown submission on error. The live zbus client overrides this and
+    /// distinguishes pre-call, unknown-call, accepted-job, and terminal state.
+    fn stop_unit_exact<'a>(
+        &'a self,
+        request: SystemdStopUnitRequest,
+    ) -> HostLifecycleFuture<'a, SystemdStopUnitSubmission> {
+        Box::pin(async move {
+            Ok(match self.stop_unit(request).await {
+                Ok(response) => SystemdStopUnitSubmission::Terminal(Box::new(response)),
+                Err(error) => SystemdStopUnitSubmission::UnknownSubmission {
+                    error: error.to_string(),
+                },
+            })
+        })
+    }
+
     fn inspect_unit<'a>(
         &'a self,
         request: SystemdInspectUnitRequest,
@@ -43,6 +72,7 @@ pub trait SystemdDbusClient: Send + Sync + 'static {
 #[derive(Debug, Clone)]
 pub struct SystemdTransientUnitBackend<C = UnavailableSystemdDbusClient> {
     client: Arc<C>,
+    teardown_store: Option<Arc<SystemdTeardownStore>>,
 }
 
 impl SystemdTransientUnitBackend<UnavailableSystemdDbusClient> {
@@ -76,7 +106,24 @@ where
     pub fn new(client: C) -> Self {
         Self {
             client: Arc::new(client),
+            teardown_store: None,
         }
+    }
+
+    /// Construct an exact-teardown-capable backend with crash-safe receipts.
+    pub fn new_with_teardown_state_root(client: C, root: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self {
+            client: Arc::new(client),
+            teardown_store: Some(Arc::new(SystemdTeardownStore::open(root)?)),
+        })
+    }
+
+    fn teardown_store(&self) -> Result<&SystemdTeardownStore> {
+        self.teardown_store.as_deref().ok_or_else(|| {
+            Error::Internal(
+                "exact systemd teardown requires a durable teardown state root".to_owned(),
+            )
+        })
     }
 
     fn ensure_capable(&self) -> Result<()> {
@@ -915,6 +962,96 @@ pub struct SystemdStopUnitResponse {
     status: SystemdUnitStatus,
 }
 
+/// Provider-visible `StopUnit` submission boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SystemdStopUnitSubmission {
+    PreCallFailure { error: String },
+    UnknownSubmission { error: String },
+    AcceptedJobIncomplete { job_path: String, error: String },
+    Terminal(Box<SystemdStopUnitResponse>),
+    TerminalFailure { job_path: String, result: String },
+}
+
+impl SystemdStopUnitSubmission {
+    pub fn pre_call_failure(error: impl Into<String>) -> Self {
+        Self::PreCallFailure {
+            error: error.into(),
+        }
+    }
+
+    pub fn unknown_submission(error: impl Into<String>) -> Self {
+        Self::UnknownSubmission {
+            error: error.into(),
+        }
+    }
+
+    pub fn accepted_job_incomplete(
+        job_path: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Result<Self> {
+        Ok(Self::AcceptedJobIncomplete {
+            job_path: valid_object_path(job_path, "systemd accepted stop job path")?,
+            error: error.into(),
+        })
+    }
+
+    pub fn terminal_failure(
+        job_path: impl Into<String>,
+        result: impl Into<String>,
+    ) -> Result<Self> {
+        Ok(Self::TerminalFailure {
+            job_path: valid_object_path(job_path, "systemd terminal stop job path")?,
+            result: nimbus_core::non_empty(result, "systemd terminal stop job result")?,
+        })
+    }
+}
+
+/// Current systemd job attached to an exact unit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SystemdUnitJobStatus {
+    id: u32,
+    path: String,
+    job_type: String,
+    state: String,
+}
+
+impl SystemdUnitJobStatus {
+    pub fn new(
+        id: u32,
+        path: impl Into<String>,
+        job_type: impl Into<String>,
+        state: impl Into<String>,
+    ) -> Result<Self> {
+        if id == 0 {
+            return Err(Error::InvalidInput(
+                "systemd current job ID must be greater than zero".to_owned(),
+            ));
+        }
+        Ok(Self {
+            id,
+            path: valid_object_path(path, "systemd current job path")?,
+            job_type: nimbus_core::non_empty(job_type, "systemd current job type")?,
+            state: nimbus_core::non_empty(state, "systemd current job state")?,
+        })
+    }
+
+    pub const fn id(&self) -> u32 {
+        self.id
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn job_type(&self) -> &str {
+        &self.job_type
+    }
+
+    pub fn state(&self) -> &str {
+        &self.state
+    }
+}
+
 impl SystemdStopUnitResponse {
     pub fn new(job_path: impl Into<String>, status: SystemdUnitStatus) -> Result<Self> {
         Ok(Self {
@@ -939,6 +1076,7 @@ pub struct SystemdUnitStatus {
     active_state: String,
     sub_state: String,
     job_path: Option<String>,
+    current_job: Option<SystemdUnitJobStatus>,
     main_pid: Option<u32>,
     cgroup_path: String,
     journal_selectors: Vec<SystemdJournalSelector>,
@@ -954,6 +1092,44 @@ enum SystemdUnitPresence {
 }
 
 impl SystemdUnitStatus {
+    /// Report that one exact inspected unit does not exist without exposing
+    /// the private unit-presence representation.
+    ///
+    /// External D-Bus adapters use this result for a successful inspection of
+    /// a unit that systemd does not know. The request binds the absence to the
+    /// exact execution and derived unit name that Nimbus inspected.
+    pub fn absent_for_inspect_request(request: &SystemdInspectUnitRequest) -> Result<Self> {
+        let mut status = Self::new(
+            request.execution_id().clone(),
+            request.unit_name().clone(),
+            "inactive",
+            "dead",
+        )?;
+        status.presence = SystemdUnitPresence::ExplicitlyAbsent;
+        Ok(status)
+    }
+
+    /// Build provider status for one exact start request without exposing the
+    /// private activation-fence representation.
+    ///
+    /// External D-Bus adapters can retain and return the opaque fence through
+    /// this constructor. They cannot inspect, modify, or synthesize its raw
+    /// fields.
+    pub fn for_start_request(
+        request: &SystemdStartTransientUnitRequest,
+        active_state: impl Into<String>,
+        sub_state: impl Into<String>,
+    ) -> Result<Self> {
+        let mut status = Self::new(
+            request.execution_id().clone(),
+            request.unit_name().clone(),
+            active_state,
+            sub_state,
+        )?;
+        status.activation_fence = request.activation_fence().cloned();
+        Ok(status)
+    }
+
     pub fn new(
         execution_id: WorkloadExecutionId,
         unit_name: SystemdUnitName,
@@ -971,6 +1147,7 @@ impl SystemdUnitStatus {
             active_state: active_state.into(),
             sub_state: sub_state.into(),
             job_path: None,
+            current_job: None,
             main_pid: None,
             cgroup_path,
             journal_selectors,
@@ -992,6 +1169,11 @@ impl SystemdUnitStatus {
     pub fn with_job_path(mut self, job_path: impl Into<String>) -> Result<Self> {
         self.job_path = Some(valid_object_path(job_path, "systemd status job path")?);
         Ok(self)
+    }
+
+    pub fn with_current_job(mut self, job: SystemdUnitJobStatus) -> Self {
+        self.current_job = Some(job);
+        self
     }
 
     pub fn with_main_pid(mut self, main_pid: u32) -> Self {
@@ -1044,6 +1226,10 @@ impl SystemdUnitStatus {
 
     pub fn job_path(&self) -> Option<&str> {
         self.job_path.as_deref()
+    }
+
+    pub fn current_job(&self) -> Option<&SystemdUnitJobStatus> {
+        self.current_job.as_ref()
     }
 
     pub fn main_pid(&self) -> Option<u32> {

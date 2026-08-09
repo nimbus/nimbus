@@ -650,7 +650,7 @@
       "kind": "primitive-port-authority-open-declaration",
       "symbol": "open",
       "ordinal": 1,
-      "line": 789,
+      "line": 790,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -660,7 +660,7 @@
       "kind": "primitive-state-store-open",
       "symbol": "open",
       "ordinal": 1,
-      "line": 790,
+      "line": 791,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1080,7 +1080,7 @@
       "kind": "manager-derived-prebound-listeners-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 643,
+      "line": 579,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1090,7 +1090,7 @@
       "kind": "manager-derived-server-listener-authority",
       "symbol": "new",
       "ordinal": 1,
-      "line": 645,
+      "line": 581,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1100,7 +1100,7 @@
       "kind": "direct-prebound-listener-reconstruction-declaration",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 655,
+      "line": 591,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1110,7 +1110,7 @@
       "kind": "server-internal-direct-reconstruction",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 657,
+      "line": 593,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1120,7 +1120,7 @@
       "kind": "manager-derived-server-listener-authority-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 752,
+      "line": 688,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1130,7 +1130,7 @@
       "kind": "manager-derived-server-primitive-handle",
       "symbol": "new",
       "ordinal": 1,
-      "line": 753,
+      "line": 689,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1140,7 +1140,7 @@
       "kind": "server-internal-direct-reconstruction-declaration",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 758,
+      "line": 694,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1150,7 +1150,7 @@
       "kind": "server-primitive-direct-reconstruction",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 760,
+      "line": 696,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1200,7 +1200,7 @@
       "kind": "manager-derived-server-listener-authority",
       "symbol": "new",
       "ordinal": 1,
-      "line": 141,
+      "line": 150,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc6.4"

@@ -13,11 +13,13 @@ doctest = false
 workspace = true
 
 [dependencies]
+fs2.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 nimbus-workloads = { path = "../nimbus-workloads" }
 serde.workspace = true
+serde_json.workspace = true
 futures = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
@@ -46,6 +48,5 @@ systemd-dbus-integration-tests = ["systemd-dbus"]
 nimbus-network = { path = "../nimbus-network" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-testing = { path = "../nimbus-testing" }
-serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

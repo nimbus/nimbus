@@ -6,11 +6,9 @@
 //! resolve service names, decide tenant policy, or mutate attachment state.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{self, Read, Write};
-use std::net::{Shutdown, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::io;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use nimbus_compute::workload_saga::provision_provider::{
@@ -49,11 +47,22 @@ use nimbus_sandbox::{
 };
 use nimbus_workloads::{WorkloadProvisionProviderTarget, WorkloadPublicationIntent};
 
+#[cfg(test)]
 use crate::listener_lease::{
-    ActiveServerListenerLease, RestartStoppingServerListener, ServerListenerLeaseAuthority,
-    stop_and_retain_server_listeners_for_restart,
+    ActiveServerListenerLease, recover_dead_process_bound_server_listeners_for_final_withdrawal,
+    withdraw_server_listeners_for_final_withdrawal,
+};
+use crate::listener_lease::{
+    ServerListenerLeaseAuthority, stop_and_retain_server_listeners_for_restart,
 };
 use crate::network_capabilities::nimbus_owned_local_ingress_provider_id;
+
+#[path = "workload_ingress/final_withdrawal.rs"]
+mod final_withdrawal;
+use final_withdrawal::{FinalIngressPhase, PublicationKey, PublishedIngressAuthority};
+#[path = "workload_ingress/route_workers.rs"]
+mod route_workers;
+use route_workers::RunningIngressRoute;
 
 const SERVER_INGRESS_JOURNAL_NAMESPACE: &str = "server-workload-ingress";
 const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(10);
@@ -148,19 +157,29 @@ impl ServerIngressPublicationAdapter {
         &self,
         command: &ConfirmedWorkloadProvisionCommand,
     ) -> Result<ValidatedPublication, ProviderProvisionEffectObservation> {
-        match command.provider_target() {
+        let provider_source_digest = match command.provider_target() {
             WorkloadProvisionProviderTarget::Network {
                 role: NetworkCapabilityRole::Ingress,
                 provider_id,
-                ..
-            } if provider_id == &nimbus_owned_local_ingress_provider_id() => {}
+                provider_source_digest,
+            } if provider_id == &nimbus_owned_local_ingress_provider_id() => {
+                *provider_source_digest
+            }
             _ => {
                 return Err(definite_failure(
                     "server_ingress_provider_mismatch",
                     "publication command does not target Nimbus-owned local ingress",
                 ));
             }
-        }
+        };
+        let nimbus_workloads::WorkloadProvisionSubjects::Publication(reference) =
+            command.subjects()
+        else {
+            return Err(definite_failure(
+                "server_ingress_publication_subject_mismatch",
+                "publication command does not carry its exact publication reference",
+            ));
+        };
         let validated = validate_sandbox_provision_command(command, self.source.backend_kind())?;
         Ok(ValidatedPublication {
             key: PublicationKey {
@@ -173,6 +192,11 @@ impl ServerIngressPublicationAdapter {
             sandbox_id: validated.sandbox_id().clone(),
             execution_attempt_id: validated.execution_attempt_id().clone(),
             network_plan: validated.network_plan().clone(),
+            publication: PublishedIngressAuthority::new(
+                reference.clone(),
+                provider_source_digest,
+                command.source_digest(),
+            ),
         })
     }
 
@@ -195,6 +219,7 @@ impl ServerIngressPublicationAdapter {
             &self.listeners,
             &validated.key.execution_id,
             &targets,
+            validated.publication.clone(),
         ) {
             Ok(batch) => batch,
             Err(error) => return bind_error(error),
@@ -275,7 +300,11 @@ impl ServerIngressPublicationAdapter {
         command: &ConfirmedWorkloadRestartCommand,
     ) -> Result<ValidatedRestartPublication, ProviderRestartEffectObservation> {
         let validated = validate_sandbox_restart_command(command, self.source.backend_kind())?;
-        Ok(ValidatedRestartPublication::new(command, validated))
+        ValidatedRestartPublication::new(command, validated).ok_or_else(|| {
+            restart_definite_failure(
+                "restart ingress command omits its exact publication or provider evidence",
+            )
+        })
     }
 
     fn withdraw_restart_publication(
@@ -490,6 +519,7 @@ impl ServerIngressPublicationAdapter {
             &self.listeners,
             &validated.target_key.execution_id,
             &targets,
+            validated.publication.clone(),
         ) {
             Ok(batch) => batch,
             Err(error) => return restart_bind_error(error),
@@ -884,6 +914,7 @@ struct ValidatedPublication {
     sandbox_id: nimbus_sandbox::SandboxId,
     execution_attempt_id: nimbus_sandbox::SandboxExecutionAttemptId,
     network_plan: SandboxProvisionNetworkPlan,
+    publication: PublishedIngressAuthority,
 }
 
 struct ValidatedRestartPublication {
@@ -892,13 +923,14 @@ struct ValidatedRestartPublication {
     sandbox_id: nimbus_sandbox::SandboxId,
     attempt_fence: nimbus_sandbox::SandboxRestartAttemptFence,
     network_plan: SandboxProvisionNetworkPlan,
+    publication: PublishedIngressAuthority,
 }
 
 impl ValidatedRestartPublication {
     fn new(
         command: &ConfirmedWorkloadRestartCommand,
         validated: ValidatedSandboxRestartCommand,
-    ) -> Self {
+    ) -> Option<Self> {
         let key = |attempt_id: &nimbus_sandbox::SandboxExecutionAttemptId| PublicationKey {
             saga_id: command.saga_id().as_str().to_owned(),
             attempt_id: attempt_id.as_str().to_owned(),
@@ -906,23 +938,24 @@ impl ValidatedRestartPublication {
             generation: command.generation().as_u64(),
             network_plan_digest: command.network_plan_digest().to_string(),
         };
-        Self {
+        let selection = command
+            .compiled_network_plan()
+            .content()
+            .capability_selection_evidence()?;
+        let reference = command.publication_reference()?.clone();
+        Some(Self {
             source_key: key(validated.attempt_fence().source_attempt_id()),
             target_key: key(validated.attempt_fence().attempt_id()),
             sandbox_id: validated.sandbox_id().clone(),
             attempt_fence: validated.attempt_fence().clone(),
             network_plan: validated.network_plan().clone(),
-        }
+            publication: PublishedIngressAuthority::new(
+                reference,
+                selection.source_digest(),
+                command.source_digest(),
+            ),
+        })
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct PublicationKey {
-    saga_id: String,
-    attempt_id: String,
-    execution_id: String,
-    generation: u64,
-    network_plan_digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -950,6 +983,8 @@ struct RunningIngressBatch {
     attachment_id: nimbus_network::NetworkAttachmentId,
     plan_members: Vec<nimbus_network::PortLeaseRequest>,
     routes: Vec<RunningIngressRoute>,
+    publication: PublishedIngressAuthority,
+    final_phase: FinalIngressPhase,
 }
 
 impl RunningIngressBatch {
@@ -957,6 +992,7 @@ impl RunningIngressBatch {
         authority: &ServerListenerLeaseAuthority,
         execution_id: &str,
         targets: &SandboxProvisionIngressTargets,
+        publication: PublishedIngressAuthority,
     ) -> io::Result<Self> {
         let ingress_requests = targets
             .routes()
@@ -998,6 +1034,8 @@ impl RunningIngressBatch {
             attachment_id: targets.attachment_id().clone(),
             plan_members,
             routes,
+            publication,
+            final_phase: FinalIngressPhase::Published,
         })
     }
 
@@ -1156,269 +1194,6 @@ impl RunningIngressBatch {
         endpoints.sort_by(|left, right| left.endpoint_id().cmp(right.endpoint_id()));
         Some(endpoints)
     }
-}
-
-struct RunningIngressRoute {
-    expected: ExpectedRoute,
-    bound_addr: SocketAddr,
-    stop: Arc<AtomicBool>,
-    failed: Arc<AtomicBool>,
-    #[cfg(test)]
-    active_connections: Arc<AtomicUsize>,
-    #[cfg(test)]
-    peak_connections: Arc<AtomicUsize>,
-    #[cfg(test)]
-    rejected_connections: Arc<AtomicUsize>,
-    worker: Option<JoinHandle<()>>,
-    lease: Option<ActiveServerListenerLease>,
-}
-
-impl RunningIngressRoute {
-    fn start(
-        expected: ExpectedRoute,
-        listener: crate::PreboundServerListener,
-        max_active_connections: usize,
-    ) -> io::Result<Self> {
-        if max_active_connections == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "workload ingress connection limit must be greater than zero",
-            ));
-        }
-        let bound_addr = listener.local_addr()?;
-        let (listener, lease, _) = listener.into_std_parts();
-        if let Err(error) = listener.set_nonblocking(true) {
-            drop(listener);
-            return match lease.settle_after_confirmed_local_close() {
-                Ok(()) => Err(error),
-                Err(cleanup) => Err(io::Error::new(
-                    error.kind(),
-                    format!("{error}; failed to settle listener: {cleanup}"),
-                )),
-            };
-        }
-        let stop = Arc::new(AtomicBool::new(false));
-        let failed = Arc::new(AtomicBool::new(false));
-        let active_connections = Arc::new(AtomicUsize::new(0));
-        let peak_connections = Arc::new(AtomicUsize::new(0));
-        let rejected_connections = Arc::new(AtomicUsize::new(0));
-        let worker_stop = Arc::clone(&stop);
-        let worker_failed = Arc::clone(&failed);
-        let worker_active = Arc::clone(&active_connections);
-        let worker_peak = Arc::clone(&peak_connections);
-        let worker_rejected = Arc::clone(&rejected_connections);
-        let upstream = expected.upstream;
-        let name = format!("nimbus-ingress-{}", expected.listener_id);
-        let worker = thread::Builder::new().name(name).spawn(move || {
-            let mut connections = Vec::new();
-            while !worker_stop.load(Ordering::Acquire) {
-                if reap_finished_connections(&mut connections) {
-                    worker_failed.store(true, Ordering::Release);
-                }
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        let Some(permit) = ConnectionPermit::try_acquire(
-                            Arc::clone(&worker_active),
-                            Arc::clone(&worker_peak),
-                            max_active_connections,
-                        ) else {
-                            worker_rejected.fetch_add(1, Ordering::AcqRel);
-                            drop(stream);
-                            continue;
-                        };
-                        let connection_stop = Arc::clone(&worker_stop);
-                        match thread::Builder::new()
-                            .name("nimbus-ingress-connection".to_owned())
-                            .spawn(move || {
-                                let _permit = permit;
-                                proxy_connection(stream, upstream, &connection_stop);
-                            }) {
-                            Ok(connection) => connections.push(connection),
-                            Err(_) => {
-                                worker_failed.store(true, Ordering::Release);
-                                break;
-                            }
-                        }
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                        thread::sleep(ACCEPT_RETRY_DELAY);
-                    }
-                    Err(_) => {
-                        worker_failed.store(true, Ordering::Release);
-                        break;
-                    }
-                }
-            }
-            for connection in connections {
-                if connection.join().is_err() {
-                    worker_failed.store(true, Ordering::Release);
-                }
-            }
-        })?;
-        Ok(Self {
-            expected,
-            bound_addr,
-            stop,
-            failed,
-            #[cfg(test)]
-            active_connections,
-            #[cfg(test)]
-            peak_connections,
-            #[cfg(test)]
-            rejected_connections,
-            worker: Some(worker),
-            lease: Some(lease),
-        })
-    }
-
-    fn is_healthy(&self) -> bool {
-        !self.failed.load(Ordering::Acquire)
-            && self
-                .worker
-                .as_ref()
-                .is_some_and(|worker| !worker.is_finished())
-            && self.lease.is_some()
-    }
-
-    fn take_for_restart(&mut self) -> Option<RestartStoppingServerListener> {
-        let lease = self.lease.take()?;
-        let worker = self.worker.take()?;
-        let stop = Arc::clone(&self.stop);
-        Some(RestartStoppingServerListener::new(lease, move || {
-            stop.store(true, Ordering::Release);
-            worker.join().map_err(|_| {
-                io::Error::other("workload ingress listener worker panicked during restart stop")
-            })
-        }))
-    }
-
-    fn stop_and_settle(&mut self) {
-        self.stop.store(true, Ordering::Release);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-        if let Some(lease) = self.lease.take()
-            && let Err(error) = lease.settle_after_confirmed_local_close()
-        {
-            tracing::error!(%error, "failed to settle workload ingress listener");
-        }
-    }
-}
-
-struct ConnectionPermit {
-    active: Arc<AtomicUsize>,
-}
-
-impl ConnectionPermit {
-    fn try_acquire(active: Arc<AtomicUsize>, peak: Arc<AtomicUsize>, limit: usize) -> Option<Self> {
-        let observed = active
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < limit).then_some(count + 1)
-            })
-            .ok()?;
-        let current = observed + 1;
-        peak.fetch_max(current, Ordering::AcqRel);
-        Some(Self { active })
-    }
-}
-
-impl Drop for ConnectionPermit {
-    fn drop(&mut self) {
-        self.active.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
-/// Join completed route-owned workers before removing their handles.
-///
-/// Each outer worker owns and joins its one bidirectional-copy child, so this
-/// route-level vector is the transitive ownership root for every thread that
-/// can touch the listener lease.
-fn reap_finished_connections(connections: &mut Vec<JoinHandle<()>>) -> bool {
-    let mut panicked = false;
-    let mut index = 0;
-    while index < connections.len() {
-        if connections[index].is_finished() {
-            let connection = connections.swap_remove(index);
-            panicked |= connection.join().is_err();
-        } else {
-            index += 1;
-        }
-    }
-    panicked
-}
-
-impl Drop for RunningIngressRoute {
-    fn drop(&mut self) {
-        self.stop_and_settle();
-    }
-}
-
-fn proxy_connection(inbound: std::net::TcpStream, upstream: SocketAddr, stop: &Arc<AtomicBool>) {
-    let Ok(outbound) = std::net::TcpStream::connect_timeout(&upstream, UPSTREAM_CONNECT_TIMEOUT)
-    else {
-        return;
-    };
-    for stream in [&inbound, &outbound] {
-        let _ = stream.set_read_timeout(Some(CONNECTION_IO_TIMEOUT));
-        let _ = stream.set_write_timeout(Some(CONNECTION_IO_TIMEOUT));
-    }
-    let (Ok(inbound_read), Ok(outbound_write)) = (inbound.try_clone(), outbound.try_clone()) else {
-        return;
-    };
-    // This child is never detached: its route-owned outer worker blocks on
-    // `join` before returning, and listener settlement joins that outer worker.
-    let request_stop = Arc::clone(stop);
-    let forward = thread::spawn(move || {
-        copy_until_stopped(inbound_read, outbound_write, &request_stop);
-    });
-    copy_until_stopped(outbound, inbound, stop);
-    let _ = forward.join();
-}
-
-fn copy_until_stopped(
-    mut reader: std::net::TcpStream,
-    mut writer: std::net::TcpStream,
-    stop: &AtomicBool,
-) {
-    let mut buffer = [0_u8; 16 * 1024];
-    while !stop.load(Ordering::Acquire) {
-        match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(count) => {
-                if !write_all_until_stopped(&mut writer, &buffer[..count], stop) {
-                    break;
-                }
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) => {}
-            Err(_) => break,
-        }
-    }
-    let _ = writer.shutdown(Shutdown::Write);
-}
-
-fn write_all_until_stopped(
-    writer: &mut std::net::TcpStream,
-    bytes: &[u8],
-    stop: &AtomicBool,
-) -> bool {
-    let mut offset = 0;
-    while offset < bytes.len() && !stop.load(Ordering::Acquire) {
-        match writer.write(&bytes[offset..]) {
-            Ok(0) => return false,
-            Ok(count) => offset += count,
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) => {}
-            Err(_) => return false,
-        }
-    }
-    offset == bytes.len()
 }
 
 fn source_evidence(label: &str, targets: &SandboxProvisionIngressTargets) -> Vec<u8> {

@@ -12,6 +12,14 @@ use super::{
 };
 use crate::host_lifecycle::HostProviderPlan;
 
+#[path = "direct_process/teardown.rs"]
+mod teardown;
+use teardown::DirectProcessTeardownState;
+
+#[cfg(test)]
+#[path = "direct_process/teardown/tests.rs"]
+mod teardown_fail_before_tests;
+
 #[derive(Debug, Clone, Default)]
 pub struct DirectProcessBackend {
     state: Arc<Mutex<DirectProcessState>>,
@@ -82,6 +90,7 @@ impl DirectProcessBackend {
                 process_id,
                 logs,
                 evidence,
+                teardown: DirectProcessTeardownState::default(),
             },
         );
         Ok(status)
@@ -261,6 +270,7 @@ struct DirectProcessRecord {
     process_id: u64,
     logs: Vec<String>,
     evidence: DirectProcessEvidence,
+    teardown: DirectProcessTeardownState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

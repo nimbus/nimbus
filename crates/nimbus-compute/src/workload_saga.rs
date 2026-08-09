@@ -31,6 +31,7 @@ mod teardown_command;
 mod teardown_decision;
 mod teardown_dispatch;
 mod teardown_driver;
+mod teardown_node;
 mod teardown_registry;
 mod teardown_runtime;
 
@@ -101,6 +102,7 @@ pub use teardown_dispatch::WorkloadTeardownDispatchError;
 pub use teardown_driver::{
     WorkloadTeardownRun, WorkloadTeardownRunDisposition, WorkloadTeardownRunError,
 };
+pub use teardown_node::NodeExecutionTeardownAdapter;
 pub use teardown_registry::{
     FinalIngressWithdrawalCapability, IngressTeardownCapabilities,
     NetworkAttachmentTeardownCapabilities, NetworkDetachmentCapability, NetworkReleaseCapability,

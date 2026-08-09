@@ -1609,7 +1609,9 @@ impl LocalPortLeaseAuthority {
                 let record = exact_record(state, request)?;
                 if !matches!(
                     record.phase(),
-                    PortLeasePhase::Active | PortLeasePhase::CleanupPending
+                    PortLeasePhase::Active
+                        | PortLeasePhase::Withdrawing
+                        | PortLeasePhase::CleanupPending
                 ) || record.active_lifetime().is_none()
                 {
                     return Err(PortLeaseOperationError::LifetimeMismatch {
@@ -1656,7 +1658,9 @@ impl LocalPortLeaseAuthority {
                     let record = exact_record(state, request)?;
                     if !matches!(
                         record.phase(),
-                        PortLeasePhase::Active | PortLeasePhase::CleanupPending
+                        PortLeasePhase::Active
+                            | PortLeasePhase::Withdrawing
+                            | PortLeasePhase::CleanupPending
                     ) || record.active_lifetime().is_none()
                     {
                         return Err(PortLeaseOperationError::LifetimeMismatch {

@@ -1,7 +1,10 @@
 //! Provider-local activation identity retained beside one physical effect.
 
 use nimbus_core::Result;
-use nimbus_workloads::{WorkloadExecutionReference, WorkloadProvisionDispatchClaim};
+use nimbus_workloads::{
+    WorkloadExecutionReference, WorkloadProvisionDispatchClaim, WorkloadProvisionSourceEvidence,
+    WorkloadTeardownClaim, WorkloadTeardownProviderTarget,
+};
 use serde::Serialize;
 
 use super::restart::HostRestartActivationFence;
@@ -35,6 +38,30 @@ impl HostActivationFence {
         match self {
             Self::Provision(fence) => fence.journal_fields(),
             Self::Restart(fence) => fence.journal_fields(),
+        }
+    }
+
+    pub(crate) fn authenticate_teardown_execution(
+        &self,
+        execution: &WorkloadExecutionReference,
+        source: &WorkloadProvisionSourceEvidence,
+        provider_target: &WorkloadTeardownProviderTarget,
+        claim: &WorkloadTeardownClaim,
+    ) -> Result<()> {
+        let matches = match self {
+            Self::Provision(fence) => {
+                fence.matches_teardown_execution(execution, source, provider_target, claim)
+            }
+            Self::Restart(fence) => {
+                fence.matches_teardown_execution(execution, source, provider_target, claim)
+            }
+        };
+        if matches {
+            Ok(())
+        } else {
+            Err(nimbus_core::Error::PermissionDenied(
+                "host teardown execution is crossed with the retained activation fence".to_owned(),
+            ))
         }
     }
 

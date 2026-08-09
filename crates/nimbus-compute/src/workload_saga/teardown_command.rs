@@ -2,13 +2,13 @@
 
 use nimbus_network::{NetworkCapabilitySelectionEvidence, NetworkPlanDigest};
 use nimbus_workloads::{
-    NodeIdentity, WorkloadDesiredDigest, WorkloadFailureEvidence, WorkloadGeneration,
-    WorkloadOwnerEvidenceDigest, WorkloadProvisionSourceDigest, WorkloadProvisionSourceEvidence,
-    WorkloadSagaId, WorkloadSagaKey, WorkloadSagaRecord, WorkloadSagaRevision,
-    WorkloadSagaStoreError, WorkloadSagaTransitionId, WorkloadTeardownAttemptId,
-    WorkloadTeardownClaim, WorkloadTeardownCommandId, WorkloadTeardownCommandMode,
-    WorkloadTeardownDispatchEpoch, WorkloadTeardownDisposition, WorkloadTeardownEffectResult,
-    WorkloadTeardownInspectionResult, WorkloadTeardownProviderTarget,
+    CompiledWorkloadNetworkPlan, NodeIdentity, WorkloadDesiredDigest, WorkloadFailureEvidence,
+    WorkloadGeneration, WorkloadOwnerEvidenceDigest, WorkloadProvisionSourceDigest,
+    WorkloadProvisionSourceEvidence, WorkloadSagaId, WorkloadSagaKey, WorkloadSagaRecord,
+    WorkloadSagaRevision, WorkloadSagaStoreError, WorkloadSagaTransitionId,
+    WorkloadTeardownAttemptId, WorkloadTeardownClaim, WorkloadTeardownCommandId,
+    WorkloadTeardownCommandMode, WorkloadTeardownDispatchEpoch, WorkloadTeardownDisposition,
+    WorkloadTeardownEffectResult, WorkloadTeardownInspectionResult, WorkloadTeardownProviderTarget,
     WorkloadTeardownRetryEvidence, WorkloadTeardownStep, WorkloadTeardownSubjects,
     WorkloadTeardownSuccessEvidence,
 };
@@ -22,6 +22,7 @@ pub struct ConfirmedWorkloadTeardownCommand {
     confirmed_revision: WorkloadSagaRevision,
     confirmed_transition_id: WorkloadSagaTransitionId,
     source: WorkloadProvisionSourceEvidence,
+    compiled_network_plan: CompiledWorkloadNetworkPlan,
     mode: WorkloadTeardownCommandMode,
     claim: WorkloadTeardownClaim,
 }
@@ -73,6 +74,13 @@ impl ConfirmedWorkloadTeardownCommand {
             }
         };
         authenticate_durable_claim(record, claim, mode)?;
+        let compiled_network_plan = record.active_intent().network().compiled_plan().clone();
+        if compiled_network_plan.plan().digest() != claim.attempt().network_plan_digest() {
+            return Err(nimbus_workloads::WorkloadSagaError::InvalidEvidence(
+                "confirmed teardown command network content is crossed with its durable claim",
+            )
+            .into());
+        }
         let command_id = WorkloadTeardownCommandId::for_confirmed_dispatch(
             claim,
             record.revision(),
@@ -84,6 +92,7 @@ impl ConfirmedWorkloadTeardownCommand {
             confirmed_revision: record.revision(),
             confirmed_transition_id: record.last_transition().transition_id().clone(),
             source: record.active_intent().source().clone(),
+            compiled_network_plan,
             mode,
             claim: claim.clone(),
         }))
@@ -139,6 +148,11 @@ impl ConfirmedWorkloadTeardownCommand {
 
     pub fn network_plan_digest(&self) -> NetworkPlanDigest {
         self.claim.attempt().network_plan_digest()
+    }
+
+    /// Exact portable network content authenticated by the confirmed record.
+    pub fn compiled_network_plan(&self) -> &CompiledWorkloadNetworkPlan {
+        &self.compiled_network_plan
     }
 
     pub fn selection_evidence(&self) -> Option<&NetworkCapabilitySelectionEvidence> {
@@ -396,6 +410,8 @@ fn authenticate_confirmed_record(
         || record.revision() != command.confirmed_revision()
         || record.last_transition().transition_id() != command.confirmed_transition_id()
         || record.active_intent().source() != command.source()
+        || record.active_intent().network().compiled_plan() != command.compiled_network_plan()
+        || command.compiled_network_plan().plan().digest() != command.network_plan_digest()
     {
         return Err(nimbus_workloads::WorkloadSagaError::InvalidEvidence(
             "teardown command is crossed with its confirmed transition",

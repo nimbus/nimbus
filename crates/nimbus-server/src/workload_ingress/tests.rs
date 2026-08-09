@@ -4,33 +4,58 @@ use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use nimbus_compute::workload_saga::{
-    IngressProvisionCapabilities, WorkloadProvisionCapabilityRegistry,
+    IngressProvisionCapabilities, IngressTeardownCapabilities, WorkloadProvisionCapabilityRegistry,
+    WorkloadProvisionDecision, WorkloadProvisionSourceAuthority,
+    WorkloadProvisionSourceAuthorityError, WorkloadProvisionSourceFuture, WorkloadSagaCoordinator,
+    WorkloadTeardownCancellationToken, WorkloadTeardownCapabilityRegistry, WorkloadTeardownRuntime,
 };
+use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
-    ListenerId, LocalNetworkAuthority, LocalNetworkManager, LocalPortLeaseAuthority,
-    NetworkAttachmentCapabilitySet, NetworkAttachmentId, NetworkCapabilityRegistry,
+    EndpointProtocol, ListenerId, LocalNetworkAuthority, LocalNetworkManager,
+    LocalPortLeaseAuthority, NetworkAddressFamily, NetworkAttachmentCapabilitySet,
+    NetworkAttachmentId, NetworkAttachmentProviderRegistration, NetworkCapabilityRegistry,
     NetworkCapabilityRequirements, NetworkControlPlaneLocality, NetworkEndpointCapabilitySet,
-    NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet, NetworkLeaseEpoch,
-    NetworkLifecycleCapabilitySet, NetworkLifecycleRequirements, NetworkManagementMode,
-    NetworkPlan, NetworkPlanContentDigest, NetworkPlanDigest, NetworkPlanId, NetworkProviderHandle,
+    NetworkExposure, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
+    NetworkIngressProviderRegistration, NetworkLeaseEpoch, NetworkLifecycleCapabilitySet,
+    NetworkLifecycleRequirements, NetworkManagementMode, NetworkPlan, NetworkPlanContentDigest,
+    NetworkPlanDigest, NetworkPlanId, NetworkPortAssignmentMode, NetworkProviderHandle,
     NetworkProviderId, NetworkReservationClaim, NetworkResourceGeneration, NetworkResourceId,
-    NetworkSovereigntyRequirements, PortBindRealm, PortBindTarget, PortBindingProvenance,
-    PortBindingSpec, PortExposure, PortLeaseAccounting, PortLeaseFence, PortLeaseId,
-    PortLeaseLifetime, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
-    PublishedEndpointId,
+    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, NetworkTlsBehavior,
+    PortBindRealm, PortBindTarget, PortBindingProvenance, PortBindingSpec, PortExposure,
+    PortLeaseAccounting, PortLeaseFence, PortLeaseId, PortLeaseLifetime, PortLeaseRequest,
+    PortProtocol, PortPublicationIntent, PortRequestMode, PublishedEndpointId,
 };
+use nimbus_workloads::{
+    CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadExecutableEncoding,
+    WorkloadExecutableIntent, WorkloadExecutionReference, WorkloadNetworkEndpointSemantics,
+    WorkloadNetworkForwardingBehavior, WorkloadNetworkIntent, WorkloadNetworkListenerBlueprint,
+    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest,
+    WorkloadProvisionDisposition, WorkloadProvisionEffectResult, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep, WorkloadProvisionSubjects,
+    WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadRestartEpoch,
+    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaIntent, WorkloadSagaIntentUpdate,
+    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore, WorkloadTeardownDecision,
+};
+
+use crate::EngineWorkloadSagaStore;
 
 use super::*;
 
-static PROCESS_NETWORK_AUTHORITY_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static PROCESS_NETWORK_AUTHORITY_TEST_GUARD: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
 
-fn process_network_authority_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    PROCESS_NETWORK_AUTHORITY_TEST_GUARD
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+fn process_network_authority_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    PROCESS_NETWORK_AUTHORITY_TEST_GUARD.blocking_lock()
+}
+
+async fn process_network_authority_test_guard_async() -> tokio::sync::MutexGuard<'static, ()> {
+    PROCESS_NETWORK_AUTHORITY_TEST_GUARD.lock().await
 }
 
 struct AbsentContainerIngressSource;
@@ -109,13 +134,1328 @@ fn real_server_ingress_adapter_substitutes_for_publication_inspection_and_observ
     .expect("the real server adapter should earn all three narrow ingress capabilities");
 }
 
+#[test]
+fn real_server_ingress_adapter_substitutes_for_final_withdrawal_capability() {
+    let _process_authority_guard = process_network_authority_test_guard();
+    let root = tempfile::tempdir().expect("fixture root should exist");
+    let bootstrap = LocalNetworkManager::bootstrap(root.path())
+        .expect("fixture network authority should bootstrap");
+    let manager = Arc::new(bootstrap.freeze(
+        NetworkCapabilityRegistry::new([]).expect("empty report registry should validate"),
+    ));
+    let adapter = Arc::new(
+        ServerIngressPublicationAdapter::new(
+            Arc::new(AbsentContainerIngressSource),
+            manager.authority(),
+        )
+        .expect("server ingress journal should open"),
+    );
+
+    WorkloadTeardownCapabilityRegistry::new(
+        [],
+        [],
+        [IngressTeardownCapabilities::new(
+            nimbus_owned_local_ingress_provider_id(),
+            adapter,
+        )],
+    )
+    .expect("the real server adapter should earn final ingress withdrawal authority");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_teardown_runtime_advances_exact_final_ingress_withdrawal() {
+    let _process_authority_guard = process_network_authority_test_guard_async().await;
+    let root = tempfile::tempdir().expect("runtime fixture root should exist");
+    let bundle = runtime_network_bundle();
+    let reports = NetworkCapabilityRegistry::new([bundle.clone()])
+        .expect("runtime provider reports should validate");
+    let bootstrap = LocalNetworkManager::bootstrap(root.path().join("network"))
+        .expect("runtime network authority should bootstrap");
+    let manager = Arc::new(bootstrap.freeze(reports.clone()));
+    let network_authority = manager.authority();
+    let adapter = Arc::new(
+        ServerIngressPublicationAdapter::new(
+            Arc::new(AbsentContainerIngressSource),
+            network_authority.clone(),
+        )
+        .expect("runtime server ingress journal should open"),
+    );
+
+    let history = runtime_withdrawal_history(&bundle);
+    let observed = history
+        .iter()
+        .find(|record| record.phase() == WorkloadSagaPhase::Observed)
+        .expect("runtime history should retain observed publication");
+    install_runtime_live_batch(&adapter, &network_authority, observed);
+    let addresses = adapter
+        .running
+        .lock()
+        .expect("runtime live registry should remain healthy")
+        .values()
+        .flat_map(|batch| batch.routes.iter().map(|route| route.bound_addr))
+        .collect::<Vec<_>>();
+
+    let engine = Arc::new(
+        nimbus_engine::Engine::new(root.path().join("engine"))
+            .expect("runtime fixture Engine should open"),
+    );
+    let store = Arc::new(EngineWorkloadSagaStore::new(engine));
+    persist_runtime_history(store.as_ref(), &history).await;
+    let current = history
+        .last()
+        .expect("runtime history should end at withdrawal intent");
+    let source = Arc::new(RuntimeSourceAuthority {
+        key: current.key().clone(),
+        identity: current.active_intent().source().source_identity().clone(),
+        evidence: current.active_intent().source().clone(),
+    });
+    let coordinator = Arc::new(WorkloadSagaCoordinator::new(store.clone()));
+    let capabilities = Arc::new(
+        WorkloadTeardownCapabilityRegistry::new(
+            [],
+            [],
+            [IngressTeardownCapabilities::new(
+                nimbus_owned_local_ingress_provider_id(),
+                adapter.clone(),
+            )],
+        )
+        .expect("runtime should register the real final ingress capability"),
+    );
+    let runtime = WorkloadTeardownRuntime::new(coordinator, source, reports, capabilities);
+    runtime
+        .submit(
+            current.key().clone(),
+            &WorkloadTeardownCancellationToken::new(),
+        )
+        .await
+        .expect_err("the focused registry intentionally omits the later drain capability");
+
+    let advanced = store
+        .load(current.key())
+        .await
+        .expect("advanced runtime record should load")
+        .expect("advanced runtime record should remain durable");
+    assert_eq!(advanced.phase(), WorkloadSagaPhase::Withdrawn);
+    assert!(
+        adapter
+            .running
+            .lock()
+            .expect("runtime live registry should remain healthy")
+            .values()
+            .all(|batch| batch.final_phase == FinalIngressPhase::Released)
+    );
+    for address in addresses {
+        drop(
+            TcpListener::bind(address)
+                .expect("runtime success must close and release every exact listener"),
+        );
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CrossedRuntimeIngressAuthority {
+    GenerationAndPlan,
+    ExecutionAttempt,
+    EndpointSet,
+    ProviderEvidence,
+    WorkloadSource,
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crossed_runtime_ingress_fences_select_no_route_and_make_zero_effects() {
+    let _process_authority_guard = process_network_authority_test_guard_async().await;
+    let root = tempfile::tempdir().expect("crossed runtime fixture root should exist");
+    for case in [
+        CrossedRuntimeIngressAuthority::GenerationAndPlan,
+        CrossedRuntimeIngressAuthority::ExecutionAttempt,
+        CrossedRuntimeIngressAuthority::EndpointSet,
+        CrossedRuntimeIngressAuthority::ProviderEvidence,
+        CrossedRuntimeIngressAuthority::WorkloadSource,
+    ] {
+        assert_crossed_runtime_ingress_is_effect_free(root.path(), case).await;
+    }
+}
+
+async fn assert_crossed_runtime_ingress_is_effect_free(
+    root: &Path,
+    case: CrossedRuntimeIngressAuthority,
+) {
+    let case_root = root.join(format!("{case:?}"));
+    let network_root = case_root.join("network");
+    let bundle = runtime_network_bundle();
+    let reports = NetworkCapabilityRegistry::new([bundle.clone()])
+        .expect("crossed runtime provider reports should validate");
+    let bootstrap = LocalNetworkManager::bootstrap(&network_root)
+        .expect("crossed runtime network authority should bootstrap");
+    let manager = Arc::new(bootstrap.freeze(reports.clone()));
+    let network_authority = manager.authority();
+    let adapter = Arc::new(
+        ServerIngressPublicationAdapter::new(
+            Arc::new(AbsentContainerIngressSource),
+            network_authority.clone(),
+        )
+        .expect("crossed runtime server ingress journal should open"),
+    );
+    let history = runtime_withdrawal_history(&bundle);
+    let observed = history
+        .iter()
+        .find(|record| record.phase() == WorkloadSagaPhase::Observed)
+        .expect("crossed runtime history should retain observed publication");
+    install_runtime_live_batch(&adapter, &network_authority, observed);
+
+    let exact_reference = observed
+        .phase_detail()
+        .references()
+        .publication()
+        .expect("crossed runtime record should retain publication")
+        .clone();
+    let exact_provider_source = observed
+        .active_intent()
+        .network()
+        .compiled_plan()
+        .content()
+        .capability_selection_evidence()
+        .expect("crossed runtime plan should retain provider evidence")
+        .source_digest();
+    let exact_workload_source = observed.active_intent().source().source_digest();
+    let crossed_authority = match case {
+        CrossedRuntimeIngressAuthority::GenerationAndPlan => {
+            let crossed_intent = runtime_intent(
+                observed.key(),
+                2,
+                DesiredWorkloadState::Running,
+                WorkloadPublicationIntent::PublishWhenReady,
+                &bundle,
+            );
+            PublishedIngressAuthority::new(
+                publication_reference_for_intent(&crossed_intent),
+                exact_provider_source,
+                exact_workload_source,
+            )
+        }
+        CrossedRuntimeIngressAuthority::ExecutionAttempt => {
+            let execution = WorkloadExecutionReference::for_restart_epoch(
+                observed.active_intent(),
+                WorkloadRestartEpoch::new(1),
+            );
+            PublishedIngressAuthority::new(
+                nimbus_workloads::WorkloadPublicationReference::for_execution(
+                    exact_reference.endpoints().iter().cloned(),
+                    observed.active_intent(),
+                    execution,
+                )
+                .expect("crossed runtime attempt should form a valid publication"),
+                exact_provider_source,
+                exact_workload_source,
+            )
+        }
+        CrossedRuntimeIngressAuthority::EndpointSet => PublishedIngressAuthority::new(
+            nimbus_workloads::WorkloadPublicationReference::for_execution(
+                [PublishedEndpointId::for_workload_endpoint(
+                    "tenant-runtime-ingress/runtime-ingress",
+                    "crossed-endpoint",
+                )],
+                observed.active_intent(),
+                exact_reference.execution().clone(),
+            )
+            .expect("crossed runtime endpoint set should form a valid publication"),
+            exact_provider_source,
+            exact_workload_source,
+        ),
+        CrossedRuntimeIngressAuthority::ProviderEvidence => PublishedIngressAuthority::new(
+            exact_reference.clone(),
+            nimbus_network::NetworkCapabilitySourceDigest::from_bytes([0x5a; 32]),
+            exact_workload_source,
+        ),
+        CrossedRuntimeIngressAuthority::WorkloadSource => PublishedIngressAuthority::new(
+            exact_reference,
+            exact_provider_source,
+            nimbus_workloads::WorkloadProvisionSourceDigest::sha256("crossed-runtime-source"),
+        ),
+    };
+    let (addresses, before_routes) = {
+        let mut running = adapter
+            .running
+            .lock()
+            .expect("crossed runtime live registry should remain healthy");
+        let batch = running
+            .values_mut()
+            .next()
+            .expect("crossed runtime should retain one exact live batch");
+        batch.publication = crossed_authority;
+        (
+            batch
+                .routes
+                .iter()
+                .map(|route| route.bound_addr)
+                .collect::<Vec<_>>(),
+            batch.routes.len(),
+        )
+    };
+
+    let engine = Arc::new(
+        nimbus_engine::Engine::new(case_root.join("engine"))
+            .expect("crossed runtime fixture Engine should open"),
+    );
+    let store = Arc::new(EngineWorkloadSagaStore::new(engine));
+    persist_runtime_history(store.as_ref(), &history).await;
+    let current = history
+        .last()
+        .expect("crossed runtime history should end at withdrawal intent");
+    let source = Arc::new(RuntimeSourceAuthority {
+        key: current.key().clone(),
+        identity: current.active_intent().source().source_identity().clone(),
+        evidence: current.active_intent().source().clone(),
+    });
+    let coordinator = Arc::new(WorkloadSagaCoordinator::new(store.clone()));
+    let capabilities = Arc::new(
+        WorkloadTeardownCapabilityRegistry::new(
+            [],
+            [],
+            [IngressTeardownCapabilities::new(
+                nimbus_owned_local_ingress_provider_id(),
+                adapter.clone(),
+            )],
+        )
+        .expect("crossed runtime should register the real final ingress capability"),
+    );
+    let runtime = WorkloadTeardownRuntime::new(coordinator, source, reports, capabilities);
+    let leases_before = network_authority
+        .port_leases()
+        .list()
+        .expect("crossed runtime leases should remain readable");
+    let files_before = snapshot_regular_files(&network_root);
+
+    let _ = runtime
+        .submit(
+            current.key().clone(),
+            &WorkloadTeardownCancellationToken::new(),
+        )
+        .await;
+
+    let after = store
+        .load(current.key())
+        .await
+        .expect("crossed runtime record should load")
+        .expect("crossed runtime record should remain durable");
+    assert_ne!(after.phase(), WorkloadSagaPhase::Withdrawn, "case {case:?}");
+    let running = adapter
+        .running
+        .lock()
+        .expect("crossed runtime live registry should remain healthy");
+    let batch = running
+        .values()
+        .next()
+        .expect("crossed runtime must retain the live batch");
+    assert_eq!(
+        batch.final_phase,
+        FinalIngressPhase::Published,
+        "case {case:?}"
+    );
+    assert_eq!(batch.routes.len(), before_routes, "case {case:?}");
+    assert!(
+        batch.routes.iter().all(RunningIngressRoute::is_healthy),
+        "case {case:?}"
+    );
+    drop(running);
+    assert_eq!(
+        network_authority
+            .port_leases()
+            .list()
+            .expect("crossed runtime leases should remain readable"),
+        leases_before,
+        "crossed case {case:?} must not change durable lease state"
+    );
+    assert_eq!(
+        snapshot_regular_files(&network_root),
+        files_before,
+        "crossed case {case:?} must not change network authority bytes"
+    );
+    for address in addresses {
+        assert!(TcpStream::connect(address).is_ok(), "case {case:?}");
+        assert_eq!(
+            TcpListener::bind(address)
+                .expect_err("crossed final withdrawal must retain every bound listener")
+                .kind(),
+            std::io::ErrorKind::AddrInUse,
+            "case {case:?}"
+        );
+    }
+}
+
+fn publication_reference_for_intent(
+    intent: &WorkloadSagaIntent,
+) -> nimbus_workloads::WorkloadPublicationReference {
+    nimbus_workloads::WorkloadPublicationReference::new(
+        intent
+            .network()
+            .compiled_plan()
+            .content()
+            .listeners()
+            .iter()
+            .map(|listener| listener.endpoint_id().clone()),
+        intent,
+    )
+    .expect("runtime publication reference should validate")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inspection_reconciles_dead_listener_owners_but_not_live_owners() {
+    let _process_authority_guard = process_network_authority_test_guard_async().await;
+    let root = tempfile::tempdir().expect("inspection fixture root should exist");
+    for case in [
+        RuntimeInspectionOwnerCase::RetainedDeadBatch,
+        RuntimeInspectionOwnerCase::FreshDeadOwner,
+        RuntimeInspectionOwnerCase::LiveOtherOwner,
+    ] {
+        assert_runtime_inspection_owner_case(root.path(), case).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fresh_process_same_cardinality_crossed_endpoint_reference_preserves_exact_listener_leases()
+{
+    let _process_authority_guard = process_network_authority_test_guard_async().await;
+    let root = tempfile::tempdir().expect("crossed membership fixture root should exist");
+    let network_root = root.path().join("network");
+    let bundle = runtime_network_bundle();
+    let reports = NetworkCapabilityRegistry::new([bundle.clone()])
+        .expect("crossed membership provider reports should validate");
+    let bootstrap = LocalNetworkManager::bootstrap(&network_root)
+        .expect("crossed membership network authority should bootstrap");
+    let manager = Arc::new(bootstrap.freeze(reports.clone()));
+    let network_authority = manager.authority();
+    let owner_adapter = Arc::new(
+        ServerIngressPublicationAdapter::new(
+            Arc::new(AbsentContainerIngressSource),
+            network_authority.clone(),
+        )
+        .expect("crossed membership owner adapter should open"),
+    );
+    let owner_history = runtime_withdrawal_history_for_listeners(&bundle, &["http", "admin"]);
+    let owner_observed = owner_history
+        .iter()
+        .find(|record| record.phase() == WorkloadSagaPhase::Observed)
+        .expect("owner history should retain observed publication");
+    install_runtime_live_batch(&owner_adapter, &network_authority, owner_observed);
+    let owner_reference = owner_observed
+        .phase_detail()
+        .references()
+        .publication()
+        .expect("owner history should retain exact endpoints")
+        .clone();
+    let owner_requests = {
+        let mut running = owner_adapter
+            .running
+            .lock()
+            .expect("owner live registry should remain healthy");
+        let (_, mut batch) = running
+            .pop_first()
+            .expect("owner adapter should retain one live batch");
+        batch.routes[0].inject_final_join_failure_for_test();
+        batch
+            .stop_and_release_for_final_withdrawal()
+            .expect_err("post-join ambiguity should retain every owner lease fence");
+        let requests = batch
+            .routes
+            .iter()
+            .map(|route| route.expected.request.clone())
+            .collect::<Vec<_>>();
+        drop(batch);
+        requests
+    };
+
+    let crossed_history =
+        runtime_withdrawal_history_for_listeners(&bundle, &["crossed-http", "crossed-admin"]);
+    let crossed_observed = crossed_history
+        .iter()
+        .find(|record| record.phase() == WorkloadSagaPhase::Observed)
+        .expect("crossed history should retain observed publication");
+    let crossed_reference = crossed_observed
+        .phase_detail()
+        .references()
+        .publication()
+        .expect("crossed history should retain foreign endpoints")
+        .clone();
+    assert_eq!(
+        owner_reference.network().plan_id(),
+        crossed_reference.network().plan_id(),
+        "the fail-before requires the same stable plan identity"
+    );
+    assert_ne!(
+        owner_reference.network().digest(),
+        crossed_reference.network().digest(),
+        "the foreign compiled content must retain a distinct digest"
+    );
+    assert_eq!(
+        owner_reference.endpoints().len(),
+        crossed_reference.endpoints().len(),
+        "the crossed endpoint sets must have equal cardinality"
+    );
+    assert!(
+        owner_reference
+            .endpoints()
+            .iter()
+            .all(|endpoint| !crossed_reference.endpoints().contains(endpoint)),
+        "the crossed endpoint set must not alias a real owner endpoint"
+    );
+
+    let inspecting_adapter = Arc::new(
+        ServerIngressPublicationAdapter::new(
+            Arc::new(AbsentContainerIngressSource),
+            network_authority.clone(),
+        )
+        .expect("fresh crossed membership adapter should open"),
+    );
+    let engine = Arc::new(
+        nimbus_engine::Engine::new(root.path().join("engine"))
+            .expect("crossed membership Engine should open"),
+    );
+    let store = Arc::new(EngineWorkloadSagaStore::new(engine));
+    persist_runtime_history(store.as_ref(), &crossed_history).await;
+    let current = crossed_history
+        .last()
+        .expect("crossed membership history should end at withdrawal intent");
+    let source = Arc::new(RuntimeSourceAuthority {
+        key: current.key().clone(),
+        identity: current.active_intent().source().source_identity().clone(),
+        evidence: current.active_intent().source().clone(),
+    });
+    let coordinator = Arc::new(WorkloadSagaCoordinator::new(store.clone()));
+    let capabilities = Arc::new(
+        WorkloadTeardownCapabilityRegistry::new(
+            [],
+            [],
+            [IngressTeardownCapabilities::new(
+                nimbus_owned_local_ingress_provider_id(),
+                inspecting_adapter.clone(),
+            )],
+        )
+        .expect("crossed membership runtime should register real ingress"),
+    );
+    let runtime = WorkloadTeardownRuntime::new(coordinator, source, reports, capabilities);
+    let leases_before = network_authority
+        .port_leases()
+        .list()
+        .expect("crossed membership leases should remain readable");
+    let files_before = snapshot_regular_files(&network_root);
+
+    let _ = runtime
+        .submit(
+            current.key().clone(),
+            &WorkloadTeardownCancellationToken::new(),
+        )
+        .await;
+
+    let advanced = store
+        .load(current.key())
+        .await
+        .expect("crossed membership record should load")
+        .expect("crossed membership record should remain durable");
+    assert_ne!(
+        advanced.phase(),
+        WorkloadSagaPhase::Withdrawn,
+        "foreign endpoint membership must not withdraw real listener authority"
+    );
+    assert!(
+        matches!(
+            advanced.teardown_disposition(),
+            Some(nimbus_workloads::WorkloadTeardownDisposition::DefiniteFailure { .. })
+        ),
+        "crossed durable listener membership must produce a definite rejection"
+    );
+    assert_eq!(
+        network_authority
+            .port_leases()
+            .list()
+            .expect("crossed membership leases should remain readable"),
+        leases_before,
+        "foreign endpoint membership must preserve every listener lease"
+    );
+    assert_eq!(
+        snapshot_regular_files(&network_root),
+        files_before,
+        "foreign endpoint membership must preserve durable network bytes"
+    );
+    for request in owner_requests {
+        assert_eq!(
+            network_authority
+                .port_leases()
+                .inspect(request.lease_id())
+                .expect("owner listener should inspect")
+                .expect("owner listener history should remain durable")
+                .phase(),
+            PortLeasePhase::Withdrawing
+        );
+    }
+    assert!(
+        inspecting_adapter
+            .running
+            .lock()
+            .expect("fresh adapter registry should remain healthy")
+            .is_empty(),
+        "fresh reconciliation must not start a route or worker"
+    );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeInspectionOwnerCase {
+    RetainedDeadBatch,
+    FreshDeadOwner,
+    LiveOtherOwner,
+}
+
+async fn assert_runtime_inspection_owner_case(root: &Path, case: RuntimeInspectionOwnerCase) {
+    let case_root = root.join(format!("{case:?}"));
+    let network_root = case_root.join("network");
+    let bundle = runtime_network_bundle();
+    let reports = NetworkCapabilityRegistry::new([bundle.clone()])
+        .expect("inspection provider reports should validate");
+    let bootstrap = LocalNetworkManager::bootstrap(&network_root)
+        .expect("inspection network authority should bootstrap");
+    let manager = Arc::new(bootstrap.freeze(reports.clone()));
+    let network_authority = manager.authority();
+    let owner_adapter = Arc::new(
+        ServerIngressPublicationAdapter::new(
+            Arc::new(AbsentContainerIngressSource),
+            network_authority.clone(),
+        )
+        .expect("owner ingress adapter should open"),
+    );
+    let history = runtime_inspection_history(&bundle);
+    let observed = history
+        .iter()
+        .find(|record| record.phase() == WorkloadSagaPhase::Observed)
+        .expect("inspection history should retain observed publication");
+    install_runtime_live_batch(&owner_adapter, &network_authority, observed);
+    let (addresses, requests) = {
+        let mut running = owner_adapter
+            .running
+            .lock()
+            .expect("owner live registry should remain healthy");
+        let batch = running
+            .values_mut()
+            .next()
+            .expect("owner adapter should retain one live batch");
+        let leases = batch
+            .routes
+            .iter()
+            .map(|route| {
+                route
+                    .lease
+                    .as_ref()
+                    .expect("owner route should retain listener authority")
+            })
+            .collect::<Vec<_>>();
+        withdraw_server_listeners_for_final_withdrawal(&batch.plan_members, &leases)
+            .expect("inspection fixture should persist exact listener withdrawal");
+        (
+            batch
+                .routes
+                .iter()
+                .map(|route| route.bound_addr)
+                .collect::<Vec<_>>(),
+            batch
+                .routes
+                .iter()
+                .map(|route| route.expected.request.clone())
+                .collect::<Vec<_>>(),
+        )
+    };
+    match case {
+        RuntimeInspectionOwnerCase::LiveOtherOwner => {
+            owner_adapter
+                .running
+                .lock()
+                .expect("owner live registry should remain healthy")
+                .values_mut()
+                .next()
+                .expect("owner adapter should retain one live batch")
+                .final_phase = FinalIngressPhase::Withdrawing;
+        }
+        RuntimeInspectionOwnerCase::RetainedDeadBatch => {
+            let mut running = owner_adapter
+                .running
+                .lock()
+                .expect("owner live registry should remain healthy");
+            let batch = running
+                .values_mut()
+                .next()
+                .expect("owner adapter should retain one live batch");
+            batch.routes[0].inject_final_join_failure_for_test();
+            batch
+                .stop_and_release_for_final_withdrawal()
+                .expect_err("injected post-join ambiguity should retain withdrawal fences");
+        }
+        RuntimeInspectionOwnerCase::FreshDeadOwner => {
+            let (_, mut batch) = owner_adapter
+                .running
+                .lock()
+                .expect("owner live registry should remain healthy")
+                .pop_first()
+                .expect("owner adapter should retain one live batch");
+            batch.routes[0].inject_final_join_failure_for_test();
+            batch
+                .stop_and_release_for_final_withdrawal()
+                .expect_err("injected post-join ambiguity should retain withdrawal fences");
+            drop(batch);
+        }
+    }
+
+    let inspecting_adapter = if case == RuntimeInspectionOwnerCase::RetainedDeadBatch {
+        owner_adapter.clone()
+    } else {
+        Arc::new(
+            ServerIngressPublicationAdapter::new(
+                Arc::new(AbsentContainerIngressSource),
+                network_authority.clone(),
+            )
+            .expect("fresh inspecting ingress adapter should open"),
+        )
+    };
+    let engine = Arc::new(
+        nimbus_engine::Engine::new(case_root.join("engine"))
+            .expect("inspection fixture Engine should open"),
+    );
+    let store = Arc::new(EngineWorkloadSagaStore::new(engine));
+    persist_runtime_history(store.as_ref(), &history).await;
+    let current = history
+        .last()
+        .expect("inspection history should end in inspection-required state");
+    let source = Arc::new(RuntimeSourceAuthority {
+        key: current.key().clone(),
+        identity: current.active_intent().source().source_identity().clone(),
+        evidence: current.active_intent().source().clone(),
+    });
+    let coordinator = Arc::new(WorkloadSagaCoordinator::new(store.clone()));
+    let capabilities = Arc::new(
+        WorkloadTeardownCapabilityRegistry::new(
+            [],
+            [],
+            [IngressTeardownCapabilities::new(
+                nimbus_owned_local_ingress_provider_id(),
+                inspecting_adapter,
+            )],
+        )
+        .expect("inspection runtime should register the real ingress capability"),
+    );
+    let runtime = WorkloadTeardownRuntime::new(coordinator, source, reports, capabilities);
+    let leases_before = network_authority
+        .port_leases()
+        .list()
+        .expect("inspection leases should remain readable");
+    let files_before = snapshot_regular_files(&network_root);
+
+    let _ = runtime
+        .submit(
+            current.key().clone(),
+            &WorkloadTeardownCancellationToken::new(),
+        )
+        .await;
+
+    let advanced = store
+        .load(current.key())
+        .await
+        .expect("inspection runtime record should load")
+        .expect("inspection runtime record should remain durable");
+    if case == RuntimeInspectionOwnerCase::LiveOtherOwner {
+        assert_eq!(advanced.phase(), current.phase());
+        assert_eq!(
+            network_authority
+                .port_leases()
+                .list()
+                .expect("live-owner leases should remain readable"),
+            leases_before,
+            "inspection must not settle another live owner's listeners"
+        );
+        assert_eq!(snapshot_regular_files(&network_root), files_before);
+        let running = owner_adapter
+            .running
+            .lock()
+            .expect("live owner registry should remain healthy");
+        assert!(
+            running
+                .values()
+                .flat_map(|batch| &batch.routes)
+                .all(RunningIngressRoute::is_healthy)
+        );
+        drop(running);
+        for address in addresses {
+            assert!(TcpStream::connect(address).is_ok());
+            assert_eq!(
+                TcpListener::bind(address)
+                    .expect_err("live-owner inspection must retain listener ownership")
+                    .kind(),
+                std::io::ErrorKind::AddrInUse
+            );
+        }
+    } else {
+        assert_eq!(advanced.phase(), WorkloadSagaPhase::Withdrawn);
+        for (request, address) in requests.iter().zip(addresses) {
+            let record = network_authority
+                .port_leases()
+                .inspect(request.lease_id())
+                .expect("reconciled listener should inspect")
+                .expect("reconciled listener history should remain durable");
+            assert_eq!(record.phase(), PortLeasePhase::Released);
+            drop(
+                TcpListener::bind(address)
+                    .expect("dead-owner inspection should release without binding a listener"),
+            );
+        }
+    }
+}
+
+fn runtime_inspection_history(
+    bundle: &nimbus_network::NetworkCapabilityBundle,
+) -> Vec<WorkloadSagaRecord> {
+    let mut history = runtime_withdrawal_history(bundle);
+    let current = history
+        .last()
+        .expect("inspection history should retain withdrawal intent");
+    let WorkloadTeardownDecision::PersistCandidate(
+        nimbus_workloads::ProposedWorkloadTeardownTransition::Claim {
+            attempt,
+            provider_target,
+        },
+    ) = current
+        .decide_teardown()
+        .expect("withdrawal intent should reduce")
+    else {
+        panic!("withdrawal intent should propose the final ingress claim");
+    };
+    let pending = current
+        .claim_teardown(*attempt, provider_target)
+        .expect("final ingress claim should validate");
+    let claim = pending
+        .teardown_disposition()
+        .and_then(nimbus_workloads::WorkloadTeardownDisposition::claim)
+        .expect("pending final ingress should retain its exact claim")
+        .clone();
+    history.push(pending.clone());
+    history.push(
+        pending
+            .teardown_dispatch_to_inspection(&claim)
+            .expect("pending final ingress should enter inspection"),
+    );
+    history
+}
+
+struct RuntimeSourceAuthority {
+    key: nimbus_workloads::WorkloadSagaKey,
+    identity: nimbus_workloads::WorkloadProvisionSourceIdentity,
+    evidence: WorkloadProvisionSourceEvidence,
+}
+
+impl WorkloadProvisionSourceAuthority for RuntimeSourceAuthority {
+    fn current_source<'a>(
+        &'a self,
+        key: &'a nimbus_workloads::WorkloadSagaKey,
+        identity: &'a nimbus_workloads::WorkloadProvisionSourceIdentity,
+    ) -> WorkloadProvisionSourceFuture<'a> {
+        Box::pin(async move {
+            if key != &self.key || identity != &self.identity {
+                return Err(WorkloadProvisionSourceAuthorityError::Corrupt);
+            }
+            Ok(self.evidence.clone())
+        })
+    }
+}
+
+async fn persist_runtime_history(store: &EngineWorkloadSagaStore, history: &[WorkloadSagaRecord]) {
+    for (index, record) in history.iter().enumerate() {
+        let expected = index
+            .checked_sub(1)
+            .map_or(WorkloadSagaExpected::Missing, |prior| {
+                WorkloadSagaExpected::Revision(history[prior].revision())
+            });
+        assert_eq!(
+            store
+                .compare_and_swap(expected, record.clone())
+                .await
+                .expect("runtime history transition should persist"),
+            WorkloadSagaCommit::Applied
+        );
+    }
+}
+
+fn runtime_withdrawal_history(
+    bundle: &nimbus_network::NetworkCapabilityBundle,
+) -> Vec<WorkloadSagaRecord> {
+    runtime_withdrawal_history_for_listeners(bundle, &["http"])
+}
+
+fn runtime_withdrawal_history_for_listeners(
+    bundle: &nimbus_network::NetworkCapabilityBundle,
+    listener_names: &[&str],
+) -> Vec<WorkloadSagaRecord> {
+    let tenant_id = TenantId::new("tenant-runtime-ingress").expect("runtime tenant should parse");
+    let key = nimbus_workloads::WorkloadSagaKey::new(
+        tenant_id.clone(),
+        WorkloadId::new("runtime-ingress").expect("runtime workload should parse"),
+    );
+    let running = runtime_intent_for_listeners(
+        &key,
+        1,
+        DesiredWorkloadState::Running,
+        WorkloadPublicationIntent::PublishWhenReady,
+        bundle,
+        listener_names,
+    );
+    let mut history = vec![
+        WorkloadSagaRecord::new(key.clone(), running).expect("runtime saga should initialize"),
+    ];
+    while history
+        .last()
+        .expect("runtime provision history should remain non-empty")
+        .phase()
+        != WorkloadSagaPhase::Observed
+    {
+        extend_runtime_provision_step(&mut history);
+    }
+    let observed = history
+        .last()
+        .expect("runtime history should reach observed");
+    let stopped = runtime_intent(
+        &key,
+        2,
+        DesiredWorkloadState::Stopped,
+        WorkloadPublicationIntent::Withheld,
+        bundle,
+    );
+    let WorkloadSagaIntentUpdate::Transition(withdrawal) = observed
+        .apply_intent(stopped)
+        .expect("stopped successor should start teardown")
+    else {
+        panic!("stopped successor must change durable state");
+    };
+    history.push(*withdrawal);
+    history
+}
+
+fn runtime_intent(
+    key: &nimbus_workloads::WorkloadSagaKey,
+    generation: u64,
+    desired_state: DesiredWorkloadState,
+    publication: WorkloadPublicationIntent,
+    bundle: &nimbus_network::NetworkCapabilityBundle,
+) -> WorkloadSagaIntent {
+    runtime_intent_for_listeners(
+        key,
+        generation,
+        desired_state,
+        publication,
+        bundle,
+        &["http"],
+    )
+}
+
+fn runtime_intent_for_listeners(
+    key: &nimbus_workloads::WorkloadSagaKey,
+    generation: u64,
+    desired_state: DesiredWorkloadState,
+    publication: WorkloadPublicationIntent,
+    bundle: &nimbus_network::NetworkCapabilityBundle,
+    listener_names: &[&str],
+) -> WorkloadSagaIntent {
+    let executable = WorkloadExecutableIntent::new(
+        WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        format!(r#"{{"fixture":"runtime-ingress-{generation}"}}"#),
+    )
+    .expect("runtime executable should validate");
+    let source = WorkloadProvisionSourceEvidence::standalone_sandbox(
+        WorkloadProvisionSourceIdentity::standalone_sandbox("runtime-ingress", "fixture")
+            .expect("runtime source identity should validate"),
+        WorkloadProvisionSourceGeneration::new(generation),
+        WorkloadProvisionSourceResourceVersion::new(format!("runtime-v{generation}"))
+            .expect("runtime source version should validate"),
+        executable.content_digest(),
+        runtime_attachment_provider_id(),
+        nimbus_workloads::WorkloadExecutionProviderId::for_registration_key("runtime-execution"),
+    )
+    .expect("runtime source evidence should validate");
+    WorkloadSagaIntent::new_without_automatic_restart(
+        DesiredWorkloadKind::Sandbox,
+        desired_state,
+        nimbus_workloads::WorkloadGeneration::new(generation),
+        executable,
+        source,
+        WorkloadNetworkIntent::new(if listener_names == ["http"] {
+            runtime_compiled_plan(key.tenant_id(), generation, publication, bundle)
+        } else {
+            runtime_compiled_plan_for_listeners(
+                key.tenant_id(),
+                generation,
+                publication,
+                bundle,
+                listener_names,
+            )
+        }),
+        if desired_state == DesiredWorkloadState::Running {
+            WorkloadActivationIntent::ActivateWhenAttached
+        } else {
+            WorkloadActivationIntent::PrepareOnly
+        },
+        publication,
+        WorkloadAdmissionEvidence::new(
+            format!("tid_{}", "1".repeat(64))
+                .try_into()
+                .expect("runtime decision ID should validate"),
+            format!("twu_{}", "2".repeat(64))
+                .try_into()
+                .expect("runtime workload UID should validate"),
+            NodeIdentity::new("node-runtime-ingress").expect("runtime node should validate"),
+        ),
+    )
+    .expect("runtime workload intent should validate")
+}
+
+fn runtime_compiled_plan(
+    tenant_id: &TenantId,
+    generation: u64,
+    publication: WorkloadPublicationIntent,
+    bundle: &nimbus_network::NetworkCapabilityBundle,
+) -> CompiledWorkloadNetworkPlan {
+    runtime_compiled_plan_for_listeners(tenant_id, generation, publication, bundle, &["http"])
+}
+
+fn runtime_compiled_plan_for_listeners(
+    tenant_id: &TenantId,
+    generation: u64,
+    publication: WorkloadPublicationIntent,
+    bundle: &nimbus_network::NetworkCapabilityBundle,
+    listener_names: &[&str],
+) -> CompiledWorkloadNetworkPlan {
+    let identity = WorkloadNetworkPlanIdentity::new(
+        tenant_id.clone(),
+        "runtime-ingress",
+        NetworkResourceGeneration::new(generation),
+    )
+    .expect("runtime network identity should validate");
+    let attachment =
+        NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []);
+    let endpoint = NetworkEndpointCapabilitySet::new(
+        [NetworkAddressFamily::Ipv4],
+        [nimbus_network::NetworkBindRealmKind::Host],
+        [NetworkExposure::Loopback],
+        [PortProtocol::Tcp],
+        [NetworkPortAssignmentMode::ProviderAssigned],
+    );
+    let lifecycle = NetworkLifecycleCapabilitySet::new([]);
+    let requirements = NetworkCapabilityRequirements::new(
+        attachment,
+        endpoint,
+        NetworkIngressCapabilitySet::new([]),
+        NetworkForwardingCapabilitySet::new([]),
+        NetworkLifecycleRequirements::new(lifecycle.clone(), lifecycle),
+        NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+    );
+    let (selection, evidence, listeners) =
+        if publication == WorkloadPublicationIntent::PublishWhenReady {
+            let listeners = listener_names
+                .iter()
+                .map(|name| {
+                    WorkloadNetworkListenerBlueprint::new(
+                        &identity,
+                        *name,
+                        EndpointProtocol::Http,
+                        Ipv4Addr::LOCALHOST.into(),
+                        nimbus_workloads::WorkloadNetworkPortRequestMode::ProviderAssigned,
+                        WorkloadNetworkEndpointSemantics::new(
+                            WorkloadNetworkForwardingBehavior::None,
+                            NetworkTlsBehavior::Disabled,
+                        ),
+                        None,
+                    )
+                    .expect("runtime listener blueprint should validate")
+                })
+                .collect();
+            (
+                Some(bundle.selection()),
+                Some(bundle.selection_evidence()),
+                listeners,
+            )
+        } else {
+            (None, None, Vec::new())
+        };
+    let content = WorkloadNetworkPlanContent::new(
+        identity,
+        requirements,
+        selection,
+        evidence,
+        None,
+        [],
+        listeners,
+        [],
+        if publication == WorkloadPublicationIntent::PublishWhenReady {
+            WorkloadActivationIntent::ActivateWhenAttached
+        } else {
+            WorkloadActivationIntent::PrepareOnly
+        },
+        publication,
+    )
+    .expect("runtime network content should validate");
+    CompiledWorkloadNetworkPlan::from_content(content)
+        .expect("runtime compiled plan should validate")
+}
+
+fn runtime_network_bundle() -> nimbus_network::NetworkCapabilityBundle {
+    let lifecycle = NetworkLifecycleCapabilitySet::new([]);
+    nimbus_network::NetworkCapabilityBundle::new(
+        NetworkAttachmentProviderRegistration::new(
+            runtime_attachment_provider_id(),
+            NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []),
+            [NetworkAddressFamily::Ipv4],
+            lifecycle.clone(),
+            NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+        ),
+        NetworkIngressProviderRegistration::new(
+            nimbus_owned_local_ingress_provider_id(),
+            NetworkEndpointCapabilitySet::new(
+                [NetworkAddressFamily::Ipv4],
+                [nimbus_network::NetworkBindRealmKind::Host],
+                [NetworkExposure::Loopback],
+                [PortProtocol::Tcp],
+                [NetworkPortAssignmentMode::ProviderAssigned],
+            ),
+            NetworkIngressCapabilitySet::new([]),
+            NetworkForwardingCapabilitySet::new([]),
+            lifecycle,
+            NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+        ),
+    )
+}
+
+fn runtime_attachment_provider_id() -> NetworkProviderId {
+    NetworkProviderId::for_registration_key("runtime-attachment")
+}
+
+fn extend_runtime_provision_step(history: &mut Vec<WorkloadSagaRecord>) {
+    let current = history
+        .last()
+        .expect("runtime provision history should remain non-empty");
+    let WorkloadProvisionDecision::Proposed(proposed) =
+        WorkloadProvisionDecision::plan(current).expect("runtime phase should reduce")
+    else {
+        panic!("runtime provision phase should produce a candidate");
+    };
+    let mut candidate = proposed.into_candidate();
+    history.push(candidate.clone());
+    while let Some(WorkloadProvisionDisposition::DispatchPending(claim)) =
+        candidate.provision_disposition()
+    {
+        let attempt = claim.attempt();
+        let result = WorkloadProvisionEffectResult::Succeeded {
+            attempt_id: attempt.attempt_id().clone(),
+            evidence: runtime_provision_success(attempt),
+        };
+        let WorkloadProvisionDecision::Proposed(proposed) =
+            WorkloadProvisionDecision::reduce(&candidate, result)
+                .expect("runtime provision success should reduce")
+        else {
+            panic!("runtime provision success should produce a candidate");
+        };
+        candidate = proposed.into_candidate();
+        history.push(candidate.clone());
+    }
+}
+
+fn runtime_provision_success(
+    attempt: &nimbus_workloads::WorkloadProvisionAttempt,
+) -> WorkloadProvisionSuccessEvidence {
+    let evidence = WorkloadOwnerEvidenceDigest::sha256(format!("{:?}", attempt.step()));
+    match (attempt.step(), attempt.subjects()) {
+        (WorkloadProvisionStep::ReserveNetwork, WorkloadProvisionSubjects::Network(reference)) => {
+            WorkloadProvisionSuccessEvidence::NetworkReserved {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        (
+            WorkloadProvisionStep::PrepareWorkload,
+            WorkloadProvisionSubjects::Execution(reference),
+        ) => WorkloadProvisionSuccessEvidence::WorkloadPrepared {
+            reference: reference.clone(),
+            evidence,
+        },
+        (WorkloadProvisionStep::AttachNetwork, WorkloadProvisionSubjects::Network(reference)) => {
+            WorkloadProvisionSuccessEvidence::NetworkAttached {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        (
+            WorkloadProvisionStep::InspectActivationPrerequisites,
+            WorkloadProvisionSubjects::Readiness { network, execution },
+        ) => WorkloadProvisionSuccessEvidence::ActivationPrerequisitesReady {
+            network: network.clone(),
+            execution: execution.clone(),
+            evidence,
+        },
+        (
+            WorkloadProvisionStep::ActivateWorkload,
+            WorkloadProvisionSubjects::Execution(reference),
+        ) => WorkloadProvisionSuccessEvidence::WorkloadActivated {
+            reference: reference.clone(),
+            evidence,
+        },
+        (
+            WorkloadProvisionStep::InspectWorkloadReadiness,
+            WorkloadProvisionSubjects::Readiness { network, execution },
+        ) => WorkloadProvisionSuccessEvidence::WorkloadReady {
+            network: network.clone(),
+            execution: execution.clone(),
+            evidence,
+        },
+        (WorkloadProvisionStep::Publish, WorkloadProvisionSubjects::Publication(reference)) => {
+            WorkloadProvisionSuccessEvidence::Published {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        (
+            WorkloadProvisionStep::ObservePublication,
+            WorkloadProvisionSubjects::Publication(reference),
+        ) => WorkloadProvisionSuccessEvidence::PublicationObserved {
+            reference: reference.clone(),
+            evidence,
+        },
+        _ => panic!("runtime provision attempt should retain matching subjects"),
+    }
+}
+
+fn install_runtime_live_batch(
+    adapter: &ServerIngressPublicationAdapter,
+    network_authority: &LocalNetworkAuthority,
+    observed: &WorkloadSagaRecord,
+) {
+    let reference = observed
+        .phase_detail()
+        .references()
+        .publication()
+        .expect("observed runtime record should retain publication")
+        .clone();
+    let listeners = observed
+        .active_intent()
+        .network()
+        .compiled_plan()
+        .content()
+        .listeners();
+    assert!(
+        !listeners.is_empty(),
+        "runtime plan should retain listeners"
+    );
+    let requests = listeners
+        .iter()
+        .map(|listener| {
+            PortLeaseRequest::new(
+                listener.port_lease_id().clone(),
+                NetworkResourceId::from(listener.listener_id().clone()),
+                Some(observed.key().tenant_id().clone()),
+                PortLeaseFence::new(reference.network().generation(), NetworkLeaseEpoch::new(1)),
+                PortLeaseAccounting::TenantPublished,
+                PortPublicationIntent::host(listener.desired_host_address()),
+                PortBindingSpec::new(
+                    PortProtocol::Tcp,
+                    PortBindRealm::Host,
+                    PortBindTarget::ipv4_specific(Ipv4Addr::LOCALHOST),
+                    PortExposure::Loopback,
+                    PortRequestMode::ProviderAssigned,
+                ),
+            )
+            .with_plan_id(reference.network().plan_id().clone())
+        })
+        .collect::<Vec<_>>();
+    let claim = reservation_claim("runtime-final-ingress");
+    network_authority
+        .port_leases()
+        .reserve_batch_for_coordinator(requests.clone(), &claim)
+        .expect("runtime launch owner should reserve every exact listener");
+    let plan_members = adapter
+        .listeners
+        .authenticate_workload_ingress_plan(
+            reference.network().plan_id(),
+            observed.key().tenant_id(),
+            reference.network().generation(),
+            &requests,
+            &claim,
+        )
+        .expect("runtime server should authenticate the complete plan");
+    let routes = listeners
+        .iter()
+        .zip(requests)
+        .map(|(listener, request)| {
+            let prepared = adapter
+                .listeners
+                .prepare_workload_ingress(Some(&plan_members), request.clone(), &claim)
+                .expect("runtime server should claim the exact listener");
+            let socket = TcpListener::bind(
+                prepared
+                    .bind_addr()
+                    .expect("runtime listener address should resolve"),
+            )
+            .expect("runtime listener should bind");
+            RunningIngressRoute::start(
+                ExpectedRoute {
+                    listener_id: listener.listener_id().clone(),
+                    request,
+                    upstream: (Ipv4Addr::LOCALHOST, 9).into(),
+                },
+                prepared
+                    .adopt_std(socket)
+                    .expect("runtime listener should adopt its exact lease"),
+                DEFAULT_MAX_ACTIVE_CONNECTIONS,
+            )
+            .expect("runtime listener worker should start")
+        })
+        .collect::<Vec<_>>();
+    let selection = observed
+        .active_intent()
+        .network()
+        .compiled_plan()
+        .content()
+        .capability_selection_evidence()
+        .expect("runtime plan should retain selected provider evidence");
+    adapter
+        .running
+        .lock()
+        .expect("runtime live registry should remain healthy")
+        .insert(
+            PublicationKey {
+                saga_id: observed.saga_id().as_str().to_owned(),
+                attempt_id: "runtime-publication-attempt".to_owned(),
+                execution_id: reference.execution().execution_id().as_str().to_owned(),
+                generation: reference.network().generation().as_u64(),
+                network_plan_digest: reference.network().digest().to_string(),
+            },
+            RunningIngressBatch {
+                execution_id: reference.execution().execution_id().as_str().to_owned(),
+                tenant_id: observed.key().tenant_id().clone(),
+                plan_id: reference.network().plan_id().clone(),
+                generation: reference.network().generation(),
+                attachment_id: NetworkAttachmentId::for_workload_attachment(
+                    "tenant-runtime-ingress/runtime-ingress",
+                    "private",
+                ),
+                plan_members,
+                routes,
+                publication: PublishedIngressAuthority::new(
+                    reference,
+                    selection.source_digest(),
+                    observed.active_intent().source().source_digest(),
+                ),
+                final_phase: FinalIngressPhase::Published,
+            },
+        );
+}
+
 struct LiveObservationFixture {
     adapter: Arc<ServerIngressPublicationAdapter>,
     network_authority: LocalNetworkAuthority,
     query: LiveIngressObservationQuery,
     expected_lifetimes: BTreeMap<PublishedEndpointId, PortLeaseLifetime>,
     state_root: tempfile::TempDir,
-    _process_authority_guard: std::sync::MutexGuard<'static, ()>,
+    _process_authority_guard: tokio::sync::MutexGuard<'static, ()>,
 }
 
 fn live_workload_request(
@@ -265,6 +1605,8 @@ fn live_observation_fixture(listener_names: &[&str]) -> LiveObservationFixture {
                 ),
                 plan_members,
                 routes,
+                publication: PublishedIngressAuthority::direct_fixture(),
+                final_phase: FinalIngressPhase::Published,
             },
         );
 
@@ -371,6 +1713,7 @@ fn restart_publication_for(
         sandbox_id: nimbus_sandbox::SandboxId::new(key.execution_id.clone()),
         attempt_fence,
         network_plan,
+        publication: PublishedIngressAuthority::direct_fixture(),
     }
 }
 
@@ -462,6 +1805,173 @@ fn live_observation_returns_canonical_provider_assigned_witnesses_without_mutati
         before_files,
         "replay and concurrent observation must leave journal and lease bytes unchanged"
     );
+}
+
+#[test]
+fn final_withdrawal_closes_routes_joins_workers_and_releases_exact_leases() {
+    let fixture = live_observation_fixture(&["http", "admin"]);
+    let (_, mut batch) = fixture
+        .adapter
+        .running
+        .lock()
+        .expect("fixture registry lock should remain healthy")
+        .pop_first()
+        .expect("fixture should retain one live publication batch");
+    let addresses = batch
+        .routes
+        .iter()
+        .map(|route| route.bound_addr)
+        .collect::<Vec<_>>();
+    let requests = batch
+        .routes
+        .iter()
+        .map(|route| route.expected.request.clone())
+        .collect::<Vec<_>>();
+
+    batch
+        .stop_and_release_for_final_withdrawal()
+        .expect("exact final withdrawal should settle every route and lease");
+
+    for (request, address) in requests.iter().zip(addresses) {
+        let record = fixture
+            .network_authority
+            .port_leases()
+            .inspect(request.lease_id())
+            .expect("released listener should inspect")
+            .expect("released listener history should remain durable");
+        assert_eq!(record.phase(), PortLeasePhase::Released);
+        drop(
+            TcpListener::bind(address)
+                .expect("the old address must be reusable only after terminal release"),
+        );
+    }
+}
+
+#[test]
+fn final_withdrawal_settlement_failure_blocks_progress_and_preserves_fences() {
+    let fixture = live_observation_fixture(&["http", "admin"]);
+    let (_, mut batch) = fixture
+        .adapter
+        .running
+        .lock()
+        .expect("fixture registry lock should remain healthy")
+        .pop_first()
+        .expect("fixture should retain one live publication batch");
+    let requests = batch
+        .routes
+        .iter()
+        .map(|route| route.expected.request.clone())
+        .collect::<Vec<_>>();
+    batch.routes[0].inject_final_join_failure_for_test();
+
+    batch
+        .stop_and_release_for_final_withdrawal()
+        .expect_err("one ambiguous join must block final withdrawal success");
+
+    for request in requests {
+        let record = fixture
+            .network_authority
+            .port_leases()
+            .inspect(request.lease_id())
+            .expect("ambiguous listener should inspect")
+            .expect("ambiguous listener must remain durably fenced");
+        assert_eq!(record.phase(), PortLeasePhase::Withdrawing);
+        assert!(record.active_lifetime().is_some());
+    }
+}
+
+#[test]
+fn final_withdrawal_missing_owner_stops_siblings_and_preserves_every_fence() {
+    let fixture = live_observation_fixture(&["lost", "sibling"]);
+    let (_, mut batch) = fixture
+        .adapter
+        .running
+        .lock()
+        .expect("fixture registry lock should remain healthy")
+        .pop_first()
+        .expect("fixture should retain one live publication batch");
+    let requests = batch
+        .routes
+        .iter()
+        .map(|route| route.expected.request.clone())
+        .collect::<Vec<_>>();
+    let sibling_address = batch.routes[1].bound_addr;
+    batch.routes[0].abandon_final_worker_owner_for_test();
+
+    batch
+        .stop_and_release_for_final_withdrawal()
+        .expect_err("a lost terminal owner must make final withdrawal ambiguous");
+
+    assert!(
+        batch.routes[1].stop.load(Ordering::Acquire),
+        "the intact sibling must still receive its terminal stop signal"
+    );
+    drop(
+        TcpListener::bind(sibling_address)
+            .expect("the intact sibling listener must close even when another owner is lost"),
+    );
+    for request in requests {
+        let record = fixture
+            .network_authority
+            .port_leases()
+            .inspect(request.lease_id())
+            .expect("ambiguous listener should inspect")
+            .expect("ambiguous listener must retain durable recovery evidence");
+        assert_eq!(record.phase(), PortLeasePhase::Withdrawing);
+        assert!(record.active_lifetime().is_some());
+    }
+}
+
+#[test]
+fn final_withdrawal_recovers_dead_process_bound_listeners_without_rebind() {
+    let fixture = live_observation_fixture(&["http", "admin"]);
+    let (_, mut batch) = fixture
+        .adapter
+        .running
+        .lock()
+        .expect("fixture registry lock should remain healthy")
+        .pop_first()
+        .expect("fixture should retain one live publication batch");
+    let plan_members = batch.plan_members.clone();
+    let requests = batch
+        .routes
+        .iter()
+        .map(|route| route.expected.request.clone())
+        .collect::<Vec<_>>();
+    let addresses = batch
+        .routes
+        .iter()
+        .map(|route| route.bound_addr)
+        .collect::<Vec<_>>();
+    for route in &mut batch.routes {
+        drop(
+            route
+                .take_for_restart()
+                .expect("fixture route should retain one process-bound listener"),
+        );
+    }
+    drop(batch);
+
+    recover_dead_process_bound_server_listeners_for_final_withdrawal(
+        &fixture.network_authority,
+        &plan_members,
+        &requests,
+    )
+    .expect("dead process-bound listeners should release without rebind");
+
+    for (request, address) in requests.iter().zip(addresses) {
+        let record = fixture
+            .network_authority
+            .port_leases()
+            .inspect(request.lease_id())
+            .expect("recovered listener should inspect")
+            .expect("recovered listener history should remain durable");
+        assert_eq!(record.phase(), PortLeasePhase::Released);
+        drop(
+            TcpListener::bind(address)
+                .expect("owner-death recovery must not retain or rebind the old address"),
+        );
+    }
 }
 
 #[test]

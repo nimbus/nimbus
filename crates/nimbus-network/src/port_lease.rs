@@ -26,6 +26,7 @@ mod plan_batch;
 mod rebind;
 mod request;
 mod reservation_lifetime;
+mod terminal_settlement;
 
 pub use binding::{
     PortBindAttempt, PortBindAttemptError, PortBindClaim, PortBindFailure, PortBindFailureKind,

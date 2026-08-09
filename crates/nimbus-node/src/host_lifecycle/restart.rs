@@ -362,6 +362,34 @@ impl HostRestartActivationFence {
             && self.provider_selection == claim.provider_selection
     }
 
+    pub(super) fn matches_teardown_execution(
+        &self,
+        execution: &WorkloadExecutionReference,
+        source: &nimbus_workloads::WorkloadProvisionSourceEvidence,
+        provider_target: &nimbus_workloads::WorkloadTeardownProviderTarget,
+        claim: &nimbus_workloads::WorkloadTeardownClaim,
+    ) -> bool {
+        let nimbus_workloads::WorkloadTeardownProviderTarget::Execution {
+            provider_id,
+            provider_source_digest,
+        } = provider_target
+        else {
+            return false;
+        };
+        self.workload_uid == execution.workload_uid().as_str()
+            && self.node_identity == execution.node_identity().as_str()
+            && self.execution_id == *execution.execution_id()
+            && self.attempt_id == *execution.attempt_id()
+            && self.restart_epoch == execution.restart_epoch()
+            && self.provider_selection == *provider_id
+            && self.provider_selection == *source.execution_provider_id()
+            && self.generation == execution.generation().as_u64()
+            && self.desired_digest == execution.desired_digest().to_string()
+            && self.source_digest == *provider_source_digest
+            && self.source_digest == source.source_digest()
+            && self.network_plan_digest == claim.attempt().network_plan_digest().to_string()
+    }
+
     pub(super) fn journal_fields(&self) -> Vec<String> {
         vec![
             format!("NIMBUS_RESTART_SAGA_ID={}", self.saga_id),

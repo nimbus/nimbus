@@ -20,6 +20,18 @@ pub(crate) use activation_fence::HostActivationFence;
 #[path = "host_lifecycle/restart.rs"]
 mod restart;
 pub use restart::{HostRestartProviderClaim, HostRestartProviderClaimInput};
+#[path = "host_lifecycle/teardown.rs"]
+mod teardown;
+pub(crate) use teardown::HostTeardownOperationFence;
+pub use teardown::{
+    HostExecutionDrainProvider, HostExecutionStopProvider, HostTeardownExecuteClaim,
+    HostTeardownExecuteObservation, HostTeardownFuture, HostTeardownInspectClaim,
+    HostTeardownInspectObservation, HostTeardownProviderClaimInput,
+};
+
+#[cfg(test)]
+#[path = "host_lifecycle/teardown/tests.rs"]
+pub(crate) mod teardown_fail_before_tests;
 
 use super::{
     LocalEnforcementBinding, NodeStatusAuthorizer, TenantWorkloadCondition,

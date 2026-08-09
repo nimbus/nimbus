@@ -311,6 +311,7 @@ async fn confirmed_restart_command_is_private_and_complete() {
         command.compiled_network_plan(),
         record.active_intent().network().compiled_plan()
     );
+    assert!(command.publication_reference().is_none());
     assert_eq!(store.counts(), (0, 1));
 }
 
@@ -456,6 +457,20 @@ async fn fresh_process_observation_absence_republishes_once_before_observing_aga
     let (record, observe) = confirmed_parts(&recovered);
     assert_eq!(observe.step(), WorkloadRestartStep::ObservePublication);
     assert_eq!(observe.mode(), WorkloadRestartCommandMode::Inspect);
+    let publication = observe
+        .publication_reference()
+        .expect("published restart command retains exact target publication identity");
+    assert_eq!(publication.execution(), observe.execution());
+    assert_eq!(
+        publication.endpoints(),
+        observe
+            .compiled_network_plan()
+            .content()
+            .listeners()
+            .iter()
+            .map(|listener| listener.endpoint_id().clone())
+            .collect::<Vec<_>>()
+    );
     let observe_epoch = observe.dispatch_epoch();
     let attempt_id = observe.attempt_id().clone();
     let result = WorkloadRestartCommandResult::for_command(

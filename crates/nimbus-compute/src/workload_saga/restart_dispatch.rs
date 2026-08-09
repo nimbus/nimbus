@@ -10,11 +10,12 @@ use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, WorkloadDesiredDigest, WorkloadExecutableIntent,
     WorkloadExecutionAttemptId, WorkloadExecutionProviderId, WorkloadExecutionReference,
     WorkloadGeneration, WorkloadInspectionVersion, WorkloadProvisionSourceDigest,
-    WorkloadProvisionSourceEvidence, WorkloadRestartAbsenceEvidence, WorkloadRestartCommandClaim,
-    WorkloadRestartCommandId, WorkloadRestartDispatchEpoch, WorkloadRestartEffectResult,
-    WorkloadRestartEpoch, WorkloadRestartEvidenceDigest, WorkloadRestartRequestId,
-    WorkloadRestartStep, WorkloadSagaId, WorkloadSagaKey, WorkloadSagaRecord, WorkloadSagaRevision,
-    WorkloadSagaStoreError, WorkloadSagaTransitionId,
+    WorkloadProvisionSourceEvidence, WorkloadPublicationIntent, WorkloadPublicationReference,
+    WorkloadRestartAbsenceEvidence, WorkloadRestartCommandClaim, WorkloadRestartCommandId,
+    WorkloadRestartDispatchEpoch, WorkloadRestartEffectResult, WorkloadRestartEpoch,
+    WorkloadRestartEvidenceDigest, WorkloadRestartRequestId, WorkloadRestartStep, WorkloadSagaId,
+    WorkloadSagaKey, WorkloadSagaRecord, WorkloadSagaRevision, WorkloadSagaStoreError,
+    WorkloadSagaTransitionId,
 };
 
 use super::{
@@ -54,6 +55,7 @@ pub struct ConfirmedWorkloadRestartCommand {
     claim: WorkloadRestartCommandClaim,
     executable: WorkloadExecutableIntent,
     compiled_network_plan: CompiledWorkloadNetworkPlan,
+    publication_reference: Option<WorkloadPublicationReference>,
 }
 
 impl ConfirmedWorkloadRestartCommand {
@@ -110,6 +112,29 @@ impl ConfirmedWorkloadRestartCommand {
             record.active_intent(),
             admission.restart_epoch(),
         );
+        let publication_reference = match record.active_intent().publication() {
+            WorkloadPublicationIntent::PublishWhenReady => {
+                let endpoints = record
+                    .active_intent()
+                    .network()
+                    .compiled_plan()
+                    .content()
+                    .listeners()
+                    .iter()
+                    .map(|listener| listener.endpoint_id().clone())
+                    .collect::<Vec<_>>();
+                if endpoints.is_empty() {
+                    None
+                } else {
+                    Some(WorkloadPublicationReference::for_execution(
+                        endpoints,
+                        record.active_intent(),
+                        execution.clone(),
+                    )?)
+                }
+            }
+            WorkloadPublicationIntent::Withheld => None,
+        };
         Ok(Some(Self {
             command_id: claim.command_id().clone(),
             key: record.key().clone(),
@@ -133,6 +158,7 @@ impl ConfirmedWorkloadRestartCommand {
             claim: claim.clone(),
             executable: record.active_intent().executable().clone(),
             compiled_network_plan: record.active_intent().network().compiled_plan().clone(),
+            publication_reference,
         }))
     }
 
@@ -234,6 +260,11 @@ impl ConfirmedWorkloadRestartCommand {
 
     pub fn compiled_network_plan(&self) -> &CompiledWorkloadNetworkPlan {
         &self.compiled_network_plan
+    }
+
+    /// Exact target publication identity reconstructed from durable saga state.
+    pub fn publication_reference(&self) -> Option<&WorkloadPublicationReference> {
+        self.publication_reference.as_ref()
     }
 
     pub fn network_plan_digest(&self) -> NetworkPlanDigest {

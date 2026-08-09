@@ -1,6 +1,6 @@
 # NNC6.5b Compute-Confirmed Teardown Driver
 
-Status: `complete; item checkpoint commit pending`
+Status: `complete; item checkpoint 3976a8b6c475bd60dcee347ba39182f3944a701d`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 

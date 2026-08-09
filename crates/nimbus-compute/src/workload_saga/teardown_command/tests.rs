@@ -138,6 +138,53 @@ async fn confirmed_command_binds_complete_claim_and_record_fence() {
 }
 
 #[tokio::test]
+async fn confirmed_teardown_command_binds_exact_compiled_publication_membership() {
+    let loaded = initial("teardown-command-network-membership");
+    let store = DurableTeardownStore::with_record(loaded.clone());
+    let confirmed = WorkloadSagaCoordinator::new(store)
+        .confirm_teardown_transition(&loaded, candidate(&loaded))
+        .await
+        .expect("direct claim confirmation succeeds");
+    let record = confirmed.confirmed_record().expect("claim is durable");
+    let command = confirmed.command().expect("direct winner gets execute");
+    let retained = command.compiled_network_plan();
+
+    assert_eq!(
+        retained,
+        record.active_intent().network().compiled_plan(),
+        "the command must retain the exact compiled plan authenticated by the confirmed record"
+    );
+    assert_eq!(
+        retained.plan().digest(),
+        command.network_plan_digest(),
+        "retained content must authenticate the command's network-plan digest"
+    );
+    let WorkloadTeardownSubjects::Publication(reference) = command.subjects() else {
+        panic!("withdrawal fixture must retain a publication subject");
+    };
+    let membership = retained
+        .content()
+        .listeners()
+        .iter()
+        .map(|listener| {
+            (
+                listener.endpoint_id().clone(),
+                listener.listener_id().clone(),
+                listener.port_lease_id().clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let endpoints = membership
+        .iter()
+        .map(|(endpoint_id, _, _)| endpoint_id.clone())
+        .collect::<Vec<_>>();
+
+    assert_eq!(reference.endpoints(), endpoints);
+    assert!(membership.iter().all(|(_, listener_id, lease_id)| lease_id
+        == &nimbus_network::PortLeaseId::for_listener(listener_id)));
+}
+
+#[tokio::test]
 async fn crossed_teardown_command_result_preserves_durable_revision() {
     let loaded = initial("teardown-command-crossed-result");
     let store = DurableTeardownStore::with_record(loaded.clone());

@@ -30,6 +30,14 @@ mod restart_retain;
 pub(crate) use restart_retain::{
     RestartStoppingServerListener, stop_and_retain_server_listeners_for_restart,
 };
+#[path = "listener_lease/terminal_settlement.rs"]
+mod terminal_settlement;
+#[cfg(test)]
+pub(crate) use terminal_settlement::recover_dead_process_bound_server_listeners_for_final_withdrawal;
+pub(crate) use terminal_settlement::{
+    ActiveServerListenerLease, TerminalStoppingServerListener, settle_exact_listener_leases,
+    stop_server_listeners_for_final_withdrawal, withdraw_server_listeners_for_final_withdrawal,
+};
 
 const INITIAL_RESOURCE_GENERATION: NetworkResourceGeneration = NetworkResourceGeneration::new(1);
 const INITIAL_LEASE_EPOCH: NetworkLeaseEpoch = NetworkLeaseEpoch::new(1);
@@ -516,78 +524,6 @@ impl LeasedServerListener {
         self,
     ) -> (tokio::net::TcpListener, ActiveServerListenerLease, Arc<str>) {
         (self.listener, self.lease, self.owner_incarnation)
-    }
-}
-
-pub(crate) struct ActiveServerListenerLease {
-    network_authority: RetainedServerNetworkAuthority,
-    request: PortLeaseRequest,
-    provenance: PortBindingProvenance,
-    lifetime: PortLeaseLifetimeGuard,
-    binding: PortLeaseBinding,
-}
-
-/// Effect-free evidence retained by one live server-owned listener.
-///
-/// The opaque provider handle and network authority deliberately remain in
-/// the listener owner. This snapshot carries only the immutable request,
-/// active lifetime, concrete endpoint, and provenance needed to authenticate
-/// a post-Observed projection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ActiveServerListenerEvidence {
-    request: PortLeaseRequest,
-    lifetime: nimbus_network::PortLeaseLifetime,
-    bound_endpoint: PortBoundEndpoint,
-    provenance: PortBindingProvenance,
-}
-
-impl ActiveServerListenerEvidence {
-    pub(crate) fn request(&self) -> &PortLeaseRequest {
-        &self.request
-    }
-
-    pub(crate) const fn lifetime(&self) -> nimbus_network::PortLeaseLifetime {
-        self.lifetime
-    }
-
-    pub(crate) fn bound_endpoint(&self) -> &PortBoundEndpoint {
-        &self.bound_endpoint
-    }
-
-    pub(crate) const fn provenance(&self) -> PortBindingProvenance {
-        self.provenance
-    }
-}
-
-impl ActiveServerListenerLease {
-    /// Return a typed comparison snapshot without reading or mutating durable
-    /// authority and without exposing provider effect authority.
-    pub(crate) fn observation_evidence(&self) -> Option<ActiveServerListenerEvidence> {
-        if self.lifetime.request() != &self.request || self.binding.provenance() != self.provenance
-        {
-            return None;
-        }
-        Some(ActiveServerListenerEvidence {
-            request: self.request.clone(),
-            lifetime: self.lifetime.lifetime(),
-            bound_endpoint: self.binding.endpoint().clone(),
-            provenance: self.provenance,
-        })
-    }
-
-    pub(crate) fn settle_after_confirmed_local_close(self) -> io::Result<()> {
-        debug_assert_eq!(self.lifetime.request(), &self.request);
-        self.network_authority
-            .port_leases()
-            .withdraw(&self.request)
-            .map_err(network_error)?;
-        if self.provenance != PortBindingProvenance::ExternallyOwned {
-            self.network_authority
-                .port_leases()
-                .release_with_lifetime(&self.request, &self.lifetime)
-                .map_err(network_error)?;
-        }
-        Ok(())
     }
 }
 

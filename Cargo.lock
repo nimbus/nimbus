@@ -6997,6 +6997,7 @@ dependencies = [
 name = "nimbus-node"
 version = "0.1.45"
 dependencies = [
+ "fs2",
  "futures",
  "nimbus-core",
  "nimbus-network",

@@ -810,7 +810,7 @@
       "kind": "suspicious-port-allocation-definition",
       "symbol": "reserve_port",
       "ordinal": 1,
-      "line": 739
+      "line": 740
     },
     {
       "site_id": "pep-listener-bind",
@@ -1034,7 +1034,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt",
       "ordinal": 1,
-      "line": 199
+      "line": 207
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1042,7 +1042,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_std",
       "ordinal": 1,
-      "line": 226
+      "line": 234
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1050,7 +1050,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_after_failed_adoption",
       "ordinal": 1,
-      "line": 316
+      "line": 324
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1058,7 +1058,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_std_after_failed_adoption",
       "ordinal": 1,
-      "line": 334
+      "line": 342
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1066,7 +1066,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 1,
-      "line": 393
+      "line": 401
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1074,7 +1074,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 2,
-      "line": 405
+      "line": 413
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1082,7 +1082,7 @@
       "kind": "tcp-from-std",
       "symbol": "into_leased",
       "ordinal": 1,
-      "line": 460
+      "line": 468
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1090,7 +1090,7 @@
       "kind": "listener-return-handoff",
       "symbol": "into_parts",
       "ordinal": 1,
-      "line": 517
+      "line": 525
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1098,7 +1098,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_external_main",
       "ordinal": 1,
-      "line": 831
+      "line": 767
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1106,7 +1106,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "abandon_prepared_after_guard_failure",
       "ordinal": 1,
-      "line": 1554
+      "line": 1490
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1130,7 +1130,7 @@
       "kind": "listener-return-handoff",
       "symbol": "into_std_parts",
       "ordinal": 1,
-      "line": 484
+      "line": 492
     },
     {
       "site_id": "server-workload-ingress-listener",
@@ -1138,7 +1138,7 @@
       "kind": "tcp-bind",
       "symbol": "start",
       "ordinal": 1,
-      "line": 982
+      "line": 1018
     }
   ],
   "non_authority_occurrences": [
