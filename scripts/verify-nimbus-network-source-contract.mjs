@@ -15,6 +15,7 @@ import {
   walkRust,
 } from "./nimbus-network-control-plane/source-contract-scanner.mjs";
 import { verifyWorkloadRestartContract } from "./nimbus-network-control-plane/workload-restart-source-contract.mjs";
+import { verifyWorkloadTeardownContract } from "./nimbus-network-control-plane/workload-teardown-source-contract.mjs";
 
 const mode = process.argv[2];
 const validModes = new Set([
@@ -27,6 +28,7 @@ const validModes = new Set([
   "compute-network-manager-injection",
   "compute-node-workload-coordinator",
   "workload-restart-contract",
+  "workload-teardown-contract",
 ]);
 if (!validModes.has(mode)) {
   process.stderr.write(
@@ -34,7 +36,8 @@ if (!validModes.has(mode)) {
       "[forbidden-dependencies-effects|single-definition-owner|address-is-not-identity|" +
       "sandbox-effect-locality|sealed-effect-capabilities|" +
       "side-effect-free-sandbox-inspection|compute-network-manager-injection|" +
-      "compute-node-workload-coordinator|workload-restart-contract]\n",
+      "compute-node-workload-coordinator|workload-restart-contract|" +
+      "workload-teardown-contract]\n",
   );
   process.exit(2);
 }
@@ -1739,6 +1742,8 @@ if (mode === "forbidden-dependencies-effects") {
   verifyComputeNodeWorkloadCoordinator();
 } else if (mode === "workload-restart-contract") {
   errors.push(...verifyWorkloadRestartContract());
+} else if (mode === "workload-teardown-contract") {
+  errors.push(...verifyWorkloadTeardownContract());
 } else {
   verifySealedEffectCapabilities();
 }

@@ -31,6 +31,9 @@ const R2_COMPLETE_CHECKPOINT =
   "73f53796392eae1b7c6df06e15450f272e228710";
 const R3_CHECKPOINT =
   process.env.NIMBUS_NETWORK_NNC64A_R3_CHECKPOINT ?? R2_COMPLETE_CHECKPOINT;
+const ITEM_COMPLETE_CHECKPOINT =
+  process.env.NIMBUS_NETWORK_NNC64A_ITEM_COMPLETE_CHECKPOINT ??
+  "a37a87f86ee80252812fda66d33d23f05e73d0d4";
 
 const ALLOWED_EXACT_PATHS = new Set([
   "crates/nimbus-workloads/src/lib.rs",
@@ -556,7 +559,11 @@ function productionSources(root) {
         "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",
       ),
     ].join("\n"),
-    changedPaths: changedPathsSince(root, AUDIT_CHECKPOINT),
+    changedPaths: changedPathsBetween(
+      root,
+      AUDIT_CHECKPOINT,
+      ITEM_COMPLETE_CHECKPOINT,
+    ),
     r1ChangedPaths: changedPathsBetween(
       root,
       R1_START_CHECKPOINT,
@@ -567,22 +574,12 @@ function productionSources(root) {
       R2_START_CHECKPOINT,
       R2_COMPLETE_CHECKPOINT,
     ),
-    r3ChangedPaths: changedPathsSince(root, R3_CHECKPOINT),
+    r3ChangedPaths: changedPathsBetween(
+      root,
+      R3_CHECKPOINT,
+      ITEM_COMPLETE_CHECKPOINT,
+    ),
   };
-}
-
-function changedPathsSince(root, checkpoint) {
-  const tracked = execFileSync(
-    "git",
-    ["diff", "--name-only", checkpoint, "--"],
-    { cwd: root, encoding: "utf8" },
-  );
-  const untracked = execFileSync(
-    "git",
-    ["ls-files", "--others", "--exclude-standard"],
-    { cwd: root, encoding: "utf8" },
-  );
-  return [...new Set(`${tracked}\n${untracked}`.split("\n").filter(Boolean))];
 }
 
 function changedPathsBetween(root, startCheckpoint, endCheckpoint) {

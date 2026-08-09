@@ -47,6 +47,7 @@ NNC63A_WORKLOAD_EXECUTABLE_CONTRACT="scripts/nimbus-network-control-plane/worklo
 NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT="scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh"
 NNC64_WORKLOAD_PROVISION_DISPATCH_CONTRACT="scripts/nimbus-network-control-plane/workload-provision-dispatch-contract.sh"
 NNC64A_WORKLOAD_RESTART_CONTRACT="scripts/nimbus-network-control-plane/workload-restart-contract.sh"
+NNC65_WORKLOAD_TEARDOWN_CONTRACT="scripts/nimbus-network-control-plane/workload-teardown-contract.sh"
 
 # shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
 . "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
@@ -1083,7 +1084,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 34 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 35 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1863,25 +1864,63 @@ NODE
     sed -n '1,220p' "${temporary}/nnc64a-contract-self-test.out"
   fi
 
+  if [ ! -f "${NNC65_WORKLOAD_TEARDOWN_CONTRACT}" ]; then
+    printf 'SELFTEST FAIL NNCV035 workload teardown helper is missing\n'
+    self_fail=$((self_fail + 1))
+  elif ! bash "${NNC65_WORKLOAD_TEARDOWN_CONTRACT}" --self-test \
+    >"${temporary}/nnc65-contract-self-test.out" 2>&1; then
+    printf 'SELFTEST FAIL NNCV035 workload teardown mutation suite failed\n'
+    sed -n '1,220p' "${temporary}/nnc65-contract-self-test.out"
+    self_fail=$((self_fail + 1))
+  elif ! rg -q '^NNC6\.5 teardown contract self-test: 55 passed, 0 failed$' \
+    "${temporary}/nnc65-contract-self-test.out"; then
+    printf 'SELFTEST FAIL NNCV035 workload teardown mutation count is not exact\n'
+    self_fail=$((self_fail + 1))
+  else
+    sed -n '1,220p' "${temporary}/nnc65-contract-self-test.out"
+  fi
+
+  if NIMBUS_NETWORK_NNC65_AGGREGATE_SELF_TEST_BASELINE=0 \
+    NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE=1 \
+    NIMBUS_NETWORK_VERIFY_TEARDOWN_MUTATION=missing-phase \
+    NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    "${script}" >"${temporary}/nnc65-aggregate-mutation.out" 2>&1; then
+    printf 'SELFTEST FAIL NNCV035 aggregate teardown mutation unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV035 fenced-workload-teardown' \
+    "${temporary}/nnc65-aggregate-mutation.out" ||
+    grep -q '^PASS NNCV035 fenced-workload-teardown' \
+      "${temporary}/nnc65-aggregate-mutation.out" ||
+    [ "$(grep -c '^FAIL NNCV' "${temporary}/nnc65-aggregate-mutation.out")" -ne 1 ] ||
+    ! grep -q '^Summary: 35 passed, 1 failed$' \
+      "${temporary}/nnc65-aggregate-mutation.out"; then
+    printf 'SELFTEST FAIL NNCV035 aggregate mutation did not fail exclusively\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS NNCV035 aggregate mutation fails closed exclusively\n'
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 413 passed, 0 failed\n'
+  printf 'self-test: 469 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
   # Retained verifier mutations assert one exclusive historical diagnostic.
   # The aggregate mutation fixtures use green baselines for the historical
-  # NNCV032-NNCV034 use green aggregate fixtures so retained mutations can
+  # NNCV032-NNCV035 use green aggregate fixtures so retained mutations can
   # assert one historical diagnostic. Their concept-owned mutation suites
   # still run below.
   NIMBUS_NETWORK_NNC63B_AGGREGATE_SELF_TEST_BASELINE=1
   NIMBUS_NETWORK_NNC64_AGGREGATE_SELF_TEST_BASELINE=1
   NIMBUS_NETWORK_NNC64A_AGGREGATE_SELF_TEST_BASELINE=1
+  NIMBUS_NETWORK_NNC65_AGGREGATE_SELF_TEST_BASELINE=1
   export NIMBUS_NETWORK_NNC63B_AGGREGATE_SELF_TEST_BASELINE
   export NIMBUS_NETWORK_NNC64_AGGREGATE_SELF_TEST_BASELINE
   export NIMBUS_NETWORK_NNC64A_AGGREGATE_SELF_TEST_BASELINE
+  export NIMBUS_NETWORK_NNC65_AGGREGATE_SELF_TEST_BASELINE
   run_self_test
   exit 0
 fi
@@ -2070,6 +2109,28 @@ verify_nnc64a_workload_restart() {
   fi
 }
 
+verify_nnc65_workload_teardown() {
+  if [ "${NIMBUS_NETWORK_NNC65_AGGREGATE_SELF_TEST_BASELINE:-0}" = "1" ]; then
+    pass "NNCV035" "fenced-workload-teardown"
+    return
+  fi
+  if [ ! -f "${NNC65_WORKLOAD_TEARDOWN_CONTRACT}" ]; then
+    fail "NNCV035" "fenced-workload-teardown" \
+      "missing ${NNC65_WORKLOAD_TEARDOWN_CONTRACT}"
+    return
+  fi
+
+  teardown_error="$(
+    bash "${NNC65_WORKLOAD_TEARDOWN_CONTRACT}" --check 2>&1
+  )"
+  teardown_contract_exit=$?
+  if [ "${teardown_contract_exit}" -eq 0 ]; then
+    pass "NNCV035" "fenced-workload-teardown"
+  else
+    fail "NNCV035" "fenced-workload-teardown" "${teardown_error}"
+  fi
+}
+
 printf 'Nimbus network control-plane static verifier\n'
 printf 'Repo: %s\n\n' "${REPO_ROOT}"
 
@@ -2108,6 +2169,7 @@ verify_nnc63a_workload_executable_carrier
 verify_nnc63b_workload_provision_decision
 verify_nnc64_workload_provision_dispatch
 verify_nnc64a_workload_restart
+verify_nnc65_workload_teardown
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

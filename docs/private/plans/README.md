@@ -75,7 +75,14 @@ extension-registry seam before the second concern edits `extensions.rs`.
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
 - `nimbus-network-control-plane-plan.md` - `active; NNC6.4a complete; NNC6.5
-  in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
+  in progress`. NNC6.5 is now the plan-only teardown choreography substitution
+  audit. Its source-derived owner/caller/failure census prospectively splits
+  the implementation into NNC6.5a-NNC6.5g before product edits: portable
+  protocol, compute driver, ingress/node adapters, sandbox drain/stop and
+  detach/release adapters, native caller cutover, Compose/machine cutover, and final
+  compensation/tenant/deletion convergence. NNCV035 is the sole expected-red
+  implementation condition. Product source remains frozen until the audit
+  item closes. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
   pure admitted-intent to exact `NetworkPlan` compiler. C1-C18 are green after
@@ -116,9 +123,9 @@ extension-registry seam before the second concern edits `extensions.rs`.
   splits executable durability and pure provision decisions into
   NNC6.3a-NNC6.3b. Revised NNC6.4 atomically adds real provider commands,
   replaces every native/runtime/Compose/Machine provision caller, and deletes
-  every coarse path in the same item. NNC6.4a/NNC6.5/NNC6.6 retain restart,
-  teardown, and resolution caller cutover; NNC6.1e2 retains final fresh-process
-  convergence.
+  every coarse path in the same item. NNC6.4a retains restart; the prospective
+  NNC6.5a-NNC6.5g sequence retains teardown; NNC6.6 retains resolution caller
+  fencing; NNC6.1e2 retains final fresh-process convergence.
   The existing sole coordinator now owns one effect-free `submit_intent` seam:
   one load, at most one CAS, one ambiguity read only after an ambiguous CAS,
   and no decision before exact confirmed durability. Missing, replay,
@@ -279,9 +286,10 @@ extension-registry seam before the second concern edits `extensions.rs`.
   `17/17`. One full and one narrow Sol/xhigh/fast review are fully
   dispositioned. No third review ran or is warranted. Exact item commit
   `a37a87f86ee80252812fda66d33d23f05e73d0d4` closes NNC6.4a. NNC6.5
-  teardown caller cutover is active at its read-only audit boundary; source
-  work waits for its caller, authority, failure, expected-red, and owned-path
-  freeze.
+  teardown audit A1-A23 are green and candidate-frozen in
+  `proof/nimbus-network-control-plane/nnc6.5-teardown-choreography-substitution-audit.md`.
+  It owns only the plan/proof/NNCV035 expected-red files and awaits its sole
+  item review. Product source work starts with NNC6.5a only after NNC6.5 closes.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
