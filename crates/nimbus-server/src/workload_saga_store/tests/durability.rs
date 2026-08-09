@@ -12,9 +12,9 @@ use super::super::schema::{exact_table_schema, workload_saga_table, workload_sag
 use super::{document_for, engine, initial_record};
 
 #[test]
-fn exact_schema_has_twenty_five_fields_five_indexes_and_system_policy() {
+fn exact_schema_includes_optional_teardown_disposition_without_new_index() {
     let schema = exact_table_schema();
-    assert_eq!(schema.fields.len(), 25);
+    assert_eq!(schema.fields.len(), 26);
     assert_eq!(
         schema
             .fields
@@ -48,6 +48,7 @@ fn exact_schema_has_twenty_five_fields_five_indexes_and_system_policy() {
             ("phaseDetail", true),
             ("restartState", true),
             ("provisionDisposition", false),
+            ("teardownDisposition", false),
             ("compiledNetworkPlan", true),
             ("activationIntent", true),
             ("publicationIntent", true),
@@ -86,6 +87,12 @@ fn exact_schema_has_twenty_five_fields_five_indexes_and_system_policy() {
             ),
         ]
     );
+    assert!(schema.indexes.iter().all(|index| {
+        index
+            .fields
+            .iter()
+            .all(|field| field != "teardownDisposition")
+    }));
     let policy = schema.access_policy.expect("system policy is required");
     for rule in [policy.read, policy.create, policy.update, policy.delete] {
         assert!(rule.require_authenticated);

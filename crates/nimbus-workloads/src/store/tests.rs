@@ -21,15 +21,17 @@ use super::*;
 use crate::WorkloadExecutionProviderId;
 use crate::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    TenantWorkloadUid, WorkloadActivationIntent, WorkloadAdmissionEvidence,
-    WorkloadEffectReferences, WorkloadExecutableEncoding, WorkloadExecutableIntent,
-    WorkloadGeneration, WorkloadInspectionRequirement, WorkloadNetworkAttachmentBlueprint,
-    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
-    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
-    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
+    ProposedWorkloadTeardownTransition, TenantWorkloadUid, WorkloadActivationIntent,
+    WorkloadAdmissionEvidence, WorkloadEffectReferences, WorkloadExecutableEncoding,
+    WorkloadExecutableIntent, WorkloadGeneration, WorkloadInspectionRequirement,
+    WorkloadNetworkAttachmentBlueprint, WorkloadNetworkIntent, WorkloadNetworkPlanContent,
+    WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
+    WorkloadPhaseDetail, WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
     WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion,
-    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaIntent, WorkloadSagaPhase,
-    WorkloadSagaTransitionId, WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
+    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaIntent,
+    WorkloadSagaIntentUpdate, WorkloadSagaPhase, WorkloadSagaTransitionId,
+    WorkloadTeardownDecision, WorkloadTeardownDisposition, WorkloadTeardownEffectResult,
+    WorkloadTeardownStep, WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
 };
 
 fn require_object_safe_store(_: &dyn WorkloadSagaStore) {}
@@ -1123,24 +1125,14 @@ fn tenant_phase_record(tenant_id: &TenantId, phase: WorkloadSagaPhase) -> Worklo
         }
     }
     assert_eq!(phase, WorkloadSagaPhase::Recorded);
-    let WorkloadPhaseDetail::Teardown(detail) = record.phase_detail() else {
-        panic!("network-released fixture must carry teardown detail");
-    };
-    let terminal_digest =
-        WorkloadTerminalEvidenceDigest::for_observations(detail.terminal_observations()).unwrap();
-    record
-        .advance(
-            WorkloadSagaPhase::Recorded,
-            WorkloadPhaseDetail::recorded(record.active_intent(), terminal_digest),
-            None,
-        )
-        .unwrap()
+    record.record_terminal_teardown().unwrap()
 }
 
 fn provision_phase_record(key: WorkloadSagaKey, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
     let saga_intent = intent_with_publication(
         &key,
         DesiredWorkloadState::Running,
+        1,
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::PublishWhenReady,
     );
@@ -1250,73 +1242,93 @@ fn advance_provision(
 }
 
 fn begin_teardown(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
-    let references = record.phase_detail().references();
-    let detail = WorkloadPhaseDetail::teardown(
-        WorkloadSagaPhase::WithdrawalCommitted,
-        record.active_intent(),
-        record.phase(),
-        references,
-        Vec::new(),
-    )
-    .unwrap();
-    record
-        .advance(WorkloadSagaPhase::WithdrawalCommitted, detail, None)
-        .unwrap()
+    let successor = intent_with_publication(
+        record.key(),
+        DesiredWorkloadState::Stopped,
+        record.active_intent().generation().as_u64() + 1,
+        WorkloadActivationIntent::PrepareOnly,
+        WorkloadPublicationIntent::Withheld,
+    );
+    let WorkloadSagaIntentUpdate::Transition(withdrawal) = record.apply_intent(successor).unwrap()
+    else {
+        panic!("fixture successor must commit withdrawal");
+    };
+    *withdrawal
 }
 
 fn advance_teardown(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
-    let WorkloadPhaseDetail::Teardown(current) = record.phase_detail() else {
-        panic!("teardown fixture must carry teardown detail");
-    };
-    let references = current.retained_references().clone();
-    let rank = match phase {
-        WorkloadSagaPhase::Withdrawn => 1,
-        WorkloadSagaPhase::Drained => 2,
-        WorkloadSagaPhase::WorkloadStopped => 3,
-        WorkloadSagaPhase::NetworkDetached => 4,
-        WorkloadSagaPhase::NetworkReleased => 5,
-        _ => panic!("{phase:?} is not an advanced teardown phase"),
-    };
-    let mut observations = Vec::new();
-    if rank >= 1 {
-        observations.push(WorkloadTerminalObservation::PublicationAbsent {
-            reference: references.publication().unwrap().clone(),
-            evidence: WorkloadOwnerEvidenceDigest::sha256("publication-absent"),
-        });
+    let mut current = record.clone();
+    while current.phase().recovery_order() < phase.recovery_order() {
+        current = match current.decide_teardown().unwrap() {
+            WorkloadTeardownDecision::PersistCandidate(
+                ProposedWorkloadTeardownTransition::ResourceFree { step, .. },
+            ) => current.record_resource_free_teardown_step(step).unwrap(),
+            WorkloadTeardownDecision::PersistCandidate(
+                ProposedWorkloadTeardownTransition::Claim {
+                    attempt,
+                    provider_target,
+                },
+            ) => {
+                let pending = current.claim_teardown(*attempt, provider_target).unwrap();
+                let claim = pending
+                    .teardown_disposition()
+                    .and_then(WorkloadTeardownDisposition::claim)
+                    .unwrap()
+                    .clone();
+                let evidence = match (claim.attempt().step(), claim.attempt().subjects()) {
+                    (
+                        WorkloadTeardownStep::WithdrawPublication,
+                        WorkloadTeardownSubjects::Publication(reference),
+                    ) => WorkloadTeardownSuccessEvidence::PublicationAbsent {
+                        reference: reference.clone(),
+                        evidence: WorkloadOwnerEvidenceDigest::sha256("publication-absent"),
+                    },
+                    (
+                        WorkloadTeardownStep::DrainExecution,
+                        WorkloadTeardownSubjects::Execution(reference),
+                    ) => WorkloadTeardownSuccessEvidence::ExecutionDrained {
+                        reference: reference.clone(),
+                        evidence: WorkloadOwnerEvidenceDigest::sha256("execution-drained"),
+                    },
+                    (
+                        WorkloadTeardownStep::StopExecution,
+                        WorkloadTeardownSubjects::Execution(reference),
+                    ) => WorkloadTeardownSuccessEvidence::ExecutionStopped {
+                        reference: reference.clone(),
+                        evidence: WorkloadOwnerEvidenceDigest::sha256("execution-stopped"),
+                    },
+                    (
+                        WorkloadTeardownStep::DetachNetwork,
+                        WorkloadTeardownSubjects::Network(reference),
+                    ) => WorkloadTeardownSuccessEvidence::NetworkDetached {
+                        reference: reference.clone(),
+                        evidence: WorkloadOwnerEvidenceDigest::sha256("network-detached"),
+                    },
+                    (
+                        WorkloadTeardownStep::ReleaseNetwork,
+                        WorkloadTeardownSubjects::Network(reference),
+                    ) => WorkloadTeardownSuccessEvidence::NetworkReleased {
+                        reference: reference.clone(),
+                        evidence: WorkloadOwnerEvidenceDigest::sha256("network-released"),
+                    },
+                    _ => panic!("crossed fixture teardown claim"),
+                };
+                pending
+                    .apply_teardown_effect_result(
+                        &claim,
+                        WorkloadTeardownEffectResult::Succeeded {
+                            attempt_id: claim.attempt().attempt_id().clone(),
+                            dispatch_epoch: claim.dispatch_epoch(),
+                            provider_target: claim.provider_target().clone(),
+                            evidence: Box::new(evidence),
+                        },
+                    )
+                    .unwrap()
+            }
+            decision => panic!("unexpected fixture teardown decision {decision:?}"),
+        };
     }
-    if rank >= 2 {
-        observations.push(WorkloadTerminalObservation::ExecutionDrained {
-            reference: references.execution().unwrap().clone(),
-            evidence: WorkloadOwnerEvidenceDigest::sha256("execution-drained"),
-        });
-    }
-    if rank >= 3 {
-        observations.push(WorkloadTerminalObservation::ExecutionStopped {
-            reference: references.execution().unwrap().clone(),
-            evidence: WorkloadOwnerEvidenceDigest::sha256("execution-stopped"),
-        });
-    }
-    if rank >= 4 {
-        observations.push(WorkloadTerminalObservation::NetworkDetached {
-            reference: references.network().unwrap().clone(),
-            evidence: WorkloadOwnerEvidenceDigest::sha256("network-detached"),
-        });
-    }
-    if rank >= 5 {
-        observations.push(WorkloadTerminalObservation::NetworkReleased {
-            reference: references.network().unwrap().clone(),
-            evidence: WorkloadOwnerEvidenceDigest::sha256("network-released"),
-        });
-    }
-    let detail = WorkloadPhaseDetail::teardown(
-        phase,
-        record.active_intent(),
-        current.origin(),
-        references,
-        observations,
-    )
-    .unwrap();
-    record.advance(phase, detail, None).unwrap()
+    current
 }
 
 fn cleanup_inspections(
@@ -1404,6 +1416,7 @@ fn intent(
     intent_with_publication(
         key,
         desired_state,
+        1,
         activation,
         WorkloadPublicationIntent::Withheld,
     )
@@ -1412,13 +1425,14 @@ fn intent(
 fn intent_with_publication(
     key: &WorkloadSagaKey,
     desired_state: DesiredWorkloadState,
+    generation: u64,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
 ) -> WorkloadSagaIntent {
     let identity = WorkloadNetworkPlanIdentity::new(
         key.tenant_id().clone(),
         key.workload_id().as_str(),
-        NetworkResourceGeneration::new(1),
+        NetworkResourceGeneration::new(generation),
     )
     .unwrap();
     let requirements = NetworkCapabilityRequirements::new(
@@ -1509,7 +1523,7 @@ fn intent_with_publication(
     WorkloadSagaIntent::new_without_automatic_restart(
         DesiredWorkloadKind::Service,
         desired_state,
-        WorkloadGeneration::new(1),
+        WorkloadGeneration::new(generation),
         executable,
         source,
         WorkloadNetworkIntent::new(compiled_plan),

@@ -28,7 +28,12 @@ const REQUIRED_FIELDS: [&str; 22] = [
     "admission",
     "lastTransition",
 ];
-const OPTIONAL_FIELDS: [&str; 3] = ["successorIntent", "provisionDisposition", "failure"];
+const OPTIONAL_FIELDS: [&str; 4] = [
+    "successorIntent",
+    "provisionDisposition",
+    "teardownDisposition",
+    "failure",
+];
 
 pub(crate) fn encode_workload_saga_record(
     record: &WorkloadSagaRecord,
@@ -72,6 +77,12 @@ pub(crate) fn encode_workload_saga_record(
         portable,
         "provisionDisposition",
     )?;
+    copy_optional(
+        &mut fields,
+        "teardownDisposition",
+        portable,
+        "teardownDisposition",
+    )?;
     fields.insert(
         "compiledNetworkPlan".to_owned(),
         Value::Object(network.clone()),
@@ -91,7 +102,7 @@ pub(crate) fn decode_workload_saga_record(
     validate_physical_shape(&document.fields)?;
 
     let fields = &document.fields;
-    let portable = json!({
+    let mut portable = json!({
         "formatVersion": required(fields, "formatVersion")?,
         "sagaId": required(fields, "sagaId")?,
         "key": {
@@ -117,9 +128,16 @@ pub(crate) fn decode_workload_saga_record(
         "phaseDetail": required(fields, "phaseDetail")?,
         "restart": required(fields, "restartState")?,
         "provisionDisposition": fields.get("provisionDisposition").cloned(),
+        "teardownDisposition": fields.get("teardownDisposition").cloned(),
         "lastTransition": required(fields, "lastTransition")?,
         "failure": fields.get("failure").cloned(),
     });
+    if !fields.contains_key("teardownDisposition") {
+        portable
+            .as_object_mut()
+            .expect("portable workload saga document is an object")
+            .remove("teardownDisposition");
+    }
     let record: WorkloadSagaRecord =
         serde_json::from_value(portable).map_err(|_| WorkloadSagaStoreError::Corrupt)?;
 

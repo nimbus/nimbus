@@ -3,13 +3,12 @@ use std::collections::BTreeSet;
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WorkloadActivationIntent,
-    WorkloadAdmissionEvidence, WorkloadEffectReferences, WorkloadFailureEvidence,
-    WorkloadGeneration, WorkloadInspectionRequirement, WorkloadNetworkIntent,
-    WorkloadOwnerEvidenceDigest, WorkloadPhaseDetail, WorkloadPublicationIntent,
-    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaIntent, WorkloadSagaIntentUpdate,
-    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
-    WorkloadSagaTenantCursor, WorkloadSagaTenantPageRequest, WorkloadTerminalEvidenceDigest,
-    WorkloadTerminalObservation,
+    WorkloadAdmissionEvidence, WorkloadFailureEvidence, WorkloadGeneration,
+    WorkloadInspectionRequirement, WorkloadNetworkIntent, WorkloadOwnerEvidenceDigest,
+    WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected,
+    WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantCursor,
+    WorkloadSagaTenantPageRequest,
 };
 
 use super::super::EngineWorkloadSagaStore;
@@ -336,32 +335,9 @@ fn full_lifecycle_history(tenant_id: &TenantId, workload: &str) -> Vec<WorkloadS
     };
     history.push(*withdrawal);
 
-    for phase in [
-        WorkloadSagaPhase::Withdrawn,
-        WorkloadSagaPhase::Drained,
-        WorkloadSagaPhase::WorkloadStopped,
-        WorkloadSagaPhase::NetworkDetached,
-        WorkloadSagaPhase::NetworkReleased,
-    ] {
-        let next = advance_teardown(history.last().unwrap(), phase);
-        history.push(next);
+    while history.last().unwrap().phase() != WorkloadSagaPhase::Recorded {
+        super::recovery::extend_confirmed_teardown_step(&mut history);
     }
-    let WorkloadPhaseDetail::Teardown(detail) = history.last().unwrap().phase_detail() else {
-        panic!("released fixture has teardown detail");
-    };
-    let terminal_digest =
-        WorkloadTerminalEvidenceDigest::for_observations(detail.terminal_observations())
-            .expect("terminal observations should digest");
-    let recorded = history
-        .last()
-        .unwrap()
-        .advance(
-            WorkloadSagaPhase::Recorded,
-            WorkloadPhaseDetail::recorded(history.last().unwrap().active_intent(), terminal_digest),
-            None,
-        )
-        .expect("recorded transition should validate");
-    history.push(recorded);
     history
 }
 
@@ -445,70 +421,6 @@ fn provision_history(
         provision_fixture::extend_confirmed_step(&mut history);
     }
     history
-}
-
-fn advance_teardown(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
-    let WorkloadPhaseDetail::Teardown(current) = record.phase_detail() else {
-        panic!("teardown record must retain teardown detail");
-    };
-    let references = current.retained_references().clone();
-    let detail = WorkloadPhaseDetail::teardown(
-        phase,
-        record.active_intent(),
-        current.origin(),
-        references.clone(),
-        terminal_observations(phase, &references),
-    )
-    .expect("teardown detail should validate");
-    record
-        .advance(phase, detail, None)
-        .expect("teardown transition should validate")
-}
-
-fn terminal_observations(
-    phase: WorkloadSagaPhase,
-    references: &WorkloadEffectReferences,
-) -> Vec<WorkloadTerminalObservation> {
-    let rank = match phase {
-        WorkloadSagaPhase::Withdrawn => 1,
-        WorkloadSagaPhase::Drained => 2,
-        WorkloadSagaPhase::WorkloadStopped => 3,
-        WorkloadSagaPhase::NetworkDetached => 4,
-        WorkloadSagaPhase::NetworkReleased => 5,
-        _ => panic!("not a teardown phase"),
-    };
-    let mut observations = Vec::new();
-    if rank >= 1 {
-        observations.push(WorkloadTerminalObservation::PublicationAbsent {
-            reference: references.publication().unwrap().clone(),
-            evidence: evidence("publication-absent"),
-        });
-    }
-    if rank >= 2 {
-        observations.push(WorkloadTerminalObservation::ExecutionDrained {
-            reference: references.execution().unwrap().clone(),
-            evidence: evidence("execution-drained"),
-        });
-    }
-    if rank >= 3 {
-        observations.push(WorkloadTerminalObservation::ExecutionStopped {
-            reference: references.execution().unwrap().clone(),
-            evidence: evidence("execution-stopped"),
-        });
-    }
-    if rank >= 4 {
-        observations.push(WorkloadTerminalObservation::NetworkDetached {
-            reference: references.network().unwrap().clone(),
-            evidence: evidence("network-detached"),
-        });
-    }
-    if rank >= 5 {
-        observations.push(WorkloadTerminalObservation::NetworkReleased {
-            reference: references.network().unwrap().clone(),
-            evidence: evidence("network-released"),
-        });
-    }
-    observations
 }
 
 fn initial_record(tenant_id: &TenantId, workload: &str) -> WorkloadSagaRecord {

@@ -16,10 +16,10 @@ use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadNetworkEndpointSemantics,
     WorkloadNetworkForwardingBehavior, WorkloadNetworkIntent, WorkloadNetworkListenerBlueprint,
-    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadPhaseDetail,
-    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
-    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion,
-    WorkloadPublicationIntent, WorkloadSagaKey, WorkloadSagaRecord,
+    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent, WorkloadSagaKey,
+    WorkloadSagaRecord,
 };
 
 use super::codec::encode_workload_saga_record;
@@ -242,21 +242,49 @@ fn valid_successor(current: &WorkloadSagaRecord) -> WorkloadSagaRecord {
 }
 
 fn valid_competing_successor(current: &WorkloadSagaRecord) -> WorkloadSagaRecord {
-    let detail = WorkloadPhaseDetail::teardown(
-        nimbus_workloads::WorkloadSagaPhase::WithdrawalCommitted,
-        current.active_intent(),
-        current.phase(),
-        current.phase_detail().references(),
-        Vec::new(),
+    let generation = current
+        .active_intent()
+        .generation()
+        .checked_next()
+        .expect("fixture generation should advance");
+    let executable = current.active_intent().executable().clone();
+    let label = current.key().workload_id().as_str();
+    let source = provision_source(
+        &executable,
+        &format!("{label}-competing"),
+        generation.as_u64(),
+        current
+            .active_intent()
+            .source()
+            .attachment_provider_id()
+            .clone(),
+    );
+    let stopped = nimbus_workloads::WorkloadSagaIntent::new_with_restart_policy(
+        current.active_intent().kind(),
+        DesiredWorkloadState::Stopped,
+        generation,
+        executable,
+        source,
+        current.active_intent().restart_policy(),
+        WorkloadNetworkIntent::new(compiled_network_plan(
+            current.key().tenant_id(),
+            &format!("{label}-competing"),
+            generation.as_u64(),
+            WorkloadActivationIntent::PrepareOnly,
+            WorkloadPublicationIntent::Withheld,
+        )),
+        WorkloadActivationIntent::PrepareOnly,
+        WorkloadPublicationIntent::Withheld,
+        current.active_intent().admission().clone(),
     )
-    .expect("fixture teardown detail is valid");
-    current
-        .advance(
-            nimbus_workloads::WorkloadSagaPhase::WithdrawalCommitted,
-            detail,
-            None,
-        )
-        .expect("fixture competing successor is valid")
+    .expect("fixture stopped intent should validate");
+    let nimbus_workloads::WorkloadSagaIntentUpdate::Transition(competing) = current
+        .apply_intent(stopped)
+        .expect("fixture stopped intent should use the exact teardown reducer")
+    else {
+        panic!("fixture stopped intent should create a competing transition");
+    };
+    *competing
 }
 
 fn document_for(record: &WorkloadSagaRecord) -> Document {

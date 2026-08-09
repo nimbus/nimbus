@@ -5,6 +5,7 @@ fn candidate_record(label: &str) -> WorkloadSagaRecord {
     let base = intent_with_publication(
         &key,
         DesiredWorkloadState::Running,
+        1,
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::PublishWhenReady,
     );

@@ -547,7 +547,38 @@ pub(super) fn validate_restart_state_transition(
             if previous.phase == WorkloadRestartPhase::ObservationPending
                 && candidate.phase == WorkloadSagaPhase::Observed
     );
+    let restart_teardown_handoff = matches!(
+        (&current.restart.active, &candidate.restart.active),
+        (Some(previous), None)
+            if candidate.phase == WorkloadSagaPhase::WithdrawalCommitted
+                && matches!(
+                    (&previous.disposition, candidate.teardown_disposition()),
+                    (
+                        WorkloadRestartDisposition::SuccessorVetoed { claim, result },
+                        Some(disposition),
+                    ) if disposition
+                        .context()
+                        .restart_settlement()
+                        .is_some_and(|settlement| {
+                            settlement.claim() == claim
+                                && settlement.result() == result
+                                && settlement.source_execution()
+                                    == &WorkloadExecutionReference::for_restart_epoch(
+                                        &current.active_intent,
+                                        current.restart.completed_restart_epoch,
+                                    )
+                                && settlement.target_execution()
+                                    == &WorkloadExecutionReference::for_restart_epoch(
+                                        &current.active_intent,
+                                        previous.admission.restart_epoch(),
+                                    )
+                                && settlement.owner_observations()
+                                    == previous.owner_observations
+                        })
+                )
+    );
     if !unissued_successor_veto
+        && !restart_teardown_handoff
         && (current.active_intent != candidate.active_intent
             || current.phase != candidate.phase
             || (!restart_completion && current.phase_detail != candidate.phase_detail)
@@ -639,9 +670,17 @@ pub(super) fn validate_restart_state_transition(
                     .completion_history
                     .last()
                     .is_some_and(|history| history.admission == previous.admission);
-            if !vetoed_for_successor && !completed {
+            let settled_for_teardown = restart_teardown_handoff
+                && candidate.restart.current_execution_attempt_id
+                    == current.restart.current_execution_attempt_id
+                && candidate.restart.completed_restart_epoch
+                    == current.restart.completed_restart_epoch
+                && candidate.restart.completed_automatic_restart_count
+                    == current.restart.completed_automatic_restart_count
+                && candidate.restart.completion_history == current.restart.completion_history;
+            if !vetoed_for_successor && !completed && !settled_for_teardown {
                 return Err(WorkloadSagaError::InvalidTransition(
-                    "active restart can end only after observation or an unissued successor veto",
+                    "active restart can end only after observation, an unissued successor veto, or exact teardown settlement",
                 ));
             }
         }
@@ -1191,7 +1230,8 @@ impl WorkloadSagaRecord {
             &active.disposition,
             WorkloadRestartDisposition::InspectionRequired { claim: retained }
                 if retained == claim
-        ) || claim.step() == WorkloadRestartStep::ObservePublication
+        ) || active.successor_veto_generation.is_some()
+            || claim.step() == WorkloadRestartStep::ObservePublication
             || !absence.matches_inspection(self, claim)
         {
             return Err(WorkloadSagaError::InvalidEvidence(

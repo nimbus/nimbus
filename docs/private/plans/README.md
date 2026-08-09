@@ -75,7 +75,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
 - `nimbus-network-control-plane-plan.md` - `active; NNC6.5 complete; NNC6.5a
-  in progress`. NNC6.5 froze the source-derived teardown owner, caller, failure,
+  acceptance green; commit pending`. NNC6.5 froze the source-derived teardown owner, caller, failure,
   path, and verification contract. NNC6.5a now owns the strict portable
   protocol, reducer, exact provision/restart handoff validators, server
   codec/schema, and named compile-green test fixtures. It owns no provider

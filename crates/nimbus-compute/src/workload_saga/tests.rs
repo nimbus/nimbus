@@ -10,13 +10,12 @@ use nimbus_network::{
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadNetworkIntent,
-    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadPhaseDetail,
-    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
-    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion,
-    WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
-    WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecord,
-    WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
-    WorkloadSagaTenantPageRequest,
+    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadProvisionSourceEvidence,
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent, WorkloadSagaCommit,
+    WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey, WorkloadSagaPage,
+    WorkloadSagaPageRequest, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
+    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
 };
 
 use super::WorkloadSagaCoordinator;
@@ -231,22 +230,7 @@ fn ambiguous_store(
 }
 
 fn valid_competing_successor(current: &WorkloadSagaRecord) -> WorkloadSagaRecord {
-    let references = current.phase_detail().references();
-    let detail = WorkloadPhaseDetail::teardown(
-        nimbus_workloads::WorkloadSagaPhase::WithdrawalCommitted,
-        current.active_intent(),
-        current.phase(),
-        references,
-        Vec::new(),
-    )
-    .expect("fixture teardown detail is valid");
-    current
-        .advance(
-            nimbus_workloads::WorkloadSagaPhase::WithdrawalCommitted,
-            detail,
-            None,
-        )
-        .expect("fixture competing successor is valid")
+    crate::workload_saga::test_support::record_with_successor(current, "ambiguous-competing")
 }
 
 #[test]

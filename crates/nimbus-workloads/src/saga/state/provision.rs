@@ -42,9 +42,14 @@ fn validate_claim_revision(
         WorkloadProvisionDisposition::DispatchPending(_) => {
             claim.claimed_revision() == record.revision
         }
-        WorkloadProvisionDisposition::InspectionRequired(_) => after_claim == Some(record.revision),
+        WorkloadProvisionDisposition::InspectionRequired(_) => {
+            after_claim == Some(record.revision)
+                || record.successor_intent.is_some() && claim.claimed_revision() < record.revision
+        }
         WorkloadProvisionDisposition::DefiniteFailure { .. } => {
-            after_claim == Some(record.revision) || after_inspection == Some(record.revision)
+            after_claim == Some(record.revision)
+                || after_inspection == Some(record.revision)
+                || record.successor_intent.is_some() && claim.claimed_revision() < record.revision
         }
     };
     if valid {
@@ -61,6 +66,14 @@ fn validate_attempt_for_record(
     attempt: &WorkloadProvisionAttempt,
 ) -> Result<(), WorkloadSagaError> {
     let intent = &record.active_intent;
+    let phase_matches = attempt.source_phase() == record.phase
+        || matches!(
+            record.provision_disposition.as_ref(),
+            Some(WorkloadProvisionDisposition::InspectionRequired(claim))
+                if record.successor_intent.is_some()
+                    && claim.attempt() == attempt
+                    && attempt.target_phase() == record.phase
+        );
     if attempt.key() != &record.key
         || attempt.saga_id() != &record.saga_id
         || attempt.generation() != intent.generation
@@ -75,7 +88,7 @@ fn validate_attempt_for_record(
                 .compiled_plan()
                 .content()
                 .capability_selection_evidence()
-        || attempt.source_phase() != record.phase
+        || !phase_matches
         || attempt.issuing_revision() >= record.revision
     {
         return Err(WorkloadSagaError::InvalidEvidence(
@@ -209,6 +222,45 @@ pub(super) fn validate_provision_disposition_transition(
         {
             Ok(())
         }
+        (Some(WorkloadProvisionDisposition::InspectionRequired(previous)), None)
+            if candidate.phase == WorkloadSagaPhase::WithdrawalCommitted
+                && previous.attempt().target_phase() == current.phase
+                && candidate.teardown_disposition().is_some_and(|disposition| {
+                    disposition.context().provision_absence().is_none()
+                        && matches!(disposition.cause(), WorkloadTeardownCause::Successor { .. })
+                }) =>
+        {
+            Ok(())
+        }
+        (Some(WorkloadProvisionDisposition::InspectionRequired(previous)), None)
+            if candidate.phase == WorkloadSagaPhase::WithdrawalCommitted
+                && candidate.teardown_disposition().is_some_and(|disposition| {
+                    disposition
+                        .context()
+                        .provision_absence()
+                        .is_some_and(|absence| {
+                            absence.claim() == previous
+                                && absence.evidence().matches_inspection(current, previous)
+                        })
+                }) =>
+        {
+            Ok(())
+        }
+        (
+            Some(WorkloadProvisionDisposition::DefiniteFailure {
+                claim: previous_claim,
+                failure: previous_failure,
+            }),
+            None,
+        ) if candidate.phase == WorkloadSagaPhase::WithdrawalCommitted
+            && matches!(
+                candidate.teardown_disposition().map(WorkloadTeardownDisposition::cause),
+                Some(WorkloadTeardownCause::FailedProvision { claim, failure })
+                    if claim.as_ref() == previous_claim && failure == previous_failure
+            ) =>
+        {
+            Ok(())
+        }
         (Some(WorkloadProvisionDisposition::Ready), Some(WorkloadProvisionDisposition::Ready))
             if current.phase == WorkloadSagaPhase::Observed
                 && candidate.phase == current.phase
@@ -264,12 +316,50 @@ pub(super) fn validate_provision_disposition_transition(
             Some(WorkloadProvisionDisposition::InspectionRequired(next)),
         ) if candidate.phase == current.phase && previous == next => Ok(()),
         (
+            Some(WorkloadProvisionDisposition::InspectionRequired(previous)),
+            Some(WorkloadProvisionDisposition::InspectionRequired(next)),
+        ) if candidate.phase == current.phase
+            && previous == next
+            && current.successor_intent != candidate.successor_intent =>
+        {
+            Ok(())
+        }
+        (
+            Some(WorkloadProvisionDisposition::DefiniteFailure {
+                claim: previous_claim,
+                failure: previous_failure,
+            }),
+            Some(WorkloadProvisionDisposition::DefiniteFailure {
+                claim: next_claim,
+                failure: next_failure,
+            }),
+        ) if candidate.phase == current.phase
+            && previous_claim == next_claim
+            && previous_failure == next_failure
+            && current.successor_intent != candidate.successor_intent =>
+        {
+            Ok(())
+        }
+        (
             Some(
                 WorkloadProvisionDisposition::DispatchPending(previous)
                 | WorkloadProvisionDisposition::InspectionRequired(previous),
             ),
             Some(WorkloadProvisionDisposition::DefiniteFailure { claim, .. }),
         ) if candidate.phase == current.phase && previous == claim => Ok(()),
+        (
+            Some(
+                WorkloadProvisionDisposition::DispatchPending(previous)
+                | WorkloadProvisionDisposition::InspectionRequired(previous),
+            ),
+            Some(WorkloadProvisionDisposition::InspectionRequired(next)),
+        ) if candidate.phase == previous.attempt().target_phase()
+            && candidate.phase != current.phase
+            && current.successor_intent.is_some()
+            && previous == next =>
+        {
+            Ok(())
+        }
         (
             Some(
                 WorkloadProvisionDisposition::DispatchPending(previous)

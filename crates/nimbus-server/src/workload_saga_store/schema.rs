@@ -72,6 +72,7 @@ pub(crate) fn exact_table_schema() -> TableSchema {
             field("phaseDetail", FieldType::Object, true),
             field("restartState", FieldType::Object, true),
             field("provisionDisposition", FieldType::Object, false),
+            field("teardownDisposition", FieldType::Object, false),
             field("compiledNetworkPlan", FieldType::Object, true),
             field("activationIntent", FieldType::String, true),
             field("publicationIntent", FieldType::String, true),

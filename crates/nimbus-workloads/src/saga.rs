@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use crate::{DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadUid};
 
 /// Portable saga format understood by this crate.
-pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 5;
+pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 6;
 
 /// A rejected workload-saga value or transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1580,6 +1580,7 @@ mod executable;
 mod provision;
 mod restart;
 mod state;
+mod teardown;
 
 mod network;
 #[cfg(test)]
@@ -1615,6 +1616,17 @@ pub use restart::{
 };
 use state::validate_phase_detail;
 pub use state::{WorkloadSagaIntentUpdate, WorkloadSagaRecord, WorkloadSagaTransition};
+pub use teardown::{
+    ProposedWorkloadTeardownTransition, WorkloadProvisionTeardownAbsence,
+    WorkloadRestartTeardownSettlement, WorkloadTeardownAttempt, WorkloadTeardownAttemptId,
+    WorkloadTeardownAttemptInput, WorkloadTeardownCause, WorkloadTeardownClaim,
+    WorkloadTeardownCommandId, WorkloadTeardownCommandMode, WorkloadTeardownContext,
+    WorkloadTeardownDecision, WorkloadTeardownDispatchAuthorization, WorkloadTeardownDispatchEpoch,
+    WorkloadTeardownDisposition, WorkloadTeardownEffectResult, WorkloadTeardownInspectionResult,
+    WorkloadTeardownProviderTarget, WorkloadTeardownReceipt, WorkloadTeardownResultConfirmation,
+    WorkloadTeardownRetryEvidence, WorkloadTeardownStep, WorkloadTeardownSubjects,
+    WorkloadTeardownSuccessEvidence, WorkloadTeardownSuccessorFence,
+};
 #[cfg(test)]
 #[path = "saga/tests.rs"]
 mod tests;

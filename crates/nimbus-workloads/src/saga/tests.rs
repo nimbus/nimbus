@@ -1,4 +1,3 @@
-use std::any::TypeId;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::NonZeroU16;
 
@@ -468,6 +467,8 @@ fn record_at_ready(publication: WorkloadPublicationIntent) -> WorkloadSagaRecord
 
 fn terminal_observations(
     phase: WorkloadSagaPhase,
+    intent: &WorkloadSagaIntent,
+    origin: WorkloadSagaPhase,
     references: &WorkloadEffectReferences,
 ) -> Vec<WorkloadTerminalObservation> {
     let rank = match phase {
@@ -480,8 +481,16 @@ fn terminal_observations(
         _ => panic!("fixture phase is not teardown evidence"),
     };
     let mut observations = Vec::new();
+    let origin_rank = origin.recovery_order();
+    let provider_managed_network = intent
+        .network()
+        .compiled_plan()
+        .content()
+        .capability_selection_evidence()
+        .is_some();
     if rank >= 1
         && let Some(reference) = references.publication()
+        && origin_rank >= WorkloadSagaPhase::Published.recovery_order()
     {
         observations.push(WorkloadTerminalObservation::PublicationAbsent {
             reference: reference.clone(),
@@ -490,6 +499,7 @@ fn terminal_observations(
     }
     if rank >= 2
         && let Some(reference) = references.execution()
+        && origin_rank >= WorkloadSagaPhase::WorkloadActivated.recovery_order()
     {
         observations.push(WorkloadTerminalObservation::ExecutionDrained {
             reference: reference.clone(),
@@ -498,6 +508,7 @@ fn terminal_observations(
     }
     if rank >= 3
         && let Some(reference) = references.execution()
+        && origin_rank >= WorkloadSagaPhase::WorkloadPrepared.recovery_order()
     {
         observations.push(WorkloadTerminalObservation::ExecutionStopped {
             reference: reference.clone(),
@@ -506,6 +517,8 @@ fn terminal_observations(
     }
     if rank >= 4
         && let Some(reference) = references.network()
+        && provider_managed_network
+        && origin_rank >= WorkloadSagaPhase::NetworkAttached.recovery_order()
     {
         observations.push(WorkloadTerminalObservation::NetworkDetached {
             reference: reference.clone(),
@@ -514,6 +527,8 @@ fn terminal_observations(
     }
     if rank >= 5
         && let Some(reference) = references.network()
+        && provider_managed_network
+        && origin_rank >= WorkloadSagaPhase::NetworkReserved.recovery_order()
     {
         observations.push(WorkloadTerminalObservation::NetworkReleased {
             reference: reference.clone(),
@@ -524,42 +539,141 @@ fn terminal_observations(
 }
 
 fn begin_teardown(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
-    let references = record.phase_detail().references();
-    record
-        .advance(
-            WorkloadSagaPhase::WithdrawalCommitted,
-            WorkloadPhaseDetail::teardown(
-                WorkloadSagaPhase::WithdrawalCommitted,
-                record.active_intent(),
-                record.phase(),
-                references,
-                Vec::new(),
+    let successor = stopped_intent(
+        record
+            .successor_intent()
+            .map_or(
+                record.active_intent().generation(),
+                WorkloadSagaIntent::generation,
             )
-            .expect("withdrawal detail should validate"),
-            None,
-        )
-        .expect("withdrawal should validate")
+            .checked_next()
+            .expect("fixture successor generation should not overflow")
+            .as_u64(),
+    );
+    let WorkloadSagaIntentUpdate::Transition(withdrawal) = record
+        .apply_intent(successor)
+        .expect("fixture successor should commit withdrawal")
+    else {
+        panic!("fixture successor must produce one withdrawal transition");
+    };
+    *withdrawal
 }
 
 fn advance_teardown(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
-    let WorkloadPhaseDetail::Teardown(current) = record.phase_detail() else {
-        panic!("teardown fixture must carry teardown detail");
+    let mut current = record.clone();
+    while current.phase().recovery_order() < phase.recovery_order() {
+        current = match current
+            .decide_teardown()
+            .expect("fixture teardown decision should validate")
+        {
+            WorkloadTeardownDecision::PersistCandidate(
+                ProposedWorkloadTeardownTransition::ResourceFree { step, .. },
+            ) => current
+                .record_resource_free_teardown_step(step)
+                .expect("resource-free fixture step should persist"),
+            WorkloadTeardownDecision::PersistCandidate(
+                ProposedWorkloadTeardownTransition::Claim {
+                    attempt,
+                    provider_target,
+                },
+            ) => {
+                let pending = current
+                    .claim_teardown(*attempt, provider_target)
+                    .expect("fixture teardown claim should persist");
+                let claim = pending
+                    .teardown_disposition()
+                    .and_then(WorkloadTeardownDisposition::claim)
+                    .expect("fixture pending teardown should retain its claim")
+                    .clone();
+                let evidence = match (claim.attempt().step(), claim.attempt().subjects()) {
+                    (
+                        WorkloadTeardownStep::WithdrawPublication,
+                        WorkloadTeardownSubjects::Publication(reference),
+                    ) => WorkloadTeardownSuccessEvidence::PublicationAbsent {
+                        reference: reference.clone(),
+                        evidence: evidence("publication-absent"),
+                    },
+                    (
+                        WorkloadTeardownStep::DrainExecution,
+                        WorkloadTeardownSubjects::Execution(reference),
+                    ) => WorkloadTeardownSuccessEvidence::ExecutionDrained {
+                        reference: reference.clone(),
+                        evidence: evidence("execution-drained"),
+                    },
+                    (
+                        WorkloadTeardownStep::StopExecution,
+                        WorkloadTeardownSubjects::Execution(reference),
+                    ) => WorkloadTeardownSuccessEvidence::ExecutionStopped {
+                        reference: reference.clone(),
+                        evidence: evidence("execution-stopped"),
+                    },
+                    (
+                        WorkloadTeardownStep::DetachNetwork,
+                        WorkloadTeardownSubjects::Network(reference),
+                    ) => WorkloadTeardownSuccessEvidence::NetworkDetached {
+                        reference: reference.clone(),
+                        evidence: evidence("network-detached"),
+                    },
+                    (
+                        WorkloadTeardownStep::ReleaseNetwork,
+                        WorkloadTeardownSubjects::Network(reference),
+                    ) => WorkloadTeardownSuccessEvidence::NetworkReleased {
+                        reference: reference.clone(),
+                        evidence: evidence("network-released"),
+                    },
+                    _ => panic!("fixture teardown claim has a crossed step and subject"),
+                };
+                pending
+                    .apply_teardown_effect_result(
+                        &claim,
+                        WorkloadTeardownEffectResult::Succeeded {
+                            attempt_id: claim.attempt().attempt_id().clone(),
+                            dispatch_epoch: claim.dispatch_epoch(),
+                            provider_target: claim.provider_target().clone(),
+                            evidence: Box::new(evidence),
+                        },
+                    )
+                    .expect("fixture teardown success should persist")
+            }
+            decision => panic!("unexpected fixture teardown decision {decision:?}"),
+        };
+    }
+    current
+}
+
+fn fail_current_teardown(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
+    let WorkloadTeardownDecision::PersistCandidate(ProposedWorkloadTeardownTransition::Claim {
+        attempt,
+        provider_target,
+    }) = record
+        .decide_teardown()
+        .expect("fixture teardown decision should validate")
+    else {
+        panic!("fixture teardown failure requires an effectful step");
     };
-    let references = current.retained_references().clone();
-    record
-        .advance(
-            phase,
-            WorkloadPhaseDetail::teardown(
-                phase,
-                record.active_intent(),
-                current.origin(),
-                references.clone(),
-                terminal_observations(phase, &references),
-            )
-            .expect("teardown detail should validate"),
-            None,
+    let pending = record
+        .claim_teardown(*attempt, provider_target)
+        .expect("fixture teardown claim should persist");
+    let claim = pending
+        .teardown_disposition()
+        .and_then(WorkloadTeardownDisposition::claim)
+        .expect("fixture teardown claim should remain durable")
+        .clone();
+    pending
+        .apply_teardown_effect_result(
+            &claim,
+            WorkloadTeardownEffectResult::DefiniteFailure {
+                attempt_id: claim.attempt().attempt_id().clone(),
+                dispatch_epoch: claim.dispatch_epoch(),
+                provider_target: claim.provider_target().clone(),
+                failure: WorkloadFailureEvidence::new(
+                    "fixture_teardown_failure",
+                    evidence("fixture-teardown-failure"),
+                )
+                .expect("fixture failure should validate"),
+            },
         )
-        .expect("teardown transition should validate")
+        .expect("fixture teardown failure should enter cleanup")
 }
 
 fn finish_teardown(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
@@ -575,18 +689,8 @@ fn finish_teardown(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
             record = advance_teardown(&record, phase);
         }
     }
-    let WorkloadPhaseDetail::Teardown(detail) = record.phase_detail() else {
-        panic!("network released should carry teardown detail");
-    };
-    let terminal_digest =
-        WorkloadTerminalEvidenceDigest::for_observations(detail.terminal_observations())
-            .expect("terminal evidence should digest");
     record
-        .advance(
-            WorkloadSagaPhase::Recorded,
-            WorkloadPhaseDetail::recorded(record.active_intent(), terminal_digest),
-            None,
-        )
+        .record_terminal_teardown()
         .expect("recorded transition should validate")
 }
 
@@ -606,6 +710,7 @@ struct RehashedTransitionPayload {
     successor_intent: Option<WorkloadSagaIntent>,
     phase_detail: WorkloadPhaseDetail,
     provision_disposition: Option<WorkloadProvisionDisposition>,
+    teardown_disposition: Option<WorkloadTeardownDisposition>,
     restart: WorkloadRestartState,
     failure: Option<WorkloadFailureEvidence>,
 }
@@ -629,182 +734,21 @@ fn rehash_encoded_record(record: &mut serde_json::Value) {
         phase_detail: serde_json::from_value(record["phaseDetail"].clone()).unwrap(),
         provision_disposition: serde_json::from_value(record["provisionDisposition"].clone())
             .unwrap(),
+        teardown_disposition: record
+            .get("teardownDisposition")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .unwrap(),
         restart: serde_json::from_value(record["restart"].clone()).unwrap(),
         failure: serde_json::from_value(record["failure"].clone()).unwrap(),
     };
     let encoded_payload = serde_json::to_vec(&payload).unwrap();
     record["lastTransition"]["transitionId"] = json!(derive_id(
         WorkloadSagaTransitionId::PREFIX,
-        b"nimbus.workloads.saga.transition.v4",
+        b"nimbus.workloads.saga.transition.v5",
         &[std::str::from_utf8(&encoded_payload).unwrap()],
     ));
-}
-
-#[test]
-fn counters_have_distinct_lossless_wire_types() {
-    assert_ne!(
-        TypeId::of::<WorkloadGeneration>(),
-        TypeId::of::<WorkloadSagaRevision>()
-    );
-}
-
-#[test]
-fn decimal_counters_round_trip_losslessly_at_boundaries() {
-    for value in [0, TWO_TO_53, u64::MAX] {
-        let generation = WorkloadGeneration::new(value);
-        let revision = WorkloadSagaRevision::new(value);
-        assert_eq!(
-            serde_json::to_string(&generation).unwrap(),
-            format!("\"{value}\"")
-        );
-        assert_eq!(
-            serde_json::to_string(&revision).unwrap(),
-            format!("\"{value}\"")
-        );
-        assert_eq!(
-            serde_json::from_str::<WorkloadGeneration>(&format!("\"{value}\"")).unwrap(),
-            generation
-        );
-        assert_eq!(
-            serde_json::from_str::<WorkloadSagaRevision>(&format!("\"{value}\"")).unwrap(),
-            revision
-        );
-    }
-    assert_eq!(WorkloadGeneration::new(u64::MAX).checked_next(), None);
-    assert_eq!(WorkloadSagaRevision::new(u64::MAX).checked_next(), None);
-}
-
-#[test]
-fn decimal_counters_reject_noncanonical_or_lossy_forms() {
-    for malformed in [
-        json!(0),
-        json!(1.0),
-        json!(""),
-        json!("00"),
-        json!("01"),
-        json!("-1"),
-        json!("+1"),
-        json!(" 1"),
-        json!("1.0"),
-        json!("١"),
-        json!("18446744073709551616"),
-    ] {
-        assert!(serde_json::from_value::<WorkloadGeneration>(malformed.clone()).is_err());
-        assert!(serde_json::from_value::<WorkloadSagaRevision>(malformed).is_err());
-    }
-}
-
-#[test]
-fn nested_counter_wire_is_decimal_text_and_strict() {
-    let record = WorkloadSagaRecord::new(key("tenant-a", "workload-a"), stopped_intent(TWO_TO_53))
-        .expect("stopped record should initialize");
-    let value = serde_json::to_value(&record).unwrap();
-    assert_eq!(
-        value["activeIntent"]["generation"],
-        json!(TWO_TO_53.to_string())
-    );
-    assert!(value["activeIntent"]["network"]["plan"]["generation"].is_string());
-    assert!(value["activeIntent"]["network"]["content"]["identity"]["generation"].is_string());
-    assert_eq!(value["revision"], json!("0"));
-    assert_eq!(value["lastTransition"]["resultingRevision"], json!("0"));
-    assert_eq!(
-        value["phaseDetail"]["value"]["completedGeneration"],
-        json!(TWO_TO_53.to_string())
-    );
-
-    for path in [
-        &["activeIntent", "generation"][..],
-        &["activeIntent", "network", "plan", "generation"][..],
-        &[
-            "activeIntent",
-            "network",
-            "content",
-            "identity",
-            "generation",
-        ][..],
-        &["revision"][..],
-        &["lastTransition", "resultingRevision"][..],
-        &["phaseDetail", "value", "completedGeneration"][..],
-    ] {
-        let mut malformed = value.clone();
-        let mut slot = &mut malformed;
-        for component in path {
-            slot = &mut slot[*component];
-        }
-        *slot = json!(TWO_TO_53);
-        assert!(serde_json::from_value::<WorkloadSagaRecord>(malformed).is_err());
-    }
-}
-
-#[test]
-fn stable_ids_are_deterministic_domain_separated_and_length_framed() {
-    let first = key("tenant-a", "workload-a");
-    assert_eq!(first.saga_id(), first.saga_id());
-    assert_ne!(first.saga_id(), key("tenant-b", "workload-a").saga_id());
-    assert_ne!(first.saga_id(), key("tenant-a", "workload-b").saga_id());
-    assert_ne!(key("a", "bc").saga_id(), key("ab", "c").saga_id());
-
-    let uid = workload_uid(1);
-    let node = NodeIdentity::new("node-a").unwrap();
-    let execution = WorkloadExecutionId::for_execution(&uid, &node, WorkloadGeneration::new(1));
-    assert_eq!(
-        execution,
-        WorkloadExecutionId::for_execution(&uid, &node, WorkloadGeneration::new(1))
-    );
-    assert_ne!(
-        execution,
-        WorkloadExecutionId::for_execution(&workload_uid(2), &node, WorkloadGeneration::new(1))
-    );
-    assert_ne!(
-        execution,
-        WorkloadExecutionId::for_execution(
-            &uid,
-            &NodeIdentity::new("node-b").unwrap(),
-            WorkloadGeneration::new(1),
-        )
-    );
-    assert_ne!(
-        execution,
-        WorkloadExecutionId::for_execution(&uid, &node, WorkloadGeneration::new(2))
-    );
-    assert_ne!(first.saga_id().as_str(), execution.as_str());
-}
-
-#[test]
-fn stable_id_and_admission_identity_decoders_reject_malformed_text() {
-    for malformed in [
-        "bad_0000000000000000000000000000000000000000000000000000000000000000",
-        "wsg_00",
-        "wsg_G000000000000000000000000000000000000000000000000000000000000000",
-        "wsg_z000000000000000000000000000000000000000000000000000000000000000",
-    ] {
-        assert!(malformed.parse::<WorkloadSagaId>().is_err());
-    }
-    for malformed in [
-        "bad_0000000000000000000000000000000000000000000000000000000000000000",
-        "wst_00",
-        "wst_F000000000000000000000000000000000000000000000000000000000000000",
-        "wst_z000000000000000000000000000000000000000000000000000000000000000",
-    ] {
-        assert!(serde_json::from_value::<WorkloadSagaTransitionId>(json!(malformed)).is_err());
-    }
-    assert!(serde_json::from_value::<NodeIdentity>(json!("")).is_err());
-    assert!(serde_json::from_value::<TenantWorkloadUid>(json!("twu_00")).is_err());
-    assert!(
-        serde_json::from_value::<TenantWorkloadUid>(json!(format!("twu_{}", "A".repeat(64))))
-            .is_err()
-    );
-    assert!(serde_json::from_value::<TenantIsolationDecisionId>(json!("tid_00")).is_err());
-}
-
-#[test]
-fn digest_decoders_reject_wrong_length_uppercase_and_nonhex() {
-    for malformed in ["00".to_string(), "A".repeat(64), "z".repeat(64)] {
-        let value = json!(malformed);
-        assert!(serde_json::from_value::<WorkloadDesiredDigest>(value.clone()).is_err());
-        assert!(serde_json::from_value::<WorkloadOwnerEvidenceDigest>(value.clone()).is_err());
-        assert!(serde_json::from_value::<WorkloadTerminalEvidenceDigest>(value).is_err());
-    }
 }
 
 #[test]
@@ -1044,8 +988,10 @@ fn teardown_matrix_accepts_every_origin_and_no_op_step() {
                 panic!("withdrawn phase should carry teardown detail");
             };
             assert_eq!(
-                detail.terminal_observations().is_empty(),
-                references.publication().is_none()
+                !detail.terminal_observations().is_empty(),
+                references.publication().is_some()
+                    && origin.phase().recovery_order()
+                        >= WorkloadSagaPhase::Published.recovery_order()
             );
             assert_eq!(
                 finish_teardown(&withdrawn).phase(),
@@ -1063,7 +1009,12 @@ fn teardown_rejects_reference_rewrite_missing_duplicate_and_early_release() {
         panic!("withdrawal should carry teardown detail");
     };
     let references = detail.retained_references().clone();
-    let valid = terminal_observations(WorkloadSagaPhase::Drained, &references);
+    let valid = terminal_observations(
+        WorkloadSagaPhase::Drained,
+        ready.active_intent(),
+        detail.origin(),
+        &references,
+    );
 
     assert!(
         WorkloadPhaseDetail::teardown(
@@ -1071,12 +1022,12 @@ fn teardown_rejects_reference_rewrite_missing_duplicate_and_early_release() {
             ready.active_intent(),
             detail.origin(),
             references.clone(),
-            valid[..1].to_vec(),
+            Vec::new(),
         )
         .is_err()
     );
     let mut duplicate = valid.clone();
-    duplicate.push(valid[1].clone());
+    duplicate.push(valid[0].clone());
     assert!(
         WorkloadPhaseDetail::teardown(
             WorkloadSagaPhase::Drained,
@@ -1093,7 +1044,12 @@ fn teardown_rejects_reference_rewrite_missing_duplicate_and_early_release() {
             ready.active_intent(),
             detail.origin(),
             references.clone(),
-            terminal_observations(WorkloadSagaPhase::NetworkDetached, &references),
+            terminal_observations(
+                WorkloadSagaPhase::NetworkDetached,
+                ready.active_intent(),
+                detail.origin(),
+                &references,
+            ),
         )
         .is_err()
     );
@@ -1120,26 +1076,20 @@ fn teardown_rejects_reference_rewrite_missing_duplicate_and_early_release() {
 fn teardown_transition_retains_exact_origin_references() {
     let ready = record_at_ready(WorkloadPublicationIntent::PublishWhenReady);
     let withdrawal = begin_teardown(&ready);
-    let WorkloadPhaseDetail::Teardown(detail) = withdrawal.phase_detail() else {
+    let WorkloadPhaseDetail::Teardown(_) = withdrawal.phase_detail() else {
         panic!("withdrawal should carry teardown detail");
     };
+    let crossed_intent = running_intent(2, WorkloadPublicationIntent::PublishWhenReady);
     let replacement = WorkloadEffectReferences::provision(
-        ready.active_intent(),
-        Some(publication_reference(ready.active_intent(), 777)),
+        &crossed_intent,
+        Some(publication_reference(&crossed_intent, 777)),
     )
     .unwrap();
-    let candidate = WorkloadPhaseDetail::teardown(
-        WorkloadSagaPhase::Withdrawn,
-        ready.active_intent(),
-        detail.origin(),
-        replacement.clone(),
-        terminal_observations(WorkloadSagaPhase::Withdrawn, &replacement),
-    )
-    .unwrap();
-    assert!(matches!(
-        withdrawal.advance(WorkloadSagaPhase::Withdrawn, candidate, None),
-        Err(WorkloadSagaError::InvalidEvidence(_))
-    ));
+    let mut crossed = serde_json::to_value(&withdrawal).unwrap();
+    crossed["phaseDetail"]["value"]["retainedReferences"] =
+        serde_json::to_value(replacement).unwrap();
+    rehash_encoded_record(&mut crossed);
+    assert!(serde_json::from_value::<WorkloadSagaRecord>(crossed).is_err());
 }
 
 fn cleanup_inspections(
@@ -1192,14 +1142,7 @@ fn cleanup_pending_requires_exact_one_to_one_inspection_and_retains_fences() {
     assert!(cleanup.promote_successor().is_err());
     assert!(
         cleanup
-            .advance(
-                WorkloadSagaPhase::NetworkReleased,
-                WorkloadPhaseDetail::recorded(
-                    cleanup.active_intent(),
-                    WorkloadTerminalEvidenceDigest::for_observations(&[]).unwrap(),
-                ),
-                None,
-            )
+            .record_resource_free_teardown_step(WorkloadTeardownStep::ReleaseNetwork)
             .is_err()
     );
 
@@ -1512,25 +1455,15 @@ fn validated_record_rejects_cleanup_successor_replacement() {
     else {
         panic!("successor should queue");
     };
-    let retained = queued.phase_detail().references();
-    let cleanup_detail = WorkloadPhaseDetail::cleanup_pending(
-        queued.active_intent(),
-        queued.phase(),
-        retained.clone(),
-        cleanup_inspections(queued.phase(), &retained),
-    )
-    .unwrap();
-    let cleanup = queued
-        .advance(WorkloadSagaPhase::CleanupPending, cleanup_detail, None)
-        .unwrap();
+    let withdrawn = advance_teardown(&queued, WorkloadSagaPhase::Withdrawn);
+    let cleanup = fail_current_teardown(&withdrawn);
     assert!(cleanup.apply_intent(stopped_intent(3)).is_err());
 
     let mut forged = serde_json::to_value(&cleanup).unwrap();
     forged["successorIntent"] = serde_json::to_value(stopped_intent(3)).unwrap();
     forged["lastTransition"]["successorGeneration"] = json!("3");
     rehash_encoded_record(&mut forged);
-    let candidate = serde_json::from_value::<WorkloadSagaRecord>(forged).unwrap();
-    assert!(cleanup.validate_successor(&candidate).is_err());
+    assert!(serde_json::from_value::<WorkloadSagaRecord>(forged).is_err());
 }
 
 #[test]
@@ -1861,6 +1794,8 @@ fn phase_progression_cannot_rewrite_prior_observation_evidence() {
     };
     let mut rewritten_terminal = terminal_observations(
         WorkloadSagaPhase::Drained,
+        ready.active_intent(),
+        withdrawn_detail.origin(),
         withdrawn_detail.retained_references(),
     );
     rewritten_terminal[0] = WorkloadTerminalObservation::PublicationAbsent {
@@ -1877,13 +1812,8 @@ fn phase_progression_cannot_rewrite_prior_observation_evidence() {
         withdrawn_detail.origin(),
         withdrawn_detail.retained_references().clone(),
         rewritten_terminal,
-    )
-    .unwrap();
-    assert!(
-        withdrawn
-            .advance(WorkloadSagaPhase::Drained, rewritten_teardown, None)
-            .is_err()
     );
+    assert!(rewritten_teardown.is_err());
 }
 
 #[test]
@@ -1900,6 +1830,7 @@ fn record_deserialization_rejects_forged_illegal_source_edge() {
         successor_intent: Option<&'a WorkloadSagaIntent>,
         phase_detail: &'a WorkloadPhaseDetail,
         provision_disposition: Option<&'a WorkloadProvisionDisposition>,
+        teardown_disposition: Option<&'a WorkloadTeardownDisposition>,
         restart: &'a WorkloadRestartState,
         failure: Option<&'a WorkloadFailureEvidence>,
     }
@@ -1921,13 +1852,14 @@ fn record_deserialization_rejects_forged_illegal_source_edge() {
         successor_intent: reserved.successor_intent(),
         phase_detail: reserved.phase_detail(),
         provision_disposition: reserved.provision_disposition(),
+        teardown_disposition: reserved.teardown_disposition(),
         restart: reserved.restart_state(),
         failure: reserved.failure(),
     };
     let encoded_payload = serde_json::to_vec(&payload).unwrap();
     let transition_id = derive_id(
         WorkloadSagaTransitionId::PREFIX,
-        b"nimbus.workloads.saga.transition.v4",
+        b"nimbus.workloads.saga.transition.v5",
         &[std::str::from_utf8(&encoded_payload).unwrap()],
     );
     let mut forged_record = serde_json::to_value(&reserved).unwrap();
@@ -1959,3 +1891,8 @@ fn failure_evidence_is_stable_bounded_and_cleanup_only() {
 mod provision_state;
 #[path = "tests/restart_state.rs"]
 mod restart_state;
+#[path = "tests/teardown_state.rs"]
+mod teardown_state;
+
+#[path = "tests/wire_primitives.rs"]
+mod wire_primitives;

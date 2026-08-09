@@ -2,14 +2,15 @@ use std::collections::BTreeSet;
 
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_workloads::{
-    DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WORKLOAD_SAGA_RECOVERY_ORDER,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
+    DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, ProposedWorkloadTeardownTransition,
+    WORKLOAD_SAGA_RECOVERY_ORDER, WorkloadActivationIntent, WorkloadAdmissionEvidence,
     WorkloadFailureEvidence, WorkloadGeneration, WorkloadInspectionRequirement,
     WorkloadNetworkIntent, WorkloadOwnerEvidenceDigest, WorkloadPhaseDetail,
     WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaIntent,
     WorkloadSagaIntentUpdate, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
-    WorkloadSagaRecoveryCursor, WorkloadSagaStore, WorkloadTerminalEvidenceDigest,
-    WorkloadTerminalObservation,
+    WorkloadSagaRecoveryCursor, WorkloadSagaStore, WorkloadTeardownClaim, WorkloadTeardownDecision,
+    WorkloadTeardownDisposition, WorkloadTeardownEffectResult, WorkloadTeardownStep,
+    WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
 };
 
 use super::super::EngineWorkloadSagaStore;
@@ -573,109 +574,104 @@ fn teardown_history_with_successor(
     };
     history.push(*withdrawal);
 
-    for phase in [
-        WorkloadSagaPhase::Withdrawn,
-        WorkloadSagaPhase::Drained,
-        WorkloadSagaPhase::WorkloadStopped,
-        WorkloadSagaPhase::NetworkDetached,
-        WorkloadSagaPhase::NetworkReleased,
-    ] {
-        history.push(advance_teardown(latest(&history), phase));
+    while latest(&history).phase() != WorkloadSagaPhase::Recorded {
+        extend_confirmed_teardown_step(&mut history);
     }
-    let WorkloadPhaseDetail::Teardown(detail) = latest(&history).phase_detail() else {
-        panic!("network release fixture has teardown detail");
-    };
-    let terminal_digest =
-        WorkloadTerminalEvidenceDigest::for_observations(detail.terminal_observations())
-            .expect("terminal observations should digest");
-    let recorded = latest(&history)
-        .advance(
-            WorkloadSagaPhase::Recorded,
-            WorkloadPhaseDetail::recorded(latest(&history).active_intent(), terminal_digest),
-            None,
-        )
-        .expect("recorded transition should validate");
-    history.push(recorded);
     history
 }
 
-fn advance_teardown(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
-    let WorkloadPhaseDetail::Teardown(current) = record.phase_detail() else {
-        panic!("teardown fixture has teardown detail");
-    };
-    let references = current.retained_references().clone();
-    let detail = WorkloadPhaseDetail::teardown(
-        phase,
-        record.active_intent(),
-        current.origin(),
-        references.clone(),
-        terminal_observations(phase, &references),
-    )
-    .expect("fixture teardown detail is valid");
-    record
-        .advance(phase, detail, None)
-        .expect("fixture teardown transition is valid")
+pub(super) fn extend_confirmed_teardown_step(history: &mut Vec<WorkloadSagaRecord>) {
+    let current = latest(history);
+    match current
+        .decide_teardown()
+        .expect("fixture teardown decision should validate")
+    {
+        WorkloadTeardownDecision::PersistCandidate(
+            ProposedWorkloadTeardownTransition::ResourceFree { step, .. },
+        ) => {
+            history.push(
+                current
+                    .record_resource_free_teardown_step(step)
+                    .expect("exact resource-free teardown step should persist"),
+            );
+        }
+        WorkloadTeardownDecision::PersistCandidate(ProposedWorkloadTeardownTransition::Claim {
+            attempt,
+            provider_target,
+        }) => {
+            let claimed = current
+                .claim_teardown(*attempt, provider_target)
+                .expect("exact teardown claim should persist");
+            let claim = claimed
+                .teardown_disposition()
+                .and_then(WorkloadTeardownDisposition::claim)
+                .expect("claimed teardown record should retain its exact claim")
+                .clone();
+            let succeeded = claimed
+                .apply_teardown_effect_result(&claim, teardown_success_result(&claim))
+                .expect("exact teardown success should advance one phase");
+            history.push(claimed);
+            history.push(succeeded);
+        }
+        WorkloadTeardownDecision::PersistCandidate(
+            ProposedWorkloadTeardownTransition::RecordTerminal,
+        ) => {
+            history.push(
+                current
+                    .record_terminal_teardown()
+                    .expect("exact terminal teardown record should persist"),
+            );
+        }
+        decision => {
+            panic!("fixture teardown must have an exact persistence decision: {decision:?}")
+        }
+    }
 }
 
-fn terminal_observations(
-    phase: WorkloadSagaPhase,
-    references: &WorkloadEffectReferences,
-) -> Vec<WorkloadTerminalObservation> {
-    let rank = match phase {
-        WorkloadSagaPhase::Withdrawn => 1,
-        WorkloadSagaPhase::Drained => 2,
-        WorkloadSagaPhase::WorkloadStopped => 3,
-        WorkloadSagaPhase::NetworkDetached => 4,
-        WorkloadSagaPhase::NetworkReleased => 5,
-        _ => panic!("fixture phase is not a teardown phase"),
-    };
-    let mut observations = Vec::new();
-    if rank >= 1 {
-        observations.push(WorkloadTerminalObservation::PublicationAbsent {
-            reference: references
-                .publication()
-                .expect("withdrawal fixture has a publication reference")
-                .clone(),
+fn teardown_success_result(claim: &WorkloadTeardownClaim) -> WorkloadTeardownEffectResult {
+    WorkloadTeardownEffectResult::Succeeded {
+        attempt_id: claim.attempt().attempt_id().clone(),
+        dispatch_epoch: claim.dispatch_epoch(),
+        provider_target: claim.provider_target().clone(),
+        evidence: Box::new(teardown_success_evidence(claim)),
+    }
+}
+
+fn teardown_success_evidence(claim: &WorkloadTeardownClaim) -> WorkloadTeardownSuccessEvidence {
+    match (claim.attempt().step(), claim.attempt().subjects()) {
+        (
+            WorkloadTeardownStep::WithdrawPublication,
+            WorkloadTeardownSubjects::Publication(reference),
+        ) => WorkloadTeardownSuccessEvidence::PublicationAbsent {
+            reference: reference.clone(),
             evidence: evidence("publication-absent"),
-        });
+        },
+        (WorkloadTeardownStep::DrainExecution, WorkloadTeardownSubjects::Execution(reference)) => {
+            WorkloadTeardownSuccessEvidence::ExecutionDrained {
+                reference: reference.clone(),
+                evidence: evidence("execution-drained"),
+            }
+        }
+        (WorkloadTeardownStep::StopExecution, WorkloadTeardownSubjects::Execution(reference)) => {
+            WorkloadTeardownSuccessEvidence::ExecutionStopped {
+                reference: reference.clone(),
+                evidence: evidence("execution-stopped"),
+            }
+        }
+        (WorkloadTeardownStep::DetachNetwork, WorkloadTeardownSubjects::Network(reference)) => {
+            WorkloadTeardownSuccessEvidence::NetworkDetached {
+                reference: reference.clone(),
+                evidence: evidence("network-detached"),
+            }
+        }
+        (WorkloadTeardownStep::ReleaseNetwork, WorkloadTeardownSubjects::Network(reference)) => {
+            WorkloadTeardownSuccessEvidence::NetworkReleased {
+                reference: reference.clone(),
+                evidence: evidence("network-released"),
+            }
+        }
+        _ => panic!("validated teardown claim has a crossed step and subject"),
     }
-    if rank >= 2 {
-        observations.push(WorkloadTerminalObservation::ExecutionDrained {
-            reference: references
-                .execution()
-                .expect("withdrawal fixture has an execution reference")
-                .clone(),
-            evidence: evidence("execution-drained"),
-        });
-    }
-    if rank >= 3 {
-        observations.push(WorkloadTerminalObservation::ExecutionStopped {
-            reference: references
-                .execution()
-                .expect("withdrawal fixture has an execution reference")
-                .clone(),
-            evidence: evidence("execution-stopped"),
-        });
-    }
-    if rank >= 4 {
-        observations.push(WorkloadTerminalObservation::NetworkDetached {
-            reference: references
-                .network()
-                .expect("withdrawal fixture has a network reference")
-                .clone(),
-            evidence: evidence("network-detached"),
-        });
-    }
-    if rank >= 5 {
-        observations.push(WorkloadTerminalObservation::NetworkReleased {
-            reference: references
-                .network()
-                .expect("withdrawal fixture has a network reference")
-                .clone(),
-            evidence: evidence("network-released"),
-        });
-    }
-    observations
 }
 
 fn cleanup_pending_history(label: &str) -> Vec<WorkloadSagaRecord> {

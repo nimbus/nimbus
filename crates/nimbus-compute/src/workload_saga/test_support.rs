@@ -11,8 +11,8 @@ use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadInspectionVersion,
     WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
-    WorkloadOwnerEvidenceDigest, WorkloadPhaseDetail, WorkloadProvisionAttempt,
-    WorkloadProvisionDisposition, WorkloadProvisionEffectResult, WorkloadProvisionSourceEvidence,
+    WorkloadOwnerEvidenceDigest, WorkloadProvisionAttempt, WorkloadProvisionDisposition,
+    WorkloadProvisionEffectResult, WorkloadProvisionSourceEvidence,
     WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
     WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep, WorkloadProvisionSubjects,
     WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadRestartAdmissionInput,
@@ -285,17 +285,7 @@ pub(crate) fn restart_observed_record(
 }
 
 pub(crate) fn withdrawn_record(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
-    let detail = WorkloadPhaseDetail::teardown(
-        WorkloadSagaPhase::WithdrawalCommitted,
-        record.active_intent(),
-        record.phase(),
-        record.phase_detail().references(),
-        Vec::new(),
-    )
-    .expect("restart fixture withdrawal detail is valid");
-    record
-        .advance(WorkloadSagaPhase::WithdrawalCommitted, detail, None)
-        .expect("restart fixture withdrawal is valid")
+    record_with_successor(record, "withdrawal-winner")
 }
 
 pub(crate) fn record_with_successor(
