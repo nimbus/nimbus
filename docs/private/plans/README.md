@@ -277,9 +277,11 @@ extension-registry seam before the second concern edits `extensions.rs`.
   services `82`. NNCV033 passes `40/40 + 50/50`; NNCV034 passes `86/86`; the
   aggregate passes `35/35 + 413/413`; docs pass `108`; and the site gate passes
   `17/17`. One full and one narrow Sol/xhigh/fast review are fully
-  dispositioned. No third review ran or is warranted. NNC6.5 teardown caller
-  cutover is active at its read-only audit boundary; its first source change
-  waits for the exact NNC6.4a closeout commit.
+  dispositioned. No third review ran or is warranted. Exact item commit
+  `a37a87f86ee80252812fda66d33d23f05e73d0d4` closes NNC6.4a. NNC6.5
+  teardown caller cutover is active at its read-only audit boundary; source
+  work waits for its caller, authority, failure, expected-red, and owned-path
+  freeze.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
