@@ -2,15 +2,15 @@
 
 use nimbus_network::{NetworkCapabilitySelectionEvidence, NetworkPlanDigest};
 use nimbus_workloads::{
-    CompiledWorkloadNetworkPlan, NodeIdentity, WorkloadDesiredDigest, WorkloadFailureEvidence,
-    WorkloadGeneration, WorkloadOwnerEvidenceDigest, WorkloadProvisionSourceDigest,
-    WorkloadProvisionSourceEvidence, WorkloadSagaId, WorkloadSagaKey, WorkloadSagaRecord,
-    WorkloadSagaRevision, WorkloadSagaStoreError, WorkloadSagaTransitionId,
-    WorkloadTeardownAttemptId, WorkloadTeardownClaim, WorkloadTeardownCommandId,
-    WorkloadTeardownCommandMode, WorkloadTeardownDispatchEpoch, WorkloadTeardownDisposition,
-    WorkloadTeardownEffectResult, WorkloadTeardownInspectionResult, WorkloadTeardownProviderTarget,
-    WorkloadTeardownRetryEvidence, WorkloadTeardownStep, WorkloadTeardownSubjects,
-    WorkloadTeardownSuccessEvidence,
+    CompiledWorkloadNetworkPlan, NodeIdentity, WorkloadDesiredDigest, WorkloadExecutionReference,
+    WorkloadFailureEvidence, WorkloadGeneration, WorkloadOwnerEvidenceDigest,
+    WorkloadProvisionSourceDigest, WorkloadProvisionSourceEvidence, WorkloadSagaId,
+    WorkloadSagaKey, WorkloadSagaRecord, WorkloadSagaRevision, WorkloadSagaStoreError,
+    WorkloadSagaTransitionId, WorkloadTeardownAttemptId, WorkloadTeardownClaim,
+    WorkloadTeardownCommandId, WorkloadTeardownCommandMode, WorkloadTeardownDispatchEpoch,
+    WorkloadTeardownDisposition, WorkloadTeardownEffectResult, WorkloadTeardownInspectionResult,
+    WorkloadTeardownProviderTarget, WorkloadTeardownRetryEvidence, WorkloadTeardownStep,
+    WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
 };
 
 use super::{WorkloadSagaConfirmation, WorkloadSagaCoordinator};
@@ -23,6 +23,7 @@ pub struct ConfirmedWorkloadTeardownCommand {
     confirmed_transition_id: WorkloadSagaTransitionId,
     source: WorkloadProvisionSourceEvidence,
     compiled_network_plan: CompiledWorkloadNetworkPlan,
+    execution_locator: WorkloadExecutionReference,
     mode: WorkloadTeardownCommandMode,
     claim: WorkloadTeardownClaim,
 }
@@ -81,6 +82,14 @@ impl ConfirmedWorkloadTeardownCommand {
             )
             .into());
         }
+        let execution_locator = record
+            .phase_detail()
+            .references()
+            .execution()
+            .cloned()
+            .ok_or(nimbus_workloads::WorkloadSagaError::InvalidEvidence(
+                "effectful teardown command requires its retained execution locator",
+            ))?;
         let command_id = WorkloadTeardownCommandId::for_confirmed_dispatch(
             claim,
             record.revision(),
@@ -93,6 +102,7 @@ impl ConfirmedWorkloadTeardownCommand {
             confirmed_transition_id: record.last_transition().transition_id().clone(),
             source: record.active_intent().source().clone(),
             compiled_network_plan,
+            execution_locator,
             mode,
             claim: claim.clone(),
         }))
@@ -153,6 +163,11 @@ impl ConfirmedWorkloadTeardownCommand {
     /// Exact portable network content authenticated by the confirmed record.
     pub fn compiled_network_plan(&self) -> &CompiledWorkloadNetworkPlan {
         &self.compiled_network_plan
+    }
+
+    /// Exact execution identity retained from the durable teardown origin.
+    pub fn execution_locator(&self) -> &WorkloadExecutionReference {
+        &self.execution_locator
     }
 
     pub fn selection_evidence(&self) -> Option<&NetworkCapabilitySelectionEvidence> {
@@ -244,6 +259,7 @@ pub struct WorkloadTeardownCommandResult {
     source_digest: WorkloadProvisionSourceDigest,
     network_plan_digest: NetworkPlanDigest,
     selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
+    execution_locator: WorkloadExecutionReference,
     attempt_id: WorkloadTeardownAttemptId,
     dispatch_epoch: WorkloadTeardownDispatchEpoch,
     provider_target: WorkloadTeardownProviderTarget,
@@ -357,6 +373,7 @@ impl WorkloadTeardownCommandResult {
             source_digest: command.source_digest(),
             network_plan_digest: command.network_plan_digest(),
             selection_evidence: command.selection_evidence().cloned(),
+            execution_locator: command.execution_locator().clone(),
             attempt_id: command.attempt_id().clone(),
             dispatch_epoch: command.dispatch_epoch(),
             provider_target: command.provider_target().clone(),
@@ -412,6 +429,7 @@ fn authenticate_confirmed_record(
         || record.active_intent().source() != command.source()
         || record.active_intent().network().compiled_plan() != command.compiled_network_plan()
         || command.compiled_network_plan().plan().digest() != command.network_plan_digest()
+        || record.phase_detail().references().execution() != Some(command.execution_locator())
     {
         return Err(nimbus_workloads::WorkloadSagaError::InvalidEvidence(
             "teardown command is crossed with its confirmed transition",
@@ -437,6 +455,7 @@ fn authenticate_command_result(
         || result.source_digest != command.source_digest()
         || result.network_plan_digest != command.network_plan_digest()
         || result.selection_evidence.as_ref() != command.selection_evidence()
+        || result.execution_locator != *command.execution_locator()
         || result.attempt_id != *command.attempt_id()
         || result.dispatch_epoch != command.dispatch_epoch()
         || result.provider_target != *command.provider_target()

@@ -22,6 +22,10 @@ fn publish_claim(epoch: u64) -> ProviderCommandClaim {
     command_claim(ProviderCommandOperation::PublishIngress, 0, epoch)
 }
 
+fn stop_claim(epoch: u64) -> ProviderCommandClaim {
+    command_claim(ProviderCommandOperation::StopExecution, 0, epoch)
+}
+
 fn restart_claim(
     operation: ProviderCommandOperation,
     restart_ordinal: u64,
@@ -317,7 +321,7 @@ fn exact_absence_is_the_only_authority_for_next_epoch() {
         .expect_err("retry without absence must fail");
     assert_eq!(
         without_absence,
-        ProviderCommandJournalError::RetryWithoutAbsence
+        ProviderCommandJournalError::RetryWithoutAuthority
     );
 
     journal
@@ -332,6 +336,247 @@ fn exact_absence_is_the_only_authority_for_next_epoch() {
             .claim_dispatch_epoch(&claim(1))
             .expect("exact next epoch should claim"),
         ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+}
+
+#[test]
+fn exact_retry_receipts_survive_multiple_claim_only_crashes() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let first = stop_claim(1);
+    journal
+        .claim_dispatch_epoch(&first)
+        .expect("first stop claim should persist");
+    journal
+        .record_observation(
+            &first,
+            ProviderCommandObservationKind::RetryAuthorized,
+            b"exact live process reached the KILL redelivery deadline",
+        )
+        .expect("safe redelivery authority should persist");
+
+    let second = stop_claim(2);
+    let second_execution = match journal
+        .claim_dispatch_epoch(&second)
+        .expect("first adjacent retry should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("a new retry epoch must receive execute authority")
+        }
+    };
+    assert!(
+        second_execution
+            .observation()
+            .authenticates_retry_progress(&first)
+    );
+    journal
+        .record_observation(
+            &second,
+            ProviderCommandObservationKind::RetryAuthorized,
+            b"the same exact process remains live after another reconciliation deadline",
+        )
+        .expect("the second safe redelivery authority should persist");
+
+    let third = stop_claim(3);
+    let third_execution = match journal
+        .claim_dispatch_epoch(&third)
+        .expect("second adjacent retry should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("a second new retry epoch must receive execute authority")
+        }
+    };
+    assert!(
+        third_execution
+            .observation()
+            .authenticates_retry_progress(&first)
+    );
+    assert!(
+        third_execution
+            .observation()
+            .authenticates_retry_progress(&second)
+    );
+    assert!(
+        !third_execution
+            .observation()
+            .authenticates_retry_progress(&stop_claim(0))
+    );
+}
+
+#[test]
+fn stale_execution_claim_cannot_start_after_retry_authority_advances() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let first = stop_claim(1);
+    let stale_execution = match journal
+        .claim_dispatch_epoch(&first)
+        .expect("the first stop epoch should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("the first stop epoch must receive execute authority")
+        }
+    };
+    journal
+        .record_observation(
+            &first,
+            ProviderCommandObservationKind::RetryAuthorized,
+            b"inspection authorized the exact adjacent stop epoch",
+        )
+        .expect("retry authority should become durable");
+    let second = stop_claim(2);
+    let _current_execution = match journal
+        .claim_dispatch_epoch(&second)
+        .expect("the adjacent stop epoch should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("the adjacent stop epoch must receive execute authority")
+        }
+    };
+
+    let mut effects = 0_u64;
+    assert_eq!(
+        journal
+            .execute_current_claim(stale_execution, |_| {
+                effects += 1;
+                (
+                    (),
+                    ProviderCommandObservationKind::Succeeded,
+                    b"stale effect must not publish".to_vec(),
+                )
+            })
+            .expect_err("an older live claimant must fail before its provider effect"),
+        ProviderCommandJournalError::StaleDispatchEpoch {
+            current: 2,
+            candidate: 1,
+        }
+    );
+    assert_eq!(effects, 0, "the stale claimant must not start an effect");
+}
+
+#[test]
+fn execution_publishes_its_result_before_releasing_the_live_claim_lock() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = Arc::new(journal(root.path()));
+    let claim = stop_claim(1);
+    let execution = match journal
+        .claim_dispatch_epoch(&claim)
+        .expect("the stop epoch should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("the first stop epoch must receive execute authority")
+        }
+    };
+    let effect_started = Arc::new(Barrier::new(2));
+    let release_effect = Arc::new(Barrier::new(2));
+    let executor_journal = Arc::clone(&journal);
+    let executor_started = Arc::clone(&effect_started);
+    let executor_release = Arc::clone(&release_effect);
+    let executor = std::thread::spawn(move || {
+        executor_journal.execute_current_claim(execution, |_| {
+            executor_started.wait();
+            executor_release.wait();
+            (
+                (),
+                ProviderCommandObservationKind::InProgress,
+                b"the exact TERM effect is in progress".to_vec(),
+            )
+        })
+    });
+
+    effect_started.wait();
+    let inspector_journal = Arc::clone(&journal);
+    let inspector_claim = claim.clone();
+    let inspector = std::thread::spawn(move || {
+        inspector_journal.record_observation(
+            &inspector_claim,
+            ProviderCommandObservationKind::RetryAuthorized,
+            b"inspection authenticated the adjacent retry",
+        )
+    });
+    release_effect.wait();
+
+    let (_, executed) = executor
+        .join()
+        .expect("executor thread should join")
+        .expect("the live claimant should publish its exact result");
+    assert_eq!(executed.kind(), ProviderCommandObservationKind::InProgress);
+    let inspected = inspector
+        .join()
+        .expect("inspector thread should join")
+        .expect("inspection may advance only after the effect result is durable");
+    assert_eq!(
+        inspected.kind(),
+        ProviderCommandObservationKind::RetryAuthorized
+    );
+}
+
+#[test]
+fn retry_authority_is_stop_only_and_retry_lineage_corruption_fails_closed() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let activation_journal = journal(root.path());
+    let activation = claim(0);
+    activation_journal
+        .claim_dispatch_epoch(&activation)
+        .expect("activation claim should persist");
+    assert!(matches!(
+        activation_journal.record_observation(
+            &activation,
+            ProviderCommandObservationKind::RetryAuthorized,
+            b"invalid retry authority",
+        ),
+        Err(ProviderCommandJournalError::InvalidClaim { .. })
+    ));
+
+    let lineage_root = root.path().join("lineage");
+    let lineage_journal = journal(&lineage_root);
+    let first = stop_claim(1);
+    lineage_journal
+        .claim_dispatch_epoch(&first)
+        .expect("first stop claim should persist");
+    lineage_journal
+        .record_observation(
+            &first,
+            ProviderCommandObservationKind::RetryAuthorized,
+            b"first redelivery authority",
+        )
+        .expect("first retry authority should persist");
+    let second = stop_claim(2);
+    lineage_journal
+        .claim_dispatch_epoch(&second)
+        .expect("second stop claim should persist");
+    lineage_journal
+        .record_observation(
+            &second,
+            ProviderCommandObservationKind::RetryAuthorized,
+            b"second redelivery authority",
+        )
+        .expect("second retry authority should persist");
+    let third = stop_claim(3);
+    lineage_journal
+        .claim_dispatch_epoch(&third)
+        .expect("third stop claim should persist");
+
+    let paths = lineage_journal.paths(&third);
+    let bytes = fs::read(&paths.record).expect("record should be readable");
+    let mut envelope: JournalEnvelope =
+        serde_json::from_slice(&bytes).expect("record should be valid JSON");
+    envelope.observation.retry_lineage[1].claim.dispatch_epoch = 7;
+    envelope.observation_sha256 = observation_sha256(&envelope.observation)
+        .expect("the semantically corrupt observation should encode");
+    fs::write(
+        &paths.record,
+        serde_json::to_vec_pretty(&envelope).expect("corrupt envelope should encode"),
+    )
+    .expect("test should publish checksum-valid semantic corruption");
+
+    assert!(matches!(
+        lineage_journal.adopt_exact_attempt(&third),
+        Err(ProviderCommandJournalError::Corrupt { .. })
     ));
 }
 

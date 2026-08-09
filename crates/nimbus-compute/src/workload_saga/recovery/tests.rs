@@ -217,7 +217,7 @@ fn running_intent(
     )
 }
 
-fn stopped_intent(label: &str, generation: u64) -> WorkloadSagaIntent {
+pub(crate) fn stopped_intent(label: &str, generation: u64) -> WorkloadSagaIntent {
     intent(
         label,
         generation,
@@ -291,7 +291,7 @@ pub(crate) fn provision_record(
     record
 }
 
-fn begin_teardown(
+pub(crate) fn begin_teardown(
     record: &WorkloadSagaRecord,
     successor: WorkloadSagaIntent,
 ) -> WorkloadSagaRecord {
@@ -388,7 +388,7 @@ fn advance_teardown(record: WorkloadSagaRecord) -> WorkloadSagaRecord {
     }
 }
 
-fn finish_teardown(
+pub(crate) fn finish_teardown(
     mut record: WorkloadSagaRecord,
     target: WorkloadSagaPhase,
 ) -> WorkloadSagaRecord {

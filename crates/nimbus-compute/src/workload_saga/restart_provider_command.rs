@@ -261,7 +261,8 @@ fn observation_outcome(observation: &ProviderCommandObservation) -> WorkloadRest
         ProviderCommandObservationKind::Absent => {
             WorkloadRestartCommandOutcome::AuthenticatedAbsent { evidence }
         }
-        ProviderCommandObservationKind::Ambiguous => WorkloadRestartCommandOutcome::Ambiguous,
+        ProviderCommandObservationKind::RetryAuthorized
+        | ProviderCommandObservationKind::Ambiguous => WorkloadRestartCommandOutcome::Ambiguous,
     }
 }
 
@@ -291,7 +292,7 @@ fn journal_error_observation(
         | ProviderCommandJournalError::StaleDispatchEpoch { .. }
         | ProviderCommandJournalError::SkippedDispatchEpoch { .. }
         | ProviderCommandJournalError::CrossedClaim
-        | ProviderCommandJournalError::RetryWithoutAbsence
+        | ProviderCommandJournalError::RetryWithoutAuthority
         | ProviderCommandJournalError::PriorEffectUnresolved => {
             WorkloadRestartCommandOutcome::DefiniteFailure {
                 evidence: WorkloadRestartEvidenceDigest::sha256(error.to_string()),

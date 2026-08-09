@@ -204,6 +204,9 @@ impl ContainerSandboxBackend {
             egress_proxies,
             egress_pin_provider: Arc::new(RealOciEgressPinProvider),
             readiness_probe_provider: Arc::new(SocketReadinessProbeProvider),
+            teardown_runtime_provider: Arc::new(
+                super::teardown::effects::HostContainerExecutionTeardownRuntime,
+            ),
             netavark_port_lifetimes,
             machine_port_proxies,
             _network_process: network_process,

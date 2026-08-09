@@ -1303,6 +1303,14 @@
       "reason": "Converts the write end of the same creator-local Unix pipe into a launch gate; it cannot allocate, bind, or adopt a host TCP/UDP listener."
     },
     {
+      "path": "crates/nimbus-sandbox/src/backends/conmon/runtime_process.rs",
+      "kind": "ambiguous-descriptor-adoption",
+      "symbol": "signal_authenticated_runtime_process",
+      "ordinal": 1,
+      "line": 306,
+      "reason": "Reads the raw descriptor of the process-authenticated Linux pidfd solely to signal that exact runtime process; it cannot allocate, bind, or adopt a host TCP/UDP listener."
+    },
+    {
       "path": "crates/nimbus-sandbox/src/backends/container/bundle.rs",
       "kind": "authority-shaped-macro",
       "symbol": "validate_port_bindings",
@@ -1583,7 +1591,7 @@
     "active_production_sites": 25,
     "retired_production_sites": 3,
     "authority_occurrences": 66,
-    "non_authority_occurrences": 34,
+    "non_authority_occurrences": 35,
     "portable_owner_sites": 6,
     "trust_inputs_not_network_authorities": 3,
     "unclassified_production_sites": 0,

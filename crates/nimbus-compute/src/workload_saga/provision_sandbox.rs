@@ -674,7 +674,7 @@ impl_sandbox_capabilities!(ContainerProvisionAdapter);
 impl_sandbox_capabilities!(KrunProvisionAdapter);
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use nimbus_core::TenantId;
     use nimbus_network::{
         NetworkAddressFamily, NetworkAttachmentProviderRegistration, NetworkBindRealmKind,
@@ -759,7 +759,7 @@ mod tests {
         )
     }
 
-    fn composed_record_with_rootfs(
+    pub(crate) fn composed_record_with_rootfs(
         backend: SandboxBackendKind,
         rootfs: &std::path::Path,
     ) -> WorkloadSagaRecord {

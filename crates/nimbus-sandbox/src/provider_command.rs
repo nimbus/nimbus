@@ -20,7 +20,7 @@ const JOURNAL_DIRECTORY: &str = ".nimbus-provider-command-attempts";
 const RECORD_SUFFIX: &str = ".json";
 const STAGE_SUFFIX: &str = ".stage";
 const LOCK_SUFFIX: &str = ".lock";
-const CURRENT_ENVELOPE_VERSION: u32 = 2;
+const CURRENT_ENVELOPE_VERSION: u32 = 3;
 const MAX_IDENTITY_LEN: usize = 256;
 const MAX_CANONICAL_SUBJECT_LEN: usize = 64 * 1024;
 #[cfg(not(test))]
@@ -50,6 +50,17 @@ pub enum ProviderCommandOperation {
     InspectRestartReadiness,
     PublishRestartIngress,
     ObserveRestartPublication,
+    DrainExecution,
+    StopExecution,
+    DetachNetwork,
+    ReleaseNetwork,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderCommandOperationFamily {
+    Provision,
+    Restart,
+    Teardown,
 }
 
 impl ProviderCommandOperation {
@@ -74,22 +85,41 @@ impl ProviderCommandOperation {
             Self::InspectRestartReadiness => "inspect_restart_readiness",
             Self::PublishRestartIngress => "publish_restart_ingress",
             Self::ObserveRestartPublication => "observe_restart_publication",
+            Self::DrainExecution => "drain_execution",
+            Self::StopExecution => "stop_execution",
+            Self::DetachNetwork => "detach_network",
+            Self::ReleaseNetwork => "release_network",
         }
     }
 
     const fn is_restart(self) -> bool {
-        matches!(
-            self,
+        matches!(self.family(), ProviderCommandOperationFamily::Restart)
+    }
+
+    const fn family(self) -> ProviderCommandOperationFamily {
+        match self {
             Self::WithdrawPublication
-                | Self::ResetWorkloadForRestart
-                | Self::PrepareRestartAttempt
-                | Self::AttachRetainedNetwork
-                | Self::InspectRestartActivationPrerequisites
-                | Self::ActivateRestartedWorkload
-                | Self::InspectRestartReadiness
-                | Self::PublishRestartIngress
-                | Self::ObserveRestartPublication
-        )
+            | Self::ResetWorkloadForRestart
+            | Self::PrepareRestartAttempt
+            | Self::AttachRetainedNetwork
+            | Self::InspectRestartActivationPrerequisites
+            | Self::ActivateRestartedWorkload
+            | Self::InspectRestartReadiness
+            | Self::PublishRestartIngress
+            | Self::ObserveRestartPublication => ProviderCommandOperationFamily::Restart,
+            Self::DrainExecution
+            | Self::StopExecution
+            | Self::DetachNetwork
+            | Self::ReleaseNetwork => ProviderCommandOperationFamily::Teardown,
+            Self::ReserveNetwork
+            | Self::PrepareWorkload
+            | Self::AttachNetwork
+            | Self::InspectActivationPrerequisites
+            | Self::ActivateWorkload
+            | Self::InspectWorkloadReadiness
+            | Self::PublishIngress
+            | Self::ObserveIngress => ProviderCommandOperationFamily::Provision,
+        }
     }
 
     const fn permits_live_absence_reconciliation(self) -> bool {
@@ -159,16 +189,27 @@ impl ProviderCommandClaim {
         ] {
             validate_sha256(label, digest)?;
         }
-        if input.operation.is_restart()
-            != (input.restart_ordinal != 0 && input.source_attempt_id.is_some())
-        {
+        let attempt_domain_error = match input.operation.family() {
+            ProviderCommandOperationFamily::Provision
+                if input.source_attempt_id.is_some() || input.restart_ordinal != 0 =>
+            {
+                Some("provision commands require no source attempt and restart ordinal zero")
+            }
+            ProviderCommandOperationFamily::Restart
+                if input.source_attempt_id.is_none() || input.restart_ordinal == 0 =>
+            {
+                Some("restart commands require a source attempt and nonzero restart ordinal")
+            }
+            ProviderCommandOperationFamily::Teardown
+                if input.source_attempt_id.is_some() || input.restart_ordinal != 0 =>
+            {
+                Some("teardown commands require no source attempt and restart ordinal zero")
+            }
+            _ => None,
+        };
+        if let Some(message) = attempt_domain_error {
             return Err(ProviderCommandJournalError::InvalidClaim {
-                message: if input.operation.is_restart() {
-                    "restart commands require a source attempt and nonzero restart ordinal"
-                } else {
-                    "provision commands require no source attempt and restart ordinal zero"
-                }
-                .to_owned(),
+                message: message.to_owned(),
             });
         }
         if input.source_attempt_id.as_ref() == Some(&input.attempt_id) {
@@ -214,6 +255,22 @@ impl ProviderCommandClaim {
 
     pub const fn workload_generation(&self) -> u64 {
         self.workload_generation
+    }
+
+    pub fn desired_digest(&self) -> &str {
+        &self.desired_digest
+    }
+
+    pub fn source_digest(&self) -> &str {
+        &self.source_digest
+    }
+
+    pub fn network_plan_digest(&self) -> &str {
+        &self.network_plan_digest
+    }
+
+    pub fn provider_target_digest(&self) -> &str {
+        &self.provider_target_digest
     }
 
     pub const fn restart_ordinal(&self) -> u64 {
@@ -269,13 +326,76 @@ pub enum ProviderCommandObservationKind {
     Succeeded,
     DefiniteFailure,
     Absent,
+    RetryAuthorized,
     InProgress,
     Ambiguous,
 }
 
 impl ProviderCommandObservationKind {
-    fn is_terminal(self) -> bool {
+    fn is_final_for_epoch(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::DefiniteFailure | Self::Absent | Self::RetryAuthorized
+        )
+    }
+
+    fn resolves_effect(self) -> bool {
         matches!(self, Self::Succeeded | Self::DefiniteFailure | Self::Absent)
+    }
+
+    fn authorizes_retry(self, operation: ProviderCommandOperation) -> bool {
+        self == Self::Absent
+            || (self == Self::RetryAuthorized
+                && operation == ProviderCommandOperation::StopExecution)
+    }
+}
+
+/// Exact durable outcome that authorized one adjacent retry epoch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ProviderCommandRetryReceipt {
+    claim: ProviderCommandClaim,
+    kind: ProviderCommandObservationKind,
+    evidence_sha256: String,
+}
+
+impl ProviderCommandRetryReceipt {
+    fn from_observation(
+        observation: &ProviderCommandObservation,
+    ) -> Result<Self, ProviderCommandJournalError> {
+        if !observation
+            .kind
+            .authorizes_retry(observation.claim.operation)
+        {
+            return Err(ProviderCommandJournalError::RetryWithoutAuthority);
+        }
+        Ok(Self {
+            claim: observation.claim.clone(),
+            kind: observation.kind,
+            evidence_sha256: observation.evidence_sha256.clone().ok_or_else(|| {
+                ProviderCommandJournalError::Corrupt {
+                    message: "retry authority lacks outcome evidence".to_owned(),
+                }
+            })?,
+        })
+    }
+
+    fn validate(&self) -> Result<(), ProviderCommandJournalError> {
+        self.claim.validate()?;
+        if self.kind == ProviderCommandObservationKind::RetryAuthorized
+            && self.claim.operation != ProviderCommandOperation::StopExecution
+        {
+            return Err(ProviderCommandJournalError::Corrupt {
+                message: "provider retry authorization is valid only for execution stop".to_owned(),
+            });
+        }
+        validate_sha256("provider retry evidence", &self.evidence_sha256)?;
+        if !self.kind.authorizes_retry(self.claim.operation) {
+            return Err(ProviderCommandJournalError::Corrupt {
+                message: "provider retry lineage contains a non-authorizing outcome".to_owned(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -286,6 +406,7 @@ pub struct ProviderCommandObservation {
     claim: ProviderCommandClaim,
     kind: ProviderCommandObservationKind,
     evidence_sha256: Option<String>,
+    retry_lineage: Vec<ProviderCommandRetryReceipt>,
 }
 
 impl ProviderCommandObservation {
@@ -301,16 +422,59 @@ impl ProviderCommandObservation {
         self.evidence_sha256.as_deref()
     }
 
-    fn claimed(claim: ProviderCommandClaim) -> Self {
+    /// Whether exact journal receipts authorize provider progress at an older
+    /// epoch of this same command attempt.
+    pub fn authenticates_retry_progress(&self, progress: &ProviderCommandClaim) -> bool {
+        self.claim.same_attempt_fence(progress)
+            && self.claim.operation == progress.operation
+            && self
+                .retry_lineage
+                .iter()
+                .any(|receipt| receipt.claim == *progress)
+    }
+
+    fn claimed(
+        claim: ProviderCommandClaim,
+        retry_lineage: Vec<ProviderCommandRetryReceipt>,
+    ) -> Self {
         Self {
             claim,
             kind: ProviderCommandObservationKind::Claimed,
             evidence_sha256: None,
+            retry_lineage,
         }
     }
 
     fn validate(&self) -> Result<(), ProviderCommandJournalError> {
         self.claim.validate()?;
+        let mut prior: Option<&ProviderCommandClaim> = None;
+        for receipt in &self.retry_lineage {
+            receipt.validate()?;
+            if !receipt.claim.same_attempt_fence(&self.claim)
+                || receipt.claim.operation != self.claim.operation
+            {
+                return Err(ProviderCommandJournalError::Corrupt {
+                    message: "provider retry lineage crosses its current command attempt"
+                        .to_owned(),
+                });
+            }
+            if let Some(prior) = prior
+                && prior.dispatch_epoch.checked_add(1) != Some(receipt.claim.dispatch_epoch)
+            {
+                return Err(ProviderCommandJournalError::Corrupt {
+                    message: "provider retry lineage skips a dispatch epoch".to_owned(),
+                });
+            }
+            prior = Some(&receipt.claim);
+        }
+        if let Some(prior) = prior
+            && prior.dispatch_epoch.checked_add(1) != Some(self.claim.dispatch_epoch)
+        {
+            return Err(ProviderCommandJournalError::Corrupt {
+                message: "provider retry lineage does not end immediately before the current claim"
+                    .to_owned(),
+            });
+        }
         match (self.kind, self.evidence_sha256.as_deref()) {
             (ProviderCommandObservationKind::Claimed, None) => Ok(()),
             (ProviderCommandObservationKind::Claimed, Some(_)) => {
@@ -327,10 +491,30 @@ impl ProviderCommandObservation {
 }
 
 /// Result of claiming one provider-local dispatch epoch.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ProviderCommandClaimDecision {
-    ExecuteClaimed(ProviderCommandObservation),
+    ExecuteClaimed(ProviderCommandExecutionClaim),
     AdoptExactAttempt(ProviderCommandObservation),
+}
+
+/// Journal-authenticated authorization for one provider execution.
+///
+/// A retry carries the exact preceding absence that authorized its epoch. A
+/// provider can use this receipt to reconcile local progress that did not yet
+/// reach the claimed epoch before a crash.
+#[derive(Debug)]
+pub struct ProviderCommandExecutionClaim {
+    observation: ProviderCommandObservation,
+}
+
+impl ProviderCommandExecutionClaim {
+    pub fn observation(&self) -> &ProviderCommandObservation {
+        &self.observation
+    }
+
+    pub fn claim(&self) -> &ProviderCommandClaim {
+        self.observation.claim()
+    }
 }
 
 /// Typed fail-before or durable-store error.
@@ -360,8 +544,10 @@ pub enum ProviderCommandJournalError {
     SkippedDispatchEpoch { current: u64, candidate: u64 },
     #[error("provider command claim crosses durable authority at the same command ordinal")]
     CrossedClaim,
-    #[error("provider command retry requires exact durable absence at the preceding epoch")]
-    RetryWithoutAbsence,
+    #[error(
+        "provider command retry requires exact durable absence or stop-redelivery authority at the preceding epoch"
+    )]
+    RetryWithoutAuthority,
     #[error("a later provider command cannot replace an in-progress or ambiguous effect")]
     PriorEffectUnresolved,
     #[error("provider command journal is corrupt: {message}")]
@@ -411,10 +597,49 @@ impl ProviderCommandAttemptJournal {
         match current {
             None => {
                 Self::require_initial_restart_ordinal(claim)?;
-                self.publish_new_claim(&paths, claim.clone())
+                self.publish_new_claim(&paths, claim.clone(), None)
             }
             Some(current) => self.decide_existing(&paths, current, claim),
         }
+    }
+
+    /// Run and publish one provider effect while its exact claimed epoch remains current.
+    ///
+    /// The journal lock stays held through the callback. An inspection cannot
+    /// authorize a later epoch while an older claimant can still start its
+    /// effect.
+    pub(crate) fn execute_current_claim<T>(
+        &self,
+        execution_claim: ProviderCommandExecutionClaim,
+        execute: impl FnOnce(
+            &ProviderCommandExecutionClaim,
+        ) -> (T, ProviderCommandObservationKind, Vec<u8>),
+    ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError> {
+        execution_claim.observation.validate()?;
+        let claim = execution_claim.claim();
+        let paths = self.paths(claim);
+        if !self.journal_directory_exists(&paths.directory)? {
+            return Err(ProviderCommandJournalError::Store {
+                message: "provider execution claim has no durable journal directory".to_owned(),
+            });
+        }
+        let _guard = lock(&paths.lock)?;
+        remove_stale_stage(&paths.stage)?;
+        let current =
+            read_if_present(&paths.record)?.ok_or_else(|| ProviderCommandJournalError::Store {
+                message: "provider execution claim has no durable journal record".to_owned(),
+            })?;
+        if current != execution_claim.observation {
+            if current.claim != *claim {
+                self.reject_stale_or_crossed(&current.claim, claim)?;
+                return Err(ProviderCommandJournalError::CrossedClaim);
+            }
+            return Err(ProviderCommandJournalError::PriorEffectUnresolved);
+        }
+        debug_assert_eq!(current.kind, ProviderCommandObservationKind::Claimed);
+        let (output, kind, evidence) = execute(&execution_claim);
+        let observation = self.record_observation_locked(&paths, current, kind, &evidence)?;
+        Ok((output, observation))
     }
 
     /// Inspect only when the durable authority is the exact attempt and epoch.
@@ -446,11 +671,7 @@ impl ProviderCommandAttemptJournal {
         kind: ProviderCommandObservationKind,
         evidence: &[u8],
     ) -> Result<ProviderCommandObservation, ProviderCommandJournalError> {
-        if kind == ProviderCommandObservationKind::Claimed {
-            return Err(ProviderCommandJournalError::InvalidClaim {
-                message: "record_observation requires an outcome kind".to_owned(),
-            });
-        }
+        Self::validate_outcome_kind(claim, kind)?;
         claim.validate()?;
         let paths = self.paths(claim);
         self.establish_directory(&paths.directory)?;
@@ -464,7 +685,18 @@ impl ProviderCommandAttemptJournal {
             self.reject_stale_or_crossed(&current.claim, claim)?;
             return Err(ProviderCommandJournalError::CrossedClaim);
         }
-        if current.kind.is_terminal() {
+        self.record_observation_locked(&paths, current, kind, evidence)
+    }
+
+    fn record_observation_locked(
+        &self,
+        paths: &JournalPaths,
+        current: ProviderCommandObservation,
+        kind: ProviderCommandObservationKind,
+        evidence: &[u8],
+    ) -> Result<ProviderCommandObservation, ProviderCommandJournalError> {
+        Self::validate_outcome_kind(&current.claim, kind)?;
+        if current.kind.is_final_for_epoch() {
             let expected = evidence_sha256(evidence);
             if current.kind == kind && current.evidence_sha256.as_deref() == Some(&expected) {
                 return Ok(current);
@@ -472,12 +704,32 @@ impl ProviderCommandAttemptJournal {
             return Err(ProviderCommandJournalError::CrossedClaim);
         }
         let observation = ProviderCommandObservation {
-            claim: claim.clone(),
+            claim: current.claim.clone(),
             kind,
             evidence_sha256: Some(evidence_sha256(evidence)),
+            retry_lineage: current.retry_lineage.clone(),
         };
-        publish(&paths, &observation)?;
+        publish(paths, &observation)?;
         Ok(observation)
+    }
+
+    fn validate_outcome_kind(
+        claim: &ProviderCommandClaim,
+        kind: ProviderCommandObservationKind,
+    ) -> Result<(), ProviderCommandJournalError> {
+        if kind == ProviderCommandObservationKind::Claimed {
+            return Err(ProviderCommandJournalError::InvalidClaim {
+                message: "record_observation requires an outcome kind".to_owned(),
+            });
+        }
+        if kind == ProviderCommandObservationKind::RetryAuthorized
+            && claim.operation != ProviderCommandOperation::StopExecution
+        {
+            return Err(ProviderCommandJournalError::InvalidClaim {
+                message: "retry authorization is valid only for execution stop".to_owned(),
+            });
+        }
+        Ok(())
     }
 
     /// Replace an exact live-resource observation with provider-proven current absence.
@@ -517,6 +769,7 @@ impl ProviderCommandAttemptJournal {
             claim: claim.clone(),
             kind: ProviderCommandObservationKind::Absent,
             evidence_sha256: Some(evidence_sha256(evidence)),
+            retry_lineage: current.retry_lineage.clone(),
         };
         if current == observation {
             return Ok(current);
@@ -529,10 +782,19 @@ impl ProviderCommandAttemptJournal {
         &self,
         paths: &JournalPaths,
         claim: ProviderCommandClaim,
+        retry_authority: Option<ProviderCommandObservation>,
     ) -> Result<ProviderCommandClaimDecision, ProviderCommandJournalError> {
-        let observation = ProviderCommandObservation::claimed(claim);
+        let mut retry_lineage = retry_authority
+            .as_ref()
+            .map_or_else(Vec::new, |observation| observation.retry_lineage.clone());
+        if let Some(observation) = retry_authority.as_ref() {
+            retry_lineage.push(ProviderCommandRetryReceipt::from_observation(observation)?);
+        }
+        let observation = ProviderCommandObservation::claimed(claim, retry_lineage);
         publish(paths, &observation)?;
-        Ok(ProviderCommandClaimDecision::ExecuteClaimed(observation))
+        Ok(ProviderCommandClaimDecision::ExecuteClaimed(
+            ProviderCommandExecutionClaim { observation },
+        ))
     }
 
     fn decide_existing(
@@ -556,7 +818,7 @@ impl ProviderCommandAttemptJournal {
                 return Err(ProviderCommandJournalError::PriorEffectUnresolved);
             }
             Self::require_initial_restart_ordinal(candidate)?;
-            return self.publish_new_claim(paths, candidate.clone());
+            return self.publish_new_claim(paths, candidate.clone(), None);
         }
         if candidate.restart_ordinal < current.claim.restart_ordinal {
             return Err(ProviderCommandJournalError::StaleRestartOrdinal {
@@ -580,7 +842,7 @@ impl ProviderCommandAttemptJournal {
             if !candidate.same_workload_fence(&current.claim) {
                 return Err(ProviderCommandJournalError::CrossedClaim);
             }
-            if !current.kind.is_terminal() {
+            if !current.kind.resolves_effect() {
                 return Err(ProviderCommandJournalError::PriorEffectUnresolved);
             }
             if candidate.operation.is_restart()
@@ -588,7 +850,7 @@ impl ProviderCommandAttemptJournal {
             {
                 return Err(ProviderCommandJournalError::CrossedClaim);
             }
-            return self.publish_new_claim(paths, candidate.clone());
+            return self.publish_new_claim(paths, candidate.clone(), None);
         }
         if !candidate.same_attempt_fence(&current.claim) {
             return Err(ProviderCommandJournalError::CrossedClaim);
@@ -614,10 +876,10 @@ impl ProviderCommandAttemptJournal {
                 candidate: candidate.dispatch_epoch,
             });
         }
-        if current.kind != ProviderCommandObservationKind::Absent {
-            return Err(ProviderCommandJournalError::RetryWithoutAbsence);
+        if !current.kind.authorizes_retry(current.claim.operation) {
+            return Err(ProviderCommandJournalError::RetryWithoutAuthority);
         }
-        self.publish_new_claim(paths, candidate.clone())
+        self.publish_new_claim(paths, candidate.clone(), Some(current))
     }
 
     fn reject_stale_or_crossed(
@@ -1006,3 +1268,143 @@ struct JournalGuard {
 #[cfg(test)]
 #[path = "provider_command/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod teardown_operation_tests {
+    use super::*;
+
+    const DIGEST_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const DIGEST_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const TEARDOWN_OPERATIONS: [(ProviderCommandOperation, &str); 4] = [
+        (ProviderCommandOperation::DrainExecution, "drain_execution"),
+        (ProviderCommandOperation::StopExecution, "stop_execution"),
+        (ProviderCommandOperation::DetachNetwork, "detach_network"),
+        (ProviderCommandOperation::ReleaseNetwork, "release_network"),
+    ];
+
+    fn teardown_claim_input(operation: ProviderCommandOperation) -> ProviderCommandClaimInput {
+        ProviderCommandClaimInput {
+            authority_id: "wsg_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_owned(),
+            effect_subject: r#"{"kind":"execution","id":"wex_alpha"}"#.to_owned(),
+            source_attempt_id: None,
+            attempt_id: "wpa_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                .to_owned(),
+            dispatch_epoch: 0,
+            workload_generation: 7,
+            restart_ordinal: 0,
+            desired_digest: DIGEST_A.to_owned(),
+            source_digest: DIGEST_B.to_owned(),
+            network_plan_digest: DIGEST_A.to_owned(),
+            provider_target_digest: DIGEST_B.to_owned(),
+            operation,
+        }
+    }
+
+    #[test]
+    fn teardown_operations_have_stable_names_and_accept_only_teardown_attempt_domains() {
+        for (operation, stable_name) in TEARDOWN_OPERATIONS {
+            assert_eq!(operation.family(), ProviderCommandOperationFamily::Teardown);
+            assert!(!operation.is_restart());
+            assert_eq!(operation.as_str(), stable_name);
+            assert_eq!(
+                serde_json::to_string(&operation).expect("operation should serialize"),
+                format!(r#""{stable_name}""#)
+            );
+            assert_eq!(
+                serde_json::from_str::<ProviderCommandOperation>(&format!(r#""{stable_name}""#))
+                    .expect("stable operation name should deserialize"),
+                operation
+            );
+
+            let claim = ProviderCommandClaim::new(teardown_claim_input(operation))
+                .expect("a teardown claim without restart lineage should be valid");
+            assert_eq!(claim.operation(), operation);
+            assert_eq!(claim.source_attempt_id(), None);
+            assert_eq!(claim.restart_ordinal(), 0);
+        }
+    }
+
+    #[test]
+    fn teardown_operations_reject_all_restart_lineage_combinations() {
+        for (operation, _) in TEARDOWN_OPERATIONS {
+            for (source_attempt_id, restart_ordinal) in [
+                (Some("wpa_source".to_owned()), 0),
+                (None, 1),
+                (Some("wpa_source".to_owned()), 1),
+            ] {
+                let mut input = teardown_claim_input(operation);
+                input.source_attempt_id = source_attempt_id;
+                input.restart_ordinal = restart_ordinal;
+                assert_eq!(
+                    ProviderCommandClaim::new(input)
+                        .expect_err("teardown commands must reject restart lineage"),
+                    ProviderCommandJournalError::InvalidClaim {
+                        message:
+                            "teardown commands require no source attempt and restart ordinal zero"
+                                .to_owned(),
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn provision_and_restart_attempt_domain_messages_remain_exact() {
+        let mut invalid_provision = teardown_claim_input(ProviderCommandOperation::PrepareWorkload);
+        invalid_provision.source_attempt_id = Some("wpa_source".to_owned());
+        invalid_provision.restart_ordinal = 1;
+        assert_eq!(
+            ProviderCommandClaim::new(invalid_provision)
+                .expect_err("provision commands must reject restart lineage"),
+            ProviderCommandJournalError::InvalidClaim {
+                message: "provision commands require no source attempt and restart ordinal zero"
+                    .to_owned(),
+            }
+        );
+
+        let mut invalid_restart =
+            teardown_claim_input(ProviderCommandOperation::PrepareRestartAttempt);
+        assert_eq!(
+            ProviderCommandClaim::new(invalid_restart)
+                .expect_err("restart commands must require restart lineage"),
+            ProviderCommandJournalError::InvalidClaim {
+                message: "restart commands require a source attempt and nonzero restart ordinal"
+                    .to_owned(),
+            }
+        );
+
+        invalid_restart = teardown_claim_input(ProviderCommandOperation::PrepareRestartAttempt);
+        invalid_restart.source_attempt_id = Some("wpa_source".to_owned());
+        invalid_restart.restart_ordinal = 1;
+        ProviderCommandClaim::new(invalid_restart)
+            .expect("an exact restart attempt domain must remain valid");
+    }
+
+    #[test]
+    fn serialized_teardown_semantics_fail_closed_after_corruption() {
+        let claim = ProviderCommandClaim::new(teardown_claim_input(
+            ProviderCommandOperation::StopExecution,
+        ))
+        .expect("fixture teardown claim should be valid");
+        let mut value = serde_json::to_value(claim).expect("claim should serialize");
+        value["sourceAttemptId"] = serde_json::Value::String("wpa_source".to_owned());
+        value["restartOrdinal"] = serde_json::Value::from(1_u64);
+
+        let corrupted: ProviderCommandClaim =
+            serde_json::from_value(value).expect("the corruption is structurally valid JSON");
+        assert_eq!(
+            corrupted
+                .validate()
+                .expect_err("semantic corruption must fail validation"),
+            ProviderCommandJournalError::InvalidClaim {
+                message: "teardown commands require no source attempt and restart ordinal zero"
+                    .to_owned(),
+            }
+        );
+        assert!(
+            serde_json::from_str::<ProviderCommandOperation>(r#""destroy_network""#).is_err(),
+            "unknown teardown operations must fail closed"
+        );
+    }
+}

@@ -215,3 +215,76 @@ async fn crossed_provider_observation_fails_before_result_cas() {
         WorkloadTeardownStep::WithdrawPublication
     );
 }
+
+struct CrossedLocatorIngressCapability {
+    calls: AtomicUsize,
+    locator: nimbus_workloads::WorkloadExecutionReference,
+}
+
+impl FinalIngressWithdrawalCapability for CrossedLocatorIngressCapability {
+    fn execute<'a>(
+        &'a self,
+        command: &'a ConfirmedWorkloadTeardownCommand,
+    ) -> WorkloadTeardownCapabilityFuture<'a> {
+        Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::AcqRel);
+            let outcome = WorkloadTeardownProviderOutcome::Execute(
+                WorkloadTeardownExecuteOutcome::Succeeded(
+                    teardown_success_evidence(command.step(), command.subjects()).into(),
+                ),
+            );
+            let mut observation =
+                WorkloadTeardownProviderObservation::for_command(command, outcome);
+            observation.cross_execution_locator_for_test(self.locator.clone());
+            observation
+        })
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        command: &'a ConfirmedWorkloadTeardownCommand,
+    ) -> WorkloadTeardownCapabilityFuture<'a> {
+        self.execute(command)
+    }
+}
+
+#[tokio::test]
+async fn crossed_execution_locator_fails_before_result_cas() {
+    let record = initial("teardown-dispatch-crossed-locator");
+    let confirmed = confirmed_execute(&record).await;
+    let other = initial("teardown-dispatch-other-locator");
+    let other_confirmed = confirmed_execute(&other).await;
+    let locator = other_confirmed
+        .command()
+        .expect("other execute command")
+        .execution_locator()
+        .clone();
+    let capability = Arc::new(CrossedLocatorIngressCapability {
+        calls: AtomicUsize::new(0),
+        locator,
+    });
+    let capabilities = WorkloadTeardownCapabilityRegistry::new(
+        [],
+        [],
+        [IngressTeardownCapabilities::new(
+            NetworkProviderId::for_registration_key("fixture-ingress"),
+            capability.clone(),
+        )],
+    )
+    .expect("crossed fixture registry is valid");
+    let dispatcher = WorkloadTeardownDispatcher::new(
+        StaticSourceAuthority::exact(&record),
+        provider_reports(),
+        Arc::new(capabilities),
+    );
+
+    assert!(matches!(
+        dispatcher.dispatch_confirmed(&confirmed).await,
+        Err(WorkloadTeardownDispatchError::CrossedProviderObservation)
+    ));
+    assert_eq!(capability.calls.load(Ordering::Acquire), 1);
+    assert_eq!(
+        confirmed.confirmed_record().expect("durable claim").phase(),
+        record.phase()
+    );
+}

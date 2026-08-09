@@ -73,6 +73,7 @@ impl ContainerSandboxBackend {
         &self,
         manifest: &mut ContainerSandboxManifest,
     ) -> Result<String> {
+        manifest.require_execution_admission_open("container creator spawn")?;
         let attempt_id = Ulid::new().to_string().to_ascii_lowercase();
         self.persist_creator_intent_before_spawn(manifest, &attempt_id)?;
         if let Err(error) =
@@ -116,6 +117,17 @@ impl ContainerSandboxBackend {
             }
         };
         if let Err(error) = self.persist_pending_creator_receipt(manifest, &receipt) {
+            let quiescence = creator.cancel_before_gate_release_and_confirm_quiesced();
+            let persistence = quiescence.as_ref().ok().and_then(|()| {
+                self.persist_creator_quiescence(
+                    manifest,
+                    CreatorQuiescenceProof::launch_gate_never_released(attempt_id.clone()),
+                )
+                .err()
+            });
+            return Err(combine_launch_failure(error, quiescence.err(), persistence));
+        }
+        if let Err(error) = manifest.require_execution_admission_open("container creator release") {
             let quiescence = creator.cancel_before_gate_release_and_confirm_quiesced();
             let persistence = quiescence.as_ref().ok().and_then(|()| {
                 self.persist_creator_quiescence(

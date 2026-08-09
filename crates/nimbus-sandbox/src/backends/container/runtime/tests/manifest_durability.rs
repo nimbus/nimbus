@@ -70,6 +70,40 @@ fn manifest_schema_requires_egress_reload_generations() {
 }
 
 #[test]
+fn manifest_schema_requires_complete_execution_teardown_state() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let (_, manifest) = plan_only_manifest(temp_dir.path(), "required-execution-teardown-state");
+    let serialized = serde_json::to_value(&manifest).expect("container manifest should serialize");
+    let state = serialized
+        .get("execution_teardown")
+        .expect("new manifests must publish execution teardown state");
+    assert_eq!(state["drain"]["phase"], "open");
+    assert_eq!(state["stop"]["phase"], "not_requested");
+
+    for missing in ["execution_teardown", "drain", "stop"] {
+        let mut incomplete = serialized.clone();
+        if missing == "execution_teardown" {
+            incomplete
+                .as_object_mut()
+                .expect("container manifest should be an object")
+                .remove(missing);
+        } else {
+            incomplete
+                .get_mut("execution_teardown")
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("execution teardown state should be an object")
+                .remove(missing);
+        }
+        let error = serde_json::from_value::<ContainerSandboxManifest>(incomplete)
+            .expect_err("missing execution teardown authority must fail closed");
+        assert!(
+            error.to_string().contains(missing),
+            "the missing authority-bearing field must be explicit: {error}"
+        );
+    }
+}
+
+#[test]
 fn first_manifest_publication_syncs_complete_ancestor_chain_before_stage_creation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let state_root = temp_dir.path().join("state");

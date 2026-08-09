@@ -18,6 +18,7 @@ mod process;
 mod provider_command;
 mod provision;
 mod spec;
+mod teardown;
 pub mod volume;
 
 pub use crate::backends::oci::network::{MachinePortForwardOutcome, MachinePortForwardReceipt};
@@ -36,8 +37,8 @@ pub use inspection::{
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
 pub use provider_command::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
-    ProviderCommandClaimInput, ProviderCommandJournalError, ProviderCommandObservation,
-    ProviderCommandObservationKind, ProviderCommandOperation,
+    ProviderCommandClaimInput, ProviderCommandExecutionClaim, ProviderCommandJournalError,
+    ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
 };
 pub use provision::{
     SandboxProvisionDependencyListener, SandboxProvisionIngressRoute,
@@ -51,4 +52,8 @@ pub use spec::{
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge, SandboxResourceLimits,
     SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec,
     SandboxSpec, validate_sandbox_mounts, validate_tenant_volume_name,
+};
+pub use teardown::{
+    SandboxExecutionTeardownCommand, SandboxExecutionTeardownCommandError,
+    SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation,
 };

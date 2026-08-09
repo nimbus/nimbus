@@ -34,6 +34,7 @@ mod teardown_driver;
 mod teardown_node;
 mod teardown_registry;
 mod teardown_runtime;
+mod teardown_sandbox;
 
 pub use ingress::{ConfirmedWorkloadSagaIntent, WorkloadSagaIngressDisposition};
 pub use nimbus_workloads::{
@@ -113,6 +114,9 @@ pub use teardown_registry::{
 };
 pub use teardown_runtime::{
     WorkloadTeardownCancellationToken, WorkloadTeardownRuntime, WorkloadTeardownSubmissionError,
+};
+pub use teardown_sandbox::{
+    ContainerTeardownAdapter, ValidatedSandboxTeardownCommand, validate_sandbox_teardown_command,
 };
 /// Sole cross-domain writer of portable workload-saga transitions.
 pub struct WorkloadSagaCoordinator {

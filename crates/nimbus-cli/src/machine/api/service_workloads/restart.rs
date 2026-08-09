@@ -588,7 +588,8 @@ fn journal_observation(
         ProviderCommandObservationKind::Claimed | ProviderCommandObservationKind::InProgress => {
             MachineApiWorkloadRestartObservation::InProgress { evidence }
         }
-        ProviderCommandObservationKind::Ambiguous => {
+        ProviderCommandObservationKind::RetryAuthorized
+        | ProviderCommandObservationKind::Ambiguous => {
             MachineApiWorkloadRestartObservation::Ambiguous
         }
     }
@@ -691,7 +692,7 @@ fn journal_error(error: &ProviderCommandJournalError) -> MachineApiWorkloadResta
         | ProviderCommandJournalError::StaleDispatchEpoch { .. }
         | ProviderCommandJournalError::SkippedDispatchEpoch { .. }
         | ProviderCommandJournalError::CrossedClaim
-        | ProviderCommandJournalError::RetryWithoutAbsence
+        | ProviderCommandJournalError::RetryWithoutAuthority
         | ProviderCommandJournalError::PriorEffectUnresolved => definite_failure(error.to_string()),
         ProviderCommandJournalError::Corrupt { .. } | ProviderCommandJournalError::Store { .. } => {
             MachineApiWorkloadRestartObservation::Ambiguous

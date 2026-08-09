@@ -797,6 +797,11 @@ fn persist_claimed_runner_execution_ownership(
 fn prepared_projection(manifest: &ContainerSandboxManifest) -> ContainerSandboxManifest {
     let mut prepared = manifest.clone();
     prepared.start_mode = ContainerStartMode::PlanOnly;
+    // A final drain can race after the runner has durably won admission but
+    // before its first effect. Teardown progress is not part of the admitted
+    // execution identity; the effect boundary authenticates it separately and
+    // rejects a closed barrier immediately before the effect.
+    prepared.execution_teardown = Default::default();
     prepared
 }
 
@@ -1472,6 +1477,7 @@ pub(super) fn mark_runner_effects_started(
     _handoff: &RunnerHandoffGuard,
 ) -> Result<()> {
     require_execute_handoff_source(manifest, "container runner effect publication")?;
+    manifest.require_execution_admission_open("container runner effect publication")?;
     let prepared = prepared_projection(manifest);
     let decision_path = runner_handoff_decision_path(manifest);
     let mut record = read_runner_handoff_decision(&decision_path)?;

@@ -7,11 +7,12 @@ use std::sync::Arc;
 
 use nimbus_network::{NetworkCapabilitySelectionEvidence, NetworkPlanDigest, NetworkProviderId};
 use nimbus_workloads::{
-    NodeIdentity, WorkloadDesiredDigest, WorkloadExecutionProviderId, WorkloadGeneration,
-    WorkloadProvisionSourceDigest, WorkloadProvisionSourceEvidence, WorkloadSagaId,
-    WorkloadSagaKey, WorkloadSagaRevision, WorkloadSagaTransitionId, WorkloadTeardownAttemptId,
-    WorkloadTeardownCommandId, WorkloadTeardownCommandMode, WorkloadTeardownDispatchEpoch,
-    WorkloadTeardownProviderTarget, WorkloadTeardownStep, WorkloadTeardownSubjects,
+    NodeIdentity, WorkloadDesiredDigest, WorkloadExecutionProviderId, WorkloadExecutionReference,
+    WorkloadGeneration, WorkloadProvisionSourceDigest, WorkloadProvisionSourceEvidence,
+    WorkloadSagaId, WorkloadSagaKey, WorkloadSagaRevision, WorkloadSagaTransitionId,
+    WorkloadTeardownAttemptId, WorkloadTeardownCommandId, WorkloadTeardownCommandMode,
+    WorkloadTeardownDispatchEpoch, WorkloadTeardownProviderTarget, WorkloadTeardownStep,
+    WorkloadTeardownSubjects,
 };
 use thiserror::Error;
 
@@ -44,6 +45,7 @@ pub struct WorkloadTeardownProviderObservation {
     source_digest: WorkloadProvisionSourceDigest,
     network_plan_digest: NetworkPlanDigest,
     selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
+    execution_locator: WorkloadExecutionReference,
     attempt_id: WorkloadTeardownAttemptId,
     dispatch_epoch: WorkloadTeardownDispatchEpoch,
     provider_target: WorkloadTeardownProviderTarget,
@@ -72,6 +74,7 @@ impl WorkloadTeardownProviderObservation {
             source_digest: command.source_digest(),
             network_plan_digest: command.network_plan_digest(),
             selection_evidence: command.selection_evidence().cloned(),
+            execution_locator: command.execution_locator().clone(),
             attempt_id: command.attempt_id().clone(),
             dispatch_epoch: command.dispatch_epoch(),
             provider_target: command.provider_target().clone(),
@@ -95,6 +98,7 @@ impl WorkloadTeardownProviderObservation {
             && self.source_digest == command.source_digest()
             && self.network_plan_digest == command.network_plan_digest()
             && self.selection_evidence.as_ref() == command.selection_evidence()
+            && self.execution_locator == *command.execution_locator()
             && self.attempt_id == *command.attempt_id()
             && self.dispatch_epoch == command.dispatch_epoch()
             && self.provider_target == *command.provider_target()
@@ -113,6 +117,11 @@ impl WorkloadTeardownProviderObservation {
             .confirmed_revision
             .checked_next()
             .expect("fixture confirmed revision has room to advance");
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cross_execution_locator_for_test(&mut self, locator: WorkloadExecutionReference) {
+        self.execution_locator = locator;
     }
 }
 

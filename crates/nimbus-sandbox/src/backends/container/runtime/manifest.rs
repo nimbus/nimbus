@@ -27,6 +27,7 @@ use crate::spec::{SandboxPortBinding, SandboxSpec};
 
 use super::ContainerSandboxBackend;
 use super::config::{ContainerSandboxBackendConfig, ContainerStartMode};
+use super::teardown::state::ContainerExecutionTeardownState;
 
 mod publication;
 pub(super) use publication::reconcile_startup_manifest_publications;
@@ -355,6 +356,9 @@ pub(super) struct ContainerSandboxManifest {
     pub(super) lifecycle_coordinator: ContainerLifecycleCoordinator,
     pub(super) start_mode: ContainerStartMode,
     pub(super) shutdown_requested: bool,
+    /// Exact execution-only drain and stop progress. Network authority remains
+    /// retained until the later attachment release owner completes.
+    pub(super) execution_teardown: ContainerExecutionTeardownState,
     pub(super) status: SandboxStatus,
 }
 
@@ -494,6 +498,21 @@ impl ContainerSandboxManifest {
             message: format!(
                 "{operation} for {} crossed execution attempt {}; durable attempt is {}",
                 self.handle.id, expected, self.execution_attempt_id
+            ),
+        })
+    }
+
+    pub(super) fn require_execution_admission_open(
+        &self,
+        operation: &str,
+    ) -> crate::error::Result<()> {
+        if self.execution_teardown.admission_is_open() {
+            return Ok(());
+        }
+        Err(crate::error::SandboxError::OperationFailed {
+            message: format!(
+                "{operation} cannot admit provider work for {} after the durable execution drain barrier",
+                self.handle.id
             ),
         })
     }

@@ -317,6 +317,7 @@ enum RuntimeStateCommandOutcome {
     Observation {
         observation: RuntimeStateObservation,
         evidence: RuntimeStateCommandEvidence,
+        pid: Option<u32>,
     },
     AmbiguousCompletedFailure(SandboxError),
 }
@@ -339,6 +340,7 @@ fn runtime_state_with_evidence(
         RuntimeStateCommandOutcome::Observation {
             observation,
             evidence,
+            ..
         } => Ok((observation, evidence)),
         RuntimeStateCommandOutcome::AmbiguousCompletedFailure(error) => Err(error),
     }
@@ -352,6 +354,44 @@ pub(crate) fn runtime_state_for_creator_attempt(
 ) -> Result<RuntimeStateObservation> {
     match run_runtime_state_command(command, expected_runtime_id, Some(expected_attempt_id))? {
         RuntimeStateCommandOutcome::Observation { observation, .. } => Ok(observation),
+        RuntimeStateCommandOutcome::AmbiguousCompletedFailure(error) => Err(error),
+    }
+}
+
+/// Exact provider state used to authenticate a runtime process before signal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum RuntimeProcessProviderObservation {
+    Present { pid: u32 },
+    ExplicitlyAbsent,
+}
+
+/// Observe a runtime process only when both its runtime and creator-attempt
+/// identities match. A present response without an OCI state PID is not
+/// sufficient process identity and fails closed.
+pub(super) fn runtime_process_state_for_creator_attempt(
+    command: &CommandSpec,
+    expected_runtime_id: &str,
+    expected_attempt_id: &str,
+) -> Result<RuntimeProcessProviderObservation> {
+    match run_runtime_state_command(command, expected_runtime_id, Some(expected_attempt_id))? {
+        RuntimeStateCommandOutcome::Observation {
+            observation: RuntimeStateObservation::Present(_),
+            pid: Some(pid),
+            ..
+        } => Ok(RuntimeProcessProviderObservation::Present { pid }),
+        RuntimeStateCommandOutcome::Observation {
+            observation: RuntimeStateObservation::Present(_),
+            pid: None,
+            ..
+        } => Err(SandboxError::OperationFailed {
+            message: format!(
+                "runtime state for {expected_runtime_id:?} omitted its process identity; refusing to authorize a signal"
+            ),
+        }),
+        RuntimeStateCommandOutcome::Observation {
+            observation: RuntimeStateObservation::ExplicitlyAbsent,
+            ..
+        } => Ok(RuntimeProcessProviderObservation::ExplicitlyAbsent),
         RuntimeStateCommandOutcome::AmbiguousCompletedFailure(error) => Err(error),
     }
 }
@@ -384,6 +424,7 @@ fn run_runtime_state_command(
             return Ok(RuntimeStateCommandOutcome::Observation {
                 observation: RuntimeStateObservation::ExplicitlyAbsent,
                 evidence,
+                pid: None,
             });
         }
         return Ok(RuntimeStateCommandOutcome::AmbiguousCompletedFailure(
@@ -425,6 +466,7 @@ fn run_runtime_state_command(
     Ok(RuntimeStateCommandOutcome::Observation {
         observation: RuntimeStateObservation::Present(payload.status),
         evidence,
+        pid: payload.pid,
     })
 }
 
@@ -679,6 +721,8 @@ pub(crate) fn remove_if_exists(path: &Path) -> Result<()> {
 struct RuntimeStatePayload {
     id: Option<String>,
     status: String,
+    #[serde(default)]
+    pid: Option<u32>,
     #[serde(default)]
     annotations: BTreeMap<String, String>,
 }

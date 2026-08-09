@@ -96,15 +96,15 @@ fn is_completed_predecessor(
 }
 
 fn require_execute_restart(manifest: &ContainerSandboxManifest, operation: &str) -> Result<()> {
-    if manifest.start_mode == ContainerStartMode::Execute && !manifest.shutdown_requested {
-        return Ok(());
+    if manifest.start_mode != ContainerStartMode::Execute || manifest.shutdown_requested {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "{operation} for {} requires an active Execute-mode Container provider; mode={:?}, shutdown_requested={}",
+                manifest.handle.id, manifest.start_mode, manifest.shutdown_requested
+            ),
+        });
     }
-    Err(SandboxError::InvalidSpec {
-        message: format!(
-            "{operation} for {} requires an active Execute-mode Container provider; mode={:?}, shutdown_requested={}",
-            manifest.handle.id, manifest.start_mode, manifest.shutdown_requested
-        ),
-    })
+    manifest.require_execution_admission_open(operation)
 }
 
 fn authenticate_restart_machine_plan<'a>(

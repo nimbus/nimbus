@@ -127,6 +127,10 @@ async fn confirmed_command_binds_complete_claim_and_record_fence() {
     assert_eq!(command.source(), record.active_intent().source());
     assert_eq!(command.source_digest(), attempt.source_digest());
     assert_eq!(command.network_plan_digest(), attempt.network_plan_digest());
+    assert_eq!(
+        Some(command.execution_locator()),
+        record.phase_detail().references().execution()
+    );
     assert_eq!(command.selection_evidence(), attempt.selection_evidence());
     assert_eq!(command.attempt_id(), attempt.attempt_id());
     assert_eq!(command.dispatch_epoch(), claim.dispatch_epoch());
@@ -270,6 +274,9 @@ async fn crossed_teardown_command_result_preserves_durable_revision() {
     let mut value = result.clone();
     value.selection_evidence = None;
     crossed.push(("selection evidence", value));
+    let mut value = result.clone();
+    value.execution_locator = other_result.execution_locator.clone();
+    crossed.push(("execution locator", value));
     let mut value = result.clone();
     value.attempt_id = other_result.attempt_id.clone();
     crossed.push(("attempt", value));

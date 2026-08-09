@@ -593,14 +593,17 @@ impl ContainerSandboxBackend {
                         .to_owned(),
             });
         }
-        ensure_linux_host("container")?;
-        let Some(mut manifest) = self.read_manifest(sandbox_id)? else {
+        let Some(manifest) = self.read_manifest(sandbox_id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             });
         };
+        let (_lifecycle, mut manifest) =
+            super::runner::lock_current_execute_lifecycle_for_backend(self, &manifest)?;
         manifest
             .require_execution_attempt(expected_attempt_id, "container provision activation")?;
+        manifest.require_execution_admission_open("container provision activation")?;
+        ensure_linux_host("container")?;
         match self.inspect_provision_activation_prerequisites(sandbox_id, expected_attempt_id)? {
             crate::SandboxProvisionPhaseObservation::Succeeded { .. } => {}
             observation => {

@@ -17,6 +17,10 @@ pub(super) fn prepared_manifest_sha256(manifest: &ContainerSandboxManifest) -> R
     let mut prepared = manifest.clone();
     prepared.start_mode = ContainerStartMode::PlanOnly;
     prepared.runner_handoff_id = None;
+    // Teardown is an independent post-admission state machine. Its barrier is
+    // checked at the runner effect boundary and must not cross the immutable
+    // identity of work that was admitted before the barrier.
+    prepared.execution_teardown = Default::default();
     manifest_sha256(&prepared, "prepared container runner")
 }
 

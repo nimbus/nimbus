@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.5d complete; NNC6.5d1
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5d1 complete; NNC6.5d2
   in progress`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,
   path, and verification contract. NNC6.5a completed the strict portable
@@ -96,9 +96,21 @@ extension-registry seam before the second concern edits `extensions.rs`.
   detach evidence, release-only terminal authority, authenticated process identity,
   one provider-command journal, and direct-versus-forwarded provider realms.
   The original provider item is prospectively split into NNC6.5d1-NNC6.5d4.
-  NNC6.5d1 is now the sole active item. The four implementation units cover
-  Container execution, Krun execution, shared host-managed attachment, and
-  end-to-end forwarded-machine provider substitution. NNC6.5e-NNC6.5g retain
+  NNC6.5d1 is complete. Its one full item review accepted three executable
+  defects. Corrections add exact retry-receipt lineage for repeated
+  claim-before-manifest crashes, stop-only authenticated KILL redelivery after
+  a named deadline, and fail-closed manifest teardown fields. A related manual
+  audit closed delayed stale-claim execution. The one narrow correction review
+  found a provider-result publication gap; the provider now publishes its
+  result under the same exact-stream lock as the effect, and compute consumes
+  that durable observation without a second write. C1-C25 and all closeout
+  gates are green; review cadence is exhausted. NNC6.5d2 is the sole active
+  item and starts with the read-only Krun substitution audit. NNC8.2 owns the
+  earlier provision and restart producers that do not yet retain live claim
+  authority through their effect boundaries.
+  The four implementation units cover Container execution, Krun execution, shared
+  host-managed attachment, and end-to-end forwarded-machine provider
+  substitution. NNC6.5e-NNC6.5g retain
   native caller cutover, Compose/machine cutover, and final compensation,
   tenant-retirement, and deletion convergence. NNCV035 remains the sole
   expected-red implementation condition until NNC6.5g. NNC6.1e's R1-R15

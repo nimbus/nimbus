@@ -23,6 +23,7 @@ mod provision;
 mod restart;
 mod runner;
 mod status;
+mod teardown;
 
 use super::bundle::{
     ContainerBundleLayout, ContainerBundleMount, ContainerBundleOptions, write_bundle_config,
@@ -103,6 +104,7 @@ pub struct ContainerSandboxBackend {
     egress_proxies: EgressProxyRegistry,
     egress_pin_provider: Arc<dyn OciEgressPinProvider>,
     readiness_probe_provider: Arc<dyn ReadinessProbeProvider>,
+    teardown_runtime_provider: Arc<dyn teardown::effects::ContainerExecutionTeardownRuntime>,
     netavark_port_lifetimes: NetavarkPortLifetimeRegistry,
     machine_port_proxies: MachinePortProxyLifetimeRegistry,
     _network_process: Option<Arc<OciNetworkProcess>>,
@@ -958,6 +960,7 @@ impl ContainerSandboxBackend {
                 lifecycle_coordinator: ContainerLifecycleCoordinator::DirectBackend,
                 start_mode: self.config.start_mode,
                 shutdown_requested: false,
+                execution_teardown: Default::default(),
                 status: SandboxStatus::Starting,
             },
         };
@@ -1134,6 +1137,7 @@ impl ContainerSandboxBackend {
         clear_last_exit_code: bool,
     ) -> Result<()> {
         self.ensure_startup_reconciliation_ready()?;
+        manifest.require_execution_admission_open("container launch")?;
         manifest.network_cleanup_complete = false;
         let reservation_claim = if clear_last_exit_code {
             Some(

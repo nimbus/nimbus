@@ -510,7 +510,8 @@ fn journal_observation(
         ProviderCommandObservationKind::Claimed | ProviderCommandObservationKind::InProgress => {
             MachineApiWorkloadProvisionObservation::InProgress { evidence }
         }
-        ProviderCommandObservationKind::Ambiguous => {
+        ProviderCommandObservationKind::RetryAuthorized
+        | ProviderCommandObservationKind::Ambiguous => {
             MachineApiWorkloadProvisionObservation::Ambiguous { evidence }
         }
     }

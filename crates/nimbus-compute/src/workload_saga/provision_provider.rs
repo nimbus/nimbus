@@ -237,7 +237,8 @@ fn observation_result(
         ProviderCommandObservationKind::Absent => WorkloadProvisionInspectionResult::Absent {
             evidence: command.absence_evidence(evidence),
         },
-        ProviderCommandObservationKind::Ambiguous => ambiguous_result(command),
+        ProviderCommandObservationKind::RetryAuthorized
+        | ProviderCommandObservationKind::Ambiguous => ambiguous_result(command),
     }
 }
 
@@ -331,7 +332,7 @@ fn journal_error_result(
         | ProviderCommandJournalError::StaleDispatchEpoch { .. }
         | ProviderCommandJournalError::SkippedDispatchEpoch { .. }
         | ProviderCommandJournalError::CrossedClaim
-        | ProviderCommandJournalError::RetryWithoutAbsence
+        | ProviderCommandJournalError::RetryWithoutAuthority
         | ProviderCommandJournalError::PriorEffectUnresolved => definite_failure_result(
             command,
             "provider_claim_rejected",
