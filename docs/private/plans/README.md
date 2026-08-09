@@ -105,7 +105,13 @@ extension-registry seam before the second concern edits `extensions.rs`.
   result under the same exact-stream lock as the effect, and compute consumes
   that durable observation without a second write. C1-C25 and all closeout
   gates are green; review cadence is exhausted. NNC6.5d2 is the sole active
-  item and starts with the read-only Krun substitution audit. NNC8.2 owns the
+  item. Its three read-only audits and six expected-red source checks are
+  durable in `proof/nimbus-network-control-plane/nnc6.5d2-krun-execution-teardown.md`.
+  The audit reuses the shared conmon process identity and the existing
+  `krun-runtime` journal. It also requires that the existing provider
+  observation retain exact backend failure codes; this repairs one journal
+  instead of adding another authority. Product source is unchanged at the
+  audit checkpoint. NNC8.2 owns the
   earlier provision and restart producers that do not yet retain live claim
   authority through their effect boundaries.
   The four implementation units cover Container execution, Krun execution, shared
