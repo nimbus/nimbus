@@ -223,12 +223,19 @@ owner changes them serially. They do not define product ownership.
 - NNC6.5b owns the exact `crates/nimbus-compute/src/workload_saga/` paths
   `teardown_decision.rs`, `teardown_command.rs`, `teardown_dispatch.rs`,
   `teardown_driver.rs`, `teardown_registry.rs`, and `teardown_runtime.rs`, plus
-  each same-named test child directory. It also owns `workload_saga.rs`, the
-  compute `lib.rs`, `workload_saga/recovery.rs`, `restart_runtime.rs`, and
-  `restart_runtime/tests.rs`. It must remove raw teardown-action authority. It
-  must compose the runtime from existing saga state and store accessors. It
-  does not own `crates/nimbus-compute/src/state.rs`, the three NNC6.5a-owned
-  compute fixture files, `workload_saga/teardown_node.rs`, or
+  each same-named test child directory. It also owns
+  `workload_saga/teardown_test_support.rs`, `workload_saga.rs`, the compute
+  `lib.rs`, `workload_saga/recovery.rs`, `restart_runtime.rs`, and
+  `restart_runtime/tests.rs`. It has a narrow mechanical-test exception for
+  `workload_saga/recovery/tests.rs` to permit deletion of raw teardown actions
+  without a compatibility surface. The real process proof has a test-only
+  server exception for `workload_saga_store/tests/teardown_driver_process.rs`,
+  `workload_saga_store/tests/mod.rs`, and
+  `workload_saga_store/tests/composition.rs`. This avoids a compute-to-server
+  dependency cycle. It must remove raw teardown-action authority and compose
+  the runtime from existing saga state and store accessors. It does not own
+  `crates/nimbus-compute/src/state.rs`, the remaining NNC6.5a-owned compute
+  fixture files, `workload_saga/teardown_node.rs`, or
   `workload_saga/teardown_sandbox.rs`.
 - NNC6.5c owns `crates/nimbus-server/src/workload_ingress.rs` and its child
   directory, `listener_lease.rs`, `listener_lease/`, and the server `lib.rs`.
