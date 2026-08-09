@@ -74,15 +74,17 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.4a complete; NNC6.5
-  in progress`. NNC6.5 is now the plan-only teardown choreography substitution
-  audit. Its source-derived owner/caller/failure census prospectively splits
-  the implementation into NNC6.5a-NNC6.5g before product edits: portable
-  protocol, compute driver, ingress/node adapters, sandbox drain/stop and
-  detach/release adapters, native caller cutover, Compose/machine cutover, and final
-  compensation/tenant/deletion convergence. NNCV035 is the sole expected-red
-  implementation condition. Product source remains frozen until the audit
-  item closes. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5 complete; NNC6.5a
+  in progress`. NNC6.5 froze the source-derived teardown owner, caller, failure,
+  path, and verification contract. NNC6.5a now owns the strict portable
+  protocol, reducer, exact provision/restart handoff validators, server
+  codec/schema, and named compile-green test fixtures. It owns no provider
+  effect or caller cutover. NNC6.5b-NNC6.5g retain compute driver,
+  ingress/node adapters, sandbox drain/stop and detach/release adapters, native
+  caller cutover, Compose/machine cutover, and final compensation,
+  tenant-retirement, and deletion convergence. NNCV035 remains the sole
+  expected-red implementation condition until NNC6.5g. NNC6.1e's R1-R15
+  portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
   pure admitted-intent to exact `NetworkPlan` compiler. C1-C18 are green after
