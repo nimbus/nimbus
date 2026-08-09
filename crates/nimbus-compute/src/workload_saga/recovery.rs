@@ -1,12 +1,10 @@
 //! Pure recovery decisions derived from durable workload-saga records.
 
 use nimbus_workloads::{
-    DesiredWorkloadState, WorkloadEffectReferences, WorkloadExecutionReference, WorkloadGeneration,
-    WorkloadInspectionRequirement, WorkloadNetworkReference, WorkloadPhaseDetail,
-    WorkloadPublicationReference, WorkloadSagaError, WorkloadSagaId, WorkloadSagaIntent,
-    WorkloadSagaKey, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
-    WorkloadSagaRecoveryCursor, WorkloadSagaRevision, WorkloadSagaStoreError,
-    WorkloadTerminalEvidenceDigest,
+    DesiredWorkloadState, ProposedWorkloadTeardownTransition, WorkloadGeneration,
+    WorkloadSagaError, WorkloadSagaId, WorkloadSagaIntent, WorkloadSagaKey,
+    WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaRecoveryCursor,
+    WorkloadSagaRevision, WorkloadSagaStoreError, WorkloadTeardownDecision,
 };
 
 use super::{WorkloadProvisionDecision, WorkloadSagaCoordinator};
@@ -20,33 +18,11 @@ use super::{WorkloadProvisionDecision, WorkloadSagaCoordinator};
 pub enum WorkloadSagaAction {
     /// The one pure provision reducer owns every provision-phase decision.
     Provision(WorkloadProvisionDecision),
-    WithdrawPublication {
-        reference: WorkloadPublicationReference,
-    },
-    DrainWorkload {
-        reference: WorkloadExecutionReference,
-    },
-    StopWorkload {
-        reference: WorkloadExecutionReference,
-    },
-    DetachNetwork {
-        reference: WorkloadNetworkReference,
-    },
-    ReleaseNetwork {
-        reference: WorkloadNetworkReference,
-    },
-    RecordTerminalEvidence {
-        digest: WorkloadTerminalEvidenceDigest,
-    },
+    /// The portable workloads reducer owns all teardown decisions.
+    Teardown(WorkloadTeardownDecision),
     PromoteSuccessor {
         intent: Box<WorkloadSagaIntent>,
     },
-    InspectCleanup {
-        last_safe_phase: WorkloadSagaPhase,
-        retained_references: WorkloadEffectReferences,
-        inspections: Vec<WorkloadInspectionRequirement>,
-    },
-    AdvanceWithoutEffect,
     Quiescent,
 }
 
@@ -65,87 +41,11 @@ impl WorkloadSagaDecision {
     /// Selects an action without reading a store or invoking an effect owner.
     pub fn for_record(record: &WorkloadSagaRecord) -> Result<Self, WorkloadSagaError> {
         record.validate()?;
-        let references = record.phase_detail().references();
         let (target_phase, action) = match record.phase() {
             phase if phase.is_provision() => {
                 let decision = WorkloadProvisionDecision::plan(record)?;
                 let target_phase = decision.target_phase(record.phase());
                 (target_phase, WorkloadSagaAction::Provision(decision))
-            }
-            WorkloadSagaPhase::WithdrawalCommitted => match references.publication() {
-                Some(reference) => (
-                    WorkloadSagaPhase::Withdrawn,
-                    WorkloadSagaAction::WithdrawPublication {
-                        reference: reference.clone(),
-                    },
-                ),
-                None => (
-                    WorkloadSagaPhase::Withdrawn,
-                    WorkloadSagaAction::AdvanceWithoutEffect,
-                ),
-            },
-            WorkloadSagaPhase::Withdrawn => match references.execution() {
-                Some(reference) => (
-                    WorkloadSagaPhase::Drained,
-                    WorkloadSagaAction::DrainWorkload {
-                        reference: reference.clone(),
-                    },
-                ),
-                None => (
-                    WorkloadSagaPhase::Drained,
-                    WorkloadSagaAction::AdvanceWithoutEffect,
-                ),
-            },
-            WorkloadSagaPhase::Drained => match references.execution() {
-                Some(reference) => (
-                    WorkloadSagaPhase::WorkloadStopped,
-                    WorkloadSagaAction::StopWorkload {
-                        reference: reference.clone(),
-                    },
-                ),
-                None => (
-                    WorkloadSagaPhase::WorkloadStopped,
-                    WorkloadSagaAction::AdvanceWithoutEffect,
-                ),
-            },
-            WorkloadSagaPhase::WorkloadStopped => match references.network() {
-                Some(reference) => (
-                    WorkloadSagaPhase::NetworkDetached,
-                    WorkloadSagaAction::DetachNetwork {
-                        reference: reference.clone(),
-                    },
-                ),
-                None => (
-                    WorkloadSagaPhase::NetworkDetached,
-                    WorkloadSagaAction::AdvanceWithoutEffect,
-                ),
-            },
-            WorkloadSagaPhase::NetworkDetached => match references.network() {
-                Some(reference) => (
-                    WorkloadSagaPhase::NetworkReleased,
-                    WorkloadSagaAction::ReleaseNetwork {
-                        reference: reference.clone(),
-                    },
-                ),
-                None => (
-                    WorkloadSagaPhase::NetworkReleased,
-                    WorkloadSagaAction::AdvanceWithoutEffect,
-                ),
-            },
-            WorkloadSagaPhase::NetworkReleased => {
-                let WorkloadPhaseDetail::Teardown(detail) = record.phase_detail() else {
-                    return Err(WorkloadSagaError::InvalidEvidence(
-                        "network-released recovery requires teardown evidence",
-                    ));
-                };
-                (
-                    WorkloadSagaPhase::Recorded,
-                    WorkloadSagaAction::RecordTerminalEvidence {
-                        digest: WorkloadTerminalEvidenceDigest::for_observations(
-                            detail.terminal_observations(),
-                        )?,
-                    },
-                )
             }
             WorkloadSagaPhase::Recorded => match record.successor_intent() {
                 Some(intent) => {
@@ -162,25 +62,10 @@ impl WorkloadSagaDecision {
                 }
                 None => (WorkloadSagaPhase::Recorded, WorkloadSagaAction::Quiescent),
             },
-            WorkloadSagaPhase::CleanupPending => {
-                let WorkloadPhaseDetail::CleanupPending(detail) = record.phase_detail() else {
-                    return Err(WorkloadSagaError::InvalidEvidence(
-                        "cleanup recovery requires cleanup-pending evidence",
-                    ));
-                };
-                (
-                    WorkloadSagaPhase::CleanupPending,
-                    WorkloadSagaAction::InspectCleanup {
-                        last_safe_phase: detail.last_safe_phase(),
-                        retained_references: detail.retained_references().clone(),
-                        inspections: detail.inspections().to_vec(),
-                    },
-                )
-            }
             _ => {
-                return Err(WorkloadSagaError::InvalidTransition(
-                    "provision phase did not delegate to the provision reducer",
-                ));
+                let decision = record.decide_teardown()?;
+                let target_phase = teardown_target_phase(record, &decision);
+                (target_phase, WorkloadSagaAction::Teardown(decision))
             }
         };
 
@@ -224,6 +109,28 @@ impl WorkloadSagaDecision {
 
     pub fn action(&self) -> &WorkloadSagaAction {
         &self.action
+    }
+}
+
+fn teardown_target_phase(
+    record: &WorkloadSagaRecord,
+    decision: &WorkloadTeardownDecision,
+) -> WorkloadSagaPhase {
+    match decision {
+        WorkloadTeardownDecision::PersistCandidate(ProposedWorkloadTeardownTransition::Claim {
+            attempt,
+            ..
+        }) => attempt.target_phase(),
+        WorkloadTeardownDecision::PersistCandidate(
+            ProposedWorkloadTeardownTransition::ResourceFree { target_phase, .. },
+        ) => *target_phase,
+        WorkloadTeardownDecision::PersistCandidate(
+            ProposedWorkloadTeardownTransition::RecordTerminal,
+        ) => WorkloadSagaPhase::Recorded,
+        WorkloadTeardownDecision::InspectExact(claim) => claim.attempt().target_phase(),
+        WorkloadTeardownDecision::Quiescent
+        | WorkloadTeardownDecision::RestartSettlementPending(_)
+        | WorkloadTeardownDecision::CleanupPending { .. } => record.phase(),
     }
 }
 

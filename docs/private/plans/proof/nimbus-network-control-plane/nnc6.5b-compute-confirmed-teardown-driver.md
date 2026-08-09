@@ -1,6 +1,6 @@
 # NNC6.5b Compute-Confirmed Teardown Driver
 
-Status: `fail-before recorded; implementation pending`
+Status: `complete; item checkpoint commit pending`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -39,6 +39,7 @@ durable record
   -> nimbus-workloads decide_teardown
   -> nimbus-compute candidate builder
   -> existing coordinator confirmation
+  -> exact-key retained runtime
   -> confirmed Execute or Inspect command
   -> exact injected capability
   -> correlated provider observation
@@ -94,17 +95,22 @@ The read-only audit used item checkpoint
    crossed step/target selection fails without fallback. This preserves the
    canonical NNC4 `NetworkRoleConflict` rule instead of creating a second
    registration policy for teardown.
-7. **Provider source digests are command fences, not registry keys.** Execute
-   rechecks current source and network reports. Inspect remains available for
-   an already-issued exact target after source or report drift. This prevents
-   a durable old effect from becoming impossible to settle.
+7. **Provider source digests fence commands.** They are not registry keys. Execute
+   rechecks current source and the process-frozen provider-report snapshot
+   supplied by the sole network composition. A report change creates a new
+   manager and runtime. Reports are not mutable health state. Inspect remains
+   available for an already-issued exact target after source or composition
+   drift. This prevents a durable old effect from becoming impossible to
+   settle.
 8. **No placeholder composition.** An empty registry is a valid fail-closed
    value for tests and protocol-only composition. NNC6.5b does not install it
    in workload-capable `ComputeState`.
-9. **Retained work outlives one waiter.** Cancellation before runtime
-   submission makes zero store and capability calls. After the retained task
-   starts, cancellation detaches only that waiter. The task confirms any
-   received result before it returns or becomes recoverable.
+9. **One retained task per exact key.** The runtime is the only external
+   submission seam. It atomically joins duplicate waiters to one task per
+   tenant-qualified saga key. Cancellation before waiter registration makes
+   zero store and capability calls. After registration, cancellation detaches
+   only that waiter. The task confirms any received result before it returns
+   or becomes recoverable.
 10. **Bounded execution.** One run has a hard decision limit and dispatches at
     most one unresolved inspection before it returns `Waiting`. Provider
     ambiguity cannot create a busy loop.
@@ -114,6 +120,11 @@ The read-only audit used item checkpoint
 12. **No terminal fabrication.** NNC6.5b returns typed waiting results for
     `RestartSettlementPending` and `CleanupPending`. It does not clear either
     obligation.
+13. **Provider inspection synchronizes with effects.** `NotCompleted` means no
+    exact effect is complete or in flight. It also means that no older matching
+    operation can later commit. An external operation that can still finish
+    reports progress or ambiguity from provider-owned durable evidence. Compute
+    command fencing does not replace that adapter obligation.
 
 ## Capability Contract
 
@@ -172,14 +183,14 @@ provider and no dynamic registration after construction.
 | B7 | Execute accepts only success, definite failure, or ambiguity. Inspect accepts satisfied, not completed, definite failure, progress, or ambiguity. Compute creates retry evidence from the exact confirmed inspection. |
 | B8 | The five object-safe `Send + Sync` capabilities provide real substitution. The dispatcher invokes exactly one selected method and contains no concrete provider effect. |
 | B9 | Registry construction rejects duplicate role/provider registrations and network role conflict. Selection rejects missing ID and crossed step/target without fallback or invocation. Registry and runtime are `Send + Sync`. |
-| B10 | Execute reauthenticates exact current source and provider reports before invocation. Stale evidence makes zero calls. Inspect remains routable after source or report drift for an already-issued command. |
+| B10 | Execute reauthenticates exact current source and the current process-frozen provider-report snapshot before invocation. Stale evidence makes zero calls. A changed process composition constructs a new runtime. Inspect remains routable after source or composition drift for an already-issued command. |
 | B11 | The driver confirms every provider result before it considers the next decision. Behavioral proof records exact withdraw, drain, stop, detach, release, and terminal order. |
 | B12 | A resource-free step creates no command, capability selection, provider observation, or fabricated terminal evidence. |
-| B13 | Two contenders for one claim produce one Execute call. The loser reloads or inspects. Exact replay produces no second effect. |
+| B13 | Two same-key runtime contenders share one retained task and produce one Execute call. A blocked direct winner cannot overlap an inspection or next-epoch Execute. Exact replay produces no second effect. Direct driver construction is not an external submission seam. |
 | B14 | Claim ambiguity performs exactly one fresh read. Exact observed claim becomes inspection-only; unchanged state waits; crossed state reports conflict. |
 | B15 | Effect or result ambiguity cannot advance from memory. Recovery persists or retains exact inspection state before one provider read. |
 | B16 | `NotCompleted` authorizes the same attempt at the next epoch once. Reused, skipped, stale, or crossed evidence fails without a call. |
-| B17 | Cancellation before runtime submission makes zero store and capability calls. Cancellation after retained work starts detaches only the waiter; the retained task confirms a received result or leaves exact inspection-recoverable state. |
+| B17 | Cancellation before or during waiter registration makes zero store and capability calls. The registration receiver is created before its current value is checked, so no watch update is lost. Cancellation after retained work starts detaches only the waiter; the retained task confirms a received result or leaves exact inspection-recoverable state. |
 | B18 | One bounded run cannot spin on progress, ambiguity, conflicts, or inspection. The exact decision limit returns a typed error or waiting disposition. |
 | B19 | `RestartSettlementPending` makes zero teardown-capability calls and remains durable for NNC6.5g. `CleanupPending` makes zero new calls and remains durable for NNC8.3. |
 | B20 | A real distinct-process ten-cut matrix uses the server-owned Engine store: crash after each of five claim commits and after each external effect before its result CAS. Two parent tests each run five parameterized child-process cuts. Recovery uses the same attempt, returns Inspect first, and never duplicates the recorded effect. |
@@ -230,14 +241,16 @@ provider and no dynamic registration after construction.
 27. `teardown_driver_records_exact_five_step_order`
 28. `resource_free_teardown_makes_zero_capability_calls`
 29. `cancellation_before_runtime_submission_makes_zero_calls`
-30. `cancellation_after_claim_detaches_only_waiter`
-31. `in_progress_and_ambiguous_inspection_return_bounded_waiting`
-32. `restart_settlement_and_cleanup_pending_make_zero_teardown_calls`
+30. `cancellation_during_waiter_registration_prevents_submission`
+31. `cancellation_after_claim_detaches_only_waiter`
+32. `blocked_direct_winner_prevents_not_completed_retry_overlap`
+33. `in_progress_and_ambiguous_inspection_return_bounded_waiting`
+34. `restart_settlement_and_cleanup_pending_make_zero_teardown_calls`
 
 ### Real-process recovery
 
-33. `teardown_driver_process_crash_after_each_claim_inspects_before_retry`
-34. `teardown_driver_process_crash_after_each_effect_never_reexecutes`
+35. `teardown_driver_process_crash_after_each_claim_inspects_before_retry`
+36. `teardown_driver_process_crash_after_each_effect_never_reexecutes`
 
 Each real-process parent test runs five named step cases. Together they cover
 all ten crash cuts required by B20 without treating each parameter as a new
@@ -298,6 +311,16 @@ These are test-only source assertions. Implementation must replace them with
 observable contract tests. It must not make them pass with token-only product
 markers.
 
+### Review-Correction Fail-Before
+
+After the full review, we added the blocked-winner and
+cancellation-registration tests before the runtime correction. The exact command
+exited 101. Compilation failed with E0599 for both missing correction seams:
+`install_test_retained_join_boundary` and
+`install_test_registration_boundary`. The accepted correction then made these
+exact tests pass `1/1` each. This proves that the regression tests did not pass
+against the reviewed runtime.
+
 ## Owned Paths
 
 Product and compute tests:
@@ -328,6 +351,9 @@ Narrow server test-only handoff:
 - `crates/nimbus-server/src/workload_saga_store/tests/teardown_driver_process.rs`
 - `crates/nimbus-server/src/workload_saga_store/tests/mod.rs`
 - `crates/nimbus-server/src/workload_saga_store/tests/composition.rs`
+- `crates/nimbus-server/src/workload_saga_store/tests/recovery.rs` for the four
+  mechanically stale raw-action expectations exposed by the portable reducer
+  cutover.
 
 Verifier and control-plane evidence:
 
@@ -335,6 +361,11 @@ Verifier and control-plane evidence:
 - `scripts/nimbus-network-control-plane/workload-teardown-contract-fixture.mjs`
 - `scripts/nimbus-network-control-plane/workload-teardown-contract.sh` only if
   the exact partial-red arithmetic needs a mechanical update.
+- `scripts/nimbus-network-control-plane/workload-saga-authority-contract.sh`
+  and `scripts/verify-nimbus-network-control-plane.sh` for NNCV027's mechanical
+  migration from raw compute actions to the compute-to-workloads reducer seam.
+- `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json`
+  for the exact `#[cfg(test)]` ownership edge of `teardown_test_support.rs`.
 - this proof, the canonical plan, and the plan index.
 
 ## Forbidden Paths And Effects
@@ -378,6 +409,102 @@ target is `0 passed, 8 failed`, with only `service`, `definition-delete`,
 `compose`, `machine`, `ingress`, `tenant`, `compensation`, and `behavior`
 remaining. The aggregate must remain `35/36` with only NNCV035 red.
 
+## Candidate Evidence
+
+The candidate uses six compute-owned concepts. Their handwritten production
+files contain 29, 627, 147, 203, 467, and 267 lines. Each file is below the
+1,500-line threshold. The server process proof contains 919 test-only lines.
+
+| Proof | Candidate result |
+| --- | --- |
+| Portable reducer | `nimbus-workloads` library: 216 passed, 0 failed, 0 ignored. |
+| Compute behavior | `nimbus-compute` library: 340 passed, 0 failed, 1 child-only test ignored. |
+| Durable server slice | `workload_saga_store`: 59 passed, 0 failed, 7 child-only tests ignored. |
+| Frozen item roster | All 36 named tests are present. No roster item is missing. |
+| Process recovery | Two parent tests pass all five claim cuts and all five effect cuts with distinct processes and the real Engine store. |
+| Teardown contract | Self-test: 55 passed, 0 failed. Direct result: 0 passed, 8 later-owner failures. |
+| Aggregate verifier | 35 passed, 1 failed. NNCV035 is the only failed condition. |
+| Neighbor verifier corrections | NNCV015 passes seven exclusive mutations. NNCV027 passes ten exclusive mutations. |
+| Dependency and effect checks | No manifest changed. `nimbus-network` has only the `nimbus-core` workspace edge. The six compute modules contain no forbidden provider effect. |
+| Quality | Format, strict affected Clippy, warning-denied affected Rustdoc, and proof lint with zero diagnostics exit 0. Docs pass 108 pages, and the site passes 17/17. |
+
+Four old server phase-matrix expectations changed during acceptance
+convergence. Three provisioning-cleanup records have no teardown disposition,
+so the portable reducer returns `Quiescent`. A `Ready` record has no published
+endpoint, so withdrawal advances without an ingress effect. The updated
+30-case process digest is
+`655913e4b1e2195dc3ef486e8d00207f3c323930d40203ec17ea18a77bd323a0`.
+These changes remove fabricated effect authority. They do not change a product
+caller.
+
+NNCV015 initially classified the directly `#[cfg(test)]` teardown fixture as
+production. The bind inventory now records the exact module-owner edge. Its
+seven mutations still reject missing census, duplicate construction, a
+different root, a wrong realm, guest-minted parent identity, false evidence,
+and an unapproved direct seam. NNCV027 initially required the eight raw compute
+actions that this item deletes. It now checks the compute `Teardown` delegation,
+the workloads-owned five-step reducer, and exact cleanup evidence. Its ten
+exclusive mutations pass.
+
+## Structured Review And Disposition
+
+The one full item review ran against staged tree
+`7bd2a42f7d3539294667b29a385d48c8cf643f5b`. The complete patch SHA-256 was
+`c69d09b237dd70bce0127ba91db145221080520842512d36d974ea2f56c26bfc`.
+The executable and script patch SHA-256 was
+`8539cb6a1aea238d5adb9109bdb498c48999b13167a333eeb82100e113079d8a`.
+The actual reviewer was GPT-5.6 Sol with xhigh reasoning and fast mode. It
+reported three findings. It classified the patch as incorrect with 0.96
+confidence.
+
+| Finding | Disposition | Evidence and correction |
+| --- | --- | --- |
+| P1: a contender can inspect `NotCompleted` while the direct Execute winner remains live, then issue the next epoch. | `accepted` | The runtime previously spawned a driver for every waiter even though B13 and B21 called it retained. A deterministic blocked-winner fail-before exposed the overlap. The runtime now retains one task and shared completion per exact key; duplicate waiters join it. Driver and dispatcher are no longer external submission seams, and the real-process proof uses the runtime. The capability contract also requires provider inspection to synchronize with its exact in-flight and durable effect evidence. A cross-process compute lease is not part of B1-B24: B20 kills and reaps the writer before recovery, while distributed execution ownership remains a future cluster concern. |
+| P2: provider freshness uses a construction-time snapshot. | `rejected as executable; accepted as wording` | `NetworkCapabilityRegistry` is process-local immutable composition evidence. `LocalNetworkManagerBootstrap::freeze` installs it once and exposes no mutation or replacement API. Provision and restart use the same lifetime model. A report change constructs a new manager and runtime; it is not live health state. B10 and decision 7 now say “current process-frozen provider-report snapshot.” Later product composition must derive the runtime snapshot from the sole active `LocalNetworkManager`; a teardown-only mutable report authority would violate the frozen composition contract and would not atomically fence provider retirement. |
+| P2: cancellation between the first check and `watch::subscribe` is lost. | `accepted` | Tokio receivers treat the version current at subscription as seen. A deterministic registration-boundary fail-before exposed the gap. The runtime now subscribes first, checks that same receiver, and uses it for the wait. Cancellation during registration returns `Cancelled` with zero store and capability calls. |
+
+The two accepted executable findings required one narrow correction review
+after the affected tests and gates passed. The rejected executable change and
+the wording correction did not authorize another full review.
+
+The correction candidate used staged tree
+`d88cbc08974e8a028ee60b9c0bcfc6785d02ded0`. Its complete patch SHA-256 was
+`4db62fc5513de1daea0c1143c400d0be45a129daa6b79fc7a01762f03b85c1f8`.
+Its executable and script patch SHA-256 was
+`0e1a4af0bc6b6ec89b551ee4a6ccb90651701bb3fdc891649e03a84ed7973720`.
+The one authorized narrow GPT-5.6 Sol/xhigh/fast review reported zero findings.
+It classified the correction as correct with 0.98 confidence. The item review
+cadence requires no further NNC6.5b review.
+
+## B1-B24 Disposition
+
+| ID | Status | Candidate proof |
+| --- | --- | --- |
+| B1 | `green` | Recovery calls `record.decide_teardown()` and exposes one typed `Teardown` action. The behavioral delegation and raw-action absence tests pass. |
+| B2 | `green` | All six named modules exist and remain below 1,500 lines. |
+| B3 | `green` | Candidate materialization is equal to the workloads reducer in the exhaustive behavioral test. No compute phase table exists. |
+| B4 | `green` | The confirmed-command test checks every claim, record, source, plan, provider, and mode fence. The constructor remains private. |
+| B5 | `green` | Direct-winner, replay, confirmed-ambiguity, conflict, and unresolved-ambiguity tests prove the Execute and Inspect rules. |
+| B6 | `green` | The crossed-result test changes all 18 result fences one at a time. Each change fails and preserves the durable revision. |
+| B7 | `green` | Execute and Inspect use closed outcome enums. Mode-crossing and exact retry-evidence tests pass. |
+| B8 | `green` | Five object-safe capabilities route through behavioral substitutes. Dispatch contains no provider effect. |
+| B9 | `green` | Duplicate role, network role conflict, missing ID, crossed target, and `Send + Sync` checks pass. |
+| B10 | `green` | Execute rejects stale source or process-frozen provider evidence before a call. A new composition constructs a new runtime, and Inspect remains routable after drift. |
+| B11 | `green` | The driver persists each result before the next call and records exact withdraw, drain, stop, detach, release order. |
+| B12 | `green` | Resource-free teardown creates no command, capability call, observation, or terminal evidence. |
+| B13 | `green` | Duplicate same-key waiters join one retained task. A deterministic blocked direct winner has one Execute, zero concurrent Inspect calls, and no next epoch before release. |
+| B14 | `green` | Claim ambiguity performs one fresh read and classifies exact, unchanged, and crossed durable truth. |
+| B15 | `green` | Effect and result ambiguity persist or retain InspectionRequired before one read-only provider call. |
+| B16 | `green` | NotCompleted authorizes the same attempt at the next epoch once. Reused and crossed retry evidence is rejected. |
+| B17 | `green` | Pre-submit and registration-race cancellation make zero calls. Post-claim cancellation detaches one waiter and retains durable work. |
+| B18 | `green` | Progress and ambiguity return Waiting. A repeated-conflict store reaches the exact 64-decision limit after 65 loads, 64 CAS calls, and zero provider calls. |
+| B19 | `green` | Real restart-settlement and cleanup-pending records make zero teardown calls and remain byte-for-byte durable. |
+| B20 | `green` | The two real-process parents pass ten cuts. Recovery inspects first, retains the attempt, advances the epoch only after NotCompleted, and records five effects once. |
+| B21 | `green` | The explicit runtime owns one in-flight map and shared completion per exact key. Driver and dispatcher are not external submission seams. `ComputeState` and tenant enumeration are unchanged. |
+| B22 | `green` | Affected suites and static scans pass. No manifest, provider, caller, or `nimbus-network` source changed. |
+| B23 | `green` | NNCV035 self-test is 55/55, direct is exact 0/8, and aggregate is exact 35/36 with NNCV035 alone red. |
+| B24 | `green` | The full Sol/xhigh/fast review was dispositioned. All affected quality/docs gates passed after correction. The one authorized narrow Sol/xhigh/fast review reported zero findings and classified the patch as correct at 0.98. |
+
 ## Review Cadence
 
 Do not run structured review during fail-before, implementation, cleanup, or
@@ -395,7 +522,7 @@ review. No review runs for docs-only closeout or ledger wording.
 | Exact owned/forbidden paths | `green` | Frozen above. Server additions are test-only and avoid a dependency cycle. |
 | Acceptance-freeze gates | `green` | NNCV035 is current exact `0/11`; self-test is `55/55`; aggregate is `35/36` with only NNCV035 red; NNCV008 and NNCV009 pass. Technical-writing lint has zero diagnostics. Docs pass `108`, and the site passes `17/17`. |
 | Fail-before | `green` | The exact absence/presence census and seven named `0/1` failures are recorded above at checkpoint `76626d33541a126d32fb9aa694429f4a93b44292`. |
-| Implementation | `red` | No NNC6.5b product source has changed. |
-| Final behavior and process proof | `red` | Roster and ten-cut matrix remain. |
-| Static, quality, docs, and review | `red` | Candidate does not exist. |
-| Item commit | `red` | One reviewed evidence-backed NNC6.5b commit remains. |
+| Implementation | `green` | The six compute concepts implement portable decision delegation, confirmed commands, exact capability selection, dispatch, bounded driving, and retained exact-key execution. No provider or caller is composed. |
+| Final behavior and process proof | `green` | The 36-test roster, workloads 216, compute 340 plus one ignore, server slice 59 plus seven ignores, and ten distinct-process cuts pass. |
+| Static, quality, docs, and review | `green` | NNCV035 is 55/55 and exact 0/8. The aggregate is 35/36 with only NNCV035 red. NNCV015 is 7/7, NNCV027 is 10/10, format and diff checks pass, strict Clippy passes, warning-denied Rustdoc passes, proof lint has zero diagnostics, docs pass 108 pages, site checks pass 17/17, and the narrow review is clean at 0.98. |
+| Item commit | `ready` | Commit the exact reviewed tree with this proof and recovery checkpoint. The containing commit is the durable NNC6.5b item checkpoint. |

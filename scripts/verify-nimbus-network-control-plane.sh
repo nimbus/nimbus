@@ -860,6 +860,7 @@ run_nnc61e_recovery_decision_self_tests() {
     cp crates/nimbus-workloads/src/store.rs "${fixture}/store.rs"
     cp crates/nimbus-compute/src/workload_saga.rs "${fixture}/compute-root.rs"
     cp crates/nimbus-compute/src/workload_saga/recovery.rs "${fixture}/compute.rs"
+    cp crates/nimbus-workloads/src/saga/state/teardown.rs "${fixture}/teardown.rs"
     cp crates/nimbus-server/src/workload_saga_store/tenant_enumeration.rs \
       "${fixture}/tenant-adapter.rs"
     cp crates/nimbus-server/src/workload_saga_store/tests/composition.rs \
@@ -906,15 +907,15 @@ switch (mutation) {
   case "missing-action-row":
     replaceOne(
       "compute.rs",
-      "WorkloadSagaAction::Provision(decision)",
-      "WorkloadSagaAction::OmittedProvision(decision)",
+      "WorkloadSagaAction::Teardown(decision)",
+      "WorkloadSagaAction::OmittedTeardown(decision)",
     );
     break;
   case "missing-cleanup-retention":
     replaceOne(
-      "compute.rs",
-      "retained_references: detail.retained_references().clone()",
-      "retained_references: WorkloadEffectReferences::default()",
+      "teardown.rs",
+      "WorkloadTeardownDecision::CleanupPending {",
+      "WorkloadTeardownDecision::MissingCleanupPending {",
     );
     break;
   case "missing-successor-promotion":
@@ -940,10 +941,12 @@ NODE
     fi
 
     output="${temporary}/nnc61e-${mutation}.out"
-    if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    if NIMBUS_NETWORK_NNC65_AGGREGATE_SELF_TEST_BASELINE=1 \
+      NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
       NIMBUS_NETWORK_VERIFY_RECOVERY_STORE_SOURCE="${fixture}/store.rs" \
       NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_ROOT_SOURCE="${fixture}/compute-root.rs" \
       NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_SOURCE="${fixture}/compute.rs" \
+      NIMBUS_NETWORK_VERIFY_RECOVERY_TEARDOWN_SOURCE="${fixture}/teardown.rs" \
       NIMBUS_NETWORK_VERIFY_RECOVERY_TENANT_ADAPTER_SOURCE="${fixture}/tenant-adapter.rs" \
       NIMBUS_NETWORK_VERIFY_RECOVERY_PROCESS_SOURCE="${fixture}/process.rs" \
       NIMBUS_NETWORK_VERIFY_RECOVERY_MATRIX_SOURCE="${fixture}/matrix.rs" \

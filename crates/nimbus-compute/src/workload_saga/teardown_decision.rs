@@ -1,30 +1,29 @@
 //! Compute projection of the portable workload teardown reducer.
 
-#[cfg(test)]
-mod tests {
-    use super::super::teardown_test_support::production_source;
+use nimbus_workloads::{
+    ProposedWorkloadTeardownTransition, WorkloadSagaRecord, WorkloadSagaStoreError,
+};
 
-    const RECOVERY_SOURCE: &str = include_str!("recovery.rs");
-
-    #[test]
-    fn teardown_recovery_delegates_to_workloads_reducer() {
-        let source = production_source(RECOVERY_SOURCE);
-        assert!(source.contains("decide_teardown"));
-        assert!(source.contains("WorkloadSagaAction::Teardown"));
-        for raw_action in [
-            "WithdrawPublication",
-            "DrainWorkload",
-            "StopWorkload",
-            "DetachNetwork",
-            "ReleaseNetwork",
-            "RecordTerminalEvidence",
-            "InspectCleanup",
-            "AdvanceWithoutEffect",
-        ] {
-            assert!(
-                !source.contains(raw_action),
-                "recovery retains raw teardown authority `{raw_action}`"
-            );
+/// Materialize one workloads-owned teardown proposal without reconstructing
+/// its phase or effect rules in compute.
+pub(super) fn materialize_teardown_candidate(
+    record: &WorkloadSagaRecord,
+    proposed: &ProposedWorkloadTeardownTransition,
+) -> Result<WorkloadSagaRecord, WorkloadSagaStoreError> {
+    match proposed {
+        ProposedWorkloadTeardownTransition::Claim {
+            attempt,
+            provider_target,
+        } => Ok(record.claim_teardown((**attempt).clone(), provider_target.clone())?),
+        ProposedWorkloadTeardownTransition::ResourceFree { step, .. } => {
+            Ok(record.record_resource_free_teardown_step(*step)?)
+        }
+        ProposedWorkloadTeardownTransition::RecordTerminal => {
+            Ok(record.record_terminal_teardown()?)
         }
     }
 }
+
+#[cfg(test)]
+#[path = "teardown_decision/tests.rs"]
+mod tests;

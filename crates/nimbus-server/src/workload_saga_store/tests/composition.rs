@@ -12,7 +12,8 @@ use nimbus_testing::{
     ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
 };
 use nimbus_workloads::{
-    DesiredWorkloadState, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaStore,
+    DesiredWorkloadState, ProposedWorkloadTeardownTransition, WorkloadSagaCommit,
+    WorkloadSagaExpected, WorkloadSagaStore, WorkloadTeardownDecision, WorkloadTeardownStep,
 };
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -44,7 +45,7 @@ const RECOVERY_MATRIX_WRITE_MODE: &str = "write";
 const RECOVERY_MATRIX_READ_MODE: &str = "recover";
 const RECOVERY_MATRIX_BOUNDARY: &str = "workload-saga.phase-matrix-durable";
 const RECOVERY_MATRIX_OBSERVATION: &str =
-    "matrix-30-0360cdac77ad542515ad29c6580935e2a4c2a116fcd428cb1e3b8dc48f9e3143";
+    "matrix-30-655913e4b1e2195dc3ef486e8d00207f3c323930d40203ec17ea18a77bd323a0";
 const RECOVERY_MATRIX_TIMEOUT: Duration = Duration::from_secs(20);
 const RECOVERY_MATRIX_PID_PREFIX: &str = "NIMBUS_NNC61E_PROCESS_ID";
 
@@ -381,15 +382,13 @@ async fn recover_process_matrix(root: &Path) -> Result<String, String> {
                 decision.target_phase()
             ));
         }
-        if let WorkloadSagaAction::InspectCleanup {
-            retained_references,
-            inspections,
-            ..
-        } = decision.action()
-            && (retained_references.is_empty() || inspections.len() != retained_references.len())
+        if matches!(
+            decision.action(),
+            WorkloadSagaAction::Teardown(WorkloadTeardownDecision::CleanupPending { .. })
+        ) && record.teardown_disposition().is_none()
         {
             return Err(format!(
-                "cleanup decision failed to retain every reference for {}",
+                "cleanup decision failed to retain durable teardown state for {}",
                 expectation.label
             ));
         }
@@ -458,21 +457,51 @@ fn recovery_action_label(action: &WorkloadSagaAction) -> &'static str {
             nimbus_compute::workload_saga::WorkloadProvisionDecision::DefiniteFailure
             | nimbus_compute::workload_saga::WorkloadProvisionDecision::Wait => "quiescent",
         },
-        WorkloadSagaAction::WithdrawPublication { .. } => "withdraw-publication",
-        WorkloadSagaAction::DrainWorkload { .. } => "drain-workload",
-        WorkloadSagaAction::StopWorkload { .. } => "stop-workload",
-        WorkloadSagaAction::DetachNetwork { .. } => "detach-network",
-        WorkloadSagaAction::ReleaseNetwork { .. } => "release-network",
-        WorkloadSagaAction::RecordTerminalEvidence { .. } => "record-terminal-evidence",
+        WorkloadSagaAction::Teardown(decision) => teardown_action_label(decision),
         WorkloadSagaAction::PromoteSuccessor { intent }
             if intent.desired_state() == DesiredWorkloadState::Running =>
         {
             "promote-successor-running"
         }
         WorkloadSagaAction::PromoteSuccessor { .. } => "promote-successor-stopped",
-        WorkloadSagaAction::InspectCleanup { .. } => "inspect-cleanup",
-        WorkloadSagaAction::AdvanceWithoutEffect => "advance-without-effect",
         WorkloadSagaAction::Quiescent => "quiescent",
+    }
+}
+
+fn teardown_action_label(decision: &WorkloadTeardownDecision) -> &'static str {
+    let step = match decision {
+        WorkloadTeardownDecision::PersistCandidate(ProposedWorkloadTeardownTransition::Claim {
+            attempt,
+            ..
+        }) => Some(attempt.step()),
+        WorkloadTeardownDecision::InspectExact(claim) => Some(claim.attempt().step()),
+        _ => None,
+    };
+    if let Some(step) = step {
+        return match step {
+            WorkloadTeardownStep::WithdrawPublication => "withdraw-publication",
+            WorkloadTeardownStep::DrainExecution => "drain-workload",
+            WorkloadTeardownStep::StopExecution => "stop-workload",
+            WorkloadTeardownStep::DetachNetwork => "detach-network",
+            WorkloadTeardownStep::ReleaseNetwork => "release-network",
+        };
+    }
+    match decision {
+        WorkloadTeardownDecision::PersistCandidate(ProposedWorkloadTeardownTransition::Claim {
+            ..
+        })
+        | WorkloadTeardownDecision::InspectExact(_) => {
+            unreachable!("effectful teardown decisions always have a step")
+        }
+        WorkloadTeardownDecision::PersistCandidate(
+            ProposedWorkloadTeardownTransition::ResourceFree { .. },
+        ) => "advance-without-effect",
+        WorkloadTeardownDecision::PersistCandidate(
+            ProposedWorkloadTeardownTransition::RecordTerminal,
+        ) => "record-terminal-evidence",
+        WorkloadTeardownDecision::CleanupPending { .. } => "inspect-cleanup",
+        WorkloadTeardownDecision::RestartSettlementPending(_) => "restart-settlement-pending",
+        WorkloadTeardownDecision::Quiescent => "quiescent",
     }
 }
 

@@ -65,16 +65,16 @@ const ALLOWED_PATHS = new Set([
 const AUDIT_START_CHECKPOINT = "26a02363c96af5204061c6a0d2c6f9311ffc9b49";
 
 const REQUIRED_ORDER = [
-  "settle_issued_restart_before_teardown",
-  "retain_late_restart_result",
-  "enter_withdrawal_committed_after_restart_settlement",
-  "persist_withdrawal_committed",
-  "withdraw_exact_publication",
-  "drain_exact_execution",
-  "stop_exact_execution",
-  "detach_exact_network",
-  "release_exact_network",
-  "record_terminal_evidence",
+  "WorkloadSagaPhase::WithdrawalCommitted",
+  "WorkloadTeardownStep::WithdrawPublication",
+  "WorkloadSagaPhase::Withdrawn",
+  "WorkloadTeardownStep::DrainExecution",
+  "WorkloadSagaPhase::Drained",
+  "WorkloadTeardownStep::StopExecution",
+  "WorkloadSagaPhase::WorkloadStopped",
+  "WorkloadTeardownStep::DetachNetwork",
+  "WorkloadSagaPhase::NetworkDetached",
+  "WorkloadTeardownStep::ReleaseNetwork",
 ];
 
 function joinSources(sources) {
@@ -304,15 +304,19 @@ function applyFixtureMutation(sources, mutation) {
     "missing-claim": ["workloads", "pub struct WorkloadTeardownClaim;", ""],
     "missing-reducer": [
       "compute",
-      "fn compare_and_swap_teardown_claim()",
-      "fn omitted_teardown_claim()",
+      "fn materialize_teardown_candidate()",
+      "fn omitted_teardown_candidate()",
     ],
     "missing-revision-fence": [
       "compute",
-      "    require_exact_revision();\n",
+      "    confirm_transition();\n",
       "",
     ],
-    "missing-commit-loaded": ["compute", "    commit_loaded();\n", ""],
+    "missing-commit-loaded": [
+      "compute",
+      "    confirm_teardown_transition();\n",
+      "",
+    ],
     "missing-command": [
       "compute",
       "struct ConfirmedWorkloadTeardownCommand",
@@ -320,43 +324,43 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "missing-command-transition": [
       "compute",
-      "    transition_id: WorkloadSagaTransitionId,\n",
+      "    confirmed_transition_id: WorkloadSagaTransitionId,\n",
       "",
     ],
     "missing-command-attempt": [
       "compute",
-      "    attempt_id: WorkloadTeardownAttemptId,\n",
+      "    fn attempt_id() -> WorkloadTeardownAttemptId {}\n",
       "",
     ],
     "missing-command-epoch": [
       "compute",
-      "    dispatch_epoch: WorkloadTeardownDispatchEpoch,\n",
+      "    fn dispatch_epoch() -> WorkloadTeardownDispatchEpoch {}\n",
       "",
     ],
     "forgeable-command": [
       "compute",
-      "    fn from_confirmed_cas_winner()",
-      "    pub fn from_confirmed_cas_winner()",
+      "    fn from_confirmation()",
+      "    pub fn from_confirmation()",
     ],
     "stop-before-withdraw": [
-      "compute",
-      "    withdraw_exact_publication();\n    drain_exact_execution();\n    stop_exact_execution();",
-      "    stop_exact_execution();\n    withdraw_exact_publication();\n    drain_exact_execution();",
+      "workloads",
+      "    WorkloadSagaPhase::WithdrawalCommitted; WorkloadTeardownStep::WithdrawPublication;\n    WorkloadSagaPhase::Withdrawn; WorkloadTeardownStep::DrainExecution;\n    WorkloadSagaPhase::Drained; WorkloadTeardownStep::StopExecution;",
+      "    WorkloadSagaPhase::Drained; WorkloadTeardownStep::StopExecution;\n    WorkloadSagaPhase::WithdrawalCommitted; WorkloadTeardownStep::WithdrawPublication;\n    WorkloadSagaPhase::Withdrawn; WorkloadTeardownStep::DrainExecution;",
     ],
     "detach-before-stop": [
-      "compute",
-      "    stop_exact_execution();\n    detach_exact_network();",
-      "    detach_exact_network();\n    stop_exact_execution();",
+      "workloads",
+      "    WorkloadSagaPhase::Drained; WorkloadTeardownStep::StopExecution;\n    WorkloadSagaPhase::WorkloadStopped; WorkloadTeardownStep::DetachNetwork;",
+      "    WorkloadSagaPhase::WorkloadStopped; WorkloadTeardownStep::DetachNetwork;\n    WorkloadSagaPhase::Drained; WorkloadTeardownStep::StopExecution;",
     ],
     "release-before-detach": [
-      "compute",
-      "    detach_exact_network();\n    release_exact_network();",
-      "    release_exact_network();\n    detach_exact_network();",
+      "workloads",
+      "    WorkloadSagaPhase::WorkloadStopped; WorkloadTeardownStep::DetachNetwork;\n    WorkloadSagaPhase::NetworkDetached; WorkloadTeardownStep::ReleaseNetwork;",
+      "    WorkloadSagaPhase::NetworkDetached; WorkloadTeardownStep::ReleaseNetwork;\n    WorkloadSagaPhase::WorkloadStopped; WorkloadTeardownStep::DetachNetwork;",
     ],
     "record-before-release": [
-      "compute",
-      "    release_exact_network();\n    record_terminal_evidence();",
-      "    record_terminal_evidence();\n    release_exact_network();",
+      "workloads",
+      "WorkloadSagaPhase::NetworkReleased; ProposedWorkloadTeardownTransition::RecordTerminal;",
+      "WorkloadSagaPhase::NetworkReleased; ProposedWorkloadTeardownTransition::PrematureTerminal;",
     ],
     "missing-service-submit": [
       "compute",
@@ -481,9 +485,9 @@ function applyFixtureMutation(sources, mutation) {
       "",
     ],
     "missing-restart-handoff": [
-      "compute",
-      "    settle_issued_restart_before_teardown();\n    retain_late_restart_result();\n    enter_withdrawal_committed_after_restart_settlement();\n    persist_withdrawal_committed();",
-      "    persist_withdrawal_committed();\n    settle_issued_restart_before_teardown();\n    retain_late_restart_result();\n    enter_withdrawal_committed_after_restart_settlement();",
+      "workloads",
+      "    WorkloadTeardownDecision::RestartSettlementPending;\n",
+      "",
     ],
     "network-effect": [
       "network",
@@ -604,22 +608,31 @@ export function verifyWorkloadTeardownContract() {
     workloadTeardownDiagnostics.vocabulary,
   );
 
-  const reducer = extractItem(
+  const materializer = extractItem(
     sources.compute,
-    "fn compare_and_swap_teardown_claim",
+    "fn materialize_teardown_candidate",
   );
+  const confirmation = extractItem(
+    sources.compute,
+    "fn confirm_teardown_transition",
+  );
+  const teardownDriver = extractItem(sources.compute, "impl WorkloadTeardownDriver");
   requireContract(
     hasAll(sources.workloads, [
       "WorkloadTeardownAttemptId",
       "WorkloadTeardownClaim",
       "WorkloadTeardownDisposition",
     ]) &&
-      hasAll(reducer, [
-        "require_exact_revision",
-        "require_exact_generation",
-        "require_exact_desired_digest",
-        "reject_crossed_teardown_subject",
-        "commit_loaded",
+      hasAll(materializer, [
+        "claim_teardown",
+        "record_resource_free_teardown_step",
+        "record_terminal_teardown",
+      ]) &&
+      hasAll(confirmation, ["confirm_transition", "WorkloadSagaConfirmation"]) &&
+      hasAll(teardownDriver, [
+        "decide_teardown",
+        "materialize_teardown_candidate",
+        "confirm_teardown_transition",
       ]),
     workloadTeardownDiagnostics.reducer,
   );
@@ -635,38 +648,46 @@ export function verifyWorkloadTeardownContract() {
   const result = extractItem(sources.compute, "fn apply_teardown_result");
   requireContract(
     hasAll(command, [
-      "saga_id: WorkloadSagaId",
-      "transition_id: WorkloadSagaTransitionId",
-      "generation: WorkloadGeneration",
-      "desired_digest: WorkloadDesiredDigest",
-      "attempt_id: WorkloadTeardownAttemptId",
-      "dispatch_epoch: WorkloadTeardownDispatchEpoch",
-      "issuing_revision: WorkloadSagaRevision",
-      "subject: WorkloadTeardownSubjects",
-      "provider_target: WorkloadTeardownProviderTarget",
+      "command_id: WorkloadTeardownCommandId",
+      "confirmed_revision: WorkloadSagaRevision",
+      "confirmed_transition_id: WorkloadSagaTransitionId",
+      "source: WorkloadProvisionSourceEvidence",
+      "mode: WorkloadTeardownCommandMode",
+      "claim: WorkloadTeardownClaim",
     ]) &&
       hasAll(commandConstructor, [
-        "fn from_confirmed_cas_winner",
+        "fn from_confirmation",
         "WorkloadSagaConfirmation::AppliedByThisCall",
         "WorkloadTeardownCommandMode::Execute",
+        "fn attempt_id",
+        "fn dispatch_epoch",
+        "fn provider_target",
+        "fn subjects",
       ]) &&
-      !/\bpub(?:\([^)]*\))?\s+fn\s+from_confirmed_cas_winner\b/u.test(
+      !/\bpub(?:\([^)]*\))?\s+fn\s+from_confirmation\b/u.test(
         commandConstructor,
       ) &&
       hasAll(result, [
-        "authenticate_result_transition",
-        "authenticate_result_attempt",
-        "authenticate_result_dispatch_epoch",
-        "WorkloadTeardownCommandMode::Inspect",
-        "inspect_before_retry",
-        "same_attempt_next_dispatch_epoch",
+        "authenticate_confirmed_record",
+        "authenticate_command_result",
+        "apply_teardown_effect_result",
+        "apply_teardown_inspection_result",
       ]),
     workloadTeardownDiagnostics.command,
   );
 
-  const driver = extractItem(sources.compute, "fn drive_confirmed_teardown");
+  const order = extractItem(sources.workloads, "fn teardown_step_for_phase");
+  const portableReducer = extractItem(sources.workloads, "fn decide_teardown");
   requireContract(
-    appearsInOrder(driver, REQUIRED_ORDER),
+    appearsInOrder(order, REQUIRED_ORDER) &&
+      hasAll(portableReducer, [
+        "WorkloadTeardownDecision::RestartSettlementPending",
+        "WorkloadSagaPhase::NetworkReleased",
+        "ProposedWorkloadTeardownTransition::RecordTerminal",
+      ]) &&
+      hasTestsAt(sources, "crates/nimbus-compute/src/workload_saga/teardown_driver/tests.rs", [
+        "teardown_driver_records_exact_five_step_order",
+      ]),
     workloadTeardownDiagnostics.order,
   );
 

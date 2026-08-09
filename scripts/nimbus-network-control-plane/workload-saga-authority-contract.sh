@@ -15,6 +15,7 @@ RECOVERY_STORE_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_STORE_SOURCE:-crates/nim
 RECOVERY_COMPUTE_ROOT_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_ROOT_SOURCE:-crates/nimbus-compute/src/workload_saga.rs}"
 RECOVERY_COMPUTE_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_SOURCE:-crates/nimbus-compute/src/workload_saga/recovery.rs}"
 RECOVERY_PROVISION_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_PROVISION_SOURCE:-crates/nimbus-compute/src/workload_saga/provision_decision.rs}"
+RECOVERY_TEARDOWN_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_TEARDOWN_SOURCE:-crates/nimbus-workloads/src/saga/state/teardown.rs}"
 RECOVERY_TENANT_ADAPTER_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_TENANT_ADAPTER_SOURCE:-crates/nimbus-server/src/workload_saga_store/tenant_enumeration.rs}"
 RECOVERY_PROCESS_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_PROCESS_SOURCE:-crates/nimbus-server/src/workload_saga_store/tests/composition.rs}"
 RECOVERY_MATRIX_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_MATRIX_SOURCE:-crates/nimbus-server/src/workload_saga_store/tests/recovery.rs}"
@@ -504,6 +505,7 @@ verify_durable_store_contract() {
 verify_recovery_decision_contract() {
   require_file "${RECOVERY_PROOF}"
   require_file "${RECOVERY_PROVISION_SOURCE}"
+  require_file "${RECOVERY_TEARDOWN_SOURCE}"
 
   if ! rg -q 'pub struct WorkloadSagaTenantCursor' "${RECOVERY_STORE_SOURCE}" ||
     ! rg -q 'key: WorkloadSagaKey' "${RECOVERY_STORE_SOURCE}" ||
@@ -522,23 +524,17 @@ verify_recovery_decision_contract() {
     ! rg -q -F 'pub fn for_record' "${RECOVERY_COMPUTE_SOURCE}" ||
     ! rg -q -F 'WorkloadSagaAction::Provision(decision)' "${RECOVERY_COMPUTE_SOURCE}" ||
     ! rg -q -F 'WorkloadProvisionDecision::plan(record)?' "${RECOVERY_COMPUTE_SOURCE}" ||
-    ! rg -q -F 'WorkloadSagaPhase::CleanupPending' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'WorkloadSagaAction::Teardown(decision)' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'let decision = record.decide_teardown()?;' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'teardown_target_phase(record, &decision)' "${RECOVERY_COMPUTE_SOURCE}" ||
     ! rg -q -F 'PromoteSuccessor' "${RECOVERY_COMPUTE_SOURCE}" ||
-    ! rg -q -F 'retained_references: detail.retained_references().clone()' \
-      "${RECOVERY_COMPUTE_SOURCE}"; then
+    ! rg -q -F 'WorkloadSagaAction::Quiescent' "${RECOVERY_COMPUTE_SOURCE}"; then
     add_error "missing pure compute workload-saga action selector"
   fi
 
-  phase_count="$(
-    rg -o 'WorkloadSagaPhase::[A-Za-z]+' \
-      "${RECOVERY_COMPUTE_SOURCE}" "${RECOVERY_PROVISION_SOURCE}" |
-      sed 's/.*:://' |
-      sort -u |
-      wc -l |
-      tr -d ' '
-  )"
-  if [ "${phase_count}" -ne 16 ]; then
-    add_error "compute workload-saga action phase count: expected 16, observed ${phase_count}"
+  if rg -q 'WorkloadSagaAction::(WithdrawPublication|DrainWorkload|StopWorkload|DetachNetwork|ReleaseNetwork|RecordTerminalEvidence|InspectCleanup|AdvanceWithoutEffect)' \
+    "${RECOVERY_COMPUTE_SOURCE}"; then
+    add_error "compute recovery selector retains raw teardown action authority"
   fi
 
   for step in \
@@ -550,13 +546,24 @@ verify_recovery_decision_contract() {
     fi
   done
 
-  for action in \
-    Provision WithdrawPublication \
-    DrainWorkload StopWorkload DetachNetwork ReleaseNetwork \
-    RecordTerminalEvidence PromoteSuccessor InspectCleanup \
-    AdvanceWithoutEffect Quiescent; do
+  for action in Provision Teardown PromoteSuccessor Quiescent; do
     if ! rg -q "WorkloadSagaAction::${action}" "${RECOVERY_COMPUTE_SOURCE}"; then
       add_error "compute workload-saga action matrix omits ${action}"
+    fi
+  done
+
+  if ! rg -q -F 'pub fn decide_teardown' "${RECOVERY_TEARDOWN_SOURCE}" ||
+    ! rg -q -F 'WorkloadTeardownDisposition::DefiniteFailure { claim, failure, .. }' \
+      "${RECOVERY_TEARDOWN_SOURCE}" ||
+    ! rg -q -F 'WorkloadTeardownDecision::CleanupPending {' "${RECOVERY_TEARDOWN_SOURCE}" ||
+    ! rg -q -F 'claim: claim.clone()' "${RECOVERY_TEARDOWN_SOURCE}" ||
+    ! rg -q -F 'failure: failure.clone()' "${RECOVERY_TEARDOWN_SOURCE}"; then
+    add_error "portable teardown reducer does not retain exact cleanup evidence"
+  fi
+  for step in \
+    WithdrawPublication DrainExecution StopExecution DetachNetwork ReleaseNetwork; do
+    if ! rg -q "WorkloadTeardownStep::${step}" "${RECOVERY_TEARDOWN_SOURCE}"; then
+      add_error "portable workload-saga teardown matrix omits ${step}"
     fi
   done
 

@@ -35,7 +35,9 @@ mod teardown_registry;
 mod teardown_runtime;
 
 pub use ingress::{ConfirmedWorkloadSagaIntent, WorkloadSagaIngressDisposition};
-pub use nimbus_workloads::{WorkloadProvisionCommandId, WorkloadProvisionCommandMode};
+pub use nimbus_workloads::{
+    WorkloadProvisionCommandId, WorkloadProvisionCommandMode, WorkloadTeardownCommandMode,
+};
 pub use provision_decision::{
     ProposedWorkloadProvisionTransition, WorkloadProvisionDecision, WorkloadProvisionSymbolicAction,
 };
@@ -89,6 +91,26 @@ pub use restart_sandbox::{ValidatedSandboxRestartCommand, validate_sandbox_resta
 pub(crate) use restart_submission::{
     ExplicitWorkloadRestartDisposition, ExplicitWorkloadRestartError,
     ExplicitWorkloadRestartRequest,
+};
+pub use teardown_command::{
+    ConfirmedWorkloadTeardownCommand, ConfirmedWorkloadTeardownTransition,
+    WorkloadTeardownCommandResult, WorkloadTeardownExecuteOutcome, WorkloadTeardownInspectOutcome,
+    WorkloadTeardownProviderOutcome,
+};
+pub use teardown_dispatch::WorkloadTeardownDispatchError;
+pub use teardown_driver::{
+    WorkloadTeardownRun, WorkloadTeardownRunDisposition, WorkloadTeardownRunError,
+};
+pub use teardown_registry::{
+    FinalIngressWithdrawalCapability, IngressTeardownCapabilities,
+    NetworkAttachmentTeardownCapabilities, NetworkDetachmentCapability, NetworkReleaseCapability,
+    WorkloadExecutionDrainCapability, WorkloadExecutionStopCapability,
+    WorkloadExecutionTeardownCapabilities, WorkloadTeardownCapabilityFuture,
+    WorkloadTeardownCapabilityRegistry, WorkloadTeardownCapabilityRegistryError,
+    WorkloadTeardownProviderObservation,
+};
+pub use teardown_runtime::{
+    WorkloadTeardownCancellationToken, WorkloadTeardownRuntime, WorkloadTeardownSubmissionError,
 };
 /// Sole cross-domain writer of portable workload-saga transitions.
 pub struct WorkloadSagaCoordinator {

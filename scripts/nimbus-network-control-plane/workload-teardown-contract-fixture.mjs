@@ -41,6 +41,10 @@ export function greenTeardownFixture() {
     file: `__fixture__/${name}.rs`,
     source: testSource(name),
   }));
+  testEntries.push({
+    file: "crates/nimbus-compute/src/workload_saga/teardown_driver/tests.rs",
+    source: testSource("teardown_driver_records_exact_five_step_order"),
+  });
   return {
     workloads: withoutCfgTestItems(`
 pub enum WorkloadSagaPhase {
@@ -79,51 +83,58 @@ pub enum WorkloadTeardownDisposition {
     DefiniteFailure,
     Succeeded,
 }
+fn decide_teardown() {
+    WorkloadTeardownDecision::RestartSettlementPending;
+    WorkloadSagaPhase::NetworkReleased; ProposedWorkloadTeardownTransition::RecordTerminal;
+}
+fn teardown_step_for_phase() {
+    WorkloadSagaPhase::WithdrawalCommitted; WorkloadTeardownStep::WithdrawPublication;
+    WorkloadSagaPhase::Withdrawn; WorkloadTeardownStep::DrainExecution;
+    WorkloadSagaPhase::Drained; WorkloadTeardownStep::StopExecution;
+    WorkloadSagaPhase::WorkloadStopped; WorkloadTeardownStep::DetachNetwork;
+    WorkloadSagaPhase::NetworkDetached; WorkloadTeardownStep::ReleaseNetwork;
+}
 `),
     compute: withoutCfgTestItems(`
-fn compare_and_swap_teardown_claim() {
-    require_exact_revision();
-    require_exact_generation();
-    require_exact_desired_digest();
-    reject_crossed_teardown_subject();
-    commit_loaded();
+fn materialize_teardown_candidate() {
+    claim_teardown();
+    record_resource_free_teardown_step();
+    record_terminal_teardown();
 }
 struct ConfirmedWorkloadTeardownCommand {
-    saga_id: WorkloadSagaId,
-    transition_id: WorkloadSagaTransitionId,
-    generation: WorkloadGeneration,
-    desired_digest: WorkloadDesiredDigest,
-    attempt_id: WorkloadTeardownAttemptId,
-    dispatch_epoch: WorkloadTeardownDispatchEpoch,
-    issuing_revision: WorkloadSagaRevision,
-    subject: WorkloadTeardownSubjects,
-    provider_target: WorkloadTeardownProviderTarget,
+    command_id: WorkloadTeardownCommandId,
+    confirmed_revision: WorkloadSagaRevision,
+    confirmed_transition_id: WorkloadSagaTransitionId,
+    source: WorkloadProvisionSourceEvidence,
+    mode: WorkloadTeardownCommandMode,
+    claim: WorkloadTeardownClaim,
 }
 impl ConfirmedWorkloadTeardownCommand {
-    fn from_confirmed_cas_winner() {
+    fn from_confirmation() {
         WorkloadSagaConfirmation::AppliedByThisCall;
         WorkloadTeardownCommandMode::Execute;
     }
+    fn attempt_id() -> WorkloadTeardownAttemptId {}
+    fn dispatch_epoch() -> WorkloadTeardownDispatchEpoch {}
+    fn provider_target() -> WorkloadTeardownProviderTarget {}
+    fn subjects() -> WorkloadTeardownSubjects {}
 }
 fn apply_teardown_result() {
-    authenticate_result_transition();
-    authenticate_result_attempt();
-    authenticate_result_dispatch_epoch();
-    WorkloadTeardownCommandMode::Inspect;
-    inspect_before_retry();
-    same_attempt_next_dispatch_epoch();
+    authenticate_confirmed_record();
+    authenticate_command_result();
+    apply_teardown_effect_result();
+    apply_teardown_inspection_result();
 }
-fn drive_confirmed_teardown() {
-    settle_issued_restart_before_teardown();
-    retain_late_restart_result();
-    enter_withdrawal_committed_after_restart_settlement();
-    persist_withdrawal_committed();
-    withdraw_exact_publication();
-    drain_exact_execution();
-    stop_exact_execution();
-    detach_exact_network();
-    release_exact_network();
-    record_terminal_evidence();
+fn confirm_teardown_transition() {
+    confirm_transition();
+    WorkloadSagaConfirmation::AppliedByThisCall;
+}
+impl WorkloadTeardownDriver {
+    async fn drive() {
+        decide_teardown();
+        materialize_teardown_candidate();
+        confirm_teardown_transition();
+    }
 }
 fn submit_service_teardown() {}
 fn submit_sandbox_teardown() {}

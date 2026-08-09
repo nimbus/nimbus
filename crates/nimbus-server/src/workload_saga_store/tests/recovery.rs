@@ -124,7 +124,7 @@ pub(super) const PROCESS_MATRIX_EXPECTATIONS: &[ProcessMatrixExpectation] = &[
         "process-cleanup-complete",
         WorkloadSagaPhase::CleanupPending,
         WorkloadSagaPhase::CleanupPending,
-        "inspect-cleanup",
+        "quiescent",
     ),
     process_case(
         "process-attached-prepare-only",
@@ -154,13 +154,13 @@ pub(super) const PROCESS_MATRIX_EXPECTATIONS: &[ProcessMatrixExpectation] = &[
         "process-cleanup-network",
         WorkloadSagaPhase::CleanupPending,
         WorkloadSagaPhase::CleanupPending,
-        "inspect-cleanup",
+        "quiescent",
     ),
     process_case(
         "process-cleanup-execution",
         WorkloadSagaPhase::CleanupPending,
         WorkloadSagaPhase::CleanupPending,
-        "inspect-cleanup",
+        "quiescent",
     ),
     process_case(
         "process-successor-from-intent",
@@ -196,7 +196,7 @@ pub(super) const PROCESS_MATRIX_EXPECTATIONS: &[ProcessMatrixExpectation] = &[
         "process-successor-from-ready",
         WorkloadSagaPhase::WithdrawalCommitted,
         WorkloadSagaPhase::Withdrawn,
-        "withdraw-publication",
+        "advance-without-effect",
     ),
     process_case(
         "process-successor-from-published",

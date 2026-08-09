@@ -1552,6 +1552,13 @@
           "cfg_owner": "crates/nimbus-cli/src/lib.rs",
           "owner_module": "test_support",
           "module": "managed_workload"
+        },
+        {
+          "path": "crates/nimbus-compute/src/workload_saga/teardown_test_support.rs",
+          "declared_from": "crates/nimbus-compute/src/workload_saga.rs",
+          "cfg_owner": "crates/nimbus-compute/src/workload_saga.rs",
+          "owner_module": "teardown_test_support",
+          "module": "teardown_test_support"
         }
       ],
       "allowed_shape": "The exact child path is admitted only while its declaration remains inside the mechanically verified #[cfg(test)] tests module and no production mod, path, or include edge reaches it."

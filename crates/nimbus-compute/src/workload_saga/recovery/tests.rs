@@ -20,15 +20,17 @@ use nimbus_workloads::{
     WorkloadGeneration, WorkloadNetworkEndpointSemantics, WorkloadNetworkForwardingBehavior,
     WorkloadNetworkIntent, WorkloadNetworkListenerBlueprint, WorkloadNetworkPlanContent,
     WorkloadNetworkPlanIdentity, WorkloadNetworkPortRequestMode, WorkloadOwnerEvidenceDigest,
-    WorkloadPhaseDetail, WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
+    WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
     WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion,
-    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaCommit,
-    WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaIntent, WorkloadSagaIntentUpdate,
-    WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase,
-    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
-    WorkloadSagaTenantPageRequest, WorkloadTeardownDecision, WorkloadTeardownEffectResult,
-    WorkloadTeardownStep, WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
-    WorkloadTerminalEvidenceDigest,
+    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadRestartAdmissionInput,
+    WorkloadRestartAdmissionUpdate, WorkloadRestartEffectResult, WorkloadRestartEvidenceDigest,
+    WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy, WorkloadRestartRequestId,
+    WorkloadRestartTrigger, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
+    WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaPage,
+    WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore,
+    WorkloadSagaStoreError, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    WorkloadTeardownDecision, WorkloadTeardownEffectResult, WorkloadTeardownStep,
+    WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
 };
 
 use super::{WorkloadSagaAction, WorkloadSagaCoordinator, WorkloadSagaDecision};
@@ -226,7 +228,7 @@ fn stopped_intent(label: &str, generation: u64) -> WorkloadSagaIntent {
     )
 }
 
-fn evidence(label: &str) -> WorkloadOwnerEvidenceDigest {
+pub(crate) fn evidence(label: &str) -> WorkloadOwnerEvidenceDigest {
     WorkloadOwnerEvidenceDigest::sha256(label)
 }
 
@@ -302,7 +304,7 @@ fn begin_teardown(
     *candidate
 }
 
-fn teardown_success_evidence(
+pub(crate) fn teardown_success_evidence(
     step: WorkloadTeardownStep,
     subjects: &WorkloadTeardownSubjects,
 ) -> WorkloadTeardownSuccessEvidence {
@@ -399,7 +401,7 @@ fn finish_teardown(
     panic!("teardown fixture exceeded its reducer decision bound")
 }
 
-fn teardown_record(label: &str, target: WorkloadSagaPhase) -> WorkloadSagaRecord {
+pub(crate) fn teardown_record(label: &str, target: WorkloadSagaPhase) -> WorkloadSagaRecord {
     let observed = provision_record(
         label,
         WorkloadSagaPhase::Observed,
@@ -409,7 +411,10 @@ fn teardown_record(label: &str, target: WorkloadSagaPhase) -> WorkloadSagaRecord
     finish_teardown(begin_teardown(&observed, stopped_intent(label, 2)), target)
 }
 
-fn no_reference_teardown_record(label: &str, target: WorkloadSagaPhase) -> WorkloadSagaRecord {
+pub(crate) fn no_reference_teardown_record(
+    label: &str,
+    target: WorkloadSagaPhase,
+) -> WorkloadSagaRecord {
     let current = provision_record(
         label,
         WorkloadSagaPhase::IntentCommitted,
@@ -441,7 +446,7 @@ fn recorded_with_successor(label: &str, successor: WorkloadSagaIntent) -> Worklo
     finish_teardown(*with_successor, WorkloadSagaPhase::Recorded)
 }
 
-fn cleanup_pending_record(label: &str) -> WorkloadSagaRecord {
+pub(crate) fn cleanup_pending_record(label: &str) -> WorkloadSagaRecord {
     let ready = provision_record(
         label,
         WorkloadSagaPhase::Ready,
@@ -497,6 +502,75 @@ fn cleanup_pending_record(label: &str) -> WorkloadSagaRecord {
     panic!("cleanup fixture did not reach an effectful teardown step")
 }
 
+pub(crate) fn restart_settlement_pending_record(label: &str) -> WorkloadSagaRecord {
+    let observed = crate::workload_saga::test_support::restart_observed_record(
+        label,
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+    );
+    let input = WorkloadRestartAdmissionInput {
+        expected_revision: observed.revision(),
+        trigger: WorkloadRestartTrigger::Explicit,
+        inspection_version: None,
+        request_id: WorkloadRestartRequestId::for_explicit(
+            observed.saga_id(),
+            observed.active_intent().source().source_generation(),
+            "teardown-settlement",
+        )
+        .expect("restart settlement request identity is valid"),
+        not_before_unix_millis: WorkloadRestartNotBeforeUnixMillis::new(0),
+    };
+    let WorkloadRestartAdmissionUpdate::Transition(admitted) = observed
+        .admit_restart(input)
+        .expect("restart settlement fixture should admit")
+    else {
+        panic!("restart settlement fixture admission should transition");
+    };
+    let request_id = admitted
+        .restart_state()
+        .active()
+        .expect("restart settlement fixture should stay active")
+        .admission()
+        .request_id()
+        .clone();
+    let quiesced = admitted
+        .advance_restart_without_effect(&request_id)
+        .expect("restart settlement fixture should enter its first command phase");
+    let pending = quiesced
+        .claim_restart_command(&request_id)
+        .expect("restart settlement fixture command should claim");
+    let claim = pending
+        .restart_state()
+        .active()
+        .and_then(|active| active.disposition().claim())
+        .expect("restart settlement fixture should retain the command claim")
+        .clone();
+    let WorkloadSagaIntentUpdate::Transition(fenced) = pending
+        .apply_intent(stopped_intent(label, 2))
+        .expect("stopped successor should fence the issued restart")
+    else {
+        panic!("stopped successor should change the durable record");
+    };
+    let settled = fenced
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Succeeded {
+                evidence: WorkloadRestartEvidenceDigest::sha256("teardown-restart-settled"),
+            },
+        )
+        .expect("exact restart result should settle before teardown");
+    let withdrawal = settled
+        .commit_restart_settlement_teardown()
+        .expect("settled restart should enter teardown");
+    let released = finish_teardown(withdrawal, WorkloadSagaPhase::NetworkReleased);
+    assert!(matches!(
+        released
+            .decide_teardown()
+            .expect("released restart settlement should reduce"),
+        WorkloadTeardownDecision::RestartSettlementPending(_)
+    ));
+    released
+}
+
 fn assert_decision(
     record: &WorkloadSagaRecord,
     target: WorkloadSagaPhase,
@@ -518,6 +592,13 @@ fn assert_provision_decision(record: &WorkloadSagaRecord, target: WorkloadSagaPh
     let provision = super::super::WorkloadProvisionDecision::plan(record)
         .expect("valid provision record is reducible");
     assert_decision(record, target, WorkloadSagaAction::Provision(provision));
+}
+
+fn assert_teardown_decision(record: &WorkloadSagaRecord, target: WorkloadSagaPhase) {
+    let teardown = record
+        .decide_teardown()
+        .expect("valid teardown record is reducible");
+    assert_decision(record, target, WorkloadSagaAction::Teardown(teardown));
 }
 
 #[test]
@@ -587,89 +668,22 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
     assert_provision_decision(&observed, WorkloadSagaPhase::Observed);
 
     let withdrawal = teardown_record("withdrawal", WorkloadSagaPhase::WithdrawalCommitted);
-    assert_decision(
-        &withdrawal,
-        WorkloadSagaPhase::Withdrawn,
-        WorkloadSagaAction::WithdrawPublication {
-            reference: withdrawal
-                .phase_detail()
-                .references()
-                .publication()
-                .expect("publication retained")
-                .clone(),
-        },
-    );
+    assert_teardown_decision(&withdrawal, WorkloadSagaPhase::Withdrawn);
 
     let withdrawn = teardown_record("withdrawn", WorkloadSagaPhase::Withdrawn);
-    assert_decision(
-        &withdrawn,
-        WorkloadSagaPhase::Drained,
-        WorkloadSagaAction::DrainWorkload {
-            reference: withdrawn
-                .phase_detail()
-                .references()
-                .execution()
-                .expect("execution retained")
-                .clone(),
-        },
-    );
+    assert_teardown_decision(&withdrawn, WorkloadSagaPhase::Drained);
 
     let drained = teardown_record("drained", WorkloadSagaPhase::Drained);
-    assert_decision(
-        &drained,
-        WorkloadSagaPhase::WorkloadStopped,
-        WorkloadSagaAction::StopWorkload {
-            reference: drained
-                .phase_detail()
-                .references()
-                .execution()
-                .expect("execution retained")
-                .clone(),
-        },
-    );
+    assert_teardown_decision(&drained, WorkloadSagaPhase::WorkloadStopped);
 
     let stopped = teardown_record("stopped", WorkloadSagaPhase::WorkloadStopped);
-    assert_decision(
-        &stopped,
-        WorkloadSagaPhase::NetworkDetached,
-        WorkloadSagaAction::DetachNetwork {
-            reference: stopped
-                .phase_detail()
-                .references()
-                .network()
-                .expect("network retained")
-                .clone(),
-        },
-    );
+    assert_teardown_decision(&stopped, WorkloadSagaPhase::NetworkDetached);
 
     let detached = teardown_record("detached", WorkloadSagaPhase::NetworkDetached);
-    assert_decision(
-        &detached,
-        WorkloadSagaPhase::NetworkReleased,
-        WorkloadSagaAction::ReleaseNetwork {
-            reference: detached
-                .phase_detail()
-                .references()
-                .network()
-                .expect("network retained")
-                .clone(),
-        },
-    );
+    assert_teardown_decision(&detached, WorkloadSagaPhase::NetworkReleased);
 
     let released = teardown_record("released", WorkloadSagaPhase::NetworkReleased);
-    let WorkloadPhaseDetail::Teardown(released_detail) = released.phase_detail() else {
-        panic!("network released carries teardown evidence");
-    };
-    assert_decision(
-        &released,
-        WorkloadSagaPhase::Recorded,
-        WorkloadSagaAction::RecordTerminalEvidence {
-            digest: WorkloadTerminalEvidenceDigest::for_observations(
-                released_detail.terminal_observations(),
-            )
-            .expect("terminal evidence can be digested"),
-        },
-    );
+    assert_teardown_decision(&released, WorkloadSagaPhase::Recorded);
 
     let successor = running_intent(
         "recorded",
@@ -687,18 +701,7 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
     );
 
     let cleanup = cleanup_pending_record("cleanup");
-    let WorkloadPhaseDetail::CleanupPending(cleanup_detail) = cleanup.phase_detail() else {
-        panic!("cleanup fixture carries cleanup detail");
-    };
-    assert_decision(
-        &cleanup,
-        WorkloadSagaPhase::CleanupPending,
-        WorkloadSagaAction::InspectCleanup {
-            last_safe_phase: cleanup_detail.last_safe_phase(),
-            retained_references: cleanup_detail.retained_references().clone(),
-            inspections: cleanup_detail.inspections().to_vec(),
-        },
-    );
+    assert_teardown_decision(&cleanup, WorkloadSagaPhase::CleanupPending);
 }
 
 #[test]
@@ -787,7 +790,7 @@ fn selector_advances_teardown_without_effect_when_origin_retained_no_reference()
     ] {
         let record = no_reference_teardown_record(&format!("no-ref-{phase:?}"), phase);
         assert!(record.phase_detail().references().is_empty());
-        assert_decision(&record, target, WorkloadSagaAction::AdvanceWithoutEffect);
+        assert_teardown_decision(&record, target);
     }
 }
 
