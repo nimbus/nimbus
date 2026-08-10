@@ -7,16 +7,18 @@ use nimbus_workloads::{
     WorkloadProvisionDispatchClaim, WorkloadProvisionProviderTarget,
     WorkloadProvisionSourceGeneration, WorkloadRestartCommandId, WorkloadRestartDispatchEpoch,
     WorkloadRestartEpoch, WorkloadRestartRequestId, WorkloadRestartStep, WorkloadSagaRevision,
-    WorkloadSagaTransitionId,
+    WorkloadSagaTransitionId, WorkloadTeardownCommandMode, WorkloadTeardownStep,
 };
 use serde_json::json;
 
 use super::*;
 use crate::host_lifecycle::{
     HostRestartProviderClaim, HostRestartProviderClaimInput,
+    teardown_fail_before_tests::{fixture as teardown_fixture, input as teardown_input},
     test_support::activation_command_for_plan,
 };
 use crate::{HostExecutable, HostLifecyclePropertySet, HostRestartPolicy, TenantWorkloadPhase};
+use crate::{HostExecutionDrainProvider, HostTeardownExecuteClaim, HostTeardownExecuteObservation};
 
 #[derive(Clone)]
 struct FakeSystemdDbusClient {
@@ -1106,6 +1108,53 @@ async fn concurrent_equal_systemd_activation_creates_one_unit() {
     left.expect("first concurrent activation should succeed");
     right.expect("equal concurrent activation should adopt");
     assert_eq!(client.start_effect_count(), 1);
+}
+
+#[tokio::test]
+async fn systemd_closed_drain_barrier_blocks_restart_activation() {
+    let client = FakeSystemdDbusClient::available();
+    let state = tempfile::tempdir().expect("teardown state root should create");
+    let backend =
+        SystemdTransientUnitBackend::new_with_teardown_state_root(client.clone(), state.path())
+            .expect("durable systemd backend should construct");
+    let fixture = teardown_fixture(WorkloadTeardownStep::DrainExecution);
+    backend
+        .activate_exact(
+            fixture.execution.clone(),
+            fixture.activation_claim.clone(),
+            request(),
+        )
+        .await
+        .expect("initial exact activation should start");
+    let drain = HostTeardownExecuteClaim::new(teardown_input(
+        &fixture,
+        WorkloadTeardownCommandMode::Execute,
+    ))
+    .expect("exact drain claim should validate");
+    assert!(matches!(
+        backend.execute_drain(drain).await,
+        HostTeardownExecuteObservation::Succeeded(_)
+    ));
+    client.clear_unit();
+
+    let restart = restart_claim(
+        &fixture.execution,
+        &fixture.activation_claim,
+        WorkloadRestartEpoch::new(1),
+        WorkloadRestartStep::ActivateExecution,
+        0x72,
+    );
+    let error = backend
+        .activate_restart_exact(restart, request())
+        .await
+        .expect_err("closed drain barrier must reject restart activation");
+
+    assert!(error.to_string().contains("admission is closed"));
+    assert_eq!(
+        client.start_effect_count(),
+        1,
+        "restart activation must fail before StartTransientUnit"
+    );
 }
 
 #[test]

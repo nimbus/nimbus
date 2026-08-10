@@ -4,8 +4,9 @@ use std::collections::BTreeMap;
 
 use nimbus_workloads::{
     WorkloadExecutionAttemptId, WorkloadExecutionId, WorkloadFailureEvidence,
-    WorkloadProvisionSourceEvidence, WorkloadTeardownAttemptId, WorkloadTeardownClaim,
-    WorkloadTeardownProviderTarget, WorkloadTeardownStep, WorkloadTeardownSuccessEvidence,
+    WorkloadOwnerEvidenceDigest, WorkloadProvisionSourceEvidence, WorkloadTeardownAttemptId,
+    WorkloadTeardownClaim, WorkloadTeardownProviderTarget, WorkloadTeardownStep,
+    WorkloadTeardownSuccessEvidence,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -23,8 +24,23 @@ use crate::host_lifecycle::{
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SystemdTeardownState {
-    drain: BTreeMap<SystemdTeardownOperationKey, SystemdDrainOperation>,
+    activation: BTreeMap<WorkloadExecutionId, SystemdActivationAdmission>,
+    drain: BTreeMap<WorkloadExecutionId, SystemdDrainOperation>,
     stop: BTreeMap<SystemdTeardownOperationKey, SystemdStopOperation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SystemdActivationAdmission {
+    request_digest: WorkloadOwnerEvidenceDigest,
+    stage: SystemdActivationAdmissionStage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SystemdActivationAdmissionStage {
+    Submitting,
+    Settled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -39,6 +55,81 @@ pub(super) struct SystemdTeardownOperationKey {
 struct SystemdDrainOperation {
     fence: HostTeardownOperationFence,
     evidence: WorkloadTeardownSuccessEvidence,
+}
+
+impl SystemdTeardownState {
+    #[cfg(test)]
+    pub(super) fn closed_drain_count(&self) -> usize {
+        self.drain.len()
+    }
+
+    pub(super) fn begin_activation(
+        &mut self,
+        execution_id: &WorkloadExecutionId,
+        request_digest: WorkloadOwnerEvidenceDigest,
+    ) -> nimbus_core::Result<()> {
+        if self.drain.contains_key(execution_id) {
+            return Err(nimbus_core::Error::PermissionDenied(
+                "systemd activation admission is closed by the durable execution drain barrier"
+                    .to_owned(),
+            ));
+        }
+        match self.activation.get_mut(execution_id) {
+            Some(admission)
+                if admission.stage == SystemdActivationAdmissionStage::Submitting
+                    && admission.request_digest != request_digest =>
+            {
+                return Err(nimbus_core::Error::AlreadyExists(
+                    "a different exact systemd activation submission is unresolved".to_owned(),
+                ));
+            }
+            Some(admission) => {
+                admission.request_digest = request_digest;
+                admission.stage = SystemdActivationAdmissionStage::Submitting;
+            }
+            None => {
+                self.activation.insert(
+                    execution_id.clone(),
+                    SystemdActivationAdmission {
+                        request_digest,
+                        stage: SystemdActivationAdmissionStage::Submitting,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn settle_activation(
+        &mut self,
+        execution_id: &WorkloadExecutionId,
+        request_digest: WorkloadOwnerEvidenceDigest,
+    ) -> nimbus_core::Result<()> {
+        let admission = self.activation.get_mut(execution_id).ok_or_else(|| {
+            nimbus_core::Error::InvalidInput(
+                "systemd activation settlement has no durable admission".to_owned(),
+            )
+        })?;
+        if admission.request_digest != request_digest {
+            return Err(nimbus_core::Error::PermissionDenied(
+                "systemd activation settlement is crossed with its durable admission".to_owned(),
+            ));
+        }
+        admission.stage = SystemdActivationAdmissionStage::Settled;
+        Ok(())
+    }
+
+    fn activation_is_unresolved(&self, execution_id: &WorkloadExecutionId) -> bool {
+        self.activation
+            .get(execution_id)
+            .is_some_and(|admission| admission.stage == SystemdActivationAdmissionStage::Submitting)
+    }
+
+    fn settle_observed_activation(&mut self, execution_id: &WorkloadExecutionId) {
+        if let Some(admission) = self.activation.get_mut(execution_id) {
+            admission.stage = SystemdActivationAdmissionStage::Settled;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,6 +273,18 @@ where
                 Ok(store) => store,
                 Err(_) => return execute_failure(&claim, "systemd_teardown_store_unavailable"),
             };
+            let mut state = match store.lock_state() {
+                Ok(state) => state,
+                Err(_) => return execute_failure(&claim, "systemd_teardown_store_unavailable"),
+            };
+            let execution_id = claim.execution().execution_id();
+            if let Some(operation) = state.state().drain.get(execution_id) {
+                return if operation.fence.matches_execute(&claim) {
+                    HostTeardownExecuteObservation::Succeeded(Box::new(operation.evidence.clone()))
+                } else {
+                    execute_failure(&claim, "crossed_drain_barrier")
+                };
+            }
             let observed = match inspect_unit(self, claim.execution().execution_id()).await {
                 Ok(observed) => observed,
                 Err(()) => return HostTeardownExecuteObservation::Ambiguous,
@@ -198,35 +301,27 @@ where
             if observed.current_job().is_some() {
                 return HostTeardownExecuteObservation::Ambiguous;
             }
-            let key = SystemdTeardownOperationKey::for_claim(&claim);
-            match store.transact(|state| {
-                if let Some(operation) = state.drain.get(&key) {
-                    return Ok(if operation.fence.matches_execute(&claim) {
-                        HostTeardownExecuteObservation::Succeeded(Box::new(
-                            operation.evidence.clone(),
-                        ))
-                    } else {
-                        execute_failure(&claim, "crossed_drain_operation")
-                    });
+            if state.state().activation_is_unresolved(execution_id) {
+                if observed.is_absent() {
+                    return HostTeardownExecuteObservation::Ambiguous;
                 }
-                let evidence = WorkloadTeardownSuccessEvidence::ExecutionDrained {
-                    reference: claim.execution().clone(),
-                    evidence: claim.canonical_evidence("nimbus.node.systemd.drain.v1"),
-                };
-                state.drain.insert(
-                    key,
-                    SystemdDrainOperation {
-                        fence: claim.operation_fence(),
-                        evidence: evidence.clone(),
-                    },
-                );
-                Ok(HostTeardownExecuteObservation::Succeeded(Box::new(
-                    evidence,
-                )))
-            }) {
-                Ok(observation) => observation,
-                Err(_) => execute_failure(&claim, "systemd_teardown_store_unavailable"),
+                state.state_mut().settle_observed_activation(execution_id);
             }
+            let evidence = WorkloadTeardownSuccessEvidence::ExecutionDrained {
+                reference: claim.execution().clone(),
+                evidence: claim.canonical_evidence("nimbus.node.systemd.drain.v2"),
+            };
+            state.state_mut().drain.insert(
+                execution_id.clone(),
+                SystemdDrainOperation {
+                    fence: claim.operation_fence(),
+                    evidence: evidence.clone(),
+                },
+            );
+            if state.checkpoint().is_err() {
+                return HostTeardownExecuteObservation::Ambiguous;
+            }
+            HostTeardownExecuteObservation::Succeeded(Box::new(evidence))
         })
     }
 
@@ -248,12 +343,24 @@ where
                 Ok(store) => store,
                 Err(_) => return inspect_failure(&claim, "systemd_teardown_store_unavailable"),
             };
+            let state = match store.lock_state() {
+                Ok(state) => state,
+                Err(_) => return inspect_failure(&claim, "systemd_teardown_store_unavailable"),
+            };
             let observed = match inspect_unit(self, claim.execution().execution_id()).await {
                 Ok(observed) => observed,
                 Err(()) => return HostTeardownInspectObservation::Ambiguous,
             };
             if authenticate_observation(&observed, &claim).is_err() {
                 return inspect_failure(&claim, "crossed_activation_fence");
+            }
+            let execution_id = claim.execution().execution_id();
+            if let Some(operation) = state.state().drain.get(execution_id) {
+                return if operation.fence.matches_inspect(&claim) {
+                    HostTeardownInspectObservation::Satisfied(Box::new(operation.evidence.clone()))
+                } else {
+                    inspect_failure(&claim, "crossed_drain_barrier")
+                };
             }
             if let Some(job) = observed.current_job() {
                 return if job.job_type() == "stop" {
@@ -264,34 +371,14 @@ where
                     HostTeardownInspectObservation::Ambiguous
                 };
             }
-            if terminal(&observed) {
-                return HostTeardownInspectObservation::Satisfied(Box::new(
-                    WorkloadTeardownSuccessEvidence::ExecutionDrained {
-                        reference: claim.execution().clone(),
-                        evidence: claim.canonical_evidence("nimbus.node.systemd.drain.absent.v1"),
-                    },
-                ));
+            if state.state().activation_is_unresolved(execution_id) {
+                return HostTeardownInspectObservation::InProgress(
+                    claim.canonical_evidence("nimbus.node.systemd.drain.activation-unresolved.v1"),
+                );
             }
-            let key = SystemdTeardownOperationKey::for_claim(&claim);
-            match store.transact(|state| {
-                Ok(match state.drain.get_mut(&key) {
-                    Some(operation) => {
-                        if operation.fence.bind_or_matches_inspect(&claim) {
-                            HostTeardownInspectObservation::Satisfied(Box::new(
-                                operation.evidence.clone(),
-                            ))
-                        } else {
-                            inspect_failure(&claim, "crossed_drain_operation")
-                        }
-                    }
-                    None => HostTeardownInspectObservation::NotCompleted(
-                        claim.canonical_evidence("nimbus.node.systemd.drain.not-completed.v1"),
-                    ),
-                })
-            }) {
-                Ok(observation) => observation,
-                Err(_) => inspect_failure(&claim, "systemd_teardown_store_unavailable"),
-            }
+            HostTeardownInspectObservation::NotCompleted(
+                claim.canonical_evidence("nimbus.node.systemd.drain.not-completed.v2"),
+            )
         })
     }
 }
@@ -318,6 +405,14 @@ where
                 Ok(store) => store,
                 Err(_) => return execute_failure(&claim, "systemd_teardown_store_unavailable"),
             };
+            let drain_barrier = match store.lock_state() {
+                Ok(state) => state,
+                Err(_) => return execute_failure(&claim, "systemd_teardown_store_unavailable"),
+            };
+            if !closed_drain_authenticates(drain_barrier.state(), &claim) {
+                return execute_failure(&claim, "systemd_drain_barrier_required");
+            }
+            drop(drain_barrier);
             let initial = match inspect_unit(self, claim.execution().execution_id()).await {
                 Ok(observed) => observed,
                 Err(()) => return HostTeardownExecuteObservation::Ambiguous,
@@ -418,6 +513,14 @@ where
                 Ok(store) => store,
                 Err(_) => return inspect_failure(&claim, "systemd_teardown_store_unavailable"),
             };
+            let drain_barrier = match store.lock_state() {
+                Ok(state) => state,
+                Err(_) => return inspect_failure(&claim, "systemd_teardown_store_unavailable"),
+            };
+            if !closed_drain_authenticates(drain_barrier.state(), &claim) {
+                return inspect_failure(&claim, "systemd_drain_barrier_required");
+            }
+            drop(drain_barrier);
             let observed = match inspect_unit(self, claim.execution().execution_id()).await {
                 Ok(observed) => observed,
                 Err(()) => return HostTeardownInspectObservation::Ambiguous,
@@ -643,6 +746,22 @@ fn terminal(observed: &SystemdUnitStatus) -> bool {
     observed.is_absent() || matches!(observed.active_state(), "inactive" | "failed")
 }
 
+fn closed_drain_authenticates(
+    state: &SystemdTeardownState,
+    claim: &impl ExactTeardownClaim,
+) -> bool {
+    let Some(receipt) = claim
+        .prior_receipt_prefix()
+        .receipt_for(WorkloadTeardownStep::DrainExecution)
+    else {
+        return false;
+    };
+    state
+        .drain
+        .get(claim.execution().execution_id())
+        .is_some_and(|operation| operation.fence.matches_prior_receipt(receipt))
+}
+
 /// Persist a submission-stage result without replacing an observation that
 /// has already reached a terminal receipt. The terminal stages are absorbing
 /// even when inspection races the original StopUnit submitter.
@@ -803,6 +922,7 @@ trait ExactTeardownClaim {
     fn source(&self) -> &WorkloadProvisionSourceEvidence;
     fn execution(&self) -> &nimbus_workloads::WorkloadExecutionReference;
     fn provider_target(&self) -> &WorkloadTeardownProviderTarget;
+    fn prior_receipt_prefix(&self) -> &nimbus_workloads::WorkloadTeardownReceiptPrefix;
 }
 
 macro_rules! impl_exact_claim {
@@ -819,6 +939,9 @@ macro_rules! impl_exact_claim {
             }
             fn provider_target(&self) -> &WorkloadTeardownProviderTarget {
                 self.provider_target()
+            }
+            fn prior_receipt_prefix(&self) -> &nimbus_workloads::WorkloadTeardownReceiptPrefix {
+                self.prior_receipt_prefix()
             }
         }
     };

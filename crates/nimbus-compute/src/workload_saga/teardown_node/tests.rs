@@ -377,17 +377,27 @@ async fn real_systemd_runtime_retries_only_after_exact_not_completed_proof() {
         )
         .await
         .expect("systemd fixture activation succeeds");
+    let drain = teardown_command(label, WorkloadSagaPhase::Withdrawn).await;
+    let WorkloadTeardownProviderTarget::Execution { provider_id, .. } = drain.provider_target()
+    else {
+        panic!("drain command must select an execution provider");
+    };
+    let adapter = Arc::new(NodeExecutionTeardownAdapter::new(
+        provider_id.clone(),
+        Arc::clone(&backend),
+    ));
+    assert!(matches!(
+        WorkloadExecutionDrainCapability::execute(adapter.as_ref(), &drain)
+            .await
+            .into_outcome(),
+        WorkloadTeardownProviderOutcome::Execute(WorkloadTeardownExecuteOutcome::Succeeded(_))
+    ));
     client.fail_before_next_stop();
 
     let initial = teardown_record(label, WorkloadSagaPhase::Drained);
     let store = DurableTeardownStore::with_record(initial.clone());
     let later = RecordingTeardownProvider::new(TeardownProviderBehavior::Succeed);
-    let execution_provider =
-        nimbus_workloads::WorkloadExecutionProviderId::for_registration_key("fixture-execution");
-    let adapter = Arc::new(NodeExecutionTeardownAdapter::new(
-        execution_provider.clone(),
-        backend,
-    ));
+    let execution_provider = provider_id.clone();
     let capabilities = WorkloadTeardownCapabilityRegistry::new(
         [NetworkAttachmentTeardownCapabilities::new(
             NetworkProviderId::for_registration_key("fixture-attachment"),

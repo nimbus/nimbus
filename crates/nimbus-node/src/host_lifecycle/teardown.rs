@@ -13,8 +13,9 @@ use nimbus_workloads::{
     WorkloadExecutionReference, WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest,
     WorkloadProvisionSourceEvidence, WorkloadSagaRevision, WorkloadSagaTransitionId,
     WorkloadTeardownClaim, WorkloadTeardownCommandId, WorkloadTeardownCommandMode,
-    WorkloadTeardownDispatchAuthorization, WorkloadTeardownProviderTarget, WorkloadTeardownStep,
-    WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
+    WorkloadTeardownDispatchAuthorization, WorkloadTeardownProviderTarget, WorkloadTeardownReceipt,
+    WorkloadTeardownReceiptPrefix, WorkloadTeardownStep, WorkloadTeardownSubjects,
+    WorkloadTeardownSuccessEvidence,
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +31,7 @@ pub struct HostTeardownProviderClaimInput {
     pub source: WorkloadProvisionSourceEvidence,
     pub execution: WorkloadExecutionReference,
     pub provider_target: WorkloadTeardownProviderTarget,
+    pub prior_receipt_prefix: WorkloadTeardownReceiptPrefix,
 }
 
 /// Effect authority for one exact confirmed teardown command.
@@ -61,6 +63,7 @@ struct HostTeardownClaim {
     source: WorkloadProvisionSourceEvidence,
     execution: WorkloadExecutionReference,
     provider_target: WorkloadTeardownProviderTarget,
+    prior_receipt_prefix: WorkloadTeardownReceiptPrefix,
 }
 
 impl HostTeardownExecuteClaim {
@@ -109,6 +112,10 @@ macro_rules! claim_accessors {
                 &self.0.provider_target
             }
 
+            pub fn prior_receipt_prefix(&self) -> &WorkloadTeardownReceiptPrefix {
+                &self.0.prior_receipt_prefix
+            }
+
             pub fn step(&self) -> WorkloadTeardownStep {
                 self.0.portable.attempt().step()
             }
@@ -144,6 +151,7 @@ impl HostTeardownOperationFence {
             || self.execute.source != claim.0.source
             || self.execute.execution != claim.0.execution
             || self.execute.provider_target != claim.0.provider_target
+            || self.execute.prior_receipt_prefix != claim.0.prior_receipt_prefix
             || self.execute.confirmed_revision.checked_next() != Some(claim.0.confirmed_revision)
             || !command_matches
         {
@@ -156,6 +164,11 @@ impl HostTeardownOperationFence {
                 true
             }
         }
+    }
+
+    pub(crate) fn matches_inspect(&self, claim: &HostTeardownInspectClaim) -> bool {
+        let mut candidate = self.clone();
+        candidate.bind_or_matches_inspect(claim)
     }
 
     pub(crate) fn advance_after_not_completed(
@@ -177,6 +190,7 @@ impl HostTeardownOperationFence {
             && self.execute.source == claim.0.source
             && self.execute.execution == claim.0.execution
             && self.execute.provider_target == claim.0.provider_target
+            && self.execute.prior_receipt_prefix == claim.0.prior_receipt_prefix
             && evidence.attempt_id() == self.execute.portable.attempt().attempt_id()
             && evidence.dispatch_epoch() == self.execute.portable.dispatch_epoch()
             && evidence.inspected_revision() == inspect.confirmed_revision
@@ -190,6 +204,10 @@ impl HostTeardownOperationFence {
             self.inspect = None;
         }
         matches
+    }
+
+    pub(crate) fn matches_prior_receipt(&self, receipt: &WorkloadTeardownReceipt) -> bool {
+        self.execute.portable == *receipt.claim()
     }
 }
 
@@ -225,6 +243,10 @@ impl HostTeardownClaim {
                 "host teardown confirmation revision is not exact for its authority",
             ));
         }
+        input
+            .prior_receipt_prefix
+            .validate_for_claim(&input.claim)
+            .map_err(|error| permission_denied(error.to_string()))?;
         let attempt = input.claim.attempt();
         if input.provider_target != *input.claim.provider_target() {
             return Err(permission_denied(
@@ -271,6 +293,7 @@ impl HostTeardownClaim {
             source: input.source,
             execution: input.execution,
             provider_target: input.provider_target,
+            prior_receipt_prefix: input.prior_receipt_prefix,
         })
     }
 
@@ -287,8 +310,11 @@ impl HostTeardownClaim {
     }
 
     fn canonical_evidence(&self, domain: &str) -> WorkloadOwnerEvidenceDigest {
+        let prior_receipt_prefix = serde_json::to_vec(&self.prior_receipt_prefix)
+            .expect("validated teardown receipt prefix should serialize");
+        let prior_receipt_prefix_digest = WorkloadOwnerEvidenceDigest::sha256(prior_receipt_prefix);
         WorkloadOwnerEvidenceDigest::sha256(format!(
-            "{domain}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            "{domain}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
             self.command_id,
             self.confirmed_revision,
             self.confirmed_transition_id,
@@ -299,6 +325,7 @@ impl HostTeardownClaim {
             self.execution.execution_id().as_str(),
             self.execution.attempt_id().as_str(),
             self.portable.attempt().execution_provider_id().as_str(),
+            prior_receipt_prefix_digest,
         ))
     }
 }

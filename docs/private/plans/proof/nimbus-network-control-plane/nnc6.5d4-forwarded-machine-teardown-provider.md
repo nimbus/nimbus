@@ -636,12 +636,18 @@ membership, transport, routing, and super-net fencing remain separate.
 | Band 4 capability semantics | General Systemd lifecycle capability remains unchanged for provision and restart. Exact teardown capability separately requires D-Bus, transient units, service units, and `durable_teardown_state`; it keeps precise backend blockers and adds `durable systemd teardown state store is unavailable` only when the store is absent. The Machine API lists teardown readiness as unavailable while the strict sink is missing and includes provider blockers. It does not add teardown to `supported_operations` or the router. |
 | Band 4 behavior | Focused Systemd capability and store-open tests pass `3/3`; guest composition tests pass `4/4`; existing capability response tests pass `5/5`; restart capability passes `1/1`; Systemd pre-call and unknown-submission reopen proofs pass `2/2`. Full `nimbus-node` passes `108/108`. Full `nimbus-cli` passes `952/952` with one declared child-process ignore. Provision and restart capability behavior stays green. |
 | Band 4 quality and modularity | Format, diff, strict affected Clippy, warning-denied affected Rustdoc, NNCV008, proof lint with zero diagnostics, docs `108`, and site `17/17` pass. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. One shifted local-listener fingerprint and one new test-only backend construction are reconciled in the source-derived censuses; NNCV006 and NNCV015 pass. Linux cross-check stops before Nimbus compilation because the host lacks `aarch64-linux-gnu-gcc` and the target sysroot; this is an environment limitation, not passing Linux evidence. Product files are below threshold: Systemd root `1,407`, guest composition root `570`, API root `263`, state root `88`, and the concept-owned composition test child `142` lines. No dependency, route, client, provider effect, journal, caller, protocol-version, or `nimbus-network` path changed. |
+| Band 5 read-only audit | Three bounded packets inspected Systemd activation and teardown, the Container producer barrier and journal, host-claim lowering, Machine API guest composition, capability reporting, and current tests. They changed zero paths. Two independently found that Systemd drain is a receipt, not an activation barrier: exact initial and restart activation can inspect absence before drain, then submit `StartTransientUnit` after drain succeeds. Stop also lacks the exact prior drain receipt. Container drain already fences activation, restart, creator, launch, and runner publication, but reservation, preparation, network attachment, and machine-ingress publication do not hold the lifecycle lock or check the barrier. The guest needs one Container-rooted generic journal around both Systemd and Container subeffects; Container cannot publish the generic result after only its subeffect. |
+| Band 5 deterministic fail-before | `test -f crates/nimbus-cli/src/machine/api/service_workloads/teardown.rs`, `rg -q 'SystemdActivationAdmission\|activation_admission' crates/nimbus-node/src`, `rg -q 'execute_current_claim_async\|inspect_current_claim_async' crates/nimbus-sandbox/src/provider_command`, `rg -q prior_receipt_prefix crates/nimbus-node/src/host_lifecycle/teardown.rs`, and `rg -q 'execute_execution_teardown_substep\|inspect_execution_teardown_substep' crates/nimbus-sandbox/src/backends/container/runtime/teardown.rs` each exit `1`. The required barrier, receipt history, shared journal composition seam, Container substep, and guest sink do not exist. |
+| Band 5a host claim and Systemd barrier | The closed host claim now carries and validates the exact portable prior-receipt prefix. The operation fence and provider evidence bind its digest, so stop cannot accept substituted history. The Systemd store schema is directly replaced at version `2` with execution-scoped activation admission and an absorbing drain barrier. Exact initial and restart activation persist `Submitting` before inspection or `StartTransientUnit`, hold the host-global store lock across the provider boundary, and settle only after exact adoption or success. Drain holds the same lock, refuses unresolved absent activation as ambiguous, and checkpoints the closed barrier before success. Stop requires the matching exact prior drain receipt and closed barrier before provider inspection or effect. |
+| Band 5a recovery behavior | The activation-barrier module passes `7/7`, including deterministic activation-versus-drain contention, unknown-submission reopen, read-only drain inspection, a two-child real-process closer race, closed-barrier reopen fencing, and stop-order authentication. Host claim identity passes `4/4`. Exact restart activation, corruption fail-before, and prior-receipt reopen tests each pass `1/1`. The compute teardown-node regression passes after explicitly establishing its drain receipt. Full `nimbus-node` passes `118/118`; full `nimbus-compute` passes `381/381` with one declared child-only ignore. |
+| Band 5a quality and modularity | Strict affected Clippy, warning-denied affected Rustdoc, format, and diff checks pass. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. NNCV008 passes. Technical-writing proof lint has zero diagnostics. Docs pass `108`; the site passes `17/17`. The Systemd composition root is `1,451` lines, production teardown is `979`, the test parent is `1,349`, and its concept-owned activation-barrier child is `284`; no changed handwritten file reaches the ownership-exception threshold. No route, client, guest sink, shared async journal seam, Container producer, provider effect, dependency, or `nimbus-network` path changed. |
 | Structured review | Not run. Audit and fail-before are partial item work. One review is allowed only after K1-K34 are green. |
 | Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
 | Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 2 checkpoint | The commit that contains this row, the band 2 product and test paths, and the recovery header is the exact band 2 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 3 checkpoint | The commit that contains this row, the band 3 product and test paths, and the recovery header is the exact band 3 recovery checkpoint. It is not the item completion commit and has no structured review. |
-| Durable band 4 checkpoint | The commit that contains this row, the band 4 product and test paths, and the recovery header is the exact band 4 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 4 checkpoint | `1100cbc04` is the exact band 4 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 5a checkpoint | The commit that contains this row, the band 5a product and test paths, and the recovery header is the exact band 5a recovery checkpoint. It is not the item completion commit and has no structured review. |
 
 ## Current Acceptance State
 
@@ -656,11 +662,34 @@ nonaspirational capability reporting. Guest dispatch and route availability
 remain later bands. K5-K6 and the remaining end-to-end portions of K7-K10 and
 K15-K35 remain open.
 
-Band 5 is next. It adds only the guest composite execution drain and stop
-state machine and exact phase sink. It reuses the retained Systemd traits,
-Container journal, and current node and Container progress stores. It adds
-replay, contention, and fresh-process cuts. It does not add forwarded
-attachment composition, a private route, client, parent adapter, or caller
-cutover.
+Band 5 is prospectively split before implementation. These are dependency-
+ordered recovery slices, not separate plan items or review units. Band 5a is
+green. Band 5b is next:
+
+1. Band 5a carries the exact prior receipt prefix into the closed host claim.
+   It adds one durable Systemd activation-admission barrier to the existing
+   teardown store. Drain closes admission before it records a receipt. The
+   barrier blocks initial and restart activation after closure, and stop
+   requires the matching closed barrier. Tests prove crossed history, response loss,
+   thread and process contention, reopen, and corrupt-store fail-closed
+   behavior. This slice is complete at the commit that contains the band 5a
+   ledger row.
+2. Band 5b closes the four remaining Container provision-dispatch producers
+   under the current lifecycle lock and durable drain barrier. It adds one
+   asynchronous exact-current-claim journal seam. A Container-authorized
+   substep cannot publish the generic result after only its effect. Tests prove
+   one cross-process claimant and no delayed Execute after Inspect reports
+   `NotCompleted`. They also prove exact replay and no second guest journal.
+3. Band 5c adds the concept-owned guest composite execution drain/stop sink.
+   It authenticates the installed forwarder and local node. It composes
+   Systemd and Container under the one guest journal. The sink requires both
+   exact child receipts and applies a deterministic inspection join. Tests add
+   replay, contention, and fresh-process cuts. Capability reporting keeps the
+   operation unavailable through a separate missing-private-route blocker.
+
+Band 5 does not add forwarded attachment composition, a private route, client,
+parent adapter, caller cutover, or coarse-stop deletion. NNC6.5d4 remains the
+sole `in_progress` canonical item and the complete item remains the one future
+review unit.
 
 NNC6.5d4 remains the sole `in_progress` canonical item. There is no blocker.

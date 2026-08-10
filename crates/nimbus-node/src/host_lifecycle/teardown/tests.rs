@@ -12,8 +12,8 @@ use nimbus_workloads::{
     WorkloadProvisionSuccessEvidence, WorkloadRestartEpoch, WorkloadSagaKey, WorkloadSagaPhase,
     WorkloadSagaRevision, WorkloadSagaTransitionId, WorkloadTeardownAttempt,
     WorkloadTeardownAttemptInput, WorkloadTeardownClaim, WorkloadTeardownCommandId,
-    WorkloadTeardownCommandMode, WorkloadTeardownProviderTarget, WorkloadTeardownStep,
-    WorkloadTeardownSubjects,
+    WorkloadTeardownCommandMode, WorkloadTeardownProviderTarget, WorkloadTeardownReceiptPrefix,
+    WorkloadTeardownStep, WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
 };
 use serde_json::json;
 
@@ -29,6 +29,7 @@ pub(crate) struct Fixture {
     pub(crate) activation_claim: WorkloadProvisionDispatchClaim,
     pub(crate) confirmed_revision: WorkloadSagaRevision,
     pub(crate) confirmed_transition_id: WorkloadSagaTransitionId,
+    pub(crate) prior_receipt_prefix: WorkloadTeardownReceiptPrefix,
 }
 
 pub(crate) fn fixture(step: WorkloadTeardownStep) -> Fixture {
@@ -131,7 +132,7 @@ pub(crate) fn fixture_with_source_tag(step: WorkloadTeardownStep, source_tag: &s
     let (source_phase, target_phase) = step.phases();
     let attempt = WorkloadTeardownAttempt::new(WorkloadTeardownAttemptInput {
         saga_id: key.saga_id(),
-        key,
+        key: key.clone(),
         issuing_revision: WorkloadSagaRevision::new(20),
         issuing_transition_id,
         generation,
@@ -163,6 +164,60 @@ pub(crate) fn fixture_with_source_tag(step: WorkloadTeardownStep, source_tag: &s
         "authorization": { "kind": "initial" },
     }))
     .expect("teardown claim should validate");
+    let prior_receipt_prefix = if step == WorkloadTeardownStep::DrainExecution {
+        serde_json::from_value(json!({ "receipts": [] }))
+            .expect("empty drain prefix should validate")
+    } else {
+        let (source_phase, target_phase) = WorkloadTeardownStep::DrainExecution.phases();
+        let drain_attempt = WorkloadTeardownAttempt::new(WorkloadTeardownAttemptInput {
+            saga_id: key.saga_id(),
+            key,
+            issuing_revision: WorkloadSagaRevision::new(16),
+            issuing_transition_id: format!("wst_{}", "09".repeat(32))
+                .parse()
+                .expect("drain issuing transition should validate"),
+            generation,
+            desired_digest,
+            required_node: execution.node_identity().clone(),
+            source_digest: source.source_digest(),
+            execution_provider_id: execution_provider_id.clone(),
+            network_plan_digest,
+            selection_evidence: None,
+            cause: nimbus_workloads::WorkloadTeardownCause::Successor {
+                generation: WorkloadGeneration::new(8),
+                desired_digest: WorkloadDesiredDigest::sha256("host-teardown-successor"),
+            },
+            successor_fence: None,
+            source_phase,
+            target_phase,
+            step: WorkloadTeardownStep::DrainExecution,
+            subjects: WorkloadTeardownSubjects::Execution(execution.clone()),
+        })
+        .expect("prior drain attempt should validate");
+        let drain_target = WorkloadTeardownProviderTarget::for_attempt(&drain_attempt)
+            .expect("drain provider target should validate")
+            .expect("drain should select an execution provider");
+        let drain_claim: WorkloadTeardownClaim = serde_json::from_value(json!({
+            "attempt": drain_attempt,
+            "claimedRevision": "17",
+            "dispatchEpoch": "0",
+            "providerTarget": drain_target,
+            "authorization": { "kind": "initial" },
+        }))
+        .expect("prior drain claim should validate");
+        let evidence = WorkloadTeardownSuccessEvidence::ExecutionDrained {
+            reference: execution.clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("host-teardown-prior-drain"),
+        };
+        serde_json::from_value(json!({
+            "receipts": [{
+                "claim": drain_claim,
+                "evidence": evidence,
+                "confirmation": { "kind": "dispatch" },
+            }]
+        }))
+        .expect("prior drain receipt prefix should validate")
+    };
     Fixture {
         claim,
         source,
@@ -172,6 +227,7 @@ pub(crate) fn fixture_with_source_tag(step: WorkloadTeardownStep, source_tag: &s
         confirmed_transition_id: format!("wst_{}", "12".repeat(32))
             .parse()
             .expect("confirmed transition should validate"),
+        prior_receipt_prefix,
     }
 }
 
@@ -192,6 +248,7 @@ pub(crate) fn input(
         source: fixture.source.clone(),
         execution: fixture.execution.clone(),
         provider_target: fixture.claim.provider_target().clone(),
+        prior_receipt_prefix: fixture.prior_receipt_prefix.clone(),
         claim: fixture.claim.clone(),
     }
 }
@@ -273,6 +330,16 @@ fn host_teardown_claim_binds_complete_confirmed_command_fence() {
         .parse()
         .expect("crossed transition should validate");
     assert!(HostTeardownExecuteClaim::new(crossed).is_err());
+}
+
+#[test]
+fn host_teardown_claim_rejects_crossed_prior_receipt_history() {
+    let fixture = fixture(WorkloadTeardownStep::StopExecution);
+    let crossed = fixture_with_source_tag(WorkloadTeardownStep::StopExecution, "crossed-prefix");
+    let mut claim_input = input(&fixture, WorkloadTeardownCommandMode::Execute);
+    claim_input.prior_receipt_prefix = crossed.prior_receipt_prefix;
+
+    assert!(HostTeardownExecuteClaim::new(claim_input).is_err());
 }
 
 #[test]

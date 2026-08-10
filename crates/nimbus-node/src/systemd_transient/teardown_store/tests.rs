@@ -40,7 +40,7 @@ fn teardown_store_rejects_corruption_and_unknown_versions() {
 
     fs::write(
         &state_path,
-        br#"{"version":2,"checksum":"0000000000000000000000000000000000000000000000000000000000000000","payload":{"drain":{},"stop":{}}}"#,
+        br#"{"version":3,"checksum":"0000000000000000000000000000000000000000000000000000000000000000","payload":{"activation":{},"drain":{},"stop":{}}}"#,
     )
     .expect("versioned state should write");
     assert!(SystemdTeardownStore::open(root.path()).is_err());

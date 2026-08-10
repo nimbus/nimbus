@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::teardown::SystemdTeardownState;
 
-const STORE_VERSION: u32 = 1;
+const STORE_VERSION: u32 = 2;
 const STATE_FILE: &str = "systemd-teardown-state.json";
 const LOCK_FILE: &str = "systemd-teardown-state.lock";
 const TEMP_FILE: &str = ".systemd-teardown-state.tmp";
@@ -19,6 +19,17 @@ const TEMP_FILE: &str = ".systemd-teardown-state.tmp";
 #[derive(Debug)]
 pub(super) struct SystemdTeardownStore {
     root: PathBuf,
+}
+
+/// One loaded Systemd state image held under the host-global process lock.
+///
+/// The guard can cross an awaited provider call. This closes the gap between
+/// activation admission and drain closure without moving provider effects
+/// into the store.
+pub(super) struct SystemdTeardownStoreGuard<'a> {
+    store: &'a SystemdTeardownStore,
+    _lock: File,
+    state: SystemdTeardownState,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,6 +59,31 @@ impl SystemdTeardownStore {
             let result = update(state)?;
             self.write_state(state)?;
             Ok(result)
+        })
+    }
+
+    pub(super) fn lock_state(&self) -> Result<SystemdTeardownStoreGuard<'_>> {
+        let lock_path = self.root.join(LOCK_FILE);
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .map_err(|error| store_io("open state lock", error))?;
+        lock.lock_exclusive()
+            .map_err(|error| store_io("lock state", error))?;
+        let state = match self.read_state() {
+            Ok(state) => state,
+            Err(error) => {
+                let _ = FileExt::unlock(&lock);
+                return Err(error);
+            }
+        };
+        Ok(SystemdTeardownStoreGuard {
+            store: self,
+            _lock: lock,
+            state,
         })
     }
 
@@ -133,6 +169,20 @@ impl SystemdTeardownStore {
         File::open(&self.root)
             .and_then(|directory| directory.sync_all())
             .map_err(|error| store_io("sync state directory", error))
+    }
+}
+
+impl SystemdTeardownStoreGuard<'_> {
+    pub(super) fn state(&self) -> &SystemdTeardownState {
+        &self.state
+    }
+
+    pub(super) fn state_mut(&mut self) -> &mut SystemdTeardownState {
+        &mut self.state
+    }
+
+    pub(super) fn checkpoint(&self) -> Result<()> {
+        self.store.write_state(&self.state)
     }
 }
 

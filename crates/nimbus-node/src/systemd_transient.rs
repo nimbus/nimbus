@@ -2,7 +2,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use nimbus_core::{Error, Result};
-use nimbus_workloads::{WorkloadExecutionReference, WorkloadProvisionDispatchClaim};
+use nimbus_workloads::{
+    WorkloadExecutionReference, WorkloadOwnerEvidenceDigest, WorkloadProvisionDispatchClaim,
+};
 use serde::Serialize;
 
 use super::{
@@ -17,7 +19,7 @@ use crate::host_lifecycle::{HostActivationFence, HostProviderPlan, HostRestartPr
 mod teardown;
 #[path = "systemd_transient/teardown_store.rs"]
 mod teardown_store;
-use teardown_store::SystemdTeardownStore;
+use teardown_store::{SystemdTeardownStore, SystemdTeardownStoreGuard};
 
 #[cfg(test)]
 #[path = "systemd_transient/teardown/tests.rs"]
@@ -151,6 +153,23 @@ where
     ) -> Result<HostLifecycleStatus> {
         self.ensure_capable()?;
         let request = SystemdStartTransientUnitRequest::from_provider_plan(plan)?;
+        let request_digest =
+            WorkloadOwnerEvidenceDigest::sha256(serde_json::to_vec(&request).map_err(|error| {
+                Error::Internal(format!(
+                    "failed to encode exact systemd activation admission: {error}"
+                ))
+            })?);
+        let mut admission = match self.teardown_store.as_deref() {
+            Some(store) => {
+                let mut guard = store.lock_state()?;
+                guard
+                    .state_mut()
+                    .begin_activation(request.execution_id(), request_digest)?;
+                guard.checkpoint()?;
+                Some(guard)
+            }
+            None => None,
+        };
         let expected_fence = request.activation_fence().cloned();
         if let Some(expected_fence) = expected_fence.as_ref() {
             let observed = self
@@ -160,6 +179,11 @@ where
                 )?)
                 .await?;
             if let Some(adopted) = adopt_exact_systemd_observation(expected_fence, &observed)? {
+                settle_systemd_activation(
+                    admission.as_mut(),
+                    request.execution_id(),
+                    request_digest,
+                )?;
                 return Ok(adopted);
             }
         }
@@ -180,6 +204,11 @@ where
                         if let Some(adopted) =
                             adopt_exact_systemd_observation(expected_fence, &observed)?
                         {
+                            settle_systemd_activation(
+                                admission.as_mut(),
+                                request.execution_id(),
+                                request_digest,
+                            )?;
                             return Ok(adopted);
                         }
                         return Err(start_error);
@@ -195,6 +224,7 @@ where
                 plan.unit_name().as_str()
             )));
         }
+        settle_systemd_activation(admission.as_mut(), request.execution_id(), request_digest)?;
         let lifecycle_evidence = TenantWorkloadLifecycleEvidence::from_provider_plan(
             plan,
             HostLifecycleStatusReason::Submitted,
@@ -449,6 +479,20 @@ where
     ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
         Box::pin(async move { self.inspect_restart_target(&claim, request).await })
     }
+}
+
+fn settle_systemd_activation(
+    admission: Option<&mut SystemdTeardownStoreGuard<'_>>,
+    execution_id: &WorkloadExecutionId,
+    request_digest: WorkloadOwnerEvidenceDigest,
+) -> Result<()> {
+    let Some(admission) = admission else {
+        return Ok(());
+    };
+    admission
+        .state_mut()
+        .settle_activation(execution_id, request_digest)?;
+    admission.checkpoint()
 }
 
 fn adopt_exact_systemd_observation(

@@ -62,6 +62,7 @@ impl<Provider> NodeExecutionTeardownAdapter<Provider> {
             source: command.source().clone(),
             execution: execution.clone(),
             provider_target: command.provider_target().clone(),
+            prior_receipt_prefix: command.prior_receipt_prefix().clone(),
         })
     }
 

@@ -9,9 +9,11 @@ use nimbus_workloads::{
 };
 use serde_json::json;
 use tempfile::{TempDir, tempdir};
+use tokio::sync::Notify;
 
 use super::super::*;
 use super::teardown::{SystemdStopStage, SystemdTeardownOperationKey, set_stage};
+use super::teardown_store::SystemdTeardownStore;
 use crate::host_lifecycle::teardown_fail_before_tests::{
     Fixture, fixture, fixture_with_source_tag, input, inspection_fixture,
     retry_fixture_after_not_completed,
@@ -24,9 +26,17 @@ use crate::{
     RuntimePoolTrustClass,
 };
 
+#[path = "tests/activation_barrier.rs"]
+mod activation_barrier;
+
 #[derive(Clone)]
 struct TeardownFakeSystemdClient {
     status: Arc<Mutex<Option<SystemdUnitStatus>>>,
+    start_effects: Arc<AtomicUsize>,
+    pause_next_start: Arc<AtomicBool>,
+    start_entered: Arc<Notify>,
+    release_start: Arc<Notify>,
+    unknown_next_start_submission: Arc<AtomicBool>,
     stop_effects: Arc<AtomicUsize>,
     lose_next_stop_response: Arc<AtomicBool>,
     fail_before_next_stop: Arc<AtomicBool>,
@@ -42,6 +52,11 @@ impl TeardownFakeSystemdClient {
     fn new() -> Self {
         Self {
             status: Arc::new(Mutex::new(None)),
+            start_effects: Arc::new(AtomicUsize::new(0)),
+            pause_next_start: Arc::new(AtomicBool::new(false)),
+            start_entered: Arc::new(Notify::new()),
+            release_start: Arc::new(Notify::new()),
+            unknown_next_start_submission: Arc::new(AtomicBool::new(false)),
             stop_effects: Arc::new(AtomicUsize::new(0)),
             lose_next_stop_response: Arc::new(AtomicBool::new(false)),
             fail_before_next_stop: Arc::new(AtomicBool::new(false)),
@@ -56,6 +71,34 @@ impl TeardownFakeSystemdClient {
 
     fn stop_effect_count(&self) -> usize {
         self.stop_effects.load(Ordering::SeqCst)
+    }
+
+    fn start_effect_count(&self) -> usize {
+        self.start_effects.load(Ordering::SeqCst)
+    }
+
+    fn pause_next_start(&self) {
+        self.pause_next_start.store(true, Ordering::SeqCst);
+    }
+
+    async fn wait_until_start_entered(&self) {
+        self.start_entered.notified().await;
+    }
+
+    fn release_paused_start(&self) {
+        self.release_start.notify_one();
+    }
+
+    fn unknown_next_start_submission(&self) {
+        self.unknown_next_start_submission
+            .store(true, Ordering::SeqCst);
+    }
+
+    fn clear_unit(&self) {
+        *self
+            .status
+            .lock()
+            .expect("fake systemd status lock should not be poisoned") = None;
     }
 
     fn lose_next_stop_response(&self) {
@@ -229,6 +272,19 @@ impl SystemdDbusClient for TeardownFakeSystemdClient {
         request: SystemdStartTransientUnitRequest,
     ) -> crate::HostLifecycleFuture<'a, SystemdStartTransientUnitResponse> {
         Box::pin(async move {
+            self.start_effects.fetch_add(1, Ordering::SeqCst);
+            if self.pause_next_start.swap(false, Ordering::SeqCst) {
+                self.start_entered.notify_one();
+                self.release_start.notified().await;
+            }
+            if self
+                .unknown_next_start_submission
+                .swap(false, Ordering::SeqCst)
+            {
+                return Err(Error::Internal(
+                    "fake systemd start submission outcome is unknown".to_owned(),
+                ));
+            }
             let status = SystemdUnitStatus::for_start_request(&request, "active", "running")?;
             *self
                 .status
@@ -437,6 +493,25 @@ async fn activate(
     backend: &SystemdTransientUnitBackend<TeardownFakeSystemdClient>,
     fixture: &Fixture,
 ) {
+    activate_without_drain(backend, fixture).await;
+    if fixture.claim.attempt().step() == WorkloadTeardownStep::StopExecution
+        && backend.teardown_store().is_ok()
+    {
+        let drain = prior_drain_fixture(fixture);
+        let claim =
+            HostTeardownExecuteClaim::new(input(&drain, WorkloadTeardownCommandMode::Execute))
+                .expect("prior drain claim should validate");
+        assert!(matches!(
+            backend.execute_drain(claim).await,
+            HostTeardownExecuteObservation::Succeeded(_)
+        ));
+    }
+}
+
+async fn activate_without_drain(
+    backend: &SystemdTransientUnitBackend<TeardownFakeSystemdClient>,
+    fixture: &Fixture,
+) {
     backend
         .activate_exact(
             fixture.execution.clone(),
@@ -445,6 +520,22 @@ async fn activate(
         )
         .await
         .expect("fixture systemd unit should activate");
+}
+
+fn prior_drain_fixture(fixture: &Fixture) -> Fixture {
+    let receipt = fixture
+        .prior_receipt_prefix
+        .receipt_for(WorkloadTeardownStep::DrainExecution)
+        .expect("stop fixture should retain its exact prior drain receipt");
+    let mut drain = fixture.clone();
+    drain.claim = receipt.claim().clone();
+    drain.confirmed_revision = drain.claim.claimed_revision();
+    drain.confirmed_transition_id = format!("wst_{}", "0d".repeat(32))
+        .parse()
+        .expect("prior drain confirmation should validate");
+    drain.prior_receipt_prefix = serde_json::from_value(json!({ "receipts": [] }))
+        .expect("prior drain prefix should validate");
+    drain
 }
 
 fn activation_fence(fixture: &Fixture) -> HostActivationFence {
@@ -1202,6 +1293,24 @@ async fn systemd_store_failure_before_submission_has_zero_effect() {
         HostTeardownExecuteObservation::DefiniteFailure(_)
     ));
     assert_eq!(client.stop_effect_count(), 0);
+}
+
+#[tokio::test]
+async fn systemd_corrupt_barrier_store_fails_before_activation_effect() {
+    let client = TeardownFakeSystemdClient::new();
+    let (state, backend) = durable_backend(client.clone());
+    fs::write(
+        state.path().join("systemd-teardown-state.json"),
+        b"{corrupt-before-activation",
+    )
+    .expect("corrupt state should write");
+    let fixture = fixture(WorkloadTeardownStep::DrainExecution);
+
+    backend
+        .activate_exact(fixture.execution, fixture.activation_claim, request())
+        .await
+        .expect_err("corrupt barrier store must reject activation");
+    assert_eq!(client.start_effect_count(), 0);
 }
 
 #[tokio::test]
