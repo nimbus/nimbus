@@ -60,6 +60,7 @@ fn network_retry_authority_accepts_only_detach_and_release_recovery() {
         ProviderCommandOperation::PublishIngress,
         ProviderCommandOperation::ObserveIngress,
         ProviderCommandOperation::WithdrawPublication,
+        ProviderCommandOperation::WithdrawFinalPublication,
         ProviderCommandOperation::ResetWorkloadForRestart,
         ProviderCommandOperation::PrepareRestartAttempt,
         ProviderCommandOperation::AttachRetainedNetwork,

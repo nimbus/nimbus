@@ -32,6 +32,7 @@ mod teardown_decision;
 mod teardown_dispatch;
 mod teardown_driver;
 mod teardown_node;
+pub mod teardown_provider_command;
 mod teardown_registry;
 mod teardown_runtime;
 mod teardown_sandbox;

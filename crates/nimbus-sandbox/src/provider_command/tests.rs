@@ -124,6 +124,87 @@ fn provision_and_restart_operations_require_their_exact_ordinal_domain() {
 }
 
 #[test]
+fn restart_withdrawal_rejects_final_teardown_attempt_domain() {
+    let input = ProviderCommandClaimInput {
+        authority_id: "wsg_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            .to_owned(),
+        effect_subject: r#"{"kind":"publication","id":"wep_alpha"}"#.to_owned(),
+        source_attempt_id: None,
+        attempt_id: TARGET_ATTEMPT.to_owned(),
+        dispatch_epoch: 0,
+        workload_generation: 7,
+        restart_ordinal: 0,
+        desired_digest: DIGEST_A.to_owned(),
+        source_digest: DIGEST_B.to_owned(),
+        network_plan_digest: DIGEST_A.to_owned(),
+        provider_target_digest: DIGEST_B.to_owned(),
+        operation: ProviderCommandOperation::WithdrawPublication,
+    };
+    assert_eq!(
+        ProviderCommandClaim::new(input)
+            .expect_err("restart withdrawal must reject final-teardown lineage"),
+        ProviderCommandJournalError::InvalidClaim {
+            message: "restart commands require a source attempt and nonzero restart ordinal"
+                .to_owned(),
+        }
+    );
+
+    command_claim(ProviderCommandOperation::WithdrawFinalPublication, 0, 0);
+}
+
+#[test]
+fn restart_and_final_withdrawal_use_distinct_streams_in_one_journal() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let restart = restart_claim(ProviderCommandOperation::WithdrawPublication, 1, 0);
+    let final_withdraw = command_claim(ProviderCommandOperation::WithdrawFinalPublication, 0, 0);
+
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(&restart)
+            .expect("restart withdrawal should claim its stream"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(&final_withdraw)
+            .expect("final withdrawal should claim its independent stream"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+
+    let restart_result = journal
+        .record_observation(
+            &restart,
+            ProviderCommandObservationKind::Succeeded,
+            b"restart publication withdrawn",
+        )
+        .expect("restart result should persist");
+    let final_result = journal
+        .record_observation(
+            &final_withdraw,
+            ProviderCommandObservationKind::Succeeded,
+            b"final publication withdrawn",
+        )
+        .expect("final result should persist");
+
+    assert_ne!(restart_result.claim(), final_result.claim());
+    assert_eq!(
+        journal
+            .adopt_exact_attempt(&restart)
+            .expect("restart replay should read")
+            .expect("restart replay should exist"),
+        restart_result
+    );
+    assert_eq!(
+        journal
+            .adopt_exact_attempt(&final_withdraw)
+            .expect("final replay should read")
+            .expect("final replay should exist"),
+        final_result
+    );
+}
+
+#[test]
 fn exact_replay_adopts_without_second_execute_authority() {
     let root = tempfile::tempdir().expect("temporary root should exist");
     let journal = journal(root.path());

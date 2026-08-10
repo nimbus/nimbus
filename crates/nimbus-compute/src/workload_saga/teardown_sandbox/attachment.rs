@@ -4,11 +4,10 @@ use nimbus_sandbox::backends::{
     CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY, KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
 };
 use nimbus_sandbox::{
-    ProviderCommandClaim, ProviderCommandClaimInput, ProviderCommandOperation, SandboxBackendKind,
-    SandboxExecutionAttemptId, SandboxId, SandboxNetworkTeardownCommand,
-    SandboxNetworkTeardownCommandInput, SandboxNetworkTeardownIdentity,
-    SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownOperation,
-    sandbox_network_plan_requirements,
+    ProviderCommandOperation, SandboxBackendKind, SandboxExecutionAttemptId, SandboxId,
+    SandboxNetworkTeardownCommand, SandboxNetworkTeardownCommandInput,
+    SandboxNetworkTeardownIdentity, SandboxNetworkTeardownIdentityInput,
+    SandboxNetworkTeardownOperation, sandbox_network_plan_requirements,
 };
 use nimbus_workloads::{
     WorkloadFailureEvidence, WorkloadTeardownProviderTarget, WorkloadTeardownStep,
@@ -17,16 +16,22 @@ use nimbus_workloads::{
 
 use super::{ConfirmedWorkloadTeardownCommand, crossed_command_failure, invalid_command_failure};
 use crate::workload_saga::provision_sandbox::sandbox_execution_provider_id;
+use crate::workload_saga::teardown_provider_command::ConfirmedTeardownProviderCommand;
 
 /// Validated lower command for one exact attachment detach or release.
 #[derive(Debug)]
 pub(super) struct ValidatedSandboxNetworkTeardownCommand {
     sandbox_command: SandboxNetworkTeardownCommand,
+    provider_command: ConfirmedTeardownProviderCommand,
 }
 
 impl ValidatedSandboxNetworkTeardownCommand {
     pub(super) fn sandbox_command(&self) -> &SandboxNetworkTeardownCommand {
         &self.sandbox_command
+    }
+
+    pub(super) fn provider_command(&self) -> &ConfirmedTeardownProviderCommand {
+        &self.provider_command
     }
 }
 
@@ -136,34 +141,25 @@ pub(super) fn validate_sandbox_network_teardown_command(
         provider_source_digest: *provider_source_digest,
     })
     .map_err(|error| invalid_command_failure(error.to_string()))?;
-    let provider_claim = network_provider_claim(command, provider_operation, &identity)?;
+    let provider_command = ConfirmedTeardownProviderCommand::new(
+        command,
+        identity.provider_effect_subject(),
+        identity.provider_target_digest(),
+    )
+    .map_err(|error| invalid_command_failure(error.to_string()))?;
+    if provider_command.claim().operation() != provider_operation {
+        return Err(invalid_command_failure(
+            "sandbox network teardown operation crosses the confirmed provider operation",
+        ));
+    }
     let sandbox_command = SandboxNetworkTeardownCommand::new(SandboxNetworkTeardownCommandInput {
         identity,
         operation,
-        provider_claim,
+        provider_claim: provider_command.claim().clone(),
     })
     .map_err(|error| invalid_command_failure(error.to_string()))?;
-    Ok(ValidatedSandboxNetworkTeardownCommand { sandbox_command })
-}
-
-fn network_provider_claim(
-    command: &ConfirmedWorkloadTeardownCommand,
-    operation: ProviderCommandOperation,
-    identity: &SandboxNetworkTeardownIdentity,
-) -> Result<ProviderCommandClaim, WorkloadFailureEvidence> {
-    ProviderCommandClaim::new(ProviderCommandClaimInput {
-        authority_id: command.saga_id().as_str().to_owned(),
-        effect_subject: identity.provider_effect_subject(),
-        source_attempt_id: None,
-        attempt_id: command.attempt_id().as_str().to_owned(),
-        dispatch_epoch: command.dispatch_epoch().as_u64(),
-        workload_generation: command.generation().as_u64(),
-        restart_ordinal: 0,
-        desired_digest: command.desired_digest().to_string(),
-        source_digest: command.source_digest().to_string(),
-        network_plan_digest: command.network_plan_digest().to_string(),
-        provider_target_digest: identity.provider_target_digest(),
-        operation,
+    Ok(ValidatedSandboxNetworkTeardownCommand {
+        sandbox_command,
+        provider_command,
     })
-    .map_err(|error| invalid_command_failure(error.to_string()))
 }

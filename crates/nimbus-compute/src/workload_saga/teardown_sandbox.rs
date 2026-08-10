@@ -8,9 +8,8 @@ use std::sync::Arc;
 use nimbus_network::NetworkProviderId;
 use nimbus_sandbox::backends::container::ContainerSandboxBackend;
 use nimbus_sandbox::{
-    ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
-    ProviderCommandClaimInput, ProviderCommandExecutionClaim, ProviderCommandJournalError,
-    ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
+    ProviderCommandAttemptJournal, ProviderCommandClaimDecision, ProviderCommandExecutionClaim,
+    ProviderCommandJournalError, ProviderCommandObservation, ProviderCommandObservationKind,
     SandboxBackendKind, SandboxExecutionAttemptId, SandboxExecutionTeardownCommand,
     SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation, SandboxId,
     SandboxNetworkTeardownObservation, sandbox_network_plan_requirements,
@@ -22,6 +21,9 @@ use nimbus_workloads::{
 };
 
 use super::provision_sandbox::sandbox_execution_provider_id;
+use super::teardown_provider_command::{
+    ConfirmedTeardownProviderCommand, ConfirmedTeardownProviderJournal,
+};
 use super::{
     ConfirmedWorkloadTeardownCommand, NetworkAttachmentTeardownCapabilities,
     NetworkDetachmentCapability, NetworkReleaseCapability, WorkloadExecutionDrainCapability,
@@ -39,11 +41,16 @@ const CONTAINER_EXECUTION_PROVIDER_KEY: &str = "nimbus-sandbox.container-executi
 /// Validated lower command plus its exact provider-journal claim.
 pub struct ValidatedSandboxTeardownCommand {
     sandbox_command: SandboxExecutionTeardownCommand,
+    provider_command: ConfirmedTeardownProviderCommand,
 }
 
 impl ValidatedSandboxTeardownCommand {
     pub fn sandbox_command(&self) -> &SandboxExecutionTeardownCommand {
         &self.sandbox_command
+    }
+
+    fn provider_command(&self) -> &ConfirmedTeardownProviderCommand {
+        &self.provider_command
     }
 }
 
@@ -96,7 +103,21 @@ pub fn validate_sandbox_teardown_command(
         ));
     }
 
-    let provider_claim = provider_claim(command, operation.provider_operation())?;
+    let effect_subject = serde_json::to_string(&(command.execution_locator(), command.subjects()))
+        .map_err(|error| invalid_command_failure(error.to_string()))?;
+    let provider_target = serde_json::to_vec(command.provider_target())
+        .map_err(|error| invalid_command_failure(error.to_string()))?;
+    let provider_command = ConfirmedTeardownProviderCommand::new(
+        command,
+        effect_subject,
+        WorkloadOwnerEvidenceDigest::sha256(provider_target).to_string(),
+    )
+    .map_err(|error| invalid_command_failure(error.to_string()))?;
+    if provider_command.claim().operation() != operation.provider_operation() {
+        return Err(invalid_command_failure(
+            "sandbox execution teardown operation crosses the confirmed provider operation",
+        ));
+    }
     let provider_key = match backend {
         SandboxBackendKind::Container => CONTAINER_EXECUTION_PROVIDER_KEY,
         SandboxBackendKind::Krun => "nimbus-sandbox.krun-execution",
@@ -108,47 +129,24 @@ pub fn validate_sandbox_teardown_command(
             .map_err(|error| invalid_command_failure(error.to_string()))?,
         provider_key,
         operation,
-        provider_claim,
+        provider_command.claim().clone(),
     )
     .map_err(|error| invalid_command_failure(error.to_string()))?;
-    Ok(ValidatedSandboxTeardownCommand { sandbox_command })
-}
-
-fn provider_claim(
-    command: &ConfirmedWorkloadTeardownCommand,
-    operation: ProviderCommandOperation,
-) -> Result<ProviderCommandClaim, WorkloadFailureEvidence> {
-    // The operation is a separate provider-journal domain. Keep the effect
-    // subject stable across drain and stop so the provider can prove that both
-    // phases refer to the same retained execution.
-    let effect_subject = serde_json::to_string(&(command.execution_locator(), command.subjects()))
-        .map_err(|error| invalid_command_failure(error.to_string()))?;
-    let provider_target = serde_json::to_vec(command.provider_target())
-        .map_err(|error| invalid_command_failure(error.to_string()))?;
-    ProviderCommandClaim::new(ProviderCommandClaimInput {
-        authority_id: command.saga_id().as_str().to_owned(),
-        effect_subject,
-        source_attempt_id: None,
-        attempt_id: command.attempt_id().as_str().to_owned(),
-        dispatch_epoch: command.dispatch_epoch().as_u64(),
-        workload_generation: command.generation().as_u64(),
-        restart_ordinal: 0,
-        desired_digest: command.desired_digest().to_string(),
-        source_digest: command.source_digest().to_string(),
-        network_plan_digest: command.network_plan_digest().to_string(),
-        provider_target_digest: WorkloadOwnerEvidenceDigest::sha256(provider_target).to_string(),
-        operation,
+    Ok(ValidatedSandboxTeardownCommand {
+        sandbox_command,
+        provider_command,
     })
-    .map_err(|error| invalid_command_failure(error.to_string()))
 }
 
 struct ProviderTeardownPhaseAdapter {
-    journal: ProviderCommandAttemptJournal,
+    journal: ConfirmedTeardownProviderJournal,
 }
 
 impl ProviderTeardownPhaseAdapter {
     fn new(journal: ProviderCommandAttemptJournal) -> Self {
-        Self { journal }
+        Self {
+            journal: ConfirmedTeardownProviderJournal::new(journal),
+        }
     }
 
     fn execute(
@@ -159,8 +157,8 @@ impl ProviderTeardownPhaseAdapter {
             ProviderCommandExecutionClaim,
         ) -> Result<ProviderCommandObservation, ProviderCommandJournalError>,
     ) -> WorkloadTeardownProviderOutcome {
-        let claim = validated.sandbox_command().provider_claim();
-        match self.journal.claim_dispatch_epoch(claim) {
+        let provider_command = validated.provider_command();
+        match self.journal.claim_execute(provider_command) {
             Ok(ProviderCommandClaimDecision::ExecuteClaimed(execution_claim)) => {
                 match effect(execution_claim) {
                     Ok(observation) => provider_outcome(command, &observation),
@@ -180,8 +178,8 @@ impl ProviderTeardownPhaseAdapter {
         validated: &ValidatedSandboxTeardownCommand,
         inspect: impl FnOnce(&ProviderCommandObservation) -> SandboxExecutionTeardownObservation,
     ) -> WorkloadTeardownProviderOutcome {
-        let claim = validated.sandbox_command().provider_claim();
-        match self.journal.adopt_exact_attempt(claim) {
+        let provider_command = validated.provider_command();
+        match self.journal.adopt_inspect(provider_command) {
             Ok(None) => WorkloadTeardownProviderOutcome::Inspect(
                 WorkloadTeardownInspectOutcome::NotCompleted(WorkloadOwnerEvidenceDigest::sha256(
                     b"sandbox provider command was never claimed",
@@ -199,8 +197,11 @@ impl ProviderTeardownPhaseAdapter {
                 provider_outcome(command, &observation)
             }
             Ok(Some(observation)) => {
-                match self.journal.inspect_current_claim(&observation, inspect) {
-                    Ok(inspected) => self.record(command, claim, inspected),
+                match self
+                    .journal
+                    .inspect_current_claim(provider_command, &observation, inspect)
+                {
+                    Ok(inspected) => self.record(command, provider_command, inspected),
                     Err(error) => journal_error_outcome(command.mode(), &error),
                 }
             }
@@ -211,7 +212,7 @@ impl ProviderTeardownPhaseAdapter {
     fn record(
         &self,
         command: &ConfirmedWorkloadTeardownCommand,
-        claim: &ProviderCommandClaim,
+        provider_command: &ConfirmedTeardownProviderCommand,
         observation: SandboxExecutionTeardownObservation,
     ) -> WorkloadTeardownProviderOutcome {
         let kind = match (&observation, command.mode()) {
@@ -245,7 +246,7 @@ impl ProviderTeardownPhaseAdapter {
             }
         };
         match self.journal.record_observation_with_failure_code(
-            claim,
+            provider_command,
             kind,
             observation.failure_code(),
             observation.evidence(),
@@ -264,8 +265,8 @@ impl ProviderTeardownPhaseAdapter {
         ) -> Result<ProviderCommandObservation, ProviderCommandJournalError>,
         inspect: impl FnOnce(&ProviderCommandObservation) -> SandboxNetworkTeardownObservation,
     ) -> WorkloadTeardownProviderOutcome {
-        let claim = validated.sandbox_command().provider_claim();
-        match self.journal.claim_dispatch_epoch(claim) {
+        let provider_command = validated.provider_command();
+        match self.journal.claim_execute(provider_command) {
             Ok(ProviderCommandClaimDecision::ExecuteClaimed(execution_claim)) => {
                 match effect(execution_claim) {
                     Ok(observation) => provider_outcome(command, &observation),
@@ -275,7 +276,10 @@ impl ProviderTeardownPhaseAdapter {
             Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation))
                 if observation.kind() == ProviderCommandObservationKind::Claimed =>
             {
-                match self.journal.resume_current_claim(&observation) {
+                match self
+                    .journal
+                    .resume_current_claim(provider_command, &observation)
+                {
                     Ok(execution_claim) => match effect(execution_claim) {
                         Ok(observation) => provider_outcome(command, &observation),
                         Err(error) => journal_error_outcome(command.mode(), &error),
@@ -292,7 +296,7 @@ impl ProviderTeardownPhaseAdapter {
             {
                 let inspected = inspect(&observation);
                 match self.journal.record_observation_with_failure_code(
-                    claim,
+                    provider_command,
                     network_observation_kind(&inspected),
                     inspected.failure_code(),
                     inspected.evidence(),
@@ -314,8 +318,8 @@ impl ProviderTeardownPhaseAdapter {
         validated: &attachment::ValidatedSandboxNetworkTeardownCommand,
         inspect: impl FnOnce(&ProviderCommandObservation) -> SandboxNetworkTeardownObservation,
     ) -> WorkloadTeardownProviderOutcome {
-        let claim = validated.sandbox_command().provider_claim();
-        match self.journal.adopt_exact_attempt(claim) {
+        let provider_command = validated.provider_command();
+        match self.journal.adopt_inspect(provider_command) {
             Ok(None) => WorkloadTeardownProviderOutcome::Inspect(
                 WorkloadTeardownInspectOutcome::NotCompleted(WorkloadOwnerEvidenceDigest::sha256(
                     b"sandbox network provider command was never claimed",

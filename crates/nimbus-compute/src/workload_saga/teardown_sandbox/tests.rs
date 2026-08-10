@@ -3,8 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use nimbus_sandbox::SandboxBackendKind;
 use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
+use nimbus_sandbox::{
+    ProviderCommandClaim, ProviderCommandClaimInput, ProviderCommandOperation, SandboxBackendKind,
+};
 use nimbus_workloads::{
     ProposedWorkloadTeardownTransition, WorkloadProvisionInspectionResult, WorkloadSagaPhase,
     WorkloadSagaRecord, WorkloadTeardownDecision, WorkloadTeardownProviderTarget,
@@ -14,7 +16,9 @@ use super::*;
 use crate::workload_saga::provision_sandbox::{
     ContainerProvisionAdapter, validate_sandbox_provision_command,
 };
-use crate::workload_saga::recovery::tests::{begin_teardown, finish_teardown, stopped_intent};
+use crate::workload_saga::recovery::tests::{
+    begin_teardown, finish_teardown, stopped_intent, teardown_record,
+};
 use crate::workload_saga::teardown_decision::materialize_teardown_candidate;
 use crate::workload_saga::teardown_registry::ExactWorkloadTeardownCapability;
 use crate::workload_saga::teardown_test_support::DurableTeardownStore;
@@ -76,6 +80,50 @@ fn teardown_record_at(
     let successor_generation = observed.active_intent().generation().as_u64() + 1;
     let teardown = begin_teardown(observed, stopped_intent("container", successor_generation));
     finish_teardown(teardown, target)
+}
+
+#[tokio::test]
+async fn confirmed_final_withdrawal_lowers_to_the_teardown_journal_domain() {
+    let teardown = teardown_record(
+        "nnc65d4-final-withdraw",
+        WorkloadSagaPhase::WithdrawalCommitted,
+    );
+    let (withdraw, _) = confirmed_teardown_commands(teardown).await;
+    assert_eq!(
+        withdraw.step(),
+        nimbus_workloads::WorkloadTeardownStep::WithdrawPublication
+    );
+    let provider_command = ConfirmedTeardownProviderCommand::new(
+        &withdraw,
+        r#"{"kind":"publication","id":"parent-batch"}"#.to_owned(),
+        "a".repeat(64),
+    )
+    .expect("confirmed final withdrawal should lower to a provider command");
+    let claim = provider_command.claim();
+
+    assert_eq!(
+        provider_command.mode(),
+        WorkloadTeardownCommandMode::Execute
+    );
+    assert_eq!(
+        claim.operation(),
+        ProviderCommandOperation::WithdrawFinalPublication
+    );
+    assert_eq!(claim.authority_id(), withdraw.saga_id().as_str());
+    assert_eq!(claim.source_attempt_id(), None);
+    assert_eq!(claim.attempt_id(), withdraw.attempt_id().as_str());
+    assert_eq!(claim.dispatch_epoch(), withdraw.dispatch_epoch().as_u64());
+    assert_eq!(claim.workload_generation(), withdraw.generation().as_u64());
+    assert_eq!(claim.restart_ordinal(), 0);
+    assert_eq!(
+        claim.desired_digest(),
+        withdraw.desired_digest().to_string()
+    );
+    assert_eq!(claim.source_digest(), withdraw.source_digest().to_string());
+    assert_eq!(
+        claim.network_plan_digest(),
+        withdraw.network_plan_digest().to_string()
+    );
 }
 
 async fn confirmed_teardown_commands(

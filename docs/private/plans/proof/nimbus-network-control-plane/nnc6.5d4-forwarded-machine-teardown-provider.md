@@ -1,6 +1,6 @@
 # NNC6.5d4 Forwarded-Machine Teardown Provider
 
-Status: `implementation in progress. band 1 complete`
+Status: `implementation in progress. bands 1-2 complete`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -618,18 +618,26 @@ membership, transport, routing, and super-net fencing remain separate.
 | Band 1 compute fence | Confirmed commands, provider observations, and command results carry the same immutable prefix. Command authentication reconstructs and compares the exact durable projection. Provider callbacks and results reject crossed prefixes before reducer application or result CAS. No provider effect, Machine API, caller, or `nimbus-network` path changed. |
 | Band 1 behavior | Focused receipt-prefix tests pass `2/2`; focused compute prefix tests pass `5/5`; the existing crossed-result matrix passes `1/1`. Full `nimbus-workloads` passes `218/218`. Full `nimbus-compute` passes `374/374` with one declared child-only ignore. |
 | Band 1 quality and modularity | Format, diff, strict affected Clippy, and warning-denied affected Rustdoc pass. NNCV008 passes. NNCV035 self-test passes `55/55`; direct remains expected red at `0/7`; the aggregate is `35/36` with only NNCV035 red. Proof lint has zero diagnostics. Docs pass `108`, and the site passes `17/17`. The new concept-owned receipt-prefix test child has `94` lines, and its parent remains below the `1,500`-line ownership threshold at `1,436` lines. |
+| Band 2 read-only audit | Three bounded packets inspected Container, Krun, and shared compute ownership and changed zero paths. They independently converged on a distinct `WithdrawFinalPublication` teardown stream, unchanged restart withdrawal, one existing provider journal, and one compute-owned seam that receives an already-open journal. Provider-specific effect subjects and target digests stay with the existing lowerers; `ProviderTeardownPhaseAdapter` stays private and sandbox-specific. |
+| Band 2 deterministic fail-before | `cargo test -p nimbus-sandbox --lib teardown_operation_tests -- --nocapture` exited `101` because `WithdrawFinalPublication` did not exist. `cargo test -p nimbus-compute --lib teardown_provider_command -- --nocapture` exited `101` because the confirmed-teardown command and injected-journal seam did not exist. An earlier multiple-filter Cargo invocation was invalid and is not acceptance evidence. |
+| Band 2 operation and journal seam | `nimbus-sandbox` now gives final withdrawal the stable `withdraw_final_publication` teardown-family operation. It cannot use live-absence reconciliation or mint explicit retry authority. Restart `WithdrawPublication` remains restart-family and retains its source-attempt and nonzero restart-ordinal rules. `nimbus-compute` owns `ConfirmedTeardownProviderCommand` and `ConfirmedTeardownProviderJournal`: the command derives the operation from the confirmed step and the journal wrapper accepts an existing provider journal without opening a store or choosing a namespace. |
+| Band 2 adapter reuse | Current Container and Krun execution and attachment lowerers construct the confirmed provider command, retain exact provider-local effect subjects and target digests, and use the injected journal seam through the existing private `ProviderTeardownPhaseAdapter`. No Machine API, provider composition, product caller, provider effect, or `nimbus-network` source changed. |
+| Band 2 behavior | Focused shared-seam tests pass `6/6`; real final-withdraw lowering passes `1/1`; sandbox teardown-operation classification passes `4/4`; restart/final stream separation passes `1/1`; final-domain rejection by restart passes `1/1`; network retry-authority regression passes `1/1`; full focused sandbox teardown passes `24/24`; unchanged compute and CLI restart mappings pass `1/1 + 1/1`. Full `nimbus-sandbox` passes `1,109/1,109` with `31` declared ignores. Full `nimbus-compute` passes `381/381` with one declared ignore. |
+| Band 2 quality and modularity | Format, diff, strict affected Clippy, and warning-denied affected Rustdoc pass. NNCV008 passes. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; the aggregate is `35/36` with only NNCV035 red. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The compute production seam is `168` lines with a `231`-line concept-owned test child. The existing deep sandbox provider journal is `1,568` lines; this band adds only the operation vocabulary and the existing concept-owned test modules hold the new behavior tests. |
 | Structured review | Not run. Audit and fail-before are partial item work. One review is allowed only after K1-K34 are green. |
 | Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
 | Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 2 checkpoint | The commit that contains this row, the band 2 product and test paths, and the recovery header is the exact band 2 recovery checkpoint. It is not the item completion commit and has no structured review. |
 
 ## Current Acceptance State
 
 K1-K3 are green. Band 1 also completes the portable validator part of K4.
 The forwarded adapter must still enforce the full five-phase evidence chain.
-K5-K35 remain open. Band 1 changes only portable workload vocabulary and
-compute command, callback, and result fences.
+Band 2 completes the operation-family, claim-derivation, and injected-journal
+prerequisites of K7. The future parent adapter must still prove one journal and
+five independent durable streams. K5-K6 and K8-K35 remain open.
 
-Band 2 is next. It adds the distinct teardown-family final-withdraw operation
-and extracts one narrow confirmed-teardown journal seam. It must not change
-restart withdrawal. NNC6.5d4 remains the sole `in_progress` canonical item.
-There is no blocker.
+Band 3 is next. It adds the strict Machine API teardown wire vocabulary,
+complete request digest, closed mode-specific outcomes, response correlation,
+and pure wire tests. It does not add a route or client. NNC6.5d4 remains the
+sole `in_progress` canonical item. There is no blocker.

@@ -112,6 +112,7 @@ pub enum ProviderCommandOperation {
     PublishIngress,
     ObserveIngress,
     WithdrawPublication,
+    WithdrawFinalPublication,
     ResetWorkloadForRestart,
     PrepareRestartAttempt,
     AttachRetainedNetwork,
@@ -145,6 +146,7 @@ impl ProviderCommandOperation {
             Self::PublishIngress => "publish_ingress",
             Self::ObserveIngress => "observe_ingress",
             Self::WithdrawPublication => "withdraw_publication",
+            Self::WithdrawFinalPublication => "withdraw_final_publication",
             Self::ResetWorkloadForRestart => "reset_workload_for_restart",
             Self::PrepareRestartAttempt => "prepare_restart_attempt",
             Self::AttachRetainedNetwork => "attach_retained_network",
@@ -177,7 +179,8 @@ impl ProviderCommandOperation {
             | Self::InspectRestartReadiness
             | Self::PublishRestartIngress
             | Self::ObserveRestartPublication => ProviderCommandOperationFamily::Restart,
-            Self::DrainExecution
+            Self::WithdrawFinalPublication
+            | Self::DrainExecution
             | Self::StopExecution
             | Self::DetachNetwork
             | Self::ReleaseNetwork => ProviderCommandOperationFamily::Teardown,
@@ -1426,7 +1429,11 @@ mod teardown_operation_tests {
 
     const DIGEST_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const DIGEST_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    const TEARDOWN_OPERATIONS: [(ProviderCommandOperation, &str); 4] = [
+    const TEARDOWN_OPERATIONS: [(ProviderCommandOperation, &str); 5] = [
+        (
+            ProviderCommandOperation::WithdrawFinalPublication,
+            "withdraw_final_publication",
+        ),
         (ProviderCommandOperation::DrainExecution, "drain_execution"),
         (ProviderCommandOperation::StopExecution, "stop_execution"),
         (ProviderCommandOperation::DetachNetwork, "detach_network"),
