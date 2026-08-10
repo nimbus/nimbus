@@ -40,6 +40,7 @@ use nimbus_network::{
 };
 use nimbus_sandbox::{
     MachinePortForwardOutcome, MachinePortForwardReceipt, SandboxBackendKind, SandboxInspection,
+    backends::container::OciMachinePortForwarderConfig,
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
@@ -797,11 +798,18 @@ async fn stale_epoch_replay_is_rejected_before_machine_api_effect() {
 #[test]
 fn provider_managed_wsl2_fails_before_opening_parent_authority() {
     let root = TempDir::new().expect("fixture root should exist");
+    let authority = forwarder_authority();
+    let config = OciMachinePortForwarderConfig::gvproxy_for_provider_instance(
+        authority.provider_instance().expose_to_provider(),
+        authority.generation(),
+    )
+    .expect("fixture forwarder config should validate");
     let error = match ForwardedMachineProvisionSourcePlan::new(
         MachineProvider::Wsl2,
-        forwarder_authority(),
+        authority,
         NodeIdentity::new("machine-node").expect("fixture node should validate"),
         source_connectivity(),
+        config,
     ) {
         Ok(_) => panic!("provider-managed WSL2 must reject host forwarding"),
         Err(error) => error,
@@ -1261,11 +1269,8 @@ pub(super) fn workload_key() -> WorkloadSagaKey {
 
 pub(super) fn forwarder_authority() -> MachineForwarderAuthority {
     MachineForwarderAuthority::new(
-        NetworkProviderHandle::new(
-            NetworkProviderId::for_registration_key("machine-forwarded-ingress-test"),
-            "gvproxy-test-incarnation",
-        )
-        .expect("fixture provider handle should validate"),
+        OciMachinePortForwarderConfig::gvproxy_provider_handle("gvproxy-test-incarnation")
+            .expect("fixture provider handle should validate"),
         NetworkResourceGeneration::new(7),
     )
 }
@@ -1286,11 +1291,17 @@ pub(super) fn source_plan(
     provider: MachineProvider,
     authority: MachineForwarderAuthority,
 ) -> ForwardedMachineProvisionSourcePlan {
+    let config = OciMachinePortForwarderConfig::gvproxy_for_provider_instance(
+        authority.provider_instance().expose_to_provider(),
+        authority.generation(),
+    )
+    .expect("fixture forwarder config should validate");
     ForwardedMachineProvisionSourcePlan::new(
         provider,
         authority,
         NodeIdentity::new("machine-node").expect("fixture node should validate"),
         source_connectivity(),
+        config,
     )
     .expect("fixture forwarded source plan should validate")
 }

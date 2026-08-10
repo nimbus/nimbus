@@ -89,6 +89,43 @@ impl ProviderCommandAttemptJournal {
         .map_err(join_error)?
     }
 
+    /// Send one atomically prepared request while its exact stream stays current.
+    pub async fn execute_started_claim_async<T, Execute>(
+        &self,
+        execution_claim: ProviderCommandStartedExecutionClaim,
+        execute: Execute,
+    ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError>
+    where
+        T: Send + 'static,
+        Execute: for<'a> FnOnce(
+                &'a ProviderCommandCurrentExecution,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = (T, ProviderCommandObservationKind, Option<String>, Vec<u8>),
+                        > + Send
+                        + 'a,
+                >,
+            > + Send
+            + 'static,
+    {
+        let journal = self.clone();
+        tokio::spawn(async move {
+            let locked = spawn_blocking_journal(move || {
+                journal.lock_current_started_execution(execution_claim)
+            })
+            .await?;
+            let (output, kind, failure_code, evidence) = execute(&locked.current).await;
+            spawn_blocking_journal(move || {
+                let observation = locked.finish(kind, failure_code, evidence)?;
+                Ok((output, observation))
+            })
+            .await
+        })
+        .await
+        .map_err(join_error)?
+    }
+
     /// Inspect a provider while its exact command stream remains current.
     ///
     /// The callback must be read-only. Holding the stream lock before the
@@ -147,6 +184,48 @@ impl ProviderCommandAttemptJournal {
         }
         let output = inspect(&locked.current).await;
         Ok(ProviderCommandCurrentInspection::Inspected(output))
+    }
+
+    /// Inspect and publish one correlated result under the same stream lock.
+    ///
+    /// This is for remote providers where two parent Inspect contenders must
+    /// not both issue the same provider request before one durable result wins.
+    pub async fn inspect_current_claim_async_and_publish<T, Inspect>(
+        &self,
+        expected: &ProviderCommandObservation,
+        inspect: Inspect,
+    ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError>
+    where
+        T: Send + 'static,
+        Inspect: for<'a> FnOnce(
+                &'a ProviderCommandObservation,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = (T, ProviderCommandObservationKind, Option<String>, Vec<u8>),
+                        > + Send
+                        + 'a,
+                >,
+            > + Send
+            + 'static,
+    {
+        let journal = self.clone();
+        let expected = expected.clone();
+        tokio::spawn(async move {
+            let locked =
+                spawn_blocking_journal(move || journal.lock_current_inspection(&expected)).await?;
+            if locked.current.kind == ProviderCommandObservationKind::Claimed {
+                return Err(ProviderCommandJournalError::PriorEffectUnresolved);
+            }
+            let (output, kind, failure_code, evidence) = inspect(&locked.current).await;
+            spawn_blocking_journal(move || {
+                let observation = locked.finish(kind, failure_code, evidence)?;
+                Ok((output, observation))
+            })
+            .await
+        })
+        .await
+        .map_err(join_error)?
     }
 
     fn require_current_directory(
@@ -213,6 +292,34 @@ impl ProviderCommandAttemptJournal {
         })
     }
 
+    fn lock_current_started_execution(
+        self,
+        execution_claim: ProviderCommandStartedExecutionClaim,
+    ) -> Result<LockedCurrentExecution, ProviderCommandJournalError> {
+        execution_claim.observation.validate()?;
+        let paths = self.paths(execution_claim.claim());
+        self.require_current_directory(&paths, "started execution")?;
+        let guard = lock(&paths.lock)?;
+        remove_stale_stage(&paths.stage)?;
+        let current = self.read_required_current(&paths, "started execution")?;
+        self.authenticate_locked_observation(&current, &execution_claim.observation)?;
+        if current.kind != ProviderCommandObservationKind::InProgress
+            || current.prepared_request.is_none()
+        {
+            return Err(ProviderCommandJournalError::InvalidClaim {
+                message: "provider started execution requires an exact prepared request".to_owned(),
+            });
+        }
+        Ok(LockedCurrentExecution {
+            journal: self,
+            paths,
+            current: ProviderCommandCurrentExecution {
+                observation: current,
+            },
+            _guard: guard,
+        })
+    }
+
     fn lock_current_inspection(
         self,
         expected: &ProviderCommandObservation,
@@ -236,6 +343,8 @@ impl ProviderCommandAttemptJournal {
             });
         }
         Ok(LockedCurrentInspection {
+            journal: self,
+            paths,
             current,
             _guard: guard,
         })
@@ -273,8 +382,27 @@ impl LockedCurrentExecution {
 }
 
 struct LockedCurrentInspection {
+    journal: ProviderCommandAttemptJournal,
+    paths: JournalPaths,
     current: ProviderCommandObservation,
     _guard: JournalGuard,
+}
+
+impl LockedCurrentInspection {
+    fn finish(
+        self,
+        kind: ProviderCommandObservationKind,
+        failure_code: Option<String>,
+        evidence: Vec<u8>,
+    ) -> Result<ProviderCommandObservation, ProviderCommandJournalError> {
+        let Self {
+            journal,
+            paths,
+            current,
+            _guard,
+        } = self;
+        journal.record_observation_locked(&paths, current, kind, failure_code.as_deref(), &evidence)
+    }
 }
 
 async fn spawn_blocking_journal<T>(

@@ -27,6 +27,9 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const LOCK_RETRY: Duration = Duration::from_millis(10);
 
 mod current_claim;
+mod prepared_request;
+
+use prepared_request::validate_prepared_request;
 
 #[cfg(test)]
 std::thread_local! {
@@ -209,7 +212,10 @@ impl ProviderCommandOperation {
     const fn permits_retry_authorization(self) -> bool {
         matches!(
             self,
-            Self::StopExecution | Self::DetachNetwork | Self::ReleaseNetwork
+            Self::WithdrawFinalPublication
+                | Self::StopExecution
+                | Self::DetachNetwork
+                | Self::ReleaseNetwork
         )
     }
 }
@@ -501,6 +507,8 @@ pub struct ProviderCommandObservation {
     claim: ProviderCommandClaim,
     kind: ProviderCommandObservationKind,
     evidence_sha256: Option<String>,
+    prepared_request: Option<Vec<u8>>,
+    prepared_request_sha256: Option<String>,
     #[serde(deserialize_with = "deserialize_present_optional_string")]
     failure_code: Option<String>,
     retry_lineage: Vec<ProviderCommandRetryReceipt>,
@@ -517,6 +525,11 @@ impl ProviderCommandObservation {
 
     pub fn evidence_sha256(&self) -> Option<&str> {
         self.evidence_sha256.as_deref()
+    }
+
+    /// Exact request bytes durably prepared before a provider effect may start.
+    pub fn prepared_request(&self) -> Option<&[u8]> {
+        self.prepared_request.as_deref()
     }
 
     /// Stable provider failure code retained for exact teardown replay.
@@ -543,6 +556,8 @@ impl ProviderCommandObservation {
             claim,
             kind: ProviderCommandObservationKind::Claimed,
             evidence_sha256: None,
+            prepared_request: None,
+            prepared_request_sha256: None,
             failure_code: None,
             retry_lineage,
         }
@@ -607,6 +622,32 @@ impl ProviderCommandObservation {
             (_, None) => Err(ProviderCommandJournalError::Corrupt {
                 message: "a provider outcome must carry SHA-256 evidence".to_owned(),
             }),
+        }?;
+        match (
+            self.prepared_request.as_deref(),
+            self.prepared_request_sha256.as_deref(),
+        ) {
+            (None, None) => Ok(()),
+            (Some(request), Some(digest)) => {
+                if self.kind == ProviderCommandObservationKind::Claimed {
+                    return Err(ProviderCommandJournalError::Corrupt {
+                        message: "a claimed provider attempt cannot carry a prepared request"
+                            .to_owned(),
+                    });
+                }
+                validate_prepared_request(request)?;
+                if evidence_sha256(request) != digest {
+                    return Err(ProviderCommandJournalError::Corrupt {
+                        message: "prepared provider request digest is crossed".to_owned(),
+                    });
+                }
+                validate_sha256("prepared provider request", digest)
+            }
+            _ => Err(ProviderCommandJournalError::Corrupt {
+                message:
+                    "prepared provider request bytes and digest are missing, crossed, or oversized"
+                        .to_owned(),
+            }),
         }
     }
 }
@@ -615,6 +656,13 @@ impl ProviderCommandObservation {
 #[derive(Debug)]
 pub enum ProviderCommandClaimDecision {
     ExecuteClaimed(ProviderCommandExecutionClaim),
+    AdoptExactAttempt(ProviderCommandObservation),
+}
+
+/// Result of atomically claiming an epoch with an exact prepared request.
+#[derive(Debug)]
+pub enum ProviderCommandStartedClaimDecision {
+    ExecuteStarted(ProviderCommandStartedExecutionClaim),
     AdoptExactAttempt(ProviderCommandObservation),
 }
 
@@ -629,6 +677,22 @@ pub struct ProviderCommandExecutionClaim {
 }
 
 impl ProviderCommandExecutionClaim {
+    pub fn observation(&self) -> &ProviderCommandObservation {
+        &self.observation
+    }
+
+    pub fn claim(&self) -> &ProviderCommandClaim {
+        self.observation.claim()
+    }
+}
+
+/// Journal-authenticated request-may-exist authority for one provider effect.
+#[derive(Debug)]
+pub struct ProviderCommandStartedExecutionClaim {
+    observation: ProviderCommandObservation,
+}
+
+impl ProviderCommandStartedExecutionClaim {
     pub fn observation(&self) -> &ProviderCommandObservation {
         &self.observation
     }
@@ -811,6 +875,8 @@ impl ProviderCommandAttemptJournal {
                     claim: current.claim.clone(),
                     kind: ProviderCommandObservationKind::Absent,
                     evidence_sha256: Some(evidence_sha256(inspection_evidence)),
+                    prepared_request: current.prepared_request.clone(),
+                    prepared_request_sha256: current.prepared_request_sha256.clone(),
                     failure_code: None,
                     retry_lineage: current.retry_lineage.clone(),
                 };
@@ -945,6 +1011,8 @@ impl ProviderCommandAttemptJournal {
             claim: current.claim.clone(),
             kind,
             evidence_sha256: Some(evidence_sha256(evidence)),
+            prepared_request: current.prepared_request.clone(),
+            prepared_request_sha256: current.prepared_request_sha256.clone(),
             failure_code: failure_code.map(str::to_owned),
             retry_lineage: current.retry_lineage.clone(),
         };
@@ -1037,6 +1105,8 @@ impl ProviderCommandAttemptJournal {
             claim: claim.clone(),
             kind: ProviderCommandObservationKind::Absent,
             evidence_sha256: Some(evidence_sha256(evidence)),
+            prepared_request: current.prepared_request.clone(),
+            prepared_request_sha256: current.prepared_request_sha256.clone(),
             failure_code: None,
             retry_lineage: current.retry_lineage.clone(),
         };

@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use fs2::FileExt as _;
 use nimbus::{Error, SandboxId, SandboxPortBinding};
+use nimbus_compute::workload_saga::ConfirmedWorkloadTeardownCommand;
+use nimbus_compute::workload_saga::teardown_provider_command::ConfirmedTeardownProviderCommand;
 use nimbus_core::TenantId;
 use nimbus_machine::{
     MachineForwarderAuthority,
@@ -30,6 +32,7 @@ use nimbus_workloads::{
     WorkloadGeneration, WorkloadNetworkPortRequestMode, WorkloadProvisionAttemptId,
     WorkloadProvisionCommandMode, WorkloadProvisionDispatchEpoch, WorkloadProvisionProviderTarget,
     WorkloadProvisionSourceDigest, WorkloadProvisionStep, WorkloadSagaId, WorkloadSagaKey,
+    WorkloadTeardownStep,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -44,9 +47,18 @@ const STATE_FILE: &str = "confirmed.json";
 const LOCK_FILE: &str = "authority.lock";
 const STAGE_FILE: &str = ".confirmed.stage";
 const FORMAT_MAGIC: &str = "nimbus-confirmed-machine-publications";
-const FORMAT_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 3;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCK_RETRY: Duration = Duration::from_millis(10);
+
+mod retirement;
+
+pub(crate) use retirement::ConfirmedMachinePublicationRetirementPhase;
+use retirement::{
+    ConfirmedGuestReleaseEvidence, ConfirmedMachinePublicationRetirementProgress,
+    ConfirmedParentPortBatchEvidence, ConfirmedParentWithdrawalEvidence,
+    ConfirmedParentWithdrawalFence,
+};
 
 #[derive(Clone)]
 pub(crate) struct ConfirmedMachinePublicationJournal {
@@ -64,12 +76,14 @@ impl ConfirmedMachinePublicationJournal {
     ) -> Result<(), Error> {
         let candidate = ConfirmedMachineRetirementWitness::new(command, authority)?;
         self.mutate(|body| {
-            if let Some(existing) = body
-                .retirement_witnesses
-                .iter()
-                .find(|existing| existing.sandbox_id == candidate.sandbox_id)
-            {
-                if existing.retired {
+            if let Some(existing) = body.retirement_witnesses.iter().find(|existing| {
+                existing.tenant_id == candidate.tenant_id
+                    && existing.sandbox_id == candidate.sandbox_id
+            }) {
+                if !matches!(
+                    existing.progress,
+                    ConfirmedMachinePublicationRetirementProgress::Active
+                ) {
                     return Err(Error::conflict(
                         "machine workload command cannot resurrect retired execution authority",
                     ));
@@ -77,8 +91,10 @@ impl ConfirmedMachinePublicationJournal {
                 return existing.authenticate(&candidate);
             }
             body.retirement_witnesses.push(candidate);
-            body.retirement_witnesses
-                .sort_by(|left, right| left.sandbox_id.as_str().cmp(right.sandbox_id.as_str()));
+            body.retirement_witnesses.sort_by(|left, right| {
+                (&left.tenant_id, left.sandbox_id.as_str())
+                    .cmp(&(&right.tenant_id, right.sandbox_id.as_str()))
+            });
             Ok(())
         })
     }
@@ -111,6 +127,26 @@ impl ConfirmedMachinePublicationJournal {
     ) -> Result<(), Error> {
         let candidate = ConfirmedMachinePublicationRecord::new(command, authority, members)?;
         self.mutate(|body| {
+            let witness = body
+                .retirement_witnesses
+                .iter()
+                .find(|witness| {
+                    witness.tenant_id == *candidate.workload_key.tenant_id()
+                        && witness.execution == candidate.execution
+                })
+                .ok_or_else(|| {
+                    Error::PreconditionFailed(
+                        "machine publication lacks durable retirement authority".to_owned(),
+                    )
+                })?;
+            if !matches!(
+                witness.progress,
+                ConfirmedMachinePublicationRetirementProgress::Active
+            ) {
+                return Err(Error::conflict(
+                    "machine publication command cannot resurrect retired parent authority",
+                ));
+            }
             let related = body
                 .records
                 .iter()
@@ -132,11 +168,6 @@ impl ConfirmedMachinePublicationJournal {
                 .iter()
                 .find(|record| record.dispatch_epoch == candidate.dispatch_epoch)
             {
-                if existing.retired {
-                    return Err(Error::conflict(
-                        "machine publication command cannot resurrect retired parent authority",
-                    ));
-                }
                 existing.authenticate_common(&candidate)?;
                 let existing = body
                     .records
@@ -151,11 +182,6 @@ impl ConfirmedMachinePublicationJournal {
                 return Ok(());
             }
             if let Some(previous) = related.iter().max_by_key(|record| record.dispatch_epoch) {
-                if previous.retired {
-                    return Err(Error::conflict(
-                        "machine publication retry cannot replace retired parent authority",
-                    ));
-                }
                 previous.authenticate_retry(&candidate)?;
                 let expected = previous
                     .dispatch_epoch
@@ -234,25 +260,54 @@ impl ConfirmedMachinePublicationJournal {
         &self,
         sandbox_id: &SandboxId,
     ) -> Result<Option<ConfirmedMachinePublicationRetirement>, Error> {
-        self.with_body(|body| {
-            let witness = body
+        let matches = self.with_body(|body| {
+            Ok(body
                 .retirement_witnesses
                 .iter()
-                .find(|witness| witness.sandbox_id == *sandbox_id);
+                .filter(|witness| witness.sandbox_id == *sandbox_id)
+                .map(|witness| witness.tenant_id.clone())
+                .collect::<Vec<_>>())
+        })?;
+        match matches.as_slice() {
+            [] => Ok(None),
+            [tenant_id] => self.retirement_for_workload(tenant_id, sandbox_id),
+            _ => Err(Error::PreconditionFailed(format!(
+                "machine retirement sandbox {sandbox_id} is ambiguous across tenants"
+            ))),
+        }
+    }
+
+    /// Read one exact tenant-qualified confirmed publication retirement.
+    pub(crate) fn retirement_for_workload(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+    ) -> Result<Option<ConfirmedMachinePublicationRetirement>, Error> {
+        self.with_body(|body| {
+            let witness = body.retirement_witnesses.iter().find(|witness| {
+                witness.tenant_id == *tenant_id && witness.sandbox_id == *sandbox_id
+            });
             let related = body
                 .records
                 .iter()
-                .filter(|record| record.execution.execution_id().as_str() == sandbox_id.as_str())
+                .filter(|record| {
+                    record.workload_key.tenant_id() == tenant_id
+                        && record.execution.execution_id().as_str() == sandbox_id.as_str()
+                })
                 .collect::<Vec<_>>();
             let Some(first) = related.first() else {
                 return Ok(
                     witness.map(|witness| ConfirmedMachinePublicationRetirement {
                         tenant_id: witness.tenant_id.clone(),
                         sandbox_id: witness.sandbox_id.clone(),
+                        execution: witness.execution.clone(),
+                        generation: witness.generation,
+                        source_digest: witness.source_digest,
+                        network_plan_digest: witness.network_plan_digest,
                         forwarder_authority: witness.forwarder_authority.clone(),
                         expected_guest_bindings: witness.expected_guest_bindings.clone(),
                         members: Vec::new(),
-                        retired: witness.retired,
+                        progress: witness.progress.clone(),
                     }),
                 );
             };
@@ -260,7 +315,6 @@ impl ConfirmedMachinePublicationJournal {
                 record.workload_key.tenant_id() != first.workload_key.tenant_id()
                     || record.forwarder_authority != first.forwarder_authority
                     || !same_stable_members(&record.members, &first.members)
-                    || record.retired != first.retired
             }) {
                 return Err(Error::PreconditionFailed(
                     "confirmed machine publication retirement records are crossed".to_owned(),
@@ -272,8 +326,11 @@ impl ConfirmedMachinePublicationJournal {
                 ));
             };
             if witness.tenant_id != *first.workload_key.tenant_id()
+                || witness.execution != first.execution
+                || witness.generation != first.generation
+                || witness.source_digest != first.source_digest
+                || witness.network_plan_digest != first.network_plan_digest
                 || witness.forwarder_authority != first.forwarder_authority
-                || witness.retired != first.retired
                 || first.commands.iter().any(|command| {
                     !matches!(
                         canonical_machine_guest_bindings(command.compiled_network_plan()),
@@ -288,12 +345,85 @@ impl ConfirmedMachinePublicationJournal {
             Ok(Some(ConfirmedMachinePublicationRetirement {
                 tenant_id: first.workload_key.tenant_id().clone(),
                 sandbox_id: sandbox_id.clone(),
+                execution: first.execution.clone(),
+                generation: first.generation,
+                source_digest: first.source_digest,
+                network_plan_digest: first.network_plan_digest,
                 forwarder_authority: first.forwarder_authority.clone(),
                 expected_guest_bindings: witness.expected_guest_bindings.clone(),
                 members: first.members.clone(),
-                retired: first.retired,
+                progress: witness.progress.clone(),
             }))
         })
+    }
+
+    /// Authenticate one compute-confirmed teardown command against the exact
+    /// provision-owned retirement authority before any provider journal or
+    /// parent effect can change.
+    pub(crate) fn authenticate_teardown_command(
+        &self,
+        command: &ConfirmedWorkloadTeardownCommand,
+        authority: &MachineForwarderAuthority,
+    ) -> Result<ConfirmedMachinePublicationRetirement, Error> {
+        command
+            .prior_receipt_prefix()
+            .validate_for_claim(command.claim())
+            .map_err(|error| Error::PreconditionFailed(error.to_string()))?;
+        let required_steps: &[WorkloadTeardownStep] = match command.step() {
+            WorkloadTeardownStep::WithdrawPublication => &[],
+            WorkloadTeardownStep::DrainExecution => &[WorkloadTeardownStep::WithdrawPublication],
+            WorkloadTeardownStep::StopExecution => &[
+                WorkloadTeardownStep::WithdrawPublication,
+                WorkloadTeardownStep::DrainExecution,
+            ],
+            WorkloadTeardownStep::DetachNetwork => &[
+                WorkloadTeardownStep::WithdrawPublication,
+                WorkloadTeardownStep::DrainExecution,
+                WorkloadTeardownStep::StopExecution,
+            ],
+            WorkloadTeardownStep::ReleaseNetwork => &[
+                WorkloadTeardownStep::WithdrawPublication,
+                WorkloadTeardownStep::DrainExecution,
+                WorkloadTeardownStep::StopExecution,
+                WorkloadTeardownStep::DetachNetwork,
+            ],
+        };
+        if command.prior_receipt_prefix().receipts().len() != required_steps.len()
+            || required_steps
+                .iter()
+                .any(|step| command.prior_receipt_prefix().receipt_for(*step).is_none())
+        {
+            return Err(Error::PreconditionFailed(
+                "forwarded machine teardown lacks its exact complete prior receipt chain"
+                    .to_owned(),
+            ));
+        }
+
+        let sandbox_id = SandboxId::new(command.execution_locator().execution_id().as_str());
+        let retirement = self
+            .retirement_for_workload(command.key().tenant_id(), &sandbox_id)?
+            .ok_or_else(|| {
+                Error::NotFound(
+                    "confirmed machine teardown lacks durable retirement authority".to_owned(),
+                )
+            })?;
+        let expected_bindings = canonical_machine_guest_bindings(command.compiled_network_plan())?;
+        if retirement.execution != *command.execution_locator()
+            || retirement.generation != command.generation()
+            || retirement.source_digest != command.source_digest()
+            || retirement.network_plan_digest != command.network_plan_digest()
+            || retirement.forwarder_authority != *authority
+            || retirement.expected_guest_bindings != expected_bindings
+            || retirement
+                .members
+                .iter()
+                .any(|member| !retirement.expected_guest_bindings.contains(&member.binding))
+        {
+            return Err(Error::conflict(
+                "confirmed machine teardown is crossed with durable publication authority",
+            ));
+        }
+        Ok(retirement)
     }
 
     pub(crate) fn mark_retired(
@@ -301,44 +431,285 @@ impl ConfirmedMachinePublicationJournal {
         retirement: &ConfirmedMachinePublicationRetirement,
     ) -> Result<(), Error> {
         self.mutate(|body| {
-            let mut matched = false;
-            for witness in body
-                .retirement_witnesses
-                .iter_mut()
-                .filter(|witness| witness.sandbox_id == retirement.sandbox_id)
-            {
-                matched = true;
-                if witness.tenant_id != retirement.tenant_id
-                    || witness.forwarder_authority != retirement.forwarder_authority
-                    || witness.expected_guest_bindings != retirement.expected_guest_bindings
-                {
+            authenticate_retirement_records(body, retirement)?;
+            let witness = exact_retirement_witness_mut(body, retirement)?;
+            match (&witness.progress, &retirement.progress) {
+                (
+                    ConfirmedMachinePublicationRetirementProgress::Active,
+                    ConfirmedMachinePublicationRetirementProgress::Active,
+                ) => {
+                    witness.progress =
+                        ConfirmedMachinePublicationRetirementProgress::LegacyReleased;
+                    Ok(())
+                }
+                (
+                    ConfirmedMachinePublicationRetirementProgress::LegacyReleased,
+                    ConfirmedMachinePublicationRetirementProgress::LegacyReleased
+                    | ConfirmedMachinePublicationRetirementProgress::Active,
+                ) => Ok(()),
+                _ => Err(Error::conflict(
+                    "coarse machine retirement cannot overwrite exact teardown progression",
+                )),
+            }
+        })
+    }
+
+    pub(crate) fn begin_parent_publication_withdrawal(
+        &self,
+        retirement: &ConfirmedMachinePublicationRetirement,
+        command: &ConfirmedWorkloadTeardownCommand,
+        provider: &ConfirmedTeardownProviderCommand,
+    ) -> Result<ConfirmedMachinePublicationRetirement, Error> {
+        let candidate = ConfirmedParentWithdrawalFence::new(
+            command,
+            provider,
+            retirement.members(),
+            retirement.expected_guest_bindings(),
+        )?;
+        self.mutate(|body| {
+            authenticate_retirement_records(body, retirement)?;
+            let witness = exact_retirement_witness_mut(body, retirement)?;
+            match &mut witness.progress {
+                ConfirmedMachinePublicationRetirementProgress::Active => {
+                    witness.progress =
+                        ConfirmedMachinePublicationRetirementProgress::WithdrawalMayExist {
+                            withdrawal: candidate,
+                        };
+                }
+                ConfirmedMachinePublicationRetirementProgress::WithdrawalMayExist {
+                    withdrawal,
+                } => {
+                    withdrawal.authenticate_candidate(
+                        command,
+                        provider,
+                        retirement.members(),
+                        retirement.expected_guest_bindings(),
+                    )?;
+                    *withdrawal = candidate;
+                }
+                ConfirmedMachinePublicationRetirementProgress::WithdrawnRetained {
+                    withdrawal,
+                    ..
+                }
+                | ConfirmedMachinePublicationRetirementProgress::ReleaseMayExist {
+                    withdrawal,
+                    ..
+                }
+                | ConfirmedMachinePublicationRetirementProgress::Released { withdrawal, .. } => {
+                    withdrawal.authenticate_candidate(
+                        command,
+                        provider,
+                        retirement.members(),
+                        retirement.expected_guest_bindings(),
+                    )?;
+                }
+                ConfirmedMachinePublicationRetirementProgress::LegacyReleased => {
                     return Err(Error::conflict(
-                        "machine retirement is crossed with durable execution authority",
+                        "exact parent withdrawal cannot enter legacy retirement",
                     ));
                 }
-                witness.retired = true;
-            }
-            for record in body.records.iter_mut().filter(|record| {
-                record.execution.execution_id().as_str() == retirement.sandbox_id.as_str()
-            }) {
-                matched = true;
-                if record.workload_key.tenant_id() != &retirement.tenant_id
-                    || record.forwarder_authority != retirement.forwarder_authority
-                    || !same_stable_members(&record.members, &retirement.members)
-                {
-                    return Err(Error::conflict(
-                        "machine publication retirement is crossed with durable parent authority",
-                    ));
-                }
-                record.retired = true;
-            }
-            if !matched {
-                return Err(Error::NotFound(
-                    "confirmed machine publication retirement is not durably staged".to_owned(),
-                ));
             }
             Ok(())
-        })
+        })?;
+        self.require_retirement_after_transition(retirement)
+    }
+
+    pub(crate) fn record_parent_publication_withdrawn_retained(
+        &self,
+        retirement: &ConfirmedMachinePublicationRetirement,
+        command: &ConfirmedWorkloadTeardownCommand,
+        provider: &ConfirmedTeardownProviderCommand,
+        forwarding: &[nimbus_sandbox::MachinePortForwardReceipt],
+        ports: &[nimbus_network::PortLeaseRecord],
+    ) -> Result<ConfirmedMachinePublicationRetirement, Error> {
+        self.mutate(|body| {
+            authenticate_retirement_records(body, retirement)?;
+            let witness = exact_retirement_witness_mut(body, retirement)?;
+            match &witness.progress {
+                ConfirmedMachinePublicationRetirementProgress::WithdrawalMayExist {
+                    withdrawal,
+                } => {
+                    let settled_by = withdrawal.authenticate_candidate(
+                        command,
+                        provider,
+                        retirement.members(),
+                        retirement.expected_guest_bindings(),
+                    )?;
+                    let withdrawn = ConfirmedParentWithdrawalEvidence::new(
+                        withdrawal,
+                        settled_by,
+                        forwarding,
+                        ports,
+                        retirement.members(),
+                        retirement.expected_guest_bindings(),
+                        &retirement.forwarder_authority,
+                    )?;
+                    witness.progress =
+                        ConfirmedMachinePublicationRetirementProgress::WithdrawnRetained {
+                            withdrawal: withdrawal.clone(),
+                            withdrawn,
+                        };
+                }
+                ConfirmedMachinePublicationRetirementProgress::WithdrawnRetained {
+                    withdrawal,
+                    withdrawn,
+                }
+                | ConfirmedMachinePublicationRetirementProgress::ReleaseMayExist {
+                    withdrawal,
+                    withdrawn,
+                    ..
+                }
+                | ConfirmedMachinePublicationRetirementProgress::Released {
+                    withdrawal,
+                    withdrawn,
+                    ..
+                } => {
+                    let settled_by = withdrawal.authenticate_candidate(
+                        command,
+                        provider,
+                        retirement.members(),
+                        retirement.expected_guest_bindings(),
+                    )?;
+                    let candidate = ConfirmedParentWithdrawalEvidence::new(
+                        withdrawal,
+                        settled_by,
+                        forwarding,
+                        ports,
+                        retirement.members(),
+                        retirement.expected_guest_bindings(),
+                        &retirement.forwarder_authority,
+                    )?;
+                    if *withdrawn != candidate {
+                        return Err(Error::conflict(
+                            "parent withdrawal replay crosses durable absence evidence",
+                        ));
+                    }
+                }
+                ConfirmedMachinePublicationRetirementProgress::Active
+                | ConfirmedMachinePublicationRetirementProgress::LegacyReleased => {
+                    return Err(Error::conflict(
+                        "parent withdrawal evidence precedes its durable intent",
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        self.require_retirement_after_transition(retirement)
+    }
+
+    pub(crate) fn begin_parent_publication_release(
+        &self,
+        retirement: &ConfirmedMachinePublicationRetirement,
+        command: &ConfirmedWorkloadTeardownCommand,
+        provider: &ConfirmedTeardownProviderCommand,
+        request: &nimbus_machine::api::MachineApiWorkloadTeardownPhaseRequest,
+        response: &nimbus_machine::api::MachineApiWorkloadTeardownPhaseResponse,
+    ) -> Result<ConfirmedMachinePublicationRetirement, Error> {
+        self.mutate(|body| {
+            authenticate_retirement_records(body, retirement)?;
+            let witness = exact_retirement_witness_mut(body, retirement)?;
+            match &witness.progress {
+                ConfirmedMachinePublicationRetirementProgress::WithdrawnRetained {
+                    withdrawal,
+                    withdrawn,
+                } => {
+                    let release = ConfirmedGuestReleaseEvidence::new(
+                        withdrawal, withdrawn, command, provider, request, response,
+                    )?;
+                    witness.progress =
+                        ConfirmedMachinePublicationRetirementProgress::ReleaseMayExist {
+                            withdrawal: withdrawal.clone(),
+                            withdrawn: withdrawn.clone(),
+                            release,
+                        };
+                }
+                ConfirmedMachinePublicationRetirementProgress::ReleaseMayExist {
+                    withdrawal,
+                    withdrawn,
+                    release,
+                }
+                | ConfirmedMachinePublicationRetirementProgress::Released {
+                    withdrawal,
+                    withdrawn,
+                    release,
+                    ..
+                } => {
+                    let candidate = ConfirmedGuestReleaseEvidence::new(
+                        withdrawal, withdrawn, command, provider, request, response,
+                    )?;
+                    if *release != candidate && !release.authenticates_recovery(&candidate) {
+                        return Err(Error::conflict(
+                            "guest release replay crosses durable response evidence",
+                        ));
+                    }
+                }
+                ConfirmedMachinePublicationRetirementProgress::Active
+                | ConfirmedMachinePublicationRetirementProgress::WithdrawalMayExist { .. }
+                | ConfirmedMachinePublicationRetirementProgress::LegacyReleased => {
+                    return Err(Error::conflict(
+                        "guest release evidence precedes retained parent withdrawal",
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        self.require_retirement_after_transition(retirement)
+    }
+
+    pub(crate) fn record_parent_publication_released(
+        &self,
+        retirement: &ConfirmedMachinePublicationRetirement,
+        ports: &[nimbus_network::PortLeaseRecord],
+    ) -> Result<ConfirmedMachinePublicationRetirement, Error> {
+        self.mutate(|body| {
+            authenticate_retirement_records(body, retirement)?;
+            let witness = exact_retirement_witness_mut(body, retirement)?;
+            let parent_ports =
+                ConfirmedParentPortBatchEvidence::released(ports, retirement.members())?;
+            match &witness.progress {
+                ConfirmedMachinePublicationRetirementProgress::ReleaseMayExist {
+                    withdrawal,
+                    withdrawn,
+                    release,
+                } => {
+                    witness.progress = ConfirmedMachinePublicationRetirementProgress::Released {
+                        withdrawal: withdrawal.clone(),
+                        withdrawn: withdrawn.clone(),
+                        release: release.clone(),
+                        parent_ports,
+                    };
+                }
+                ConfirmedMachinePublicationRetirementProgress::Released {
+                    parent_ports: existing,
+                    ..
+                } if *existing == parent_ports => {}
+                ConfirmedMachinePublicationRetirementProgress::Released { .. } => {
+                    return Err(Error::conflict(
+                        "parent release replay crosses durable terminal port evidence",
+                    ));
+                }
+                _ => {
+                    return Err(Error::conflict(
+                        "parent port release precedes exact guest release evidence",
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        self.require_retirement_after_transition(retirement)
+    }
+
+    fn require_retirement_after_transition(
+        &self,
+        retirement: &ConfirmedMachinePublicationRetirement,
+    ) -> Result<ConfirmedMachinePublicationRetirement, Error> {
+        self.retirement_for_workload(&retirement.tenant_id, &retirement.sandbox_id)?
+            .ok_or_else(|| {
+                Error::NotFound(
+                    "confirmed machine publication retirement disappeared after transition"
+                        .to_owned(),
+                )
+            })
     }
 
     fn mutate<T>(
@@ -496,6 +867,86 @@ impl ConfirmedMachinePublicationJournal {
                 )
             })
     }
+}
+
+fn authenticate_retirement_records(
+    body: &ConfirmedMachinePublicationBody,
+    retirement: &ConfirmedMachinePublicationRetirement,
+) -> Result<(), Error> {
+    let witness = body
+        .retirement_witnesses
+        .iter()
+        .find(|witness| {
+            witness.tenant_id == retirement.tenant_id && witness.sandbox_id == retirement.sandbox_id
+        })
+        .ok_or_else(|| {
+            Error::NotFound(
+                "confirmed machine publication retirement is not durably staged".to_owned(),
+            )
+        })?;
+    authenticate_retirement_identity(witness, retirement)?;
+    let mut related = body.records.iter().filter(|record| {
+        record.workload_key.tenant_id() == &retirement.tenant_id
+            && record.execution.execution_id().as_str() == retirement.sandbox_id.as_str()
+    });
+    if let Some(first) = related.next() {
+        if first.execution != retirement.execution
+            || first.generation != retirement.generation
+            || first.source_digest != retirement.source_digest
+            || first.network_plan_digest != retirement.network_plan_digest
+            || first.forwarder_authority != retirement.forwarder_authority
+            || !same_stable_members(&first.members, &retirement.members)
+            || related.any(|record| !same_stable_members(&record.members, &first.members))
+        {
+            return Err(Error::conflict(
+                "machine publication retirement is crossed with durable parent authority",
+            ));
+        }
+    } else if !retirement.members.is_empty() {
+        return Err(Error::PreconditionFailed(
+            "confirmed machine publication retirement loses its durable member batch".to_owned(),
+        ));
+    }
+    witness
+        .progress
+        .authenticate_members(&retirement.members, &retirement.expected_guest_bindings)
+}
+
+fn exact_retirement_witness_mut<'a>(
+    body: &'a mut ConfirmedMachinePublicationBody,
+    retirement: &ConfirmedMachinePublicationRetirement,
+) -> Result<&'a mut ConfirmedMachineRetirementWitness, Error> {
+    let witness = body
+        .retirement_witnesses
+        .iter_mut()
+        .find(|witness| {
+            witness.tenant_id == retirement.tenant_id && witness.sandbox_id == retirement.sandbox_id
+        })
+        .ok_or_else(|| {
+            Error::NotFound(
+                "confirmed machine publication retirement is not durably staged".to_owned(),
+            )
+        })?;
+    authenticate_retirement_identity(witness, retirement)?;
+    Ok(witness)
+}
+
+fn authenticate_retirement_identity(
+    witness: &ConfirmedMachineRetirementWitness,
+    retirement: &ConfirmedMachinePublicationRetirement,
+) -> Result<(), Error> {
+    if witness.execution != retirement.execution
+        || witness.generation != retirement.generation
+        || witness.source_digest != retirement.source_digest
+        || witness.network_plan_digest != retirement.network_plan_digest
+        || witness.forwarder_authority != retirement.forwarder_authority
+        || witness.expected_guest_bindings != retirement.expected_guest_bindings
+    {
+        return Err(Error::conflict(
+            "machine retirement is crossed with durable execution authority",
+        ));
+    }
+    Ok(())
 }
 
 /// Exact listener and lease authority retained for one forwarded command.
@@ -686,10 +1137,14 @@ fn canonical_machine_guest_bindings(
 pub(crate) struct ConfirmedMachinePublicationRetirement {
     tenant_id: TenantId,
     sandbox_id: SandboxId,
+    execution: WorkloadExecutionReference,
+    generation: WorkloadGeneration,
+    source_digest: WorkloadProvisionSourceDigest,
+    network_plan_digest: nimbus_network::NetworkPlanDigest,
     forwarder_authority: MachineForwarderAuthority,
     expected_guest_bindings: Vec<SandboxPortBinding>,
     members: Vec<ConfirmedMachinePublicationMember>,
-    retired: bool,
+    progress: ConfirmedMachinePublicationRetirementProgress,
 }
 
 impl ConfirmedMachinePublicationRetirement {
@@ -713,8 +1168,12 @@ impl ConfirmedMachinePublicationRetirement {
         &self.members
     }
 
-    pub(crate) const fn is_retired(&self) -> bool {
-        self.retired
+    pub(crate) fn phase(&self) -> ConfirmedMachinePublicationRetirementPhase {
+        self.progress.phase()
+    }
+
+    pub(crate) fn is_retired(&self) -> bool {
+        self.progress.phase().is_released()
     }
 
     #[cfg(test)]
@@ -745,9 +1204,10 @@ struct ConfirmedMachineRetirementWitness {
     execution: WorkloadExecutionReference,
     generation: WorkloadGeneration,
     source_digest: WorkloadProvisionSourceDigest,
+    network_plan_digest: nimbus_network::NetworkPlanDigest,
     forwarder_authority: MachineForwarderAuthority,
     expected_guest_bindings: Vec<SandboxPortBinding>,
-    retired: bool,
+    progress: ConfirmedMachinePublicationRetirementProgress,
 }
 
 impl ConfirmedMachineRetirementWitness {
@@ -761,16 +1221,25 @@ impl ConfirmedMachineRetirementWitness {
             execution: command.execution().clone(),
             generation: command.generation(),
             source_digest: command.source_digest(),
+            network_plan_digest: command.network_plan_digest(),
             forwarder_authority: authority.clone(),
             expected_guest_bindings: canonical_machine_guest_bindings(
                 command.compiled_network_plan(),
             )?,
-            retired: false,
+            progress: ConfirmedMachinePublicationRetirementProgress::Active,
         })
     }
 
     fn authenticate(&self, candidate: &Self) -> Result<(), Error> {
-        if self == candidate {
+        if self.tenant_id == candidate.tenant_id
+            && self.sandbox_id == candidate.sandbox_id
+            && self.execution == candidate.execution
+            && self.generation == candidate.generation
+            && self.source_digest == candidate.source_digest
+            && self.network_plan_digest == candidate.network_plan_digest
+            && self.forwarder_authority == candidate.forwarder_authority
+            && self.expected_guest_bindings == candidate.expected_guest_bindings
+        {
             Ok(())
         } else {
             Err(Error::conflict(
@@ -793,6 +1262,7 @@ impl ConfirmedMachineRetirementWitness {
                     .to_owned(),
             ));
         }
+        self.progress.validate()?;
         Ok(())
     }
 }
@@ -819,7 +1289,6 @@ pub(super) struct ConfirmedMachinePublicationRecord {
     commands: Vec<MachineApiWorkloadProvisionCommandEnvelope>,
     machine_api_committed: bool,
     observations: Vec<ConfirmedMachinePublicationObservation>,
-    retired: bool,
 }
 
 impl ConfirmedMachinePublicationRecord {
@@ -854,7 +1323,6 @@ impl ConfirmedMachinePublicationRecord {
             commands: vec![command.clone()],
             machine_api_committed: false,
             observations: Vec::new(),
-            retired: false,
         };
         record.validate()?;
         Ok(record)
@@ -1070,22 +1538,35 @@ impl ConfirmedMachinePublicationBody {
     fn validate(&self) -> Result<(), Error> {
         for (index, witness) in self.retirement_witnesses.iter().enumerate() {
             witness.validate()?;
-            if self.retirement_witnesses[..index]
-                .iter()
-                .any(|existing| existing.sandbox_id == witness.sandbox_id)
-            {
+            if self.retirement_witnesses[..index].iter().any(|existing| {
+                existing.tenant_id == witness.tenant_id && existing.sandbox_id == witness.sandbox_id
+            }) {
                 return Err(Error::PreconditionFailed(
                     "confirmed machine retirement authority contains duplicate execution identity"
                         .to_owned(),
                 ));
             }
+            let members = self
+                .records
+                .iter()
+                .find(|record| {
+                    record.workload_key.tenant_id() == &witness.tenant_id
+                        && record.execution == witness.execution
+                })
+                .map_or(&[][..], |record| record.members.as_slice());
+            witness
+                .progress
+                .authenticate_members(members, &witness.expected_guest_bindings)?;
         }
         for (index, record) in self.records.iter().enumerate() {
             record.validate()?;
             let witness = self
                 .retirement_witnesses
                 .iter()
-                .find(|witness| witness.execution == record.execution)
+                .find(|witness| {
+                    witness.tenant_id == *record.workload_key.tenant_id()
+                        && witness.execution == record.execution
+                })
                 .ok_or_else(|| {
                     Error::PreconditionFailed(
                         "confirmed machine publication lacks durable retirement authority"
@@ -1095,8 +1576,8 @@ impl ConfirmedMachinePublicationBody {
             if witness.tenant_id != *record.workload_key.tenant_id()
                 || witness.generation != record.generation
                 || witness.source_digest != record.source_digest
+                || witness.network_plan_digest != record.network_plan_digest
                 || witness.forwarder_authority != record.forwarder_authority
-                || witness.retired != record.retired
                 || record.commands.iter().any(|command| {
                     !matches!(
                         canonical_machine_guest_bindings(command.compiled_network_plan()),

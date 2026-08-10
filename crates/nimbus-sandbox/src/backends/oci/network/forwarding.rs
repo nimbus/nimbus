@@ -2,7 +2,15 @@
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+#[cfg(unix)]
+use std::os::fd::{AsRawFd as _, FromRawFd as _};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt as _;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 
 use nimbus_core::TenantId;
 use nimbus_network::{
@@ -23,16 +31,22 @@ const MACHINE_FORWARDER_PROVIDER_KEY: &str = "nimbus-sandbox.gvproxy-forwarder";
 const MAX_MACHINE_FORWARDER_RESPONSE_BYTES: usize = 1024 * 1024;
 
 mod receipt;
+mod retirement;
 pub(crate) use receipt::{
     CurrentMachinePortForwardingObservation, MachinePortForwardingSlotObservation,
 };
 pub use receipt::{MachinePortForwardOutcome, MachinePortForwardReceipt};
+pub use retirement::{
+    MachinePortForwardingRetirement, MachinePortForwardingRetirementObservation,
+    OciMachinePortForwardingRetirement,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OciMachinePortForwarderConfig {
     pub host: String,
     pub port: u16,
     pub path_prefix: String,
+    unix_socket_path: Option<PathBuf>,
     provider_instance: NetworkProviderHandle,
     provider_generation: NetworkResourceGeneration,
 }
@@ -81,9 +95,74 @@ impl OciMachinePortForwarderConfig {
             host: host.into(),
             port,
             path_prefix: path_prefix.into(),
+            unix_socket_path: None,
             provider_instance: Self::gvproxy_provider_handle(provider_instance)?,
             provider_generation,
         })
+    }
+
+    /// Configure a parent-reachable gvproxy services socket.
+    pub fn for_unix_services_socket(
+        socket_path: impl Into<PathBuf>,
+        path_prefix: impl Into<String>,
+        provider_instance: impl Into<String>,
+        provider_generation: NetworkResourceGeneration,
+    ) -> Result<Self> {
+        let socket_path = socket_path.into();
+        let path_prefix = path_prefix.into();
+        if !socket_path.is_absolute() {
+            return Err(SandboxError::InvalidSpec {
+                message: "machine forwarder services socket path must be absolute".to_owned(),
+            });
+        }
+        if path_prefix != DEFAULT_MACHINE_FORWARDER_PATH {
+            return Err(SandboxError::InvalidSpec {
+                message: format!(
+                    "machine forwarder services path must be {DEFAULT_MACHINE_FORWARDER_PATH}"
+                ),
+            });
+        }
+        #[cfg(unix)]
+        {
+            let path_bytes = socket_path.as_os_str().as_bytes();
+            if path_bytes.contains(&0) {
+                return Err(SandboxError::InvalidSpec {
+                    message: "machine forwarder services socket path contains a NUL byte"
+                        .to_owned(),
+                });
+            }
+            if path_bytes.len() > unix_socket_path_max_bytes() {
+                return Err(SandboxError::InvalidSpec {
+                    message: format!(
+                        "machine forwarder services socket path {} exceeds the platform limit of {} bytes",
+                        socket_path.display(),
+                        unix_socket_path_max_bytes()
+                    ),
+                });
+            }
+        }
+        #[cfg(not(unix))]
+        return Err(SandboxError::BackendUnavailable {
+            message: "machine forwarder Unix services sockets are unavailable on this platform"
+                .to_owned(),
+        });
+
+        Ok(Self {
+            host: "localhost".to_owned(),
+            port: 0,
+            path_prefix,
+            unix_socket_path: Some(socket_path),
+            provider_instance: Self::gvproxy_provider_handle(provider_instance).map_err(
+                |error| SandboxError::InvalidSpec {
+                    message: format!("machine forwarder provider identity is invalid: {error}"),
+                },
+            )?,
+            provider_generation,
+        })
+    }
+
+    pub fn unix_socket_path(&self) -> Option<&Path> {
+        self.unix_socket_path.as_deref()
     }
 
     pub fn provider_instance(&self) -> &NetworkProviderHandle {
@@ -93,6 +172,26 @@ impl OciMachinePortForwarderConfig {
     pub fn provider_generation(&self) -> NetworkResourceGeneration {
         self.provider_generation
     }
+
+    fn endpoint_label(&self) -> String {
+        self.unix_socket_path.as_ref().map_or_else(
+            || format!("{}:{}", self.host, self.port),
+            |path| path.display().to_string(),
+        )
+    }
+
+    /// Prove that the configured control endpoint serves the gvproxy API.
+    ///
+    /// Machine composition uses this before it advertises the forwarding
+    /// capability. The probe performs one bounded read-only route-list request.
+    pub fn require_reachable(&self) -> Result<()> {
+        fetch_machine_forwarder_routes(self).map(|_| ())
+    }
+}
+
+#[cfg(unix)]
+const fn unix_socket_path_max_bytes() -> usize {
+    std::mem::size_of::<libc::sockaddr_un>() - std::mem::offset_of!(libc::sockaddr_un, sun_path) - 1
 }
 
 #[cfg(test)]
@@ -133,30 +232,37 @@ pub(crate) fn inspect_machine_ports(
         ));
     }
 
-    let deadline = Instant::now() + MACHINE_FORWARDER_TIMEOUT;
-    let response =
-        send_machine_forwarder_request(config, "GET", "/all", &[], deadline).map_err(|error| {
-            current_observation_error(config.provider_generation, error.to_string())
-        })?;
-    if response.status_code != 200 {
-        return Err(current_observation_error(
-            config.provider_generation,
-            format!("gvproxy returned HTTP {}", response.status_code),
-        ));
-    }
-    let routes =
-        serde_json::from_slice::<Vec<GvproxyForwardRoute>>(&response.body).map_err(|error| {
-            current_observation_error(
-                config.provider_generation,
-                format!("gvproxy returned a malformed forwarding list: {error}"),
-            )
-        })?;
+    let routes = fetch_machine_forwarder_routes(config).map_err(|error| {
+        current_observation_error(config.provider_generation, error.to_string())
+    })?;
     let slots = authenticate_current_routes(config, tenant_id, sandbox_id, port_bindings, &routes)?;
     Ok(CurrentMachinePortForwardingObservation::authenticated(
         &config.provider_instance,
         config.provider_generation,
         slots,
     ))
+}
+
+fn fetch_machine_forwarder_routes(
+    config: &OciMachinePortForwarderConfig,
+) -> Result<Vec<GvproxyForwardRoute>> {
+    let deadline = Instant::now() + MACHINE_FORWARDER_TIMEOUT;
+    let response = send_machine_forwarder_request(config, "GET", "/all", &[], deadline)?;
+    if response.status_code != 200 {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "machine forwarder {} returned HTTP {} for its services probe",
+                config.endpoint_label(),
+                response.status_code
+            ),
+        });
+    }
+    serde_json::from_slice(&response.body).map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "machine forwarder {} returned a malformed forwarding list: {error}",
+            config.endpoint_label()
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -338,17 +444,17 @@ impl MachinePortForwardingProvider for OciMachinePortForwarderConfig {
     }
 }
 
-#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
 enum MachinePortForwardingAction {
+    #[cfg(test)]
     Expose,
     Withdraw,
 }
 
-#[cfg(test)]
 impl MachinePortForwardingAction {
     fn label(self) -> &'static str {
         match self {
+            #[cfg(test)]
             Self::Expose => "expose",
             Self::Withdraw => "unexpose",
         }
@@ -359,13 +465,13 @@ impl MachinePortForwardingAction {
         observation: &MachinePortForwardingSlotObservation,
     ) -> Option<&MachinePortForwardReceipt> {
         match self {
+            #[cfg(test)]
             Self::Expose => observation.exposed_receipt(),
             Self::Withdraw => observation.absent_receipt(),
         }
     }
 }
 
-#[cfg(test)]
 fn converge_machine_ports_without_journal(
     provider: &impl MachinePortForwardingProvider,
     tenant_id: &TenantId,
@@ -395,6 +501,7 @@ fn converge_machine_ports_without_journal(
         }
 
         let mutation = match action {
+            #[cfg(test)]
             MachinePortForwardingAction::Expose => provider.expose_one(binding),
             MachinePortForwardingAction::Withdraw => provider.withdraw_one(binding),
         };
@@ -619,7 +726,6 @@ fn authenticate_current_routes(
     Ok(slots)
 }
 
-#[cfg(test)]
 fn authenticate_observation_identity(
     provider: &impl MachinePortForwardingProvider,
     observation: &CurrentMachinePortForwardingObservation,
@@ -648,7 +754,6 @@ fn current_observation_error(
     }
 }
 
-#[cfg(test)]
 fn mutation_observation_error(
     provider_generation: NetworkResourceGeneration,
     action: &str,
@@ -685,38 +790,15 @@ fn send_machine_forwarder_request(
     deadline: Instant,
 ) -> Result<MachineForwarderHttpResponse> {
     let remaining = remaining_before(deadline)?;
-    let mut addresses = (config.host.as_str(), config.port)
-        .to_socket_addrs()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to resolve machine forwarder {}:{}: {error}",
-                config.host, config.port
-            ),
-        })?;
-    let address = addresses
-        .next()
-        .ok_or_else(|| SandboxError::OperationFailed {
-            message: format!(
-                "machine forwarder {}:{} did not resolve to an address",
-                config.host, config.port
-            ),
-        })?;
-    let mut stream = TcpStream::connect_timeout(&address, remaining).map_err(|error| {
-        SandboxError::OperationFailed {
-            message: format!(
-                "failed to connect to machine forwarder {}:{}: {error}",
-                config.host, config.port
-            ),
-        }
-    })?;
+    let mut stream = connect_machine_forwarder(config, remaining)?;
     let io_timeout = remaining_before(deadline)?;
     stream
         .set_read_timeout(Some(io_timeout))
         .and_then(|()| stream.set_write_timeout(Some(io_timeout)))
         .map_err(|error| SandboxError::OperationFailed {
             message: format!(
-                "failed to configure machine forwarder timeout {}:{}: {error}",
-                config.host, config.port
+                "failed to configure machine forwarder timeout {}: {error}",
+                config.endpoint_label()
             ),
         })?;
     let request = format!(
@@ -731,8 +813,8 @@ fn send_machine_forwarder_request(
         .and_then(|()| stream.write_all(body))
         .map_err(|error| SandboxError::OperationFailed {
             message: format!(
-                "failed to send machine forwarder {method} request to {}:{}: {error}",
-                config.host, config.port
+                "failed to send machine forwarder {method} request to {}: {error}",
+                config.endpoint_label()
             ),
         })?;
 
@@ -740,7 +822,7 @@ fn send_machine_forwarder_request(
 }
 
 fn read_machine_forwarder_response(
-    stream: &mut TcpStream,
+    stream: &mut MachineForwarderStream,
     deadline: Instant,
 ) -> Result<MachineForwarderHttpResponse> {
     let mut response = Vec::new();
@@ -790,6 +872,239 @@ fn read_machine_forwarder_response(
         }
     }
     parse_machine_forwarder_response(response, reached_eof)
+}
+
+enum MachineForwarderStream {
+    Tcp(TcpStream),
+    #[cfg(unix)]
+    Unix(UnixStream),
+}
+
+impl MachineForwarderStream {
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.set_read_timeout(timeout),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.set_read_timeout(timeout),
+        }
+    }
+
+    fn set_write_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.set_write_timeout(timeout),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.set_write_timeout(timeout),
+        }
+    }
+}
+
+impl Read for MachineForwarderStream {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.read(buffer),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.read(buffer),
+        }
+    }
+}
+
+impl Write for MachineForwarderStream {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.write(buffer),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.write(buffer),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.flush(),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.flush(),
+        }
+    }
+}
+
+fn connect_machine_forwarder(
+    config: &OciMachinePortForwarderConfig,
+    timeout: Duration,
+) -> Result<MachineForwarderStream> {
+    if let Some(socket_path) = config.unix_socket_path() {
+        #[cfg(unix)]
+        {
+            return connect_unix_with_timeout(socket_path, timeout)
+                .map(MachineForwarderStream::Unix)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to connect to machine forwarder services socket {}: {error}",
+                        socket_path.display()
+                    ),
+                });
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = timeout;
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "machine forwarder Unix services socket {} is unavailable on this platform",
+                    socket_path.display()
+                ),
+            });
+        }
+    }
+
+    let mut addresses = (config.host.as_str(), config.port)
+        .to_socket_addrs()
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to resolve machine forwarder {}:{}: {error}",
+                config.host, config.port
+            ),
+        })?;
+    let address = addresses
+        .next()
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "machine forwarder {}:{} did not resolve to an address",
+                config.host, config.port
+            ),
+        })?;
+    TcpStream::connect_timeout(&address, timeout)
+        .map(MachineForwarderStream::Tcp)
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to connect to machine forwarder {}:{}: {error}",
+                config.host, config.port
+            ),
+        })
+}
+
+#[cfg(unix)]
+fn connect_unix_with_timeout(path: &Path, timeout: Duration) -> std::io::Result<UnixStream> {
+    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let stream = unsafe { UnixStream::from_raw_fd(fd) };
+    stream.set_nonblocking(true)?;
+    let descriptor_flags = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFD) };
+    if descriptor_flags < 0
+        || unsafe {
+            libc::fcntl(
+                stream.as_raw_fd(),
+                libc::F_SETFD,
+                descriptor_flags | libc::FD_CLOEXEC,
+            )
+        } < 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    let path_bytes = path.as_os_str().as_bytes();
+    if path_bytes.len() > unix_socket_path_max_bytes() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Unix socket path exceeds the platform limit",
+        ));
+    }
+    let mut address = unsafe { std::mem::zeroed::<libc::sockaddr_un>() };
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (target, source) in address.sun_path.iter_mut().zip(path_bytes) {
+        *target = *source as libc::c_char;
+    }
+    let address_length = std::mem::offset_of!(libc::sockaddr_un, sun_path) + path_bytes.len() + 1;
+    #[cfg(any(
+        target_os = "aix",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    {
+        address.sun_len = u8::try_from(address_length).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Unix socket address length exceeds u8",
+            )
+        })?;
+    }
+    let connected = unsafe {
+        libc::connect(
+            stream.as_raw_fd(),
+            (&raw const address).cast::<libc::sockaddr>(),
+            address_length as libc::socklen_t,
+        )
+    };
+    if connected != 0 {
+        let error = std::io::Error::last_os_error();
+        if !matches!(
+            error.raw_os_error(),
+            Some(code) if code == libc::EINPROGRESS
+                || code == libc::EAGAIN
+                || code == libc::EWOULDBLOCK
+        ) {
+            return Err(error);
+        }
+        wait_for_unix_connect(stream.as_raw_fd(), timeout)?;
+    }
+    stream.set_nonblocking(false)?;
+    Ok(stream)
+}
+
+#[cfg(unix)]
+fn wait_for_unix_connect(fd: std::os::fd::RawFd, timeout: Duration) -> std::io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Unix socket connect timed out",
+            ));
+        }
+        let timeout_ms = remaining
+            .as_millis()
+            .saturating_add(1)
+            .min(i32::MAX as u128) as i32;
+        let mut poll = libc::pollfd {
+            fd,
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        let result = unsafe { libc::poll(&raw mut poll, 1, timeout_ms) };
+        if result == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Unix socket connect timed out",
+            ));
+        }
+        if result < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        let mut socket_error = 0;
+        let mut socket_error_length = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        if unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_ERROR,
+                (&raw mut socket_error).cast(),
+                &raw mut socket_error_length,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        return if socket_error == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::from_raw_os_error(socket_error))
+        };
+    }
 }
 
 fn response_has_complete_declared_body(response: &[u8]) -> Result<bool> {

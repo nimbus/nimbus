@@ -292,11 +292,12 @@ fn teardown_response_rejects_cross_mode_success_and_every_echoed_fence() {
         WorkloadTeardownCommandMode::Execute,
     );
     assert_eq!(
-        MachineApiWorkloadTeardownPhaseResponse::for_request(
-            &request,
+        MachineApiWorkloadTeardownPhaseResult::new(
+            request.command(),
             MachineApiWorkloadTeardownObservation::Inspect(
                 MachineApiWorkloadTeardownInspectObservation::Ambiguous,
             ),
+            None,
         ),
         Err(MachineApiWorkloadTeardownWireError::ObservationModeMismatch)
     );
@@ -306,21 +307,25 @@ fn teardown_response_rejects_cross_mode_success_and_every_echoed_fence() {
         "crossed-success",
     );
     assert_eq!(
-        MachineApiWorkloadTeardownPhaseResponse::for_request(
-            &request,
+        MachineApiWorkloadTeardownPhaseResult::new(
+            request.command(),
             MachineApiWorkloadTeardownObservation::Execute(
                 MachineApiWorkloadTeardownExecuteObservation::Succeeded {
                     evidence: Box::new(crossed_success),
                 },
             ),
+            None,
         ),
         Err(MachineApiWorkloadTeardownWireError::SuccessEvidenceMismatch)
     );
 
     let response = MachineApiWorkloadTeardownPhaseResponse::for_request(
         &request,
-        MachineApiWorkloadTeardownObservation::Execute(
-            MachineApiWorkloadTeardownExecuteObservation::Ambiguous,
+        phase_result(
+            &request,
+            MachineApiWorkloadTeardownObservation::Execute(
+                MachineApiWorkloadTeardownExecuteObservation::Ambiguous,
+            ),
         ),
     )
     .unwrap();
@@ -332,8 +337,11 @@ fn teardown_response_rejects_cross_mode_success_and_every_echoed_fence() {
     );
     let other_response = MachineApiWorkloadTeardownPhaseResponse::for_request(
         &other,
-        MachineApiWorkloadTeardownObservation::Execute(
-            MachineApiWorkloadTeardownExecuteObservation::Ambiguous,
+        phase_result(
+            &other,
+            MachineApiWorkloadTeardownObservation::Execute(
+                MachineApiWorkloadTeardownExecuteObservation::Ambiguous,
+            ),
         ),
     )
     .unwrap();
@@ -378,16 +386,97 @@ fn teardown_response_rejects_cross_mode_success_and_every_echoed_fence() {
     assert!(serde_json::from_value::<MachineApiWorkloadTeardownPhaseResponse>(unknown).is_err());
 }
 
+#[test]
+fn release_success_requires_independent_absence_and_other_outcomes_forbid_it() {
+    let release = request_fixture(
+        'a',
+        WorkloadTeardownStep::ReleaseNetwork,
+        WorkloadTeardownCommandMode::Execute,
+    );
+    let success = MachineApiWorkloadTeardownObservation::Execute(
+        MachineApiWorkloadTeardownExecuteObservation::Succeeded {
+            evidence: Box::new(success_evidence(
+                WorkloadTeardownStep::ReleaseNetwork,
+                release.command().subjects(),
+                "release-success",
+            )),
+        },
+    );
+    assert_eq!(
+        MachineApiWorkloadTeardownPhaseResult::new(release.command(), success.clone(), None),
+        Err(MachineApiWorkloadTeardownWireError::ReleaseAbsenceEvidenceMismatch)
+    );
+
+    let absence = MachineApiNetworkReleaseAbsenceEvidence::new(
+        WorkloadOwnerEvidenceDigest::sha256("provider-absent"),
+        WorkloadOwnerEvidenceDigest::sha256("publication-absent"),
+    );
+    let drain = request_fixture(
+        'a',
+        WorkloadTeardownStep::DrainExecution,
+        WorkloadTeardownCommandMode::Execute,
+    );
+    assert_eq!(
+        MachineApiWorkloadTeardownPhaseResult::new(
+            drain.command(),
+            MachineApiWorkloadTeardownObservation::Execute(
+                MachineApiWorkloadTeardownExecuteObservation::Ambiguous,
+            ),
+            Some(absence),
+        ),
+        Err(MachineApiWorkloadTeardownWireError::ReleaseAbsenceEvidenceMismatch)
+    );
+
+    let response = MachineApiWorkloadTeardownPhaseResponse::for_request(
+        &release,
+        MachineApiWorkloadTeardownPhaseResult::new(release.command(), success, Some(absence))
+            .unwrap(),
+    )
+    .unwrap();
+    let mut missing = serde_json::to_value(&response).unwrap();
+    missing.as_object_mut().unwrap().remove("releaseAbsence");
+    assert!(serde_json::from_value::<MachineApiWorkloadTeardownPhaseResponse>(missing).is_err());
+    let mut null = serde_json::to_value(response).unwrap();
+    null["releaseAbsence"] = Value::Null;
+    assert!(serde_json::from_value::<MachineApiWorkloadTeardownPhaseResponse>(null).is_err());
+}
+
 fn assert_response_round_trip(
     request: &MachineApiWorkloadTeardownPhaseRequest,
     observation: MachineApiWorkloadTeardownObservation,
 ) {
-    let response =
-        MachineApiWorkloadTeardownPhaseResponse::for_request(request, observation).unwrap();
+    let response = MachineApiWorkloadTeardownPhaseResponse::for_request(
+        request,
+        phase_result(request, observation),
+    )
+    .unwrap();
     let encoded = serde_json::to_value(&response).unwrap();
     let decoded: MachineApiWorkloadTeardownPhaseResponse = serde_json::from_value(encoded).unwrap();
     assert_eq!(decoded, response);
     decoded.validate_for_request(request).unwrap();
+}
+
+fn phase_result(
+    request: &MachineApiWorkloadTeardownPhaseRequest,
+    observation: MachineApiWorkloadTeardownObservation,
+) -> MachineApiWorkloadTeardownPhaseResult {
+    let successful_release = request.command().step() == WorkloadTeardownStep::ReleaseNetwork
+        && matches!(
+            &observation,
+            MachineApiWorkloadTeardownObservation::Execute(
+                MachineApiWorkloadTeardownExecuteObservation::Succeeded { .. }
+            ) | MachineApiWorkloadTeardownObservation::Inspect(
+                MachineApiWorkloadTeardownInspectObservation::Satisfied { .. }
+            )
+        );
+    let release_absence = successful_release.then(|| {
+        MachineApiNetworkReleaseAbsenceEvidence::new(
+            WorkloadOwnerEvidenceDigest::sha256("provider-absent"),
+            WorkloadOwnerEvidenceDigest::sha256("publication-absent"),
+        )
+    });
+    MachineApiWorkloadTeardownPhaseResult::new(request.command(), observation, release_absence)
+        .unwrap()
 }
 
 fn guest_steps() -> [WorkloadTeardownStep; 4] {

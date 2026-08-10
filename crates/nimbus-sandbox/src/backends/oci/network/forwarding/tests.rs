@@ -3,6 +3,11 @@ use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
+#[cfg(unix)]
+use std::os::fd::AsRawFd as _;
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
+
 use nimbus_core::TenantId;
 use nimbus_network::NetworkResourceGeneration;
 
@@ -158,6 +163,174 @@ fn config_for(
     .expect("test provider instance should validate")
 }
 
+#[cfg(unix)]
+#[test]
+fn unix_services_socket_is_the_reachable_parent_control_endpoint() {
+    let root = tempfile::TempDir::new().expect("Unix services fixture should exist");
+    let socket_path = root.path().join("gvproxy-services.sock");
+    let listener = UnixListener::bind(&socket_path).expect("Unix services socket should bind");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener
+            .accept()
+            .expect("parent control probe should connect to the Unix services socket");
+        let request = read_complete_unix_request(&mut stream);
+        assert!(request.starts_with("GET /services/forwarder/all "));
+        stream
+            .write_all(&http_response("200 OK", b"[]"))
+            .expect("services probe response should write");
+    });
+    let config = OciMachinePortForwarderConfig::for_unix_services_socket(
+        &socket_path,
+        "/services/forwarder",
+        "unix-parent-control",
+        NetworkResourceGeneration::new(7),
+    )
+    .expect("Unix parent control config should validate");
+
+    assert_eq!(config.unix_socket_path(), Some(socket_path.as_path()));
+    config
+        .require_reachable()
+        .expect("bound Unix services socket should be reachable");
+    server.join().expect("Unix control probe should finish");
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_services_capability_requires_valid_forwarder_http_api() {
+    let root = tempfile::TempDir::new().expect("Unix services fixture should exist");
+    let socket_path = root.path().join("accept-only.sock");
+    let listener = UnixListener::bind(&socket_path).expect("accept-only socket should bind");
+    let server = thread::spawn(move || {
+        let _ = listener
+            .accept()
+            .expect("services probe should reach accept-only listener");
+    });
+    let config = OciMachinePortForwarderConfig::for_unix_services_socket(
+        &socket_path,
+        "/services/forwarder",
+        "accept-only-parent-control",
+        NetworkResourceGeneration::new(9),
+    )
+    .expect("Unix parent control config should validate");
+
+    config
+        .require_reachable()
+        .expect_err("an arbitrary accepting listener is not the gvproxy services API");
+    server.join().expect("accept-only listener should finish");
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_services_config_rejects_relative_empty_prefix_and_overlong_paths() {
+    use std::os::unix::ffi::OsStringExt as _;
+
+    let generation = NetworkResourceGeneration::new(10);
+    assert!(
+        OciMachinePortForwarderConfig::for_unix_services_socket(
+            "relative.sock",
+            "/services/forwarder",
+            "relative",
+            generation,
+        )
+        .is_err()
+    );
+    assert!(
+        OciMachinePortForwarderConfig::for_unix_services_socket(
+            "/tmp/nimbus.sock",
+            "",
+            "empty-prefix",
+            generation,
+        )
+        .is_err()
+    );
+    let overlong = format!("/tmp/{}.sock", "x".repeat(256));
+    assert!(
+        OciMachinePortForwarderConfig::for_unix_services_socket(
+            overlong,
+            "/services/forwarder",
+            "overlong",
+            generation,
+        )
+        .is_err()
+    );
+    assert!(
+        OciMachinePortForwarderConfig::for_unix_services_socket(
+            std::ffi::OsString::from_vec(b"/tmp/nimbus\0crossed.sock".to_vec()),
+            "/services/forwarder",
+            "nul-path",
+            generation,
+        )
+        .is_err()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_services_errors_name_socket_not_localhost_zero() {
+    let root = tempfile::TempDir::new().expect("Unix services fixture should exist");
+    let socket_path = root.path().join("missing.sock");
+    let config = OciMachinePortForwarderConfig::for_unix_services_socket(
+        &socket_path,
+        "/services/forwarder",
+        "diagnostic-parent-control",
+        NetworkResourceGeneration::new(11),
+    )
+    .expect("Unix parent control config should validate");
+
+    let error = config
+        .require_reachable()
+        .expect_err("missing services socket should fail");
+    let diagnostic = error.to_string();
+    assert!(diagnostic.contains(&socket_path.display().to_string()));
+    assert!(!diagnostic.contains("localhost:0"), "{diagnostic}");
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_services_connect_poll_obeys_deadline() {
+    let (mut sender, receiver) = UnixStream::pair().expect("Unix socket pair should create");
+    sender
+        .set_nonblocking(true)
+        .expect("test sender should become nonblocking");
+    let chunk = [0_u8; 8192];
+    loop {
+        match sender.write(&chunk) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) => panic!("test send buffer should fill: {error}"),
+        }
+    }
+    let started = std::time::Instant::now();
+    let error = super::wait_for_unix_connect(sender.as_raw_fd(), Duration::from_millis(20))
+        .expect_err("a non-writable socket must honor the connect deadline");
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    drop(receiver);
+}
+
+#[cfg(unix)]
+#[test]
+fn missing_unix_services_socket_is_not_an_available_capability() {
+    let root = tempfile::TempDir::new().expect("Unix services fixture should exist");
+    let socket_path = root.path().join("missing-gvproxy-services.sock");
+    let config = OciMachinePortForwarderConfig::for_unix_services_socket(
+        &socket_path,
+        "/services/forwarder",
+        "missing-unix-parent-control",
+        NetworkResourceGeneration::new(8),
+    )
+    .expect("Unix parent control config should validate");
+
+    let error = config
+        .require_reachable()
+        .expect_err("missing Unix services socket must keep capability unavailable");
+    assert!(
+        error
+            .to_string()
+            .contains(&socket_path.display().to_string())
+    );
+}
+
 fn binding() -> SandboxPortBinding {
     SandboxPortBinding::tcp("http", 18080, 8080)
 }
@@ -245,6 +418,18 @@ fn read_complete_request(stream: &mut std::net::TcpStream) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
         .expect("test request timeout should configure");
+    read_complete_request_from(stream)
+}
+
+#[cfg(unix)]
+fn read_complete_unix_request(stream: &mut UnixStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("test Unix request timeout should configure");
+    read_complete_request_from(stream)
+}
+
+fn read_complete_request_from(stream: &mut impl std::io::Read) -> String {
     let mut request = Vec::new();
     let mut expected_len = None;
     let mut chunk = [0_u8; 1024];
@@ -278,6 +463,49 @@ fn read_complete_request(stream: &mut std::net::TcpStream) -> String {
             return String::from_utf8(request).expect("test request should be UTF-8");
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_services_retirement_inspects_and_withdraws_exact_batch() {
+    let root = tempfile::TempDir::new().expect("Unix retirement fixture should exist");
+    let socket_path = root.path().join("gvproxy-services.sock");
+    let listener = UnixListener::bind(&socket_path).expect("Unix services socket should bind");
+    let expected_binding = binding();
+    let route_body = native_routes(std::slice::from_ref(&expected_binding));
+    let server = thread::spawn(move || {
+        let responses = [
+            http_response("200 OK", &route_body),
+            http_response("200 OK", b"[]"),
+            http_response("200 OK", b"[]"),
+        ];
+        let mut requests = Vec::new();
+        for response in responses {
+            let (mut stream, _) = listener.accept().expect("Unix request should arrive");
+            requests.push(read_complete_unix_request(&mut stream));
+            stream
+                .write_all(&response)
+                .expect("Unix services response should write");
+        }
+        requests
+    });
+    let config = OciMachinePortForwarderConfig::for_unix_services_socket(
+        &socket_path,
+        "/services/forwarder",
+        "unix-retirement",
+        NetworkResourceGeneration::new(12),
+    )
+    .expect("Unix parent control config should validate");
+
+    let receipts = unexpose_machine_ports(&config, std::slice::from_ref(&expected_binding))
+        .expect("Unix services retirement should prove exact absence");
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].outcome, MachinePortForwardOutcome::Withdrawn);
+    let requests = server.join().expect("Unix retirement server should join");
+    assert_eq!(requests.len(), 3);
+    assert!(requests[0].starts_with("GET /services/forwarder/all "));
+    assert!(requests[1].starts_with("POST /services/forwarder/unexpose "));
+    assert!(requests[2].starts_with("GET /services/forwarder/all "));
 }
 
 fn assert_ambiguous(error: crate::error::SandboxError) {

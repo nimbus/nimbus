@@ -40,10 +40,11 @@ pub use restart::{
 mod teardown;
 #[cfg(unix)]
 pub use teardown::{
-    MachineApiWorkloadTeardownCommandEnvelope, MachineApiWorkloadTeardownCommandEnvelopeInput,
-    MachineApiWorkloadTeardownExecuteObservation, MachineApiWorkloadTeardownInspectObservation,
-    MachineApiWorkloadTeardownObservation, MachineApiWorkloadTeardownPhaseRequest,
-    MachineApiWorkloadTeardownPhaseResponse, MachineApiWorkloadTeardownProviderTranslation,
+    MachineApiNetworkReleaseAbsenceEvidence, MachineApiWorkloadTeardownCommandEnvelope,
+    MachineApiWorkloadTeardownCommandEnvelopeInput, MachineApiWorkloadTeardownExecuteObservation,
+    MachineApiWorkloadTeardownInspectObservation, MachineApiWorkloadTeardownObservation,
+    MachineApiWorkloadTeardownPhaseRequest, MachineApiWorkloadTeardownPhaseResponse,
+    MachineApiWorkloadTeardownPhaseResult, MachineApiWorkloadTeardownProviderTranslation,
     MachineApiWorkloadTeardownRequestDigest, MachineApiWorkloadTeardownWireError,
 };
 

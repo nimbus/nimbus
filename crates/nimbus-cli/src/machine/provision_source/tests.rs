@@ -36,6 +36,9 @@ struct Fixture {
 
 impl Fixture {
     fn new(provider: MachineProvider, state: MachineStateRecord) -> Self {
+        #[cfg(unix)]
+        let temp = TempDir::new_in("/tmp").expect("short fixture root should exist");
+        #[cfg(not(unix))]
         let temp = TempDir::new().expect("fixture root should exist");
         let composition =
             HostMachineNetworkComposition::claim_at(&temp.path().join("network-authority"))
@@ -217,6 +220,23 @@ fn snapshot_tree(root: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
 }
 
 #[test]
+fn parent_forwarder_uses_the_exact_machine_services_socket_and_authority() {
+    let fixture = Fixture::new(MachineProvider::Krunkit, MachineStateRecord::initialized());
+    let paths = fixture.roots.paths(DEFAULT_MACHINE_NAME);
+    let authority = authority(&fixture.config, 11);
+
+    let config = parent_forwarder_config(&paths, &authority)
+        .expect("parent forwarder config should validate");
+
+    assert_eq!(
+        config.unix_socket_path(),
+        Some(paths.gvproxy_services_socket_path().as_path())
+    );
+    assert_eq!(config.provider_instance(), authority.provider_instance());
+    assert_eq!(config.provider_generation(), authority.generation());
+}
+
+#[test]
 #[serial_test::serial]
 fn provider_managed_wsl_rejects_before_mutation_or_effect() {
     let fixture = Fixture::new(MachineProvider::Wsl2, MachineStateRecord::initialized());
@@ -275,6 +295,9 @@ fn running_source_adopts_exact_current_authority_without_start() {
 #[test]
 #[serial_test::serial]
 fn forwarded_server_profile_defers_machine_activation_until_after_engine_construction() {
+    #[cfg(unix)]
+    let temp = TempDir::new_in("/tmp").expect("short fixture root should exist");
+    #[cfg(not(unix))]
     let temp = TempDir::new().expect("fixture root should exist");
     let network_root = LocalNodeNetworkRoot::resolve_for_current_platform(Some(
         &temp.path().join("network-authority"),

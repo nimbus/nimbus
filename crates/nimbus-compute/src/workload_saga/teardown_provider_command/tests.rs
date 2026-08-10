@@ -189,7 +189,7 @@ fn journal_observation_cannot_cross_a_confirmed_teardown_command() {
 }
 
 #[test]
-fn final_withdraw_requires_coded_failure_and_cannot_mint_retry_authority() {
+fn final_withdraw_requires_coded_failure_and_accepts_exact_retry_authority() {
     let root = tempfile::tempdir().expect("temporary root should exist");
     let journal = ProviderCommandAttemptJournal::open(root.path(), "final-withdraw-policy")
         .expect("provider journal should open");
@@ -210,15 +210,6 @@ fn final_withdraw_requires_coded_failure_and_cannot_mint_retry_authority() {
         ),
         Err(ProviderCommandJournalError::InvalidClaim { .. })
     ));
-    assert!(matches!(
-        seam.record_observation_with_failure_code(
-            &command,
-            ProviderCommandObservationKind::RetryAuthorized,
-            None,
-            b"unproven retry authority",
-        ),
-        Err(ProviderCommandJournalError::InvalidClaim { .. })
-    ));
     let terminal = seam
         .record_observation_with_failure_code(
             &command,
@@ -228,4 +219,24 @@ fn final_withdraw_requires_coded_failure_and_cannot_mint_retry_authority() {
         )
         .expect("coded teardown failure should persist");
     assert_eq!(terminal.failure_code(), Some("final_withdraw_failed"));
+
+    let retry_journal = ProviderCommandAttemptJournal::open(root.path(), "final-withdraw-retry")
+        .expect("provider retry journal should open");
+    let retry_seam = ConfirmedTeardownProviderJournal::new(retry_journal);
+    retry_seam
+        .claim_execute(&command)
+        .expect("final withdrawal retry fixture should claim its stream");
+    let retry = retry_seam
+        .record_observation_with_failure_code(
+            &command,
+            ProviderCommandObservationKind::RetryAuthorized,
+            None,
+            b"fresh complete forwarding inspection authorizes the adjacent retry",
+        )
+        .expect("exact final withdrawal retry authority should persist");
+    assert_eq!(
+        retry.kind(),
+        ProviderCommandObservationKind::RetryAuthorized
+    );
+    assert_eq!(retry.failure_code(), None);
 }

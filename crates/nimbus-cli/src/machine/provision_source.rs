@@ -17,6 +17,7 @@ use nimbus_network::{
     NetworkCapabilityBundle, NetworkCapabilityRequirements, NetworkCapabilitySelection,
     NetworkManagementMode, NetworkSovereigntyRequirements,
 };
+use nimbus_sandbox::backends::container::OciMachinePortForwarderConfig;
 use nimbus_workloads::{NodeIdentity, WorkloadExecutionProviderId};
 
 use super::DEFAULT_MACHINE_NAME;
@@ -150,6 +151,7 @@ impl PreparedDefaultMachineProvisionSource {
             expected_authority.clone(),
             node_identity,
             connectivity.clone(),
+            parent_forwarder_config(&paths, &expected_authority)?,
         )?;
         Ok(Self {
             roots,
@@ -214,6 +216,16 @@ impl PreparedDefaultMachineProvisionSource {
                     .to_owned(),
             ));
         }
+        activation
+            .source_plan
+            .forwarder_config()
+            .require_reachable()
+            .map_err(|error| {
+                Error::InvalidInput(format!(
+                    "machine '{}' parent gvproxy control endpoint is not reachable after exact activation: {error}",
+                    DEFAULT_MACHINE_NAME
+                ))
+            })?;
         let client = MachineApiClient::new(activation.paths.api_socket_path)
             .with_forwarder_authority(activation.authority);
         let health = client.health().map_err(|error| {
@@ -268,6 +280,7 @@ impl PreparedDefaultMachineProvisionSource {
                 authority.clone(),
                 self.source_plan.node_identity().clone(),
                 self.connectivity.clone(),
+                parent_forwarder_config(&paths, &authority)?,
             )?;
             if source_plan != self.source_plan {
                 return Err(Error::PreconditionFailed(
@@ -295,6 +308,23 @@ impl PreparedDefaultMachineProvisionSource {
             })
         })
     }
+}
+
+fn parent_forwarder_config(
+    paths: &MachinePaths,
+    authority: &MachineForwarderAuthority,
+) -> Result<OciMachinePortForwarderConfig, Error> {
+    OciMachinePortForwarderConfig::for_unix_services_socket(
+        paths.gvproxy_services_socket_path(),
+        "/services/forwarder",
+        authority.provider_instance().expose_to_provider(),
+        authority.generation(),
+    )
+    .map_err(|error| {
+        Error::PreconditionFailed(format!(
+            "failed to compose the exact parent gvproxy control endpoint: {error}"
+        ))
+    })
 }
 
 fn reject_provider_managed(provider: MachineProvider) -> Result<(), Error> {

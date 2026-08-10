@@ -8,8 +8,9 @@
 use nimbus_machine::{
     MachineForwarderAuthority, MachineForwarderAuthorityMismatch,
     api::{
-        MachineApiWorkloadTeardownCommandEnvelope, MachineApiWorkloadTeardownExecuteObservation,
-        MachineApiWorkloadTeardownInspectObservation, MachineApiWorkloadTeardownObservation,
+        MachineApiNetworkReleaseAbsenceEvidence, MachineApiWorkloadTeardownCommandEnvelope,
+        MachineApiWorkloadTeardownExecuteObservation, MachineApiWorkloadTeardownInspectObservation,
+        MachineApiWorkloadTeardownObservation, MachineApiWorkloadTeardownPhaseResult,
         MachineApiWorkloadTeardownProviderTranslation,
     },
 };
@@ -49,18 +50,18 @@ pub(super) async fn dispatch(
     service: &GuestNodeWorkloadService,
     command: &MachineApiWorkloadTeardownCommandEnvelope,
     installed_forwarder: &MachineForwarderAuthority,
-) -> Result<MachineApiWorkloadTeardownObservation, MachineApiHttpError> {
+) -> Result<MachineApiWorkloadTeardownPhaseResult, MachineApiHttpError> {
     let expected_forwarder = match validate_forwarder(command, installed_forwarder) {
         Ok(forwarder) => forwarder,
-        Err(observation) => return Ok(observation),
+        Err(observation) => return phase_result(command, observation, None),
     };
     let current = match lower_attachment_command(command, command.claim(), &service.node_id) {
         Ok(current) => current,
-        Err(observation) => return Ok(observation),
+        Err(observation) => return phase_result(command, observation, None),
     };
     let journal = match service.bundle_materializer.attempt_idempotency_journal() {
         Ok(journal) => journal,
-        Err(error) => return Ok(journal_error(command.mode(), &error)),
+        Err(error) => return phase_result(command, journal_error(command.mode(), &error), None),
     };
     let prior_observation = match authenticate_prior_success(
         command,
@@ -69,7 +70,7 @@ pub(super) async fn dispatch(
         &journal,
     ) {
         Ok(observation) => observation,
-        Err(observation) => return Ok(observation),
+        Err(observation) => return phase_result(command, observation, None),
     };
     if let Err(observation) = service
         .bundle_materializer
@@ -79,7 +80,11 @@ pub(super) async fn dispatch(
             &expected_forwarder,
         )
     {
-        return Ok(preflight_failure(command.mode(), observation));
+        return phase_result(
+            command,
+            preflight_failure(command.mode(), observation),
+            None,
+        );
     }
 
     let validated = ValidatedGuestAttachmentCommand {
@@ -88,13 +93,18 @@ pub(super) async fn dispatch(
         prior_observation,
         expected_forwarder,
     };
-    match command.mode() {
+    let observation = match command.mode() {
         WorkloadTeardownCommandMode::Execute => {
-            Ok(execute(service, command, validated, journal).await)
+            execute(service, command, &validated, journal).await
         }
         WorkloadTeardownCommandMode::Inspect => {
-            Ok(inspect(service, command, validated, journal).await)
+            inspect(service, command, &validated, journal).await
         }
+    };
+    let release_absence = release_absence_evidence(service, command, &validated, &observation);
+    match release_absence {
+        Ok(evidence) => phase_result(command, observation, evidence),
+        Err(()) => phase_result(command, ambiguous(command.mode()), None),
     }
 }
 
@@ -467,7 +477,7 @@ fn require_prior_journal_success(
 async fn execute(
     service: &GuestNodeWorkloadService,
     command: &MachineApiWorkloadTeardownCommandEnvelope,
-    validated: ValidatedGuestAttachmentCommand,
+    validated: &ValidatedGuestAttachmentCommand,
     journal: ProviderCommandAttemptJournal,
 ) -> MachineApiWorkloadTeardownObservation {
     let provider_claim = validated.provider_claim.clone();
@@ -505,9 +515,9 @@ async fn execute(
         Err(error) => return journal_error(command.mode(), &error),
     };
     let container = std::sync::Arc::clone(&service.bundle_materializer);
-    let sandbox_command = validated.sandbox_command;
-    let prior_observation = validated.prior_observation;
-    let expected_forwarder = validated.expected_forwarder;
+    let sandbox_command = validated.sandbox_command.clone();
+    let prior_observation = validated.prior_observation.clone();
+    let expected_forwarder = validated.expected_forwarder.clone();
     let result = journal
         .execute_current_claim_async(execution, move |current| {
             Box::pin(async move {
@@ -533,7 +543,7 @@ async fn execute(
 async fn inspect(
     service: &GuestNodeWorkloadService,
     command: &MachineApiWorkloadTeardownCommandEnvelope,
-    validated: ValidatedGuestAttachmentCommand,
+    validated: &ValidatedGuestAttachmentCommand,
     journal: ProviderCommandAttemptJournal,
 ) -> MachineApiWorkloadTeardownObservation {
     let provider_claim = validated.provider_claim.clone();
@@ -548,9 +558,9 @@ async fn inspect(
         }
     };
     let container = std::sync::Arc::clone(&service.bundle_materializer);
-    let sandbox_command = validated.sandbox_command;
-    let prior_observation = validated.prior_observation;
-    let expected_forwarder = validated.expected_forwarder;
+    let sandbox_command = validated.sandbox_command.clone();
+    let prior_observation = validated.prior_observation.clone();
+    let expected_forwarder = validated.expected_forwarder.clone();
     let inspected = journal
         .inspect_current_claim_async(&current, move |locked| {
             Box::pin(async move {
@@ -640,6 +650,58 @@ fn inspect_observation(
             MachineApiWorkloadTeardownInspectObservation::Ambiguous
         }
     })
+}
+
+fn release_absence_evidence(
+    service: &GuestNodeWorkloadService,
+    command: &MachineApiWorkloadTeardownCommandEnvelope,
+    validated: &ValidatedGuestAttachmentCommand,
+    observation: &MachineApiWorkloadTeardownObservation,
+) -> Result<Option<MachineApiNetworkReleaseAbsenceEvidence>, ()> {
+    let successful_release = command.step() == WorkloadTeardownStep::ReleaseNetwork
+        && matches!(
+            observation,
+            MachineApiWorkloadTeardownObservation::Execute(
+                MachineApiWorkloadTeardownExecuteObservation::Succeeded { .. }
+            ) | MachineApiWorkloadTeardownObservation::Inspect(
+                MachineApiWorkloadTeardownInspectObservation::Satisfied { .. }
+            )
+        );
+    if !successful_release {
+        return Ok(None);
+    }
+    let evidence = service
+        .bundle_materializer
+        .inspect_forwarded_network_release_absence_evidence(
+            &validated.sandbox_command,
+            &validated.prior_observation,
+            &validated.expected_forwarder,
+        )
+        .map_err(|_| ())?;
+    let provider_absence = evidence.provider_absence_sha256().parse().map_err(|_| ())?;
+    let publication_absence = evidence
+        .publication_absence_sha256()
+        .parse()
+        .map_err(|_| ())?;
+    Ok(Some(MachineApiNetworkReleaseAbsenceEvidence::new(
+        provider_absence,
+        publication_absence,
+    )))
+}
+
+fn phase_result(
+    command: &MachineApiWorkloadTeardownCommandEnvelope,
+    observation: MachineApiWorkloadTeardownObservation,
+    release_absence: Option<MachineApiNetworkReleaseAbsenceEvidence>,
+) -> Result<MachineApiWorkloadTeardownPhaseResult, MachineApiHttpError> {
+    MachineApiWorkloadTeardownPhaseResult::new(command, observation, release_absence).map_err(
+        |error| MachineApiHttpError {
+            status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!(
+                "guest attachment teardown result violated its exact contract: {error}"
+            ),
+        },
+    )
 }
 
 fn preflight_failure(

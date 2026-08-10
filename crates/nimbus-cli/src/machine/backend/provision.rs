@@ -44,7 +44,9 @@ use nimbus_network::{
     NetworkSovereigntyRequirements, NetworkTlsBehavior, PortBindClaim, PortBindRealm,
     PortLeaseAccounting, PortLeaseBinding, PortLeaseLifetimeGuard, PortLeasePhase, PortProtocol,
 };
-use nimbus_sandbox::{ProviderCommandAttemptJournal, SandboxId};
+use nimbus_sandbox::{
+    ProviderCommandAttemptJournal, SandboxId, backends::container::OciMachinePortForwarderConfig,
+};
 use nimbus_workloads::{
     NodeIdentity, WorkloadExecutableIntent, WorkloadExecutionProviderId,
     WorkloadExecutionReference, WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest,
@@ -61,6 +63,8 @@ use super::super::publication_authority::{
     authenticate_exact_durable_plan, canonical_machine_publication_members,
     canonical_machine_restart_publication_members, port_authority_error, recover_dead_batch,
 };
+
+mod teardown_authority;
 
 const PROVIDER_JOURNAL_NAMESPACE: &str = "forwarded-machine-provision";
 const RESTART_PROVIDER_JOURNAL_NAMESPACE: &str = "forwarded-machine-restart";
@@ -82,6 +86,7 @@ pub(crate) struct ForwardedMachineProvisionSourcePlan {
     forwarder_authority: MachineForwarderAuthority,
     node_identity: NodeIdentity,
     connectivity: MachineConnectivityCapabilities,
+    forwarder_config: OciMachinePortForwarderConfig,
     bundle: NetworkCapabilityBundle,
     selection: NetworkCapabilitySelection,
     requirements: NetworkCapabilityRequirements,
@@ -96,6 +101,7 @@ impl ForwardedMachineProvisionSourcePlan {
         forwarder_authority: MachineForwarderAuthority,
         node_identity: NodeIdentity,
         connectivity: MachineConnectivityCapabilities,
+        forwarder_config: OciMachinePortForwarderConfig,
     ) -> Result<Self, Error> {
         if provider.network_management_mode() != NetworkManagementMode::NimbusHostManaged
             || connectivity.attachment().management_mode()
@@ -105,6 +111,14 @@ impl ForwardedMachineProvisionSourcePlan {
                 "the {} machine provider does not offer Nimbus host-managed forwarded networking",
                 provider.as_str()
             )));
+        }
+        if forwarder_config.provider_instance() != forwarder_authority.provider_instance()
+            || forwarder_config.provider_generation() != forwarder_authority.generation()
+        {
+            return Err(Error::InvalidInput(
+                "forwarded machine control endpoint is crossed with its provider instance or generation"
+                    .to_owned(),
+            ));
         }
 
         let lifecycle = NetworkLifecycleCapabilitySet::new([
@@ -167,6 +181,7 @@ impl ForwardedMachineProvisionSourcePlan {
             &forwarder_authority,
             &node_identity,
             &connectivity,
+            &forwarder_config,
             &bundle,
             &selection,
             &requirements,
@@ -178,6 +193,7 @@ impl ForwardedMachineProvisionSourcePlan {
             forwarder_authority,
             node_identity,
             connectivity,
+            forwarder_config,
             bundle,
             selection,
             requirements,
@@ -211,6 +227,10 @@ impl ForwardedMachineProvisionSourcePlan {
         &self.execution_provider_id
     }
 
+    pub(in crate::machine) fn forwarder_config(&self) -> &OciMachinePortForwarderConfig {
+        &self.forwarder_config
+    }
+
     #[cfg(test)]
     pub(crate) const fn machine_provider_generation(
         &self,
@@ -238,7 +258,10 @@ impl ForwardedMachineProvisionSourcePlan {
         .map(std::sync::Arc::new)
     }
 
-    fn authenticate_for_activation(&self, client: &MachineApiClient) -> Result<(), Error> {
+    pub(super) fn authenticate_for_activation(
+        &self,
+        client: &MachineApiClient,
+    ) -> Result<(), Error> {
         self.forwarder_authority
             .authenticate(client.forwarder_authority()?)
             .map_err(|error| Error::PreconditionFailed(error.to_string()))?;
@@ -247,6 +270,7 @@ impl ForwardedMachineProvisionSourcePlan {
             self.forwarder_authority.clone(),
             self.node_identity.clone(),
             self.connectivity.clone(),
+            self.forwarder_config.clone(),
         )?;
         if &rebuilt != self {
             return Err(Error::PreconditionFailed(
@@ -264,6 +288,7 @@ struct ForwardedMachineProvisionSourcePlanDigest<'a> {
     forwarder_authority: &'a MachineForwarderAuthority,
     node_identity: &'a NodeIdentity,
     connectivity: &'a MachineConnectivityCapabilities,
+    forwarder_config: &'a OciMachinePortForwarderConfig,
     bundle: &'a NetworkCapabilityBundle,
     selection: &'a NetworkCapabilitySelection,
     requirements: &'a NetworkCapabilityRequirements,
@@ -277,6 +302,7 @@ fn source_plan_digest(
     forwarder_authority: &MachineForwarderAuthority,
     node_identity: &NodeIdentity,
     connectivity: &MachineConnectivityCapabilities,
+    forwarder_config: &OciMachinePortForwarderConfig,
     bundle: &NetworkCapabilityBundle,
     selection: &NetworkCapabilitySelection,
     requirements: &NetworkCapabilityRequirements,
@@ -288,6 +314,7 @@ fn source_plan_digest(
         forwarder_authority,
         node_identity,
         connectivity,
+        forwarder_config,
         bundle,
         selection,
         requirements,
@@ -364,6 +391,38 @@ impl ForwardedMachineProvisionAdapter {
             live: Mutex::new(BTreeMap::new()),
             source_plan,
         })
+    }
+
+    pub(super) fn teardown_client(&self) -> MachineApiClient {
+        self.client.clone()
+    }
+
+    pub(super) fn teardown_state_root(&self) -> &std::path::Path {
+        self.port_leases.state_root()
+    }
+
+    pub(super) fn teardown_source_plan(&self) -> &ForwardedMachineProvisionSourcePlan {
+        &self.source_plan
+    }
+
+    pub(super) fn take_live_publication_batch(
+        &self,
+        plan_id: &NetworkPlanId,
+        expected_members: &[ConfirmedMachinePublicationMember],
+    ) -> Result<Option<LivePublicationBatch>, Error> {
+        let mut batches = self.live.lock().map_err(|_| {
+            Error::Internal("forwarded machine publication runtime registry is poisoned".to_owned())
+        })?;
+        let Some(batch) = batches.remove(plan_id) else {
+            return Ok(None);
+        };
+        if batch.members != expected_members {
+            batches.insert(plan_id.clone(), batch);
+            return Err(Error::PreconditionFailed(
+                "live parent publication members differ from teardown authority".to_owned(),
+            ));
+        }
+        Ok(Some(batch))
     }
 
     fn validate_exact_phase(
@@ -1421,9 +1480,15 @@ impl ForwardedIngressObservationQuery {
     }
 }
 
-struct LivePublicationBatch {
+pub(super) struct LivePublicationBatch {
     members: Vec<ConfirmedMachinePublicationMember>,
     lifetimes: Vec<PortLeaseLifetimeGuard>,
+}
+
+impl LivePublicationBatch {
+    pub(super) fn lifetimes(&self) -> &[PortLeaseLifetimeGuard] {
+        &self.lifetimes
+    }
 }
 
 fn activation_batch(
@@ -1445,7 +1510,7 @@ fn activation_batch(
         .collect()
 }
 
-fn publication_requests(
+pub(super) fn publication_requests(
     members: &[ConfirmedMachinePublicationMember],
 ) -> Vec<nimbus_network::PortLeaseRequest> {
     members

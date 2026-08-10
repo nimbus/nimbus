@@ -18,8 +18,10 @@ use super::publication_authority::{
     authenticate_exact_durable_plan, port_authority_error, recover_dead_batch,
 };
 use provision::ForwardedMachineProvisionAdapter;
+use teardown::ForwardedMachineTeardownAdapter;
 
 pub(crate) mod provision;
+pub(crate) mod teardown;
 
 #[derive(Clone)]
 pub(crate) struct ForwardedMachineApiSandboxBackend {
@@ -29,6 +31,9 @@ pub(crate) struct ForwardedMachineApiSandboxBackend {
     port_leases: nimbus_network::LocalPortLeaseAuthority,
     publication_journal: ConfirmedMachinePublicationJournal,
     provision_adapter: Option<Arc<ForwardedMachineProvisionAdapter>>,
+    // Band 8 composes and retains the exact teardown sink. Band 9 transfers
+    // these traits into the compute registry without reopening its authorities.
+    _teardown_adapter: Option<Arc<ForwardedMachineTeardownAdapter>>,
 }
 
 impl ForwardedMachineApiSandboxBackend {
@@ -68,12 +73,17 @@ impl ForwardedMachineApiSandboxBackend {
     ) -> Result<Self, Error> {
         let publication_journal =
             ConfirmedMachinePublicationJournal::open(port_leases.state_root())?;
+        let teardown_adapter = provision_adapter
+            .as_ref()
+            .map(|adapter| ForwardedMachineTeardownAdapter::new(Arc::clone(adapter)).map(Arc::new))
+            .transpose()?;
         Ok(Self {
             client,
             _parent_network: parent_network,
             port_leases,
             publication_journal,
             provision_adapter,
+            _teardown_adapter: teardown_adapter,
         })
     }
 

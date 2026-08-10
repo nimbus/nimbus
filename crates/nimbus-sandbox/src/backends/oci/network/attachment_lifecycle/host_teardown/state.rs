@@ -7,6 +7,7 @@ use nimbus_network::{
     NetworkResourceGeneration,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::{
     ProviderCommandClaim, ProviderCommandObservation, ProviderCommandObservationKind,
@@ -17,6 +18,8 @@ use crate::{
 use crate::error::{Result, SandboxError};
 
 const DETACHED_PROOF_SCHEMA_VERSION: u32 = 2;
+const FORWARDED_PROVIDER_ABSENCE_DOMAIN: &[u8] =
+    b"nimbus.sandbox.forwarded-release.provider-absence.v1\0";
 
 /// Exact publication composition retained between detach and release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -422,6 +425,27 @@ impl HostManagedAttachmentDetachedProof {
         self.publication_evidence.validate()?;
         Ok(())
     }
+
+    fn forwarded_release_absence_evidence(
+        &self,
+    ) -> Result<crate::SandboxNetworkReleaseAbsenceEvidence> {
+        self.validate_integrity()?;
+        let RetainedAttachmentPublicationEvidence::MachineForwarded { absence_sha256 } =
+            &self.publication_evidence
+        else {
+            return Err(state_error(
+                "forwarded release evidence requires machine publication absence",
+            ));
+        };
+        let mut provider = Sha256::new();
+        provider.update(FORWARDED_PROVIDER_ABSENCE_DOMAIN);
+        provider.update(self.provider_delete_evidence_sha256.as_bytes());
+        provider.update(self.namespace_absence_evidence_sha256.as_bytes());
+        Ok(crate::SandboxNetworkReleaseAbsenceEvidence::new(
+            format!("{:x}", provider.finalize()),
+            absence_sha256.clone(),
+        ))
+    }
 }
 
 /// Backend-manifest effect progress. This is not a command-result journal.
@@ -452,6 +476,21 @@ impl HostManagedAttachmentTeardownState {
 
     pub(crate) const fn release_phase(&self) -> HostManagedAttachmentReleasePhase {
         self.release_phase
+    }
+
+    pub(crate) fn forwarded_release_absence_evidence(
+        &self,
+    ) -> Result<crate::SandboxNetworkReleaseAbsenceEvidence> {
+        self.validate()?;
+        if self.release_phase != HostManagedAttachmentReleasePhase::Released {
+            return Err(state_error(
+                "forwarded release absence evidence requires terminal release state",
+            ));
+        }
+        self.detached_proof
+            .as_ref()
+            .ok_or_else(|| state_error("forwarded release lacks its detached proof"))?
+            .forwarded_release_absence_evidence()
     }
 
     #[cfg(test)]

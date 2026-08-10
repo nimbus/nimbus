@@ -13,9 +13,10 @@ fn network_claim(operation: ProviderCommandOperation, epoch: u64) -> ProviderCom
 }
 
 #[test]
-fn network_retry_authority_accepts_only_detach_and_release_recovery() {
+fn teardown_retry_authority_accepts_only_exact_recovery_operations() {
     let root = tempfile::tempdir().expect("temporary root should exist");
     let allowed = [
+        ProviderCommandOperation::WithdrawFinalPublication,
         ProviderCommandOperation::StopExecution,
         ProviderCommandOperation::DetachNetwork,
         ProviderCommandOperation::ReleaseNetwork,
@@ -60,7 +61,6 @@ fn network_retry_authority_accepts_only_detach_and_release_recovery() {
         ProviderCommandOperation::PublishIngress,
         ProviderCommandOperation::ObserveIngress,
         ProviderCommandOperation::WithdrawPublication,
-        ProviderCommandOperation::WithdrawFinalPublication,
         ProviderCommandOperation::ResetWorkloadForRestart,
         ProviderCommandOperation::PrepareRestartAttempt,
         ProviderCommandOperation::AttachRetainedNetwork,

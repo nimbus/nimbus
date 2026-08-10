@@ -30,7 +30,7 @@ pub(crate) use self::helper_env_guard::MachineHelperEnvGuard;
 use self::launch::MachineLaunchPlan;
 use self::readiness::{
     bind_ready_listener, conduct_readiness_check, post_start_networking, pre_start_networking,
-    start_bootstrap_server, start_vm, wait_for_machine_ready,
+    secure_machine_runtime_root, start_bootstrap_server, start_vm, wait_for_machine_ready,
 };
 use self::stop::{cleanup_runtime_artifacts, handle_start_machine_error, remove_file_if_exists};
 
@@ -278,6 +278,7 @@ fn start_machine_with_lifecycle_and_expected(
     converge_machine_image_contract(paths, config, state)?;
     ensure_machine_bootstrap_identity(paths, config)?;
     validate_machine_bootstrap_contract(config)?;
+    secure_machine_runtime_root(paths)?;
 
     let startup_signals = StartupSignalMonitor::install()?;
     cleanup_runtime_artifacts(paths)?;

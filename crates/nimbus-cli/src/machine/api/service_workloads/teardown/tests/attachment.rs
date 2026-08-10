@@ -818,7 +818,7 @@ async fn guest_attachment_preflight_failure_never_claims_current_stream() {
     let observation = super::super::dispatch(&service, &command, &fixture.forwarder)
         .await
         .unwrap();
-    assert_ambiguous(&observation);
+    assert_ambiguous(observation.observation());
     assert_eq!(
         snapshot(&state_root),
         before,

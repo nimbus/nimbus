@@ -496,6 +496,7 @@ pub(super) fn machine_runtime_socket_and_pid_paths(paths: &MachinePaths) -> Vec<
         paths.api_socket_path.clone(),
         paths.gvproxy_socket_path.clone(),
         paths.krunkit_gvproxy_socket_path(),
+        paths.gvproxy_services_socket_path(),
         paths.vmm_endpoint_path.clone(),
         paths.api_forward_pid_path.clone(),
         paths.gvproxy_pid_path.clone(),
@@ -527,4 +528,27 @@ pub(super) fn remove_machine_runtime_artifacts(paths: &MachinePaths) -> Result<(
         remove_file_if_exists(&path)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_cleanup_owns_the_parent_gvproxy_services_socket() {
+        let root = tempfile::TempDir::new().expect("machine path fixture should exist");
+        let roots = MachineRootLayout::new(
+            root.path().join("config"),
+            root.path().join("state"),
+            root.path().join("data"),
+            root.path().join("cache"),
+            root.path().join("runtime"),
+        );
+        let paths = roots.paths("default");
+
+        assert!(
+            machine_runtime_socket_and_pid_paths(&paths)
+                .contains(&paths.gvproxy_services_socket_path())
+        );
+    }
 }

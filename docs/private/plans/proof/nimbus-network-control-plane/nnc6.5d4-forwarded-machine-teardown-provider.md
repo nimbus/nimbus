@@ -1,6 +1,6 @@
 # NNC6.5d4 Forwarded-Machine Teardown Provider
 
-Status: `implementation in progress. bands 1-7 complete`
+Status: `implementation in progress. bands 1-8 complete`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -56,9 +56,9 @@ backend is `crates/nimbus-cli/src/machine/backend.rs`, not a nonexistent
 | K21 | The guest uses the existing Container-rooted `ProviderCommandAttemptJournal` for drain, stop, detach, and release. Execute claims durably before effects. Inspect adopts the exact attempt and is read-only. The guest does not create a second generic journal, parent journal, publication authority, workload store, port authority, or result CAS. |
 | K22 | Before a remote Execute, the parent durably records the exact request and request-may-exist boundary. Response loss or either process death forces exact guest Inspect before a retry. A retransmitted Execute cannot overlap an older request that can still commit or publish. |
 | K23 | Parent `ReleaseNetwork` first proves exact guest detach, exact guest release, and independent guest provider and publication absence. It then atomically releases the complete parent port batch and marks the retained publication released. No earlier phase can release or rebind a parent port. |
-| K24 | Complete-batch fencing is strict. One absent member with one present sibling is `InProgress`. one unknown or crossed sibling is `Ambiguous` or definite crossed failure as applicable. A partial guest result, partial parent observation, partial lifetime recovery, or subset request releases no member and preserves the complete batch byte for byte. |
+| K24 | Complete-batch fencing is strict. A fresh complete parent observation with one absent member and one present sibling authorizes only an adjacent fenced retry and projects `NotCompleted`; evidence that an older exact effect can still commit is `InProgress`. One unknown or crossed sibling is `Ambiguous` or definite crossed failure as applicable. A partial guest result, partial parent observation, partial lifetime recovery, or subset request releases no member and preserves the complete batch byte for byte. |
 | K25 | Zero-listener workloads still execute the five portable phases. Parent ingress withdrawal and final release use explicit empty-batch success, not a synthetic port, skipped guest phase, or inferred absence. |
-| K26 | Invalid, crossed, stale, skipped, ordering, and identity failures preserve the frozen stable codes. Provider-store corruption, journal corruption, response-correlation failure, unknown effect state, missing authority, and partial evidence remain `Ambiguous`. they are never rewritten as definite absence. |
+| K26 | Invalid, crossed, stale, skipped, ordering, and identity failures preserve the frozen stable codes. Provider-store corruption, journal corruption, response-correlation failure, unknown effect state, missing authority, and incomplete or unauthenticated partial evidence remain `Ambiguous`; they are never rewritten as definite absence. One fresh complete parent forwarding observation can instead authorize the exact adjacent retry required by K24. |
 | K27 | Exact duplicate commands replay with no new effect. Adjacent retry epochs require the prior exact durable absence or retry receipt. Two threads, two subprocesses, and an Inspect contender produce one effect/result winner per phase. Inspect never returns `NotCompleted` while an older exact effect can still start, commit, or publish. |
 | K28 | Fresh parent and guest processes recover every frozen two-realm cut from only their own durable roots. Parent-root bytes are unchanged by guest operations. Guest-root bytes are unchanged by parent-only withdrawal and final port release. Neither process receives an in-memory snapshot as authority. |
 | K29 | Real compute registry substitution executes and inspects all five phases through the forwarded adapter. Every provider result authenticates the complete confirmed command and receipt prefix before compute's existing result CAS. Registry selection has no fallback, no-op, or compatibility shim. |
@@ -318,7 +318,9 @@ composition stay fail closed and report the exact blocker.
 | Exact duplicate Execute | Exact replay or adoption. no second parent request or guest effect. |
 | Exact Inspect with live older request | `InProgress` or `Ambiguous`, never `NotCompleted`. |
 | Lost or crossed guest response | `Ambiguous`. retain request-may-exist and every parent port. Inspect the exact guest command before retry. |
-| Parent withdrawal partial, present sibling, or unknown sibling | `InProgress` for exact live evidence or `Ambiguous` for unknown state. Preserve the complete batch. |
+| Parent withdrawal has a fresh complete partial, present, or absent observation after request-may-exist | Persist exact retry authority, project `NotCompleted`, and require one adjacent fenced idempotent Execute of the complete batch. Release no port. |
+| Parent withdrawal has an older exact effect that can still commit | `InProgress`. Do not authorize retry and preserve the complete batch. |
+| Parent withdrawal has an unknown, incomplete, or crossed sibling | `Ambiguous` or definite crossed failure as applicable. Preserve the complete batch. |
 | Guest drain incomplete | `InProgress` or `Ambiguous`. send no stop request. |
 | Systemd terminal but Container runtime live, or the inverse | `InProgress` or `Ambiguous`. do not publish `ExecutionStopped`. |
 | Detach before execution terminality or guest publication absence | `DefiniteFailure(sandbox_teardown_order_invalid)` and no network mutation. |
@@ -376,7 +378,8 @@ alter the first workload's attempt.
 | Parent members | Guest evidence | Required classification | Port result |
 | --- | --- | --- | --- |
 | All withdrawn | Exact current phase | Continue. | Retain all until final release. |
-| One present sibling | Exact current phase | `InProgress`. | Retain all. |
+| One present sibling in a fresh complete observation | Exact current phase | `RetryAuthorized`, projected as `NotCompleted`; retry only the adjacent fenced complete batch. | Retain all. |
+| Older exact withdrawal can still commit | Exact current phase | `InProgress`. | Retain all. |
 | One unknown sibling | Exact current phase | `Ambiguous`. | Retain all. |
 | One crossed or missing member | Any | Definite crossed failure or `Ambiguous` for missing authority. | Byte-stable complete batch. |
 | All withdrawn | Partial guest receipt prefix | Definite order/crossed failure. | Retain all. |
@@ -435,7 +438,7 @@ Forbidden paths and seams:
 
 | File | Audit lines | Disposition |
 | --- | ---: | --- |
-| `crates/nimbus-cli/src/machine/backend/provision.rs` | 1,632 | Existing source-plan and exact provision composition root. Put parent teardown in `backend/teardown.rs`. expose only narrow shared-authority methods. |
+| `crates/nimbus-cli/src/machine/backend/provision.rs` | 1,697 | Existing source-plan and exact provision composition root. Parent teardown is isolated in `backend/teardown.rs`; this root exposes only narrow shared-authority methods and remains below the mandatory split threshold. |
 | `crates/nimbus-cli/src/machine/client.rs` | 1,405 | Near the explicit-reason threshold. Put teardown transport in `client/teardown.rs`. |
 | `crates/nimbus-cli/src/machine/publication_authority/confirmed.rs` | 1,240 | Keep retained publication identity and storage here. put the new strict retirement progression and tests in concept children. |
 | `crates/nimbus-sandbox/src/provider_command.rs` | 1,561 | Existing deep provider-command journal. Reuse it without adding forwarded composition logic. |
@@ -669,7 +672,12 @@ membership, transport, routing, and super-net fencing remain separate.
 | Band 7 one-shot client | The concept-owned client child accepts an already-constructed strict request, authenticates it against the configured forwarder before socket I/O, sends exactly one POST, bounds the response at `1 MiB`, and validates every echoed fence. Connection loss, timeout, truncation, non-success status, malformed or oversized JSON, unknown fields, and crossed response fences return one explicit `Ambiguous` transport outcome. The client never retries and never manufactures Inspect. A test performs one ambiguous Execute followed by one caller-supplied exact Inspect and observes exactly those two requests. Band 8 remains the sole owner of durable request-may-exist state, the current execution token, and enforced Inspect-before-retry after parent restart. |
 | Band 7 behavior | Focused client transport tests pass `5/5`; private route tests pass `2/2`; real guest capability composition tests pass `5/5`; guest execution teardown remains `12/12` with one declared child entry point; and Machine API teardown wire tests pass `7/7`. Full `nimbus-machine` passes `41/41` library tests plus `5/5` provider-networking integration tests. Full `nimbus-cli` passes `978/978` with two declared child-process ignores. |
 | Band 7 quality and modularity | Affected all-target checking, strict all-feature Clippy, warning-denied Rustdoc, format, and diff pass; only unchanged vendored Brotli warnings remain. The aggregate source verifier self-test passes `469/469`; NNCV035 passes `55/55`. The live aggregate is exact `35/36` with only NNCV035 red, and direct NNCV035 remains `0/7`. NNCV006 and NNCV015 prove the new TCP capability probe is test-only, reject production inclusion of its path, and accept the reconciled bind and composition censuses. This band changes `13` Rust paths: `7` product and `6` test paths. The production roots are `267`, `261`, `366`, `644`, `1,164`, `1,441`, and `99` lines; no changed handwritten file reaches `1,500`. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. |
-| Structured review | Not run. Band 7 is a partial recovery slice of one canonical item. One full review is allowed only after K1-K34 are green and the complete item is candidate-frozen. |
+| Band 8 parent authority | One `ForwardedMachineTeardownAdapter` implements all five exact compute capabilities. It uses one parent journal namespace with independent operation streams. It records the exact remote request before send and retains the current execution token. Ambiguity or restart requires exact Inspect before an adjacent retry. A fresh complete partial forwarding observation authorizes only the exact fenced retry. Evidence that an older effect can still commit remains `InProgress`. |
+| Band 8 publication and release | The confirmed-publication authority now has explicit active, withdrawal-may-exist, withdrawn-and-retained, release-may-exist, and released states. Parent withdrawal authenticates the complete publication batch and proves all forwarding members absent while all port leases remain retained. Final release requires exact guest detach and release, exact withdrawal linkage, independent provider absence, and the same durable binding and provider incarnation. Parent port and guest forwarding fences remain separate, so a zero-listener parent batch is valid. |
+| Band 8 wire and provider corrections | Successful Release responses require non-null exact release-absence evidence during deserialization. The Unix gvproxy provider uses an owned canonical services socket, bounded nonblocking connection, one parsed `/services/forwarder/all` request, strict HTTP and JSON validation, and exact batch retirement. Runtime directories and sockets reject symlinks and foreign ownership and use owner-only permissions. No socket or provider effect enters `nimbus-network`. |
+| Band 8 behavior and recovery | Parent-forwarder tests pass `2/2`; direct five-capability adapter and ordering tests pass `3/3`; sandbox forwarding tests pass `27/27`; provider-command tests pass `42` with two declared child-process ignores; and the Machine Release wire regression passes `1/1`. Full Machine passes `42` library plus `5` integration tests. Full Sandbox passes `1,164` with `48` declared platform or child-process ignores. Full Compute passes `381` with one declared child-process ignore. Full CLI passes `986` with two declared child-process ignores. |
+| Band 8 quality and modularity | Affected all-target checking, strict all-feature Clippy, warning-denied Rustdoc, format, diff, dependency, effect, bind, composition, attachment-readiness, and batch-convergence checks pass. The live aggregate remains exact `35/36` with only NNCV035 red. NNCV035 self-test passes `55/55`, and direct remains expected red at `0/7`. The aggregate verifier self-test passes `469/469`. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The `1,721`-line confirmed-publication file is the concept-owned durable authority; retirement progression is in a `110`-line child. The `1,669`-line provision test owner remains test-only. The `1,697`-line provision composition root retains its recorded exception and moves parent teardown to an `879`-line child with a `66`-line test child. Forwarding is `1,218` lines with a `110`-line retirement child. No changed handwritten file reaches `2,000`. |
+| Structured review | Not run. Band 8 is a partial recovery slice of one canonical item. One full review is allowed only after K1-K34 are green and the complete item is candidate-frozen. |
 | Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
 | Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 2 checkpoint | The commit that contains this row, the band 2 product and test paths, and the recovery header is the exact band 2 recovery checkpoint. It is not the item completion commit and has no structured review. |
@@ -680,6 +688,7 @@ membership, transport, routing, and super-net fencing remain separate.
 | Durable band 5c checkpoint | `62d21cb7a` is the exact band 5c recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 6 checkpoint | `a98841aaa` is the exact band 6 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 7 checkpoint | The commit that contains this row, the band 7 product and test paths, the source-derived census updates, and the recovery header is the exact band 7 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 8 checkpoint | The commit that contains this row, the band 8 product and test paths, the source-derived verifier updates, and the recovery header is the exact band 8 recovery checkpoint. It is not the item completion commit and has no structured review. |
 
 ## Current Acceptance State
 
@@ -711,12 +720,17 @@ Band 7 completes the route and transport portions of K13 and K30. It proves
 strict pre-effect request rejection, complete response correlation, and
 bounded bodies. It also proves one-shot ambiguity and explicit manual
 Execute-to-Inspect ordering.
-The parent adapter and end-to-end compute substitution remain later bands.
 
-K5-K6 and the remaining end-to-end portions of K7-K10, K15, and K22-K35 remain
-open. In particular, K22 is not green. Band 8 must persist the exact parent
-request-may-exist boundary and current execution token before remote I/O. It
-must enforce Inspect before any retry after ambiguity or restart.
+Band 8 completes K5-K10. It also completes the direct parent portions of
+K22-K24. The parent adapter owns the durable request-may-exist boundary and
+current execution token. It enforces Inspect before retry after ambiguity or
+restart. It withdraws the complete forwarding batch before guest work and
+releases the complete parent port batch only after exact guest and provider
+absence.
+
+Band 9 must complete real compute substitution and the end-to-end portions of
+K22-K29. K31-K34 and the candidate-frozen K35 review also remain open. No
+structured review ran.
 
 Band 5 is prospectively split before implementation. These are dependency-
 ordered recovery slices, not separate plan items or review units. Bands

@@ -98,7 +98,7 @@ impl MachineApiNodeWorkloadFacade for RecordingTeardownFacade {
         _forwarder: &'a MachineForwarderAuthority,
     ) -> super::super::service_workloads::MachineApiServiceFuture<
         'a,
-        MachineApiWorkloadTeardownObservation,
+        nimbus_machine::api::MachineApiWorkloadTeardownPhaseResult,
     > {
         let command = command.clone();
         Box::pin(async move {
@@ -108,7 +108,7 @@ impl MachineApiNodeWorkloadFacade for RecordingTeardownFacade {
                 .push(command.clone());
             self.provider_effects.fetch_add(1, Ordering::SeqCst);
             let cross = self.cross_next_response.swap(false, Ordering::SeqCst);
-            Ok(match (command.mode(), cross) {
+            let observation = match (command.mode(), cross) {
                 (WorkloadTeardownCommandMode::Execute, false)
                 | (WorkloadTeardownCommandMode::Inspect, true) => {
                     MachineApiWorkloadTeardownObservation::Execute(
@@ -121,6 +121,15 @@ impl MachineApiNodeWorkloadFacade for RecordingTeardownFacade {
                         MachineApiWorkloadTeardownInspectObservation::Ambiguous,
                     )
                 }
+            };
+            nimbus_machine::api::MachineApiWorkloadTeardownPhaseResult::new(
+                &command,
+                observation,
+                None,
+            )
+            .map_err(|error| MachineApiHttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: error.to_string(),
             })
         })
     }

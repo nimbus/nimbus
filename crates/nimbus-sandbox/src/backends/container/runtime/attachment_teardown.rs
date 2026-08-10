@@ -41,6 +41,44 @@ enum NetworkTeardownAdapterError {
 }
 
 impl ContainerSandboxBackend {
+    /// Inspect independent provider and publication absence after an exact
+    /// forwarded ReleaseNetwork result. This method is read-only.
+    #[doc(hidden)]
+    pub fn inspect_forwarded_network_release_absence_evidence(
+        &self,
+        command: &SandboxNetworkTeardownCommand,
+        prior_observation: &ProviderCommandObservation,
+        expected_forwarder: &OciMachinePortForwarderConfig,
+    ) -> crate::Result<crate::SandboxNetworkReleaseAbsenceEvidence> {
+        if command.operation() != SandboxNetworkTeardownOperation::Release {
+            return Err(SandboxError::InvalidSpec {
+                message: "forwarded release absence inspection requires ReleaseNetwork".to_owned(),
+            });
+        }
+        let composition = NetworkTeardownComposition::Forwarded {
+            expected_forwarder,
+            prior_observation,
+        };
+        self.preflight_network_teardown_for_composition(command, composition)
+            .map_err(|observation| SandboxError::OperationFailed {
+                message: format!(
+                    "forwarded release absence preflight did not authenticate: {observation:?}"
+                ),
+            })?;
+        let snapshot = self.read_exact_network_manifest(command)?;
+        let (_inspection, manifest) =
+            super::runner::lock_current_inspection_for_backend(self, &snapshot)?;
+        self.authenticate_network_teardown_manifest(command, &manifest, composition)
+            .map_err(NetworkTeardownAdapterError::into_sandbox_error)?;
+        self.require_execution_predecessor(command, &manifest, composition)
+            .map_err(NetworkTeardownAdapterError::into_sandbox_error)?;
+        self.require_forwarded_publication_absence_if_selected(&manifest, composition)
+            .map_err(NetworkTeardownAdapterError::into_sandbox_error)?;
+        manifest
+            .network_teardown
+            .forwarded_release_absence_evidence()
+    }
+
     /// Authenticate exact durable network teardown authority without writes or effects.
     ///
     /// Compute calls this before it creates a provider-command claim. Execute
@@ -924,6 +962,14 @@ impl NetworkTeardownAdapterError {
 
     fn ambiguous_error(error: SandboxError) -> Self {
         Self::ambiguous(error.to_string())
+    }
+
+    fn into_sandbox_error(self) -> SandboxError {
+        let message = match self {
+            Self::Definite { code, message } => format!("{code}: {message}"),
+            Self::Ambiguous { message } => message,
+        };
+        SandboxError::OperationFailed { message }
     }
 
     fn into_observation(self) -> SandboxNetworkTeardownObservation {

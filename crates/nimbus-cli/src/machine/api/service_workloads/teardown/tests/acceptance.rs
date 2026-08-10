@@ -368,6 +368,8 @@ impl AcceptanceHarness {
         .await
         .expect("guest teardown dispatch must stay bounded")
         .expect("the private adapter should return a protocol observation")
+        .observation()
+        .clone()
     }
 }
 
@@ -1166,7 +1168,7 @@ async fn guest_workload_teardown_crossed_authority_fails_before_journal_bytes() 
     .await
     .unwrap()
     .unwrap();
-    assert_definite_failure(&forwarder_result);
+    assert_definite_failure(forwarder_result.observation());
     assert_eq!(snapshot(&harness.state_root), before);
 
     let other_node = GuestNodeWorkloadService::new_for_teardown_test(
@@ -1182,7 +1184,7 @@ async fn guest_workload_teardown_crossed_authority_fails_before_journal_bytes() 
     .await
     .unwrap()
     .unwrap();
-    assert_definite_failure(&node_result);
+    assert_definite_failure(node_result.observation());
     assert_eq!(snapshot(&harness.state_root), before);
 
     let crossed_provider = TeardownFixture::new(true);
@@ -1201,7 +1203,7 @@ async fn guest_workload_teardown_crossed_authority_fails_before_journal_bytes() 
     .await
     .unwrap()
     .unwrap();
-    assert_definite_failure(&provider_result);
+    assert_definite_failure(provider_result.observation());
     assert_eq!(snapshot(&harness.state_root), before);
     assert!(record_files(&harness.state_root).is_empty());
     assert_eq!(harness.host.drain_executes.load(Ordering::SeqCst), 0);
@@ -1331,7 +1333,7 @@ fn guest_workload_teardown_process_child() {
             .unwrap();
         json!({
             "outcome": "dispatched",
-            "observation": observation,
+            "observation": observation.observation(),
             "drainExecutes": host.drain_executes.load(Ordering::SeqCst),
             "stopExecutes": host.stop_executes.load(Ordering::SeqCst),
             "drainInspects": host.drain_inspects.load(Ordering::SeqCst),

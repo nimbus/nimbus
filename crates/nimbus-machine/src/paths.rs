@@ -112,6 +112,12 @@ impl MachinePaths {
     pub fn krunkit_gvproxy_socket_path(&self) -> PathBuf {
         PathBuf::from(format!("{}-krun.sock", self.gvproxy_socket_path.display()))
     }
+
+    /// Parent-reachable gvproxy HTTP services endpoint for exact forwarding control.
+    pub fn gvproxy_services_socket_path(&self) -> PathBuf {
+        self.runtime_dir
+            .join(format!("{}-gvproxy-services.sock", self.name))
+    }
 }
 
 pub(crate) fn resolve_config_root_with_env(

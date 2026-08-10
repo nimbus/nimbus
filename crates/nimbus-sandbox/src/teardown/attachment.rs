@@ -254,6 +254,31 @@ pub enum SandboxNetworkTeardownObservation {
     Ambiguous { evidence: Vec<u8> },
 }
 
+/// Independent guest provider and publication absence evidence for a
+/// completed machine-forwarded network release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxNetworkReleaseAbsenceEvidence {
+    provider_absence_sha256: String,
+    publication_absence_sha256: String,
+}
+
+impl SandboxNetworkReleaseAbsenceEvidence {
+    pub(crate) fn new(provider_absence_sha256: String, publication_absence_sha256: String) -> Self {
+        Self {
+            provider_absence_sha256,
+            publication_absence_sha256,
+        }
+    }
+
+    pub fn provider_absence_sha256(&self) -> &str {
+        &self.provider_absence_sha256
+    }
+
+    pub fn publication_absence_sha256(&self) -> &str {
+        &self.publication_absence_sha256
+    }
+}
+
 impl SandboxNetworkTeardownObservation {
     pub fn evidence(&self) -> &[u8] {
         match self {

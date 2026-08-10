@@ -17,7 +17,7 @@ use nimbus_machine::{
     api::{
         MachineApiWorkloadProvisionCommandEnvelope, MachineApiWorkloadProvisionObservation,
         MachineApiWorkloadRestartCommandEnvelope, MachineApiWorkloadRestartObservation,
-        MachineApiWorkloadTeardownCommandEnvelope, MachineApiWorkloadTeardownObservation,
+        MachineApiWorkloadTeardownCommandEnvelope, MachineApiWorkloadTeardownPhaseResult,
     },
 };
 use nimbus_node::{
@@ -129,7 +129,7 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
         &'a self,
         _command: &'a MachineApiWorkloadTeardownCommandEnvelope,
         _installed_forwarder: &'a MachineForwarderAuthority,
-    ) -> MachineApiServiceFuture<'a, MachineApiWorkloadTeardownObservation> {
+    ) -> MachineApiServiceFuture<'a, MachineApiWorkloadTeardownPhaseResult> {
         Box::pin(async move {
             Err(MachineApiHttpError {
                 status: StatusCode::SERVICE_UNAVAILABLE,
@@ -385,7 +385,7 @@ impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {
         &'a self,
         command: &'a MachineApiWorkloadTeardownCommandEnvelope,
         installed_forwarder: &'a MachineForwarderAuthority,
-    ) -> MachineApiServiceFuture<'a, MachineApiWorkloadTeardownObservation> {
+    ) -> MachineApiServiceFuture<'a, MachineApiWorkloadTeardownPhaseResult> {
         Box::pin(teardown::dispatch(self, command, installed_forwarder))
     }
 }

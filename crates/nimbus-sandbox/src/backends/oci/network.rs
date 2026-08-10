@@ -60,7 +60,9 @@ pub(crate) use forwarding::{
     MachinePortForwardingSlotObservation, MachinePortMutationDiagnostic, inspect_machine_ports,
 };
 pub use forwarding::{
-    MachinePortForwardOutcome, MachinePortForwardReceipt, OciMachinePortForwarderConfig,
+    MachinePortForwardOutcome, MachinePortForwardReceipt, MachinePortForwardingRetirement,
+    MachinePortForwardingRetirementObservation, OciMachinePortForwarderConfig,
+    OciMachinePortForwardingRetirement,
 };
 pub(crate) use ipam::{
     OciIpamAuthority, deallocate_container_ips_after_confirmed_detach,

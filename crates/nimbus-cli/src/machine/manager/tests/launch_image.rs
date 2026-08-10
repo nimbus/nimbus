@@ -242,6 +242,10 @@ fn launch_plan_keeps_gvproxy_network_only_and_builds_separate_machine_api_forwar
             "-forward-sock" | "-forward-dest" | "-forward-user" | "-forward-identity"
         )
     }));
+    assert!(plan.gvproxy_command.args.windows(2).any(|pair| {
+        pair[0] == "-services"
+            && pair[1] == format!("unix://{}", paths.gvproxy_services_socket_path().display())
+    }));
     let forward = build_machine_api_forward_command(&paths, &config, 20022)
         .expect("machine API forward command should build");
     let forward_args = forward

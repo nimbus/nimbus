@@ -535,6 +535,76 @@ pub enum MachineApiWorkloadTeardownObservation {
     Inspect(MachineApiWorkloadTeardownInspectObservation),
 }
 
+/// Independent guest-owned absence attestations required before the parent
+/// can release its retained port batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct MachineApiNetworkReleaseAbsenceEvidence {
+    provider_absence: WorkloadOwnerEvidenceDigest,
+    publication_absence: WorkloadOwnerEvidenceDigest,
+}
+
+impl MachineApiNetworkReleaseAbsenceEvidence {
+    pub const fn new(
+        provider_absence: WorkloadOwnerEvidenceDigest,
+        publication_absence: WorkloadOwnerEvidenceDigest,
+    ) -> Self {
+        Self {
+            provider_absence,
+            publication_absence,
+        }
+    }
+
+    pub const fn provider_absence(&self) -> WorkloadOwnerEvidenceDigest {
+        self.provider_absence
+    }
+
+    pub const fn publication_absence(&self) -> WorkloadOwnerEvidenceDigest {
+        self.publication_absence
+    }
+}
+
+/// Guest dispatch result before request-bound response construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MachineApiWorkloadTeardownPhaseResult {
+    observation: MachineApiWorkloadTeardownObservation,
+    release_absence: Option<MachineApiNetworkReleaseAbsenceEvidence>,
+}
+
+impl MachineApiWorkloadTeardownPhaseResult {
+    pub fn new(
+        command: &MachineApiWorkloadTeardownCommandEnvelope,
+        observation: MachineApiWorkloadTeardownObservation,
+        release_absence: Option<MachineApiNetworkReleaseAbsenceEvidence>,
+    ) -> Result<Self, MachineApiWorkloadTeardownWireError> {
+        observation.validate_for_command(command)?;
+        let successful_release = command.step() == WorkloadTeardownStep::ReleaseNetwork
+            && matches!(
+                &observation,
+                MachineApiWorkloadTeardownObservation::Execute(
+                    MachineApiWorkloadTeardownExecuteObservation::Succeeded { .. }
+                ) | MachineApiWorkloadTeardownObservation::Inspect(
+                    MachineApiWorkloadTeardownInspectObservation::Satisfied { .. }
+                )
+            );
+        if successful_release != release_absence.is_some() {
+            return Err(MachineApiWorkloadTeardownWireError::ReleaseAbsenceEvidenceMismatch);
+        }
+        Ok(Self {
+            observation,
+            release_absence,
+        })
+    }
+
+    pub fn observation(&self) -> &MachineApiWorkloadTeardownObservation {
+        &self.observation
+    }
+
+    pub const fn release_absence(&self) -> Option<MachineApiNetworkReleaseAbsenceEvidence> {
+        self.release_absence
+    }
+}
+
 impl MachineApiWorkloadTeardownObservation {
     pub const fn mode(&self) -> WorkloadTeardownCommandMode {
         match self {
@@ -567,7 +637,7 @@ impl MachineApiWorkloadTeardownObservation {
 }
 
 /// Guest response bound to the complete authenticated teardown request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MachineApiWorkloadTeardownPhaseResponse {
     request_digest: MachineApiWorkloadTeardownRequestDigest,
@@ -585,15 +655,84 @@ pub struct MachineApiWorkloadTeardownPhaseResponse {
     subjects: WorkloadTeardownSubjects,
     mode: WorkloadTeardownCommandMode,
     observation: MachineApiWorkloadTeardownObservation,
+    release_absence: Option<MachineApiNetworkReleaseAbsenceEvidence>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct MachineApiWorkloadTeardownPhaseResponseWire {
+    request_digest: MachineApiWorkloadTeardownRequestDigest,
+    forwarder_authority: MachineForwarderAuthority,
+    command_id: WorkloadTeardownCommandId,
+    issuing_revision: WorkloadSagaRevision,
+    issuing_transition_id: WorkloadSagaTransitionId,
+    confirmed_revision: WorkloadSagaRevision,
+    confirmed_transition_id: WorkloadSagaTransitionId,
+    attempt_id: WorkloadTeardownAttemptId,
+    dispatch_epoch: WorkloadTeardownDispatchEpoch,
+    provider_target: WorkloadTeardownProviderTarget,
+    provider_translation: MachineApiWorkloadTeardownProviderTranslation,
+    step: WorkloadTeardownStep,
+    subjects: WorkloadTeardownSubjects,
+    mode: WorkloadTeardownCommandMode,
+    observation: MachineApiWorkloadTeardownObservation,
+    release_absence: Option<MachineApiNetworkReleaseAbsenceEvidence>,
+}
+
+impl<'de> Deserialize<'de> for MachineApiWorkloadTeardownPhaseResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = MachineApiWorkloadTeardownPhaseResponseWire::deserialize(deserializer)?;
+        let response = Self {
+            request_digest: wire.request_digest,
+            forwarder_authority: wire.forwarder_authority,
+            command_id: wire.command_id,
+            issuing_revision: wire.issuing_revision,
+            issuing_transition_id: wire.issuing_transition_id,
+            confirmed_revision: wire.confirmed_revision,
+            confirmed_transition_id: wire.confirmed_transition_id,
+            attempt_id: wire.attempt_id,
+            dispatch_epoch: wire.dispatch_epoch,
+            provider_target: wire.provider_target,
+            provider_translation: wire.provider_translation,
+            step: wire.step,
+            subjects: wire.subjects,
+            mode: wire.mode,
+            observation: wire.observation,
+            release_absence: wire.release_absence,
+        };
+        response
+            .validate_release_absence_shape()
+            .map_err(serde::de::Error::custom)?;
+        Ok(response)
+    }
 }
 
 impl MachineApiWorkloadTeardownPhaseResponse {
+    fn validate_release_absence_shape(&self) -> Result<(), MachineApiWorkloadTeardownWireError> {
+        let successful_release = self.step == WorkloadTeardownStep::ReleaseNetwork
+            && matches!(
+                &self.observation,
+                MachineApiWorkloadTeardownObservation::Execute(
+                    MachineApiWorkloadTeardownExecuteObservation::Succeeded { .. }
+                ) | MachineApiWorkloadTeardownObservation::Inspect(
+                    MachineApiWorkloadTeardownInspectObservation::Satisfied { .. }
+                )
+            );
+        if successful_release != self.release_absence.is_some() {
+            return Err(MachineApiWorkloadTeardownWireError::ReleaseAbsenceEvidenceMismatch);
+        }
+        Ok(())
+    }
+
     pub fn for_request(
         request: &MachineApiWorkloadTeardownPhaseRequest,
-        observation: MachineApiWorkloadTeardownObservation,
+        result: MachineApiWorkloadTeardownPhaseResult,
     ) -> Result<Self, MachineApiWorkloadTeardownWireError> {
         let command = request.command();
-        observation.validate_for_command(command)?;
+        result.observation.validate_for_command(command)?;
         Ok(Self {
             request_digest: request.request_digest(),
             forwarder_authority: request.forwarder_authority().clone(),
@@ -609,7 +748,8 @@ impl MachineApiWorkloadTeardownPhaseResponse {
             step: command.step(),
             subjects: command.subjects().clone(),
             mode: command.mode,
-            observation,
+            observation: result.observation,
+            release_absence: result.release_absence,
         })
     }
 
@@ -659,7 +799,8 @@ impl MachineApiWorkloadTeardownPhaseResponse {
         if self.mode != command.mode {
             return Err(MachineApiWorkloadTeardownWireError::ResponseModeMismatch);
         }
-        self.observation.validate_for_command(command)
+        self.observation.validate_for_command(command)?;
+        self.validate_release_absence_shape()
     }
 
     pub const fn request_digest(&self) -> MachineApiWorkloadTeardownRequestDigest {
@@ -721,6 +862,10 @@ impl MachineApiWorkloadTeardownPhaseResponse {
     pub fn observation(&self) -> &MachineApiWorkloadTeardownObservation {
         &self.observation
     }
+
+    pub const fn release_absence(&self) -> Option<MachineApiNetworkReleaseAbsenceEvidence> {
+        self.release_absence
+    }
 }
 
 /// Stable failure reason for a rejected teardown-phase wire value.
@@ -749,6 +894,7 @@ pub enum MachineApiWorkloadTeardownWireError {
     RequestDigestMismatch,
     ObservationModeMismatch,
     SuccessEvidenceMismatch,
+    ReleaseAbsenceEvidenceMismatch,
     ResponseRequestDigestMismatch,
     ResponseAuthorityMismatch,
     ResponseCommandMismatch,
@@ -808,6 +954,9 @@ impl Display for MachineApiWorkloadTeardownWireError {
             }
             Self::SuccessEvidenceMismatch => {
                 "workload teardown success evidence is crossed with its command"
+            }
+            Self::ReleaseAbsenceEvidenceMismatch => {
+                "workload teardown release success lacks independent absence evidence"
             }
             Self::ResponseRequestDigestMismatch => {
                 "workload teardown response does not bind the complete request"

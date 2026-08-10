@@ -272,6 +272,8 @@ fn build_gvproxy_args(
     // forwarding flags are shared across every gvproxy-backed provider.
     let mut args = backend.gvproxy_listen_args(&paths.gvproxy_socket_path);
     args.extend([
+        "-services".to_owned(),
+        format!("unix://{}", paths.gvproxy_services_socket_path().display()),
         "-pid-file".to_owned(),
         paths.gvproxy_pid_path.display().to_string(),
         "-log-file".to_owned(),

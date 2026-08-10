@@ -104,10 +104,15 @@ function syntheticSources() {
       "struct GvproxyForwardRoute { local: String, remote: String, protocol: String }",
       "struct GvproxyUnexposeRequest { local: String, protocol: String }",
       "fn inspect_machine_ports() {",
+      "  let routes = fetch_machine_forwarder_routes();",
+      "  CurrentMachinePortForwardingObservation::authenticated();",
+      "}",
+      "fn fetch_machine_forwarder_routes(",
+      "    config: &OciMachinePortForwarderConfig,",
+      ") -> Result<Vec<GvproxyForwardRoute>> {",
       "  let deadline = Instant::now() + MACHINE_FORWARDER_TIMEOUT;",
       '  send_machine_forwarder_request(config, "GET", "/all", &[], deadline);',
       "  serde_json::from_slice::<Vec<GvproxyForwardRoute>>(&response.body);",
-      "  CurrentMachinePortForwardingObservation::authenticated();",
       "}",
     ].join("\n"),
     forwardingReceipt: [
@@ -446,20 +451,38 @@ function verify({ sources, errors }) {
 
   const providerInspect = functionBody(forwarding, "inspect_machine_ports");
   for (const token of [
-    '"GET", "/all"',
-    "&[], deadline",
-    "serde_json::from_slice::<Vec<GvproxyForwardRoute>>",
+    "fetch_machine_forwarder_routes",
     "CurrentMachinePortForwardingObservation::authenticated",
   ]) {
     if (!providerInspect.includes(token)) {
       errors.push(`machine provider current inspection lacks read-only seam: ${token}`);
     }
   }
+  const providerFetch = functionBody(
+    forwarding,
+    "fetch_machine_forwarder_routes",
+  );
+  for (const token of [
+    '"GET", "/all"',
+    "&[], deadline",
+    "serde_json::from_slice",
+  ]) {
+    if (!providerFetch.includes(token)) {
+      errors.push(`machine provider batch fetch lacks read-only seam: ${token}`);
+    }
+  }
+  if (
+    !forwarding.includes(
+      "fn fetch_machine_forwarder_routes(\n    config: &OciMachinePortForwarderConfig,\n) -> Result<Vec<GvproxyForwardRoute>>",
+    )
+  ) {
+    errors.push("machine provider batch fetch lacks its exact typed route result");
+  }
   if (forwarding.includes('"/inspect"')) {
     errors.push("machine provider adapter contains invented /inspect endpoint");
   }
   if (
-    (providerInspect.match(/send_machine_forwarder_request\s*\(/g) ?? [])
+    (providerFetch.match(/send_machine_forwarder_request\s*\(/g) ?? [])
       .length !== 1
   ) {
     errors.push(
@@ -468,7 +491,7 @@ function verify({ sources, errors }) {
   }
   if (
     (
-      providerInspect.match(
+      providerFetch.match(
         /Instant::now\(\)\s*\+\s*MACHINE_FORWARDER_TIMEOUT/g,
       ) ?? []
     ).length !== 1
@@ -477,7 +500,7 @@ function verify({ sources, errors }) {
       "machine provider inspection does not use exactly one batch deadline",
     );
   }
-  if (/\bfor\s+\w+\s+in\b/.test(providerInspect)) {
+  if (/\bfor\s+\w+\s+in\b/.test(providerFetch)) {
     errors.push(
       "machine provider inspection loops over bindings instead of using one batch request",
     );
@@ -497,7 +520,7 @@ function verify({ sources, errors }) {
     "expose_machine_ports",
     "unexpose_machine_ports",
   ]) {
-    if (providerInspect.includes(forbidden)) {
+    if (`${providerInspect}\n${providerFetch}`.includes(forbidden)) {
       errors.push(
         `machine provider inspection gained mutating fallback: ${forbidden}`,
       );

@@ -21,7 +21,11 @@ mod spec;
 mod teardown;
 pub mod volume;
 
-pub use crate::backends::oci::network::{MachinePortForwardOutcome, MachinePortForwardReceipt};
+pub use crate::backends::oci::network::{
+    MachinePortForwardOutcome, MachinePortForwardReceipt, MachinePortForwardingRetirement,
+    MachinePortForwardingRetirementObservation, OciMachinePortForwarderConfig,
+    OciMachinePortForwardingRetirement,
+};
 pub use crate::backends::oci::network::{OciNetworkProcess, OciNetworkProcessError};
 pub use crate::backends::{SandboxNetworkPlanRequirements, sandbox_network_plan_requirements};
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
@@ -39,7 +43,8 @@ pub use provider_command::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
     ProviderCommandClaimInput, ProviderCommandCurrentExecution, ProviderCommandCurrentInspection,
     ProviderCommandExecutionClaim, ProviderCommandJournalError, ProviderCommandObservation,
-    ProviderCommandObservationKind, ProviderCommandOperation,
+    ProviderCommandObservationKind, ProviderCommandOperation, ProviderCommandStartedClaimDecision,
+    ProviderCommandStartedExecutionClaim,
 };
 pub use provision::{
     SandboxProvisionDependencyListener, SandboxProvisionIngressRoute,
@@ -57,8 +62,8 @@ pub use spec::{
 pub use teardown::{
     SandboxExecutionTeardownCommand, SandboxExecutionTeardownCommandError,
     SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation,
-    SandboxNetworkTeardownCommand, SandboxNetworkTeardownCommandError,
-    SandboxNetworkTeardownCommandInput, SandboxNetworkTeardownIdentity,
-    SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownObservation,
-    SandboxNetworkTeardownOperation,
+    SandboxNetworkReleaseAbsenceEvidence, SandboxNetworkTeardownCommand,
+    SandboxNetworkTeardownCommandError, SandboxNetworkTeardownCommandInput,
+    SandboxNetworkTeardownIdentity, SandboxNetworkTeardownIdentityInput,
+    SandboxNetworkTeardownObservation, SandboxNetworkTeardownOperation,
 };

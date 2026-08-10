@@ -39,6 +39,7 @@ const SOCKET_IO_TIMEOUT_TEST: Duration = Duration::from_secs(30);
 const LOCAL_GUEST_BINARY_HELP_TEXT: &str = "set `NIMBUS_MACHINE_GUEST_BINARY` only when you intentionally need a local Linux guest binary override";
 
 mod teardown;
+pub(crate) use teardown::MachineApiWorkloadTeardownTransportOutcome;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]

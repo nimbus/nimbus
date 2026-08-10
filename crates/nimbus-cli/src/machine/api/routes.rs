@@ -136,16 +136,17 @@ async fn machine_api_workload_teardown_phase(
     // lookup, journal inspection, and every guest provider operation.
     require_forwarder_authority(&state, request.forwarder_authority())?;
     let workloads = require_service_workloads(&state)?;
-    let observation = workloads
+    let result = workloads
         .teardown_phase(request.command(), request.forwarder_authority())
         .await?;
-    let response = MachineApiWorkloadTeardownPhaseResponse::for_request(&request, observation)
-        .map_err(|error| MachineApiHttpError {
+    let response = MachineApiWorkloadTeardownPhaseResponse::for_request(&request, result).map_err(
+        |error| MachineApiHttpError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: format!(
                 "machine API workload teardown response violated its exact wire contract: {error}"
             ),
-        })?;
+        },
+    )?;
     Ok(Json(response))
 }
 

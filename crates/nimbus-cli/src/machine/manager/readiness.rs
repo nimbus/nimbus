@@ -1,5 +1,8 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read as _};
+use std::os::unix::fs::{
+    FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
+};
 use std::os::unix::net::UnixListener;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -24,6 +27,97 @@ use super::ssh::run_silent_ssh_probe;
 use super::{
     GVPROXY_SOCKET_WAIT_TIMEOUT, MACHINE_API_FORWARD_USER, POLL_INTERVAL, StartupSignalMonitor,
 };
+
+const MACHINE_RUNTIME_DIRECTORY_MODE: u32 = 0o700;
+const MACHINE_FORWARDER_SOCKET_MODE: u32 = 0o600;
+
+pub(super) fn secure_machine_runtime_root(paths: &MachinePaths) -> Result<(), Error> {
+    secure_machine_runtime_root_for_owner(&paths.runtime_dir, unsafe { libc::geteuid() })
+}
+
+pub(super) fn secure_machine_runtime_root_for_owner(
+    path: &Path,
+    expected_uid: u32,
+) -> Result<(), Error> {
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|error| {
+            Error::PreconditionFailed(format!(
+                "machine runtime root {} must be an existing non-symlink directory: {error}",
+                path.display()
+            ))
+        })?;
+    let metadata = directory.metadata().map_err(|error| {
+        Error::Internal(format!(
+            "failed to inspect machine runtime root {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.is_dir() || metadata.uid() != expected_uid {
+        return Err(Error::PreconditionFailed(format!(
+            "machine runtime root {} must be owned by effective uid {expected_uid}",
+            path.display()
+        )));
+    }
+    directory
+        .set_permissions(fs::Permissions::from_mode(MACHINE_RUNTIME_DIRECTORY_MODE))
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to restrict machine runtime root {} to its owner: {error}",
+                path.display()
+            ))
+        })
+}
+
+fn secure_machine_forwarder_services_socket(path: &Path) -> Result<(), Error> {
+    secure_machine_forwarder_services_socket_for_owner(path, unsafe { libc::geteuid() })
+}
+
+pub(super) fn secure_machine_forwarder_services_socket_for_owner(
+    path: &Path,
+    expected_uid: u32,
+) -> Result<(), Error> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        Error::Internal(format!(
+            "failed to inspect machine forwarder services socket {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.file_type().is_socket() || metadata.uid() != expected_uid {
+        return Err(Error::PreconditionFailed(format!(
+            "machine forwarder services endpoint {} must be an owner-controlled Unix socket",
+            path.display()
+        )));
+    }
+    fs::set_permissions(
+        path,
+        fs::Permissions::from_mode(MACHINE_FORWARDER_SOCKET_MODE),
+    )
+    .map_err(|error| {
+        Error::Internal(format!(
+            "failed to restrict machine forwarder services socket {} to its owner: {error}",
+            path.display()
+        ))
+    })?;
+    let secured = fs::symlink_metadata(path).map_err(|error| {
+        Error::Internal(format!(
+            "failed to re-inspect machine forwarder services socket {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !secured.file_type().is_socket()
+        || secured.uid() != expected_uid
+        || secured.mode() & 0o777 != MACHINE_FORWARDER_SOCKET_MODE
+    {
+        return Err(Error::PreconditionFailed(format!(
+            "machine forwarder services endpoint {} changed while it was secured",
+            path.display()
+        )));
+    }
+    Ok(())
+}
 
 pub(super) fn wait_for_machine_api_ready(
     paths: &MachinePaths,
@@ -132,6 +226,13 @@ pub(super) fn pre_start_networking(
         child,
         startup_signals,
     )?;
+    wait_for_path(
+        &paths.gvproxy_services_socket_path(),
+        GVPROXY_SOCKET_WAIT_TIMEOUT,
+        child,
+        startup_signals,
+    )?;
+    secure_machine_forwarder_services_socket(&paths.gvproxy_services_socket_path())?;
     Ok(())
 }
 

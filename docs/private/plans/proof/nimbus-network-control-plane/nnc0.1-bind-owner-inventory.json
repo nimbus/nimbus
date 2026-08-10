@@ -666,7 +666,7 @@
       "kind": "gvproxy-ssh-port-request",
       "symbol": "build_gvproxy_args",
       "ordinal": 1,
-      "line": 279
+      "line": 281
     },
     {
       "site_id": "machine-ready-unix-listener",
@@ -674,7 +674,7 @@
       "kind": "listener-return-handoff",
       "symbol": "bind_ready_listener",
       "ordinal": 1,
-      "line": 204
+      "line": 305
     },
     {
       "site_id": "machine-ready-unix-listener",
@@ -682,7 +682,7 @@
       "kind": "unix-bind",
       "symbol": "bind_ready_listener",
       "ordinal": 1,
-      "line": 206
+      "line": 307
     },
     {
       "site_id": "machine-ignition-unix-listener",
@@ -690,7 +690,7 @@
       "kind": "unix-bind",
       "symbol": "serve_ignition_file",
       "ordinal": 1,
-      "line": 232
+      "line": 333
     },
     {
       "site_id": "machine-ignition-unix-listener",
@@ -698,7 +698,7 @@
       "kind": "unix-from-std",
       "symbol": "serve_ignition_file",
       "ordinal": 1,
-      "line": 257
+      "line": 358
     },
     {
       "site_id": "node-systemd-socket-unit",
@@ -858,7 +858,7 @@
       "kind": "machine-forwarder-port-request",
       "symbol": "expose_one",
       "ordinal": 1,
-      "line": 322
+      "line": 428
     },
     {
       "site_id": "machine-forwarder-port-effect",
@@ -866,7 +866,7 @@
       "kind": "machine-forwarder-port-request",
       "symbol": "withdraw_one",
       "ordinal": 1,
-      "line": 336
+      "line": 442
     },
     {
       "site_id": "netavark-port-mapping-effect",
@@ -1355,7 +1355,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "encode_gvproxy_request",
       "ordinal": 1,
-      "line": 537,
+      "line": 644,
       "reason": "Formats a serialization error while lowering an already-admitted binding into a native gvproxy request; it neither chooses a port nor creates or adopts a socket."
     },
     {
@@ -1363,15 +1363,31 @@
       "kind": "authority-shaped-macro",
       "symbol": "authenticate_current_routes",
       "ordinal": 1,
-      "line": 610,
+      "line": 717,
       "reason": "Formats a fail-closed diagnostic while translating the read-only native gvproxy route list into Nimbus observation evidence; it performs no bind, allocation, or provider mutation."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "mutation_observation_error",
+      "ordinal": 1,
+      "line": 771,
+      "reason": "Formats a fail-closed forwarding diagnostic from an already-attributed provider observation; it performs no bind, allocation, socket adoption, or provider mutation."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "ambiguous-descriptor-adoption",
+      "symbol": "connect_unix_with_timeout",
+      "ordinal": 1,
+      "line": 989,
+      "reason": "Connects to the exact configured local Unix gvproxy control socket with a bounded deadline; it does not bind, allocate, adopt a listener, or participate in host TCP/UDP PortLease authority."
     },
     {
       "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
       "kind": "authority-shaped-macro",
       "symbol": "machine_forward_remote",
       "ordinal": 1,
-      "line": 894,
+      "line": 1209,
       "reason": "Formats an admitted host port as the remote endpoint consumed by the classified forwarder request; it is not an allocator or socket owner."
     },
     {
@@ -1598,7 +1614,7 @@
     "active_production_sites": 25,
     "retired_production_sites": 3,
     "authority_occurrences": 66,
-    "non_authority_occurrences": 35,
+    "non_authority_occurrences": 37,
     "portable_owner_sites": 6,
     "trust_inputs_not_network_authorities": 3,
     "unclassified_production_sites": 0,

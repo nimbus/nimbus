@@ -174,9 +174,16 @@ extension-registry seam before the second concern edits `extensions.rs`.
   reachable, generation-matched production guest composition. The bounded
   one-shot client validates every response fence and returns explicit
   `Ambiguous` without retry. An explicit caller-supplied Inspect follows an
-  ambiguous Execute in the transport proof. Band 8 is next and owns the parent
-  confirmed-publication progression, durable request-may-exist boundary,
-  enforced Inspect-before-retry, and real five-capability forwarded adapter.
+  ambiguous Execute in the transport proof. Band 8 is green. One real parent
+  adapter implements all five capabilities through one journal namespace. It
+  persists exact request-before-send state, enforces Inspect before retry,
+  advances explicit confirmed-publication withdrawal and release states,
+  withdraws the complete forwarding batch before guest work, and releases the
+  complete parent port batch only after exact guest and provider absence. The
+  Unix gvproxy retirement provider and runtime/socket confinement are also
+  proven. Band 9 is next. It owns real compute registry substitution and the
+  complete two-realm crash, contention, sibling-batch, empty-batch, and
+  effect-order acceptance proofs.
   Compose down, physical-machine stop, product caller cutover, public-route
   growth, and a CLI-local saga store remain forbidden.
   NNC8.2 owns the

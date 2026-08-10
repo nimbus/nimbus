@@ -1,9 +1,14 @@
 //! Confirmed teardown commands at the provider-owned attempt journal boundary.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
-    ProviderCommandClaimInput, ProviderCommandExecutionClaim, ProviderCommandJournalError,
-    ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
+    ProviderCommandClaimInput, ProviderCommandCurrentExecution, ProviderCommandCurrentInspection,
+    ProviderCommandExecutionClaim, ProviderCommandJournalError, ProviderCommandObservation,
+    ProviderCommandObservationKind, ProviderCommandOperation, ProviderCommandStartedClaimDecision,
+    ProviderCommandStartedExecutionClaim,
 };
 use nimbus_workloads::{WorkloadTeardownCommandMode, WorkloadTeardownStep};
 
@@ -78,6 +83,17 @@ impl ConfirmedTeardownProviderJournal {
         self.journal.claim_dispatch_epoch(command.claim())
     }
 
+    /// Atomically claim Execute authority with its exact prepared request.
+    pub fn claim_execute_started(
+        &self,
+        command: &ConfirmedTeardownProviderCommand,
+        prepared_request: &[u8],
+    ) -> Result<ProviderCommandStartedClaimDecision, ProviderCommandJournalError> {
+        require_mode(command, WorkloadTeardownCommandMode::Execute)?;
+        self.journal
+            .claim_dispatch_epoch_started(command.claim(), prepared_request)
+    }
+
     /// Inspect only an exact command that compute confirmed in Inspect mode.
     pub fn adopt_inspect(
         &self,
@@ -107,6 +123,112 @@ impl ConfirmedTeardownProviderJournal {
     ) -> Result<T, ProviderCommandJournalError> {
         authenticate_observation(command, observation)?;
         self.journal.inspect_current_claim(observation, inspect)
+    }
+
+    /// Send one atomically prepared request while its exact stream stays current.
+    pub async fn execute_started_claim_async<T, Execute>(
+        &self,
+        command: &ConfirmedTeardownProviderCommand,
+        execution_claim: ProviderCommandStartedExecutionClaim,
+        execute: Execute,
+    ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError>
+    where
+        T: Send + 'static,
+        Execute: for<'a> FnOnce(
+                &'a ProviderCommandCurrentExecution,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = (T, ProviderCommandObservationKind, Option<String>, Vec<u8>),
+                        > + Send
+                        + 'a,
+                >,
+            > + Send
+            + 'static,
+    {
+        require_mode(command, WorkloadTeardownCommandMode::Execute)?;
+        if execution_claim.claim() != command.claim() {
+            return Err(ProviderCommandJournalError::CrossedClaim);
+        }
+        self.journal
+            .execute_started_claim_async(execution_claim, execute)
+            .await
+    }
+
+    /// Run one parent-local provider effect under its current Execute claim.
+    pub async fn execute_current_claim_async<T, Execute>(
+        &self,
+        command: &ConfirmedTeardownProviderCommand,
+        execution_claim: ProviderCommandExecutionClaim,
+        execute: Execute,
+    ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError>
+    where
+        T: Send + 'static,
+        Execute: for<'a> FnOnce(
+                &'a ProviderCommandCurrentExecution,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = (T, ProviderCommandObservationKind, Option<String>, Vec<u8>),
+                        > + Send
+                        + 'a,
+                >,
+            > + Send
+            + 'static,
+    {
+        require_mode(command, WorkloadTeardownCommandMode::Execute)?;
+        if execution_claim.claim() != command.claim() {
+            return Err(ProviderCommandJournalError::CrossedClaim);
+        }
+        self.journal
+            .execute_current_claim_async(execution_claim, execute)
+            .await
+    }
+
+    /// Await read-only provider inspection while the exact stream stays current.
+    pub async fn inspect_current_claim_async<T, Inspect>(
+        &self,
+        command: &ConfirmedTeardownProviderCommand,
+        observation: &ProviderCommandObservation,
+        inspect: Inspect,
+    ) -> Result<ProviderCommandCurrentInspection<T>, ProviderCommandJournalError>
+    where
+        Inspect: for<'a> FnOnce(
+                &'a ProviderCommandObservation,
+            ) -> Pin<Box<dyn Future<Output = T> + Send + 'a>>
+            + Send,
+    {
+        authenticate_observation(command, observation)?;
+        self.journal
+            .inspect_current_claim_async(observation, inspect)
+            .await
+    }
+
+    /// Inspect remotely and publish the correlated result under one stream lock.
+    pub async fn inspect_current_claim_async_and_publish<T, Inspect>(
+        &self,
+        command: &ConfirmedTeardownProviderCommand,
+        observation: &ProviderCommandObservation,
+        inspect: Inspect,
+    ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError>
+    where
+        T: Send + 'static,
+        Inspect: for<'a> FnOnce(
+                &'a ProviderCommandObservation,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = (T, ProviderCommandObservationKind, Option<String>, Vec<u8>),
+                        > + Send
+                        + 'a,
+                >,
+            > + Send
+            + 'static,
+    {
+        authenticate_observation(command, observation)?;
+        self.journal
+            .inspect_current_claim_async_and_publish(observation, inspect)
+            .await
     }
 
     /// Persist one exact provider observation for this confirmed command.

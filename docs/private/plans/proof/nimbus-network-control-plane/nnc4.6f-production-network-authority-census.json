@@ -330,7 +330,7 @@
       "kind": "capability-bundle-construction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 143,
+      "line": 157,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.4"
@@ -340,7 +340,7 @@
       "kind": "attachment-registration-construction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 144,
+      "line": 158,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.4"
@@ -350,7 +350,7 @@
       "kind": "ingress-registration-construction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 151,
+      "line": 165,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.4"

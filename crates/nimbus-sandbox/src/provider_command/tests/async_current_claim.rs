@@ -27,6 +27,171 @@ fn execution(
     }
 }
 
+#[tokio::test]
+async fn async_start_persists_exact_request_before_provider_io() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let claim = stop_claim(12);
+    let request = br#"{"request":"exact-forwarded-teardown"}"#.to_vec();
+    let expected_request_digest = evidence_sha256(&request);
+    let execution = match journal
+        .claim_dispatch_epoch_started(&claim, &request)
+        .expect("the request and epoch should publish atomically")
+    {
+        ProviderCommandStartedClaimDecision::ExecuteStarted(execution) => execution,
+        ProviderCommandStartedClaimDecision::AdoptExactAttempt(_) => {
+            panic!("the first exact request must receive started authority")
+        }
+    };
+    let provider_calls = Arc::new(AtomicUsize::new(0));
+    let observed_calls = Arc::clone(&provider_calls);
+
+    let (_, observation) = journal
+        .execute_started_claim_async(execution, move |current| {
+            Box::pin(async move {
+                assert_eq!(
+                    current.observation().kind(),
+                    ProviderCommandObservationKind::InProgress
+                );
+                assert_eq!(
+                    current.observation().evidence_sha256(),
+                    Some(expected_request_digest.as_str())
+                );
+                observed_calls.fetch_add(1, Ordering::SeqCst);
+                (
+                    (),
+                    ProviderCommandObservationKind::Ambiguous,
+                    None,
+                    b"provider response was lost".to_vec(),
+                )
+            })
+        })
+        .await
+        .expect("the exact request boundary should publish");
+
+    assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        observation.kind(),
+        ProviderCommandObservationKind::Ambiguous
+    );
+}
+
+#[tokio::test]
+async fn inspected_absence_invalidates_a_delayed_started_token_before_io() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let claim = stop_claim(13);
+    let request = b"exact request that may exist";
+    let execution = match journal
+        .claim_dispatch_epoch_started(&claim, request)
+        .expect("the request and epoch should publish atomically")
+    {
+        ProviderCommandStartedClaimDecision::ExecuteStarted(execution) => execution,
+        ProviderCommandStartedClaimDecision::AdoptExactAttempt(_) => unreachable!(),
+    };
+    let started = execution.observation().clone();
+
+    let (_, absent) = journal
+        .inspect_current_claim_async_and_publish(&started, |_| {
+            Box::pin(async move {
+                (
+                    (),
+                    ProviderCommandObservationKind::Absent,
+                    None,
+                    b"provider proves the request never completed".to_vec(),
+                )
+            })
+        })
+        .await
+        .expect("inspection should publish exact absence");
+    assert_eq!(absent.kind(), ProviderCommandObservationKind::Absent);
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let delayed_calls = Arc::clone(&calls);
+    let error = journal
+        .execute_started_claim_async(execution, move |_| {
+            Box::pin(async move {
+                delayed_calls.fetch_add(1, Ordering::SeqCst);
+                (
+                    (),
+                    ProviderCommandObservationKind::Succeeded,
+                    None,
+                    b"must not publish".to_vec(),
+                )
+            })
+        })
+        .await
+        .expect_err("the inspected result must invalidate the delayed token");
+    assert_eq!(error, ProviderCommandJournalError::PriorEffectUnresolved);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_remote_inspect_contenders_publish_one_result_winner() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = Arc::new(journal(root.path()));
+    let claim = stop_claim(14);
+    let started = match journal
+        .claim_dispatch_epoch_started(&claim, b"one remote request")
+        .expect("the request and epoch should publish atomically")
+    {
+        ProviderCommandStartedClaimDecision::ExecuteStarted(execution) => {
+            execution.observation().clone()
+        }
+        ProviderCommandStartedClaimDecision::AdoptExactAttempt(_) => unreachable!(),
+    };
+    let calls = Arc::new(AtomicUsize::new(0));
+    let first_journal = Arc::clone(&journal);
+    let first_started = started.clone();
+    let first_calls = Arc::clone(&calls);
+    let first = tokio::spawn(async move {
+        first_journal
+            .inspect_current_claim_async_and_publish(&first_started, move |_| {
+                Box::pin(async move {
+                    first_calls.fetch_add(1, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    (
+                        (),
+                        ProviderCommandObservationKind::Succeeded,
+                        None,
+                        b"one correlated remote result".to_vec(),
+                    )
+                })
+            })
+            .await
+    });
+    tokio::task::yield_now().await;
+    let second_calls = Arc::clone(&calls);
+    let second = journal.inspect_current_claim_async_and_publish(&started, move |_| {
+        Box::pin(async move {
+            second_calls.fetch_add(1, Ordering::SeqCst);
+            (
+                (),
+                ProviderCommandObservationKind::Succeeded,
+                None,
+                b"must not become a second result".to_vec(),
+            )
+        })
+    });
+
+    assert_eq!(
+        first
+            .await
+            .expect("first inspection task should join")
+            .expect("first inspection should publish")
+            .1
+            .kind(),
+        ProviderCommandObservationKind::Succeeded
+    );
+    assert_eq!(
+        second
+            .await
+            .expect_err("the stale contender must fail before provider I/O"),
+        ProviderCommandJournalError::PriorEffectUnresolved
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn async_execution_holds_the_stream_lock_through_await_and_publication() {
     let root = tempfile::tempdir().expect("temporary root should exist");

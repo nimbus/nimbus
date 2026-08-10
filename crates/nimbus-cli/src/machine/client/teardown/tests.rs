@@ -247,7 +247,13 @@ fn exact_response(
             MachineApiWorkloadTeardownInspectObservation::Ambiguous,
         ),
     };
-    MachineApiWorkloadTeardownPhaseResponse::for_request(request, observation)
+    let result = nimbus_machine::api::MachineApiWorkloadTeardownPhaseResult::new(
+        request.command(),
+        observation,
+        None,
+    )
+    .expect("exact non-release result should validate");
+    MachineApiWorkloadTeardownPhaseResponse::for_request(request, result)
         .expect("exact response should validate")
 }
 

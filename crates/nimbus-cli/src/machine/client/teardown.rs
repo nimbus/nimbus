@@ -44,23 +44,44 @@ impl MachineApiClient {
         &self,
         request: &MachineApiWorkloadTeardownPhaseRequest,
     ) -> Result<MachineApiWorkloadTeardownTransportOutcome, Error> {
-        self.service_forwarder_authority()?
-            .authenticate(request.forwarder_authority())
-            .map_err(|error| {
-            Error::InvalidInput(format!(
-                "machine API workload teardown request is crossed with the configured forwarder authority: {error}"
-            ))
-        })?;
         let encoded = serde_json::to_vec(request).map_err(|error| {
             Error::Internal(format!(
                 "failed to encode the exact machine API workload teardown request: {error}"
             ))
         })?;
+        self.teardown_workload_phase_prepared(request, &encoded)
+    }
+
+    /// Send the exact request bytes previously committed by the provider journal.
+    pub(crate) fn teardown_workload_phase_prepared(
+        &self,
+        request: &MachineApiWorkloadTeardownPhaseRequest,
+        prepared: &[u8],
+    ) -> Result<MachineApiWorkloadTeardownTransportOutcome, Error> {
+        self.service_forwarder_authority()?
+            .authenticate(request.forwarder_authority())
+            .map_err(|error| {
+            Error::InvalidInput(format!(
+                "machine API workload teardown request is crossed with the configured forwarder authority: {error}"
+                ))
+            })?;
+        let decoded: MachineApiWorkloadTeardownPhaseRequest = serde_json::from_slice(prepared)
+            .map_err(|error| {
+                Error::InvalidInput(format!(
+                    "prepared machine API workload teardown request is invalid: {error}"
+                ))
+            })?;
+        if &decoded != request {
+            return Err(Error::InvalidInput(
+                "prepared machine API workload teardown request is crossed with the authenticated command"
+                    .to_owned(),
+            ));
+        }
         let (status, response) = match machine_api_request_with_response_limit(
             &self.socket_path,
             "POST",
             MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH,
-            Some(&encoded),
+            Some(prepared),
             self.mutation_io_timeout,
             Some(MAX_WORKLOAD_TEARDOWN_RESPONSE_BODY_BYTES),
         ) {

@@ -12,10 +12,10 @@ use crate::{ProviderCommandClaim, ProviderCommandOperation, SandboxExecutionAtte
 mod attachment;
 
 pub use attachment::{
-    SandboxNetworkTeardownCommand, SandboxNetworkTeardownCommandError,
-    SandboxNetworkTeardownCommandInput, SandboxNetworkTeardownIdentity,
-    SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownObservation,
-    SandboxNetworkTeardownOperation,
+    SandboxNetworkReleaseAbsenceEvidence, SandboxNetworkTeardownCommand,
+    SandboxNetworkTeardownCommandError, SandboxNetworkTeardownCommandInput,
+    SandboxNetworkTeardownIdentity, SandboxNetworkTeardownIdentityInput,
+    SandboxNetworkTeardownObservation, SandboxNetworkTeardownOperation,
 };
 
 /// One exact execution-only teardown operation.

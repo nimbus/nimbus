@@ -32,7 +32,9 @@ use super::launch::{
 };
 use super::ports::managed_machine_port_range_contains;
 use super::readiness::{
-    build_machine_api_forward_command, ssh_port_is_listening, wait_for_path, wait_for_ssh_ready,
+    build_machine_api_forward_command, secure_machine_forwarder_services_socket_for_owner,
+    secure_machine_runtime_root_for_owner, ssh_port_is_listening, wait_for_path,
+    wait_for_ssh_ready,
 };
 use super::ssh::remote_shell_command;
 use super::stop::{

@@ -14,7 +14,7 @@ use nimbus_machine::{
     api::{
         MachineApiWorkloadTeardownCommandEnvelope, MachineApiWorkloadTeardownExecuteObservation,
         MachineApiWorkloadTeardownInspectObservation, MachineApiWorkloadTeardownObservation,
-        MachineApiWorkloadTeardownProviderTranslation,
+        MachineApiWorkloadTeardownPhaseResult, MachineApiWorkloadTeardownProviderTranslation,
     },
 };
 use nimbus_node::{
@@ -107,7 +107,7 @@ pub(super) async fn dispatch(
     service: &GuestNodeWorkloadService,
     command: &MachineApiWorkloadTeardownCommandEnvelope,
     installed_forwarder: &MachineForwarderAuthority,
-) -> Result<MachineApiWorkloadTeardownObservation, MachineApiHttpError> {
+) -> Result<MachineApiWorkloadTeardownPhaseResult, MachineApiHttpError> {
     if command.provider_translation()
         == MachineApiWorkloadTeardownProviderTranslation::GuestContainerAttachment
     {
@@ -115,17 +115,30 @@ pub(super) async fn dispatch(
     }
     let validated = match validate_command(service, command, installed_forwarder) {
         Ok(validated) => validated,
-        Err(observation) => return Ok(observation),
+        Err(observation) => return phase_result(command, observation),
     };
     let journal = match service.bundle_materializer.attempt_idempotency_journal() {
         Ok(journal) => journal,
-        Err(error) => return Ok(journal_error(command.mode(), &error)),
+        Err(error) => return phase_result(command, journal_error(command.mode(), &error)),
     };
 
-    match command.mode() {
+    let observation = match command.mode() {
         WorkloadTeardownCommandMode::Execute => execute(service, command, validated, journal).await,
         WorkloadTeardownCommandMode::Inspect => inspect(service, command, validated, journal).await,
-    }
+    }?;
+    phase_result(command, observation)
+}
+
+fn phase_result(
+    command: &MachineApiWorkloadTeardownCommandEnvelope,
+    observation: MachineApiWorkloadTeardownObservation,
+) -> Result<MachineApiWorkloadTeardownPhaseResult, MachineApiHttpError> {
+    MachineApiWorkloadTeardownPhaseResult::new(command, observation, None).map_err(|error| {
+        MachineApiHttpError {
+            status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!("guest workload teardown result violated its exact contract: {error}"),
+        }
+    })
 }
 
 fn validate_command(
