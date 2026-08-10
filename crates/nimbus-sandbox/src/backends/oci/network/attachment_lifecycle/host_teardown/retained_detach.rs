@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use super::super::*;
 use super::progress::{
     HostManagedAttachmentDetachPhase, HostManagedAttachmentDetachedProof,
-    HostManagedAttachmentDetachedProofInput,
+    HostManagedAttachmentDetachedProofInput, RetainedAttachmentPublicationEvidence,
 };
 use crate::SandboxNetworkTeardownCommand;
 use crate::backends::capabilities::host_managed_attachment_provider_id;
@@ -21,6 +21,11 @@ use crate::backends::oci::network::ipam::{
 use crate::backends::oci::network::netns::ExactRegularArtifactObservation;
 
 const EVIDENCE_DIGEST_DOMAIN: &[u8] = b"nimbus.sandbox.host-attachment-evidence.v1\0";
+
+struct RetainedDetachActions<RetainPublication, StopAuxiliary> {
+    retain_publication: RetainPublication,
+    stop_auxiliary: StopAuxiliary,
+}
 
 impl OciAttachmentAdapter<'_> {
     /// Detach provider effects while every reusable authority stays retained.
@@ -38,7 +43,34 @@ impl OciAttachmentAdapter<'_> {
             &RealAttachmentHostEffects,
             current_phase,
             record_phase,
-            stop_auxiliary,
+            RetainedDetachActions {
+                retain_publication: || Ok(RetainedAttachmentPublicationEvidence::HostManaged),
+                stop_auxiliary,
+            },
+        )
+    }
+
+    /// Detach a machine-forwarded private attachment after its publication
+    /// owner proves exact durable absence and retained listener authority.
+    pub(crate) fn detach_machine_forwarded_retained(
+        &self,
+        lifecycle: &OciAttachmentLifecycle<'_>,
+        command: &SandboxNetworkTeardownCommand,
+        current_phase: HostManagedAttachmentDetachPhase,
+        record_phase: impl FnMut(HostManagedAttachmentDetachPhase) -> Result<()>,
+        retain_publication: impl FnOnce() -> Result<RetainedAttachmentPublicationEvidence>,
+        stop_auxiliary: impl FnOnce(AttachmentAuxiliaryDisposition) -> Result<()>,
+    ) -> Result<HostManagedAttachmentDetachedProof> {
+        lifecycle.detach_host_managed_retained(
+            &self.context,
+            command,
+            &RealAttachmentHostEffects,
+            current_phase,
+            record_phase,
+            RetainedDetachActions {
+                retain_publication,
+                stop_auxiliary,
+            },
         )
     }
 }
@@ -51,9 +83,17 @@ impl OciAttachmentLifecycle<'_> {
         host: &impl AttachmentHostEffects,
         current_phase: HostManagedAttachmentDetachPhase,
         mut record_phase: impl FnMut(HostManagedAttachmentDetachPhase) -> Result<()>,
-        stop_auxiliary: impl FnOnce(AttachmentAuxiliaryDisposition) -> Result<()>,
+        actions: RetainedDetachActions<
+            impl FnOnce() -> Result<RetainedAttachmentPublicationEvidence>,
+            impl FnOnce(AttachmentAuxiliaryDisposition) -> Result<()>,
+        >,
     ) -> Result<HostManagedAttachmentDetachedProof> {
-        authenticate_exact_command_context(context, command)?;
+        let RetainedDetachActions {
+            retain_publication,
+            stop_auxiliary,
+        } = actions;
+        let machine_forwarded = !context.publication.owns_netavark_bindings();
+        authenticate_exact_command_context(context, command, machine_forwarded)?;
         authenticate_container_network_generation_for_cleanup(
             self.ipam,
             context.layout,
@@ -128,8 +168,8 @@ impl OciAttachmentLifecycle<'_> {
             record_phase(HostManagedAttachmentDetachPhase::PepRetained)?;
         }
 
-        let published_batch_state = (current_phase
-            < HostManagedAttachmentDetachPhase::ListenersRetained)
+        let published_batch_state = (!machine_forwarded
+            && current_phase < HostManagedAttachmentDetachPhase::ListenersRetained)
             .then(|| {
                 self.ports.classify_planned_netavark_cleanup_batch(
                     &plan_members,
@@ -175,6 +215,21 @@ impl OciAttachmentLifecycle<'_> {
                 | LaunchPortBatchState::TerminalNoEffect,
             ) => {}
         }
+        let publication_evidence = if machine_forwarded {
+            let evidence = retain_publication()?;
+            if !matches!(
+                evidence,
+                RetainedAttachmentPublicationEvidence::MachineForwarded { .. }
+            ) {
+                return Err(SandboxError::OperationFailed {
+                    message: "machine-forwarded retained detach received host-managed publication evidence"
+                        .to_owned(),
+                });
+            }
+            evidence
+        } else {
+            RetainedAttachmentPublicationEvidence::HostManaged
+        };
 
         if current_phase < HostManagedAttachmentDetachPhase::ProviderAbsent {
             let prepared_teardown = if detach.provider_absent {
@@ -194,12 +249,14 @@ impl OciAttachmentLifecycle<'_> {
                         | recovery::AttachmentProviderObservation::DetachedNamespacePending
                 )
             {
-                self.ports.retain_ambiguous_netavark_cleanup(
-                    self.lifetimes,
-                    context.tenant_id,
-                    context.sandbox_id,
-                    cleanup.take(),
-                )?;
+                if !machine_forwarded {
+                    self.ports.retain_ambiguous_netavark_cleanup(
+                        self.lifetimes,
+                        context.tenant_id,
+                        context.sandbox_id,
+                        cleanup.take(),
+                    )?;
+                }
                 return Err(effect_error);
             }
             let after_provider = host.inspect_provider(self.ipam, context);
@@ -208,12 +265,14 @@ impl OciAttachmentLifecycle<'_> {
                 recovery::AttachmentProviderObservation::Absent
                     | recovery::AttachmentProviderObservation::DetachedNamespacePending
             ) {
-                self.ports.retain_ambiguous_netavark_cleanup(
-                    self.lifetimes,
-                    context.tenant_id,
-                    context.sandbox_id,
-                    cleanup.take(),
-                )?;
+                if !machine_forwarded {
+                    self.ports.retain_ambiguous_netavark_cleanup(
+                        self.lifetimes,
+                        context.tenant_id,
+                        context.sandbox_id,
+                        cleanup.take(),
+                    )?;
+                }
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "{} attachment {} lacks exact provider absence after detach: {after_provider:?}",
@@ -234,22 +293,26 @@ impl OciAttachmentLifecycle<'_> {
                 recovery::AttachmentProviderObservation::DetachedNamespacePending
             ) && let Err(error) = host.remove_namespace(context)
             {
-                self.ports.retain_ambiguous_netavark_cleanup(
-                    self.lifetimes,
-                    context.tenant_id,
-                    context.sandbox_id,
-                    cleanup.take(),
-                )?;
+                if !machine_forwarded {
+                    self.ports.retain_ambiguous_netavark_cleanup(
+                        self.lifetimes,
+                        context.tenant_id,
+                        context.sandbox_id,
+                        cleanup.take(),
+                    )?;
+                }
                 return Err(error);
             }
             let after_namespace = host.inspect_provider(self.ipam, context);
             if after_namespace != recovery::AttachmentProviderObservation::Absent {
-                self.ports.retain_ambiguous_netavark_cleanup(
-                    self.lifetimes,
-                    context.tenant_id,
-                    context.sandbox_id,
-                    cleanup.take(),
-                )?;
+                if !machine_forwarded {
+                    self.ports.retain_ambiguous_netavark_cleanup(
+                        self.lifetimes,
+                        context.tenant_id,
+                        context.sandbox_id,
+                        cleanup.take(),
+                    )?;
+                }
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "{} attachment {} lacks explicit provider and namespace absence: {after_namespace:?}",
@@ -293,7 +356,13 @@ impl OciAttachmentLifecycle<'_> {
             record_phase(HostManagedAttachmentDetachPhase::ListenersRetained)?;
         }
 
-        let proof = self.compile_detached_proof(context, command, &durable, &durable_record)?;
+        let proof = self.compile_detached_proof(
+            context,
+            command,
+            &durable,
+            &durable_record,
+            publication_evidence,
+        )?;
         proof.validate_detach_command(command)?;
         Ok(proof)
     }
@@ -304,6 +373,7 @@ impl OciAttachmentLifecycle<'_> {
         command: &SandboxNetworkTeardownCommand,
         durable: &state::OciAttachmentDurableState<'_>,
         expected_record: &nimbus_network::DurableNetworkAttachmentState,
+        publication_evidence: RetainedAttachmentPublicationEvidence,
     ) -> Result<HostManagedAttachmentDetachedProof> {
         let attachment = durable
             .inspect()?
@@ -406,6 +476,7 @@ impl OciAttachmentLifecycle<'_> {
                 &(segment.state() as u8, segment.association()),
             )?,
             attachment_retained_evidence_sha256: retained_attachment_authority_digest(&attachment)?,
+            publication_evidence,
         })
     }
 
@@ -469,11 +540,17 @@ pub(super) fn complete_port_plan_members(
 pub(super) fn authenticate_exact_command_context(
     context: &OciAttachmentContext<'_>,
     command: &SandboxNetworkTeardownCommand,
+    machine_forwarded: bool,
 ) -> Result<()> {
     context.validate_backend_publication()?;
-    if !context.publication.owns_netavark_bindings() {
+    if machine_forwarded == context.publication.owns_netavark_bindings() {
         return Err(SandboxError::OperationFailed {
-            message: "retained host detach requires host-managed publication".to_owned(),
+            message: if machine_forwarded {
+                "retained machine-forwarded detach requires machine-forwarded publication"
+                    .to_owned()
+            } else {
+                "retained host detach requires host-managed publication".to_owned()
+            },
         });
     }
     let expected_provider = host_managed_attachment_provider_id(

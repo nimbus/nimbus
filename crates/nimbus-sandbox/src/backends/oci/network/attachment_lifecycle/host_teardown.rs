@@ -7,6 +7,8 @@ mod detached_release;
 mod progress;
 mod retained_detach;
 
+pub(crate) use detached_release::AttachmentReleaseActions;
+
 #[cfg(test)]
 pub(crate) use progress::{
     HostManagedAttachmentCheckpointTestProbe, HostManagedAttachmentTeardownCheckpoint,
@@ -14,7 +16,7 @@ pub(crate) use progress::{
 pub(crate) use progress::{
     HostManagedAttachmentCommandInspection, HostManagedAttachmentCommandInspectionError,
     HostManagedAttachmentDetachPhase, HostManagedAttachmentReleasePhase,
-    HostManagedAttachmentTeardownState,
+    HostManagedAttachmentTeardownState, RetainedAttachmentPublicationEvidence,
 };
 
 impl OciAttachmentLifecycle<'_> {

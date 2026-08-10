@@ -827,6 +827,10 @@ impl ProviderCommandAttemptJournal {
     }
 
     /// Inspect only when the durable authority is the exact attempt and epoch.
+    ///
+    /// This operation never creates a directory, lock, or record. A missing
+    /// lock means that the stream has no durable authority. A record without
+    /// its persistent stream lock is corrupt.
     pub fn adopt_exact_attempt(
         &self,
         claim: &ProviderCommandClaim,
@@ -836,7 +840,28 @@ impl ProviderCommandAttemptJournal {
         if !self.journal_directory_exists(&paths.directory)? {
             return Ok(None);
         }
-        let _guard = lock(&paths.lock)?;
+        let Some(_guard) = lock_existing(&paths.lock)? else {
+            let record = read_if_present(&paths.record)?;
+            let stage_exists = regular_file_exists(&paths.stage, "journal stage")?;
+            return if record.is_none() && !stage_exists {
+                Ok(None)
+            } else {
+                Err(ProviderCommandJournalError::Corrupt {
+                    message: format!(
+                        "provider journal stream for {} has a record or stage but no persistent lock",
+                        paths.record.display()
+                    ),
+                })
+            };
+        };
+        if regular_file_exists(&paths.stage, "journal stage")? {
+            return Err(ProviderCommandJournalError::Corrupt {
+                message: format!(
+                    "provider journal stream for {} has an unresolved staged publication",
+                    paths.record.display()
+                ),
+            });
+        }
         let Some(current) = read_if_present(&paths.record)? else {
             return Ok(None);
         };
@@ -1373,6 +1398,19 @@ fn read_if_present(
     }
 }
 
+fn regular_file_exists(path: &Path, label: &str) -> Result<bool, ProviderCommandJournalError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(true),
+        Ok(_) => Err(ProviderCommandJournalError::Corrupt {
+            message: format!("{label} {} is not a regular file", path.display()),
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(ProviderCommandJournalError::Store {
+            message: format!("failed to inspect {label} {}: {error}", path.display()),
+        }),
+    }
+}
+
 fn lock(path: &Path) -> Result<JournalGuard, ProviderCommandJournalError> {
     if let Ok(metadata) = fs::symlink_metadata(path)
         && !metadata.file_type().is_file()
@@ -1390,6 +1428,37 @@ fn lock(path: &Path) -> Result<JournalGuard, ProviderCommandJournalError> {
         .map_err(|error| ProviderCommandJournalError::Store {
             message: format!("failed to open journal lock {}: {error}", path.display()),
         })?;
+    acquire_lock(file, path)
+}
+
+fn lock_existing(path: &Path) -> Result<Option<JournalGuard>, ProviderCommandJournalError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(ProviderCommandJournalError::Corrupt {
+                message: format!("journal lock {} is not a regular file", path.display()),
+            });
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ProviderCommandJournalError::Store {
+                message: format!("failed to inspect journal lock {}: {error}", path.display()),
+            });
+        }
+    }
+    let file = match OpenOptions::new().read(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ProviderCommandJournalError::Store {
+                message: format!("failed to open journal lock {}: {error}", path.display()),
+            });
+        }
+    };
+    acquire_lock(file, path).map(Some)
+}
+
+fn acquire_lock(file: File, path: &Path) -> Result<JournalGuard, ProviderCommandJournalError> {
     if !file
         .metadata()
         .map_err(|error| ProviderCommandJournalError::Store {

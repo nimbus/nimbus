@@ -137,6 +137,32 @@ pub struct MachinePortAbsenceEvidence {
     pub receipts: Vec<MachinePortForwardReceipt>,
 }
 
+/// Complete authenticated absence witness retained by attachment teardown.
+///
+/// The public evidence projection intentionally stays small. This internal
+/// witness also binds the header fields that remain authoritative when the
+/// publication batch has zero slots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct MachinePortAbsenceWitness {
+    tenant_id: TenantId,
+    sandbox_id: SandboxId,
+    attachment_id: NetworkAttachmentId,
+    attachment_version: NetworkResourceVersion,
+    provider_instance: NetworkProviderHandle,
+    provider_generation: NetworkResourceGeneration,
+    batch_generation: u64,
+    bindings: Vec<SandboxPortBinding>,
+    port_leases: Vec<PortLeaseRequest>,
+    receipts: Vec<MachinePortForwardReceipt>,
+}
+
+/// Read-only teardown view of the exact durable machine-publication batch.
+pub(super) enum DurableMachinePortTeardownPublicationObservation {
+    Present,
+    Partial,
+    Absent,
+}
+
 #[derive(Clone)]
 struct MachinePortPublicationExpectation {
     tenant_id: TenantId,
@@ -405,6 +431,106 @@ impl MachinePortPublicationExpectation {
 }
 
 impl ContainerSandboxBackend {
+    /// Classify the exact durable machine-publication batch for teardown.
+    ///
+    /// Missing, corrupt, or crossed evidence is an error. Only a complete
+    /// `Exposed` batch is present and only a complete `Absent` batch proves
+    /// absence. In-progress batches remain explicitly partial.
+    pub(super) fn inspect_durable_machine_port_publication_for_teardown(
+        &self,
+        manifest: &ContainerSandboxManifest,
+    ) -> Result<DurableMachinePortTeardownPublicationObservation> {
+        self.validate_manifest_execution_context(manifest)?;
+        let forwarder = manifest
+            .runner_config
+            .machine_port_forwarder
+            .as_ref()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "container sandbox {} has no persisted machine forwarder authority; teardown publication inspection is unavailable",
+                    manifest.handle.id
+                ),
+            })?;
+        let record = read_record_if_present(&manifest.conmon_layout.container_state_dir)?
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "container forwarded publication for tenant {} sandbox {} has no durable machine-publication record",
+                    manifest.spec.tenant_id, manifest.handle.id
+                ),
+            })?;
+        record.validate_self()?;
+        let expectation = MachinePortPublicationExpectation::from_manifest(
+            self,
+            manifest,
+            forwarder,
+            record.phase,
+        )?;
+        if !record.matches(&expectation) {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container machine-publication teardown evidence crossed the exact current manifest for tenant {} sandbox {}",
+                    manifest.spec.tenant_id, manifest.handle.id
+                ),
+            });
+        }
+        match record.phase {
+            MachinePortPublicationPhase::Exposed => {
+                terminal_receipts(&record, MachinePortPublicationPhase::Exposed)?;
+                Ok(DurableMachinePortTeardownPublicationObservation::Present)
+            }
+            MachinePortPublicationPhase::Absent => {
+                terminal_receipts(&record, MachinePortPublicationPhase::Absent)?;
+                Ok(DurableMachinePortTeardownPublicationObservation::Absent)
+            }
+            MachinePortPublicationPhase::Exposing | MachinePortPublicationPhase::Withdrawing => {
+                Ok(DurableMachinePortTeardownPublicationObservation::Partial)
+            }
+        }
+    }
+
+    /// Read the complete exact machine-publication absence witness for one
+    /// authenticated current manifest without provider effects or writes.
+    pub(super) fn exact_absent_machine_port_witness(
+        &self,
+        manifest: &ContainerSandboxManifest,
+    ) -> Result<Option<MachinePortAbsenceWitness>> {
+        self.validate_manifest_execution_context(manifest)?;
+        let forwarder = manifest
+            .runner_config
+            .machine_port_forwarder
+            .as_ref()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "container sandbox {} has no persisted machine forwarder authority; exact absence is unavailable",
+                    manifest.handle.id
+                ),
+            })?;
+        let expectation = MachinePortPublicationExpectation::from_manifest(
+            self,
+            manifest,
+            forwarder,
+            MachinePortPublicationPhase::Absent,
+        )?;
+        let Some(record) = read_record_if_present(&manifest.conmon_layout.container_state_dir)?
+        else {
+            return Ok(None);
+        };
+        authenticate_record(&record, MachinePortPublicationPhase::Absent, &expectation)?;
+        let receipts = terminal_receipts(&record, MachinePortPublicationPhase::Absent)?;
+        Ok(Some(MachinePortAbsenceWitness {
+            tenant_id: record.tenant_id,
+            sandbox_id: record.sandbox_id,
+            attachment_id: record.attachment_id,
+            attachment_version: record.attachment_version,
+            provider_instance: record.provider_instance,
+            provider_generation: record.provider_generation,
+            batch_generation: record.batch_generation,
+            bindings: record.bindings,
+            port_leases: record.port_leases,
+            receipts,
+        }))
+    }
+
     pub(super) fn inspect_durable_machine_port_publication(
         &self,
         manifest: &ContainerSandboxManifest,

@@ -104,14 +104,15 @@ mod plan;
 mod recovery;
 mod state;
 
+pub(crate) use host_teardown::{
+    AttachmentReleaseActions, HostManagedAttachmentCommandInspection,
+    HostManagedAttachmentCommandInspectionError, HostManagedAttachmentDetachPhase,
+    HostManagedAttachmentReleasePhase, HostManagedAttachmentTeardownState,
+    RetainedAttachmentPublicationEvidence,
+};
 #[cfg(test)]
 pub(crate) use host_teardown::{
     HostManagedAttachmentCheckpointTestProbe, HostManagedAttachmentTeardownCheckpoint,
-};
-pub(crate) use host_teardown::{
-    HostManagedAttachmentCommandInspection, HostManagedAttachmentCommandInspectionError,
-    HostManagedAttachmentDetachPhase, HostManagedAttachmentReleasePhase,
-    HostManagedAttachmentTeardownState,
 };
 
 pub(crate) use plan::oci_attachment_plan;

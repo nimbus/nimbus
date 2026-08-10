@@ -6,14 +6,15 @@ use crate::error::SandboxError;
 use crate::instance::SandboxId;
 
 mod attachment_lifecycle;
+pub(crate) use attachment_lifecycle::{
+    AttachmentReleaseActions, HostManagedAttachmentCommandInspection,
+    HostManagedAttachmentCommandInspectionError, HostManagedAttachmentDetachPhase,
+    HostManagedAttachmentReleasePhase, HostManagedAttachmentTeardownState,
+    RetainedAttachmentPublicationEvidence,
+};
 #[cfg(test)]
 pub(crate) use attachment_lifecycle::{
     HostManagedAttachmentCheckpointTestProbe, HostManagedAttachmentTeardownCheckpoint,
-};
-pub(crate) use attachment_lifecycle::{
-    HostManagedAttachmentCommandInspection, HostManagedAttachmentCommandInspectionError,
-    HostManagedAttachmentDetachPhase, HostManagedAttachmentReleasePhase,
-    HostManagedAttachmentTeardownState,
 };
 mod cluster;
 mod dto;

@@ -992,6 +992,139 @@ fn stale_skipped_and_crossed_claims_fail_before_mutation() {
 }
 
 #[test]
+fn read_only_exact_inspection_never_creates_journal_authority() {
+    fn entries(path: &Path) -> Vec<String> {
+        let mut entries = fs::read_dir(path)
+            .expect("journal directory should read")
+            .map(|entry| {
+                entry
+                    .expect("journal entry should read")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        entries.sort();
+        entries
+    }
+
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let missing_root = root.path().join("missing");
+    let missing = journal(&missing_root);
+    assert_eq!(
+        missing
+            .adopt_exact_attempt(&stop_claim(0))
+            .expect("missing read-only inspection should succeed"),
+        None
+    );
+    assert!(
+        !missing_root.exists(),
+        "inspection must not create its root"
+    );
+
+    let shared_root = root.path().join("shared");
+    let shared = journal(&shared_root);
+    let other = publish_claim(0);
+    shared
+        .claim_dispatch_epoch(&other)
+        .expect("another stream should establish the namespace");
+    let target = stop_claim(0);
+    let target_paths = shared.paths(&target);
+    let before = entries(&target_paths.directory);
+    assert_eq!(
+        shared
+            .adopt_exact_attempt(&target)
+            .expect("absent stream inspection should succeed"),
+        None
+    );
+    assert_eq!(entries(&target_paths.directory), before);
+    assert!(!target_paths.lock.exists());
+    assert!(!target_paths.record.exists());
+
+    shared
+        .claim_dispatch_epoch(&target)
+        .expect("target stream should claim");
+    let terminal = shared
+        .record_observation(
+            &target,
+            ProviderCommandObservationKind::Succeeded,
+            b"durable terminal evidence",
+        )
+        .expect("target success should persist");
+    let before = entries(&target_paths.directory);
+    let record_before = fs::read(&target_paths.record).expect("target record should read");
+    assert_eq!(
+        shared
+            .adopt_exact_attempt(&target)
+            .expect("exact read-only inspection should succeed"),
+        Some(terminal)
+    );
+    assert_eq!(entries(&target_paths.directory), before);
+    assert_eq!(
+        fs::read(&target_paths.record).expect("target record should still read"),
+        record_before
+    );
+
+    fs::remove_file(&target_paths.lock).expect("fixture should remove the persistent lock");
+    let before = entries(&target_paths.directory);
+    let record_before = fs::read(&target_paths.record).expect("orphan record should read");
+    assert!(matches!(
+        shared.adopt_exact_attempt(&target),
+        Err(ProviderCommandJournalError::Corrupt { .. })
+    ));
+    assert_eq!(entries(&target_paths.directory), before);
+    assert_eq!(
+        fs::read(&target_paths.record).expect("orphan record should remain"),
+        record_before
+    );
+
+    fs::remove_file(&target_paths.record).expect("fixture should remove the orphan record");
+    fs::write(&target_paths.stage, b"orphan stage").expect("fixture should create an orphan stage");
+    let before = entries(&target_paths.directory);
+    assert!(matches!(
+        shared.adopt_exact_attempt(&target),
+        Err(ProviderCommandJournalError::Corrupt { .. })
+    ));
+    assert_eq!(entries(&target_paths.directory), before);
+    assert_eq!(
+        fs::read(&target_paths.stage).expect("orphan stage should remain"),
+        b"orphan stage"
+    );
+
+    fs::write(&target_paths.lock, b"").expect("fixture should restore the persistent lock");
+    let before = entries(&target_paths.directory);
+    let stage_before = fs::read(&target_paths.stage).expect("orphan stage should read");
+    assert!(matches!(
+        shared.adopt_exact_attempt(&target),
+        Err(ProviderCommandJournalError::Corrupt { .. })
+    ));
+    assert_eq!(entries(&target_paths.directory), before);
+    assert_eq!(
+        fs::read(&target_paths.stage).expect("orphan stage should remain with its lock"),
+        stage_before
+    );
+
+    fs::write(&target_paths.record, &record_before)
+        .expect("fixture should restore the durable record beside the stage");
+    let before = entries(&target_paths.directory);
+    let record_before = fs::read(&target_paths.record).expect("restored record should read");
+    let stage_before = fs::read(&target_paths.stage).expect("orphan stage should read");
+    assert!(matches!(
+        shared.adopt_exact_attempt(&target),
+        Err(ProviderCommandJournalError::Corrupt { .. })
+    ));
+    assert_eq!(entries(&target_paths.directory), before);
+    assert_eq!(
+        fs::read(&target_paths.record).expect("restored record should remain"),
+        record_before
+    );
+    assert_eq!(
+        fs::read(&target_paths.stage).expect("orphan stage should remain beside the record"),
+        stage_before
+    );
+}
+
+#[test]
 fn concurrent_equal_claims_grant_one_execute_authority() {
     let root = tempfile::tempdir().expect("temporary root should exist");
     let journal = Arc::new(journal(root.path()));

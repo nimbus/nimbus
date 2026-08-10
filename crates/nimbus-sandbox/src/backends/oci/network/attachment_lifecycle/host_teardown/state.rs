@@ -16,7 +16,31 @@ use crate::{
 
 use crate::error::{Result, SandboxError};
 
-const DETACHED_PROOF_SCHEMA_VERSION: u32 = 1;
+const DETACHED_PROOF_SCHEMA_VERSION: u32 = 2;
+
+/// Exact publication composition retained between detach and release.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "mode")]
+pub(crate) enum RetainedAttachmentPublicationEvidence {
+    HostManaged,
+    MachineForwarded { absence_sha256: String },
+}
+
+impl RetainedAttachmentPublicationEvidence {
+    pub(crate) fn machine_forwarded(absence_sha256: String) -> Result<Self> {
+        require_sha256("machine publication absence", &absence_sha256)?;
+        Ok(Self::MachineForwarded { absence_sha256 })
+    }
+
+    fn validate(&self) -> Result<()> {
+        match self {
+            Self::HostManaged => Ok(()),
+            Self::MachineForwarded { absence_sha256 } => {
+                require_sha256("machine publication absence", absence_sha256)
+            }
+        }
+    }
+}
 
 /// Durable boundaries for provider detach while reusable authority stays held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -159,6 +183,7 @@ pub(crate) struct HostManagedAttachmentDetachedProof {
     ipam_retained_evidence_sha256: String,
     segment_quarantine_evidence_sha256: String,
     attachment_retained_evidence_sha256: String,
+    publication_evidence: RetainedAttachmentPublicationEvidence,
     detach_claim: ProviderCommandClaim,
 }
 
@@ -174,6 +199,7 @@ pub(super) struct HostManagedAttachmentDetachedProofInput {
     pub(super) ipam_retained_evidence_sha256: String,
     pub(super) segment_quarantine_evidence_sha256: String,
     pub(super) attachment_retained_evidence_sha256: String,
+    pub(super) publication_evidence: RetainedAttachmentPublicationEvidence,
 }
 
 pub(super) struct HostManagedAttachmentDetachedEvidence<'a> {
@@ -185,6 +211,7 @@ pub(super) struct HostManagedAttachmentDetachedEvidence<'a> {
     pub(super) ipam_retained_evidence_sha256: &'a str,
     pub(super) segment_quarantine_evidence_sha256: &'a str,
     pub(super) attachment_retained_evidence_sha256: &'a str,
+    pub(super) publication_evidence: &'a RetainedAttachmentPublicationEvidence,
 }
 
 impl HostManagedAttachmentDetachedProof {
@@ -213,6 +240,7 @@ impl HostManagedAttachmentDetachedProof {
         ] {
             require_sha256(label, digest)?;
         }
+        input.publication_evidence.validate()?;
         if input.command.operation() != SandboxNetworkTeardownOperation::Detach {
             return Err(state_error(
                 "compound detached proof requires a DetachNetwork command",
@@ -245,6 +273,7 @@ impl HostManagedAttachmentDetachedProof {
             ipam_retained_evidence_sha256: input.ipam_retained_evidence_sha256,
             segment_quarantine_evidence_sha256: input.segment_quarantine_evidence_sha256,
             attachment_retained_evidence_sha256: input.attachment_retained_evidence_sha256,
+            publication_evidence: input.publication_evidence,
             detach_claim: input.command.provider_claim().clone(),
         })
     }
@@ -265,6 +294,19 @@ impl HostManagedAttachmentDetachedProof {
         self.lease_epoch
     }
 
+    pub(super) fn require_publication_evidence(
+        &self,
+        evidence: &RetainedAttachmentPublicationEvidence,
+    ) -> Result<()> {
+        evidence.validate()?;
+        if &self.publication_evidence != evidence {
+            return Err(state_error(
+                "current publication absence crossed the compound detached proof",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn require_current_evidence(
         &self,
         evidence: HostManagedAttachmentDetachedEvidence<'_>,
@@ -279,6 +321,7 @@ impl HostManagedAttachmentDetachedProof {
                 != evidence.segment_quarantine_evidence_sha256
             || self.attachment_retained_evidence_sha256
                 != evidence.attachment_retained_evidence_sha256
+            || &self.publication_evidence != evidence.publication_evidence
         {
             return Err(state_error(
                 "current provider-local authority crossed the compound detached proof",
@@ -376,6 +419,7 @@ impl HostManagedAttachmentDetachedProof {
         ] {
             require_sha256(label, digest)?;
         }
+        self.publication_evidence.validate()?;
         Ok(())
     }
 }

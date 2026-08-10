@@ -1,5 +1,7 @@
 //! Real Container host-managed attachment teardown proofs.
 
+use std::io::{Read, Write};
+use std::net::{Shutdown, TcpListener};
 use std::sync::{Barrier, mpsc};
 use std::time::Duration;
 
@@ -7,13 +9,21 @@ use nimbus_network::{NetworkCapabilitySourceDigest, NetworkResourcePhase, PortLe
 
 use super::*;
 use crate::backends::CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY;
+use crate::backends::container::runtime::machine_port_publication::{
+    MachinePortPublicationAction, MachinePortPublicationCheckpoint, MachinePortPublicationObserver,
+};
+use crate::backends::container::runtime::support::sample_forwarder;
+use crate::backends::container::runtime::{
+    ContainerLifecycleCoordinator, ContainerNetworkPublicationMode, ContainerSandboxBackendConfig,
+};
 use crate::provider_command::{
     ProviderCommandLockTestProbe, with_provider_command_lock_test_probe,
 };
 use crate::{
-    ProviderCommandClaim, SandboxNetworkTeardownCommand, SandboxNetworkTeardownCommandInput,
-    SandboxNetworkTeardownIdentity, SandboxNetworkTeardownIdentityInput,
-    SandboxNetworkTeardownObservation, SandboxNetworkTeardownOperation,
+    ProviderCommandClaim, ProviderCommandObservation, SandboxNetworkTeardownCommand,
+    SandboxNetworkTeardownCommandInput, SandboxNetworkTeardownIdentity,
+    SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownObservation,
+    SandboxNetworkTeardownOperation,
 };
 
 #[path = "network_teardown/fresh_process.rs"]
@@ -23,6 +33,225 @@ mod fresh_process;
 enum NetworkContenderRole {
     Execute,
     Adopt,
+}
+
+struct ForwardedNetworkFixture {
+    fixture: TeardownFixture,
+    forwarder: crate::backends::oci::network::OciMachinePortForwarderConfig,
+    forwarder_listener: Option<TcpListener>,
+}
+
+impl ForwardedNetworkFixture {
+    fn attached(label: &str, with_listener: bool) -> Self {
+        let root = tempfile::tempdir().expect("temporary root should exist");
+        let published_reservation = with_listener.then(|| {
+            TcpListener::bind("127.0.0.1:0").expect("published-port tripwire should bind")
+        });
+        let published_port = published_reservation.as_ref().map(|listener| {
+            listener
+                .local_addr()
+                .expect("published-port tripwire should report its address")
+                .port()
+        });
+        let pep_reservation =
+            TcpListener::bind("127.0.0.1:0").expect("PEP-port tripwire should bind");
+        let pep_port = pep_reservation
+            .local_addr()
+            .expect("PEP-port tripwire should report its address")
+            .port();
+        let forwarder_listener =
+            TcpListener::bind("127.0.0.1:0").expect("forwarder fixture should bind");
+        let forwarder = sample_forwarder(
+            forwarder_listener
+                .local_addr()
+                .expect("forwarder fixture should report its address")
+                .port(),
+        );
+        let mut config = ContainerSandboxBackendConfig::under_root(root.path());
+        config.start_mode = ContainerStartMode::PlanOnly;
+        config.node_network_supernet = "127.0.0.0/24".to_owned();
+        config.published_port_range = pep_port..=pep_port;
+        config.netavark_path = PathBuf::from("/usr/bin/true");
+        config.machine_port_forwarder = Some(forwarder.clone());
+        let backend = ContainerSandboxBackend::new(config)
+            .with_egress_pin_provider(Arc::new(FixedOciEgressPinProvider::ready()));
+        let id = crate::SandboxId::new(format!("container-forwarded-teardown-{label}"));
+        let mut spec = sample_spec_for_tenant(
+            &format!("container-forwarded-teardown-{label}"),
+            &format!("workload-{label}"),
+        );
+        if let Some(port) = published_port {
+            spec = spec.with_port_binding(crate::SandboxPortBinding::tcp("api", port, 8080));
+        }
+        let execution_attempt_id = sample_execution_attempt_id(&id);
+        let plan = sample_provision_network_plan(&spec, &id, label);
+        drop(pep_reservation);
+        backend
+            .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), plan.clone())
+            .expect("forwarded teardown fixture should reserve its exact plan");
+        backend
+            .prepare_provision_workload(&id, &execution_attempt_id)
+            .expect("forwarded teardown fixture should prepare its runner handoff");
+        backend
+            .attach_provision_network_with_test_host(&id, &execution_attempt_id)
+            .expect("forwarded teardown fixture should attach its private network");
+        drop(published_reservation);
+        backend
+            .publish_provision_machine_ingress_with_test_provider(
+                &id,
+                &execution_attempt_id,
+                &plan,
+                forwarder.provider_instance(),
+                forwarder.provider_generation(),
+            )
+            .expect("forwarded teardown fixture should publish exact machine ingress");
+        let manifest = backend
+            .read_manifest(&id)
+            .expect("forwarded manifest should read")
+            .expect("forwarded manifest should exist");
+        assert_eq!(manifest.start_mode, ContainerStartMode::PlanOnly);
+        assert_eq!(
+            manifest.lifecycle_coordinator,
+            ContainerLifecycleCoordinator::PreparedServiceRunner
+        );
+        assert_eq!(
+            manifest.runner_config.network_publication_mode,
+            ContainerNetworkPublicationMode::MachineForwarded
+        );
+        Self {
+            fixture: TeardownFixture {
+                root,
+                backend,
+                id,
+                execution_attempt_id,
+            },
+            forwarder,
+            forwarder_listener: Some(forwarder_listener),
+        }
+    }
+
+    fn persist_composite_stop(
+        &self,
+    ) -> (SandboxExecutionTeardownCommand, ProviderCommandObservation) {
+        let stop = self.fixture.command(
+            SandboxExecutionTeardownOperation::Stop,
+            "forwarded-composite-stop",
+            1,
+        );
+        let child_evidence = b"exact Container child terminal evidence".to_vec();
+        let mut manifest = self.fixture.manifest();
+        manifest.execution_teardown.set_stop(
+            super::super::state::ContainerStopProgress::ExecutionStopped {
+                fence: stop.provider_claim().clone(),
+                evidence: child_evidence,
+            },
+        );
+        self.fixture
+            .backend
+            .write_existing_workload_manifest(&manifest)
+            .expect("forwarded child stop evidence should persist");
+        let journal = self
+            .fixture
+            .backend
+            .attempt_idempotency_journal()
+            .expect("forwarded journal should open");
+        let execution = match journal
+            .claim_dispatch_epoch(stop.provider_claim())
+            .expect("composite stop should claim")
+        {
+            ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+            ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+                panic!("fresh composite stop must own execution")
+            }
+        };
+        let composite_evidence = b"exact Systemd plus Container composite stop evidence".to_vec();
+        let (_, observation) = journal
+            .execute_current_claim(execution, |_| {
+                (
+                    (),
+                    ProviderCommandObservationKind::Succeeded,
+                    None,
+                    composite_evidence,
+                )
+            })
+            .expect("composite stop should publish exact success");
+        (stop, observation)
+    }
+
+    fn spawn_withdraw_provider(&mut self) -> std::thread::JoinHandle<Vec<String>> {
+        let listener = self
+            .forwarder_listener
+            .take()
+            .expect("withdraw provider should start once");
+        let binding = self
+            .fixture
+            .manifest()
+            .spec
+            .port_bindings
+            .into_iter()
+            .next()
+            .expect("withdraw server requires one binding");
+        std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for step in 0..3 {
+                let (mut stream, _) = listener.accept().expect("forwarder request should connect");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .expect("forwarder read timeout should configure");
+                let request = read_http_request(&mut stream);
+                let request_line = request.lines().next().unwrap_or_default().to_owned();
+                requests.push(request_line.clone());
+                let body = match step {
+                    0 => {
+                        assert!(request_line.contains("GET /services/forwarder/all "));
+                        serde_json::to_vec(&vec![serde_json::json!({
+                            "local": binding.host_socket_addr().to_string(),
+                            "remote": format!(":{}", binding.host_port),
+                            "protocol": "tcp",
+                        })])
+                        .expect("forwarder exposed response should encode")
+                    }
+                    1 => {
+                        assert!(request_line.contains("POST /services/forwarder/unexpose "));
+                        Vec::new()
+                    }
+                    2 => {
+                        assert!(request_line.contains("GET /services/forwarder/all "));
+                        b"[]".to_vec()
+                    }
+                    _ => unreachable!(),
+                };
+                let response = format!(
+                    "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .and_then(|()| stream.write_all(&body))
+                    .expect("forwarder response should write");
+                stream
+                    .shutdown(Shutdown::Write)
+                    .expect("forwarder response should terminate");
+            }
+            requests
+        })
+    }
+}
+
+fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+    let mut request = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    loop {
+        let read = stream
+            .read(&mut chunk)
+            .expect("forwarder request should read");
+        assert_ne!(read, 0, "forwarder request should contain complete headers");
+        request.extend_from_slice(&chunk[..read]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    String::from_utf8(request).expect("forwarder request should be UTF-8")
 }
 
 fn network_command(
@@ -96,6 +325,147 @@ fn execute_network_with_backend(
     backend
         .execute_network_teardown_with_claim(command, execution)
         .expect("network command should publish its result")
+}
+
+fn execute_forwarded_network(
+    backend: &ContainerSandboxBackend,
+    command: &SandboxNetworkTeardownCommand,
+    prior_observation: &ProviderCommandObservation,
+    forwarder: &crate::backends::oci::network::OciMachinePortForwarderConfig,
+) -> ProviderCommandObservation {
+    let journal = backend
+        .attempt_idempotency_journal()
+        .expect("forwarded network journal should open");
+    let execution = match journal
+        .claim_dispatch_epoch(command.provider_claim())
+        .expect("forwarded network command should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("fresh forwarded network command must receive effect authority")
+        }
+    };
+    let (sandbox_observation, provider_observation) = journal
+        .execute_current_claim(execution, |current| {
+            let observation = backend.execute_forwarded_network_teardown_substep(
+                command,
+                current,
+                prior_observation,
+                forwarder,
+            );
+            let kind = match &observation {
+                SandboxNetworkTeardownObservation::Succeeded { .. } => {
+                    ProviderCommandObservationKind::Succeeded
+                }
+                SandboxNetworkTeardownObservation::DefiniteFailure { .. } => {
+                    ProviderCommandObservationKind::DefiniteFailure
+                }
+                SandboxNetworkTeardownObservation::InProgress { .. } => {
+                    ProviderCommandObservationKind::InProgress
+                }
+                SandboxNetworkTeardownObservation::Absent { .. }
+                | SandboxNetworkTeardownObservation::RetryAuthorized { .. }
+                | SandboxNetworkTeardownObservation::Ambiguous { .. } => {
+                    ProviderCommandObservationKind::Ambiguous
+                }
+            };
+            let failure_code = observation.failure_code().map(str::to_owned);
+            let evidence = observation.evidence().to_vec();
+            (observation, kind, failure_code, evidence)
+        })
+        .expect("forwarded network command should publish its exact result");
+    assert!(
+        matches!(
+            sandbox_observation,
+            SandboxNetworkTeardownObservation::Succeeded { .. }
+        ),
+        "forwarded Sandbox observation should succeed: {sandbox_observation:?}"
+    );
+    provider_observation
+}
+
+fn claim_forwarded_detach_for_inspection(
+    forwarded: &ForwardedNetworkFixture,
+    label: &str,
+) -> (
+    ProviderCommandObservation,
+    SandboxNetworkTeardownCommand,
+    ProviderCommandObservation,
+) {
+    let (stop, composite_stop) = forwarded.persist_composite_stop();
+    let detach = network_command(
+        &forwarded.fixture,
+        &stop,
+        SandboxNetworkTeardownOperation::Detach,
+        1,
+    );
+    let journal = forwarded
+        .fixture
+        .backend
+        .attempt_idempotency_journal()
+        .expect("forwarded inspection journal should open");
+    let execution = match journal
+        .claim_dispatch_epoch(detach.provider_claim())
+        .expect("forwarded detach should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("fresh forwarded detach {label} must own execution")
+        }
+    };
+    let claimed = execution.observation().clone();
+    drop(execution);
+    (composite_stop, detach, claimed)
+}
+
+fn persist_forwarded_detach_phase(
+    forwarded: &ForwardedNetworkFixture,
+    command: &SandboxNetworkTeardownCommand,
+    target: crate::backends::oci::network::HostManagedAttachmentDetachPhase,
+) {
+    use crate::backends::oci::network::HostManagedAttachmentDetachPhase;
+
+    let mut manifest = forwarded.fixture.manifest();
+    for phase in [
+        HostManagedAttachmentDetachPhase::AttachmentDeleting,
+        HostManagedAttachmentDetachPhase::SegmentQuarantined,
+        HostManagedAttachmentDetachPhase::PepStopMayExist,
+        HostManagedAttachmentDetachPhase::PepRetained,
+        HostManagedAttachmentDetachPhase::ListenerStopMayExist,
+        HostManagedAttachmentDetachPhase::ProviderDeleteMayExist,
+    ] {
+        if phase > target {
+            break;
+        }
+        assert!(
+            manifest
+                .network_teardown
+                .record_detach_phase(command.provider_claim(), phase)
+                .expect("forwarded detach checkpoint should advance")
+        );
+    }
+    forwarded
+        .fixture
+        .backend
+        .write_existing_workload_manifest(&manifest)
+        .expect("forwarded detach checkpoint should persist");
+}
+
+struct FailAfterWithdrawalPrepared;
+
+impl MachinePortPublicationObserver for FailAfterWithdrawalPrepared {
+    fn checkpoint(&mut self, checkpoint: MachinePortPublicationCheckpoint) -> crate::Result<()> {
+        assert!(matches!(
+            checkpoint,
+            MachinePortPublicationCheckpoint::BatchPrepared {
+                action: MachinePortPublicationAction::Withdraw,
+                ..
+            }
+        ));
+        Err(crate::SandboxError::OperationFailed {
+            message: "test stops after durable partial machine withdrawal".to_owned(),
+        })
+    }
 }
 
 fn contend_network(
@@ -178,6 +548,372 @@ fn runtime_authority(manifest: &ContainerSandboxManifest) -> Vec<u8> {
         &manifest.execution_teardown,
     ))
     .expect("runtime authority should serialize")
+}
+
+#[test]
+fn forwarded_container_attachment_teardown_accepts_composite_stop_then_releases_machine_ports() {
+    let mut forwarded = ForwardedNetworkFixture::attached("composite-stop", true);
+    let (stop, composite_stop) = forwarded.persist_composite_stop();
+    let detach = network_command(
+        &forwarded.fixture,
+        &stop,
+        SandboxNetworkTeardownOperation::Detach,
+        1,
+    );
+    forwarded
+        .fixture
+        .backend
+        .preflight_forwarded_network_teardown_substep(
+            &detach,
+            &composite_stop,
+            &forwarded.forwarder,
+        )
+        .expect("exact composite Stop should authorize forwarded detach");
+
+    let withdrawal = forwarded.spawn_withdraw_provider();
+    let detached = execute_forwarded_network(
+        &forwarded.fixture.backend,
+        &detach,
+        &composite_stop,
+        &forwarded.forwarder,
+    );
+    let requests = withdrawal
+        .join()
+        .expect("forwarder withdrawal server should join");
+    assert_eq!(requests.len(), 3);
+
+    let retained = forwarded.fixture.manifest();
+    assert!(retained.network_teardown.detached_proof().is_some());
+    assert!(
+        forwarded
+            .fixture
+            .backend
+            .exact_absent_machine_port_witness(&retained)
+            .expect("machine absence witness should inspect")
+            .is_some()
+    );
+    let retained_ports = forwarded
+        .fixture
+        .backend
+        .port_lease_coordinator_for_manifest(&retained)
+        .expect("retained machine port authority should open")
+        .port_lease_records_snapshot(&retained.port_leases, "forwarded retained listeners")
+        .expect("retained machine listeners should inspect");
+    assert!(retained_ports.iter().all(|record| {
+        record.phase() == PortLeasePhase::Reserved
+            && record.bind_claim().is_none()
+            && record.binding().is_none()
+            && record.confirmed_stopped_binding().is_some()
+    }));
+
+    let reopened = ContainerSandboxBackend::new(forwarded.fixture.backend.config.clone())
+        .with_egress_pin_provider(Arc::new(FixedOciEgressPinProvider::ready()));
+    let release = network_command(
+        &forwarded.fixture,
+        &stop,
+        SandboxNetworkTeardownOperation::Release,
+        1,
+    );
+    reopened
+        .preflight_forwarded_network_teardown_substep(&release, &detached, &forwarded.forwarder)
+        .expect("fresh process should authenticate prior Detach and exact publication absence");
+    let released = execute_forwarded_network(&reopened, &release, &detached, &forwarded.forwarder);
+    assert_eq!(released.kind(), ProviderCommandObservationKind::Succeeded);
+
+    let terminal = reopened
+        .read_manifest(&forwarded.fixture.id)
+        .expect("terminal forwarded manifest should read")
+        .expect("terminal forwarded manifest should exist");
+    assert_eq!(
+        terminal.network_teardown.release_phase(),
+        crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+    );
+    let released_ports = reopened
+        .port_lease_coordinator_for_manifest(&terminal)
+        .expect("released machine port authority should open")
+        .port_lease_records_snapshot(&terminal.port_leases, "forwarded released listeners")
+        .expect("released machine listeners should inspect");
+    assert!(
+        released_ports
+            .iter()
+            .all(|record| record.phase() == PortLeasePhase::Released)
+    );
+}
+
+#[test]
+fn forwarded_container_attachment_teardown_zero_listener_still_detaches_and_releases() {
+    let forwarded = ForwardedNetworkFixture::attached("zero-listener", false);
+    let (stop, composite_stop) = forwarded.persist_composite_stop();
+    let detach = network_command(
+        &forwarded.fixture,
+        &stop,
+        SandboxNetworkTeardownOperation::Detach,
+        1,
+    );
+    let detached = execute_forwarded_network(
+        &forwarded.fixture.backend,
+        &detach,
+        &composite_stop,
+        &forwarded.forwarder,
+    );
+    let release = network_command(
+        &forwarded.fixture,
+        &stop,
+        SandboxNetworkTeardownOperation::Release,
+        1,
+    );
+    let released = execute_forwarded_network(
+        &forwarded.fixture.backend,
+        &release,
+        &detached,
+        &forwarded.forwarder,
+    );
+    assert_eq!(released.kind(), ProviderCommandObservationKind::Succeeded);
+    let terminal = forwarded.fixture.manifest();
+    assert!(terminal.port_leases.is_empty());
+    assert_eq!(
+        terminal.network_teardown.release_phase(),
+        crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+    );
+}
+
+#[test]
+fn forwarded_container_attachment_teardown_claimed_inspection_is_read_only_before_detach() {
+    let forwarded = ForwardedNetworkFixture::attached("claimed-inspection", false);
+    let (stop, composite_stop) = forwarded.persist_composite_stop();
+    let detach = network_command(
+        &forwarded.fixture,
+        &stop,
+        SandboxNetworkTeardownOperation::Detach,
+        1,
+    );
+    let journal = forwarded
+        .fixture
+        .backend
+        .attempt_idempotency_journal()
+        .expect("forwarded inspection journal should open");
+    let execution = match journal
+        .claim_dispatch_epoch(detach.provider_claim())
+        .expect("forwarded detach should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("fresh forwarded detach must own execution")
+        }
+    };
+    let before = snapshot_files(forwarded.fixture.root.path());
+
+    let observation = forwarded
+        .fixture
+        .backend
+        .inspect_forwarded_network_teardown_substep(
+            &detach,
+            execution.observation(),
+            &composite_stop,
+            &forwarded.forwarder,
+        );
+
+    assert!(matches!(
+        observation,
+        SandboxNetworkTeardownObservation::InProgress { .. }
+    ));
+    assert_eq!(
+        snapshot_files(forwarded.fixture.root.path()),
+        before,
+        "claimed inspection before the first detach effect must not create publication evidence or mutate durable bytes"
+    );
+}
+
+#[test]
+fn forwarded_container_attachment_teardown_early_present_inspection_is_in_progress_and_read_only() {
+    use crate::backends::oci::network::HostManagedAttachmentDetachPhase;
+
+    let forwarded = ForwardedNetworkFixture::attached("early-present-inspection", true);
+    let (composite_stop, detach, claimed) =
+        claim_forwarded_detach_for_inspection(&forwarded, "early-present");
+    persist_forwarded_detach_phase(
+        &forwarded,
+        &detach,
+        HostManagedAttachmentDetachPhase::AttachmentDeleting,
+    );
+    let before = snapshot_files(forwarded.fixture.root.path());
+
+    let observation = forwarded
+        .fixture
+        .backend
+        .inspect_forwarded_network_teardown_substep(
+            &detach,
+            &claimed,
+            &composite_stop,
+            &forwarded.forwarder,
+        );
+
+    assert!(matches!(
+        observation,
+        SandboxNetworkTeardownObservation::InProgress { .. }
+    ));
+    assert_eq!(snapshot_files(forwarded.fixture.root.path()), before);
+}
+
+#[test]
+fn forwarded_container_attachment_teardown_late_present_inspection_is_ambiguous_and_read_only() {
+    use crate::backends::oci::network::HostManagedAttachmentDetachPhase;
+
+    let forwarded = ForwardedNetworkFixture::attached("late-present-inspection", true);
+    let (composite_stop, detach, claimed) =
+        claim_forwarded_detach_for_inspection(&forwarded, "late-present");
+    persist_forwarded_detach_phase(
+        &forwarded,
+        &detach,
+        HostManagedAttachmentDetachPhase::ProviderDeleteMayExist,
+    );
+    let before = snapshot_files(forwarded.fixture.root.path());
+
+    let observation = forwarded
+        .fixture
+        .backend
+        .inspect_forwarded_network_teardown_substep(
+            &detach,
+            &claimed,
+            &composite_stop,
+            &forwarded.forwarder,
+        );
+
+    assert!(matches!(
+        observation,
+        SandboxNetworkTeardownObservation::Ambiguous { .. }
+    ));
+    assert_eq!(snapshot_files(forwarded.fixture.root.path()), before);
+}
+
+#[test]
+fn forwarded_container_attachment_teardown_partial_publication_inspection_is_ambiguous_and_read_only()
+ {
+    use crate::backends::oci::network::HostManagedAttachmentDetachPhase;
+
+    let forwarded = ForwardedNetworkFixture::attached("partial-publication-inspection", true);
+    let (composite_stop, detach, claimed) =
+        claim_forwarded_detach_for_inspection(&forwarded, "partial-publication");
+    let manifest = forwarded.fixture.manifest();
+    forwarded
+        .fixture
+        .backend
+        .prepare_machine_port_publication_withdrawal_for_test_with_observer(
+            &manifest,
+            &mut FailAfterWithdrawalPrepared,
+        )
+        .expect_err("partial withdrawal fixture must stop after durable preparation");
+    persist_forwarded_detach_phase(
+        &forwarded,
+        &detach,
+        HostManagedAttachmentDetachPhase::AttachmentDeleting,
+    );
+    let before = snapshot_files(forwarded.fixture.root.path());
+
+    let observation = forwarded
+        .fixture
+        .backend
+        .inspect_forwarded_network_teardown_substep(
+            &detach,
+            &claimed,
+            &composite_stop,
+            &forwarded.forwarder,
+        );
+
+    assert!(matches!(
+        observation,
+        SandboxNetworkTeardownObservation::Ambiguous { .. }
+    ));
+    assert_eq!(snapshot_files(forwarded.fixture.root.path()), before);
+}
+
+#[test]
+fn forwarded_container_release_inspection_requires_local_detach_journal_and_is_read_only() {
+    let forwarded = ForwardedNetworkFixture::attached("release-inspect-local-detach", false);
+    let (stop, composite_stop) = forwarded.persist_composite_stop();
+    let detach = network_command(
+        &forwarded.fixture,
+        &stop,
+        SandboxNetworkTeardownOperation::Detach,
+        1,
+    );
+    let detached = execute_forwarded_network(
+        &forwarded.fixture.backend,
+        &detach,
+        &composite_stop,
+        &forwarded.forwarder,
+    );
+    let release = network_command(
+        &forwarded.fixture,
+        &stop,
+        SandboxNetworkTeardownOperation::Release,
+        1,
+    );
+    let journal = forwarded
+        .fixture
+        .backend
+        .attempt_idempotency_journal()
+        .expect("forwarded Release inspection journal should open");
+    let execution = match journal
+        .claim_dispatch_epoch(release.provider_claim())
+        .expect("forwarded Release inspection should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("fresh forwarded Release inspection must own execution")
+        }
+    };
+    let claimed = execution.observation().clone();
+    drop(execution);
+
+    let detached_claim =
+        serde_json::to_value(detached.claim()).expect("prior DetachNetwork claim should encode");
+    let detach_records = snapshot_files(forwarded.fixture.root.path())
+        .into_iter()
+        .filter(|(path, bytes)| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+                && serde_json::from_slice::<serde_json::Value>(bytes)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("observation")
+                            .and_then(|observation| observation.get("claim"))
+                            .cloned()
+                    })
+                    .as_ref()
+                    == Some(&detached_claim)
+        })
+        .map(|(path, _)| path)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        detach_records.len(),
+        1,
+        "fixture must contain one exact prior DetachNetwork journal record"
+    );
+    std::fs::remove_file(forwarded.fixture.root.path().join(&detach_records[0]))
+        .expect("test should remove the exact prior DetachNetwork journal record");
+    let before = snapshot_files(forwarded.fixture.root.path());
+
+    let observation = forwarded
+        .fixture
+        .backend
+        .inspect_forwarded_network_teardown_substep(
+            &release,
+            &claimed,
+            &detached,
+            &forwarded.forwarder,
+        );
+
+    assert!(matches!(
+        observation,
+        SandboxNetworkTeardownObservation::Ambiguous { .. }
+    ));
+    assert_eq!(
+        snapshot_files(forwarded.fixture.root.path()),
+        before,
+        "Release inspection must not recreate missing prior journal authority or mutate durable bytes"
+    );
 }
 
 #[test]

@@ -4,6 +4,8 @@ use super::*;
 
 #[path = "tests/acceptance.rs"]
 mod acceptance;
+#[path = "tests/attachment.rs"]
+mod attachment;
 
 fn claim() -> ProviderCommandClaim {
     ProviderCommandClaim::new(ProviderCommandClaimInput {

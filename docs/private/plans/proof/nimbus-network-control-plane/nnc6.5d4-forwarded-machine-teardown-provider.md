@@ -653,7 +653,17 @@ membership, transport, routing, and super-net fencing remain separate.
 | Band 5c behavior and recovery | Guest composite tests pass `12` with one declared child-only subprocess entry point. They cover authentication, ordering, exact replay, one generic publication, deterministic inspection, crossed evidence, adjacent retry, two-process contention, serializer failure, and a four-process crash/reopen sequence that recovers from durable Systemd, Container, and generic-journal roots without an in-memory snapshot. Provider-command tests pass `38` with two declared child-process entry points. Systemd teardown tests pass `33`; full node passes `121`. Container teardown passes `37` with two declared child-process entry points. Full Sandbox passes `1,134` with `32` declared platform or child-process ignores; full CLI passes `964` with two declared child-process ignores; full compute passes `381` with one declared child-process ignore. One earlier unrelated Container network subprocess timed out once; its exact rerun, the complete Container teardown rerun, and the full Sandbox rerun pass. |
 | Band 5c capability and failure boundary | Capability reporting remains unavailable through the exact missing-private-route blocker and retains the installed-forwarder and provider blockers. No route is installed. Child absence or retry authority remains nonterminal; uncertainty remains `Ambiguous`; crossed identity, digest, or fence is definite failure. Systemd or Container partial success cannot publish generic success. The sink does not detach or release network authority. |
 | Band 5c quality and modularity | Affected all-target checks, strict Clippy with all features, warning-denied Rustdoc, format, and diff pass. The exact `nimbus-network -> nimbus-core` workspace edge is unchanged. No route, client, parent adapter, attachment composition, caller, coarse-stop token, socket, provider effect, dependency manifest, or `nimbus-network` path changed. NNCV015 follows the shifted test-fixture constructor line. NNCV035 self-test passes `55/55`; direct remains expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. NNCV008 and proof lint pass. Docs pass `108`; the site passes `17/17`. Of `19` Rust paths, `9` are product and `10` are tests. `provider_command.rs` is a `1,670`-line deep durable state-machine owner. `container/runtime.rs` is a `1,625`-line existing composition root and adds only one re-export. Every other changed handwritten file is below `1,500` lines, and no file reaches `2,000`. |
-| Structured review | Not run. Audit and fail-before are partial item work. One review is allowed only after K1-K34 are green. |
+| Band 6 read-only seam audit | Three bounded packets inspected guest dispatch, Container attachment teardown, machine-publication authority, the NNC6.5d3 shared OCI lifecycle, provider-journal reuse, tests, and modularity. They changed zero paths from clean checkpoint `62d21cb7a`. The host-managed retained detach/release state machine is reusable, but its sealed authentication correctly rejects PlanOnly machine-forwarded publication. The existing coarse machine-forwarded cleanup combines detach and release and is forbidden here. One narrow publication-mode strategy must keep host behavior unchanged while the forwarded path supplies exact publication retention, proof, and final release. |
+| Band 6 authority and recovery audit | The Container-rooted provider journal remains the sole guest command journal. The machine-publication journal is a distinct existing provider-effect authority. Its withdrawal, slot convergence, owner-death recovery, durable Absent evidence, and restart-retained lease transition are the required inputs. The forwarded child must reauthenticate exact prior guest Stop success, exact forwarder instance and generation, and exact publication absence under lifecycle authority. Release must also authenticate the exact prior Detach journal success and compound detached proof. Lock order remains provider stream, lifecycle, publication store, proxy and port authority, then OCI authority. |
+| Band 6 zero-listener correction | Public `MachinePortAbsenceEvidence` contains only tenant, sandbox, and per-listener receipts. An empty batch therefore cannot bind provider instance, provider generation, attachment, batch generation, bindings, or leases. Forwarded detach must derive an internal complete absence witness only after the durable machine-publication record is authenticated. The compound detached proof must bind that witness and publication mode. It must not infer absence from an empty public receipt list or create a synthetic listener. |
+| Band 6 deterministic fail-before | Checks for `ContainerForwardedAttachmentAuthority`, `execute_forwarded_network_teardown_substep`, guest `GuestContainerAttachment` dispatch, and `require_forwarded_machine_publication_absent` each exit `1`. The current host seam still contains the exact `retained host detach requires host-managed publication` and `Container forwarded-machine attachment composition` rejections. Product source is unchanged at the fail-before checkpoint. |
+| Band 6 forwarded composition | The strict guest attachment child validates the installed forwarder, provider generation, node, parent-to-guest translation, provider target, source digest, tenant, sandbox, and exact prior portable history before local mutation. It lowers Detach and Release independently into the current Container attachment identity. The existing Container-rooted provider journal remains the only guest command journal. No second guest store, free-form provider choice, route, client, parent adapter, or compute substitution exists. |
+| Band 6 retained detach and release | Forwarded Detach requires the exact prior composite Stop observation and durable machine-publication absence. It withdraws publication, retains every listener lease, and binds the provider, generation, attachment, batch, bindings, leases, and absence receipts into the version-2 compound detached proof. Release requires the exact prior local Detach journal success, the same proof and claim, continued publication absence, and exact attachment absence before the shared OCI final release. The machine port authority releases only exact plan-member leases at Release. The forwarded path never calls the Netavark classifier. |
+| Band 6 inspection and recovery | Execute holds the current Container journal claim once. Inspect uses read-only exact adoption and never creates a root, stream, record, lock, or stage. Missing, corrupt, crossed, partial, and unresolved-stage state fails closed without byte changes. Publication `Exposed` is present, `Exposing` or `Withdrawing` is partial, and `Absent` is absent. Early present state is `InProgress`; late present or partial state is `Ambiguous`. Release Inspect adopts the prior Detach result before lifecycle authority, then reauthenticates the same proof under the required lock order. |
+| Band 6 behavior | Forwarded attachment tests pass `9/9`; the complete Container network teardown module passes `13/13` with one declared subprocess entry point; the read-only provider-journal regression passes `1/1`; guest attachment dispatch passes `6/6`; and guest execution teardown remains green at `12/12` with one declared subprocess entry point. Full CLI passes `970/970` with two declared ignores. Full compute passes `381/381` with one declared ignore. Affected all-target and all-feature checking passes. |
+| Band 6 full Sandbox truth | Every NNC6.5d4 test passes. Two default-parallel full Sandbox runs report `1,142` pass, two fail, and `32` ignores, then `1,143` pass, one fail, and `32` ignores. The failures are inherited Krun process-fixture and Container/Krun contender timeouts; each exact focused rerun passes. A serialized full run reports `1,143` pass, one inherited Container contender timeout, and `32` ignores; its complete owning module passes `13/13` with one declared child ignore. This recovery checkpoint does not claim the final K33 full-suite criterion. The unrelated timing fixtures remain outside band 6. |
+| Band 6 quality and modularity | Strict affected all-feature Clippy, warning-denied Rustdoc, format, diff, dependency/effect, bind census, and machine-batch convergence gates pass. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; the aggregate is `35/36` with only NNCV035 red. Proof lint has zero diagnostics. Docs pass `108`; the site passes `17/17`. The band changes `21` Rust paths: `15` product and `6` test paths. `machine_port_publication.rs` is a `1,732`-line durable publication and authentication state-machine owner; `machine_ports.rs` is a `1,526`-line machine proxy and port-lifecycle adapter whose teardown orchestration stays in children; `provider_command.rs` is a `1,739`-line durable command-journal state-machine owner. Every other changed handwritten file is below `1,500` lines, and no file reaches `2,000`. NNCV006 follows one shifted source coordinate, and NNCV021 follows the exact current ownership disposition. |
+| Structured review | Not run. Band 6 is a partial recovery slice of one canonical item. One full review is allowed only after K1-K34 are green and the complete item is candidate-frozen. |
 | Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
 | Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 2 checkpoint | The commit that contains this row, the band 2 product and test paths, and the recovery header is the exact band 2 recovery checkpoint. It is not the item completion commit and has no structured review. |
@@ -661,7 +671,8 @@ membership, transport, routing, and super-net fencing remain separate.
 | Durable band 4 checkpoint | `1100cbc04` is the exact band 4 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 5a checkpoint | The commit that contains this row, the band 5a product and test paths, and the recovery header is the exact band 5a recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 5b checkpoint | `824c2f6f0` is the exact band 5b recovery checkpoint. It is not the item completion commit and has no structured review. |
-| Durable band 5c checkpoint | The commit that contains this row, the band 5c product, test, census-coordinate, routing, and recovery-header paths is the exact band 5c recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 5c checkpoint | `62d21cb7a` is the exact band 5c recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 6 checkpoint | The commit that contains this row, the band 6 product and test paths, the source-derived census updates, and the recovery header is the exact band 6 recovery checkpoint. It is not the item completion commit and has no structured review. |
 
 ## Current Acceptance State
 
@@ -682,9 +693,17 @@ inspection join completes the inspection parts. The sole guest journal
 completes part of K21. The route-specific part of K30 remains truthfully
 unavailable.
 
-Forwarded attachment composition, route availability, the parent adapter, and
-end-to-end compute substitution remain later bands. K5-K6 and the remaining
-end-to-end portions of K7-K10, K15, and K19-K35 remain open.
+Band 6 has these results:
+
+- The guest attachment portions of K19-K21 are complete.
+- The guest zero-listener, replay, and inspection portions of K25-K27 are
+  complete.
+- The NNC6.5d3 retained-detach and proof-gated-release lifecycle stays sealed
+  for host-managed authentication.
+
+Route availability, the parent adapter, and end-to-end compute substitution
+remain later bands. K5-K6 and the remaining end-to-end portions of K7-K10,
+K15, and K22-K35 remain open.
 
 Band 5 is prospectively split before implementation. These are dependency-
 ordered recovery slices, not separate plan items or review units. Bands
@@ -713,11 +732,12 @@ ordered recovery slices, not separate plan items or review units. Bands
    operation unavailable through a separate missing-private-route blocker.
    This slice is complete at the commit that contains the band 5c ledger row.
 
-Band 5 does not add forwarded attachment composition, a private route, client,
-parent adapter, caller cutover, or coarse-stop deletion. NNC6.5d4 remains the
-sole `in_progress` canonical item and the complete item remains the one future
-review unit. Band 6 is next. It adds only the forwarded Container attachment
-composition and proves retained detach and final release without regressing
-NNC6.5d3.
+Band 5 excludes forwarded attachment composition, the private route, the
+client, the parent adapter, caller cutover, and coarse-stop deletion. Band 6 is
+now green. It adds only the forwarded Container attachment composition and
+proves retained detach and final release without regressing NNC6.5d3. Band 7
+is next. It adds
+only the private route and client child, with strict correlation and exact
+Inspect-before-retry after ambiguity.
 
 NNC6.5d4 remains the sole `in_progress` canonical item. There is no blocker.

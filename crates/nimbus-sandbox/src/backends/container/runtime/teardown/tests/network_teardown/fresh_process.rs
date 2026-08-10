@@ -439,7 +439,11 @@ fn contention_child(
             let result = backend
                 .execute_network_teardown_with_claim(&command, execution)
                 .expect("winning contender should publish");
-            assert_eq!(result.kind(), ProviderCommandObservationKind::Succeeded);
+            assert_eq!(
+                result.kind(),
+                ProviderCommandObservationKind::Succeeded,
+                "winning Container contender returned {result:?}"
+            );
             println!("NNC65D3_CONTAINER_ROLE:execute");
         }
         ProviderCommandClaimDecision::AdoptExactAttempt(_) => {

@@ -2,8 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ProviderCommandClaim;
 use crate::backends::conmon::runtime_process::RuntimeProcessIdentity;
+use crate::{
+    ProviderCommandClaim, ProviderCommandObservation, ProviderCommandObservationKind,
+    ProviderCommandOperation,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::backends::container::runtime) enum ContainerNetworkStopRequirementError {
@@ -54,6 +57,25 @@ impl ContainerExecutionTeardownState {
             return Err(ContainerNetworkStopRequirementError::NotStopped);
         };
         if fence.same_lifecycle_fence(network_claim) {
+            Ok(evidence)
+        } else {
+            Err(ContainerNetworkStopRequirementError::Crossed)
+        }
+    }
+
+    pub(in crate::backends::container::runtime) fn require_stopped_observation_for_network(
+        &self,
+        network_claim: &ProviderCommandClaim,
+        stop_observation: &ProviderCommandObservation,
+    ) -> Result<&[u8], ContainerNetworkStopRequirementError> {
+        let ContainerStopProgress::ExecutionStopped { fence, evidence } = &self.stop else {
+            return Err(ContainerNetworkStopRequirementError::NotStopped);
+        };
+        if fence.operation() == ProviderCommandOperation::StopExecution
+            && fence.same_lifecycle_fence(network_claim)
+            && stop_observation.claim() == fence
+            && stop_observation.kind() == ProviderCommandObservationKind::Succeeded
+        {
             Ok(evidence)
         } else {
             Err(ContainerNetworkStopRequirementError::Crossed)

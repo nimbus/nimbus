@@ -7,7 +7,7 @@ use nimbus_network::{
 use super::super::*;
 use super::progress::{
     HostManagedAttachmentDetachedEvidence, HostManagedAttachmentDetachedProof,
-    HostManagedAttachmentReleasePhase,
+    HostManagedAttachmentReleasePhase, RetainedAttachmentPublicationEvidence,
 };
 use super::retained_detach::{
     authenticate_exact_command_context, complete_port_plan_members, evidence_digest,
@@ -19,6 +19,77 @@ use crate::backends::oci::network::ipam::{
     inspect_netavark_provider_operation,
 };
 use crate::backends::oci::network::netns::ExactRegularArtifactObservation;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReleasePublicationComposition {
+    HostManaged,
+    MachineForwarded,
+}
+
+impl ReleasePublicationComposition {
+    fn from_context(context: &OciAttachmentContext<'_>) -> Self {
+        if context.publication.owns_netavark_bindings() {
+            Self::HostManaged
+        } else {
+            Self::MachineForwarded
+        }
+    }
+
+    fn is_machine_forwarded(self) -> bool {
+        self == Self::MachineForwarded
+    }
+
+    fn evidence_for_resume(
+        self,
+        current_phase: HostManagedAttachmentReleasePhase,
+        require_publication_absent: &mut impl FnMut() -> Result<RetainedAttachmentPublicationEvidence>,
+    ) -> Result<Option<RetainedAttachmentPublicationEvidence>> {
+        if self.is_machine_forwarded()
+            || current_phase == HostManagedAttachmentReleasePhase::NotStarted
+        {
+            require_publication_absent().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn release_listener_authority(
+        self,
+        release_host_managed: impl FnOnce() -> Result<()>,
+        release_machine_forwarded: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        match self {
+            Self::HostManaged => release_host_managed(),
+            Self::MachineForwarded => release_machine_forwarded(),
+        }
+    }
+}
+
+pub(crate) struct AttachmentReleaseActions<
+    RequirePublicationAbsent,
+    ReleaseListeners,
+    ReleaseAuxiliary,
+> {
+    require_publication_absent: RequirePublicationAbsent,
+    release_listeners: ReleaseListeners,
+    release_auxiliary: ReleaseAuxiliary,
+}
+
+impl<RequirePublicationAbsent, ReleaseListeners, ReleaseAuxiliary>
+    AttachmentReleaseActions<RequirePublicationAbsent, ReleaseListeners, ReleaseAuxiliary>
+{
+    pub(crate) fn new(
+        require_publication_absent: RequirePublicationAbsent,
+        release_listeners: ReleaseListeners,
+        release_auxiliary: ReleaseAuxiliary,
+    ) -> Self {
+        Self {
+            require_publication_absent,
+            release_listeners,
+            release_auxiliary,
+        }
+    }
+}
 
 impl OciAttachmentAdapter<'_> {
     /// Release every authority retained by one exact detached proof.
@@ -37,7 +108,36 @@ impl OciAttachmentAdapter<'_> {
             proof,
             current_phase,
             record_phase,
-            release_auxiliary,
+            AttachmentReleaseActions::new(
+                || Ok(RetainedAttachmentPublicationEvidence::HostManaged),
+                || Ok(()),
+                release_auxiliary,
+            ),
+        )
+    }
+
+    /// Release a machine-forwarded attachment after the retained detach proof
+    /// and the same exact machine-publication absence are authenticated.
+    pub(crate) fn release_machine_forwarded_detached(
+        &self,
+        lifecycle: &OciAttachmentLifecycle<'_>,
+        command: &SandboxNetworkTeardownCommand,
+        proof: &HostManagedAttachmentDetachedProof,
+        current_phase: HostManagedAttachmentReleasePhase,
+        record_phase: impl FnMut(HostManagedAttachmentReleasePhase) -> Result<()>,
+        actions: AttachmentReleaseActions<
+            impl FnMut() -> Result<RetainedAttachmentPublicationEvidence>,
+            impl FnMut() -> Result<()>,
+            impl FnMut() -> Result<()>,
+        >,
+    ) -> Result<()> {
+        lifecycle.release_host_managed_detached(
+            &self.context,
+            command,
+            proof,
+            current_phase,
+            record_phase,
+            actions,
         )
     }
 }
@@ -50,9 +150,20 @@ impl OciAttachmentLifecycle<'_> {
         proof: &HostManagedAttachmentDetachedProof,
         current_phase: HostManagedAttachmentReleasePhase,
         mut record_phase: impl FnMut(HostManagedAttachmentReleasePhase) -> Result<()>,
-        mut release_auxiliary: impl FnMut() -> Result<()>,
+        actions: AttachmentReleaseActions<
+            impl FnMut() -> Result<RetainedAttachmentPublicationEvidence>,
+            impl FnMut() -> Result<()>,
+            impl FnMut() -> Result<()>,
+        >,
     ) -> Result<()> {
-        authenticate_exact_command_context(context, command)?;
+        let AttachmentReleaseActions {
+            mut require_publication_absent,
+            release_listeners,
+            mut release_auxiliary,
+        } = actions;
+        let composition = ReleasePublicationComposition::from_context(context);
+        let machine_forwarded = composition.is_machine_forwarded();
+        authenticate_exact_command_context(context, command, machine_forwarded)?;
         proof.validate_release_command(command)?;
         let association = authority::authenticate_detach_association(
             self.attachments,
@@ -70,8 +181,31 @@ impl OciAttachmentLifecycle<'_> {
         let plan_members = complete_port_plan_members(context);
         self.require_exact_detached_absence(context)?;
 
+        let publication_evidence =
+            composition.evidence_for_resume(current_phase, &mut require_publication_absent)?;
+        if let Some(publication_evidence) = publication_evidence.as_ref() {
+            if machine_forwarded
+                != matches!(
+                    publication_evidence,
+                    RetainedAttachmentPublicationEvidence::MachineForwarded { .. }
+                )
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: "ReleaseNetwork crossed its retained publication composition"
+                        .to_owned(),
+                });
+            }
+            proof.require_publication_evidence(publication_evidence)?;
+        }
         if current_phase == HostManagedAttachmentReleasePhase::NotStarted {
-            self.require_exact_detached_evidence(context, proof, &durable)?;
+            self.require_exact_detached_evidence(
+                context,
+                proof,
+                &durable,
+                publication_evidence
+                    .as_ref()
+                    .expect("initial release always authenticates publication evidence"),
+            )?;
         }
         record_phase(HostManagedAttachmentReleasePhase::ReleaseAuthenticated)?;
 
@@ -98,46 +232,16 @@ impl OciAttachmentLifecycle<'_> {
             let listeners = self.ports.port_lease_plan_member_records_snapshot(
                 &plan_members,
                 context.leases,
-                "detached Netavark listener",
+                "detached published listener",
             )?;
             if current_phase < HostManagedAttachmentReleasePhase::ListenerReleaseMayExist {
                 require_retained_records(&listeners, context.launch_claim, "published listener")?;
                 record_phase(HostManagedAttachmentReleasePhase::ListenerReleaseMayExist)?;
             }
-            match self.ports.classify_planned_netavark_cleanup_batch(
-                &plan_members,
-                context.tenant_id,
-                context.bindings,
-                context.leases,
-                context.launch_claim,
-            )? {
-                LaunchPortBatchState::NeverBound => {
-                    let claim =
-                        context
-                            .launch_claim
-                            .ok_or_else(|| SandboxError::OperationFailed {
-                                message: "never-bound detached listeners lost their launch claim"
-                                    .to_owned(),
-                            })?;
-                    self.ports.release_never_bound_plan_members(
-                        &plan_members,
-                        context.leases,
-                        claim,
-                    )?;
-                }
-                LaunchPortBatchState::RestartRetained => {
-                    self.ports
-                        .release_planned_restart_retained_bindings(&plan_members, context.leases)?;
-                }
-                LaunchPortBatchState::TerminalNoEffect => {}
-                LaunchPortBatchState::ProviderOwned | LaunchPortBatchState::NetavarkClaimed(_) => {
-                    return Err(SandboxError::OperationFailed {
-                        message:
-                            "ReleaseNetwork found live or ambiguous Netavark listener authority"
-                                .to_owned(),
-                    });
-                }
-            }
+            composition.release_listener_authority(
+                || self.release_host_managed_listeners(context, &plan_members),
+                release_listeners,
+            )?;
             record_phase(HostManagedAttachmentReleasePhase::ListenersReleased)?;
         }
 
@@ -254,11 +358,49 @@ impl OciAttachmentLifecycle<'_> {
         record_phase(HostManagedAttachmentReleasePhase::Released)
     }
 
+    fn release_host_managed_listeners(
+        &self,
+        context: &OciAttachmentContext<'_>,
+        plan_members: &[nimbus_network::PortLeaseRequest],
+    ) -> Result<()> {
+        match self.ports.classify_planned_netavark_cleanup_batch(
+            plan_members,
+            context.tenant_id,
+            context.bindings,
+            context.leases,
+            context.launch_claim,
+        )? {
+            LaunchPortBatchState::NeverBound => {
+                let claim = context
+                    .launch_claim
+                    .ok_or_else(|| SandboxError::OperationFailed {
+                        message: "never-bound detached listeners lost their launch claim"
+                            .to_owned(),
+                    })?;
+                self.ports
+                    .release_never_bound_plan_members(plan_members, context.leases, claim)?;
+            }
+            LaunchPortBatchState::RestartRetained => {
+                self.ports
+                    .release_planned_restart_retained_bindings(plan_members, context.leases)?;
+            }
+            LaunchPortBatchState::TerminalNoEffect => {}
+            LaunchPortBatchState::ProviderOwned | LaunchPortBatchState::NetavarkClaimed(_) => {
+                return Err(SandboxError::OperationFailed {
+                    message: "ReleaseNetwork found live or ambiguous Netavark listener authority"
+                        .to_owned(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn require_exact_detached_evidence(
         &self,
         context: &OciAttachmentContext<'_>,
         proof: &HostManagedAttachmentDetachedProof,
         durable: &state::OciAttachmentDurableState<'_>,
+        publication_evidence: &RetainedAttachmentPublicationEvidence,
     ) -> Result<()> {
         let attachment = durable
             .inspect()?
@@ -347,6 +489,7 @@ impl OciAttachmentLifecycle<'_> {
             attachment_retained_evidence_sha256: &retained_attachment_authority_digest(
                 &attachment,
             )?,
+            publication_evidence,
         })
     }
 
@@ -367,5 +510,61 @@ impl OciAttachmentLifecycle<'_> {
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    #[test]
+    fn forwarded_container_attachment_teardown_release_never_dispatches_netavark_classifier() {
+        let host_calls = Cell::new(0);
+        let machine_calls = Cell::new(0);
+
+        ReleasePublicationComposition::MachineForwarded
+            .release_listener_authority(
+                || {
+                    host_calls.set(host_calls.get() + 1);
+                    Err(SandboxError::OperationFailed {
+                        message: "Netavark classifier must not run".to_owned(),
+                    })
+                },
+                || {
+                    machine_calls.set(machine_calls.get() + 1);
+                    Ok(())
+                },
+            )
+            .expect("forwarded release should use only machine listener authority");
+
+        assert_eq!(host_calls.get(), 0);
+        assert_eq!(machine_calls.get(), 1);
+    }
+
+    #[test]
+    fn forwarded_container_attachment_teardown_release_reauthenticates_absence_after_reopen() {
+        let calls = Cell::new(0);
+        for phase in [
+            HostManagedAttachmentReleasePhase::ReleaseAuthenticated,
+            HostManagedAttachmentReleasePhase::PepReleaseMayExist,
+            HostManagedAttachmentReleasePhase::PepReleased,
+            HostManagedAttachmentReleasePhase::ListenerReleaseMayExist,
+            HostManagedAttachmentReleasePhase::ListenersReleased,
+            HostManagedAttachmentReleasePhase::IpamReleaseMayExist,
+        ] {
+            let evidence = ReleasePublicationComposition::MachineForwarded
+                .evidence_for_resume(phase, &mut || {
+                    calls.set(calls.get() + 1);
+                    RetainedAttachmentPublicationEvidence::machine_forwarded("a".repeat(64))
+                })
+                .expect("reopened forwarded release should inspect exact publication absence");
+            assert!(matches!(
+                evidence,
+                Some(RetainedAttachmentPublicationEvidence::MachineForwarded { .. })
+            ));
+        }
+        assert_eq!(calls.get(), 6);
     }
 }

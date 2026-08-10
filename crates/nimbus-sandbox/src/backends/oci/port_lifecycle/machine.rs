@@ -862,6 +862,20 @@ impl OciPortLeaseCoordinator {
         Ok(())
     }
 
+    /// Release one exact compiler-planned machine listener subset after its
+    /// provider stop is durably confirmed.
+    pub(crate) fn release_planned_restart_retained_machine_bindings(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        leases: &[PortLeaseRequest],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        self.authority()?
+            .release_plan_members_after_confirmed_stop(plan_members, leases)
+            .map_err(super::port_lease_error)?;
+        Ok(())
+    }
+
     /// Acquire exact dead-owner authority for one compiler-planned publication
     /// subset without falling back to sandbox-derived listener identity or the
     /// guest wildcard transport address.

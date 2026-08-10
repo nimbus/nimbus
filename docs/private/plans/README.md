@@ -163,9 +163,14 @@ extension-registry seam before the second concern edits `extensions.rs`.
   after both child successes, joins inspection deterministically, and
   recovers contention and fresh-process cuts from durable roots. Missing
   generic state and serialization uncertainty remain `Ambiguous`. A separate
-  route blocker keeps the operation unavailable. Band 6 is next and adds only
-  forwarded Container attachment composition with retained detach and
-  proof-gated final release.
+  route blocker keeps the operation unavailable. Band 6 is green. It reuses
+  the NNC6.5d3 retained lifecycle, existing Container journal, and
+  machine-publication absence owner for explicit forwarded attachment
+  composition. Exact Stop and Detach history, retained listener leases,
+  proof-gated final release, read-only inspection, and a complete
+  zero-listener absence witness pass without weakening the host-managed guard.
+  Band 7 is next and adds only the strict private route and client child with
+  exact Inspect-before-retry after ambiguity.
   Compose down, physical-machine stop, product caller cutover, public-route
   growth, and a CLI-local saga store remain forbidden.
   NNC8.2 owns the

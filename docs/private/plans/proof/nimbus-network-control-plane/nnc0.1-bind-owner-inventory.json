@@ -1323,7 +1323,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "ambiguous_mutation_error",
       "ordinal": 1,
-      "line": 1595,
+      "line": 1721,
       "reason": "Formats a joined mutation/inspection diagnostic from an already-admitted exact binding; it performs no bind, allocation, provider mutation, or authority transition."
     },
     {

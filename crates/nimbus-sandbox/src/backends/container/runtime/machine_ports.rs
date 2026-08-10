@@ -695,6 +695,15 @@ impl ContainerSandboxBackend {
         )
     }
 
+    /// Withdraw machine publication while retaining every listener lease for
+    /// the later exact attachment-release command.
+    pub(super) fn begin_machine_port_proxy_retained_detach_for_manifest(
+        &self,
+        manifest: &ContainerSandboxManifest,
+    ) -> Result<Option<MachinePortProxyCleanup>> {
+        self.begin_machine_port_proxy_restart_for_manifest(manifest)
+    }
+
     pub(super) fn require_restart_machine_port_proxies_absent(
         &self,
         manifest: &ContainerSandboxManifest,
@@ -770,6 +779,15 @@ impl ContainerSandboxBackend {
                 manifest.spec.tenant_id, manifest.handle.id
             ),
         })
+    }
+
+    /// Prove exact absent machine publication and retained, non-bindable
+    /// listener authority for a split detach/release lifecycle.
+    pub(super) fn require_retained_machine_port_proxies_absent(
+        &self,
+        manifest: &ContainerSandboxManifest,
+    ) -> Result<()> {
+        self.require_restart_machine_port_proxies_absent(manifest)
     }
 
     #[cfg(test)]

@@ -47,6 +47,8 @@ use serde::Serialize;
 
 use super::{GuestNodeWorkloadService, MachineApiHttpError};
 
+mod attachment;
+
 const GUEST_TEARDOWN_OBSERVATION_DOMAIN: &[u8] = b"nimbus.machine.guest-teardown.observation.v1\0";
 const GUEST_TEARDOWN_COMPOSITE_DOMAIN: &str = "nimbus.machine.guest-teardown.composite.v1";
 
@@ -111,6 +113,11 @@ pub(super) async fn dispatch(
     command: &MachineApiWorkloadTeardownCommandEnvelope,
     installed_forwarder: &MachineForwarderAuthority,
 ) -> Result<MachineApiWorkloadTeardownObservation, MachineApiHttpError> {
+    if command.provider_translation()
+        == MachineApiWorkloadTeardownProviderTranslation::GuestContainerAttachment
+    {
+        return attachment::dispatch(service, command, installed_forwarder).await;
+    }
     let validated = match validate_command(service, command, installed_forwarder) {
         Ok(validated) => validated,
         Err(observation) => return Ok(observation),
@@ -288,13 +295,24 @@ fn provider_claim(
     installed_forwarder: &MachineForwarderAuthority,
     local_node: &nimbus_workloads::NodeIdentity,
 ) -> Result<ProviderCommandClaim, ProviderCommandJournalError> {
-    let effect_subject = serde_json::to_string(&(command.execution_locator(), command.subjects()))
-        .map_err(|error| ProviderCommandJournalError::InvalidClaim {
-            message: format!("guest teardown subject cannot be encoded: {error}"),
-        })?;
+    execution_provider_claim_for(command, command.claim(), installed_forwarder, local_node)
+}
+
+fn execution_provider_claim_for(
+    command: &MachineApiWorkloadTeardownCommandEnvelope,
+    claim: &nimbus_workloads::WorkloadTeardownClaim,
+    installed_forwarder: &MachineForwarderAuthority,
+    local_node: &nimbus_workloads::NodeIdentity,
+) -> Result<ProviderCommandClaim, ProviderCommandJournalError> {
+    let effect_subject =
+        serde_json::to_string(&(command.execution_locator(), claim.attempt().subjects())).map_err(
+            |error| ProviderCommandJournalError::InvalidClaim {
+                message: format!("guest teardown subject cannot be encoded: {error}"),
+            },
+        )?;
     let provider_realm = serde_json::to_vec(&(
-        command.provider_target(),
-        command.provider_translation(),
+        claim.provider_target(),
+        MachineApiWorkloadTeardownProviderTranslation::GuestExecutionComposition,
         installed_forwarder,
         command.machine_provider_generation(),
         local_node,
@@ -303,21 +321,25 @@ fn provider_claim(
         message: format!("guest teardown provider realm cannot be encoded: {error}"),
     })?;
     ProviderCommandClaim::new(ProviderCommandClaimInput {
-        authority_id: command.claim().attempt().saga_id().as_str().to_owned(),
+        authority_id: claim.attempt().saga_id().as_str().to_owned(),
         effect_subject,
         source_attempt_id: None,
-        attempt_id: command.attempt_id().as_str().to_owned(),
-        dispatch_epoch: command.dispatch_epoch().as_u64(),
-        workload_generation: command.claim().attempt().generation().as_u64(),
+        attempt_id: claim.attempt().attempt_id().as_str().to_owned(),
+        dispatch_epoch: claim.dispatch_epoch().as_u64(),
+        workload_generation: claim.attempt().generation().as_u64(),
         restart_ordinal: 0,
-        desired_digest: command.claim().attempt().desired_digest().to_string(),
-        source_digest: command.source_digest().to_string(),
-        network_plan_digest: command.network_plan_digest().to_string(),
+        desired_digest: claim.attempt().desired_digest().to_string(),
+        source_digest: claim.attempt().source_digest().to_string(),
+        network_plan_digest: claim.attempt().network_plan_digest().to_string(),
         provider_target_digest: WorkloadOwnerEvidenceDigest::sha256(provider_realm).to_string(),
-        operation: match command.step() {
+        operation: match claim.attempt().step() {
             WorkloadTeardownStep::DrainExecution => ProviderCommandOperation::DrainExecution,
             WorkloadTeardownStep::StopExecution => ProviderCommandOperation::StopExecution,
-            _ => unreachable!("validated guest teardown step is drain or stop"),
+            _ => {
+                return Err(ProviderCommandJournalError::InvalidClaim {
+                    message: "guest execution teardown claim must be drain or stop".to_owned(),
+                });
+            }
         },
     })
 }
@@ -863,20 +885,41 @@ fn success_evidence(
     command: &MachineApiWorkloadTeardownCommandEnvelope,
     evidence: WorkloadOwnerEvidenceDigest,
 ) -> WorkloadTeardownSuccessEvidence {
-    match (command.step(), command.subjects()) {
+    success_evidence_for(command.step(), command.subjects(), evidence)
+        .expect("validated guest teardown command has matching typed subjects")
+}
+
+fn success_evidence_for(
+    step: WorkloadTeardownStep,
+    subjects: &WorkloadTeardownSubjects,
+    evidence: WorkloadOwnerEvidenceDigest,
+) -> Option<WorkloadTeardownSuccessEvidence> {
+    match (step, subjects) {
         (WorkloadTeardownStep::DrainExecution, WorkloadTeardownSubjects::Execution(reference)) => {
-            WorkloadTeardownSuccessEvidence::ExecutionDrained {
+            Some(WorkloadTeardownSuccessEvidence::ExecutionDrained {
                 reference: reference.clone(),
                 evidence,
-            }
+            })
         }
         (WorkloadTeardownStep::StopExecution, WorkloadTeardownSubjects::Execution(reference)) => {
-            WorkloadTeardownSuccessEvidence::ExecutionStopped {
+            Some(WorkloadTeardownSuccessEvidence::ExecutionStopped {
                 reference: reference.clone(),
                 evidence,
-            }
+            })
         }
-        _ => unreachable!("validated guest teardown command has matching execution subjects"),
+        (WorkloadTeardownStep::DetachNetwork, WorkloadTeardownSubjects::Network(reference)) => {
+            Some(WorkloadTeardownSuccessEvidence::NetworkDetached {
+                reference: reference.clone(),
+                evidence,
+            })
+        }
+        (WorkloadTeardownStep::ReleaseNetwork, WorkloadTeardownSubjects::Network(reference)) => {
+            Some(WorkloadTeardownSuccessEvidence::NetworkReleased {
+                reference: reference.clone(),
+                evidence,
+            })
+        }
+        _ => None,
     }
 }
 
@@ -1019,12 +1062,24 @@ fn encoding_ambiguous_result(error: serde_json::Error) -> CompositeExecuteResult
 }
 
 fn provider_evidence(observation: &ProviderCommandObservation) -> WorkloadOwnerEvidenceDigest {
-    let durable = observation
-        .evidence_sha256()
-        .unwrap_or("provider_claimed_without_outcome_evidence");
-    WorkloadOwnerEvidenceDigest::sha256(
+    exact_provider_evidence(observation).unwrap_or_else(|| {
+        WorkloadOwnerEvidenceDigest::sha256(
+            [
+                GUEST_TEARDOWN_OBSERVATION_DOMAIN,
+                b"provider_claimed_without_outcome_evidence",
+            ]
+            .concat(),
+        )
+    })
+}
+
+fn exact_provider_evidence(
+    observation: &ProviderCommandObservation,
+) -> Option<WorkloadOwnerEvidenceDigest> {
+    let durable = observation.evidence_sha256()?;
+    Some(WorkloadOwnerEvidenceDigest::sha256(
         [GUEST_TEARDOWN_OBSERVATION_DOMAIN, durable.as_bytes()].concat(),
-    )
+    ))
 }
 
 fn provider_failure(

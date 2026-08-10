@@ -111,6 +111,7 @@ fn detached_proof(
         ipam_retained_evidence_sha256: "f".repeat(64),
         segment_quarantine_evidence_sha256: "1".repeat(64),
         attachment_retained_evidence_sha256: "2".repeat(64),
+        publication_evidence: RetainedAttachmentPublicationEvidence::HostManaged,
     })
     .expect("detached proof fixture should validate")
 }
