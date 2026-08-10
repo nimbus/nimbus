@@ -10,6 +10,10 @@ pub use runtime::{
     MachinePortAbsenceEvidence, PreparedContainerServiceWorkload,
     run_prepared_container_service_workload,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+pub(in crate::backends) use runtime::{
+    prepare_network_teardown_fixture, reopen_network_teardown_fixture,
+};
 pub use state::{
     ContainerSandboxDetails, ContainerSandboxLogPaths, ContainerSandboxStateView,
     ContainerSandboxSummary,

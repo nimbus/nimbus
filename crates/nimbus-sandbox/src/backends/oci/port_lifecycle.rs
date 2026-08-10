@@ -22,14 +22,12 @@ use super::port_lease::{
     adopt_claimed_and_activate_plan_members_with_lifetimes,
     adopt_claimed_and_activate_rebind_plan_members_with_lifetimes, canonical_socket_ip,
     claim_bind_attempts_with_lifetimes, claim_bind_plan_members_attempts_with_lifetimes,
-    claim_rebind_plan_members_attempts_with_lifetimes, port_lease_request,
+    claim_rebind_plan_members_attempts_with_lifetimes, port_lease_error, port_lease_request,
     prepare_provider_managed_batch_after_confirmed_stop,
     prepare_provider_managed_claim_batch_after_confirmed_stop,
-    prepare_provider_managed_plan_members_after_confirmed_stop,
     prepare_rebind_batch_after_confirmed_stop_with_lifetimes, provider_binding, published_scope,
     record_bind_failure_with_lifetime, recover_provider_managed_batch_after_owner_death,
-    recover_provider_managed_plan_members_after_owner_death, release_batch_after_confirmed_stop,
-    release_provider_managed_batch_after_confirmed_stop,
+    release_batch_after_confirmed_stop, release_provider_managed_batch_after_confirmed_stop,
     release_provider_managed_batch_after_confirmed_stop_with_lifetimes,
     release_reserved_batch_with_lifetime_without_effect, release_reserved_batch_without_effect,
     require_active_provider_binding, require_current_bind_authority,
@@ -52,6 +50,7 @@ mod authority;
 mod batch_state;
 mod machine;
 mod netavark_lifetime;
+mod planned_netavark;
 
 pub(crate) use machine::machine_port_proxy_guest_listener_addr;
 pub(crate) use netavark_lifetime::NetavarkPortLifetimeRegistry;
@@ -691,7 +690,7 @@ impl OciPortLeaseCoordinator {
     ///
     /// Classifiers must not synthesize a lifecycle decision from records read
     /// across multiple independently locked store generations.
-    fn port_lease_records_snapshot(
+    pub(crate) fn port_lease_records_snapshot(
         &self,
         requests: &[PortLeaseRequest],
         provider_name: &str,

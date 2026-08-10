@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nimbus_core::TenantId;
 
@@ -20,12 +20,12 @@ use crate::backends::oci::command::CommandSpec;
 use crate::backends::oci::egress::EgressProxyAssignment;
 use crate::backends::oci::materializer::MaterializedImageRootfs;
 use crate::{
-    ProviderCommandClaimDecision, ProviderCommandClaimInput, ProviderCommandObservationKind,
-    ProviderCommandOperation, SandboxBackendKind, SandboxExecutionAttemptId,
-    SandboxExecutionTeardownCommand, SandboxExecutionTeardownObservation,
-    SandboxExecutionTeardownOperation, SandboxHandle, SandboxId, SandboxOwnerSpec,
-    SandboxProcessSpec, SandboxRestartAttemptFence, SandboxRootSpec, SandboxRootfsSpec,
-    SandboxSpec, SandboxStatus,
+    ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
+    ProviderCommandClaimInput, ProviderCommandObservationKind, ProviderCommandOperation,
+    SandboxBackendKind, SandboxExecutionAttemptId, SandboxExecutionTeardownCommand,
+    SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation, SandboxHandle,
+    SandboxId, SandboxOwnerSpec, SandboxProcessSpec, SandboxRestartAttemptFence, SandboxRootSpec,
+    SandboxRootfsSpec, SandboxSpec, SandboxStatus,
 };
 
 use super::super::{
@@ -39,6 +39,8 @@ use super::*;
 
 #[path = "tests/fresh_process.rs"]
 mod fresh_process;
+#[path = "tests/network_teardown.rs"]
+mod network_teardown;
 
 struct TeardownFixture {
     root: tempfile::TempDir,
@@ -320,6 +322,7 @@ impl TeardownFixture {
             },
             provider_failure_cleanup: KrunProviderFailureCleanupState::Inactive,
             execution_teardown: Default::default(),
+            network_teardown: Default::default(),
             egress_proxy: Some(egress_proxy),
             conmon_launch: OciConmonLaunchPlan {
                 create_command: CommandSpec::new("/bin/true"),
@@ -986,32 +989,32 @@ fn krun_execution_stop_requires_the_exact_drain_fence() {
         SandboxExecutionTeardownObservation::DefiniteFailure { .. }
     ));
 
-    let mut crossed_attempt_input = claim_input_from(
+    let mut crossed_workload_input = claim_input_from(
         fixture
             .command(SandboxExecutionTeardownOperation::Stop, "shared", 1)
             .provider_claim(),
         ProviderCommandOperation::StopExecution,
     );
-    crossed_attempt_input.attempt_id = "different-provider-attempt".to_owned();
-    let crossed_attempt = SandboxExecutionTeardownCommand::new(
+    crossed_workload_input.attempt_id = "crossed-stop-attempt".to_owned();
+    let crossed_workload = SandboxExecutionTeardownCommand::new(
         drain.tenant_id().clone(),
         fixture.id.clone(),
         fixture.execution_attempt_id.clone(),
         "nimbus-sandbox.krun-execution",
         SandboxExecutionTeardownOperation::Stop,
-        ProviderCommandClaim::new(crossed_attempt_input)
-            .expect("crossed provider attempt should validate structurally"),
+        ProviderCommandClaim::new(crossed_workload_input)
+            .expect("crossed workload fence should validate structurally"),
     )
-    .expect("crossed provider-attempt stop should validate structurally");
-    let before_crossed_attempt = snapshot_files(fixture.root.path());
+    .expect("crossed workload stop should validate structurally");
+    let before_crossed_workload = snapshot_files(fixture.root.path());
     assert!(matches!(
         fixture
             .backend
-            .execute_execution_teardown(&crossed_attempt),
+            .execute_execution_teardown(&crossed_workload),
         SandboxExecutionTeardownObservation::DefiniteFailure { ref code, .. }
             if code == "sandbox_teardown_command_crossed"
     ));
-    assert_eq!(snapshot_files(fixture.root.path()), before_crossed_attempt);
+    assert_eq!(snapshot_files(fixture.root.path()), before_crossed_workload);
     assert!(fixture.runtime.signals().is_empty());
 }
 
@@ -1672,10 +1675,11 @@ fn two_krun_drain_contenders_publish_one_barrier() {
                         .expect("winning drain contender should publish");
                     true
                 }
-                ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
-                    assert_eq!(
-                        observation.kind(),
-                        ProviderCommandObservationKind::Succeeded
+                ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+                    wait_for_contender_result(
+                        &journal,
+                        command.provider_claim(),
+                        ProviderCommandObservationKind::Succeeded,
                     );
                     false
                 }
@@ -1720,10 +1724,11 @@ fn two_krun_stop_contenders_dispatch_one_signal_for_one_epoch() {
                         .expect("winning stop contender should publish");
                     true
                 }
-                ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
-                    assert_eq!(
-                        observation.kind(),
-                        ProviderCommandObservationKind::InProgress
+                ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+                    wait_for_contender_result(
+                        &journal,
+                        command.provider_claim(),
+                        ProviderCommandObservationKind::InProgress,
                     );
                     false
                 }
@@ -1737,6 +1742,33 @@ fn two_krun_stop_contenders_dispatch_one_signal_for_one_epoch() {
         .count();
     assert_eq!(executed, 1);
     assert_eq!(fixture.runtime.signals().len(), 1);
+}
+
+fn wait_for_contender_result(
+    journal: &ProviderCommandAttemptJournal,
+    claim: &ProviderCommandClaim,
+    expected: ProviderCommandObservationKind,
+) {
+    let started = Instant::now();
+    loop {
+        let observation = journal
+            .adopt_exact_attempt(claim)
+            .expect("contender result should remain readable")
+            .expect("contender result should remain present");
+        if observation.kind() == expected {
+            return;
+        }
+        assert_eq!(
+            observation.kind(),
+            ProviderCommandObservationKind::Claimed,
+            "winning contender published an unexpected result"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "winning contender did not publish before timeout"
+        );
+        thread::yield_now();
+    }
 }
 
 #[test]

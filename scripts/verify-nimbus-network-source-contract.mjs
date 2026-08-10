@@ -876,7 +876,7 @@ function verifySideEffectFreeSandboxInspection() {
       !body ||
       !/\.open\s*\(\s*&lock_path\s*\)/.test(body) ||
       !/\btry_lock_shared\s*\(/.test(body) ||
-      !/\b(?:read_manifest|read_runner_manifest)\s*\(/.test(body) ||
+      !/\b(?:read_exact_manifest|read_manifest|read_runner_manifest)\s*\(/.test(body) ||
       /\.create(?:_new)?\s*\(|\bFile\s*::\s*create(?:_new)?\s*\(|\bcreate_dir(?:_all)?\s*\(/.test(
         body,
       )

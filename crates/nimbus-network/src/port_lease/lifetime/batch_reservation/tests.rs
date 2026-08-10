@@ -93,6 +93,45 @@ fn list_plan_is_read_only_complete_and_stably_ordered() {
 }
 
 #[test]
+fn inspect_plan_members_returns_one_authenticated_read_only_snapshot() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    let authority = LocalPortLeaseAuthority::open(root.path()).expect("authority should open");
+    let members = [
+        planned_request_for("alpha", PORT),
+        planned_request_for("beta", PORT + 1),
+    ];
+    authority
+        .reserve_batch(members.to_vec())
+        .expect("complete plan should reserve");
+    let bytes_before = authority_bytes(root.path());
+
+    let requested = [members[1].clone(), members[0].clone()];
+    let records = authority
+        .inspect_plan_members(&members, &requested)
+        .expect("exact plan subset should inspect from one snapshot");
+
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.request().lease_id())
+            .collect::<Vec<_>>(),
+        vec![members[1].lease_id(), members[0].lease_id()]
+    );
+    assert_eq!(authority_bytes(root.path()), bytes_before);
+
+    let crossed = [planned_request_for("beta", PORT + 2)];
+    assert!(matches!(
+        authority
+            .inspect_plan_members(&members, &crossed)
+            .expect_err("crossed immutable member must fail closed"),
+        PortLeaseError::BindingMismatch { .. }
+            | PortLeaseError::IdentityConflict { .. }
+            | PortLeaseError::PlanMembershipConflict { .. }
+    ));
+    assert_eq!(authority_bytes(root.path()), bytes_before);
+}
+
+#[test]
 fn scalar_reserve_cannot_establish_or_poison_a_planned_member_set() {
     let root = tempfile::tempdir().expect("state root should exist");
     let authority = LocalPortLeaseAuthority::open(root.path()).expect("authority should open");
@@ -484,6 +523,82 @@ fn planned_member_claim_rejects_crossed_witness_or_claim_without_mutation() {
         assert!(record.bind_claim().is_none());
         assert!(record.active_lifetime().is_none());
     }
+}
+
+#[test]
+fn never_bound_plan_subset_release_authenticates_full_witness_and_preserves_siblings() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    let authority = LocalPortLeaseAuthority::open(root.path()).expect("authority should open");
+    let members = [
+        planned_request_for("alpha", PORT),
+        planned_request_for("beta", PORT + 1),
+    ];
+    let launch_claim = reservation_claim("planned-never-bound-release");
+    authority
+        .reserve_batch_for_coordinator(members.to_vec(), &launch_claim)
+        .expect("complete planned launch should reserve");
+    let sibling_before = authority
+        .inspect(members[1].lease_id())
+        .expect("sibling should inspect")
+        .expect("sibling should remain durable");
+    let bytes_before = authority_bytes(root.path());
+
+    let incomplete = authority
+        .release_reserved_batch_without_effect(std::slice::from_ref(&members[0]), &launch_claim)
+        .expect_err("a selected planned member cannot impersonate the complete plan");
+    assert!(matches!(
+        incomplete,
+        PortLeaseError::PlanMembershipConflict { .. }
+    ));
+    assert_eq!(authority_bytes(root.path()), bytes_before);
+
+    let released = authority
+        .release_reserved_plan_members_without_effect(
+            &members,
+            std::slice::from_ref(&members[0]),
+            &launch_claim,
+        )
+        .expect("the complete witness should authorize its selected no-effect member");
+    assert_eq!(released.len(), 1);
+    assert_eq!(released[0].phase(), PortLeasePhase::Released);
+    assert_eq!(
+        authority
+            .inspect(members[1].lease_id())
+            .expect("sibling should inspect"),
+        Some(sibling_before.clone()),
+        "unselected plan authority must remain byte-for-byte unchanged"
+    );
+    assert_eq!(
+        authority
+            .release_reserved_plan_members_without_effect(
+                &members,
+                std::slice::from_ref(&members[0]),
+                &launch_claim,
+            )
+            .expect("exact selected release should replay"),
+        released
+    );
+
+    let crossed_witness = [members[0].clone()];
+    let before_crossed = authority_bytes(root.path());
+    let crossed = authority
+        .release_reserved_plan_members_without_effect(
+            &crossed_witness,
+            std::slice::from_ref(&members[1]),
+            &launch_claim,
+        )
+        .expect_err("an incomplete witness must fail before sibling release");
+    assert!(matches!(
+        crossed,
+        PortLeaseError::PlanMembershipConflict { .. }
+    ));
+    assert_eq!(authority_bytes(root.path()), before_crossed);
+    assert_eq!(
+        authority
+            .inspect(members[1].lease_id())
+            .expect("crossed rejection should inspect"),
+        Some(sibling_before)
+    );
 }
 
 #[test]

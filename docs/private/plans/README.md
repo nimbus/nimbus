@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.5d2 complete; NNC6.5d3
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5d3 complete; NNC6.5d4
   in progress`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,
   path, and verification contract. NNC6.5a completed the strict portable
@@ -117,16 +117,36 @@ extension-registry seam before the second concern edits `extensions.rs`.
   fence defect. Both deterministic regressions failed before correction and
   now pass; the affected exact/full sandbox, quality, static, docs, and site
   gates are restored. The one narrow correction review is clean at `0.99`,
-  and review cadence is exhausted. NNC6.5d3 is now the sole active item. Its
-  read-only Container, Krun, and shared compute/attachment audits are complete
-  in `proof/nimbus-network-control-plane/nnc6.5d3-host-managed-attachment-detach-release.md`.
-  They freeze K1-K29, exact tenant-qualified manifest lookup, one provider
-  journal, separate retained detach and proof-gated release, nine detach and
-  six release crash cuts, concept-owned paths, and nine expected-red seams.
-  K1 and the audit checkpoint are green: format and diff pass, proof lint
-  passes, NNCV035 self-test is `55/55`, aggregate is the expected `35/36`,
-  docs pass `108`, and site passes `17/17`. Product source remains unchanged.
-  Implementation band 1 starts after the checkpoint commit. NNC8.2 owns the
+  and review cadence is exhausted. NNC6.5d3 is complete through K29 in
+  `proof/nimbus-network-control-plane/nnc6.5d3-host-managed-attachment-detach-release.md`.
+  Container and Krun now share exact retained detach and proof-gated release,
+  one provider journal, strict tenant-qualified preflight, compound detached
+  evidence, retained reusable authority, and real compute substitution. The
+  11 Detach and 11 Release crash cuts per backend, contention, focused and full
+  affected behavior, strict quality, static arithmetic, and source-derived
+  dependency/effect inventories are green. NNCV035 is exact `55/55`; the live
+  direct and aggregate results remain the planned `0/7` and `35/36` with only
+  NNCV035 red. Its one full GPT-5.6 Sol/xhigh/fast item review is complete.
+  One immutable-version digest claim was source-rejected. Three accepted
+  executable findings are corrected with deterministic fail-before proofs:
+  one authenticated plan-member snapshot, pinned no-follow namespace
+  inspection/read/removal, and semantic provider-lock contention detection.
+  A directly related empty-selection release now proves a byte-stable no-op.
+  The sole narrow correction review reported two P2 findings at confidence
+  `0.96`. The plan-snapshot claim was source-rejected because the second read
+  contributes no mutable classification field. The final-entry identity
+  defect was accepted and corrected: inspect, read, and remove now retain and
+  revalidate the exact no-follow child descriptor, and 12 deterministic K14
+  cases pass. K29 is green, review cadence is exhausted, and the commit
+  containing its ledger row is the durable item checkpoint. NNC6.5d4 is now
+  the sole active item. It starts with the frozen read-only parent/guest
+  substitution audit and an acceptance-bearing proof before product edits.
+  It owns distinct forwarded-machine provider identities, exact guest phase
+  envelopes, parent publication withdrawal before guest drain/stop, final
+  parent release after exact guest/provider absence, and two-realm recovery.
+  Compose down, physical-machine stop, product caller cutover, public-route
+  growth, and a CLI-local saga store remain forbidden.
+  NNC8.2 owns the
   earlier provision and restart producers that do not yet retain live claim
   authority through their effect boundaries.
   The four implementation units cover Container execution, Krun execution, shared

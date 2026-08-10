@@ -95,6 +95,34 @@ impl PlannedFixture {
 }
 
 #[test]
+fn empty_never_bound_release_is_read_only_while_coordinator_is_live() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    let authority = LocalPortLeaseAuthority::open(root.path()).expect("authority should open");
+    let reservation = reservation_claim();
+    let _lifetime = match authority
+        .try_acquire_reservation_lifetime(&reservation)
+        .expect("reservation lifetime should inspect")
+    {
+        NetworkReservationLifetimeAttempt::Acquired(lifetime) => lifetime,
+        NetworkReservationLifetimeAttempt::LiveOwner => {
+            panic!("isolated fixture cannot already have a live coordinator")
+        }
+    };
+    let authority_before = std::fs::read(authority.authority_path()).ok();
+
+    let released = authority
+        .release_reserved_batch_without_effect(&[], &reservation)
+        .expect("an empty selection should not contend with a live coordinator");
+
+    assert!(released.is_empty());
+    assert_eq!(
+        std::fs::read(authority.authority_path()).ok(),
+        authority_before,
+        "an empty release must not create or revise durable authority"
+    );
+}
+
+#[test]
 fn process_bound_terminal_subset_is_atomic_and_preserves_plan_siblings() {
     let PlannedFixture {
         _root,

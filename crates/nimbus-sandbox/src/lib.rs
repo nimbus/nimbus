@@ -56,4 +56,8 @@ pub use spec::{
 pub use teardown::{
     SandboxExecutionTeardownCommand, SandboxExecutionTeardownCommandError,
     SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation,
+    SandboxNetworkTeardownCommand, SandboxNetworkTeardownCommandError,
+    SandboxNetworkTeardownCommandInput, SandboxNetworkTeardownIdentity,
+    SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownObservation,
+    SandboxNetworkTeardownOperation,
 };

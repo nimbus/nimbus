@@ -94,6 +94,7 @@ impl OciAttachmentAdapter<'_> {
         )
     }
 
+    #[cfg(test)]
     pub(super) fn detach_machine_forwarded_with<T>(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
@@ -111,6 +112,7 @@ impl OciAttachmentAdapter<'_> {
         )
     }
 
+    #[cfg(test)]
     pub(super) fn attach_with(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
@@ -128,6 +130,7 @@ impl OciAttachmentAdapter<'_> {
         )
     }
 
+    #[cfg(test)]
     pub(super) fn detach_host_managed_with(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
@@ -138,6 +141,7 @@ impl OciAttachmentAdapter<'_> {
         lifecycle.detach_host_managed_with(&self.context, mode, host, before_provider_detach)
     }
 
+    #[cfg(test)]
     pub(super) fn detach_host_managed_observed_with(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
@@ -155,6 +159,7 @@ impl OciAttachmentAdapter<'_> {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn complete_injected_setup(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
@@ -163,6 +168,7 @@ impl OciAttachmentAdapter<'_> {
         lifecycle.complete_injected_setup(&self.context, setup)
     }
 
+    #[cfg(test)]
     pub(crate) fn compensate_injected_host_setup_failure(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
@@ -173,6 +179,7 @@ impl OciAttachmentAdapter<'_> {
     }
 }
 
+#[cfg(test)]
 impl OciAttachmentLifecycle<'_> {
     /// Route an injected provider result through the canonical compensation
     /// seam without manufacturing a live Netavark lifetime batch.

@@ -23,11 +23,81 @@ const LOCK_SUFFIX: &str = ".lock";
 const CURRENT_ENVELOPE_VERSION: u32 = 4;
 const MAX_IDENTITY_LEN: usize = 256;
 const MAX_CANONICAL_SUBJECT_LEN: usize = 64 * 1024;
-#[cfg(not(test))]
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(test)]
-const LOCK_TIMEOUT: Duration = Duration::from_millis(250);
 const LOCK_RETRY: Duration = Duration::from_millis(10);
+
+mod current_claim;
+
+#[cfg(test)]
+std::thread_local! {
+    static PROVIDER_COMMAND_LOCK_TEST_PROBE: std::cell::RefCell<Option<ProviderCommandLockTestProbe>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Thread-scoped proof that a test reached real provider-lock contention.
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub(crate) struct ProviderCommandLockTestProbe {
+    state: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    timeout: Duration,
+}
+
+#[cfg(test)]
+impl ProviderCommandLockTestProbe {
+    pub(crate) fn new(timeout: Duration) -> Self {
+        Self {
+            state: std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())),
+            timeout,
+        }
+    }
+
+    fn record_contention(&self) {
+        let (state, changed) = &*self.state;
+        *state.lock().expect("provider lock probe should lock") = true;
+        changed.notify_all();
+    }
+
+    pub(crate) fn wait_until_contended(&self) -> bool {
+        let (state, changed) = &*self.state;
+        let state = state.lock().expect("provider lock probe should lock");
+        let (state, _) = changed
+            .wait_timeout_while(state, self.timeout, |contended| !*contended)
+            .expect("provider lock probe should wait");
+        *state
+    }
+}
+
+#[cfg(test)]
+struct ProviderCommandLockTestProbeScope {
+    previous: Option<ProviderCommandLockTestProbe>,
+}
+
+#[cfg(test)]
+impl Drop for ProviderCommandLockTestProbeScope {
+    fn drop(&mut self) {
+        PROVIDER_COMMAND_LOCK_TEST_PROBE.with(|slot| {
+            *slot.borrow_mut() = self.previous.take();
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn with_provider_command_lock_test_probe<T>(
+    probe: ProviderCommandLockTestProbe,
+    action: impl FnOnce() -> T,
+) -> T {
+    let previous = PROVIDER_COMMAND_LOCK_TEST_PROBE.with(|slot| slot.borrow_mut().replace(probe));
+    let _scope = ProviderCommandLockTestProbeScope { previous };
+    action()
+}
+
+#[cfg(test)]
+fn record_provider_command_lock_contention() {
+    let probe = PROVIDER_COMMAND_LOCK_TEST_PROBE.with(|slot| slot.borrow().clone());
+    if let Some(probe) = probe {
+        probe.record_contention();
+    }
+}
 
 /// Provider operation fenced independently within one stable workload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +200,13 @@ impl ProviderCommandOperation {
                 | Self::ActivateRestartedWorkload
                 | Self::PublishRestartIngress
                 | Self::ObserveRestartPublication
+        )
+    }
+
+    const fn permits_retry_authorization(self) -> bool {
+        matches!(
+            self,
+            Self::StopExecution | Self::DetachNetwork | Self::ReleaseNetwork
         )
     }
 }
@@ -281,6 +358,21 @@ impl ProviderCommandClaim {
         self.operation
     }
 
+    /// Compare the stable workload authority shared by adjacent lifecycle steps.
+    ///
+    /// The attempt, dispatch epoch, effect subject, provider target, and
+    /// operation are command-local fences. They must not be equal across, for
+    /// example, `StopExecution` and `DetachNetwork`.
+    pub(crate) fn same_lifecycle_fence(&self, other: &Self) -> bool {
+        self.authority_id == other.authority_id
+            && self.source_attempt_id == other.source_attempt_id
+            && self.workload_generation == other.workload_generation
+            && self.restart_ordinal == other.restart_ordinal
+            && self.desired_digest == other.desired_digest
+            && self.source_digest == other.source_digest
+            && self.network_plan_digest == other.network_plan_digest
+    }
+
     fn same_attempt_fence(&self, other: &Self) -> bool {
         self.same_workload_fence(other)
             && self.source_attempt_id == other.source_attempt_id
@@ -345,8 +437,7 @@ impl ProviderCommandObservationKind {
 
     fn authorizes_retry(self, operation: ProviderCommandOperation) -> bool {
         self == Self::Absent
-            || (self == Self::RetryAuthorized
-                && operation == ProviderCommandOperation::StopExecution)
+            || (self == Self::RetryAuthorized && operation.permits_retry_authorization())
     }
 }
 
@@ -383,10 +474,11 @@ impl ProviderCommandRetryReceipt {
     fn validate(&self) -> Result<(), ProviderCommandJournalError> {
         self.claim.validate()?;
         if self.kind == ProviderCommandObservationKind::RetryAuthorized
-            && self.claim.operation != ProviderCommandOperation::StopExecution
+            && !self.claim.operation.permits_retry_authorization()
         {
             return Err(ProviderCommandJournalError::Corrupt {
-                message: "provider retry authorization is valid only for execution stop".to_owned(),
+                message: "provider retry authorization is valid only for execution stop or network detach/release"
+                    .to_owned(),
             });
         }
         validate_sha256("provider retry evidence", &self.evidence_sha256)?;
@@ -629,51 +721,6 @@ impl ProviderCommandAttemptJournal {
         }
     }
 
-    /// Run and publish one provider effect while its exact claimed epoch remains current.
-    ///
-    /// The journal lock stays held through the callback. An inspection cannot
-    /// authorize a later epoch while an older claimant can still start its
-    /// effect.
-    pub(crate) fn execute_current_claim<T>(
-        &self,
-        execution_claim: ProviderCommandExecutionClaim,
-        execute: impl FnOnce(
-            &ProviderCommandExecutionClaim,
-        ) -> (T, ProviderCommandObservationKind, Option<String>, Vec<u8>),
-    ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError> {
-        execution_claim.observation.validate()?;
-        let claim = execution_claim.claim();
-        let paths = self.paths(claim);
-        if !self.journal_directory_exists(&paths.directory)? {
-            return Err(ProviderCommandJournalError::Store {
-                message: "provider execution claim has no durable journal directory".to_owned(),
-            });
-        }
-        let _guard = lock(&paths.lock)?;
-        remove_stale_stage(&paths.stage)?;
-        let current =
-            read_if_present(&paths.record)?.ok_or_else(|| ProviderCommandJournalError::Store {
-                message: "provider execution claim has no durable journal record".to_owned(),
-            })?;
-        if current != execution_claim.observation {
-            if current.claim != *claim {
-                self.reject_stale_or_crossed(&current.claim, claim)?;
-                return Err(ProviderCommandJournalError::CrossedClaim);
-            }
-            return Err(ProviderCommandJournalError::PriorEffectUnresolved);
-        }
-        debug_assert_eq!(current.kind, ProviderCommandObservationKind::Claimed);
-        let (output, kind, failure_code, evidence) = execute(&execution_claim);
-        let observation = self.record_observation_locked(
-            &paths,
-            current,
-            kind,
-            failure_code.as_deref(),
-            &evidence,
-        )?;
-        Ok((output, observation))
-    }
-
     /// Inspect only when the durable authority is the exact attempt and epoch.
     pub fn adopt_exact_attempt(
         &self,
@@ -785,10 +832,12 @@ impl ProviderCommandAttemptJournal {
             });
         }
         if kind == ProviderCommandObservationKind::RetryAuthorized
-            && claim.operation != ProviderCommandOperation::StopExecution
+            && !claim.operation.permits_retry_authorization()
         {
             return Err(ProviderCommandJournalError::InvalidClaim {
-                message: "retry authorization is valid only for execution stop".to_owned(),
+                message:
+                    "retry authorization is valid only for execution stop or network detach/release"
+                        .to_owned(),
             });
         }
         Ok(())
@@ -1252,6 +1301,8 @@ fn lock(path: &Path) -> Result<JournalGuard, ProviderCommandJournalError> {
         match FileExt::try_lock_exclusive(&file) {
             Ok(()) => return Ok(JournalGuard { _file: file }),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                #[cfg(test)]
+                record_provider_command_lock_contention();
                 if Instant::now() >= deadline {
                     return Err(ProviderCommandJournalError::Store {
                         message: format!("timed out acquiring journal lock {}", path.display()),

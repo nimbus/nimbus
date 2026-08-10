@@ -27,7 +27,7 @@ pub(super) mod state;
 use effects::ContainerExecutionTeardownRuntime;
 use state::{ContainerDrainProgress, ContainerStopProgress};
 
-const CONTAINER_EXECUTION_PROVIDER_KEY: &str = "nimbus-sandbox.container-execution";
+pub(super) const CONTAINER_EXECUTION_PROVIDER_KEY: &str = "nimbus-sandbox.container-execution";
 const KILL_REDELIVERY_DELAY: Duration = Duration::from_secs(1);
 
 impl ContainerSandboxBackend {

@@ -12,6 +12,10 @@ use super::super::port_lease::{
     abandon_bind_attempts_without_effect, adopt_claimed_and_activate_batch, claim_bind_attempts,
     prepare_rebind_batch_after_confirmed_stop, record_bind_failure,
 };
+use super::super::port_lease::{
+    prepare_provider_managed_plan_members_after_confirmed_stop,
+    recover_provider_managed_plan_members_after_owner_death,
+};
 use super::*;
 
 pub(crate) fn machine_port_proxy_guest_listener_addr(binding: &SandboxPortBinding) -> SocketAddr {

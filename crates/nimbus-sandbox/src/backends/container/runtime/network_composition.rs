@@ -219,10 +219,12 @@ impl ContainerSandboxBackend {
             runner_lifecycle_lock_test_probe: None,
             #[cfg(test)]
             post_egress_reload_ack_observer: None,
+            #[cfg(test)]
+            network_teardown_checkpoint_test_probe: None,
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn with_egress_pin_provider(
         mut self,
         provider: Arc<dyn crate::backends::oci::network::OciEgressPinProvider>,

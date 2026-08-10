@@ -23,6 +23,8 @@ use super::*;
 
 #[path = "tests/fresh_process.rs"]
 mod fresh_process;
+#[path = "tests/network_teardown.rs"]
+mod network_teardown;
 #[path = "tests/retry_recovery.rs"]
 mod retry_recovery;
 
@@ -171,6 +173,7 @@ impl TeardownFixture {
         let mut config = super::super::ContainerSandboxBackendConfig::under_root(root.path());
         config.node_network_supernet = "127.0.0.0/24".to_owned();
         config.published_port_range = pep_port..=pep_port;
+        config.netavark_path = PathBuf::from("/usr/bin/true");
         let backend = ContainerSandboxBackend::new(config)
             .with_egress_pin_provider(Arc::new(FixedOciEgressPinProvider::ready()));
         let id = crate::SandboxId::new(format!("container-teardown-{label}"));

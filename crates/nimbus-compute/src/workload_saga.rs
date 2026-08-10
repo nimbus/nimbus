@@ -115,9 +115,10 @@ pub use teardown_registry::{
 pub use teardown_runtime::{
     WorkloadTeardownCancellationToken, WorkloadTeardownRuntime, WorkloadTeardownSubmissionError,
 };
-pub use teardown_sandbox::krun::KrunTeardownAdapter;
+pub use teardown_sandbox::krun::{KrunAttachmentTeardownAdapter, KrunTeardownAdapter};
 pub use teardown_sandbox::{
-    ContainerTeardownAdapter, ValidatedSandboxTeardownCommand, validate_sandbox_teardown_command,
+    ContainerAttachmentTeardownAdapter, ContainerTeardownAdapter, ValidatedSandboxTeardownCommand,
+    validate_sandbox_teardown_command,
 };
 /// Sole cross-domain writer of portable workload-saga transitions.
 pub struct WorkloadSagaCoordinator {

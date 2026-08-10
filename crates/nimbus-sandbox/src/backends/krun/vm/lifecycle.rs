@@ -151,7 +151,9 @@ impl KrunSandboxBackend {
                 }
             }
         }
-        let Some(persisted) = self.read_manifest(&manifest.handle.id)? else {
+        let Some(persisted) =
+            self.read_exact_manifest(&manifest.spec.tenant_id, &manifest.handle.id)?
+        else {
             return Err(SandboxError::OperationFailed {
                 message: format!(
                     "krun manifest {} disappeared while its inspection lock was held",
@@ -1140,6 +1142,42 @@ impl KrunSandboxBackend {
                 ),
             })?;
         self.validate_manifest_roots(id, &manifest)?;
+        Ok(Some(manifest))
+    }
+
+    /// Read one tenant-qualified manifest without scanning sibling tenants.
+    pub(super) fn read_exact_manifest(
+        &self,
+        tenant_id: &nimbus_core::TenantId,
+        id: &SandboxId,
+    ) -> Result<Option<KrunSandboxManifest>> {
+        let path =
+            crate::artifact_paths::manifest_path(&self.config.workload_state_root, tenant_id, id);
+        let contents = match std::fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to read exact krun sandbox manifest {}: {error}",
+                        path.display()
+                    ),
+                });
+            }
+        };
+        let manifest: KrunSandboxManifest =
+            serde_json::from_slice(&contents).map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to parse exact krun sandbox manifest {}: {error}",
+                    path.display()
+                ),
+            })?;
+        self.validate_manifest_roots(id, &manifest)?;
+        if manifest.spec.tenant_id != *tenant_id || manifest.conmon_layout.manifest_path != path {
+            return Err(SandboxError::InvalidSpec {
+                message: "krun manifest crossed its tenant-qualified durable path".to_owned(),
+            });
+        }
         Ok(Some(manifest))
     }
 

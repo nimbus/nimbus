@@ -464,6 +464,18 @@ pub(crate) fn release_reserved_batch_without_effect(
         .map_err(port_lease_error)
 }
 
+/// Release one never-bound provider subset against its complete plan witness.
+pub(crate) fn release_reserved_plan_members_without_effect(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+    reservation_claim: &NetworkReservationClaim,
+) -> Result<Vec<PortLeaseRecord>> {
+    authority
+        .release_reserved_plan_members_without_effect(plan_members, requests, reservation_claim)
+        .map_err(port_lease_error)
+}
+
 /// Release one exact never-bound batch while its original coordinator remains
 /// live and has not yet published the canonical request set.
 pub(crate) fn release_reserved_batch_with_lifetime_without_effect(
@@ -1662,6 +1674,32 @@ pub(crate) fn prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
         .map_err(port_lease_error)
 }
 
+pub(crate) fn prepare_provider_managed_plan_members_after_confirmed_stop_with_lifetimes(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+    expected_bindings: &[PortLeaseBinding],
+    lifetimes: &[PortLeaseLifetimeGuard],
+) -> Result<Vec<PortLeaseRecord>> {
+    if requests.len() != expected_bindings.len() {
+        return Err(SandboxError::OperationFailed {
+            message: "planned live provider rebind received crossed binding lengths".to_owned(),
+        });
+    }
+    let expected = requests
+        .iter()
+        .cloned()
+        .zip(expected_bindings.iter().cloned())
+        .collect::<Vec<_>>();
+    authority
+        .prepare_rebind_provider_managed_plan_members_after_confirmed_stop_with_lifetimes(
+            plan_members,
+            &expected,
+            lifetimes,
+        )
+        .map_err(port_lease_error)
+}
+
 /// Atomically release a live provider batch after exact provider stop.
 pub(crate) fn release_provider_managed_batch_after_confirmed_stop_with_lifetimes(
     authority: &LocalPortLeaseAuthority,
@@ -1803,6 +1841,21 @@ pub(crate) fn prepare_provider_managed_claim_batch_after_confirmed_stop(
 ) -> Result<Vec<PortLeaseRecord>> {
     authority
         .prepare_rebind_provider_managed_claim_batch_after_confirmed_stop(requests, recoveries)
+        .map_err(port_lease_error)
+}
+
+pub(crate) fn prepare_provider_managed_plan_claims_after_confirmed_stop(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    requests: &[PortLeaseRequest],
+    recoveries: &[PortLeaseRecoveryGuard],
+) -> Result<Vec<PortLeaseRecord>> {
+    authority
+        .prepare_rebind_provider_managed_plan_claims_after_confirmed_stop(
+            plan_members,
+            requests,
+            recoveries,
+        )
         .map_err(port_lease_error)
 }
 

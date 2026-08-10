@@ -672,6 +672,29 @@ pub(super) fn lock_current_execute_lifecycle_for_backend(
     lock_current_execute_lifecycle(manifest, Some(backend))
 }
 
+/// Acquire the Execute lifecycle lock and return the current durable manifest.
+///
+/// Exact teardown commands authenticate the returned manifest under this lock.
+/// They must not reject a legitimate, newer teardown checkpoint only because
+/// it changed while the command waited for lifecycle ownership.
+pub(super) fn lock_execute_lifecycle_and_read_current_for_backend(
+    backend: &ContainerSandboxBackend,
+    manifest: &ContainerSandboxManifest,
+) -> Result<(RunnerHandoffGuard, ContainerSandboxManifest)> {
+    if manifest.start_mode != ContainerStartMode::Execute {
+        return Err(SandboxError::InvalidSpec {
+            message: "execute lifecycle lock requires an Execute manifest".to_owned(),
+        });
+    }
+    let handoff = lock_runner_handoff_with_deadline(
+        manifest,
+        Some(Instant::now() + RUNNER_HANDOFF_LOCK_TIMEOUT),
+        Some(backend),
+    )?;
+    let persisted = read_runner_manifest(&manifest.conmon_layout.manifest_path)?;
+    Ok((handoff, persisted))
+}
+
 /// Acquire the existing lifecycle lock in shared mode and authenticate the
 /// exact manifest snapshot used by a read-only inspection.
 ///

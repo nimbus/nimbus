@@ -58,11 +58,11 @@
     }
   },
   "summary": {
-    "occurrences": 114,
+    "occurrences": 116,
     "owning_managers": 25,
     "manager_derived_handles": 42,
     "admitted_cross_process_reconstructions": 24,
-    "test_fixtures": 23
+    "test_fixtures": 25
   },
   "occurrences": [
     {
@@ -796,11 +796,21 @@
       "evidence": "nnc4.6c"
     },
     {
+      "path": "crates/nimbus-sandbox/src/backends/container/runtime/test_hooks.rs",
+      "kind": "direct-container-backend-construction",
+      "symbol": "reopen_network_teardown_fixture",
+      "ordinal": 1,
+      "line": 77,
+      "classification": "test-fixture",
+      "os_node_realm": "current-os-node",
+      "evidence": "source-contract"
+    },
+    {
       "path": "crates/nimbus-sandbox/src/backends/krun/vm.rs",
       "kind": "direct-krun-backend-constructor-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 312,
+      "line": 323,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -810,7 +820,7 @@
       "kind": "segment-direct-reconstruction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 314,
+      "line": 325,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -820,7 +830,7 @@
       "kind": "ipam-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 339,
+      "line": 350,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -830,7 +840,17 @@
       "kind": "port-coordinator-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 344,
+      "line": 355,
+      "classification": "test-fixture",
+      "os_node_realm": "current-os-node",
+      "evidence": "source-contract"
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/krun/vm/test_hooks.rs",
+      "kind": "direct-krun-backend-construction",
+      "symbol": "reopen_network_teardown_fixture",
+      "ordinal": 1,
+      "line": 114,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"

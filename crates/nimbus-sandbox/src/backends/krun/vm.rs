@@ -42,6 +42,8 @@ use crate::backends::oci::egress::{
 use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
 };
+#[cfg(test)]
+use crate::backends::oci::network::HostManagedAttachmentCheckpointTestProbe;
 use crate::backends::oci::network::{
     AttachmentAttachAuthority, AttachmentAuxiliaryDisposition, AttachmentBackendKind,
     AttachmentTeardownMode, ConfiguredSegmentAllocator, DEFAULT_AARDVARK_DNS_BINARY,
@@ -72,6 +74,7 @@ use crate::spec::{
 use nimbus_network::{NetworkAttachmentId, NetworkReservationClaim, PublishedEndpoint};
 
 mod attachment_recovery;
+mod attachment_teardown;
 mod coarse_stop;
 mod creator;
 mod inspection;
@@ -82,6 +85,12 @@ mod provision;
 mod readiness;
 mod restart;
 mod teardown;
+#[cfg(any(test, feature = "test-hooks"))]
+mod test_hooks;
+#[cfg(any(test, feature = "test-hooks"))]
+pub(in crate::backends) use test_hooks::{
+    prepare_network_teardown_fixture, reopen_network_teardown_fixture,
+};
 
 impl OciHostManagedAttachmentBackend for KrunSandboxBackend {
     const ATTACHMENT_BACKEND_KIND: AttachmentBackendKind = AttachmentBackendKind::Krun;
@@ -240,6 +249,8 @@ pub struct KrunSandboxBackend {
     effect_barrier_test_probe: Option<KrunEffectBarrierTestProbe>,
     #[cfg(test)]
     terminal_ipam_retirement_failure: Option<Arc<str>>,
+    #[cfg(test)]
+    network_teardown_checkpoint_test_probe: Option<HostManagedAttachmentCheckpointTestProbe>,
 }
 
 #[cfg(test)]
@@ -405,6 +416,8 @@ impl KrunSandboxBackend {
             effect_barrier_test_probe: None,
             #[cfg(test)]
             terminal_ipam_retirement_failure: None,
+            #[cfg(test)]
+            network_teardown_checkpoint_test_probe: None,
         }
     }
 
@@ -445,6 +458,15 @@ impl KrunSandboxBackend {
     }
 
     #[cfg(test)]
+    fn with_network_teardown_checkpoint_test_probe(
+        mut self,
+        probe: HostManagedAttachmentCheckpointTestProbe,
+    ) -> Self {
+        self.network_teardown_checkpoint_test_probe = Some(probe);
+        self
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
     fn with_egress_pin_provider(mut self, provider: Arc<dyn OciEgressPinProvider>) -> Self {
         self.egress_pin_provider = provider;
         self
@@ -503,6 +525,37 @@ impl KrunSandboxBackend {
                 layout: &manifest.network_layout,
                 config: network_config,
                 launch_claim: manifest.reservation_claim(),
+            },
+        )
+    }
+
+    fn retained_attachment_adapter<'a>(
+        &'a self,
+        manifest: &'a KrunSandboxManifest,
+        network_config: &'a OciNetworkConfig,
+        hostname: &'a str,
+    ) -> OciAttachmentAdapter<'a> {
+        <Self as OciHostManagedAttachmentBackend>::host_managed_attachment_adapter(
+            OciAttachmentInput {
+                workload_state_root: &self.config.workload_state_root,
+                tenant_id: &manifest.spec.tenant_id,
+                sandbox_id: &manifest.handle.id,
+                display_name: manifest.spec.display_name(),
+                hostname,
+                bindings: &manifest.spec.port_bindings,
+                leases: &manifest.port_leases,
+                auxiliary_listener: manifest.egress_proxy.as_ref().map(|assignment| {
+                    OciAttachmentAuxiliaryListener::egress_pep(
+                        &assignment.port_lease,
+                        &assignment.host,
+                        assignment.port,
+                    )
+                }),
+                layout: &manifest.network_layout,
+                config: network_config,
+                // Provider ownership consumes the launch-authority variant but
+                // retained detach still authenticates the immutable complete-plan claim.
+                launch_claim: Some(&network_config.reservation_claim),
             },
         )
     }
@@ -724,6 +777,11 @@ struct KrunSandboxManifest {
     /// Exact execution-only drain and stop progress. Network authority remains
     /// retained until the later release owner completes.
     execution_teardown: teardown::state::KrunExecutionTeardownState,
+    /// Strict provider-local attachment detach and release progress.
+    ///
+    /// This records effect boundaries and compound detached evidence. The
+    /// provider command journal remains the sole command-result authority.
+    network_teardown: crate::backends::oci::network::HostManagedAttachmentTeardownState,
     egress_proxy: Option<EgressProxyAssignment>,
     conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,

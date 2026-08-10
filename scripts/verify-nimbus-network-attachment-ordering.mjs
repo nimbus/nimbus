@@ -7,6 +7,10 @@ const paths = {
   stateStore: "crates/nimbus-network/src/state_store.rs",
   segment: "crates/nimbus-network/src/segment.rs",
   lifecycle: "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle.rs",
+  hostTeardown:
+    "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/host_teardown.rs",
+  retainedDetach:
+    "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/host_teardown/retained_detach.rs",
   host: "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/host.rs",
   machineLifecycle:
     "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/machine_forwarded.rs",
@@ -135,10 +139,21 @@ requireOrdered("shared attachment setup", source.lifecycle, [
   "claim_netavark_bindings_with_lifetimes",
   "host.setup_provider",
 ]);
-requireOrdered("shared host-managed teardown", source.lifecycle, [
+requireOrdered("shared host-managed teardown", source.hostTeardown, [
   "recovery::prepare_detach(&durable, durable_record, provider_observation)",
   "host.prepare_provider_teardown",
   "before_provider_detach(auxiliary_disposition)",
+  "host.teardown_provider",
+]);
+requireOrdered("retained host-managed detach", source.retainedDetach, [
+  "recovery::prepare_retained_detach(&durable, durable_record, provider_observation)",
+  "record_phase(HostManagedAttachmentDetachPhase::AttachmentDeleting)",
+  "quarantine_network_segment_hold",
+  "stop_auxiliary(",
+  "classify_planned_netavark_cleanup_batch",
+  "begin_planned_netavark_cleanup",
+  "host.prepare_provider_teardown",
+  "record_phase(HostManagedAttachmentDetachPhase::ProviderDeleteMayExist)",
   "host.teardown_provider",
 ]);
 requireOrdered("shared machine-forwarded teardown", source.machineLifecycle, [

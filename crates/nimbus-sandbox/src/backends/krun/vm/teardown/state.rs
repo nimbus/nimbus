@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use crate::ProviderCommandClaim;
 use crate::backends::conmon::runtime_process::RuntimeProcessIdentity;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::backends::krun::vm) enum KrunNetworkStopRequirementError {
+    NotStopped,
+    Crossed,
+}
+
 /// Independent execution drain and stop progress retained until network release.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -32,6 +38,20 @@ impl KrunExecutionTeardownState {
 
     pub(in crate::backends::krun::vm) fn admission_is_open(&self) -> bool {
         matches!(self.drain, KrunDrainProgress::Open)
+    }
+
+    pub(in crate::backends::krun::vm) fn require_stopped_for_network(
+        &self,
+        network_claim: &ProviderCommandClaim,
+    ) -> Result<&[u8], KrunNetworkStopRequirementError> {
+        let KrunStopProgress::ExecutionStopped { fence, evidence } = &self.stop else {
+            return Err(KrunNetworkStopRequirementError::NotStopped);
+        };
+        if fence.same_lifecycle_fence(network_claim) {
+            Ok(evidence)
+        } else {
+            Err(KrunNetworkStopRequirementError::Crossed)
+        }
     }
 }
 

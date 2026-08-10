@@ -5,6 +5,9 @@ use std::time::{Duration, Instant};
 
 use super::*;
 
+#[path = "tests/network_recovery.rs"]
+mod network_recovery;
+
 const DIGEST_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DIGEST_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const SOURCE_ATTEMPT: &str = "wpa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -55,6 +58,20 @@ fn command_claim(
         operation,
     })
     .expect("fixture claim should be valid")
+}
+
+#[test]
+fn lifecycle_fence_accepts_adjacent_command_attempts_but_rejects_crossed_workloads() {
+    let stopped = command_claim(ProviderCommandOperation::StopExecution, 0, 3);
+    let mut detached = command_claim(ProviderCommandOperation::DetachNetwork, 0, 1);
+    detached.attempt_id = NEXT_ATTEMPT.to_owned();
+    detached.effect_subject = r#"{"kind":"network","id":"attachment-alpha"}"#.to_owned();
+    detached.provider_target_digest = DIGEST_A.to_owned();
+
+    assert!(stopped.same_lifecycle_fence(&detached));
+
+    detached.desired_digest = DIGEST_B.to_owned();
+    assert!(!stopped.same_lifecycle_fence(&detached));
 }
 
 fn next_restart_claim(operation: ProviderCommandOperation, epoch: u64) -> ProviderCommandClaim {
@@ -518,7 +535,7 @@ fn execution_publishes_its_result_before_releasing_the_live_claim_lock() {
 }
 
 #[test]
-fn retry_authority_is_stop_only_and_retry_lineage_corruption_fails_closed() {
+fn retry_authority_is_recovery_only_and_retry_lineage_corruption_fails_closed() {
     let root = tempfile::tempdir().expect("temporary root should exist");
     let activation_journal = journal(root.path());
     let activation = claim(0);

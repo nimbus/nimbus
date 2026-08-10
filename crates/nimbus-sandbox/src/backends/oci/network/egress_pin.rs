@@ -24,7 +24,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -95,14 +95,14 @@ impl OciEgressPinProvider for RealOciEgressPinProvider {
 /// `Arc<dyn OciEgressPinProvider>`, proving the real composition seam supports
 /// false, unknown, recovery, and call-count assertions without namespace
 /// privilege.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug)]
 pub(crate) struct FixedOciEgressPinProvider {
     observation: Mutex<OciEgressPinObservation>,
     apply_count: AtomicUsize,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl FixedOciEgressPinProvider {
     pub(crate) fn new(observation: OciEgressPinObservation) -> Self {
         Self {
@@ -115,6 +115,7 @@ impl FixedOciEgressPinProvider {
         Self::new(OciEgressPinObservation::Ready)
     }
 
+    #[cfg(test)]
     pub(crate) fn set_observation(&self, observation: OciEgressPinObservation) {
         *self
             .observation
@@ -122,12 +123,13 @@ impl FixedOciEgressPinProvider {
             .expect("fixed egress-pin observation lock should not be poisoned") = observation;
     }
 
+    #[cfg(test)]
     pub(crate) fn apply_count(&self) -> usize {
         self.apply_count.load(Ordering::SeqCst)
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl OciEgressPinObserver for FixedOciEgressPinProvider {
     fn inspect(
         &self,
@@ -141,7 +143,7 @@ impl OciEgressPinObserver for FixedOciEgressPinProvider {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl OciEgressPinProvider for FixedOciEgressPinProvider {
     fn apply(&self, _layout: &OciNetworkLayout, _proxy: &EgressProxyAssignment) -> Result<()> {
         self.apply_count.fetch_add(1, Ordering::SeqCst);

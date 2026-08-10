@@ -6,6 +6,15 @@ use crate::error::SandboxError;
 use crate::instance::SandboxId;
 
 mod attachment_lifecycle;
+#[cfg(test)]
+pub(crate) use attachment_lifecycle::{
+    HostManagedAttachmentCheckpointTestProbe, HostManagedAttachmentTeardownCheckpoint,
+};
+pub(crate) use attachment_lifecycle::{
+    HostManagedAttachmentCommandInspection, HostManagedAttachmentCommandInspectionError,
+    HostManagedAttachmentDetachPhase, HostManagedAttachmentReleasePhase,
+    HostManagedAttachmentTeardownState,
+};
 mod cluster;
 mod dto;
 mod egress_pin;
@@ -37,7 +46,7 @@ pub(crate) use attachment_lifecycle::{
     OciAttachmentReadinessState, OciHostManagedAttachmentBackend,
     OciMachineForwardedAttachmentBackend, oci_attachment_plan,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) use egress_pin::FixedOciEgressPinProvider;
 pub(crate) use egress_pin::{
     OciEgressPinObservation, OciEgressPinObserver, OciEgressPinProvider, RealOciEgressPinProvider,

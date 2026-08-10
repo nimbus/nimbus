@@ -6,16 +6,20 @@ use nimbus_network::{PortLeaseBinding, PortLeasePhase, PortLeaseRecord, PortLeas
 use super::{
     EgressProxyAssignment, EgressProxyRegistry, ExpectedListenerAuthority, RegisteredArtifacts,
     SandboxError, SandboxId, egress_proxy_error, remove_trust_anchor_file,
+    validate_trust_anchor_path,
 };
+use crate::backends::oci::port_lease::port_lease_error;
 use crate::backends::oci::port_lease::{
     inspect_exact, prepare_rebind_after_confirmed_stop,
     prepare_rebind_after_confirmed_stop_with_lifetime, release, release_after_confirmed_stop,
     release_with_lifetime, require_listener_authority, withdraw,
 };
 use crate::error::Result;
+use crate::provision::SandboxProvisionNetworkPlan;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PepCleanupDisposition {
+    Detach,
     Restart,
     Release,
 }
@@ -71,6 +75,7 @@ pub(super) struct PepCleanupProgress {
 #[derive(Clone)]
 struct RegisteredSnapshot {
     port_lease: Option<PortLeaseRequest>,
+    plan_members: Option<Vec<PortLeaseRequest>>,
     cleanup: Option<PepCleanupProgress>,
 }
 
@@ -81,6 +86,7 @@ impl From<&RegisteredArtifacts> for RegisteredSnapshot {
         let _tenant_lease_pin = &artifacts.tenant_lease;
         Self {
             port_lease: artifacts.port_lease.clone(),
+            plan_members: artifacts.plan_members.clone(),
             cleanup: artifacts.cleanup.clone(),
         }
     }
@@ -145,6 +151,184 @@ impl EgressProxyRegistry {
         )
     }
 
+    /// Stop an exact PEP while retaining its selected listener as fenced,
+    /// non-bindable detach authority.
+    pub(crate) fn stop_for_detach(
+        &self,
+        tenant_id: &TenantId,
+        id: &SandboxId,
+        plan: &SandboxProvisionNetworkPlan,
+        assignment: Option<&EgressProxyAssignment>,
+    ) -> Result<()> {
+        let persisted = assignment
+            .map(|assignment| {
+                assignment.require_compiled_plan_authority(tenant_id, plan)?;
+                let plan_members = assignment.compiled_plan_members(plan);
+                let record = self
+                    .port_authority()?
+                    .inspect_plan_member(&plan_members, &assignment.port_lease)
+                    .map_err(|error| SandboxError::OperationFailed {
+                        message: format!(
+                            "compiled egress PEP lease {} rejected its complete plan witness: {error}",
+                            assignment.port_lease.lease_id()
+                        ),
+                    })?;
+                if record.reserved_port().map(std::num::NonZeroU16::get)
+                    != Some(assignment.bind_addr()?.port())
+                {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "compiled egress PEP lease {} does not own its assigned port",
+                            assignment.port_lease.lease_id()
+                        ),
+                    });
+                }
+                Ok((record, plan_members))
+            })
+            .transpose()?;
+        if let (Some(assignment), Some((record, plan_members))) = (assignment, persisted.as_ref()) {
+            let workload_id = Self::workload_id(tenant_id, id)?;
+            let registered = self
+                .engine
+                .with_lifecycle_attachment(&workload_id, |_| ())
+                .map_err(egress_proxy_error)?
+                .is_some();
+            if !registered {
+                if restart_transition_is_durably_complete(record) {
+                    return Ok(());
+                }
+                return self.recover_detach_after_owner_death(
+                    tenant_id,
+                    id,
+                    assignment,
+                    plan_members,
+                );
+            }
+        }
+        self.stop_with_lease_disposition(
+            tenant_id,
+            id,
+            assignment.map(|assignment| &assignment.port_lease),
+            persisted.map(|(record, _)| record),
+            PepCleanupDisposition::Detach,
+        )
+    }
+
+    /// Settle one process-bound PEP after its exact lifetime owner died.
+    ///
+    /// The recovery guard is the provider-absence proof for a process-bound
+    /// listener. CleanupPending is durable before trust-anchor removal, and the
+    /// listener becomes restart-retained only after that artifact is absent.
+    fn recover_detach_after_owner_death(
+        &self,
+        tenant_id: &TenantId,
+        id: &SandboxId,
+        assignment: &EgressProxyAssignment,
+        plan_members: &[PortLeaseRequest],
+    ) -> Result<()> {
+        let authority = self.port_authority()?;
+        let requests = std::slice::from_ref(&assignment.port_lease);
+        let recoveries = authority
+            .recover_dead_plan_members(plan_members, requests)
+            .map_err(port_lease_error)?;
+        authority
+            .mark_cleanup_pending_plan_members_after_owner_death(
+                plan_members,
+                requests,
+                &recoveries,
+            )
+            .map_err(port_lease_error)?;
+
+        let trust_anchor_path = self.trust_anchor_path(tenant_id, id);
+        validate_trust_anchor_path(&self.trust_anchor_root, &trust_anchor_path)?;
+        remove_trust_anchor_file(&trust_anchor_path)?;
+
+        let records = authority
+            .prepare_rebind_process_bound_plan_members_after_owner_death(
+                plan_members,
+                requests,
+                &recoveries,
+            )
+            .map_err(port_lease_error)?;
+        if records.len() != 1 || !restart_transition_is_durably_complete(&records[0]) {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "dead-owner recovery did not retain the exact egress proxy listener for sandbox {id}"
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Release one exact stopped-retained PEP lease without a provider effect.
+    pub(crate) fn release_after_detach(
+        &self,
+        tenant_id: &TenantId,
+        id: &SandboxId,
+        plan: &SandboxProvisionNetworkPlan,
+        assignment: Option<&EgressProxyAssignment>,
+    ) -> Result<()> {
+        let Some(assignment) = assignment else {
+            return Ok(());
+        };
+        let workload_id = Self::workload_id(tenant_id, id)?;
+        if self
+            .engine
+            .with_lifecycle_attachment(&workload_id, |_| ())
+            .map_err(egress_proxy_error)?
+            .is_some()
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "cannot release detached egress proxy for sandbox {id}: process-local provider authority still exists"
+                ),
+            });
+        }
+        assignment.require_compiled_plan_authority(tenant_id, plan)?;
+        let plan_members = assignment.compiled_plan_members(plan);
+        let record = self
+            .port_authority()?
+            .inspect_plan_member(&plan_members, &assignment.port_lease)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "compiled egress PEP lease {} rejected its complete plan witness: {error}",
+                    assignment.port_lease.lease_id()
+                ),
+            })?;
+        if record.reserved_port().map(std::num::NonZeroU16::get)
+            != Some(assignment.bind_addr()?.port())
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "compiled egress PEP lease {} does not own its assigned port",
+                    assignment.port_lease.lease_id()
+                ),
+            });
+        }
+        if record.phase() == PortLeasePhase::Released {
+            return Ok(());
+        }
+        if !restart_transition_is_durably_complete(&record) {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "cannot release detached egress proxy for sandbox {id}: exact listener is not stopped and retained"
+                ),
+            });
+        }
+        self.port_authority()?
+            .release_plan_members_after_confirmed_stop(
+                &plan_members,
+                std::slice::from_ref(&assignment.port_lease),
+            )
+            .map(drop)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to release compiled egress PEP lease {}: {error}",
+                    assignment.port_lease.lease_id()
+                ),
+            })
+    }
+
     fn stop_with_lease_disposition(
         &self,
         tenant_id: &TenantId,
@@ -186,9 +370,11 @@ impl EgressProxyRegistry {
             });
         }
         let persisted_phase = persisted_record.as_ref().map(PortLeaseRecord::phase);
-        if disposition == PepCleanupDisposition::Restart
-            && let Some(phase @ (PortLeasePhase::Failed | PortLeasePhase::Released)) =
-                persisted_phase
+        if matches!(
+            disposition,
+            PepCleanupDisposition::Detach | PepCleanupDisposition::Restart
+        ) && let Some(phase @ (PortLeasePhase::Failed | PortLeasePhase::Released)) =
+            persisted_phase
         {
             return Err(SandboxError::OperationFailed {
                 message: format!(
@@ -208,10 +394,12 @@ impl EgressProxyRegistry {
                 return Ok(());
             }
             (Some(_), None)
-                if disposition == PepCleanupDisposition::Restart
-                    && persisted_record
-                        .as_ref()
-                        .is_some_and(restart_transition_is_durably_complete) =>
+                if matches!(
+                    disposition,
+                    PepCleanupDisposition::Detach | PepCleanupDisposition::Restart
+                ) && persisted_record
+                    .as_ref()
+                    .is_some_and(restart_transition_is_durably_complete) =>
             {
                 // The restart transition is the durable acknowledgement that
                 // provider shutdown and trust-anchor withdrawal completed
@@ -282,7 +470,16 @@ impl EgressProxyRegistry {
             .map(|request| {
                 persisted_record
                     .filter(|record| record.request() == request)
-                    .map_or_else(|| inspect_exact(self.port_authority()?, request), Ok)
+                    .map_or_else(
+                        || match registered.plan_members.as_deref() {
+                            Some(plan_members) => self
+                                .port_authority()?
+                                .inspect_plan_member(plan_members, request)
+                                .map_err(port_lease_error),
+                            None => inspect_exact(self.port_authority()?, request),
+                        },
+                        Ok,
+                    )
             })
             .transpose()?;
         let durable_record_proves_transition_complete = durable_record
@@ -360,12 +557,33 @@ impl EgressProxyRegistry {
         // release has completed, a retry must not attempt Released ->
         // Withdrawing merely because tombstone removal was interrupted.
         if !durable_transition_complete
-            && disposition == PepCleanupDisposition::Release
+            && matches!(
+                disposition,
+                PepCleanupDisposition::Detach | PepCleanupDisposition::Release
+            )
             && let Some(request) = port_lease.as_ref()
         {
             #[cfg(test)]
             observe_pre_withdraw();
-            withdraw(self.port_authority()?, request)?;
+            stop.with_attachment(|artifacts| {
+                match (
+                    artifacts.plan_members.as_deref(),
+                    artifacts.lifetime.as_ref(),
+                    expected_binding.as_ref(),
+                ) {
+                    (Some(plan_members), Some(lifetime), Some(binding)) => self
+                        .port_authority()?
+                        .withdraw_process_bound_plan_members_with_lifetimes(
+                            plan_members,
+                            &[(request.clone(), binding.clone())],
+                            &[lifetime],
+                        )
+                        .map(drop)
+                        .map_err(port_lease_error),
+                    _ => withdraw(self.port_authority()?, request).map(drop),
+                }
+            })
+            .map_err(egress_proxy_error)??;
         }
 
         // Explicit acknowledgement, not Drop or socket bindability, grants
@@ -403,17 +621,43 @@ impl EgressProxyRegistry {
                 })?;
             match disposition {
                 PepCleanupDisposition::Release => {
-                    stop.with_attachment(|artifacts| match artifacts.lifetime.as_ref() {
-                        Some(lifetime) => {
-                            release_with_lifetime(self.port_authority()?, request, lifetime)
+                    stop.with_attachment(|artifacts| {
+                        match (
+                            artifacts.plan_members.as_deref(),
+                            artifacts.lifetime.as_ref(),
+                            expected_binding.as_ref(),
+                        ) {
+                            (Some(plan_members), Some(lifetime), Some(binding)) => self
+                                .port_authority()?
+                                .release_process_bound_plan_members_after_confirmed_stop_with_lifetimes(
+                                    plan_members,
+                                    &[(request.clone(), binding.clone())],
+                                    &[lifetime],
+                                )
+                                .map(drop)
+                                .map_err(port_lease_error),
+                            (None, Some(lifetime), _) => {
+                                release_with_lifetime(self.port_authority()?, request, lifetime)
+                                    .map(drop)
+                            }
+                            // Lifetime-free registrations are test-only fixtures
+                            // whose durable record carries no live owner.
+                            (None, None, _) => release(self.port_authority()?, request).map(drop),
+                            (Some(_), None, _) => Err(SandboxError::OperationFailed {
+                                message: format!(
+                                    "planned egress proxy cleanup for sandbox {id} lost its process lifetime"
+                                ),
+                            }),
+                            (Some(_), Some(_), None) => Err(SandboxError::OperationFailed {
+                                message: format!(
+                                    "planned egress proxy cleanup for sandbox {id} lost its exact binding"
+                                ),
+                            }),
                         }
-                        // Lifetime-free registrations are test-only fixtures
-                        // whose durable record carries no live owner.
-                        None => release(self.port_authority()?, request),
                     })
                     .map_err(egress_proxy_error)??;
                 }
-                PepCleanupDisposition::Restart => {
+                PepCleanupDisposition::Detach | PepCleanupDisposition::Restart => {
                     let expected_binding = expected_binding.as_ref().ok_or_else(|| {
                         SandboxError::OperationFailed {
                             message: format!(
@@ -421,22 +665,45 @@ impl EgressProxyRegistry {
                             ),
                         }
                     })?;
-                    stop.with_attachment(|artifacts| match artifacts.lifetime.as_ref() {
-                        Some(lifetime) => prepare_rebind_after_confirmed_stop_with_lifetime(
-                            self.port_authority()?,
-                            request,
-                            expected_binding,
-                            lifetime,
-                        ),
-                        // Durable production registrations always retain a
-                        // lifetime. The lifetime-free path exists solely for
-                        // test fixtures that intentionally omit durable
-                        // listener ownership.
-                        None => prepare_rebind_after_confirmed_stop(
-                            self.port_authority()?,
-                            request,
-                            expected_binding,
-                        ),
+                    stop.with_attachment(|artifacts| {
+                        match (
+                            artifacts.plan_members.as_deref(),
+                            artifacts.lifetime.as_ref(),
+                        ) {
+                            (Some(plan_members), Some(lifetime)) => self
+                                .port_authority()?
+                                .prepare_rebind_plan_members_after_confirmed_stop_with_lifetimes(
+                                    plan_members,
+                                    &[(request.clone(), expected_binding.clone())],
+                                    std::slice::from_ref(lifetime),
+                                )
+                                .map(drop)
+                                .map_err(port_lease_error),
+                            (None, Some(lifetime)) => {
+                                prepare_rebind_after_confirmed_stop_with_lifetime(
+                                    self.port_authority()?,
+                                    request,
+                                    expected_binding,
+                                    lifetime,
+                                )
+                                .map(drop)
+                            }
+                            // Durable production registrations always retain a
+                            // lifetime. The lifetime-free path exists solely for
+                            // test fixtures that intentionally omit durable
+                            // listener ownership.
+                            (None, None) => prepare_rebind_after_confirmed_stop(
+                                self.port_authority()?,
+                                request,
+                                expected_binding,
+                            )
+                            .map(drop),
+                            (Some(_), None) => Err(SandboxError::OperationFailed {
+                                message: format!(
+                                    "planned egress proxy cleanup for sandbox {id} lost its process lifetime"
+                                ),
+                            }),
+                        }
                     })
                     .map_err(egress_proxy_error)??;
                 }
@@ -461,7 +728,9 @@ fn cleanup_transition_is_durably_complete(
 ) -> bool {
     match disposition {
         PepCleanupDisposition::Release => record.phase() == PortLeasePhase::Released,
-        PepCleanupDisposition::Restart => restart_transition_is_durably_complete(record),
+        PepCleanupDisposition::Detach | PepCleanupDisposition::Restart => {
+            restart_transition_is_durably_complete(record)
+        }
     }
 }
 

@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use nimbus_network::NetworkProviderId;
 use nimbus_sandbox::backends::container::ContainerSandboxBackend;
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
@@ -12,6 +13,7 @@ use nimbus_sandbox::{
     ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
     SandboxBackendKind, SandboxExecutionAttemptId, SandboxExecutionTeardownCommand,
     SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation, SandboxId,
+    SandboxNetworkTeardownObservation, sandbox_network_plan_requirements,
 };
 use nimbus_workloads::{
     WorkloadExecutionProviderId, WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest,
@@ -21,13 +23,15 @@ use nimbus_workloads::{
 
 use super::provision_sandbox::sandbox_execution_provider_id;
 use super::{
-    ConfirmedWorkloadTeardownCommand, WorkloadExecutionDrainCapability,
+    ConfirmedWorkloadTeardownCommand, NetworkAttachmentTeardownCapabilities,
+    NetworkDetachmentCapability, NetworkReleaseCapability, WorkloadExecutionDrainCapability,
     WorkloadExecutionStopCapability, WorkloadExecutionTeardownCapabilities,
     WorkloadTeardownCapabilityFuture, WorkloadTeardownExecuteOutcome,
     WorkloadTeardownInspectOutcome, WorkloadTeardownProviderObservation,
     WorkloadTeardownProviderOutcome,
 };
 
+mod attachment;
 pub mod krun;
 
 const CONTAINER_EXECUTION_PROVIDER_KEY: &str = "nimbus-sandbox.container-execution";
@@ -194,7 +198,12 @@ impl ProviderTeardownPhaseAdapter {
             {
                 provider_outcome(command, &observation)
             }
-            Ok(Some(observation)) => self.record(command, claim, inspect(&observation)),
+            Ok(Some(observation)) => {
+                match self.journal.inspect_current_claim(&observation, inspect) {
+                    Ok(inspected) => self.record(command, claim, inspected),
+                    Err(error) => journal_error_outcome(command.mode(), &error),
+                }
+            }
             Err(error) => journal_error_outcome(command.mode(), &error),
         }
     }
@@ -242,6 +251,88 @@ impl ProviderTeardownPhaseAdapter {
             observation.evidence(),
         ) {
             Ok(observation) => provider_outcome(command, &observation),
+            Err(error) => journal_error_outcome(command.mode(), &error),
+        }
+    }
+
+    fn execute_network(
+        &self,
+        command: &ConfirmedWorkloadTeardownCommand,
+        validated: &attachment::ValidatedSandboxNetworkTeardownCommand,
+        effect: impl FnOnce(
+            ProviderCommandExecutionClaim,
+        ) -> Result<ProviderCommandObservation, ProviderCommandJournalError>,
+        inspect: impl FnOnce(&ProviderCommandObservation) -> SandboxNetworkTeardownObservation,
+    ) -> WorkloadTeardownProviderOutcome {
+        let claim = validated.sandbox_command().provider_claim();
+        match self.journal.claim_dispatch_epoch(claim) {
+            Ok(ProviderCommandClaimDecision::ExecuteClaimed(execution_claim)) => {
+                match effect(execution_claim) {
+                    Ok(observation) => provider_outcome(command, &observation),
+                    Err(error) => journal_error_outcome(command.mode(), &error),
+                }
+            }
+            Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation))
+                if observation.kind() == ProviderCommandObservationKind::Claimed =>
+            {
+                match self.journal.resume_current_claim(&observation) {
+                    Ok(execution_claim) => match effect(execution_claim) {
+                        Ok(observation) => provider_outcome(command, &observation),
+                        Err(error) => journal_error_outcome(command.mode(), &error),
+                    },
+                    Err(error) => journal_error_outcome(command.mode(), &error),
+                }
+            }
+            Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation))
+                if matches!(
+                    observation.kind(),
+                    ProviderCommandObservationKind::InProgress
+                        | ProviderCommandObservationKind::Ambiguous
+                ) =>
+            {
+                let inspected = inspect(&observation);
+                match self.journal.record_observation_with_failure_code(
+                    claim,
+                    network_observation_kind(&inspected),
+                    inspected.failure_code(),
+                    inspected.evidence(),
+                ) {
+                    Ok(observation) => provider_outcome(command, &observation),
+                    Err(error) => journal_error_outcome(command.mode(), &error),
+                }
+            }
+            Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation)) => {
+                provider_outcome(command, &observation)
+            }
+            Err(error) => journal_error_outcome(command.mode(), &error),
+        }
+    }
+
+    fn inspect_network(
+        &self,
+        command: &ConfirmedWorkloadTeardownCommand,
+        validated: &attachment::ValidatedSandboxNetworkTeardownCommand,
+        inspect: impl FnOnce(&ProviderCommandObservation) -> SandboxNetworkTeardownObservation,
+    ) -> WorkloadTeardownProviderOutcome {
+        let claim = validated.sandbox_command().provider_claim();
+        match self.journal.adopt_exact_attempt(claim) {
+            Ok(None) => WorkloadTeardownProviderOutcome::Inspect(
+                WorkloadTeardownInspectOutcome::NotCompleted(WorkloadOwnerEvidenceDigest::sha256(
+                    b"sandbox network provider command was never claimed",
+                )),
+            ),
+            Ok(Some(observation))
+                if matches!(
+                    observation.kind(),
+                    ProviderCommandObservationKind::Succeeded
+                        | ProviderCommandObservationKind::DefiniteFailure
+                        | ProviderCommandObservationKind::Absent
+                        | ProviderCommandObservationKind::RetryAuthorized
+                ) =>
+            {
+                provider_outcome(command, &observation)
+            }
+            Ok(Some(observation)) => network_inspect_outcome(inspect(&observation)),
             Err(error) => journal_error_outcome(command.mode(), &error),
         }
     }
@@ -334,6 +425,134 @@ impl WorkloadExecutionStopCapability for ContainerTeardownAdapter {
     }
 }
 
+/// Real Container substitution for host-managed detach and release.
+pub struct ContainerAttachmentTeardownAdapter {
+    backend: Arc<ContainerSandboxBackend>,
+    phases: ProviderTeardownPhaseAdapter,
+    provider_id: NetworkProviderId,
+}
+
+impl ContainerAttachmentTeardownAdapter {
+    pub fn new(backend: Arc<ContainerSandboxBackend>) -> Result<Self, ProviderCommandJournalError> {
+        let journal = backend.attempt_idempotency_journal()?;
+        Ok(Self {
+            backend,
+            phases: ProviderTeardownPhaseAdapter::new(journal),
+            provider_id: sandbox_network_plan_requirements(SandboxBackendKind::Container)
+                .required_attachment_provider_id()
+                .clone(),
+        })
+    }
+
+    pub fn capabilities(self: Arc<Self>) -> NetworkAttachmentTeardownCapabilities {
+        NetworkAttachmentTeardownCapabilities::new(self.provider_id.clone(), self.clone(), self)
+    }
+
+    fn validated(
+        &self,
+        command: &ConfirmedWorkloadTeardownCommand,
+    ) -> Result<attachment::ValidatedSandboxNetworkTeardownCommand, WorkloadFailureEvidence> {
+        attachment::validate_sandbox_network_teardown_command(
+            command,
+            SandboxBackendKind::Container,
+        )
+    }
+
+    fn execute_network(
+        &self,
+        command: &ConfirmedWorkloadTeardownCommand,
+    ) -> WorkloadTeardownProviderOutcome {
+        match self.validated(command) {
+            Ok(validated) => match self
+                .backend
+                .preflight_network_teardown_command(validated.sandbox_command())
+            {
+                Ok(()) => self.phases.execute_network(
+                    command,
+                    &validated,
+                    |execution_claim| {
+                        self.backend.execute_network_teardown_with_claim(
+                            validated.sandbox_command(),
+                            execution_claim,
+                        )
+                    },
+                    |observation| {
+                        self.backend.inspect_network_teardown_with_observation(
+                            validated.sandbox_command(),
+                            observation,
+                        )
+                    },
+                ),
+                Err(observation) => network_preflight_failure_outcome(command, observation),
+            },
+            Err(failure) => WorkloadTeardownProviderOutcome::Execute(
+                WorkloadTeardownExecuteOutcome::DefiniteFailure(failure),
+            ),
+        }
+    }
+
+    fn inspect_network(
+        &self,
+        command: &ConfirmedWorkloadTeardownCommand,
+    ) -> WorkloadTeardownProviderOutcome {
+        match self.validated(command) {
+            Ok(validated) => match self
+                .backend
+                .preflight_network_teardown_command(validated.sandbox_command())
+            {
+                Ok(()) => self
+                    .phases
+                    .inspect_network(command, &validated, |observation| {
+                        self.backend.inspect_network_teardown_with_observation(
+                            validated.sandbox_command(),
+                            observation,
+                        )
+                    }),
+                Err(observation) => network_preflight_failure_outcome(command, observation),
+            },
+            Err(failure) => WorkloadTeardownProviderOutcome::Inspect(
+                WorkloadTeardownInspectOutcome::DefiniteFailure(failure),
+            ),
+        }
+    }
+}
+
+impl NetworkDetachmentCapability for ContainerAttachmentTeardownAdapter {
+    fn execute<'a>(
+        &'a self,
+        command: &'a ConfirmedWorkloadTeardownCommand,
+    ) -> WorkloadTeardownCapabilityFuture<'a> {
+        Box::pin(async move {
+            WorkloadTeardownProviderObservation::for_command(command, self.execute_network(command))
+        })
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        command: &'a ConfirmedWorkloadTeardownCommand,
+    ) -> WorkloadTeardownCapabilityFuture<'a> {
+        Box::pin(async move {
+            WorkloadTeardownProviderObservation::for_command(command, self.inspect_network(command))
+        })
+    }
+}
+
+impl NetworkReleaseCapability for ContainerAttachmentTeardownAdapter {
+    fn execute<'a>(
+        &'a self,
+        command: &'a ConfirmedWorkloadTeardownCommand,
+    ) -> WorkloadTeardownCapabilityFuture<'a> {
+        <Self as NetworkDetachmentCapability>::execute(self, command)
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        command: &'a ConfirmedWorkloadTeardownCommand,
+    ) -> WorkloadTeardownCapabilityFuture<'a> {
+        <Self as NetworkDetachmentCapability>::inspect(self, command)
+    }
+}
+
 fn provider_outcome(
     command: &ConfirmedWorkloadTeardownCommand,
     observation: &ProviderCommandObservation,
@@ -397,23 +616,118 @@ fn provider_outcome(
     }
 }
 
+fn network_inspect_outcome(
+    observation: SandboxNetworkTeardownObservation,
+) -> WorkloadTeardownProviderOutcome {
+    let evidence = WorkloadOwnerEvidenceDigest::sha256(observation.evidence());
+    WorkloadTeardownProviderOutcome::Inspect(match observation {
+        SandboxNetworkTeardownObservation::Succeeded { .. } => {
+            WorkloadTeardownInspectOutcome::InProgress(evidence)
+        }
+        SandboxNetworkTeardownObservation::DefiniteFailure { code, .. } => {
+            WorkloadTeardownInspectOutcome::DefiniteFailure(provider_failure(&code, evidence))
+        }
+        SandboxNetworkTeardownObservation::Absent { .. }
+        | SandboxNetworkTeardownObservation::RetryAuthorized { .. } => {
+            WorkloadTeardownInspectOutcome::NotCompleted(evidence)
+        }
+        SandboxNetworkTeardownObservation::InProgress { .. } => {
+            WorkloadTeardownInspectOutcome::InProgress(evidence)
+        }
+        SandboxNetworkTeardownObservation::Ambiguous { .. } => {
+            WorkloadTeardownInspectOutcome::Ambiguous
+        }
+    })
+}
+
+fn network_preflight_failure_outcome(
+    command: &ConfirmedWorkloadTeardownCommand,
+    observation: SandboxNetworkTeardownObservation,
+) -> WorkloadTeardownProviderOutcome {
+    let evidence = WorkloadOwnerEvidenceDigest::sha256(observation.evidence());
+    match (command.mode(), observation) {
+        (
+            WorkloadTeardownCommandMode::Execute,
+            SandboxNetworkTeardownObservation::DefiniteFailure { code, .. },
+        ) => WorkloadTeardownProviderOutcome::Execute(
+            WorkloadTeardownExecuteOutcome::DefiniteFailure(provider_failure(&code, evidence)),
+        ),
+        (
+            WorkloadTeardownCommandMode::Inspect,
+            SandboxNetworkTeardownObservation::DefiniteFailure { code, .. },
+        ) => WorkloadTeardownProviderOutcome::Inspect(
+            WorkloadTeardownInspectOutcome::DefiniteFailure(provider_failure(&code, evidence)),
+        ),
+        (
+            WorkloadTeardownCommandMode::Execute,
+            SandboxNetworkTeardownObservation::Ambiguous { .. },
+        ) => WorkloadTeardownProviderOutcome::Execute(WorkloadTeardownExecuteOutcome::Ambiguous),
+        (
+            WorkloadTeardownCommandMode::Inspect,
+            SandboxNetworkTeardownObservation::Ambiguous { .. },
+        ) => WorkloadTeardownProviderOutcome::Inspect(WorkloadTeardownInspectOutcome::Ambiguous),
+        (WorkloadTeardownCommandMode::Execute, _) => {
+            WorkloadTeardownProviderOutcome::Execute(WorkloadTeardownExecuteOutcome::Ambiguous)
+        }
+        (WorkloadTeardownCommandMode::Inspect, _) => {
+            WorkloadTeardownProviderOutcome::Inspect(WorkloadTeardownInspectOutcome::Ambiguous)
+        }
+    }
+}
+
+fn network_observation_kind(
+    observation: &SandboxNetworkTeardownObservation,
+) -> ProviderCommandObservationKind {
+    match observation {
+        SandboxNetworkTeardownObservation::Succeeded { .. } => {
+            ProviderCommandObservationKind::Succeeded
+        }
+        SandboxNetworkTeardownObservation::DefiniteFailure { .. } => {
+            ProviderCommandObservationKind::DefiniteFailure
+        }
+        SandboxNetworkTeardownObservation::Absent { .. } => ProviderCommandObservationKind::Absent,
+        SandboxNetworkTeardownObservation::RetryAuthorized { .. } => {
+            ProviderCommandObservationKind::RetryAuthorized
+        }
+        SandboxNetworkTeardownObservation::InProgress { .. } => {
+            ProviderCommandObservationKind::InProgress
+        }
+        SandboxNetworkTeardownObservation::Ambiguous { .. } => {
+            ProviderCommandObservationKind::Ambiguous
+        }
+    }
+}
+
 fn success_evidence(
     command: &ConfirmedWorkloadTeardownCommand,
     evidence: WorkloadOwnerEvidenceDigest,
 ) -> WorkloadTeardownSuccessEvidence {
-    let WorkloadTeardownSubjects::Execution(reference) = command.subjects() else {
-        unreachable!("validated Container teardown command has an execution subject")
-    };
-    match command.step() {
-        WorkloadTeardownStep::DrainExecution => WorkloadTeardownSuccessEvidence::ExecutionDrained {
-            reference: reference.clone(),
-            evidence,
-        },
-        WorkloadTeardownStep::StopExecution => WorkloadTeardownSuccessEvidence::ExecutionStopped {
-            reference: reference.clone(),
-            evidence,
-        },
-        _ => unreachable!("validated Container teardown command is drain or stop"),
+    match (command.step(), command.subjects()) {
+        (WorkloadTeardownStep::DrainExecution, WorkloadTeardownSubjects::Execution(reference)) => {
+            WorkloadTeardownSuccessEvidence::ExecutionDrained {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        (WorkloadTeardownStep::StopExecution, WorkloadTeardownSubjects::Execution(reference)) => {
+            WorkloadTeardownSuccessEvidence::ExecutionStopped {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        (WorkloadTeardownStep::DetachNetwork, WorkloadTeardownSubjects::Network(reference)) => {
+            WorkloadTeardownSuccessEvidence::NetworkDetached {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        (WorkloadTeardownStep::ReleaseNetwork, WorkloadTeardownSubjects::Network(reference)) => {
+            WorkloadTeardownSuccessEvidence::NetworkReleased {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        _ => unreachable!("validated sandbox teardown command has matching subjects"),
     }
 }
 

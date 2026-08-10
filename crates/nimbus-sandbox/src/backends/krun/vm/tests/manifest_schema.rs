@@ -163,6 +163,7 @@ fn manifest_deserialization_defaults_lifecycle_for_pre_restart_manifests() {
                 "phase": "not_requested"
             }
         },
+        "network_teardown": crate::backends::oci::network::HostManagedAttachmentTeardownState::initial(),
         "egress_proxy": null,
         "conmon_launch": {
             "create_command": {

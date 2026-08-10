@@ -935,90 +935,6 @@ impl LocalPortLeaseAuthority {
         })
     }
 
-    /// Atomically release a batch that is still proven never bound.
-    ///
-    /// This is the compensation path for a coordinator that reserved a
-    /// complete launch batch but failed before handing any request to an effect
-    /// provider. Every distinct request is authenticated and every record must
-    /// still be `Reserved`, already `Released` by an identical retry, or
-    /// terminal `Failed` with durable proof that the provider created no
-    /// effect before any record changes. If a concurrent actor has adopted
-    /// even one binding, the complete compensation fails without mutation.
-    pub fn release_reserved_batch_without_effect(
-        &self,
-        requests: &[PortLeaseRequest],
-        reservation_claim: &NetworkReservationClaim,
-    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
-        let lifetime = match self.try_acquire_reservation_lifetime(reservation_claim)? {
-            NetworkReservationLifetimeAttempt::Acquired(lifetime) => lifetime,
-            NetworkReservationLifetimeAttempt::LiveOwner => {
-                return Err(PortLeaseError::ReservationLifetimeOwnerLive {
-                    provider_id: reservation_claim
-                        .coordinator_attempt()
-                        .provider_id()
-                        .clone(),
-                });
-            }
-        };
-        self.release_reserved_batch_without_effect_with_lifetime(requests, &lifetime)
-    }
-
-    /// Atomically release a still-never-bound batch owned by the caller's
-    /// exact live launch-reservation lifetime.
-    ///
-    /// Pre-publication coordinators use this while retaining the non-cloneable
-    /// guard. Fresh processes must acquire that same claim-derived lock first;
-    /// they cannot compensate a live owner's reservation.
-    pub fn release_reserved_batch_without_effect_with_lifetime(
-        &self,
-        requests: &[PortLeaseRequest],
-        lifetime: &NetworkReservationLifetimeGuard,
-    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
-        let reservation_claim = lifetime.claim();
-        self.transaction(|state| {
-            let planned = requests.iter().collect::<Vec<_>>();
-            plan_batch::authenticate_complete_plan_batch_if_present(state, &planned)?;
-            for request in requests {
-                let record = exact_record(state, request)?;
-                if record.reservation_claim.as_ref() != Some(reservation_claim) {
-                    return Err(PortLeaseOperationError::ReservationClaimConflict {
-                        lease_id: request.lease_id().clone(),
-                    });
-                }
-                if record.bind_claim.is_some() {
-                    return Err(PortLeaseOperationError::BindClaimConflict {
-                        lease_id: request.lease_id().clone(),
-                    });
-                }
-                if !matches!(
-                    record.phase,
-                    PortLeasePhase::Reserved | PortLeasePhase::Released | PortLeasePhase::Failed
-                ) {
-                    return Err(PortLeaseOperationError::InvalidTransition {
-                        lease_id: request.lease_id().clone(),
-                        phase: record.phase,
-                        operation: PortLeaseOperation::ReleaseReservedWithoutEffect,
-                    });
-                }
-            }
-            let distinct = requests
-                .iter()
-                .map(|request| (request.lease_id().clone(), request))
-                .collect::<BTreeMap<_, _>>();
-            for request in distinct.into_values() {
-                let record = exact_record_mut(state, request)?;
-                if record.phase == PortLeasePhase::Reserved {
-                    record.phase = PortLeasePhase::Released;
-                    record.active_lifetime = None;
-                }
-            }
-            requests
-                .iter()
-                .map(|request| exact_record(state, request).cloned())
-                .collect()
-        })
-    }
-
     /// Atomically claim one Nimbus-owned provider bind attempt.
     ///
     /// The claim is durable before the effect-owning adapter binds. A
@@ -1746,6 +1662,28 @@ impl LocalPortLeaseAuthority {
             let witness = plan_members.iter().collect::<Vec<_>>();
             plan_batch::authenticate_complete_plan_member(state, &witness, member)?;
             exact_record(state, member).cloned()
+        })
+    }
+
+    /// Inspect an exact provider-owned subset from one authenticated plan snapshot.
+    ///
+    /// The complete immutable membership witness and every requested record
+    /// are checked while the one host-global authority lock is held. The
+    /// returned order matches `members`. This read-only transaction does not
+    /// change the store revision or any lease state.
+    pub fn inspect_plan_members(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        members: &[PortLeaseRequest],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        self.transaction(|state| {
+            let witness = plan_members.iter().collect::<Vec<_>>();
+            let requested = members.iter().collect::<Vec<_>>();
+            plan_batch::authenticate_complete_plan_members(state, &witness, &requested)?;
+            members
+                .iter()
+                .map(|member| exact_record(state, member).cloned())
+                .collect()
         })
     }
 

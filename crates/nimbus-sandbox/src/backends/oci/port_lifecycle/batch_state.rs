@@ -23,6 +23,146 @@ fn terminal_failed_has_no_effect(
 }
 
 impl OciPortLeaseCoordinator {
+    /// Classify compiler-issued Netavark members using the complete immutable
+    /// plan witness. Listener identity is never reconstructed from SandboxId.
+    pub(crate) fn classify_planned_netavark_cleanup_batch(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        reservation_claim: Option<&NetworkReservationClaim>,
+    ) -> Result<LaunchPortBatchState> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        if leases.is_empty() {
+            return Ok(LaunchPortBatchState::TerminalNoEffect);
+        }
+        let records =
+            self.planned_published_listener_records(plan_members, tenant_id, bindings, leases)?;
+        let expected_bindings =
+            self.expected_planned_netavark_bindings(plan_members, tenant_id, bindings, leases)?;
+        if let Some(claim) = reservation_claim {
+            let never_bound = records.iter().all(|record| {
+                record.phase() == PortLeasePhase::Reserved
+                    && record.reservation_claim() == Some(claim)
+                    && record.bind_claim().is_none()
+                    && record.adoption_claim().is_none()
+                    && record.binding().is_none()
+                    && record.confirmed_stopped_binding().is_none()
+                    && record.failure().is_none()
+                    && record.active_lifetime().is_none()
+            });
+            if never_bound {
+                return Ok(LaunchPortBatchState::NeverBound);
+            }
+        }
+
+        let mut restart_retained = 0usize;
+        let mut netavark_claims = Vec::new();
+        let mut provider_owned = 0usize;
+        let mut terminal_no_effect = 0usize;
+        let mut terminal_coordinator = None;
+        for ((request, record), expected_binding) in
+            leases.iter().zip(records).zip(expected_bindings)
+        {
+            if record.phase() == PortLeasePhase::Reserved
+                && record.reservation_claim().is_none()
+                && record.binding().is_none()
+                && record.failure().is_none()
+                && record.confirmed_stopped_binding() == Some(&expected_binding)
+            {
+                match record.bind_claim() {
+                    None => restart_retained += 1,
+                    Some(claim)
+                        if claim.provider_attempt().provider_id()
+                            == &OciPortProvider::Netavark.provider_id() =>
+                    {
+                        netavark_claims.push(claim.clone());
+                    }
+                    Some(_) => {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "compiled restart-retained port lease {} carries a non-Netavark claim",
+                                request.lease_id()
+                            ),
+                        });
+                    }
+                }
+                continue;
+            }
+            if record.phase() == PortLeasePhase::CleanupPending
+                && record.reservation_claim() == reservation_claim
+                && record.binding().is_none()
+                && record.failure().is_none()
+                && record.active_lifetime().is_some()
+                && record
+                    .confirmed_stopped_binding()
+                    .is_none_or(|binding| binding == &expected_binding)
+                && let Some(claim) = record.bind_claim()
+                && claim.provider_attempt().provider_id()
+                    == &OciPortProvider::Netavark.provider_id()
+            {
+                netavark_claims.push(claim.clone());
+                continue;
+            }
+            if record.phase() == PortLeasePhase::Released
+                && record.bind_claim().is_none()
+                && record
+                    .binding()
+                    .is_none_or(|binding| binding == &expected_binding)
+                && record.confirmed_stopped_binding().is_none()
+                && record.failure().is_none()
+            {
+                require_uniform_terminal_coordinator(
+                    &mut terminal_coordinator,
+                    record.reservation_claim(),
+                    request,
+                    "compiled Netavark",
+                )?;
+                terminal_no_effect += 1;
+                continue;
+            }
+            let terminal_failed = terminal_failed_has_no_effect(&record, OciPortProvider::Netavark);
+            let is_provider_owned = record.reservation_claim().is_none()
+                && record.bind_claim().is_none()
+                && record.confirmed_stopped_binding().is_none()
+                && matches!(
+                    record.phase(),
+                    PortLeasePhase::Active
+                        | PortLeasePhase::Withdrawing
+                        | PortLeasePhase::CleanupPending
+                )
+                && record.active_lifetime().is_some()
+                && record.binding() == Some(&expected_binding);
+            if terminal_failed {
+                require_uniform_terminal_coordinator(
+                    &mut terminal_coordinator,
+                    record.reservation_claim(),
+                    request,
+                    "compiled Netavark",
+                )?;
+                terminal_no_effect += 1;
+            } else if is_provider_owned {
+                provider_owned += 1;
+            } else {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "compiled port lease {} is not launch-owned, restart-retained, terminal, or exact Netavark provider authority",
+                        request.lease_id()
+                    ),
+                });
+            }
+        }
+        classify_uniform_batch(
+            leases.len(),
+            restart_retained,
+            netavark_claims,
+            provider_owned,
+            terminal_no_effect,
+            "compiled Netavark",
+        )
+    }
+
     pub(super) fn require_binding_lease_identities(
         &self,
         tenant_id: &TenantId,

@@ -1,6 +1,6 @@
 # NNC6.5d3 Host-Managed Attachment Detach And Release
 
-Status: `audit checkpoint complete; K1 green; K2-K29 pending implementation`
+Status: `complete; K1-K29 green; item commit contains this checkpoint`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -43,7 +43,7 @@ product-source file changed during the audit or fail-before capture.
 | K14 | Namespace removal has an explicit may-exist boundary and exact filesystem inspection. Success requires explicit absence of the exact persistent namespace. A missing or unreadable parent, wrong artifact type, permission error, or crossed path is ambiguous, not absent. |
 | K15 | Detach persists one compound proof bound to tenant, sandbox, execution attempt, attachment, plan, generation, lease epoch, association, selected provider, stable handle, provider-delete evidence, namespace absence, retained PEP/listener evidence, quarantined segment evidence, retained IPAM/segment/port/PEP/attachment authority, and the exact detach claim. |
 | K16 | Detach succeeds to compute only when the compound proof and exact `DetachNetwork` provider-journal success both exist. The portable attachment remains `Deleting`; IPAM, segment, port, PEP, and attachment authority remain retained and fenced. |
-| K17 | Release reauthenticates the complete current command, exact manifest, compound detached proof, exact prior `DetachNetwork` journal success, provider absence, namespace absence, retained listener/PEP state, live IPAM, quarantined segment, and `Deleting` attachment before its first release effect. |
+| K17 | Release reauthenticates the complete current command, exact manifest, compound detached proof, exact prior `DetachNetwork` journal success, provider absence, namespace absence, retained listener/PEP state, live IPAM, quarantined segment, and the exact nonterminal attachment state before its first release effect. The normal state is `Deleting`. Startup-quarantined `CleanupPending` is valid only with the same complete immutable detached proof and all retained authority. |
 | K18 | Release performs no runtime stop, provider delete, namespace remove, listener bind, PEP start, or attachment reprovision effect. Unknown, active, or crossed evidence preserves every retained authority and requires inspection. |
 | K19 | Release settles retained PEP and published-listener authority first, then IPAM, then the segment hold, and finally the portable attachment. Every completed step is durable and idempotent before the next step starts. |
 | K20 | Only release transitions the portable attachment to `Released`. The manifest publishes release completion only after all reusable authority is absent. Terminal IPAM retry evidence retires only under the existing finality owner. |
@@ -320,8 +320,8 @@ stays unclaimed until the current CAS is durable.
 
 For each phase, two synchronized thread contenders, two subprocess contenders,
 and one Inspect contender prove one effect/result winner and no premature
-reuse. The port, IPAM, segment, PEP, and attachment authorities are reopened
-from disk between phases to prove retained or released state directly.
+reuse. Each phase reopens the port, IPAM, segment, PEP, and attachment
+authorities from disk. This step proves retained or released state directly.
 
 ## Implementation Bands
 
@@ -342,12 +342,12 @@ create additional review units.
 7. Run the complete item gates and freeze the candidate. Run one full item
    review. Resolve accepted findings and commit the exact item.
 
-Only this item remains `in_progress`. Partial bands cannot be marked complete
-in the canonical ledger and cannot trigger structured autoreview.
+Only this item remains `in_progress`. The canonical ledger cannot mark partial
+bands complete, and partial bands cannot trigger structured autoreview.
 
 ## Acceptance Commands
 
-The exact final counts will be recorded at closeout.
+The evidence ledger records the exact final counts.
 
 ```sh
 cargo test -p nimbus-sandbox network_teardown_contract
@@ -403,5 +403,40 @@ and IP-address identity.
 | Fail-before | Nine narrow checks exited `1`; product source unchanged. |
 | Parallel audit packets | Container, Krun, and shared compute/attachment audits complete. All three inspected the same source base, ran no product tests, and reported zero changed or staged paths. |
 | Static/docs audit gates | Format and diff pass. Proof lint passes with three advisory passive-voice warnings. NNCV035 self-test is `55/55`; direct is the expected `0/7`. The aggregate verifier is `35/36`, with only NNCV035 red. Docs pass `108`; site passes `17/17`. |
-| Product implementation | Not started. |
-| Structured review | Not authorized before K1-K28 are green and candidate is frozen. |
+| Band 1 command and lowering | Fail-before compilation exited `101` for missing attachment command/lowering. The neutral command now binds its typed identity to a canonical effect subject and provider-target digest. Sandbox and compute focused tests pass `1/1` each. K2-K3 are green. |
+| Shared lifecycle modularity | Existing host-managed teardown moved from the `1,522`-line root into the `388`-line `attachment_lifecycle/host_teardown.rs` owner. Exact retained detach, final release, and strict progress state live in `535`, `371`, and `724`-line concept children. The root is `1,165` lines. |
+| Exact provider behavior | Container and Krun each use one strict manifest substate, one shared provider journal, one exact tenant-qualified manifest preflight, and independent Detach/Release claims. The combined `network_teardown` lane passes `15` with two declared subprocess ignores. |
+| Fresh-process and contention proof | Each backend passes all 11 Detach and all 11 Release crash cuts: 44 writer deaths and 44 recovery processes in total. Thread and process contenders publish one result. Concurrent Inspect cannot report `NotCompleted` while an exact claim can still finish. Both fresh-process parents pass `2/2`. |
+| Focused acceptance | Sandbox network command `1`; shared attachment lifecycle `81 + 5` declared ignores; egress/PEP `92 + 4` declared ignores across unit and platform lanes; Container exact network `1`; Krun exact network `2`; compute teardown adapter `23`; real cross-backend substitution `8`. Review-correction regressions pass: one authenticated batch snapshot, 12 K14 filesystem cases, and one generic plus one Container plus one Krun semantic lock-contention case. |
+| Full affected behavior | `nimbus-network` passes `273` with one declared child-process ignore. The final default-concurrency sandbox run passes `1,117` with `47` declared platform/subprocess ignores across all crate targets. Compute passes `369` with one declared child-process ignore. |
+| Quality checkpoint | Strict all-target/all-feature Clippy and warning-denied rustdoc pass for network, sandbox, and compute. Format and diff checks pass. Only unchanged vendored Brotli warnings appear outside the denied workspace lints. |
+| Dependency and effect boundary | Cargo metadata/tree and NNCV004 prove that `nimbus-core` is the only workspace edge from `nimbus-network`. NNCV006, NNCV012, NNCV015, NNCV017, and NNCV022-NNCV024 pass after source-derived test-fixture, line, split-owner, and exact-inspection updates. The test-only socket reservation remains in the compute test module; sandbox test hooks receive only the held port and release callback. |
+| Static arithmetic | NNCV035 self-test is exact `55/55`. Its direct expected-red result is exact `0/7`. Aggregate verification is exact `35/36`, with NNCV035 as the only red condition. NNCV008 confirms one recoverable active ledger row and the band/ledger bijection. |
+| Read-only audit dispositions | Four backend/compute gaps were accepted and corrected: pre-journal exact-manifest preflight, live-claim inspection, stream-to-lifecycle lock order, and the portable `Deleting` gate. Legacy Krun attempt matching and restart authority were restored. Contention adopters now wait read-only for the sole winner. No audit packet changed a path. |
+| Full structured review | The one complete-item GPT-5.6 Sol/xhigh/fast review ran against staged tree `c15a7b073d581f2c4be4f28349d7edb6d1e2b927`, patch SHA-256 `9198fedb67e64fa860568a34f4143cab428398f493f095e69741c7cdeb3aa1d5`, and threads `019fea5e-0015-7b73-9bae-e6be78ee67b2` plus `019fea64-a9c9-7f92-a76e-a266c10c3318`. It reported four findings at confidence `0.93`. Internal two-pass chunking was one item-review invocation and did not create review units. |
+| Review dispositions | The stable-digest finding is rejected: `NetworkResourceVersion` is immutable across phase transitions, while mutable store revision is outside the digest. Three findings are accepted and corrected: planned listener/PEP members now come from one authenticated store transaction; namespace inspect/read/remove uses a pinned no-follow parent and descriptor-relative target; provider contention tests wait for the real `WouldBlock` branch. |
+| Correction fail-before | Missing batch inspection and real lock-contention probe tests failed to compile with exit `101`. The deterministic parent-replacement test failed because old inspection returned `ExplicitlyAbsent` for the replacement directory. A related empty-selection release test failed with `ReservationLifetimeOwnerLive`; the authority now returns a byte-stable empty no-op before lifetime acquisition. |
+| Correction convergence | The first post-review full sandbox run passed `1,100`, failed one empty-listener Krun recovery row, and declared `31` unit ignores. The exact row passed alone. The new deterministic empty-selection test reproduced the lock failure before its two-line no-op correction. The initial final-entry correction full run then had one Container contender child exceed its unchanged 15-second bound under full-suite process pressure; that exact parent passed in `1.23s`, and the unchanged default-concurrency full suite passed on immediate rerun. Final affected behavior is `1,117 + 47`; no timeout or assertion was weakened. |
+| Corrected candidate identity | Pre-ledger-closeout staged tree `a5540956a7105c50a1c5a4c4d779b30560418763`; patch SHA-256 `0d8a0bf456b643c719bea25b12e575c00a748539074299d9cd4874a6acafcd39`; 79 paths, including 68 Rust paths. The item commit containing this proof is the final self-authenticating closeout identity. |
+| Durable recovery | The commit containing this proof is the exact NNC6.5d3 item checkpoint. Require a clean owner worktree before NNC6.5d4 product edits. K1-K29 are green. |
+| Narrow structured review | The one authorized narrow correction review ran through the Nimbus wrapper with GPT-5.6 Sol, `xhigh`, and fast service tier against staged tree `6834896b412ab6a98ef8830417e6e20e36e30508`, patch SHA-256 `300cbd4c6390a04f6c77f3629628fcb2371d91ded4c0415555adbb8d298b2fd6`, 79 paths, and 68 Rust paths. The wrapper used one invocation with two internal bundle passes. It reported two P2 findings and classified the pre-disposition patch as incorrect at confidence `0.96`. The buffered ephemeral wrapper did not emit persistent thread IDs; its exact validated result is recorded here. An earlier invalid absolute `--dataset` attempt stopped before reviewer execution and does not count. |
+| Narrow-review dispositions | The plan-snapshot finding is rejected. The second call discards every returned record; expected bindings derive only from immutable `SandboxPortBinding`, `PortLeaseRequest`, and provider inputs. All lifecycle classification fields come from the first atomic `inspect_plan_members` snapshot, and reserved port identity cannot change after adoption. The final-entry finding is accepted: parent identity alone could not detect child creation, removal, or replacement. Inspect/read/remove now retain the exact no-follow target descriptor and device/inode, revalidate its directory entry, use the target descriptor for Linux unmount, and verify final absence. Five deterministic replacement/creation regressions failed to compile before the test hooks existed; all pass after correction, together with the exact-removal success case. |
+| Review cadence | The one full item review and one narrow correction review are complete. All accepted findings are corrected and proven; all rejected findings have source evidence. No third review is authorized or warranted. K29 is green. |
+
+## Current Modularity Dispositions
+
+All new production concept files are below 725 lines. The largest new test
+owner is 862 lines. These changed inherited roots cross a repository threshold
+and retain one explicit disposition:
+
+| File | Lines | Current ownership disposition |
+| --- | ---: | --- |
+| `crates/nimbus-network/src/port_lease.rs` | 1,918 | Existing public durable lease state-machine root and explicit deep-module exception. Lifetime, rebind, terminal settlement, and batch behavior live in concept children. The added batch read stays beside the same authenticated store transaction owner. |
+| `crates/nimbus-network/src/port_lease/lifetime.rs` | 2,791 | One durable lifetime state machine owns lock order, exact lifetime authentication, owner-death recovery, and atomic transitions. Complete-batch mechanics and tests are already children; splitting one transition from the same lock/fence authority would duplicate invariants. |
+| `crates/nimbus-network/src/port_lease/lifetime/batch_reservation/tests.rs` | 1,608 | Test-only owner for the complete atomic batch-reservation state machine. The added one-transaction snapshot proof remains with that concept and contains no production composition or effect authority. |
+| `crates/nimbus-sandbox/src/provider_command.rs` | 1,561 | One provider-command journal root owns claim serialization, effect/result publication order, and the process-shared stream lock. The added test-only contention probe reports the real lock-wait branch and adds no production authority. |
+| `crates/nimbus-sandbox/src/backends/container/runtime.rs` | 1,601 | Container composition root. Manifest, provision, runner, teardown, attachment teardown, and tests remain concept-owned children; the new attachment lifecycle is not implemented here. |
+| `crates/nimbus-sandbox/src/backends/container/runtime/runner.rs` | 2,114 | Inherited exact runner handoff and inspection-lock state machine. The item changes only the adjacent lifecycle fence needed by teardown and adds no second process owner. |
+| `crates/nimbus-sandbox/src/backends/krun/vm/teardown/tests.rs` | 1,818 | Test-only owner for the legacy Krun execution teardown contract. New network teardown and fresh-process matrices live in separate concept children. |
+| `crates/nimbus-sandbox/src/backends/oci/port_lease.rs` | 2,097 | One OCI adapter maps exact portable lease transitions and error semantics for scalar and complete-plan calls. The new retained/final operations remain adjacent to the same authenticated authority. |
+| `crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs` | 1,588 | Existing OCI port transition composition owner. Authority construction, machine behavior, planned-Netavark behavior, and state live in concept children. |

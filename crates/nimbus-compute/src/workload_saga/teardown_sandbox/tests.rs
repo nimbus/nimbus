@@ -25,6 +25,8 @@ use crate::workload_saga::{
 
 #[path = "tests/krun.rs"]
 mod krun;
+#[path = "tests/network_substitution.rs"]
+mod network_substitution;
 
 #[test]
 fn container_execution_provider_identity_is_exact() {
@@ -82,6 +84,17 @@ async fn confirmed_teardown_commands(
     ConfirmedWorkloadTeardownCommand,
     ConfirmedWorkloadTeardownCommand,
 ) {
+    let (execute, inspect, _) = confirmed_teardown_commands_with_claimed_record(loaded).await;
+    (execute, inspect)
+}
+
+async fn confirmed_teardown_commands_with_claimed_record(
+    loaded: WorkloadSagaRecord,
+) -> (
+    ConfirmedWorkloadTeardownCommand,
+    ConfirmedWorkloadTeardownCommand,
+    WorkloadSagaRecord,
+) {
     let WorkloadTeardownDecision::PersistCandidate(
         proposed @ ProposedWorkloadTeardownTransition::Claim { .. },
     ) = loaded
@@ -105,7 +118,7 @@ async fn confirmed_teardown_commands(
         .expect("direct confirmation should produce an Execute command")
         .clone();
     let replay = WorkloadSagaCoordinator::new(DurableTeardownStore::with_record(candidate.clone()))
-        .confirm_teardown_transition(&loaded, candidate)
+        .confirm_teardown_transition(&loaded, candidate.clone())
         .await
         .expect("durable replay should confirm inspection");
     let inspect = replay
@@ -113,7 +126,7 @@ async fn confirmed_teardown_commands(
         .expect("durable replay should produce an Inspect command")
         .clone();
     assert_eq!(inspect.mode(), WorkloadTeardownCommandMode::Inspect);
-    (execute, inspect)
+    (execute, inspect, candidate)
 }
 
 #[cfg(unix)]
@@ -558,4 +571,223 @@ fn claim_with(
         operation: source.operation(),
     })
     .expect("derived teardown claim should validate")
+}
+
+#[tokio::test]
+async fn network_inspect_unclaimed_is_not_completed_and_byte_stable() {
+    let observed = observed_container_record(Path::new("/tmp/nnc65d3-network-unclaimed"));
+    let (_, inspect) = confirmed_teardown_commands(teardown_record_at(
+        &observed,
+        WorkloadSagaPhase::WorkloadStopped,
+    ))
+    .await;
+    let validated = attachment::validate_sandbox_network_teardown_command(
+        &inspect,
+        SandboxBackendKind::Container,
+    )
+    .expect("exact Container detach inspection should lower");
+    let root = tempfile::tempdir().expect("network journal root should exist");
+    let journal = ProviderCommandAttemptJournal::open(root.path(), "container-network")
+        .expect("network journal should open");
+    let phase = ProviderTeardownPhaseAdapter::new(journal);
+    let before = snapshot_files(root.path());
+
+    let outcome = phase.inspect_network(&inspect, &validated, |_| {
+        panic!("an unclaimed provider command must not inspect the backend")
+    });
+
+    assert_eq!(
+        outcome,
+        WorkloadTeardownProviderOutcome::Inspect(WorkloadTeardownInspectOutcome::NotCompleted(
+            WorkloadOwnerEvidenceDigest::sha256(
+                b"sandbox network provider command was never claimed",
+            )
+        ),)
+    );
+    assert_eq!(snapshot_files(root.path()), before);
+}
+
+#[tokio::test]
+async fn network_inspect_success_is_query_only_and_cannot_publish_provider_result() {
+    let observed = observed_container_record(Path::new("/tmp/nnc65d3-network-query-success"));
+    let (_, inspect) = confirmed_teardown_commands(teardown_record_at(
+        &observed,
+        WorkloadSagaPhase::WorkloadStopped,
+    ))
+    .await;
+    let validated = attachment::validate_sandbox_network_teardown_command(
+        &inspect,
+        SandboxBackendKind::Container,
+    )
+    .expect("exact Container detach inspection should lower");
+    let root = tempfile::tempdir().expect("network journal root should exist");
+    let journal = ProviderCommandAttemptJournal::open(root.path(), "container-network")
+        .expect("network journal should open");
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(validated.sandbox_command().provider_claim())
+            .expect("network command should claim"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+    let reader = journal.clone();
+    let phase = ProviderTeardownPhaseAdapter::new(journal);
+    let before = snapshot_files(root.path());
+    let evidence = b"backend reports that the attachment is absent";
+
+    let outcome = phase.inspect_network(&inspect, &validated, |_| {
+        SandboxNetworkTeardownObservation::Succeeded {
+            evidence: evidence.to_vec(),
+        }
+    });
+
+    let WorkloadTeardownProviderOutcome::Inspect(WorkloadTeardownInspectOutcome::InProgress(
+        observed_evidence,
+    )) = outcome
+    else {
+        panic!("backend proof without provider-journal success must remain in progress");
+    };
+    assert_eq!(
+        observed_evidence,
+        WorkloadOwnerEvidenceDigest::sha256(evidence),
+        "backend proof is evidence for reconciliation, not provider success"
+    );
+    assert_eq!(snapshot_files(root.path()), before);
+    assert_eq!(
+        reader
+            .adopt_exact_attempt(validated.sandbox_command().provider_claim())
+            .expect("claimed network command should remain readable")
+            .expect("claimed network command should remain present")
+            .kind(),
+        ProviderCommandObservationKind::Claimed,
+        "Inspect must not publish backend success to the provider journal"
+    );
+}
+
+#[tokio::test]
+async fn network_inspect_replays_exact_terminal_journal_without_backend_query() {
+    let observed = observed_container_record(Path::new("/tmp/nnc65d3-network-terminal-replay"));
+    let (_, inspect) = confirmed_teardown_commands(teardown_record_at(
+        &observed,
+        WorkloadSagaPhase::WorkloadStopped,
+    ))
+    .await;
+    let validated = attachment::validate_sandbox_network_teardown_command(
+        &inspect,
+        SandboxBackendKind::Container,
+    )
+    .expect("exact Container detach inspection should lower");
+    let root = tempfile::tempdir().expect("network journal root should exist");
+    let journal = ProviderCommandAttemptJournal::open(root.path(), "container-network")
+        .expect("network journal should open");
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(validated.sandbox_command().provider_claim())
+            .expect("network command should claim"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+    let terminal = journal
+        .record_observation(
+            validated.sandbox_command().provider_claim(),
+            ProviderCommandObservationKind::Succeeded,
+            b"durable exact detach result",
+        )
+        .expect("terminal network result should publish");
+    let expected = provider_outcome(&inspect, &terminal);
+    let phase = ProviderTeardownPhaseAdapter::new(journal);
+    let before = snapshot_files(root.path());
+
+    let replay = phase.inspect_network(&inspect, &validated, |_| {
+        panic!("a terminal provider result must replay without a backend query")
+    });
+
+    assert_eq!(replay, expected);
+    assert_eq!(snapshot_files(root.path()), before);
+}
+
+#[tokio::test]
+async fn network_teardown_lowering_preserves_exact_attachment_and_execution_fences() {
+    let observed = observed_container_record(Path::new("/tmp/nnc65d3-network-lowering"));
+    let (detach, _) = confirmed_teardown_commands(teardown_record_at(
+        &observed,
+        WorkloadSagaPhase::WorkloadStopped,
+    ))
+    .await;
+    let detach = attachment::validate_sandbox_network_teardown_command(
+        &detach,
+        SandboxBackendKind::Container,
+    )
+    .expect("exact Container detach command should lower");
+    let detach = detach.sandbox_command();
+    let compiled = observed.active_intent().network().compiled_plan();
+    let expected_attachment = compiled
+        .content()
+        .attachment()
+        .expect("host-managed plan should have one attachment");
+    let expected_selection = compiled
+        .content()
+        .capability_selection_evidence()
+        .expect("host-managed plan should retain selection evidence");
+    let retained_references = observed.phase_detail().references();
+    let execution = retained_references
+        .execution()
+        .expect("observed workload should retain its execution");
+
+    assert_eq!(detach.tenant_id(), observed.key().tenant_id());
+    assert_eq!(
+        detach.sandbox_id().as_str(),
+        execution.execution_id().as_str()
+    );
+    assert_eq!(
+        detach.execution_attempt_id().as_str(),
+        execution.attempt_id().as_str()
+    );
+    assert_eq!(detach.attachment_id(), expected_attachment.attachment_id());
+    assert_eq!(detach.network_plan(), compiled.plan());
+    assert_eq!(
+        detach.provider_registration_key(),
+        nimbus_sandbox::backends::CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY
+    );
+    assert_eq!(
+        detach.provider_source_digest(),
+        expected_selection.source_digest()
+    );
+    assert_eq!(
+        detach.operation(),
+        nimbus_sandbox::SandboxNetworkTeardownOperation::Detach
+    );
+    assert_eq!(
+        detach.provider_claim().operation(),
+        ProviderCommandOperation::DetachNetwork
+    );
+
+    let (release_command, _) = confirmed_teardown_commands(teardown_record_at(
+        &observed,
+        WorkloadSagaPhase::NetworkDetached,
+    ))
+    .await;
+    let release = attachment::validate_sandbox_network_teardown_command(
+        &release_command,
+        SandboxBackendKind::Container,
+    )
+    .expect("exact Container release command should lower");
+    assert_eq!(
+        release.sandbox_command().operation(),
+        nimbus_sandbox::SandboxNetworkTeardownOperation::Release
+    );
+    assert_eq!(
+        release.sandbox_command().provider_claim().operation(),
+        ProviderCommandOperation::ReleaseNetwork
+    );
+    assert_eq!(
+        release.sandbox_command().provider_claim().effect_subject(),
+        detach.provider_claim().effect_subject(),
+        "detach and release use independent operations over one exact subject"
+    );
+
+    let crossed = attachment::validate_sandbox_network_teardown_command(
+        &release_command,
+        SandboxBackendKind::Krun,
+    )
+    .expect_err("a Container attachment command cannot lower through Krun");
+    assert_eq!(crossed.code(), "sandbox_teardown_command_crossed");
 }

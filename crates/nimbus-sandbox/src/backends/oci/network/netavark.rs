@@ -166,7 +166,7 @@ fn execute_prepared_container_network_teardown_with_runner(
     execute_teardown_plan(ipam_authority, layout, plan, &mut runner)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn execute_prepared_container_network_teardown_for_test(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
@@ -223,7 +223,7 @@ pub(super) fn execute_prepared_container_network_setup(
     )
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn execute_prepared_container_network_setup_for_test(
     ipam_authority: &OciIpamAuthority,
     operation: &OciNetavarkOperation<'_>,

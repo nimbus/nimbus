@@ -480,7 +480,7 @@ impl ContainerSandboxBackend {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn attach_provision_network_with_test_host(
         &self,
         sandbox_id: &SandboxId,

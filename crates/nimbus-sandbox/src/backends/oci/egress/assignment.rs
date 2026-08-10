@@ -6,7 +6,10 @@ use std::num::NonZeroU16;
 
 use nimbus_core::TenantId;
 use nimbus_egress::EgressPolicy;
-use nimbus_network::{PortExposure, PortLeaseRequest};
+use nimbus_network::{
+    NetworkLeaseEpoch, NetworkProviderId, PortBindRealm, PortExposure, PortLeaseAccounting,
+    PortLeaseId, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::backends::oci::network::{OciNetworkConfig, bridge_gateway_addr};
@@ -20,8 +23,10 @@ use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
 use crate::backends::oci::port_lifecycle::{InternalListenerReservation, ReservedInternalListener};
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
+use crate::provision::SandboxProvisionNetworkPlan;
 
 use super::{EgressProxyRegistry, PepPreAdoptionReleaseAuthority};
+use crate::backends::capabilities::SANDBOX_EGRESS_PEP_PROVIDER_KEY;
 
 /// Tier-neutral host-side egress PEP assignment for an execute-mode sandbox.
 ///
@@ -37,6 +42,63 @@ pub(crate) struct EgressProxyAssignment {
 }
 
 impl EgressProxyAssignment {
+    pub(crate) fn compiled_plan_members(
+        &self,
+        plan: &SandboxProvisionNetworkPlan,
+    ) -> Vec<PortLeaseRequest> {
+        let mut members = plan.port_leases();
+        members.push(self.port_lease.clone());
+        members
+    }
+
+    /// Authenticate this concrete assignment against the compiler-issued PEP
+    /// listener identity and network-plan fence.
+    pub(crate) fn require_compiled_plan_authority(
+        &self,
+        tenant_id: &TenantId,
+        plan: &SandboxProvisionNetworkPlan,
+    ) -> Result<()> {
+        let dependency = plan
+            .dependency_listeners()
+            .iter()
+            .find(|dependency| dependency.name() == "egress-pep")
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: "compiled network plan omitted its egress PEP listener".to_owned(),
+            })?;
+        let expected_provider =
+            NetworkProviderId::for_registration_key(SANDBOX_EGRESS_PEP_PROVIDER_KEY);
+        let bind_addr = self.bind_addr()?;
+        let requested_port_matches = match self.port_lease.binding().port() {
+            PortRequestMode::Exact(port) => port.get() == bind_addr.port(),
+            PortRequestMode::Range(range) => {
+                range.start().get() <= bind_addr.port() && bind_addr.port() <= range.end().get()
+            }
+            PortRequestMode::ProviderAssigned => true,
+        };
+        let expected_owner = dependency.listener_id().clone().into();
+        if plan.tenant_id() != tenant_id
+            || dependency.provider_id() != &expected_provider
+            || self.port_lease.lease_id() != &PortLeaseId::for_listener(dependency.listener_id())
+            || self.port_lease.owner_id() != &expected_owner
+            || self.port_lease.plan_id() != Some(plan.plan_id())
+            || self.port_lease.tenant_id() != Some(tenant_id)
+            || self.port_lease.generation() != plan.generation()
+            || self.port_lease.lease_epoch() != NetworkLeaseEpoch::new(1)
+            || self.port_lease.accounting() != PortLeaseAccounting::HostInternal
+            || self.port_lease.publication() != &PortPublicationIntent::Unpublished
+            || self.port_lease.binding().protocol() != PortProtocol::Tcp
+            || self.port_lease.binding().realm() != &PortBindRealm::Host
+            || self.port_lease.binding().target() != &target_for_ip(bind_addr.ip())?
+            || self.port_lease.binding().exposure() != PortExposure::Private
+            || !requested_port_matches
+        {
+            return Err(SandboxError::OperationFailed {
+                message: "egress PEP assignment crossed its compiled listener, plan, generation, or binding authority".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(host: &str, port: u16) -> Self {
         let tenant_id = TenantId::new("egress-assignment-test").expect("static tenant id");

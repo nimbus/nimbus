@@ -359,6 +359,11 @@ pub(super) struct ContainerSandboxManifest {
     /// Exact execution-only drain and stop progress. Network authority remains
     /// retained until the later attachment release owner completes.
     pub(super) execution_teardown: ContainerExecutionTeardownState,
+    /// Strict provider-local attachment detach and release progress.
+    ///
+    /// This records effect boundaries and compound detached evidence. The
+    /// provider command journal remains the sole command-result authority.
+    pub(super) network_teardown: crate::backends::oci::network::HostManagedAttachmentTeardownState,
     pub(super) status: SandboxStatus,
 }
 

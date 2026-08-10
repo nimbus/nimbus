@@ -2222,10 +2222,42 @@ impl LocalPortLeaseAuthority {
         requests: &[PortLeaseRequest],
         recoveries: &[PortLeaseRecoveryGuard],
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        self.prepare_rebind_provider_managed_claims_after_confirmed_stop_inner(
+            requests, recoveries, None,
+        )
+    }
+
+    /// Retain dead provider claims for a selected subset while authenticating
+    /// the complete immutable plan witness.
+    pub fn prepare_rebind_provider_managed_plan_claims_after_confirmed_stop(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        requests: &[PortLeaseRequest],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        self.prepare_rebind_provider_managed_claims_after_confirmed_stop_inner(
+            requests,
+            recoveries,
+            Some(plan_members),
+        )
+    }
+
+    fn prepare_rebind_provider_managed_claims_after_confirmed_stop_inner(
+        &self,
+        requests: &[PortLeaseRequest],
+        recoveries: &[PortLeaseRecoveryGuard],
+        plan_members: Option<&[PortLeaseRequest]>,
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         let recoveries = exact_recovery_batch(requests, recoveries)?;
         self.transaction(|state| {
             let requested = requests.iter().collect::<Vec<_>>();
-            authenticate_complete_plan_batch_if_present(state, &requested)?;
+            match plan_members {
+                Some(plan_members) => {
+                    let witness = plan_members.iter().collect::<Vec<_>>();
+                    authenticate_complete_plan_members(state, &witness, &requested)?;
+                }
+                None => authenticate_complete_plan_batch_if_present(state, &requested)?,
+            }
             for request in requests {
                 let recovery = recoveries[request.lease_id()];
                 if recovery.lifetime.effect_scope != PortLeaseEffectScope::ProviderManaged {

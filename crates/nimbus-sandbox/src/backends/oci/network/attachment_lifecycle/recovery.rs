@@ -11,6 +11,9 @@ use super::super::ipam::{
     ContainerIpamAuthorityState, inspect_container_ipam_authority,
     inspect_netavark_provider_operation, load_container_ips_for_segment_if_present,
 };
+use super::super::netns::{
+    ExactRegularArtifactObservation, inspect_exact_regular_artifact, read_exact_regular_artifact,
+};
 use super::state::OciAttachmentDurableState;
 use super::{
     AttachmentBackendKind, AttachmentDetachFailure, AttachmentDetachFailureStage,
@@ -113,16 +116,19 @@ pub(super) fn inspect_provider(
     ipam: &OciIpamAuthority,
     context: &OciAttachmentContext<'_>,
 ) -> AttachmentProviderObservation {
-    let namespace_present = match inspect_regular_artifact(&context.layout.netns_path, "namespace")
-    {
-        Ok(present) => present,
+    let namespace_present = match inspect_namespace(context) {
+        Ok(ExactRegularArtifactObservation::Present) => true,
+        Ok(ExactRegularArtifactObservation::ExplicitlyAbsent) => false,
         Err(reason) => return AttachmentProviderObservation::Unknown { reason },
     };
-    let status_projection =
-        match inspect_json_artifact(&context.layout.status_path, "provider status") {
-            Ok(projection) => projection,
-            Err(reason) => return AttachmentProviderObservation::Unknown { reason },
-        };
+    let status_projection = match inspect_json_artifact(
+        &context.layout.container_network_dir,
+        &context.layout.status_path,
+        "provider status",
+    ) {
+        Ok(projection) => projection,
+        Err(reason) => return AttachmentProviderObservation::Unknown { reason },
+    };
     let ipam_state = match inspect_container_ipam_authority(
         ipam,
         context.layout,
@@ -226,34 +232,24 @@ pub(super) fn inspect_provider(
     }
 }
 
-fn inspect_regular_artifact(
-    path: &std::path::Path,
-    label: &str,
-) -> std::result::Result<bool, String> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_file() => Ok(true),
-        Ok(_) => Err(format!(
-            "{label} {} is not an exact regular provider artifact",
-            path.display()
-        )),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(format!(
-            "cannot inspect {label} {}: {error}",
-            path.display()
-        )),
-    }
+pub(super) fn inspect_namespace(
+    context: &OciAttachmentContext<'_>,
+) -> std::result::Result<ExactRegularArtifactObservation, String> {
+    inspect_exact_regular_artifact(
+        &context.layout.netns_root,
+        &context.layout.netns_path,
+        "namespace",
+    )
 }
 
 fn inspect_json_artifact(
+    expected_parent: &std::path::Path,
     path: &std::path::Path,
     label: &str,
 ) -> std::result::Result<Option<NetavarkStatusProjection>, String> {
-    let present = inspect_regular_artifact(path, label)?;
-    if !present {
+    let Some(bytes) = read_exact_regular_artifact(expected_parent, path, label)? else {
         return Ok(None);
-    }
-    let bytes = std::fs::read(path)
-        .map_err(|error| format!("cannot read {label} {}: {error}", path.display()))?;
+    };
     serde_json::from_slice::<NetavarkStatusProjection>(&bytes)
         .map(Some)
         .map_err(|error| {
@@ -285,6 +281,10 @@ fn authenticate_status_projection(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "recovery/tests.rs"]
+mod tests;
 
 pub(super) fn prepare_attach(
     durable: &OciAttachmentDurableState<'_>,
@@ -549,6 +549,38 @@ pub(super) fn prepare_detach(
         namespace_cleanup_required,
         already_terminal: false,
     })
+}
+
+/// Prepare the strict retained-detach route before any host effect can start.
+///
+/// The older final/restart cleanup route can settle an attachment that never
+/// left `Reserved`. Retained detach cannot: its compound proof requires the
+/// portable authority to be durably `Deleting` before segment, PEP, listener,
+/// provider, or namespace effects begin.
+pub(super) fn prepare_retained_detach(
+    durable: &OciAttachmentDurableState<'_>,
+    record: DurableNetworkAttachmentState,
+    observation: AttachmentProviderObservation,
+) -> Result<AttachmentDetachRecovery> {
+    let recovery = prepare_detach(durable, record, observation)?;
+    require_retained_detach_phase(
+        recovery.record.resource().phase(),
+        recovery.already_terminal,
+    )?;
+    Ok(recovery)
+}
+
+fn require_retained_detach_phase(
+    phase: NetworkResourcePhase,
+    already_terminal: bool,
+) -> Result<()> {
+    if !already_terminal && phase == NetworkResourcePhase::Deleting {
+        return Ok(());
+    }
+    Err(recovery_error(
+        phase,
+        "retained detach requires portable Deleting authority before host effects",
+    ))
 }
 
 pub(super) fn finish_detach(

@@ -109,6 +109,34 @@ impl LocalPortLeaseAuthority {
         )
     }
 
+    /// Retain a provider-managed plan subset after exact confirmed stop.
+    pub fn prepare_rebind_provider_managed_plan_members_after_confirmed_stop_with_lifetimes(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        bindings: &[(PortLeaseRequest, PortLeaseBinding)],
+        lifetimes: &[PortLeaseLifetimeGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        if bindings.is_empty() {
+            return Err(PortLeaseError::CorruptAuthority {
+                reason: "planned provider-managed confirmed-stop subset cannot be empty".to_owned(),
+            });
+        }
+        let required = exact_confirmed_stop_lifetimes(bindings, lifetimes)?;
+        for (request, _) in bindings {
+            if required[request.lease_id()].effect_scope() != PortLeaseEffectScope::ProviderManaged
+            {
+                return Err(PortLeaseError::LifetimeScopeMismatch {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
+        }
+        self.prepare_rebind_batch_after_confirmed_stop_inner(
+            bindings,
+            Some(&required),
+            Some(plan_members),
+        )
+    }
+
     fn prepare_rebind_batch_after_confirmed_stop_inner(
         &self,
         bindings: &[(PortLeaseRequest, PortLeaseBinding)],
@@ -275,9 +303,37 @@ impl LocalPortLeaseAuthority {
         &self,
         requests: &[PortLeaseRequest],
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        self.release_after_confirmed_stop_inner(requests, None)
+    }
+
+    /// Release a restart-retained subset while authenticating the complete
+    /// immutable plan witness.
+    ///
+    /// Every selected member must be restart-retained, or every selected
+    /// member must already be released for exact replay. Unselected plan
+    /// members remain unchanged.
+    pub fn release_plan_members_after_confirmed_stop(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        requests: &[PortLeaseRequest],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        self.release_after_confirmed_stop_inner(requests, Some(plan_members))
+    }
+
+    fn release_after_confirmed_stop_inner(
+        &self,
+        requests: &[PortLeaseRequest],
+        plan_members: Option<&[PortLeaseRequest]>,
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
-            let planned = requests.iter().collect::<Vec<_>>();
-            authenticate_complete_plan_batch_if_present(state, &planned)?;
+            let selected = requests.iter().collect::<Vec<_>>();
+            match plan_members {
+                Some(plan_members) => {
+                    let witness = plan_members.iter().collect::<Vec<_>>();
+                    authenticate_complete_plan_members(state, &witness, &selected)?;
+                }
+                None => authenticate_complete_plan_batch_if_present(state, &selected)?,
+            }
 
             let mut distinct = BTreeMap::<PortLeaseId, &PortLeaseRequest>::new();
             let mut retained = 0usize;

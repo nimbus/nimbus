@@ -40,7 +40,7 @@
       "verification": "source-occurrence",
       "category": "allocation-adapter",
       "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
-      "line": 231,
+      "line": 230,
       "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
       "authority_kinds": [
         "suspicious-port-allocation-definition"
@@ -61,7 +61,7 @@
       "verification": "symbol-presence",
       "category": "allocation-consumer",
       "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
-      "line": 231,
+      "line": 230,
       "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
       "declaration_name": "reserve_launch_ports_for_sandbox",
       "current_owner": "nimbus-sandbox composition consuming nimbus-network authority",
@@ -77,7 +77,7 @@
       "verification": "symbol-presence",
       "category": "allocation-consumer",
       "path": "crates/nimbus-sandbox/src/backends/oci/egress/assignment.rs",
-      "line": 122,
+      "line": 184,
       "symbol": "egress_proxy_assignment",
       "declaration_name": "egress_proxy_assignment",
       "current_owner": "nimbus-sandbox",
@@ -570,7 +570,7 @@
       "verification": "source-occurrence",
       "category": "allocation-adapter",
       "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
-      "line": 389,
+      "line": 388,
       "symbol": "OciPortLeaseCoordinator::reserve_exact_provision_ports",
       "authority_kinds": [
         "suspicious-port-allocation-definition"
@@ -938,7 +938,7 @@
       "kind": "suspicious-port-allocation-definition",
       "symbol": "reserve_launch_ports_for_sandbox",
       "ordinal": 1,
-      "line": 231
+      "line": 230
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -1122,7 +1122,7 @@
       "kind": "suspicious-port-allocation-definition",
       "symbol": "reserve_exact_provision_ports",
       "ordinal": 1,
-      "line": 389
+      "line": 388
     },
     {
       "site_id": "server-workload-ingress-listener",
@@ -1387,7 +1387,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "reserve_launch_ports_for_sandbox",
       "ordinal": 1,
-      "line": 341,
+      "line": 340,
       "reason": "Formats an invariant error from the already-classified PortLease reservation path; it performs no additional allocation or socket effect."
     },
     {
@@ -1395,7 +1395,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "withdraw_bindings",
       "ordinal": 1,
-      "line": 1399,
+      "line": 1398,
       "reason": "Formats a withdrawal failure for an authenticated existing lease; the nimbus-network withdrawal call owns the state transition."
     },
     {

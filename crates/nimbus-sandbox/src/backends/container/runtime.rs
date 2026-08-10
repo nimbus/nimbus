@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 mod artifact_cleanup;
 mod attachment_readiness;
+mod attachment_teardown;
 mod config;
 mod creator;
 mod direct_execution;
@@ -24,6 +25,12 @@ mod restart;
 mod runner;
 mod status;
 mod teardown;
+#[cfg(any(test, feature = "test-hooks"))]
+mod test_hooks;
+#[cfg(any(test, feature = "test-hooks"))]
+pub(in crate::backends) use test_hooks::{
+    prepare_network_teardown_fixture, reopen_network_teardown_fixture,
+};
 
 use super::bundle::{
     ContainerBundleLayout, ContainerBundleMount, ContainerBundleOptions, write_bundle_config,
@@ -55,6 +62,8 @@ use crate::backends::oci::egress::{
     ensure_egress_proxy_running_with_release_authority,
 };
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
+#[cfg(test)]
+use crate::backends::oci::network::HostManagedAttachmentCheckpointTestProbe;
 use crate::backends::oci::network::{
     AttachmentAttachAuthority, MachinePortPreparationReleaseAuthority,
     MachinePortProxyLifetimeRegistry, OciEgressPinProvider, OciIpamAuthority, OciNetworkLayout,
@@ -117,6 +126,8 @@ pub struct ContainerSandboxBackend {
     runner_lifecycle_lock_test_probe: Option<RunnerLifecycleLockTestProbe>,
     #[cfg(test)]
     post_egress_reload_ack_observer: Option<Arc<dyn Fn() + Send + Sync>>,
+    #[cfg(test)]
+    network_teardown_checkpoint_test_probe: Option<HostManagedAttachmentCheckpointTestProbe>,
 }
 
 #[cfg(test)]
@@ -220,6 +231,15 @@ impl ContainerSandboxBackend {
         probe: RunnerLifecycleLockTestProbe,
     ) -> Self {
         self.runner_lifecycle_lock_test_probe = Some(probe);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_network_teardown_checkpoint_test_probe(
+        mut self,
+        probe: HostManagedAttachmentCheckpointTestProbe,
+    ) -> Self {
+        self.network_teardown_checkpoint_test_probe = Some(probe);
         self
     }
 
@@ -961,6 +981,7 @@ impl ContainerSandboxBackend {
                 start_mode: self.config.start_mode,
                 shutdown_requested: false,
                 execution_teardown: Default::default(),
+                network_teardown: Default::default(),
                 status: SandboxStatus::Starting,
             },
         };

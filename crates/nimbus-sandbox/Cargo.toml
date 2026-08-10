@@ -9,6 +9,11 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Gates deterministic cross-crate fixture construction. The feature is used
+# only by upper-crate dev-dependencies and adds no production provider path.
+test-hooks = []
+
 [dependencies]
 flate2 = "1"
 libc.workspace = true

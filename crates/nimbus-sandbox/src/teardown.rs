@@ -9,6 +9,15 @@ use thiserror::Error;
 
 use crate::{ProviderCommandClaim, ProviderCommandOperation, SandboxExecutionAttemptId, SandboxId};
 
+mod attachment;
+
+pub use attachment::{
+    SandboxNetworkTeardownCommand, SandboxNetworkTeardownCommandError,
+    SandboxNetworkTeardownCommandInput, SandboxNetworkTeardownIdentity,
+    SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownObservation,
+    SandboxNetworkTeardownOperation,
+};
+
 /// One exact execution-only teardown operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxExecutionTeardownOperation {

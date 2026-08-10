@@ -28,7 +28,7 @@ pub(super) mod state;
 use effects::{KrunExecutionTeardownRuntime, KrunExecutionTerminalObservation};
 use state::{KrunDrainProgress, KrunStopProgress};
 
-const KRUN_EXECUTION_PROVIDER_KEY: &str = "nimbus-sandbox.krun-execution";
+pub(super) const KRUN_EXECUTION_PROVIDER_KEY: &str = "nimbus-sandbox.krun-execution";
 const KILL_REDELIVERY_DELAY: Duration = Duration::from_secs(1);
 
 impl KrunSandboxBackend {
@@ -812,7 +812,7 @@ fn require_matching_drain(
             message: "Krun execution stop requires exact durable drain completion".to_owned(),
         });
     };
-    if same_workload_fence(fence, stop_claim) {
+    if same_workload_fence(fence, stop_claim) && fence.attempt_id() == stop_claim.attempt_id() {
         Ok(())
     } else {
         Err(SandboxError::InvalidSpec {
@@ -822,15 +822,8 @@ fn require_matching_drain(
 }
 
 fn same_workload_fence(left: &ProviderCommandClaim, right: &ProviderCommandClaim) -> bool {
-    left.authority_id() == right.authority_id()
+    left.same_lifecycle_fence(right)
         && left.effect_subject() == right.effect_subject()
-        && left.source_attempt_id() == right.source_attempt_id()
-        && left.attempt_id() == right.attempt_id()
-        && left.workload_generation() == right.workload_generation()
-        && left.restart_ordinal() == right.restart_ordinal()
-        && left.desired_digest() == right.desired_digest()
-        && left.source_digest() == right.source_digest()
-        && left.network_plan_digest() == right.network_plan_digest()
         && left.provider_target_digest() == right.provider_target_digest()
 }
 

@@ -91,6 +91,59 @@ impl NetavarkPortLifetimeRegistry {
 }
 
 impl OciPortLeaseCoordinator {
+    fn require_releasable_planned_netavark_bindings_with_lifetimes(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        tenant_id: &TenantId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<Vec<PortLeaseBinding>> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        let records =
+            self.planned_published_listener_records(plan_members, tenant_id, bindings, leases)?;
+        if leases.len() != batch.lifetimes().len() || leases.len() != batch.claims().len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "compiled plan has {} Netavark listener leases but {} live lifetimes and {} bind claims",
+                    leases.len(),
+                    batch.lifetimes().len(),
+                    batch.claims().len()
+                ),
+            });
+        }
+        bindings
+            .iter()
+            .zip(leases)
+            .zip(records)
+            .zip(batch.lifetimes())
+            .map(|(((binding, request), record), lifetime)| {
+                let expected = provider_binding(
+                    request,
+                    binding.host_socket_addr(),
+                    OciPortProvider::Netavark,
+                )?;
+                if !matches!(
+                    record.phase(),
+                    PortLeasePhase::Active
+                        | PortLeasePhase::Withdrawing
+                        | PortLeasePhase::CleanupPending
+                ) || record.binding() != Some(&expected)
+                    || lifetime.request() != request
+                    || record.active_lifetime() != Some(lifetime.lifetime())
+                {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "compiled Netavark listener {} is not owned by its exact live provider lifetime",
+                            request.lease_id()
+                        ),
+                    });
+                }
+                Ok(expected)
+            })
+            .collect()
+    }
+
     fn require_releasable_netavark_bindings_with_lifetimes(
         &self,
         tenant_id: &TenantId,
@@ -290,6 +343,57 @@ impl OciPortLeaseCoordinator {
         }))
     }
 
+    pub(crate) fn begin_planned_netavark_cleanup(
+        &self,
+        registry: &NetavarkPortLifetimeRegistry,
+        plan_members: &[PortLeaseRequest],
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<Option<NetavarkPortCleanup>> {
+        if leases.is_empty() {
+            return Ok(None);
+        }
+        if let Some(batch) = registry.take(tenant_id, sandbox_id)? {
+            match self.require_releasable_planned_netavark_bindings_with_lifetimes(
+                plan_members,
+                tenant_id,
+                bindings,
+                leases,
+                &batch,
+            ) {
+                Ok(expected_bindings) => {
+                    return Ok(Some(NetavarkPortCleanup {
+                        expected_bindings,
+                        authority: NetavarkPortLeaseAuthority::Live(batch),
+                    }));
+                }
+                Err(primary) => {
+                    return match registry.insert(tenant_id, sandbox_id, batch) {
+                        Ok(()) => Err(primary),
+                        Err((retention, _batch)) => Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "{primary}; retaining the planned Netavark lifetime batch also failed: {retention}"
+                            ),
+                        }),
+                    };
+                }
+            }
+        }
+        let (expected_bindings, recoveries) = self
+            .recover_planned_netavark_bindings_after_owner_death(
+                plan_members,
+                tenant_id,
+                bindings,
+                leases,
+            )?;
+        Ok(Some(NetavarkPortCleanup {
+            expected_bindings,
+            authority: NetavarkPortLeaseAuthority::Recovered(recoveries),
+        }))
+    }
+
     /// Retain cleanup authority after an ambiguous provider teardown.
     pub(crate) fn retain_ambiguous_netavark_cleanup(
         &self,
@@ -345,6 +449,33 @@ impl OciPortLeaseCoordinator {
             (NetavarkPortLeaseAuthority::Recovered(recoveries), true) => {
                 self.release_recovered_netavark_bindings(leases, recoveries)
             }
+        }
+    }
+
+    pub(crate) fn complete_planned_netavark_detach(
+        &self,
+        plan_members: &[PortLeaseRequest],
+        leases: &[PortLeaseRequest],
+        cleanup: Option<&NetavarkPortCleanup>,
+    ) -> Result<()> {
+        let Some(cleanup) = cleanup else {
+            return Ok(());
+        };
+        match &cleanup.authority {
+            NetavarkPortLeaseAuthority::Live(batch) => self
+                .prepare_planned_netavark_bindings_for_rebind_with_lifetimes(
+                    plan_members,
+                    leases,
+                    &cleanup.expected_bindings,
+                    batch,
+                ),
+            NetavarkPortLeaseAuthority::Recovered(recoveries) => self
+                .prepare_recovered_planned_netavark_bindings_for_rebind(
+                    plan_members,
+                    leases,
+                    &cleanup.expected_bindings,
+                    recoveries,
+                ),
         }
     }
 }
