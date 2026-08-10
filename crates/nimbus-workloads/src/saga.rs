@@ -1623,9 +1623,9 @@ pub use teardown::{
     WorkloadTeardownCommandId, WorkloadTeardownCommandMode, WorkloadTeardownContext,
     WorkloadTeardownDecision, WorkloadTeardownDispatchAuthorization, WorkloadTeardownDispatchEpoch,
     WorkloadTeardownDisposition, WorkloadTeardownEffectResult, WorkloadTeardownInspectionResult,
-    WorkloadTeardownProviderTarget, WorkloadTeardownReceipt, WorkloadTeardownResultConfirmation,
-    WorkloadTeardownRetryEvidence, WorkloadTeardownStep, WorkloadTeardownSubjects,
-    WorkloadTeardownSuccessEvidence, WorkloadTeardownSuccessorFence,
+    WorkloadTeardownProviderTarget, WorkloadTeardownReceipt, WorkloadTeardownReceiptPrefix,
+    WorkloadTeardownResultConfirmation, WorkloadTeardownRetryEvidence, WorkloadTeardownStep,
+    WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence, WorkloadTeardownSuccessorFence,
 };
 #[cfg(test)]
 #[path = "saga/tests.rs"]

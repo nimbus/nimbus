@@ -9,8 +9,8 @@ use nimbus_workloads::{
     WorkloadSagaTransitionId, WorkloadTeardownAttemptId, WorkloadTeardownClaim,
     WorkloadTeardownCommandId, WorkloadTeardownCommandMode, WorkloadTeardownDispatchEpoch,
     WorkloadTeardownDisposition, WorkloadTeardownEffectResult, WorkloadTeardownInspectionResult,
-    WorkloadTeardownProviderTarget, WorkloadTeardownRetryEvidence, WorkloadTeardownStep,
-    WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
+    WorkloadTeardownProviderTarget, WorkloadTeardownReceiptPrefix, WorkloadTeardownRetryEvidence,
+    WorkloadTeardownStep, WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
 };
 
 use super::{WorkloadSagaConfirmation, WorkloadSagaCoordinator};
@@ -24,6 +24,7 @@ pub struct ConfirmedWorkloadTeardownCommand {
     source: WorkloadProvisionSourceEvidence,
     compiled_network_plan: CompiledWorkloadNetworkPlan,
     execution_locator: WorkloadExecutionReference,
+    prior_receipt_prefix: WorkloadTeardownReceiptPrefix,
     mode: WorkloadTeardownCommandMode,
     claim: WorkloadTeardownClaim,
 }
@@ -90,6 +91,7 @@ impl ConfirmedWorkloadTeardownCommand {
             .ok_or(nimbus_workloads::WorkloadSagaError::InvalidEvidence(
                 "effectful teardown command requires its retained execution locator",
             ))?;
+        let prior_receipt_prefix = record.teardown_receipt_prefix_for_claim(claim)?;
         let command_id = WorkloadTeardownCommandId::for_confirmed_dispatch(
             claim,
             record.revision(),
@@ -103,6 +105,7 @@ impl ConfirmedWorkloadTeardownCommand {
             source: record.active_intent().source().clone(),
             compiled_network_plan,
             execution_locator,
+            prior_receipt_prefix,
             mode,
             claim: claim.clone(),
         }))
@@ -168,6 +171,11 @@ impl ConfirmedWorkloadTeardownCommand {
     /// Exact execution identity retained from the durable teardown origin.
     pub fn execution_locator(&self) -> &WorkloadExecutionReference {
         &self.execution_locator
+    }
+
+    /// Exact ordered durable receipts committed before this command.
+    pub fn prior_receipt_prefix(&self) -> &WorkloadTeardownReceiptPrefix {
+        &self.prior_receipt_prefix
     }
 
     pub fn selection_evidence(&self) -> Option<&NetworkCapabilitySelectionEvidence> {
@@ -260,6 +268,7 @@ pub struct WorkloadTeardownCommandResult {
     network_plan_digest: NetworkPlanDigest,
     selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
     execution_locator: WorkloadExecutionReference,
+    prior_receipt_prefix: WorkloadTeardownReceiptPrefix,
     attempt_id: WorkloadTeardownAttemptId,
     dispatch_epoch: WorkloadTeardownDispatchEpoch,
     provider_target: WorkloadTeardownProviderTarget,
@@ -374,6 +383,7 @@ impl WorkloadTeardownCommandResult {
             network_plan_digest: command.network_plan_digest(),
             selection_evidence: command.selection_evidence().cloned(),
             execution_locator: command.execution_locator().clone(),
+            prior_receipt_prefix: command.prior_receipt_prefix().clone(),
             attempt_id: command.attempt_id().clone(),
             dispatch_epoch: command.dispatch_epoch(),
             provider_target: command.provider_target().clone(),
@@ -422,6 +432,7 @@ fn authenticate_confirmed_record(
     command: &ConfirmedWorkloadTeardownCommand,
 ) -> Result<(), WorkloadSagaStoreError> {
     authenticate_durable_claim(record, command.claim(), command.mode())?;
+    let durable_prefix = record.teardown_receipt_prefix_for_claim(command.claim())?;
     if record.key() != command.key()
         || record.saga_id() != command.saga_id()
         || record.revision() != command.confirmed_revision()
@@ -430,6 +441,7 @@ fn authenticate_confirmed_record(
         || record.active_intent().network().compiled_plan() != command.compiled_network_plan()
         || command.compiled_network_plan().plan().digest() != command.network_plan_digest()
         || record.phase_detail().references().execution() != Some(command.execution_locator())
+        || durable_prefix != *command.prior_receipt_prefix()
     {
         return Err(nimbus_workloads::WorkloadSagaError::InvalidEvidence(
             "teardown command is crossed with its confirmed transition",
@@ -456,6 +468,7 @@ fn authenticate_command_result(
         || result.network_plan_digest != command.network_plan_digest()
         || result.selection_evidence.as_ref() != command.selection_evidence()
         || result.execution_locator != *command.execution_locator()
+        || result.prior_receipt_prefix != *command.prior_receipt_prefix()
         || result.attempt_id != *command.attempt_id()
         || result.dispatch_epoch != command.dispatch_epoch()
         || result.provider_target != *command.provider_target()

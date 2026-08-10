@@ -491,6 +491,25 @@ fn validate_teardown_state_transition(
 }
 
 impl WorkloadSagaRecord {
+    /// Project the exact durable receipt history for the current claim.
+    pub fn teardown_receipt_prefix_for_claim(
+        &self,
+        claim: &WorkloadTeardownClaim,
+    ) -> Result<WorkloadTeardownReceiptPrefix, WorkloadSagaError> {
+        self.validate()?;
+        let disposition =
+            self.teardown_disposition()
+                .ok_or(WorkloadSagaError::InvalidTransition(
+                    "teardown receipt prefix requires durable teardown state",
+                ))?;
+        if disposition.claim() != Some(claim) {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "teardown receipt prefix requires the exact current durable claim",
+            ));
+        }
+        WorkloadTeardownReceiptPrefix::for_claim(disposition.context().completed(), claim)
+    }
+
     pub(crate) fn commit_teardown_successor(
         &self,
         successor: WorkloadSagaIntent,

@@ -1,6 +1,6 @@
 # NNC6.5d4 Forwarded-Machine Teardown Provider
 
-Status: `audit and fail-before complete. implementation not started`
+Status: `implementation in progress. band 1 complete`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -36,7 +36,7 @@ backend is `crates/nimbus-cli/src/machine/backend.rs`, not a nonexistent
 | K1 | The read-only source audit names the current parent backend, source plan, exact provider identities, confirmed publication journal, port authority, Machine API vocabulary, client, private route, guest facade, Systemd lifecycle, Container runtime, provider journal, compute command, portable receipt, and five-capability registry authorities. |
 | K2 | `nimbus-compute` remains the sole saga coordinator. The parent and guest are effect sinks. Neither realm admits desired state, chooses phase order, advances a workload record, retries a later phase, or opens the other realm's durable state. No CLI-local saga store is added. |
 | K3 | `ConfirmedWorkloadTeardownCommand` retains the exact ordered prefix of already-committed `WorkloadTeardownReceipt` values from its durable context. Command result construction and callback authentication bind the same prefix. A stale or substituted prefix cannot publish a result. |
-| K4 | One portable receipt-prefix validator proves the exact prior evidence required by the current step: none for `WithdrawPublication`. `PublicationAbsent` for drain. plus `ExecutionDrained` for stop. plus `ExecutionStopped` for detach. plus `NetworkDetached` for release. It validates claim, confirmation, subject, generation, attempt, provider role, dispatch epoch, and order. |
+| K4 | One portable receipt-prefix validator proves that every retained receipt is valid, ordered, older than the current claim, and from the same stable teardown lifecycle. It preserves valid gaps from resource-free phases and compute separately proves exact equality with durable context. The forwarded adapter must enforce the stronger full chain: no receipt before `WithdrawPublication`; `PublicationAbsent` before drain; plus `ExecutionDrained` before stop; plus `ExecutionStopped` before detach; plus `NetworkDetached` before release. |
 | K5 | The admitted forwarded attachment, execution, and ingress provider IDs are pairwise distinct, deterministic, bound into source evidence, and independent of every IP address, port, socket path, process ID, and provider handle. The parent adapter rejects any role or provider substitution without fallback. |
 | K6 | One real `ForwardedMachineTeardownAdapter` implements `IngressWithdrawalCapability`, `WorkloadExecutionDrainCapability`, `WorkloadExecutionStopCapability`, `NetworkDetachmentCapability`, and `NetworkReleaseCapability`. It registers only the exact admitted provider IDs and shares the already-composed source, client, parent publication, port, and live-lifetime authorities. |
 | K7 | The adapter uses one parent `ProviderCommandAttemptJournal` namespace for all five independent operation streams. Final teardown withdrawal has a teardown-family operation distinct from restart withdrawal. restart claims keep their source-attempt and restart-ordinal rules unchanged. Each step has its own exact claim, epoch, durable result, and compute result CAS. The confirmed publication journal records retained publication progress, not a second command result or saga. |
@@ -612,14 +612,24 @@ membership, transport, routing, and super-net fencing remain separate.
 | Complexity census | Audit line counts and concept-owned dispositions are frozen above. |
 | Fail-before | Seven absent seam checks exit `1`. the retained coarse-stop check exits `0`. product source unchanged. |
 | Audit checkpoint verification | Format and diff pass. Technical-writing lint reports zero diagnostics. NNCV008 passes. NNCV035 self-test is `55/55`; direct remains exact expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. Docs pass `108`; site passes `17/17`. |
+| Band 1 read-only audit | Three bounded packets changed zero paths. They proved that `WorkloadTeardownContext::completed()` remains the sole durable receipt authority, resource-free phases require valid receipt gaps, a standalone prefix needs semantic deserialization, compute must compare exact durable bytes, and provider observations must carry the same prefix before result construction. |
+| Band 1 deterministic fail-before | `cargo test -p nimbus-workloads teardown_receipt_prefix -- --test-threads=1` exited `101` because the portable type and record projection did not exist. `cargo test -p nimbus-compute confirmed_teardown_command_binds_exact_prior_receipt_prefix -- --test-threads=1` exited `101` because command, result, and observation fences did not exist. |
+| Band 1 portable contract | `nimbus-workloads` now owns one strict `WorkloadTeardownReceiptPrefix`. It validates each receipt, bounded strict step and revision order, stable tenant-qualified saga lineage, provider and plan identity, monotonic successor fencing, and current-claim precedence. `WorkloadSagaRecord::teardown_receipt_prefix_for_claim` projects the exact current durable history without adding durable state. |
+| Band 1 compute fence | Confirmed commands, provider observations, and command results carry the same immutable prefix. Command authentication reconstructs and compares the exact durable projection. Provider callbacks and results reject crossed prefixes before reducer application or result CAS. No provider effect, Machine API, caller, or `nimbus-network` path changed. |
+| Band 1 behavior | Focused receipt-prefix tests pass `2/2`; focused compute prefix tests pass `5/5`; the existing crossed-result matrix passes `1/1`. Full `nimbus-workloads` passes `218/218`. Full `nimbus-compute` passes `374/374` with one declared child-only ignore. |
+| Band 1 quality and modularity | Format, diff, strict affected Clippy, and warning-denied affected Rustdoc pass. NNCV008 passes. NNCV035 self-test passes `55/55`; direct remains expected red at `0/7`; the aggregate is `35/36` with only NNCV035 red. Proof lint has zero diagnostics. Docs pass `108`, and the site passes `17/17`. The new concept-owned receipt-prefix test child has `94` lines, and its parent remains below the `1,500`-line ownership threshold at `1,436` lines. |
 | Structured review | Not run. Audit and fail-before are partial item work. One review is allowed only after K1-K34 are green. |
 | Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
+| Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
 
 ## Current Acceptance State
 
-K1-K2 path and ownership audit evidence is complete. The item has not run
-K3-K35. Those criteria remain frozen and red. The audit changed no product
-source. The next action is
-implementation band 1: add and prove the exact prior receipt-prefix contract,
-then carry it through confirmed command and result authentication. NNC6.5d4
-remains the sole `in_progress` canonical item. There is no blocker.
+K1-K3 are green. Band 1 also completes the portable validator part of K4.
+The forwarded adapter must still enforce the full five-phase evidence chain.
+K5-K35 remain open. Band 1 changes only portable workload vocabulary and
+compute command, callback, and result fences.
+
+Band 2 is next. It adds the distinct teardown-family final-withdraw operation
+and extracts one narrow confirmed-teardown journal seam. It must not change
+restart withdrawal. NNC6.5d4 remains the sole `in_progress` canonical item.
+There is no blocker.

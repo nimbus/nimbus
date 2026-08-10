@@ -11,8 +11,8 @@ use nimbus_workloads::{
     WorkloadGeneration, WorkloadProvisionSourceDigest, WorkloadProvisionSourceEvidence,
     WorkloadSagaId, WorkloadSagaKey, WorkloadSagaRevision, WorkloadSagaTransitionId,
     WorkloadTeardownAttemptId, WorkloadTeardownCommandId, WorkloadTeardownCommandMode,
-    WorkloadTeardownDispatchEpoch, WorkloadTeardownProviderTarget, WorkloadTeardownStep,
-    WorkloadTeardownSubjects,
+    WorkloadTeardownDispatchEpoch, WorkloadTeardownProviderTarget, WorkloadTeardownReceiptPrefix,
+    WorkloadTeardownStep, WorkloadTeardownSubjects,
 };
 use thiserror::Error;
 
@@ -46,6 +46,7 @@ pub struct WorkloadTeardownProviderObservation {
     network_plan_digest: NetworkPlanDigest,
     selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
     execution_locator: WorkloadExecutionReference,
+    prior_receipt_prefix: WorkloadTeardownReceiptPrefix,
     attempt_id: WorkloadTeardownAttemptId,
     dispatch_epoch: WorkloadTeardownDispatchEpoch,
     provider_target: WorkloadTeardownProviderTarget,
@@ -75,6 +76,7 @@ impl WorkloadTeardownProviderObservation {
             network_plan_digest: command.network_plan_digest(),
             selection_evidence: command.selection_evidence().cloned(),
             execution_locator: command.execution_locator().clone(),
+            prior_receipt_prefix: command.prior_receipt_prefix().clone(),
             attempt_id: command.attempt_id().clone(),
             dispatch_epoch: command.dispatch_epoch(),
             provider_target: command.provider_target().clone(),
@@ -99,6 +101,7 @@ impl WorkloadTeardownProviderObservation {
             && self.network_plan_digest == command.network_plan_digest()
             && self.selection_evidence.as_ref() == command.selection_evidence()
             && self.execution_locator == *command.execution_locator()
+            && self.prior_receipt_prefix == *command.prior_receipt_prefix()
             && self.attempt_id == *command.attempt_id()
             && self.dispatch_epoch == command.dispatch_epoch()
             && self.provider_target == *command.provider_target()
@@ -122,6 +125,14 @@ impl WorkloadTeardownProviderObservation {
     #[cfg(test)]
     pub(crate) fn cross_execution_locator_for_test(&mut self, locator: WorkloadExecutionReference) {
         self.execution_locator = locator;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cross_prior_receipt_prefix_for_test(
+        &mut self,
+        prefix: WorkloadTeardownReceiptPrefix,
+    ) {
+        self.prior_receipt_prefix = prefix;
     }
 }
 

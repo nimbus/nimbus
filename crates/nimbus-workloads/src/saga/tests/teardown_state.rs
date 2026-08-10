@@ -4,6 +4,8 @@ use super::*;
 mod handoff;
 #[path = "teardown_state/inspection.rs"]
 mod inspection;
+#[path = "teardown_state/receipt_prefix.rs"]
+mod receipt_prefix;
 #[path = "teardown_state/wire.rs"]
 mod wire;
 

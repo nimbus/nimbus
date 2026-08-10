@@ -848,6 +848,153 @@ impl WorkloadTeardownReceipt {
     }
 }
 
+/// Portable projection of the exact ordered receipts committed before one
+/// teardown command.
+///
+/// The durable authority remains [`WorkloadTeardownContext`]. This bounded
+/// value carries only the authenticated history that an effect provider needs
+/// to enforce cross-phase ordering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkloadTeardownReceiptPrefix {
+    receipts: Vec<WorkloadTeardownReceipt>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct WorkloadTeardownReceiptPrefixWire {
+    receipts: Vec<WorkloadTeardownReceipt>,
+}
+
+impl<'de> Deserialize<'de> for WorkloadTeardownReceiptPrefix {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = WorkloadTeardownReceiptPrefixWire::deserialize(deserializer)?;
+        Self::from_receipts(wire.receipts).map_err(serde::de::Error::custom)
+    }
+}
+
+impl WorkloadTeardownReceiptPrefix {
+    pub(crate) fn for_claim(
+        receipts: &[WorkloadTeardownReceipt],
+        claim: &WorkloadTeardownClaim,
+    ) -> Result<Self, WorkloadSagaError> {
+        let prefix = Self::from_receipts(receipts.to_vec())?;
+        prefix.validate_for_claim(claim)?;
+        Ok(prefix)
+    }
+
+    fn from_receipts(receipts: Vec<WorkloadTeardownReceipt>) -> Result<Self, WorkloadSagaError> {
+        let prefix = Self { receipts };
+        prefix.validate_ordered_history()?;
+        Ok(prefix)
+    }
+
+    pub fn receipts(&self) -> &[WorkloadTeardownReceipt] {
+        &self.receipts
+    }
+
+    pub fn receipt_for(&self, step: WorkloadTeardownStep) -> Option<&WorkloadTeardownReceipt> {
+        self.receipts
+            .iter()
+            .find(|receipt| receipt.claim().attempt().step() == step)
+    }
+
+    /// Validate this history as the ordered prefix for `claim`.
+    ///
+    /// Resource-free phases intentionally leave gaps. Exact equality with the
+    /// durable context is checked by the record projection and command fence.
+    pub fn validate_for_claim(
+        &self,
+        claim: &WorkloadTeardownClaim,
+    ) -> Result<(), WorkloadSagaError> {
+        claim.validate()?;
+        self.validate_ordered_history()?;
+        let current = claim.attempt();
+        for receipt in &self.receipts {
+            let prior_claim = receipt.claim();
+            if prior_claim.attempt().step().order() >= current.step().order()
+                || prior_claim.claimed_revision() >= claim.claimed_revision()
+                || prior_claim.attempt().issuing_revision() >= current.issuing_revision()
+                || prior_claim.claimed_revision() >= current.issuing_revision()
+                || !same_teardown_lifecycle(prior_claim.attempt(), current)
+                || !successor_fence_precedes_or_equals(
+                    prior_claim.attempt().successor_fence(),
+                    current.successor_fence(),
+                )
+            {
+                return Err(WorkloadSagaError::InvalidEvidence(
+                    "teardown receipt prefix is stale, crossed, or not prior to its claim",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_ordered_history(&self) -> Result<(), WorkloadSagaError> {
+        if self.receipts.len() > WorkloadTeardownStep::ReleaseNetwork.order() as usize {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "teardown receipt prefix exceeds the closed teardown step set",
+            ));
+        }
+        for receipt in &self.receipts {
+            receipt.validate()?;
+        }
+        for pair in self.receipts.windows(2) {
+            let previous = pair[0].claim();
+            let next = pair[1].claim();
+            if previous.attempt().step().order() >= next.attempt().step().order()
+                || previous.claimed_revision() >= next.claimed_revision()
+                || previous.attempt().issuing_revision() >= next.attempt().issuing_revision()
+                || previous.claimed_revision() >= next.attempt().issuing_revision()
+                || !same_teardown_lifecycle(previous.attempt(), next.attempt())
+                || !successor_fence_precedes_or_equals(
+                    previous.attempt().successor_fence(),
+                    next.attempt().successor_fence(),
+                )
+            {
+                return Err(WorkloadSagaError::InvalidEvidence(
+                    "teardown receipt prefix is duplicated, reordered, stale, or crossed",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn same_teardown_lifecycle(
+    previous: &WorkloadTeardownAttempt,
+    next: &WorkloadTeardownAttempt,
+) -> bool {
+    previous.key() == next.key()
+        && previous.saga_id() == next.saga_id()
+        && previous.generation() == next.generation()
+        && previous.desired_digest() == next.desired_digest()
+        && previous.required_node() == next.required_node()
+        && previous.source_digest() == next.source_digest()
+        && previous.execution_provider_id() == next.execution_provider_id()
+        && previous.network_plan_digest() == next.network_plan_digest()
+        && previous.selection_evidence() == next.selection_evidence()
+        && previous.cause() == next.cause()
+}
+
+fn successor_fence_precedes_or_equals(
+    previous: Option<WorkloadTeardownSuccessorFence>,
+    next: Option<WorkloadTeardownSuccessorFence>,
+) -> bool {
+    match (previous, next) {
+        (None, None | Some(_)) => true,
+        (Some(_), None) => false,
+        (Some(previous), Some(next)) => {
+            previous.generation() < next.generation()
+                || previous.generation() == next.generation()
+                    && previous.desired_digest() == next.desired_digest()
+        }
+    }
+}
+
 /// Immutable teardown context retained through every nonterminal step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

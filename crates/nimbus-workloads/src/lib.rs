@@ -58,9 +58,9 @@ pub use saga::{
     WorkloadTeardownContext, WorkloadTeardownDecision, WorkloadTeardownDetail,
     WorkloadTeardownDispatchAuthorization, WorkloadTeardownDispatchEpoch,
     WorkloadTeardownDisposition, WorkloadTeardownEffectResult, WorkloadTeardownInspectionResult,
-    WorkloadTeardownProviderTarget, WorkloadTeardownReceipt, WorkloadTeardownResultConfirmation,
-    WorkloadTeardownRetryEvidence, WorkloadTeardownStep, WorkloadTeardownSubjects,
-    WorkloadTeardownSuccessEvidence, WorkloadTeardownSuccessorFence,
+    WorkloadTeardownProviderTarget, WorkloadTeardownReceipt, WorkloadTeardownReceiptPrefix,
+    WorkloadTeardownResultConfirmation, WorkloadTeardownRetryEvidence, WorkloadTeardownStep,
+    WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence, WorkloadTeardownSuccessorFence,
     WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
 pub use scheduling::{

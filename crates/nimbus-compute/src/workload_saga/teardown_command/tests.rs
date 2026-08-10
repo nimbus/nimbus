@@ -189,6 +189,162 @@ async fn confirmed_teardown_command_binds_exact_compiled_publication_membership(
 }
 
 #[tokio::test]
+async fn confirmed_teardown_command_binds_exact_prior_receipt_prefix() {
+    let loaded = teardown_record(
+        "teardown-command-receipt-prefix",
+        WorkloadSagaPhase::Drained,
+    );
+    let store = DurableTeardownStore::with_record(loaded.clone());
+    let confirmed = WorkloadSagaCoordinator::new(store)
+        .confirm_teardown_transition(&loaded, candidate(&loaded))
+        .await
+        .expect("stop claim confirmation succeeds");
+    let record = confirmed.confirmed_record().expect("claim is durable");
+    let command = confirmed.command().expect("direct winner gets execute");
+    let durable = record
+        .teardown_disposition()
+        .expect("teardown state is durable")
+        .context()
+        .completed();
+
+    assert_eq!(command.prior_receipt_prefix().receipts(), durable);
+    assert_eq!(durable.len(), 2);
+    assert_eq!(
+        durable
+            .iter()
+            .map(|receipt| receipt.claim().attempt().step())
+            .collect::<Vec<_>>(),
+        [
+            WorkloadTeardownStep::WithdrawPublication,
+            WorkloadTeardownStep::DrainExecution,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn confirmed_teardown_commands_bind_all_five_ordered_receipt_prefixes() {
+    let steps = [
+        (
+            WorkloadSagaPhase::WithdrawalCommitted,
+            WorkloadTeardownStep::WithdrawPublication,
+        ),
+        (
+            WorkloadSagaPhase::Withdrawn,
+            WorkloadTeardownStep::DrainExecution,
+        ),
+        (
+            WorkloadSagaPhase::Drained,
+            WorkloadTeardownStep::StopExecution,
+        ),
+        (
+            WorkloadSagaPhase::WorkloadStopped,
+            WorkloadTeardownStep::DetachNetwork,
+        ),
+        (
+            WorkloadSagaPhase::NetworkDetached,
+            WorkloadTeardownStep::ReleaseNetwork,
+        ),
+    ];
+
+    for (index, (phase, step)) in steps.iter().copied().enumerate() {
+        let loaded = teardown_record(&format!("teardown-command-prefix-{index}"), phase);
+        let store = DurableTeardownStore::with_record(loaded.clone());
+        let confirmed = WorkloadSagaCoordinator::new(store)
+            .confirm_teardown_transition(&loaded, candidate(&loaded))
+            .await
+            .expect("phase claim confirmation succeeds");
+        let record = confirmed.confirmed_record().expect("claim is durable");
+        let command = confirmed.command().expect("direct winner gets execute");
+        let durable = record
+            .teardown_disposition()
+            .expect("teardown state is durable")
+            .context()
+            .completed();
+
+        assert_eq!(command.step(), step);
+        assert_eq!(command.prior_receipt_prefix().receipts(), durable);
+        assert_eq!(durable.len(), index);
+        assert_eq!(
+            durable
+                .iter()
+                .map(|receipt| receipt.claim().attempt().step())
+                .collect::<Vec<_>>(),
+            steps[..index]
+                .iter()
+                .map(|(_, prior_step)| *prior_step)
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[tokio::test]
+async fn teardown_inspection_replay_retains_exact_prior_receipt_prefix() {
+    let loaded = teardown_record(
+        "teardown-command-inspection-prefix",
+        WorkloadSagaPhase::Drained,
+    );
+    let claimed = candidate(&loaded);
+    let direct = WorkloadSagaCoordinator::new(DurableTeardownStore::with_record(loaded.clone()))
+        .confirm_teardown_transition(&loaded, claimed.clone())
+        .await
+        .expect("direct confirmation succeeds");
+    let replay = WorkloadSagaCoordinator::new(DurableTeardownStore::with_record(claimed.clone()))
+        .confirm_teardown_transition(&loaded, claimed)
+        .await
+        .expect("replay confirmation succeeds");
+    let direct_command = direct.command().expect("direct command exists");
+    let replay_command = replay.command().expect("inspection command exists");
+
+    assert_eq!(direct_command.mode(), WorkloadTeardownCommandMode::Execute);
+    assert_eq!(replay_command.mode(), WorkloadTeardownCommandMode::Inspect);
+    assert_eq!(
+        replay_command.prior_receipt_prefix(),
+        direct_command.prior_receipt_prefix()
+    );
+}
+
+#[tokio::test]
+async fn confirmed_teardown_command_rejects_missing_and_stale_receipt_prefix() {
+    let loaded = teardown_record(
+        "teardown-command-stale-receipt-prefix",
+        WorkloadSagaPhase::Drained,
+    );
+    let store = DurableTeardownStore::with_record(loaded.clone());
+    let confirmed = WorkloadSagaCoordinator::new(store)
+        .confirm_teardown_transition(&loaded, candidate(&loaded))
+        .await
+        .expect("stop claim confirmation succeeds");
+    let record = confirmed.confirmed_record().expect("claim is durable");
+    let command = confirmed.command().expect("direct winner gets execute");
+    let outcome = WorkloadTeardownProviderOutcome::Execute(
+        WorkloadTeardownExecuteOutcome::Succeeded(Box::new(teardown_success_evidence(
+            command.step(),
+            command.subjects(),
+        ))),
+    );
+    let encoded =
+        serde_json::to_value(command.prior_receipt_prefix()).expect("receipt prefix should encode");
+    let mut stale = encoded.clone();
+    stale["receipts"]
+        .as_array_mut()
+        .expect("receipts should encode as a list")
+        .pop();
+    let mut missing = encoded;
+    missing["receipts"] = serde_json::Value::Array(Vec::new());
+
+    for (case, value) in [("stale", stale), ("missing", missing)] {
+        let prefix: WorkloadTeardownReceiptPrefix =
+            serde_json::from_value(value).expect("shorter prefix is structurally valid");
+        let mut crossed = command.clone();
+        crossed.prior_receipt_prefix = prefix;
+        assert!(
+            WorkloadTeardownCommandResult::for_command(record, &crossed, outcome.clone()).is_err(),
+            "{case} receipt prefix must fail against durable command state"
+        );
+    }
+}
+
+#[tokio::test]
 async fn crossed_teardown_command_result_preserves_durable_revision() {
     let loaded = initial("teardown-command-crossed-result");
     let store = DurableTeardownStore::with_record(loaded.clone());
@@ -277,6 +433,9 @@ async fn crossed_teardown_command_result_preserves_durable_revision() {
     let mut value = result.clone();
     value.execution_locator = other_result.execution_locator.clone();
     crossed.push(("execution locator", value));
+    let mut value = result.clone();
+    value.prior_receipt_prefix = other_result.prior_receipt_prefix.clone();
+    crossed.push(("prior receipt prefix", value));
     let mut value = result.clone();
     value.attempt_id = other_result.attempt_id.clone();
     crossed.push(("attempt", value));
