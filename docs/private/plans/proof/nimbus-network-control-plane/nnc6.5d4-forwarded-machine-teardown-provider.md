@@ -624,20 +624,30 @@ membership, transport, routing, and super-net fencing remain separate.
 | Band 2 adapter reuse | Current Container and Krun execution and attachment lowerers construct the confirmed provider command, retain exact provider-local effect subjects and target digests, and use the injected journal seam through the existing private `ProviderTeardownPhaseAdapter`. No Machine API, provider composition, product caller, provider effect, or `nimbus-network` source changed. |
 | Band 2 behavior | Focused shared-seam tests pass `6/6`; real final-withdraw lowering passes `1/1`; sandbox teardown-operation classification passes `4/4`; restart/final stream separation passes `1/1`; final-domain rejection by restart passes `1/1`; network retry-authority regression passes `1/1`; full focused sandbox teardown passes `24/24`; unchanged compute and CLI restart mappings pass `1/1 + 1/1`. Full `nimbus-sandbox` passes `1,109/1,109` with `31` declared ignores. Full `nimbus-compute` passes `381/381` with one declared ignore. |
 | Band 2 quality and modularity | Format, diff, strict affected Clippy, and warning-denied affected Rustdoc pass. NNCV008 passes. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; the aggregate is `35/36` with only NNCV035 red. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The compute production seam is `168` lines with a `231`-line concept-owned test child. The existing deep sandbox provider journal is `1,568` lines; this band adds only the operation vocabulary and the existing concept-owned test modules hold the new behavior tests. |
+| Band 3 read-only audit | Three bounded packets inspected Container, Krun, shared compute, existing Machine API restart wire, and portable teardown vocabulary. They changed zero paths. They converged on one transport-only child, one closed translation without guest provider IDs, exact Execute and Inspect outcomes, full response echoes, strict forwarded receipt ordering, and no route, client, capability advertisement, composition, or effect in this band. |
+| Band 3 deterministic fail-before | `test -f crates/nimbus-machine/src/api/teardown.rs`, `rg -q MachineApiWorkloadTeardownCommandEnvelope crates/nimbus-machine/src`, `rg -q MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH crates/nimbus-machine/src`, and `rg -q MACHINE_API_WORKLOAD_TEARDOWN_PHASE_OPERATION crates/nimbus-machine/src` each exited `1`. The exact transport vocabulary did not exist. |
+| Band 3 strict wire contract | `nimbus-machine::api` owns the strict teardown command envelope, complete domain-separated request digest, request, response, provider translation, mode-tagged observations, and typed wire failures. It accepts only guest Drain, Stop, Detach, and Release. Parent withdrawal is rejected. The forwarded boundary requires the full prior phase chain and correlates every prior publication, execution, and network subject with the exact retained execution locator and compiled plan. The response echoes and validates the request digest, authority, command, issuing and confirmed transitions, attempt, epoch, parent provider target, translation, step, subjects, mode, and observation. No route or capability advertisement exists yet. |
+| Band 3 adjacent wire correction | `WorkloadTeardownAttempt` now requires explicit presence for its digest-bound `selectionEvidence` and `successorFence` fields. Explicit `null` remains canonical when the semantic value is absent. `WorkloadTeardownSuccessEvidence::matches_step_and_subjects` is the one public portable correlation seam used by receipts, inspections, and Machine API response validation. |
+| Band 3 behavior | Focused Machine API teardown wire tests pass `7/7`. They cover both modes across all four guest steps, unique complete digests, strict fields, crossed source/plan/translation/authority, parent withdrawal, incomplete and crossed prior history, eight closed outcomes, cross-mode rejection, success evidence, and every response fence. The focused workloads optional-field regression passes `1/1`. Full `nimbus-workloads` passes `219/219`. Full `nimbus-machine` passes `41/41` unit tests plus `5/5` integration tests. |
+| Band 3 quality and modularity | Format, diff, strict affected Clippy, and warning-denied affected Rustdoc pass. NNCV008 passes. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The production Machine API composition root remains `1,047` lines. The new transport-only child is `847` lines and its concept-owned pure-wire test child is `806` lines. No changed handwritten file crosses the `1,500`-line threshold. |
 | Structured review | Not run. Audit and fail-before are partial item work. One review is allowed only after K1-K34 are green. |
 | Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
 | Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 2 checkpoint | The commit that contains this row, the band 2 product and test paths, and the recovery header is the exact band 2 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 3 checkpoint | The commit that contains this row, the band 3 product and test paths, and the recovery header is the exact band 3 recovery checkpoint. It is not the item completion commit and has no structured review. |
 
 ## Current Acceptance State
 
-K1-K3 are green. Band 1 also completes the portable validator part of K4.
-The forwarded adapter must still enforce the full five-phase evidence chain.
-Band 2 completes the operation-family, claim-derivation, and injected-journal
-prerequisites of K7. The future parent adapter must still prove one journal and
-five independent durable streams. K5-K6 and K8-K35 remain open.
+K1-K4 are green at the audit, portable-prefix, compute-authentication, and
+forwarded-wire seams. Band 2 completes the operation-family,
+claim-derivation, and injected-journal prerequisites of K7. The future parent
+adapter must still prove one journal and five independent durable streams.
+Band 3 completes the transport-vocabulary portions of K11-K15. Guest provider
+composition and route availability remain later bands. K5-K6 and the
+remaining end-to-end portions of K7-K10 and K15-K35 remain open.
 
-Band 3 is next. It adds the strict Machine API teardown wire vocabulary,
-complete request digest, closed mode-specific outcomes, response correlation,
-and pure wire tests. It does not add a route or client. NNC6.5d4 remains the
-sole `in_progress` canonical item. There is no blocker.
+Band 4 is next. It adds durable Systemd production composition and retains the
+exact lifecycle, drain, and stop trait objects. It adds capability and
+unavailable-mode tests. It does not add a teardown route, client, guest
+composite state machine, parent adapter, or caller cutover. NNC6.5d4 remains
+the sole `in_progress` canonical item. There is no blocker.

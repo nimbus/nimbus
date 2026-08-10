@@ -37,6 +37,17 @@ pub use restart::{
 };
 
 #[cfg(unix)]
+mod teardown;
+#[cfg(unix)]
+pub use teardown::{
+    MachineApiWorkloadTeardownCommandEnvelope, MachineApiWorkloadTeardownCommandEnvelopeInput,
+    MachineApiWorkloadTeardownExecuteObservation, MachineApiWorkloadTeardownInspectObservation,
+    MachineApiWorkloadTeardownObservation, MachineApiWorkloadTeardownPhaseRequest,
+    MachineApiWorkloadTeardownPhaseResponse, MachineApiWorkloadTeardownProviderTranslation,
+    MachineApiWorkloadTeardownRequestDigest, MachineApiWorkloadTeardownWireError,
+};
+
+#[cfg(unix)]
 pub const MACHINE_API_PROTOCOL_VERSION: &str = "v1alpha2";
 #[cfg(unix)]
 pub const PROTOCOL_VERSION: &str = MACHINE_API_PROTOCOL_VERSION;
@@ -51,6 +62,8 @@ pub const MACHINE_API_BOOTC_ROLLBACK_PATH: &str = "/v1/machine-api/os/bootc/roll
 pub const MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH: &str =
     "/v1/machine-api/workload-provision/phase";
 pub const MACHINE_API_WORKLOAD_RESTART_PHASE_PATH: &str = "/v1/machine-api/workload-restart/phase";
+pub const MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH: &str =
+    "/v1/machine-api/workload-teardown/phase";
 pub const MACHINE_API_SERVICE_SANDBOXES_PATH: &str = "/v1/machine-api/service-sandboxes";
 pub const MACHINE_API_CURRENT_SERVICE_SANDBOX_PATH: &str =
     "/v1/machine-api/service-sandboxes/current";
@@ -63,6 +76,7 @@ pub const MACHINE_API_SERVICE_SANDBOX_STOP_PATH: &str =
     "/v1/machine-api/service-sandboxes/{sandbox_id}/stop";
 pub const MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION: &str = "workload-provision.phase";
 pub const MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION: &str = "workload-restart.phase";
+pub const MACHINE_API_WORKLOAD_TEARDOWN_PHASE_OPERATION: &str = "workload-teardown.phase";
 pub const MACHINE_API_LIST_OPERATION: &str = "service-sandboxes.list";
 pub const MACHINE_API_INSPECT_OPERATION: &str = "service-sandboxes.inspect";
 pub const MACHINE_API_INSPECT_CURRENT_OPERATION: &str = "service-sandboxes.inspect-current";

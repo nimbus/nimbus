@@ -118,6 +118,35 @@ fn teardown_wire_rejects_tampered_attempt_claim_epoch_cause_and_digest() {
 }
 
 #[test]
+fn teardown_attempt_wire_requires_digest_bound_optional_fields() {
+    let withdrawal = withdrawal_record(WorkloadPublicationIntent::PublishWhenReady);
+    let (_, claim) = claim_teardown_step(&withdrawal);
+    let encoded = serde_json::to_value(claim.attempt()).unwrap();
+
+    for field in ["selectionEvidence", "successorFence"] {
+        let mut missing = encoded.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(
+            serde_json::from_value::<WorkloadTeardownAttempt>(missing).is_err(),
+            "digest-bound field {field} must be present even when its value is null"
+        );
+    }
+
+    let mut input = attempt_input(claim.attempt());
+    input.selection_evidence = None;
+    input.successor_fence = None;
+    let without_optional_values = WorkloadTeardownAttempt::new(input).unwrap();
+    let explicit_nulls = serde_json::to_value(&without_optional_values).unwrap();
+    assert!(explicit_nulls["selectionEvidence"].is_null());
+    assert!(explicit_nulls["successorFence"].is_null());
+    assert_eq!(
+        serde_json::from_value::<WorkloadTeardownAttempt>(explicit_nulls).unwrap(),
+        without_optional_values,
+        "explicit null remains the canonical encoding for an absent optional value"
+    );
+}
+
+#[test]
 fn cleanup_wire_rejects_rewritten_completed_receipt_observation() {
     let withdrawal = withdrawal_record(WorkloadPublicationIntent::PublishWhenReady);
     let (pending, claim) = claim_teardown_step(&withdrawal);

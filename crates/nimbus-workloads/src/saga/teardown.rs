@@ -353,7 +353,20 @@ impl WorkloadTeardownSuccessEvidence {
         }
     }
 
-    pub(crate) fn matches_subjects(&self, subjects: &WorkloadTeardownSubjects) -> bool {
+    /// Whether this evidence proves the exact step and typed subjects.
+    ///
+    /// Provider adapters use this portable check before they accept a remote
+    /// success observation. Durable receipt validation uses the same seam so
+    /// the wire and reducer cannot diverge.
+    pub fn matches_step_and_subjects(
+        &self,
+        step: WorkloadTeardownStep,
+        subjects: &WorkloadTeardownSubjects,
+    ) -> bool {
+        self.step() == step && self.matches_subjects(subjects)
+    }
+
+    fn matches_subjects(&self, subjects: &WorkloadTeardownSubjects) -> bool {
         matches!(
             (self, subjects),
             (
@@ -528,13 +541,33 @@ struct WorkloadTeardownAttemptWire {
     source_digest: WorkloadProvisionSourceDigest,
     execution_provider_id: WorkloadExecutionProviderId,
     network_plan_digest: NetworkPlanDigest,
+    #[serde(deserialize_with = "deserialize_required_selection_evidence")]
     selection_evidence: Option<NetworkCapabilitySelectionEvidence>,
     cause: WorkloadTeardownCause,
+    #[serde(deserialize_with = "deserialize_required_successor_fence")]
     successor_fence: Option<WorkloadTeardownSuccessorFence>,
     source_phase: WorkloadSagaPhase,
     target_phase: WorkloadSagaPhase,
     step: WorkloadTeardownStep,
     subjects: WorkloadTeardownSubjects,
+}
+
+fn deserialize_required_selection_evidence<'de, D>(
+    deserializer: D,
+) -> Result<Option<NetworkCapabilitySelectionEvidence>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::deserialize(deserializer)
+}
+
+fn deserialize_required_successor_fence<'de, D>(
+    deserializer: D,
+) -> Result<Option<WorkloadTeardownSuccessorFence>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::deserialize(deserializer)
 }
 
 impl<'de> Deserialize<'de> for WorkloadTeardownAttempt {
@@ -835,10 +868,9 @@ impl WorkloadTeardownReceipt {
     pub(crate) fn validate(&self) -> Result<(), WorkloadSagaError> {
         self.claim.validate()?;
         self.confirmation.validate_for_claim(&self.claim)?;
-        if self.evidence.step() != self.claim.attempt().step()
-            || !self
-                .evidence
-                .matches_subjects(self.claim.attempt().subjects())
+        if !self
+            .evidence
+            .matches_step_and_subjects(self.claim.attempt().step(), self.claim.attempt().subjects())
         {
             return Err(WorkloadSagaError::InvalidEvidence(
                 "teardown receipt is crossed with its durable claim",
@@ -1121,8 +1153,10 @@ impl WorkloadTeardownEffectResult {
                 attempt_id == claim.attempt().attempt_id()
                     && *dispatch_epoch == claim.dispatch_epoch()
                     && provider_target == claim.provider_target()
-                    && evidence.step() == claim.attempt().step()
-                    && evidence.matches_subjects(claim.attempt().subjects())
+                    && evidence.matches_step_and_subjects(
+                        claim.attempt().step(),
+                        claim.attempt().subjects(),
+                    )
             }
             Self::DefiniteFailure {
                 attempt_id,

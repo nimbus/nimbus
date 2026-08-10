@@ -549,8 +549,10 @@ impl WorkloadTeardownInspectionResult {
                     && *dispatch_epoch == claim.dispatch_epoch()
                     && provider_target == claim.provider_target()
                     && *inspection_command_id == expected_command_id
-                    && evidence.step() == claim.attempt().step()
-                    && evidence.matches_subjects(claim.attempt().subjects())
+                    && evidence.matches_step_and_subjects(
+                        claim.attempt().step(),
+                        claim.attempt().subjects(),
+                    )
             }
         };
         if matches {
