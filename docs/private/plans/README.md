@@ -117,9 +117,16 @@ extension-registry seam before the second concern edits `extensions.rs`.
   fence defect. Both deterministic regressions failed before correction and
   now pass; the affected exact/full sandbox, quality, static, docs, and site
   gates are restored. The one narrow correction review is clean at `0.99`,
-  and review cadence is exhausted. NNC6.5d3 is now the sole active item and
-  begins with a read-only audit of the combined host-managed detach/release
-  authorities. NNC8.2 owns the
+  and review cadence is exhausted. NNC6.5d3 is now the sole active item. Its
+  read-only Container, Krun, and shared compute/attachment audits are complete
+  in `proof/nimbus-network-control-plane/nnc6.5d3-host-managed-attachment-detach-release.md`.
+  They freeze K1-K29, exact tenant-qualified manifest lookup, one provider
+  journal, separate retained detach and proof-gated release, nine detach and
+  six release crash cuts, concept-owned paths, and nine expected-red seams.
+  K1 and the audit checkpoint are green: format and diff pass, proof lint
+  passes, NNCV035 self-test is `55/55`, aggregate is the expected `35/36`,
+  docs pass `108`, and site passes `17/17`. Product source remains unchanged.
+  Implementation band 1 starts after the checkpoint commit. NNC8.2 owns the
   earlier provision and restart producers that do not yet retain live claim
   authority through their effect boundaries.
   The four implementation units cover Container execution, Krun execution, shared
