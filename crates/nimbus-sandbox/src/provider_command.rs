@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use fs2::FileExt;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -20,7 +20,7 @@ const JOURNAL_DIRECTORY: &str = ".nimbus-provider-command-attempts";
 const RECORD_SUFFIX: &str = ".json";
 const STAGE_SUFFIX: &str = ".stage";
 const LOCK_SUFFIX: &str = ".lock";
-const CURRENT_ENVELOPE_VERSION: u32 = 3;
+const CURRENT_ENVELOPE_VERSION: u32 = 4;
 const MAX_IDENTITY_LEN: usize = 256;
 const MAX_CANONICAL_SUBJECT_LEN: usize = 64 * 1024;
 #[cfg(not(test))]
@@ -406,6 +406,8 @@ pub struct ProviderCommandObservation {
     claim: ProviderCommandClaim,
     kind: ProviderCommandObservationKind,
     evidence_sha256: Option<String>,
+    #[serde(deserialize_with = "deserialize_present_optional_string")]
+    failure_code: Option<String>,
     retry_lineage: Vec<ProviderCommandRetryReceipt>,
 }
 
@@ -420,6 +422,11 @@ impl ProviderCommandObservation {
 
     pub fn evidence_sha256(&self) -> Option<&str> {
         self.evidence_sha256.as_deref()
+    }
+
+    /// Stable provider failure code retained for exact teardown replay.
+    pub fn failure_code(&self) -> Option<&str> {
+        self.failure_code.as_deref()
     }
 
     /// Whether exact journal receipts authorize provider progress at an older
@@ -441,6 +448,7 @@ impl ProviderCommandObservation {
             claim,
             kind: ProviderCommandObservationKind::Claimed,
             evidence_sha256: None,
+            failure_code: None,
             retry_lineage,
         }
     }
@@ -474,6 +482,24 @@ impl ProviderCommandObservation {
                 message: "provider retry lineage does not end immediately before the current claim"
                     .to_owned(),
             });
+        }
+        match (self.kind, self.failure_code.as_deref()) {
+            (ProviderCommandObservationKind::DefiniteFailure, Some(code))
+                if is_valid_identity(code) => {}
+            (ProviderCommandObservationKind::DefiniteFailure, None)
+                if self.claim.operation.family() != ProviderCommandOperationFamily::Teardown => {}
+            (ProviderCommandObservationKind::DefiniteFailure, _) => {
+                return Err(ProviderCommandJournalError::Corrupt {
+                    message: "a teardown definite failure requires one bounded portable code"
+                        .to_owned(),
+                });
+            }
+            (_, None) => {}
+            (_, Some(_)) => {
+                return Err(ProviderCommandJournalError::Corrupt {
+                    message: "only a definite provider failure can carry a failure code".to_owned(),
+                });
+            }
         }
         match (self.kind, self.evidence_sha256.as_deref()) {
             (ProviderCommandObservationKind::Claimed, None) => Ok(()),
@@ -613,7 +639,7 @@ impl ProviderCommandAttemptJournal {
         execution_claim: ProviderCommandExecutionClaim,
         execute: impl FnOnce(
             &ProviderCommandExecutionClaim,
-        ) -> (T, ProviderCommandObservationKind, Vec<u8>),
+        ) -> (T, ProviderCommandObservationKind, Option<String>, Vec<u8>),
     ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError> {
         execution_claim.observation.validate()?;
         let claim = execution_claim.claim();
@@ -637,8 +663,14 @@ impl ProviderCommandAttemptJournal {
             return Err(ProviderCommandJournalError::PriorEffectUnresolved);
         }
         debug_assert_eq!(current.kind, ProviderCommandObservationKind::Claimed);
-        let (output, kind, evidence) = execute(&execution_claim);
-        let observation = self.record_observation_locked(&paths, current, kind, &evidence)?;
+        let (output, kind, failure_code, evidence) = execute(&execution_claim);
+        let observation = self.record_observation_locked(
+            &paths,
+            current,
+            kind,
+            failure_code.as_deref(),
+            &evidence,
+        )?;
         Ok((output, observation))
     }
 
@@ -671,7 +703,7 @@ impl ProviderCommandAttemptJournal {
         kind: ProviderCommandObservationKind,
         evidence: &[u8],
     ) -> Result<ProviderCommandObservation, ProviderCommandJournalError> {
-        Self::validate_outcome_kind(claim, kind)?;
+        Self::validate_outcome(claim, kind, None)?;
         claim.validate()?;
         let paths = self.paths(claim);
         self.establish_directory(&paths.directory)?;
@@ -685,7 +717,32 @@ impl ProviderCommandAttemptJournal {
             self.reject_stale_or_crossed(&current.claim, claim)?;
             return Err(ProviderCommandJournalError::CrossedClaim);
         }
-        self.record_observation_locked(&paths, current, kind, evidence)
+        self.record_observation_locked(&paths, current, kind, None, evidence)
+    }
+
+    /// Record an exact provider observation with its stable failure code.
+    pub fn record_observation_with_failure_code(
+        &self,
+        claim: &ProviderCommandClaim,
+        kind: ProviderCommandObservationKind,
+        failure_code: Option<&str>,
+        evidence: &[u8],
+    ) -> Result<ProviderCommandObservation, ProviderCommandJournalError> {
+        Self::validate_outcome(claim, kind, failure_code)?;
+        claim.validate()?;
+        let paths = self.paths(claim);
+        self.establish_directory(&paths.directory)?;
+        let _guard = lock(&paths.lock)?;
+        remove_stale_stage(&paths.stage)?;
+        let current =
+            read_if_present(&paths.record)?.ok_or_else(|| ProviderCommandJournalError::Store {
+                message: "provider outcome has no durable preceding claim".to_owned(),
+            })?;
+        if current.claim != *claim {
+            self.reject_stale_or_crossed(&current.claim, claim)?;
+            return Err(ProviderCommandJournalError::CrossedClaim);
+        }
+        self.record_observation_locked(&paths, current, kind, failure_code, evidence)
     }
 
     fn record_observation_locked(
@@ -693,12 +750,16 @@ impl ProviderCommandAttemptJournal {
         paths: &JournalPaths,
         current: ProviderCommandObservation,
         kind: ProviderCommandObservationKind,
+        failure_code: Option<&str>,
         evidence: &[u8],
     ) -> Result<ProviderCommandObservation, ProviderCommandJournalError> {
-        Self::validate_outcome_kind(&current.claim, kind)?;
+        Self::validate_outcome(&current.claim, kind, failure_code)?;
         if current.kind.is_final_for_epoch() {
             let expected = evidence_sha256(evidence);
-            if current.kind == kind && current.evidence_sha256.as_deref() == Some(&expected) {
+            if current.kind == kind
+                && current.failure_code.as_deref() == failure_code
+                && current.evidence_sha256.as_deref() == Some(&expected)
+            {
                 return Ok(current);
             }
             return Err(ProviderCommandJournalError::CrossedClaim);
@@ -707,6 +768,7 @@ impl ProviderCommandAttemptJournal {
             claim: current.claim.clone(),
             kind,
             evidence_sha256: Some(evidence_sha256(evidence)),
+            failure_code: failure_code.map(str::to_owned),
             retry_lineage: current.retry_lineage.clone(),
         };
         publish(paths, &observation)?;
@@ -730,6 +792,33 @@ impl ProviderCommandAttemptJournal {
             });
         }
         Ok(())
+    }
+
+    fn validate_outcome(
+        claim: &ProviderCommandClaim,
+        kind: ProviderCommandObservationKind,
+        failure_code: Option<&str>,
+    ) -> Result<(), ProviderCommandJournalError> {
+        Self::validate_outcome_kind(claim, kind)?;
+        match (kind, failure_code) {
+            (ProviderCommandObservationKind::DefiniteFailure, Some(code)) => {
+                validate_identity("provider failure code", code)
+            }
+            (ProviderCommandObservationKind::DefiniteFailure, None)
+                if claim.operation.family() != ProviderCommandOperationFamily::Teardown =>
+            {
+                Ok(())
+            }
+            (ProviderCommandObservationKind::DefiniteFailure, None) => {
+                Err(ProviderCommandJournalError::InvalidClaim {
+                    message: "teardown definite failure requires a stable failure code".to_owned(),
+                })
+            }
+            (_, None) => Ok(()),
+            (_, Some(_)) => Err(ProviderCommandJournalError::InvalidClaim {
+                message: "only a definite provider failure can carry a failure code".to_owned(),
+            }),
+        }
     }
 
     /// Replace an exact live-resource observation with provider-proven current absence.
@@ -769,6 +858,7 @@ impl ProviderCommandAttemptJournal {
             claim: claim.clone(),
             kind: ProviderCommandObservationKind::Absent,
             evidence_sha256: Some(evidence_sha256(evidence)),
+            failure_code: None,
             retry_lineage: current.retry_lineage.clone(),
         };
         if current == observation {
@@ -1202,17 +1292,27 @@ fn remove_stale_stage(path: &Path) -> Result<(), ProviderCommandJournalError> {
 }
 
 fn validate_identity(label: &str, value: &str) -> Result<(), ProviderCommandJournalError> {
-    if value.is_empty()
-        || value.len() > MAX_IDENTITY_LEN
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
-    {
+    if !is_valid_identity(value) {
         return Err(ProviderCommandJournalError::InvalidClaim {
             message: format!("{label} must be a bounded portable identity"),
         });
     }
     Ok(())
+}
+
+fn is_valid_identity(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_IDENTITY_LEN
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
+}
+
+fn deserialize_present_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
 }
 
 fn validate_sha256(label: &str, value: &str) -> Result<(), ProviderCommandJournalError> {

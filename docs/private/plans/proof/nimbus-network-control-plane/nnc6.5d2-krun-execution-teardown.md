@@ -1,6 +1,6 @@
 # NNC6.5d2 Krun Execution Teardown
 
-Status: `in_progress; read-only audit and fail-before checkpoint complete; product source unchanged`
+Status: `complete; K1-K25 green; review cadence exhausted`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -157,6 +157,21 @@ Source inspection also proves that current `execute_stop` calls raw
 Existing explicit-stop tests prove the combined coarse behavior. They cannot
 serve as exact execution-only stop proofs.
 
+### Accepted full-review fail-before proofs
+
+The one candidate-frozen full item review found two executable defects. Both
+were accepted and received deterministic regressions before product-source
+correction:
+
+| Finding | Expected-red proof |
+| --- | --- |
+| P1, confidence `0.99`: provision used a pre-lock manifest snapshot for drain admission. | `krun_execution_drain_fences_creator_activation_restart_and_launch_admission` exited `101`. A preparation worker read `Open`, contended on the real lifecycle lock, then crossed a durable drain barrier and failed at a later stale-plan check instead of the drain fence. The same bounded harness owns preparation, attachment, and activation. |
+| P2, confidence `0.94`: an adjacent graceful-stop retry returned before rebasing durable progress to its current fence. | `krun_execution_stop_replay_never_duplicates_a_signal` exited `101`. After an authorized epoch-2 adoption under a backward clock step, durable progress still named epoch 1 and could not authorize epoch 3. |
+
+The corrected tests use the real lifecycle-lock contention probe, bounded
+channels, the real provider journal, exact durable progress, and byte-stable
+state checks. They add no sleep-based ordering and no new test-roster entry.
+
 ## Frozen Implementation Boundaries
 
 ### Compute
@@ -312,9 +327,59 @@ proofs green. Real signal tests use owned child processes. A fixture-created
 receipt, shell state text, or direct exit-file write can prove translation,
 but it cannot prove signal authority.
 
-The current Krun inventory contains `149` test attributes and `3` child-only
-ignores. Existing coarse-stop tests remain regression tests. They do not count
-as exact execution-only teardown proof because they release network authority.
+The final Krun inventory contains `177` test attributes and `4` child-only
+ignores. The exact provider roster is `27` runnable tests plus one child-only
+dispatcher. Existing coarse-stop tests remain regression tests. They do not
+count as exact execution-only teardown proof because they release network
+authority.
+
+## Implemented Result
+
+- Provider observation envelope v4 retains and validates the exact teardown
+  `DefiniteFailure` code. Replay compares the code as part of the durable
+  result, and other outcomes reject one.
+- `KrunTeardownAdapter` reuses the shared compute lowering, result mapping,
+  callback fencing, registry, and the backend-opened `krun-runtime` journal.
+  The registry substitution proof installs real Container and Krun providers.
+- One strict manifest field owns independent drain and stop state. Its outer
+  field and both nested fields reject absence, corruption, and unknown phases.
+- Drain persists its admission barrier before it inspects admitted creator,
+  activation, restart, provider-cleanup, or lifecycle work. All nine producer
+  entry points reject the durable barrier before their first effect.
+- Provision preparation, attachment, and activation re-read and reauthenticate
+  the manifest after acquiring the lifecycle lock. A drain winner between the
+  initial identity read and lock acquisition therefore fences the stale entry
+  before its first provider effect.
+- Stop requires the exact drained subject, persists intent and both
+  may-exist signal boundaries, and signals only an authenticated creator
+  attempt, provider PID, pidfile PID, and process birth. Adjacent journal
+  retry lineage is the only older-progress authority.
+- An adjacent graceful-stop retry that observes the same live process before
+  its stored deadline persists the same may-exist state with the current
+  fence. A backward wall-clock step cannot strand progress two epochs behind.
+- The host runtime does not treat the legacy path-only integer exit receipt as
+  attempt-qualified evidence. It accepts current creator-authenticated
+  explicit absence and leaves `last_exit_code` unset. The substitution seam
+  proves the exact-receipt branch separately.
+- Exact stop leaves the populated attachment, provider handle, namespace,
+  PEP, listener, port, IPAM, segment, launch authority, and launch artifact
+  byte-stable. Coarse stop remains intact in `vm/coarse_stop.rs` for NNC6.5g.
+
+### Modularity decisions
+
+`vm/lifecycle.rs` is `1,377` lines after moving the intact coarse-stop owner.
+All production files added for exact teardown are below `1,000` lines except
+the existing shared provider journal at `1,510` lines. That file is an
+explicit concept-owned exception: it keeps claim validation, retry lineage,
+authenticated persistence, store locking, and result publication in one
+journal state-machine authority. Splitting eleven lines of the same invariant
+would add a switchboard boundary without creating a substitutable concept.
+
+`vm/teardown/tests.rs` is `1,786` handwritten test lines and is also an
+explicit concept-owned exception. It owns one fixture and the deterministic
+in-process state-machine contract; the distinct process/crash concept is
+already isolated in `tests/fresh_process.rs`. A closeout-only split would
+duplicate fixture authority without reducing production complexity.
 
 ## Verification Contract
 
@@ -322,11 +387,13 @@ Run focused gates during implementation. Run the full item review only after
 all other gates pass and the candidate is frozen.
 
 ```sh
-cargo test -p nimbus-sandbox provider_command
-cargo test -p nimbus-sandbox krun_teardown -- --test-threads=1
-cargo test -p nimbus-sandbox runtime_process -- --test-threads=1
-cargo test -p nimbus-sandbox krun_manifest -- --test-threads=1
+cargo test -p nimbus-sandbox --lib provider_command -- --test-threads=1
+cargo test -p nimbus-sandbox --lib backends::container::runtime::teardown::tests -- --test-threads=1
+cargo test -p nimbus-sandbox --lib backends::krun::vm::teardown::tests -- --test-threads=1
+cargo test -p nimbus-sandbox --lib backends::conmon::runtime_process::tests -- --test-threads=1
+cargo test -p nimbus-sandbox --lib backends::krun::vm::tests::manifest_schema -- --test-threads=1
 cargo test -p nimbus-compute teardown_sandbox -- --test-threads=1
+cargo test -p nimbus-server teardown_driver_process -- --test-threads=1
 cargo test -p nimbus-sandbox --all-features -- --test-threads=1
 cargo test -p nimbus-compute --all-features
 cargo clippy -p nimbus-sandbox -p nimbus-compute --all-targets --all-features -- -D warnings
@@ -353,15 +420,24 @@ tree identity, and all review-finding dispositions.
 | Fail-before | Six source conditions exited `1`; current coarse stop still uses raw PID signaling and final network release. |
 | Shared-seam decision | The existing provider observation gains strict durable failure-code retention. No second journal is permitted. |
 | Shared conmon | NNC6.5d1 process identity and pidfd signaling are sufficient; no shared conmon edit is authorized. |
-| Static gates | NNCV035 self-test passes `55/55`. The direct gate is expected `0/7`. Aggregate verification is `35/36`, with only NNCV035 red. NNCV008 and all other static conditions pass. |
-| Documentation gates | Proof lint, format, and diff checks pass. Docs pass `108` pages. Site verification passes `17/17`. |
-| Review cadence | No structured review has run. One full Sol/xhigh/fast review waits for candidate freeze and K1-K24 green. |
+| Focused behavior | Exact Krun teardown passes `27` plus one child-only ignore; full Krun VM passes `173` plus four ignores; provider journal passes `25` plus one ignore; runtime identity passes `6`; Krun manifest schema passes `5`; Container regression passes `19` plus one ignore; compute substitution passes `11`; server compute-CAS process recovery passes `2` plus one child-only ignore. |
+| Full affected behavior | Serialized sandbox passes `1,078` with `45` declared ignores from an exact `1,123`-test inventory. Compute passes `357` with one child-only ignore. |
+| Quality gates | Strict all-target/all-feature Clippy and warning-denied rustdoc pass for sandbox and compute. Format and diff checks pass. |
+| Static gates | NNCV035 self-test passes `55/55`. The direct gate is expected `0/7`. The NNCV015 line census was advanced by three lines for four unchanged Krun constructor occurrences and passes. Aggregate verification is `35/36`, with only NNCV035 red. NNCV000-NNCV034 pass. |
+| Dependency/effect boundary | No Cargo file changed. NNCV004 proves the sole `nimbus-network -> nimbus-core` workspace edge; NNCV012 proves no forbidden network dependency or provider effect. Exact teardown contains no detach/release effect. |
+| Modularity | `vm/lifecycle.rs` is `1,377` lines. The `1,510`-line shared journal and `1,786`-line concept test owner have explicit single-authority reasons above; all other new production concept files are below `1,000` lines. |
+| Documentation gates | Proof/ledger text and diff checks pass. Docs pass `108` pages. Site verification passes `17/17`. |
+| Accepted correction behavior | Both deterministic regressions failed before correction and pass after it. Corrected exact Krun teardown passes `27 + 1`; full Krun VM passes `173 + 4`; serialized full sandbox remains `1,078 + 45` from `1,123`. |
+| Accepted correction quality | Strict all-target/all-feature sandbox Clippy, warning-denied sandbox rustdoc, format, and diff checks pass after the executable correction. |
+| Accepted correction static/docs | NNCV035 self-test passes `55/55`; direct remains expected `0/7`; aggregate is `35/36` with only NNCV035 red. Docs pass `108` pages and site verification passes `17/17`. |
+| Review cadence | The one full Sol/xhigh/fast item review ran on thread `019fe916-d4c5-79b0-91bf-38cac9c5abf4` over a `266,439`-byte bundle. It reported the accepted P1 and P2 defects above and classified the candidate incorrect at confidence `0.97`. The one narrow Sol/xhigh/fast correction review ran on thread `019fe935-23dd-73c2-8170-c5a08e5f77a3` over a `280,464`-byte bundle and reported zero findings, correct at confidence `0.99`. Review cadence is exhausted; no further review is warranted. |
+| Reviewed correction identity | Candidate tree `4dd82b219dfb8f8e46194da7e12da2d8fe757f3c`; `31` paths; raw staged binary patch `276,429` bytes; SHA-256 `9af49413c28fe982a6a41cc8d032c31a96ebbbc9221cd73242c1ade4b5356b8d`. |
 
 ## Acceptance Matrix
 
 | Criteria | Current result |
 | --- | --- |
-| K1-K3 | `pass` for the read-only source and seam audit. |
-| K4-K23 | `expected red`; the six source checks and current call graph prove the missing behavior. |
-| K24 | `pending`; implementation gates have not run. |
-| K25 | `pending`; the item is not candidate-frozen. |
+| K1-K3 | `pass`; the read-only source and seam audit is durable at `04bf5f7c39a51ddad61d31b1d0934c19950dc1d4`. |
+| K4-K23 | `pass`; focused behavior, owner inspection, line census, dependency scan, and effect scan satisfy every written criterion. |
+| K24 | `pass`; affected behavior, quality, static, arithmetic, proof, docs, and site gates are green after correction. Unchanged pre-review focused and full-compute evidence remains green. |
+| K25 | `pass`; the one full review's two accepted executable findings have deterministic fail-before proofs and corrected gates. The one narrow correction review is clean at `0.99`. No further review is warranted. |

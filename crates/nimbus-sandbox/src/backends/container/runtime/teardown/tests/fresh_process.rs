@@ -913,9 +913,10 @@ fn record_observation(
     observation: &SandboxExecutionTeardownObservation,
 ) {
     journal
-        .record_observation(
+        .record_observation_with_failure_code(
             command.provider_claim(),
             observation_kind(observation),
+            observation.failure_code(),
             observation.evidence(),
         )
         .expect("the exact provider observation should become durable");

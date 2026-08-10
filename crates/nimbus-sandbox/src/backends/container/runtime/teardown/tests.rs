@@ -366,7 +366,12 @@ fn persist_teardown_observation(
         }
     };
     journal
-        .record_observation(command.provider_claim(), kind, observation.evidence())
+        .record_observation_with_failure_code(
+            command.provider_claim(),
+            kind,
+            observation.failure_code(),
+            observation.evidence(),
+        )
         .expect("the exact teardown observation should become durable");
 }
 

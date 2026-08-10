@@ -445,6 +445,7 @@ fn stale_execution_claim_cannot_start_after_retry_authority_advances() {
                 (
                     (),
                     ProviderCommandObservationKind::Succeeded,
+                    None,
                     b"stale effect must not publish".to_vec(),
                 )
             })
@@ -483,6 +484,7 @@ fn execution_publishes_its_result_before_releasing_the_live_claim_lock() {
             (
                 (),
                 ProviderCommandObservationKind::InProgress,
+                None,
                 b"the exact TERM effect is in progress".to_vec(),
             )
         })
@@ -873,6 +875,159 @@ fn authenticated_record_rejects_tampering() {
         .adopt_exact_attempt(&claim)
         .expect_err("tampering must fail closed");
     assert!(matches!(error, ProviderCommandJournalError::Corrupt { .. }));
+}
+
+#[test]
+fn teardown_failure_code_is_required_durable_and_exactly_replayed() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let command_journal = journal(root.path());
+    let claim = stop_claim(0);
+    command_journal
+        .claim_dispatch_epoch(&claim)
+        .expect("stop claim should persist");
+
+    assert!(matches!(
+        command_journal.record_observation(
+            &claim,
+            ProviderCommandObservationKind::DefiniteFailure,
+            b"crossed teardown command",
+        ),
+        Err(ProviderCommandJournalError::InvalidClaim { .. })
+    ));
+
+    let persisted = command_journal
+        .record_observation_with_failure_code(
+            &claim,
+            ProviderCommandObservationKind::DefiniteFailure,
+            Some("sandbox_teardown_command_crossed"),
+            b"crossed teardown command",
+        )
+        .expect("coded teardown failure should persist");
+    assert_eq!(
+        persisted.failure_code(),
+        Some("sandbox_teardown_command_crossed")
+    );
+
+    let reopened = journal(root.path())
+        .adopt_exact_attempt(&claim)
+        .expect("reopened journal should read")
+        .expect("reopened journal should retain the observation");
+    assert_eq!(reopened, persisted);
+    assert_eq!(
+        command_journal
+            .record_observation_with_failure_code(
+                &claim,
+                ProviderCommandObservationKind::DefiniteFailure,
+                Some("sandbox_teardown_command_crossed"),
+                b"crossed teardown command",
+            )
+            .expect("an exact replay should adopt"),
+        persisted
+    );
+    assert_eq!(
+        command_journal
+            .record_observation_with_failure_code(
+                &claim,
+                ProviderCommandObservationKind::DefiniteFailure,
+                Some("sandbox_teardown_provider_mismatch"),
+                b"crossed teardown command",
+            )
+            .expect_err("a different durable failure code must cross the claim"),
+        ProviderCommandJournalError::CrossedClaim
+    );
+}
+
+#[test]
+fn failure_code_schema_and_semantics_fail_closed() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+
+    let missing_root = root.path().join("missing");
+    let missing_journal = journal(&missing_root);
+    let missing_claim = stop_claim(0);
+    missing_journal
+        .claim_dispatch_epoch(&missing_claim)
+        .expect("missing-field claim should persist");
+    let missing_paths = missing_journal.paths(&missing_claim);
+    let mut value: serde_json::Value = serde_json::from_slice(
+        &fs::read(&missing_paths.record).expect("missing-field record should read"),
+    )
+    .expect("missing-field record should decode as JSON");
+    value["observation"]
+        .as_object_mut()
+        .expect("observation should be an object")
+        .remove("failureCode");
+    fs::write(
+        &missing_paths.record,
+        serde_json::to_vec_pretty(&value).expect("missing-field record should encode"),
+    )
+    .expect("test should remove failureCode");
+    assert!(matches!(
+        missing_journal.adopt_exact_attempt(&missing_claim),
+        Err(ProviderCommandJournalError::Corrupt { .. })
+    ));
+
+    let invalid_root = root.path().join("invalid");
+    let invalid_journal = journal(&invalid_root);
+    let invalid_claim = stop_claim(0);
+    invalid_journal
+        .claim_dispatch_epoch(&invalid_claim)
+        .expect("invalid-code claim should persist");
+    invalid_journal
+        .record_observation_with_failure_code(
+            &invalid_claim,
+            ProviderCommandObservationKind::DefiniteFailure,
+            Some("valid_failure"),
+            b"invalid code fixture",
+        )
+        .expect("valid fixture should persist");
+    let invalid_paths = invalid_journal.paths(&invalid_claim);
+    let mut invalid_envelope: JournalEnvelope = serde_json::from_slice(
+        &fs::read(&invalid_paths.record).expect("invalid-code record should read"),
+    )
+    .expect("invalid-code envelope should decode");
+    invalid_envelope.observation.failure_code = Some("not portable".to_owned());
+    invalid_envelope.observation_sha256 = observation_sha256(&invalid_envelope.observation)
+        .expect("invalid-code observation should encode");
+    fs::write(
+        &invalid_paths.record,
+        serde_json::to_vec_pretty(&invalid_envelope).expect("invalid envelope should encode"),
+    )
+    .expect("test should publish checksum-valid invalid code");
+    assert!(matches!(
+        invalid_journal.adopt_exact_attempt(&invalid_claim),
+        Err(ProviderCommandJournalError::Corrupt { .. })
+    ));
+
+    let misplaced_root = root.path().join("misplaced");
+    let misplaced_journal = journal(&misplaced_root);
+    let misplaced_claim = stop_claim(0);
+    misplaced_journal
+        .claim_dispatch_epoch(&misplaced_claim)
+        .expect("misplaced-code claim should persist");
+    misplaced_journal
+        .record_observation(
+            &misplaced_claim,
+            ProviderCommandObservationKind::Succeeded,
+            b"successful stop",
+        )
+        .expect("success fixture should persist");
+    let misplaced_paths = misplaced_journal.paths(&misplaced_claim);
+    let mut misplaced_envelope: JournalEnvelope = serde_json::from_slice(
+        &fs::read(&misplaced_paths.record).expect("misplaced-code record should read"),
+    )
+    .expect("misplaced-code envelope should decode");
+    misplaced_envelope.observation.failure_code = Some("misplaced_failure".to_owned());
+    misplaced_envelope.observation_sha256 = observation_sha256(&misplaced_envelope.observation)
+        .expect("misplaced-code observation should encode");
+    fs::write(
+        &misplaced_paths.record,
+        serde_json::to_vec_pretty(&misplaced_envelope).expect("misplaced envelope should encode"),
+    )
+    .expect("test should publish checksum-valid misplaced code");
+    assert!(matches!(
+        misplaced_journal.adopt_exact_attempt(&misplaced_claim),
+        Err(ProviderCommandJournalError::Corrupt { .. })
+    ));
 }
 
 #[test]

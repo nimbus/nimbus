@@ -71,6 +71,43 @@ impl KrunRestartProviderRecord {
 }
 
 impl KrunSandboxBackend {
+    pub(super) fn execution_drain_pending_restart_evidence(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<Option<Vec<u8>>> {
+        let Some(record) = self.read_restart_provider_record(manifest)? else {
+            return Ok(None);
+        };
+        let settled = record.phase == KrunRestartProviderPhase::NetworkAttached
+            && record.fence.attempt_id() == &manifest.execution_attempt_id
+            && matches!(
+                manifest.launch_authority,
+                KrunLaunchAuthority::ProviderOwned
+            )
+            && matches!(
+                manifest.creator_handoff,
+                KrunCreatorHandoffState::RuntimeObserved { .. }
+            );
+        if settled {
+            Ok(None)
+        } else {
+            serde_json::to_vec(&(
+                "krun_restart_owner_pending",
+                &record,
+                &manifest.execution_attempt_id,
+                &manifest.launch_authority,
+                &manifest.creator_handoff,
+            ))
+            .map(Some)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to encode pending Krun restart evidence for {}: {error}",
+                    manifest.handle.id
+                ),
+            })
+        }
+    }
+
     /// Stop the exact source runtime and durably prove its creator quiescence.
     /// Network, listener, attachment, IPAM, and PEP authority remain retained.
     pub fn quiesce_restart_source(
@@ -85,6 +122,7 @@ impl KrunSandboxBackend {
         };
         let _lifecycle = self.lock_launch_lifecycle(&observed)?;
         let mut manifest = self.read_required_restart_manifest(sandbox_id)?;
+        manifest.require_execution_admission_open("Krun restart source quiescence")?;
         let durable_record = self.read_restart_provider_record(&manifest)?;
 
         if &manifest.execution_attempt_id == fence.attempt_id() {
@@ -251,6 +289,7 @@ impl KrunSandboxBackend {
         };
         let _lifecycle = self.lock_launch_lifecycle(&observed)?;
         let mut manifest = self.read_required_restart_manifest(sandbox_id)?;
+        manifest.require_execution_admission_open("Krun restart target preparation")?;
         let record = self
             .read_restart_provider_record(&manifest)?
             .ok_or_else(|| SandboxError::OperationFailed {
@@ -290,6 +329,7 @@ impl KrunSandboxBackend {
 
         let reservation_claim = manifest.require_network_config()?.reservation_claim.clone();
         manifest.execution_attempt_id = fence.attempt_id().clone();
+        manifest.execution_teardown = Default::default();
         manifest.creator_handoff = KrunCreatorHandoffState::NotSpawned;
         // The existing activation phase accepts an adopted attachment and
         // returns it to ProviderOwned after the exact target VMM is running.
@@ -419,6 +459,7 @@ impl KrunSandboxBackend {
         };
         let _lifecycle = self.lock_launch_lifecycle(&observed)?;
         let manifest = self.read_required_restart_manifest(sandbox_id)?;
+        manifest.require_execution_admission_open("Krun retained restart attachment")?;
         manifest
             .require_execution_attempt(fence.attempt_id(), "krun retained restart attachment")?;
         self.require_retained_target_authority(&manifest, "krun retained restart attachment")?;

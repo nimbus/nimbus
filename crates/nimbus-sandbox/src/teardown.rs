@@ -112,6 +112,18 @@ impl SandboxExecutionTeardownObservation {
             | Self::Ambiguous { evidence } => evidence,
         }
     }
+
+    /// Stable failure code when the provider rejected the exact command.
+    pub fn failure_code(&self) -> Option<&str> {
+        match self {
+            Self::DefiniteFailure { code, .. } => Some(code),
+            Self::Succeeded { .. }
+            | Self::Absent { .. }
+            | Self::RetryAuthorized { .. }
+            | Self::InProgress { .. }
+            | Self::Ambiguous { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

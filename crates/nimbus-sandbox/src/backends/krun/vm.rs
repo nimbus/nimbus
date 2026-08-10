@@ -72,6 +72,7 @@ use crate::spec::{
 use nimbus_network::{NetworkAttachmentId, NetworkReservationClaim, PublishedEndpoint};
 
 mod attachment_recovery;
+mod coarse_stop;
 mod creator;
 mod inspection;
 mod lifecycle;
@@ -80,6 +81,7 @@ mod network_composition;
 mod provision;
 mod readiness;
 mod restart;
+mod teardown;
 
 impl OciHostManagedAttachmentBackend for KrunSandboxBackend {
     const ATTACHMENT_BACKEND_KIND: AttachmentBackendKind = AttachmentBackendKind::Krun;
@@ -224,6 +226,7 @@ pub struct KrunSandboxBackend {
     ipam_authority: OciIpamAuthority,
     port_lease_coordinator: OciPortLeaseCoordinator,
     egress_proxies: EgressProxyRegistry,
+    teardown_runtime_provider: Arc<dyn teardown::effects::KrunExecutionTeardownRuntime>,
     egress_pin_provider: Arc<dyn OciEgressPinProvider>,
     readiness_probe_provider: Arc<dyn ReadinessProbeProvider>,
     netavark_port_lifetimes: NetavarkPortLifetimeRegistry,
@@ -386,6 +389,9 @@ impl KrunSandboxBackend {
             ipam_authority,
             port_lease_coordinator,
             egress_proxies,
+            teardown_runtime_provider: Arc::new(
+                teardown::effects::HostKrunExecutionTeardownRuntime,
+            ),
             egress_pin_provider: Arc::new(RealOciEgressPinProvider),
             readiness_probe_provider: Arc::new(SocketReadinessProbeProvider),
             netavark_port_lifetimes,
@@ -447,6 +453,15 @@ impl KrunSandboxBackend {
     #[cfg(test)]
     fn with_readiness_probe_provider(mut self, provider: Arc<dyn ReadinessProbeProvider>) -> Self {
         self.readiness_probe_provider = provider;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_teardown_runtime_provider(
+        mut self,
+        provider: Arc<dyn teardown::effects::KrunExecutionTeardownRuntime>,
+    ) -> Self {
+        self.teardown_runtime_provider = provider;
         self
     }
 
@@ -706,6 +721,9 @@ struct KrunSandboxManifest {
     /// confirmed so a fresh process can resume without falling back to the
     /// ordinary PID-driven stop path.
     provider_failure_cleanup: KrunProviderFailureCleanupState,
+    /// Exact execution-only drain and stop progress. Network authority remains
+    /// retained until the later release owner completes.
+    execution_teardown: teardown::state::KrunExecutionTeardownState,
     egress_proxy: Option<EgressProxyAssignment>,
     conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,
@@ -788,6 +806,19 @@ impl KrunCreatorHandoffState {
 }
 
 impl KrunSandboxManifest {
+    fn require_execution_admission_open(&self, operation: &str) -> Result<()> {
+        if self.execution_teardown.admission_is_open() {
+            return Ok(());
+        }
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "{operation} for {} is fenced by durable execution drain progress {:?}",
+                self.handle.id,
+                self.execution_teardown.drain(),
+            ),
+        })
+    }
+
     fn require_execution_attempt(
         &self,
         expected: &SandboxExecutionAttemptId,

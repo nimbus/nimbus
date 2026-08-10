@@ -115,6 +115,7 @@ pub use teardown_registry::{
 pub use teardown_runtime::{
     WorkloadTeardownCancellationToken, WorkloadTeardownRuntime, WorkloadTeardownSubmissionError,
 };
+pub use teardown_sandbox::krun::KrunTeardownAdapter;
 pub use teardown_sandbox::{
     ContainerTeardownAdapter, ValidatedSandboxTeardownCommand, validate_sandbox_teardown_command,
 };

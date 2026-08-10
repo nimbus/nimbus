@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.5d1 complete; NNC6.5d2
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5d2 complete; NNC6.5d3
   in progress`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,
   path, and verification contract. NNC6.5a completed the strict portable
@@ -103,15 +103,23 @@ extension-registry seam before the second concern edits `extensions.rs`.
   audit closed delayed stale-claim execution. The one narrow correction review
   found a provider-result publication gap; the provider now publishes its
   result under the same exact-stream lock as the effect, and compute consumes
-  that durable observation without a second write. C1-C25 and all closeout
-  gates are green; review cadence is exhausted. NNC6.5d2 is the sole active
-  item. Its three read-only audits and six expected-red source checks are
-  durable in `proof/nimbus-network-control-plane/nnc6.5d2-krun-execution-teardown.md`.
-  The audit reuses the shared conmon process identity and the existing
-  `krun-runtime` journal. It also requires that the existing provider
-  observation retain exact backend failure codes; this repairs one journal
-  instead of adding another authority. Product source is unchanged at the
-  audit checkpoint. NNC8.2 owns the
+  that durable observation without a second write. C1-C25 and all NNC6.5d1
+  closeout gates are green; its review cadence is exhausted. NNC6.5d2 is
+  complete. K1-K25 are green in
+  `proof/nimbus-network-control-plane/nnc6.5d2-krun-execution-teardown.md`.
+  The implementation reuses the shared conmon process identity and existing
+  `krun-runtime` journal, durably retains exact backend failure codes, adds
+  one strict Krun drain/stop state machine and real compute adapter, fences
+  all nine post-drain producer entries, and retains all network authority.
+  Full affected behavior, strict quality, NNCV000-NNCV034, docs `108`, and
+  site `17/17` passed before the one full Sol/xhigh/fast item review. That
+  review accepted one stale provision-snapshot race and one graceful-retry
+  fence defect. Both deterministic regressions failed before correction and
+  now pass; the affected exact/full sandbox, quality, static, docs, and site
+  gates are restored. The one narrow correction review is clean at `0.99`,
+  and review cadence is exhausted. NNC6.5d3 is now the sole active item and
+  begins with a read-only audit of the combined host-managed detach/release
+  authorities. NNC8.2 owns the
   earlier provision and restart producers that do not yet retain live claim
   authority through their effect boundaries.
   The four implementation units cover Container execution, Krun execution, shared

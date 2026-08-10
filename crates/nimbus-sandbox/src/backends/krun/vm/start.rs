@@ -403,6 +403,7 @@ impl KrunSandboxBackend {
             launch_authority,
             creator_handoff: KrunCreatorHandoffState::NotSpawned,
             provider_failure_cleanup: KrunProviderFailureCleanupState::Inactive,
+            execution_teardown: Default::default(),
             egress_proxy: None,
             conmon_launch,
             last_exit_code: None,

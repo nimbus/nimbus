@@ -28,6 +28,8 @@ use super::{
     WorkloadTeardownProviderOutcome,
 };
 
+pub mod krun;
+
 const CONTAINER_EXECUTION_PROVIDER_KEY: &str = "nimbus-sandbox.container-execution";
 
 /// Validated lower command plus its exact provider-journal claim.
@@ -233,10 +235,12 @@ impl ProviderTeardownPhaseAdapter {
                 ProviderCommandObservationKind::Ambiguous
             }
         };
-        match self
-            .journal
-            .record_observation(claim, kind, observation.evidence())
-        {
+        match self.journal.record_observation_with_failure_code(
+            claim,
+            kind,
+            observation.failure_code(),
+            observation.evidence(),
+        ) {
             Ok(observation) => provider_outcome(command, &observation),
             Err(error) => journal_error_outcome(command.mode(), &error),
         }
@@ -345,7 +349,9 @@ fn provider_outcome(
                 }
                 ProviderCommandObservationKind::DefiniteFailure => {
                     WorkloadTeardownExecuteOutcome::DefiniteFailure(provider_failure(
-                        "sandbox_teardown_provider_failure",
+                        observation
+                            .failure_code()
+                            .expect("validated teardown failure has a durable code"),
                         evidence,
                     ))
                 }
@@ -367,7 +373,9 @@ fn provider_outcome(
                 }
                 ProviderCommandObservationKind::DefiniteFailure => {
                     WorkloadTeardownInspectOutcome::DefiniteFailure(provider_failure(
-                        "sandbox_teardown_provider_failure",
+                        observation
+                            .failure_code()
+                            .expect("validated teardown failure has a durable code"),
                         evidence,
                     ))
                 }

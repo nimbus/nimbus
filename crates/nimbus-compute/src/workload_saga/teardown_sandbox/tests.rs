@@ -23,6 +23,9 @@ use crate::workload_saga::{
     WorkloadTeardownCapabilityRegistry,
 };
 
+#[path = "tests/krun.rs"]
+mod krun;
+
 #[test]
 fn container_execution_provider_identity_is_exact() {
     assert_eq!(
@@ -258,7 +261,12 @@ fn record_execute_observation(
             ProviderCommandObservationKind::Ambiguous
         }
     };
-    journal.record_observation(execution.claim(), kind, observation.evidence())
+    journal.record_observation_with_failure_code(
+        execution.claim(),
+        kind,
+        observation.failure_code(),
+        observation.evidence(),
+    )
 }
 
 #[test]

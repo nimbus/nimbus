@@ -157,13 +157,20 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
         expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<SandboxHandle> {
+        let Some(snapshot) = self.read_manifest(sandbox_id)? else {
+            return Err(SandboxError::NotFound {
+                sandbox_id: sandbox_id.as_str().to_owned(),
+            });
+        };
+        snapshot.require_execution_attempt(expected_attempt_id, "krun provision preparation")?;
+        let _lifecycle = self.lock_launch_lifecycle(&snapshot)?;
         let Some(mut manifest) = self.read_manifest(sandbox_id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             });
         };
         manifest.require_execution_attempt(expected_attempt_id, "krun provision preparation")?;
-        let _lifecycle = self.lock_launch_lifecycle(&manifest)?;
+        manifest.require_execution_admission_open("Krun provision preparation")?;
         self.require_current_launch_plan(&manifest)?;
         if manifest.network_config.is_none() || manifest.reservation_claim().is_none() {
             return Err(SandboxError::OperationFailed {
@@ -347,13 +354,20 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
         expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<SandboxProvisionPhaseObservation> {
+        let Some(snapshot) = self.read_manifest(sandbox_id)? else {
+            return Err(SandboxError::NotFound {
+                sandbox_id: sandbox_id.as_str().to_owned(),
+            });
+        };
+        snapshot.require_execution_attempt(expected_attempt_id, "krun provision attachment")?;
+        let _lifecycle = self.lock_launch_lifecycle(&snapshot)?;
         let Some(mut manifest) = self.read_manifest(sandbox_id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             });
         };
         manifest.require_execution_attempt(expected_attempt_id, "krun provision attachment")?;
-        let _lifecycle = self.lock_launch_lifecycle(&manifest)?;
+        manifest.require_execution_admission_open("Krun provision attachment")?;
         self.require_current_provision_attachment_plan(&manifest)?;
         if !manifest.provision_prepared {
             return Err(SandboxError::OperationFailed {
@@ -452,15 +466,22 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
         expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<SandboxProvisionPhaseObservation> {
+        let Some(snapshot) = self.read_manifest(sandbox_id)? else {
+            return Err(SandboxError::NotFound {
+                sandbox_id: sandbox_id.as_str().to_owned(),
+            });
+        };
+        snapshot.require_execution_attempt(expected_attempt_id, "krun provision activation")?;
+        let _lifecycle = self.lock_launch_lifecycle(&snapshot)?;
         let Some(mut manifest) = self.read_manifest(sandbox_id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             });
         };
         manifest.require_execution_attempt(expected_attempt_id, "krun provision activation")?;
-        ensure_linux_host("krun")?;
-        let _lifecycle = self.lock_launch_lifecycle(&manifest)?;
+        manifest.require_execution_admission_open("Krun provision activation")?;
         self.require_current_launch_plan(&manifest)?;
+        ensure_linux_host("krun")?;
         if !matches!(
             manifest.launch_authority,
             KrunLaunchAuthority::Adopted { .. }

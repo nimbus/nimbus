@@ -74,6 +74,7 @@ impl KrunSandboxBackend {
         &self,
         manifest: &mut KrunSandboxManifest,
     ) -> Result<String> {
+        manifest.require_execution_admission_open("Krun creator spawn")?;
         let attempt_id = Ulid::new().to_string().to_ascii_lowercase();
         self.persist_krun_creator_intent_before_spawn(manifest, &attempt_id)?;
         if let Err(error) =
@@ -142,6 +143,21 @@ impl KrunSandboxBackend {
             ));
         }
 
+        if let Err(error) = manifest.require_execution_admission_open("Krun creator release") {
+            let quiescence = creator.cancel_before_gate_release_and_confirm_quiesced();
+            let persistence = quiescence.as_ref().ok().and_then(|()| {
+                self.persist_krun_creator_quiescence(
+                    manifest,
+                    CreatorQuiescenceProof::launch_gate_never_released(attempt_id.clone()),
+                )
+                .err()
+            });
+            return Err(combine_krun_creator_failure(
+                error,
+                quiescence.err(),
+                persistence,
+            ));
+        }
         if let Err(error) = creator.release_after_receipt_persisted() {
             let quiescence = creator.cancel_before_gate_release_and_confirm_quiesced();
             let persistence = quiescence.as_ref().ok().and_then(|()| {
