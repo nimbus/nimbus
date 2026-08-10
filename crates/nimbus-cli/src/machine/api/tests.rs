@@ -29,6 +29,8 @@ mod provision_phase;
 mod publication_evidence;
 #[path = "tests/restart.rs"]
 mod restart;
+#[path = "tests/teardown.rs"]
+mod teardown;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restart_route_rejects_invalid_wire_before_guest_effects_and_has_no_coarse_peer() {

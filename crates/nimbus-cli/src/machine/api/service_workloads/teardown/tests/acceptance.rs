@@ -381,8 +381,42 @@ struct TeardownFixture {
     forwarder: MachineForwarderAuthority,
 }
 
+pub(crate) fn teardown_wire_fixture(
+    step: WorkloadTeardownStep,
+    mode: WorkloadTeardownCommandMode,
+) -> (
+    MachineForwarderAuthority,
+    MachineApiWorkloadTeardownCommandEnvelope,
+) {
+    let fixture = TeardownFixture::new(false);
+    let command = fixture.initial_command(step, mode);
+    (fixture.forwarder, command)
+}
+
+pub(crate) fn teardown_wire_fixture_for_forwarder(
+    step: WorkloadTeardownStep,
+    mode: WorkloadTeardownCommandMode,
+    provider_instance: &str,
+    generation: u64,
+) -> (
+    MachineForwarderAuthority,
+    MachineApiWorkloadTeardownCommandEnvelope,
+) {
+    let fixture = TeardownFixture::with_forwarder(false, provider_instance, generation);
+    let command = fixture.initial_command(step, mode);
+    (fixture.forwarder, command)
+}
+
 impl TeardownFixture {
     fn new(crossed_provider: bool) -> Self {
+        Self::with_forwarder(crossed_provider, "guest-teardown-forwarder-instance", 7)
+    }
+
+    fn with_forwarder(
+        crossed_provider: bool,
+        forwarder_provider_instance: &str,
+        forwarder_generation: u64,
+    ) -> Self {
         let tenant_id = TenantId::new("tenant-guest-teardown").unwrap();
         let generation = WorkloadGeneration::new(1);
         let node = NodeIdentity::new("node-guest-teardown").unwrap();
@@ -508,10 +542,10 @@ impl TeardownFixture {
         let forwarder = MachineForwarderAuthority::new(
             NetworkProviderHandle::new(
                 NetworkProviderId::for_registration_key("guest-teardown-forwarder"),
-                "guest-teardown-forwarder-instance",
+                forwarder_provider_instance,
             )
             .unwrap(),
-            NetworkResourceGeneration::new(7),
+            NetworkResourceGeneration::new(forwarder_generation),
         );
         Self {
             intent,
@@ -600,7 +634,21 @@ impl TeardownFixture {
                 }
             }
             WorkloadTeardownSubjects::Execution(reference) => execution_success(step, reference),
-            WorkloadTeardownSubjects::Network(_) => unreachable!(),
+            WorkloadTeardownSubjects::Network(reference) => match step {
+                WorkloadTeardownStep::DetachNetwork => {
+                    WorkloadTeardownSuccessEvidence::NetworkDetached {
+                        reference: reference.clone(),
+                        evidence: WorkloadOwnerEvidenceDigest::sha256("prior-network-detached"),
+                    }
+                }
+                WorkloadTeardownStep::ReleaseNetwork => {
+                    WorkloadTeardownSuccessEvidence::NetworkReleased {
+                        reference: reference.clone(),
+                        evidence: WorkloadOwnerEvidenceDigest::sha256("prior-network-released"),
+                    }
+                }
+                _ => panic!("network receipt fixture crossed the teardown step"),
+            },
         };
         serde_json::from_value(json!({
             "claim": claim,
@@ -646,6 +694,17 @@ impl TeardownFixture {
         confirmed_revision: WorkloadSagaRevision,
         confirmed_transition_id: WorkloadSagaTransitionId,
     ) -> MachineApiWorkloadTeardownCommandEnvelope {
+        let provider_translation = match claim.attempt().step() {
+            WorkloadTeardownStep::DrainExecution | WorkloadTeardownStep::StopExecution => {
+                MachineApiWorkloadTeardownProviderTranslation::GuestExecutionComposition
+            }
+            WorkloadTeardownStep::DetachNetwork | WorkloadTeardownStep::ReleaseNetwork => {
+                MachineApiWorkloadTeardownProviderTranslation::GuestContainerAttachment
+            }
+            WorkloadTeardownStep::WithdrawPublication => {
+                panic!("guest teardown transport must not lower parent-local withdrawal")
+            }
+        };
         let command_id = WorkloadTeardownCommandId::for_confirmed_dispatch(
             &claim,
             confirmed_revision,
@@ -665,9 +724,8 @@ impl TeardownFixture {
                 mode,
                 claim,
                 machine_forwarder_authority: self.forwarder.clone(),
-                machine_provider_generation: NetworkResourceGeneration::new(7),
-                provider_translation:
-                    MachineApiWorkloadTeardownProviderTranslation::GuestExecutionComposition,
+                machine_provider_generation: self.forwarder.generation(),
+                provider_translation,
             },
         )
         .unwrap()

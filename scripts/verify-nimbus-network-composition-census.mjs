@@ -57,7 +57,6 @@ const approvedDirectFixtureOccurrences = new Set([
   "crates/nimbus-sandbox/src/backends/container/runtime/network_composition.rs|ipam-direct-reconstruction|with_segment_allocator_and_process|1",
   "crates/nimbus-sandbox/src/backends/container/runtime/network_composition.rs|port-coordinator-direct-reconstruction|with_segment_allocator_and_process|1",
   "crates/nimbus-sandbox/src/backends/container/runtime/test_hooks.rs|direct-container-backend-construction|reopen_network_teardown_fixture|1",
-  "crates/nimbus-cli/src/machine/api/service_workloads/composition_tests.rs|direct-container-backend-construction|service_with_backend|1",
   "crates/nimbus-sandbox/src/backends/krun/vm.rs|direct-krun-backend-constructor-declaration|new|1",
   "crates/nimbus-sandbox/src/backends/krun/vm.rs|segment-direct-reconstruction|new|1",
   "crates/nimbus-sandbox/src/backends/krun/vm.rs|ipam-direct-reconstruction|with_segment_allocator_and_process|1",

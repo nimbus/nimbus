@@ -1,6 +1,6 @@
 # NNC6.5d4 Forwarded-Machine Teardown Provider
 
-Status: `implementation in progress. bands 1-5 complete`
+Status: `implementation in progress. bands 1-7 complete`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -506,7 +506,9 @@ review units. The canonical ledger records no partial band completion.
    order, guest machine-publication absence, retained detach, final release,
    and no regression to NNC6.5d3.
 7. Add the private route and client child. Prove strict fail-before request and
-   response correlation and exact Inspect-before-retry after ambiguity.
+   response correlation, one-shot ambiguity, and an explicit exact Inspect
+   after ambiguous Execute. Band 8 owns durable request-may-exist state and
+   enforced retry order.
 8. Add parent publication progression and `ForwardedMachineTeardownAdapter`.
    Implement all five real capabilities and complete-batch port fencing.
 9. Add real compute registry substitution, two-realm crash/concurrency tests,
@@ -522,7 +524,7 @@ process ignores.
 
 ```sh
 cargo test -p nimbus-workloads teardown -- --test-threads=1
-cargo test -p nimbus-machine workload_teardown_phase_wire -- --test-threads=1
+cargo test -p nimbus-machine teardown_ -- --test-threads=1
 cargo test -p nimbus-node teardown -- --test-threads=1
 cargo test -p nimbus-sandbox provider_command -- --test-threads=1
 cargo test -p nimbus-sandbox container_teardown -- --test-threads=1
@@ -663,7 +665,11 @@ membership, transport, routing, and super-net fencing remain separate.
 | Band 6 behavior | Forwarded attachment tests pass `9/9`; the complete Container network teardown module passes `13/13` with one declared subprocess entry point; the read-only provider-journal regression passes `1/1`; guest attachment dispatch passes `6/6`; and guest execution teardown remains green at `12/12` with one declared subprocess entry point. Full CLI passes `970/970` with two declared ignores. Full compute passes `381/381` with one declared ignore. Affected all-target and all-feature checking passes. |
 | Band 6 full Sandbox truth | Every NNC6.5d4 test passes. Two default-parallel full Sandbox runs report `1,142` pass, two fail, and `32` ignores, then `1,143` pass, one fail, and `32` ignores. The failures are inherited Krun process-fixture and Container/Krun contender timeouts; each exact focused rerun passes. A serialized full run reports `1,143` pass, one inherited Container contender timeout, and `32` ignores; its complete owning module passes `13/13` with one declared child ignore. This recovery checkpoint does not claim the final K33 full-suite criterion. The unrelated timing fixtures remain outside band 6. |
 | Band 6 quality and modularity | Strict affected all-feature Clippy, warning-denied Rustdoc, format, diff, dependency/effect, bind census, and machine-batch convergence gates pass. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; the aggregate is `35/36` with only NNCV035 red. Proof lint has zero diagnostics. Docs pass `108`; the site passes `17/17`. The band changes `21` Rust paths: `15` product and `6` test paths. `machine_port_publication.rs` is a `1,732`-line durable publication and authentication state-machine owner; `machine_ports.rs` is a `1,526`-line machine proxy and port-lifecycle adapter whose teardown orchestration stays in children; `provider_command.rs` is a `1,739`-line durable command-journal state-machine owner. Every other changed handwritten file is below `1,500` lines, and no file reaches `2,000`. NNCV006 follows one shifted source coordinate, and NNCV021 follows the exact current ownership disposition. |
-| Structured review | Not run. Band 6 is a partial recovery slice of one canonical item. One full review is allowed only after K1-K34 are green and the complete item is candidate-frozen. |
+| Band 7 private route and transport | The exact private POST route accepts only `MachineApiWorkloadTeardownPhaseRequest`, enforces a `1 MiB` body limit, authenticates the parent-issued forwarder before facade lookup or guest effects, dispatches one exact guest phase, and constructs only a request-correlated response. Missing, null, unknown, noncanonical, stale, crossed, oversized, wrong-method, and coarse-path requests fail before the facade. Capability advertisement now requires the real guest execution and attachment composition, durable Systemd and Container journals, an installed reachable forwarder, and matching forwarder instance and generation. |
+| Band 7 one-shot client | The concept-owned client child accepts an already-constructed strict request, authenticates it against the configured forwarder before socket I/O, sends exactly one POST, bounds the response at `1 MiB`, and validates every echoed fence. Connection loss, timeout, truncation, non-success status, malformed or oversized JSON, unknown fields, and crossed response fences return one explicit `Ambiguous` transport outcome. The client never retries and never manufactures Inspect. A test performs one ambiguous Execute followed by one caller-supplied exact Inspect and observes exactly those two requests. Band 8 remains the sole owner of durable request-may-exist state, the current execution token, and enforced Inspect-before-retry after parent restart. |
+| Band 7 behavior | Focused client transport tests pass `5/5`; private route tests pass `2/2`; real guest capability composition tests pass `5/5`; guest execution teardown remains `12/12` with one declared child entry point; and Machine API teardown wire tests pass `7/7`. Full `nimbus-machine` passes `41/41` library tests plus `5/5` provider-networking integration tests. Full `nimbus-cli` passes `978/978` with two declared child-process ignores. |
+| Band 7 quality and modularity | Affected all-target checking, strict all-feature Clippy, warning-denied Rustdoc, format, and diff pass; only unchanged vendored Brotli warnings remain. The aggregate source verifier self-test passes `469/469`; NNCV035 passes `55/55`. The live aggregate is exact `35/36` with only NNCV035 red, and direct NNCV035 remains `0/7`. NNCV006 and NNCV015 prove the new TCP capability probe is test-only, reject production inclusion of its path, and accept the reconciled bind and composition censuses. This band changes `13` Rust paths: `7` product and `6` test paths. The production roots are `267`, `261`, `366`, `644`, `1,164`, `1,441`, and `99` lines; no changed handwritten file reaches `1,500`. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. |
+| Structured review | Not run. Band 7 is a partial recovery slice of one canonical item. One full review is allowed only after K1-K34 are green and the complete item is candidate-frozen. |
 | Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
 | Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 2 checkpoint | The commit that contains this row, the band 2 product and test paths, and the recovery header is the exact band 2 recovery checkpoint. It is not the item completion commit and has no structured review. |
@@ -672,7 +678,8 @@ membership, transport, routing, and super-net fencing remain separate.
 | Durable band 5a checkpoint | The commit that contains this row, the band 5a product and test paths, and the recovery header is the exact band 5a recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 5b checkpoint | `824c2f6f0` is the exact band 5b recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 5c checkpoint | `62d21cb7a` is the exact band 5c recovery checkpoint. It is not the item completion commit and has no structured review. |
-| Durable band 6 checkpoint | The commit that contains this row, the band 6 product and test paths, the source-derived census updates, and the recovery header is the exact band 6 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 6 checkpoint | `a98841aaa` is the exact band 6 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 7 checkpoint | The commit that contains this row, the band 7 product and test paths, the source-derived census updates, and the recovery header is the exact band 7 recovery checkpoint. It is not the item completion commit and has no structured review. |
 
 ## Current Acceptance State
 
@@ -690,8 +697,7 @@ activation-admission barriers and the one asynchronous generic-journal seam.
 They also complete the nonpublishing Container child. The composite Systemd
 and Container sink completes the execution parts of K17-K18. Its deterministic
 inspection join completes the inspection parts. The sole guest journal
-completes part of K21. The route-specific part of K30 remains truthfully
-unavailable.
+completes part of K21.
 
 Band 6 has these results:
 
@@ -701,9 +707,16 @@ Band 6 has these results:
 - The NNC6.5d3 retained-detach and proof-gated-release lifecycle stays sealed
   for host-managed authentication.
 
-Route availability, the parent adapter, and end-to-end compute substitution
-remain later bands. K5-K6 and the remaining end-to-end portions of K7-K10,
-K15, and K22-K35 remain open.
+Band 7 completes the route and transport portions of K13 and K30. It proves
+strict pre-effect request rejection, complete response correlation, and
+bounded bodies. It also proves one-shot ambiguity and explicit manual
+Execute-to-Inspect ordering.
+The parent adapter and end-to-end compute substitution remain later bands.
+
+K5-K6 and the remaining end-to-end portions of K7-K10, K15, and K22-K35 remain
+open. In particular, K22 is not green. Band 8 must persist the exact parent
+request-may-exist boundary and current execution token before remote I/O. It
+must enforce Inspect before any retry after ambiguity or restart.
 
 Band 5 is prospectively split before implementation. These are dependency-
 ordered recovery slices, not separate plan items or review units. Bands
@@ -736,8 +749,9 @@ Band 5 excludes forwarded attachment composition, the private route, the
 client, the parent adapter, caller cutover, and coarse-stop deletion. Band 6 is
 now green. It adds only the forwarded Container attachment composition and
 proves retained detach and final release without regressing NNC6.5d3. Band 7
-is next. It adds
-only the private route and client child, with strict correlation and exact
-Inspect-before-retry after ambiguity.
+is also green. It adds only the strict private route, truthful capability
+advertisement, and one-shot client transport. Band 8 is next. It adds the
+parent publication progression and `ForwardedMachineTeardownAdapter`, including
+durable remote-request ambiguity and enforced Inspect-before-retry.
 
 NNC6.5d4 remains the sole `in_progress` canonical item. There is no blocker.

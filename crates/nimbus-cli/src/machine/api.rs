@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -66,6 +66,10 @@ use self::binaries::apply_resolved_runtime_paths;
 use self::listener::resolve_machine_api_listener;
 use self::network_composition::{GuestMachineNetworkComposition, load_parent_forwarder_authority};
 use self::routes::machine_api_router;
+#[cfg(test)]
+pub(crate) use self::service_workloads::teardown::tests::acceptance::{
+    teardown_wire_fixture, teardown_wire_fixture_for_forwarder,
+};
 pub(crate) use self::service_workloads::{GuestNodeWorkloadService, MachineApiNodeWorkloadFacade};
 #[cfg(test)]
 pub(crate) use self::service_workloads::{

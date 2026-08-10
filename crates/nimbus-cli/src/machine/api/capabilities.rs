@@ -1,9 +1,6 @@
 use super::binaries::resolve_binary_statuses;
 use super::*;
 
-pub(super) const MACHINE_API_WORKLOAD_TEARDOWN_PRIVATE_ROUTE_BLOCKER: &str =
-    "workload-teardown.phase private route is not installed";
-
 pub(super) fn machine_api_capability_response(
     state: &MachineApiState,
 ) -> MachineApiCapabilityResponse {
@@ -50,6 +47,25 @@ pub(super) fn machine_api_capability_response(
             "workload-teardown.phase requires parent-issued machine forwarder authority".to_owned(),
         );
     }
+    match (
+        state.machine_port_forwarder.as_ref(),
+        state.forwarder_authority.as_ref(),
+    ) {
+        (None, _) => teardown_blockers.push(
+            "workload-teardown.phase requires installed machine port forwarder configuration"
+                .to_owned(),
+        ),
+        (Some(config), Some(authority))
+            if config.provider_instance() != authority.provider_instance()
+                || config.provider_generation() != authority.generation() =>
+        {
+            teardown_blockers.push(
+                "workload-teardown.phase machine port forwarder configuration is crossed with parent-issued authority"
+                    .to_owned(),
+            );
+        }
+        (Some(_), Some(_)) | (Some(_), None) => {}
+    }
     if let Some(workloads) = state.service_workloads.as_ref() {
         teardown_blockers.extend(workloads.teardown_execution_blockers());
         teardown_blockers.extend(workloads.teardown_provider_blockers());
@@ -57,7 +73,6 @@ pub(super) fn machine_api_capability_response(
         teardown_blockers
             .push("machine API workload facade has no strict teardown-phase sink".to_owned());
     }
-    teardown_blockers.push(MACHINE_API_WORKLOAD_TEARDOWN_PRIVATE_ROUTE_BLOCKER.to_owned());
     let bootc_status_blockers =
         missing_binary_blockers(&binary_statuses, MACHINE_API_BOOTC_STATUS_OPERATION);
     let bootc_switch_blockers =

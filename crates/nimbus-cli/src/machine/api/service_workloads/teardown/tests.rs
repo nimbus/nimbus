@@ -3,7 +3,7 @@ use nimbus_sandbox::{ProviderCommandClaimInput, ProviderCommandOperation};
 use super::*;
 
 #[path = "tests/acceptance.rs"]
-mod acceptance;
+pub(in crate::machine::api) mod acceptance;
 #[path = "tests/attachment.rs"]
 mod attachment;
 

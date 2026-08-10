@@ -58,11 +58,11 @@
     }
   },
   "summary": {
-    "occurrences": 117,
+    "occurrences": 116,
     "owning_managers": 25,
     "manager_derived_handles": 42,
     "admitted_cross_process_reconstructions": 24,
-    "test_fixtures": 26
+    "test_fixtures": 25
   },
   "occurrences": [
     {
@@ -324,16 +324,6 @@
       "classification": "manager-derived-handle",
       "os_node_realm": "guest-node",
       "evidence": "nnc4.6e"
-    },
-    {
-      "path": "crates/nimbus-cli/src/machine/api/service_workloads/composition_tests.rs",
-      "kind": "direct-container-backend-construction",
-      "symbol": "service_with_backend",
-      "ordinal": 1,
-      "line": 20,
-      "classification": "test-fixture",
-      "os_node_realm": "guest-node",
-      "evidence": "source-contract"
     },
     {
       "path": "crates/nimbus-cli/src/machine/backend/provision.rs",

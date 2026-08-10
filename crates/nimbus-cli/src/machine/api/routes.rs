@@ -18,10 +18,15 @@ use nimbus_machine::api::{
     MACHINE_API_SERVICE_SANDBOX_LOGS_PATH, MACHINE_API_SERVICE_SANDBOX_PATH,
     MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH, MACHINE_API_SERVICE_SANDBOX_STOP_PATH,
     MACHINE_API_SERVICE_SANDBOXES_PATH, MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH,
-    MACHINE_API_WORKLOAD_RESTART_PHASE_PATH, MachineApiWorkloadProvisionPhaseRequest,
-    MachineApiWorkloadProvisionPhaseResponse, MachineApiWorkloadRestartPhaseRequest,
-    MachineApiWorkloadRestartPhaseResponse,
+    MACHINE_API_WORKLOAD_RESTART_PHASE_PATH, MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH,
+    MachineApiWorkloadProvisionPhaseRequest, MachineApiWorkloadProvisionPhaseResponse,
+    MachineApiWorkloadRestartPhaseRequest, MachineApiWorkloadRestartPhaseResponse,
+    MachineApiWorkloadTeardownPhaseRequest, MachineApiWorkloadTeardownPhaseResponse,
 };
+
+/// Bounded well above the closed JSON envelope while preventing unbounded
+/// allocation before strict request decoding and authority authentication.
+pub(super) const MAX_WORKLOAD_TEARDOWN_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
 pub(super) fn machine_api_router(state: MachineApiState) -> Router {
     Router::new()
@@ -47,6 +52,12 @@ pub(super) fn machine_api_router(state: MachineApiState) -> Router {
         .route(
             MACHINE_API_WORKLOAD_RESTART_PHASE_PATH,
             post(machine_api_workload_restart_phase),
+        )
+        .route(
+            MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH,
+            post(machine_api_workload_teardown_phase).layer(DefaultBodyLimit::max(
+                MAX_WORKLOAD_TEARDOWN_REQUEST_BODY_BYTES,
+            )),
         )
         .route(
             MACHINE_API_SERVICE_SANDBOXES_PATH,
@@ -112,6 +123,27 @@ async fn machine_api_workload_restart_phase(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: format!(
                 "machine API workload restart response violated its exact wire contract: {error}"
+            ),
+        })?;
+    Ok(Json(response))
+}
+
+async fn machine_api_workload_teardown_phase(
+    State(state): State<MachineApiState>,
+    Json(request): Json<MachineApiWorkloadTeardownPhaseRequest>,
+) -> Result<Json<MachineApiWorkloadTeardownPhaseResponse>, MachineApiHttpError> {
+    // Strict wire decoding and parent authority authentication precede facade
+    // lookup, journal inspection, and every guest provider operation.
+    require_forwarder_authority(&state, request.forwarder_authority())?;
+    let workloads = require_service_workloads(&state)?;
+    let observation = workloads
+        .teardown_phase(request.command(), request.forwarder_authority())
+        .await?;
+    let response = MachineApiWorkloadTeardownPhaseResponse::for_request(&request, observation)
+        .map_err(|error| MachineApiHttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!(
+                "machine API workload teardown response violated its exact wire contract: {error}"
             ),
         })?;
     Ok(Json(response))

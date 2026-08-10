@@ -71,10 +71,9 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
         vec!["machine API workload facade has no strict restart-phase sink".to_owned()]
     }
 
-    /// Provider-specific blockers for future strict teardown-phase dispatch.
-    ///
-    /// This is not operation advertisement. The private route and composite
-    /// phase sink remain absent until their later acceptance band.
+    /// Provider-specific blockers for strict teardown-phase dispatch.
+    /// Capability reporting combines these with the exact route, execution
+    /// sink, Container journal, attachment owner, and forwarder prerequisites.
     fn teardown_provider_blockers(&self) -> Vec<String> {
         vec!["machine API workload facade has no exact teardown provider bundle".to_owned()]
     }
@@ -126,10 +125,6 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
     /// A generic facade has no provider authority and must fail closed. The
     /// production guest owner overrides this method with the composed Systemd
     /// and Container sink.
-    #[allow(
-        dead_code,
-        reason = "the private Machine API route is deliberately installed in the next acceptance band"
-    )]
     fn teardown_phase<'a>(
         &'a self,
         _command: &'a MachineApiWorkloadTeardownCommandEnvelope,
@@ -151,6 +146,7 @@ pub(crate) struct GuestNodeWorkloadService {
     execution_stop_provider: Arc<dyn HostExecutionStopProvider>,
     lifecycle_blockers: Vec<String>,
     teardown_provider_blockers: Vec<String>,
+    teardown_execution_blockers: Vec<String>,
     bundle_materializer: Arc<ContainerSandboxBackend>,
     state_view: ContainerSandboxStateView,
 }
@@ -195,6 +191,15 @@ impl GuestNodeWorkloadService {
             .iter()
             .map(|reason| format!("guest execution teardown provider unavailable: {reason}"))
             .collect();
+        let teardown_execution_blockers = bundle_materializer
+            .attempt_idempotency_journal()
+            .err()
+            .map(|error| {
+                vec![format!(
+                    "guest Container provider journal unavailable: {error}"
+                )]
+            })
+            .unwrap_or_default();
         let lifecycle_backend = Arc::new(lifecycle_backend);
         let lifecycle_provider: Arc<dyn HostLifecycleBackend> = lifecycle_backend.clone();
         let execution_drain_provider: Arc<dyn HostExecutionDrainProvider> =
@@ -207,6 +212,7 @@ impl GuestNodeWorkloadService {
             execution_stop_provider,
             lifecycle_blockers,
             teardown_provider_blockers,
+            teardown_execution_blockers,
             bundle_materializer,
             state_view: ContainerSandboxStateView::new(state_root),
         };
@@ -248,6 +254,7 @@ impl GuestNodeWorkloadService {
             execution_stop_provider,
             lifecycle_blockers: Vec::new(),
             teardown_provider_blockers: Vec::new(),
+            teardown_execution_blockers: Vec::new(),
             bundle_materializer,
             state_view: ContainerSandboxStateView::new(state_root),
         };
@@ -274,7 +281,7 @@ impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {
     }
 
     fn teardown_execution_blockers(&self) -> Vec<String> {
-        Vec::new()
+        self.teardown_execution_blockers.clone()
     }
 
     fn inspect<'a>(

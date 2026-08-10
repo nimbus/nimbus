@@ -626,7 +626,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve_machine_api",
       "ordinal": 1,
-      "line": 176
+      "line": 180
     },
     {
       "site_id": "machine-api-unix-consumer",
@@ -1567,6 +1567,13 @@
           "cfg_owner": "crates/nimbus-compute/src/workload_saga.rs",
           "owner_module": "teardown_test_support",
           "module": "teardown_test_support"
+        },
+        {
+          "path": "crates/nimbus-cli/src/machine/api/service_workloads/composition_tests.rs",
+          "declared_from": "crates/nimbus-cli/src/machine/api/service_workloads.rs",
+          "cfg_owner": "crates/nimbus-cli/src/machine/api/service_workloads.rs",
+          "owner_module": "composition_tests",
+          "module": "composition_tests"
         }
       ],
       "allowed_shape": "The exact child path is admitted only while its declaration remains inside the mechanically verified #[cfg(test)] tests module and no production mod, path, or include edge reaches it."

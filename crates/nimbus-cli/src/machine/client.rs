@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use hyper::body::HttpBody as _;
 use hyper::{Body, Request, StatusCode};
 use nimbus::{Error, SandboxId, SandboxPortBinding, TenantId};
 use serde::Serialize;
@@ -36,6 +37,8 @@ const SOCKET_MUTATION_IO_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(test)]
 const SOCKET_IO_TIMEOUT_TEST: Duration = Duration::from_secs(30);
 const LOCAL_GUEST_BINARY_HELP_TEXT: &str = "set `NIMBUS_MACHINE_GUEST_BINARY` only when you intentionally need a local Linux guest binary override";
+
+mod teardown;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -455,6 +458,7 @@ async fn send_machine_api_request<T>(
     path: &str,
     body: Option<&[u8]>,
     io_timeout: Duration,
+    max_response_body_bytes: Option<usize>,
 ) -> Result<(StatusCode, Vec<u8>), Error>
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -518,7 +522,34 @@ where
         })?;
     let status = response.status();
 
-    let body_bytes = tokio::time::timeout(io_timeout, hyper::body::to_bytes(response.into_body()))
+    let body_bytes = tokio::time::timeout(io_timeout, async {
+        let mut body = response.into_body();
+        let mut body_bytes = Vec::new();
+        while let Some(chunk) = body.data().await {
+            let chunk = chunk.map_err(|error| {
+                Error::Internal(format!(
+                    "machine API response from {}{} closed after the connection ended before the declared response body completed: {error}",
+                    socket_path.display(),
+                    path
+                ))
+            })?;
+            if max_response_body_bytes.is_some_and(|limit| {
+                chunk
+                    .len()
+                    .checked_add(body_bytes.len())
+                    .is_none_or(|next| next > limit)
+            }) {
+                return Err(Error::Internal(format!(
+                    "machine API response from {}{} exceeded the {} byte limit",
+                    socket_path.display(),
+                    path,
+                    max_response_body_bytes.expect("response limit was just matched")
+                )));
+            }
+            body_bytes.extend_from_slice(&chunk);
+        }
+        Ok(body_bytes)
+    })
         .await
         .map_err(|_| {
             Error::Internal(format!(
@@ -526,16 +557,9 @@ where
                 socket_path.display(),
                 path
             ))
-        })?
-        .map_err(|error| {
-            Error::Internal(format!(
-                "machine API response from {}{} closed after the connection ended before the declared response body completed: {error}",
-                socket_path.display(),
-                path
-            ))
-        })?;
+        })??;
 
-    Ok((status, body_bytes.to_vec()))
+    Ok((status, body_bytes))
 }
 
 /// Run one machine API request to completion on a dedicated current-thread
@@ -549,6 +573,17 @@ fn machine_api_request(
     path: &str,
     body: Option<&[u8]>,
     io_timeout: Duration,
+) -> Result<(StatusCode, Vec<u8>), Error> {
+    machine_api_request_with_response_limit(socket_path, method, path, body, io_timeout, None)
+}
+
+fn machine_api_request_with_response_limit(
+    socket_path: &Path,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+    io_timeout: Duration,
+    max_response_body_bytes: Option<usize>,
 ) -> Result<(StatusCode, Vec<u8>), Error> {
     let socket_path = socket_path.to_path_buf();
     let method = method.to_owned();
@@ -573,6 +608,7 @@ fn machine_api_request(
                     &path,
                     body.as_deref(),
                     io_timeout,
+                    max_response_body_bytes,
                 )
                 .await
             })

@@ -6,11 +6,6 @@
 //! It never detaches or releases network authority and never creates another
 //! journal or workload store.
 
-#![allow(
-    dead_code,
-    reason = "the private Machine API route is deliberately installed in the next acceptance band"
-)]
-
 use std::sync::Arc;
 
 use nimbus::SandboxId;
@@ -1166,4 +1161,4 @@ fn exact_race_observation(
 
 #[cfg(test)]
 #[path = "teardown/tests.rs"]
-mod tests;
+pub(in crate::machine::api) mod tests;
