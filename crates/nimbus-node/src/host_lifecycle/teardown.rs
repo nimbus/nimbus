@@ -171,37 +171,44 @@ impl HostTeardownOperationFence {
         candidate.bind_or_matches_inspect(claim)
     }
 
-    pub(crate) fn advance_after_not_completed(
+    /// Adopt one adjacent Execute after the parent composite inspection.
+    ///
+    /// The guest generic journal authenticates and durably retains the
+    /// composite `NotCompleted` receipt before this child seam runs. The host
+    /// owner therefore validates the exact parent inspection fence but does
+    /// not reinterpret the composite evidence digest as host-only evidence.
+    pub(crate) fn advance_after_parent_inspection(
         &mut self,
         claim: &HostTeardownExecuteClaim,
-        evidence_domain: &str,
     ) -> bool {
-        let Some(inspect) = &self.inspect else {
-            return false;
-        };
         let WorkloadTeardownDispatchAuthorization::RetryAfterNotCompleted(evidence) =
             claim.0.portable.authorization()
         else {
             return false;
         };
+        let inspection_command_matches = WorkloadTeardownCommandId::for_confirmed_dispatch(
+            &self.execute.portable,
+            evidence.inspected_revision(),
+            evidence.inspected_transition_id(),
+            WorkloadTeardownCommandMode::Inspect,
+        )
+        .is_ok_and(|expected| expected == evidence.inspection_command_id());
         let matches = self.execute.portable.attempt() == claim.0.portable.attempt()
             && self.execute.portable.dispatch_epoch().checked_next()
                 == Some(claim.0.portable.dispatch_epoch())
+            && self.execute.confirmed_revision.checked_next()
+                == Some(evidence.inspected_revision())
+            && inspection_command_matches
             && self.execute.source == claim.0.source
             && self.execute.execution == claim.0.execution
             && self.execute.provider_target == claim.0.provider_target
             && self.execute.prior_receipt_prefix == claim.0.prior_receipt_prefix
             && evidence.attempt_id() == self.execute.portable.attempt().attempt_id()
             && evidence.dispatch_epoch() == self.execute.portable.dispatch_epoch()
-            && evidence.inspected_revision() == inspect.confirmed_revision
-            && evidence.inspected_transition_id() == &inspect.confirmed_transition_id
-            && evidence.inspection_command_id() == inspect.command_id
             && evidence.provider_target() == &self.execute.provider_target
-            && evidence.step() == self.execute.portable.attempt().step()
-            && evidence.evidence() == inspect.canonical_evidence(evidence_domain);
+            && evidence.step() == self.execute.portable.attempt().step();
         if matches {
-            self.execute = claim.0.clone();
-            self.inspect = None;
+            *self = claim.operation_fence();
         }
         matches
     }

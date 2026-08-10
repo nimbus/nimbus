@@ -330,7 +330,7 @@
       "kind": "direct-container-backend-construction",
       "symbol": "service_with_backend",
       "ordinal": 1,
-      "line": 18,
+      "line": 20,
       "classification": "test-fixture",
       "os_node_realm": "guest-node",
       "evidence": "source-contract"

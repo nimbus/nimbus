@@ -440,6 +440,169 @@ fn exact_absence_is_the_only_authority_for_next_epoch() {
 }
 
 #[test]
+fn exact_inspection_absence_atomically_authorizes_one_adjacent_epoch() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let first = command_claim(ProviderCommandOperation::DrainExecution, 0, 0);
+    journal
+        .claim_dispatch_epoch(&first)
+        .expect("first drain claim should persist");
+    journal
+        .record_observation(
+            &first,
+            ProviderCommandObservationKind::InProgress,
+            b"composite drain outcome requires inspection",
+        )
+        .expect("the ambiguous dispatch boundary should persist");
+
+    let second = command_claim(ProviderCommandOperation::DrainExecution, 0, 1);
+    assert_eq!(
+        journal
+            .claim_dispatch_epoch(&second)
+            .expect_err("ordinary retry cannot replace a nonterminal epoch"),
+        ProviderCommandJournalError::RetryWithoutAuthority
+    );
+    let execution = match journal
+        .claim_dispatch_epoch_after_inspected_absence(
+            &second,
+            first.dispatch_epoch(),
+            b"exact composite inspection found both children not completed",
+        )
+        .expect("authenticated inspection absence should claim the adjacent epoch")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("the first adjacent inspection retry must receive Execute authority")
+        }
+    };
+    assert!(
+        execution.observation().authenticates_retry_progress(&first),
+        "the successor claim must durably retain its exact absence receipt"
+    );
+
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch_after_inspected_absence(
+                &second,
+                first.dispatch_epoch(),
+                b"exact composite inspection found both children not completed",
+            )
+            .expect("an exact duplicate should replay"),
+        ProviderCommandClaimDecision::AdoptExactAttempt(_)
+    ));
+}
+
+#[test]
+fn inspected_absence_cannot_synthesize_an_unfenced_local_attempt() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let second = command_claim(ProviderCommandOperation::DrainExecution, 0, 1);
+
+    assert_eq!(
+        journal
+            .claim_dispatch_epoch_after_inspected_absence(
+                &second,
+                0,
+                b"unfenced inspection found no local provider record",
+            )
+            .expect_err("a missing local predecessor cannot authorize an adjacent retry"),
+        ProviderCommandJournalError::RetryWithoutAuthority
+    );
+    let first = command_claim(ProviderCommandOperation::DrainExecution, 0, 0);
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(&first)
+            .expect("the exact original epoch must remain eligible"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+}
+
+#[test]
+fn inspected_absence_retry_rejects_live_skipped_crossed_and_terminal_predecessors() {
+    for (name, kind, expected) in [
+        (
+            "live",
+            ProviderCommandObservationKind::Claimed,
+            ProviderCommandJournalError::PriorEffectUnresolved,
+        ),
+        (
+            "succeeded",
+            ProviderCommandObservationKind::Succeeded,
+            ProviderCommandJournalError::RetryWithoutAuthority,
+        ),
+        (
+            "failed",
+            ProviderCommandObservationKind::DefiniteFailure,
+            ProviderCommandJournalError::RetryWithoutAuthority,
+        ),
+    ] {
+        let root = tempfile::tempdir().expect("temporary root should exist");
+        let journal = journal(root.path());
+        let first = stop_claim(0);
+        journal
+            .claim_dispatch_epoch(&first)
+            .expect("first stop claim should persist");
+        if kind != ProviderCommandObservationKind::Claimed {
+            journal
+                .record_observation_with_failure_code(
+                    &first,
+                    kind,
+                    (kind == ProviderCommandObservationKind::DefiniteFailure)
+                        .then_some("sandbox_teardown_test_failure"),
+                    name.as_bytes(),
+                )
+                .expect("terminal predecessor should persist");
+        }
+        assert_eq!(
+            journal
+                .claim_dispatch_epoch_after_inspected_absence(
+                    &stop_claim(1),
+                    first.dispatch_epoch(),
+                    b"forged inspection absence",
+                )
+                .expect_err("an ineligible predecessor must reject the retry"),
+            expected
+        );
+    }
+
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let first = stop_claim(0);
+    journal
+        .claim_dispatch_epoch(&first)
+        .expect("first stop claim should persist");
+    journal
+        .record_observation(
+            &first,
+            ProviderCommandObservationKind::Ambiguous,
+            b"stop effect needs exact inspection",
+        )
+        .expect("ambiguous predecessor should persist");
+    assert_eq!(
+        journal
+            .claim_dispatch_epoch_after_inspected_absence(
+                &stop_claim(2),
+                first.dispatch_epoch(),
+                b"skipped inspection",
+            )
+            .expect_err("a skipped inspection retry must fail"),
+        ProviderCommandJournalError::RetryWithoutAuthority
+    );
+    let mut crossed = stop_claim(1);
+    crossed.provider_target_digest = DIGEST_A.to_owned();
+    assert_eq!(
+        journal
+            .claim_dispatch_epoch_after_inspected_absence(
+                &crossed,
+                first.dispatch_epoch(),
+                b"crossed inspection",
+            )
+            .expect_err("a crossed inspection retry must fail"),
+        ProviderCommandJournalError::CrossedClaim
+    );
+}
+
+#[test]
 fn exact_retry_receipts_survive_multiple_claim_only_crashes() {
     let root = tempfile::tempdir().expect("temporary root should exist");
     let journal = journal(root.path());

@@ -3,7 +3,9 @@ use nimbus_node::{SystemdTransientUnitBackend, UnavailableSystemdDbusClient};
 use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 
 use super::*;
-use crate::machine::api::capabilities::machine_api_capability_response;
+use crate::machine::api::capabilities::{
+    MACHINE_API_WORKLOAD_TEARDOWN_PRIVATE_ROUTE_BLOCKER, machine_api_capability_response,
+};
 use crate::machine::api::state::machine_systemd_teardown_state_root;
 use crate::machine::api::{MachineApiListenMode, MachineApiState};
 
@@ -96,7 +98,7 @@ fn guest_systemd_storeless_composition_reports_exact_teardown_blocker() {
 }
 
 #[test]
-fn guest_systemd_composition_reports_teardown_unavailable_until_the_sink_exists() {
+fn guest_systemd_composition_reports_teardown_unavailable_until_the_private_route_exists() {
     let root = tempfile::tempdir().expect("guest control root should create");
     let teardown_root = machine_systemd_teardown_state_root(root.path());
     let backend = SystemdTransientUnitBackend::new_with_teardown_state_root(
@@ -131,8 +133,11 @@ fn guest_systemd_composition_reports_teardown_unavailable_until_the_sink_exists(
         teardown
             .blockers
             .iter()
-            .any(|blocker| blocker.contains("no strict teardown-phase sink"))
+            .any(|blocker| blocker == MACHINE_API_WORKLOAD_TEARDOWN_PRIVATE_ROUTE_BLOCKER)
     );
+    assert!(teardown.blockers.iter().any(|blocker| {
+        blocker == "workload-teardown.phase requires parent-issued machine forwarder authority"
+    }));
     assert!(
         teardown
             .blockers

@@ -275,15 +275,29 @@ where
             };
             let mut state = match store.lock_state() {
                 Ok(state) => state,
-                Err(_) => return execute_failure(&claim, "systemd_teardown_store_unavailable"),
+                Err(_) => return HostTeardownExecuteObservation::Ambiguous,
             };
             let execution_id = claim.execution().execution_id();
             if let Some(operation) = state.state().drain.get(execution_id) {
-                return if operation.fence.matches_execute(&claim) {
-                    HostTeardownExecuteObservation::Succeeded(Box::new(operation.evidence.clone()))
-                } else {
-                    execute_failure(&claim, "crossed_drain_barrier")
-                };
+                let evidence = operation.evidence.clone();
+                if operation.fence.matches_execute(&claim) {
+                    return HostTeardownExecuteObservation::Succeeded(Box::new(evidence));
+                }
+                let adopted =
+                    state
+                        .state_mut()
+                        .drain
+                        .get_mut(execution_id)
+                        .is_some_and(|operation| {
+                            operation.fence.advance_after_parent_inspection(&claim)
+                        });
+                if !adopted {
+                    return execute_failure(&claim, "crossed_drain_barrier");
+                }
+                if state.checkpoint().is_err() {
+                    return HostTeardownExecuteObservation::Ambiguous;
+                }
+                return HostTeardownExecuteObservation::Succeeded(Box::new(evidence));
             }
             let observed = match inspect_unit(self, claim.execution().execution_id()).await {
                 Ok(observed) => observed,
@@ -345,7 +359,7 @@ where
             };
             let state = match store.lock_state() {
                 Ok(state) => state,
-                Err(_) => return inspect_failure(&claim, "systemd_teardown_store_unavailable"),
+                Err(_) => return HostTeardownInspectObservation::Ambiguous,
             };
             let observed = match inspect_unit(self, claim.execution().execution_id()).await {
                 Ok(observed) => observed,
@@ -407,7 +421,7 @@ where
             };
             let drain_barrier = match store.lock_state() {
                 Ok(state) => state,
-                Err(_) => return execute_failure(&claim, "systemd_teardown_store_unavailable"),
+                Err(_) => return HostTeardownExecuteObservation::Ambiguous,
             };
             if !closed_drain_authenticates(drain_barrier.state(), &claim) {
                 return execute_failure(&claim, "systemd_drain_barrier_required");
@@ -432,7 +446,9 @@ where
                 if let Some(operation) = state.stop.get_mut(&key) {
                     match &operation.stage {
                         SystemdStopStage::Terminal { evidence } => {
-                            if operation.fence.matches_execute(&claim) {
+                            if operation.fence.matches_execute(&claim)
+                                || operation.fence.advance_after_parent_inspection(&claim)
+                            {
                                 Ok(Some(HostTeardownExecuteObservation::Succeeded(
                                     evidence.clone(),
                                 )))
@@ -452,10 +468,7 @@ where
                         SystemdStopStage::PreCallFailure { .. } => {
                             if operation.fence.matches_execute(&claim) {
                                 Ok(Some(HostTeardownExecuteObservation::Ambiguous))
-                            } else if operation.fence.advance_after_not_completed(
-                                &claim,
-                                "nimbus.node.systemd.stop.pre-call.v1",
-                            ) {
+                            } else if operation.fence.advance_after_parent_inspection(&claim) {
                                 operation.stage = SystemdStopStage::Submitting;
                                 Ok(None)
                             } else {
@@ -484,9 +497,7 @@ where
                 }
             }) {
                 Ok(observation) => observation,
-                Err(_) => {
-                    return execute_failure(&claim, "systemd_teardown_store_unavailable");
-                }
+                Err(_) => return HostTeardownExecuteObservation::Ambiguous,
             };
             if let Some(observation) = existing_observation {
                 return observation;
@@ -513,14 +524,13 @@ where
                 Ok(store) => store,
                 Err(_) => return inspect_failure(&claim, "systemd_teardown_store_unavailable"),
             };
-            let drain_barrier = match store.lock_state() {
+            let state = match store.lock_state() {
                 Ok(state) => state,
-                Err(_) => return inspect_failure(&claim, "systemd_teardown_store_unavailable"),
+                Err(_) => return HostTeardownInspectObservation::Ambiguous,
             };
-            if !closed_drain_authenticates(drain_barrier.state(), &claim) {
+            if !closed_drain_authenticates(state.state(), &claim) {
                 return inspect_failure(&claim, "systemd_drain_barrier_required");
             }
-            drop(drain_barrier);
             let observed = match inspect_unit(self, claim.execution().execution_id()).await {
                 Ok(observed) => observed,
                 Err(()) => return HostTeardownInspectObservation::Ambiguous,
@@ -533,58 +543,57 @@ where
                     return HostTeardownInspectObservation::Ambiguous;
                 }
                 let key = SystemdTeardownOperationKey::for_claim(&claim);
-                return match store.transact(|state| {
-                    if let Some(operation) = state.stop.get_mut(&key) {
-                        if !operation.fence.bind_or_matches_inspect(&claim) {
-                            return Ok(inspect_failure(&claim, "crossed_stop_operation"));
-                        }
-                        if matches!(
-                            &operation.stage,
-                            SystemdStopStage::AcceptedJob { job_path, .. } if job_path != job.path()
-                        ) {
-                            return Ok(HostTeardownInspectObservation::Ambiguous);
-                        }
+                if let Some(operation) = state.state().stop.get(&key) {
+                    if !operation.fence.matches_inspect(&claim) {
+                        return inspect_failure(&claim, "crossed_stop_operation");
                     }
-                    Ok(HostTeardownInspectObservation::InProgress(
-                        claim.canonical_evidence("nimbus.node.systemd.stop.job-in-progress.v1"),
-                    ))
-                }) {
-                    Ok(observation) => observation,
-                    Err(_) => HostTeardownInspectObservation::Ambiguous,
-                };
-            }
-            if terminal(&observed) {
-                return record_terminal_inspect(store, &claim);
+                    if matches!(
+                        &operation.stage,
+                        SystemdStopStage::AcceptedJob { job_path, .. } if job_path != job.path()
+                    ) {
+                        return HostTeardownInspectObservation::Ambiguous;
+                    }
+                }
+                return HostTeardownInspectObservation::InProgress(
+                    claim.canonical_evidence("nimbus.node.systemd.stop.job-in-progress.v1"),
+                );
             }
             let key = SystemdTeardownOperationKey::for_claim(&claim);
-            match store.transact(|state| {
-                let Some(operation) = state.stop.get_mut(&key) else {
-                    return Ok(HostTeardownInspectObservation::Ambiguous);
-                };
-                if !operation.fence.bind_or_matches_inspect(&claim) {
-                    return Ok(inspect_failure(&claim, "crossed_stop_operation"));
+            let Some(operation) = state.state().stop.get(&key) else {
+                return HostTeardownInspectObservation::Ambiguous;
+            };
+            if !operation.fence.matches_inspect(&claim) {
+                return inspect_failure(&claim, "crossed_stop_operation");
+            }
+            match &operation.stage {
+                SystemdStopStage::Terminal { evidence } => {
+                    HostTeardownInspectObservation::Satisfied(evidence.clone())
                 }
-                Ok(match &operation.stage {
-                    SystemdStopStage::PreCallFailure { .. } => {
-                        HostTeardownInspectObservation::NotCompleted(
-                            claim.canonical_evidence("nimbus.node.systemd.stop.pre-call.v1"),
-                        )
-                    }
-                    SystemdStopStage::Terminal { evidence } => {
-                        HostTeardownInspectObservation::Satisfied(evidence.clone())
-                    }
-                    SystemdStopStage::TerminalFailure { evidence } => {
-                        HostTeardownInspectObservation::DefiniteFailure(evidence.clone())
-                    }
-                    SystemdStopStage::Submitting
-                    | SystemdStopStage::UnknownSubmission { .. }
-                    | SystemdStopStage::AcceptedJob { .. } => {
-                        HostTeardownInspectObservation::Ambiguous
-                    }
-                })
-            }) {
-                Ok(observation) => observation,
-                Err(_) => HostTeardownInspectObservation::Ambiguous,
+                SystemdStopStage::TerminalFailure { evidence } => {
+                    HostTeardownInspectObservation::DefiniteFailure(evidence.clone())
+                }
+                SystemdStopStage::Submitting
+                | SystemdStopStage::PreCallFailure { .. }
+                | SystemdStopStage::UnknownSubmission { .. }
+                | SystemdStopStage::AcceptedJob { .. }
+                    if terminal(&observed) =>
+                {
+                    HostTeardownInspectObservation::Satisfied(Box::new(
+                        WorkloadTeardownSuccessEvidence::ExecutionStopped {
+                            reference: claim.execution().clone(),
+                            evidence: claim
+                                .canonical_evidence("nimbus.node.systemd.stop.absent.v1"),
+                        },
+                    ))
+                }
+                SystemdStopStage::PreCallFailure { .. } => {
+                    HostTeardownInspectObservation::NotCompleted(
+                        claim.canonical_evidence("nimbus.node.systemd.stop.pre-call.v1"),
+                    )
+                }
+                SystemdStopStage::Submitting
+                | SystemdStopStage::UnknownSubmission { .. }
+                | SystemdStopStage::AcceptedJob { .. } => HostTeardownInspectObservation::Ambiguous,
             }
         })
     }
@@ -838,10 +847,9 @@ fn record_terminal_execute(
             if let Some(operation) = state.stop.get_mut(&key) {
                 let authorized = operation.fence.matches_execute(claim)
                     || (matches!(&operation.stage, SystemdStopStage::PreCallFailure { .. })
-                        && operation.fence.advance_after_not_completed(
-                            claim,
-                            "nimbus.node.systemd.stop.pre-call.v1",
-                        ));
+                        && operation.fence.advance_after_parent_inspection(claim))
+                    || (matches!(&operation.stage, SystemdStopStage::Terminal { .. })
+                        && operation.fence.advance_after_parent_inspection(claim));
                 if !authorized {
                     return Ok(execute_failure(claim, "crossed_stop_operation"));
                 }
@@ -874,47 +882,6 @@ fn record_terminal_execute(
             )))
         })
         .unwrap_or(HostTeardownExecuteObservation::Ambiguous)
-}
-
-fn record_terminal_inspect(
-    store: &SystemdTeardownStore,
-    claim: &HostTeardownInspectClaim,
-) -> HostTeardownInspectObservation {
-    let evidence = WorkloadTeardownSuccessEvidence::ExecutionStopped {
-        reference: claim.execution().clone(),
-        evidence: claim.canonical_evidence("nimbus.node.systemd.stop.absent.v1"),
-    };
-    let key = SystemdTeardownOperationKey::for_claim(claim);
-    store
-        .transact(|state| {
-            let Some(operation) = state.stop.get_mut(&key) else {
-                return Ok(HostTeardownInspectObservation::Ambiguous);
-            };
-            if !operation.fence.bind_or_matches_inspect(claim) {
-                return Ok(inspect_failure(claim, "crossed_stop_operation"));
-            }
-            match &operation.stage {
-                SystemdStopStage::Terminal { evidence } => {
-                    return Ok(HostTeardownInspectObservation::Satisfied(evidence.clone()));
-                }
-                SystemdStopStage::TerminalFailure { evidence } => {
-                    return Ok(HostTeardownInspectObservation::DefiniteFailure(
-                        evidence.clone(),
-                    ));
-                }
-                SystemdStopStage::Submitting
-                | SystemdStopStage::PreCallFailure { .. }
-                | SystemdStopStage::UnknownSubmission { .. }
-                | SystemdStopStage::AcceptedJob { .. } => {}
-            }
-            operation.stage = SystemdStopStage::Terminal {
-                evidence: Box::new(evidence.clone()),
-            };
-            Ok(HostTeardownInspectObservation::Satisfied(Box::new(
-                evidence,
-            )))
-        })
-        .unwrap_or(HostTeardownInspectObservation::Ambiguous)
 }
 
 trait ExactTeardownClaim {

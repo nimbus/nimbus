@@ -1,6 +1,9 @@
 use super::binaries::resolve_binary_statuses;
 use super::*;
 
+pub(super) const MACHINE_API_WORKLOAD_TEARDOWN_PRIVATE_ROUTE_BLOCKER: &str =
+    "workload-teardown.phase private route is not installed";
+
 pub(super) fn machine_api_capability_response(
     state: &MachineApiState,
 ) -> MachineApiCapabilityResponse {
@@ -54,6 +57,7 @@ pub(super) fn machine_api_capability_response(
         teardown_blockers
             .push("machine API workload facade has no strict teardown-phase sink".to_owned());
     }
+    teardown_blockers.push(MACHINE_API_WORKLOAD_TEARDOWN_PRIVATE_ROUTE_BLOCKER.to_owned());
     let bootc_status_blockers =
         missing_binary_blockers(&binary_statuses, MACHINE_API_BOOTC_STATUS_OPERATION);
     let bootc_switch_blockers =

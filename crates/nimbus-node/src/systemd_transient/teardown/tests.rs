@@ -28,6 +28,8 @@ use crate::{
 
 #[path = "tests/activation_barrier.rs"]
 mod activation_barrier;
+#[path = "tests/composition_prerequisite.rs"]
+mod composition_prerequisite;
 
 #[derive(Clone)]
 struct TeardownFakeSystemdClient {
@@ -1290,7 +1292,7 @@ async fn systemd_store_failure_before_submission_has_zero_effect() {
 
     assert!(matches!(
         backend.execute_stop(claim).await,
-        HostTeardownExecuteObservation::DefiniteFailure(_)
+        HostTeardownExecuteObservation::Ambiguous
     ));
     assert_eq!(client.stop_effect_count(), 0);
 }

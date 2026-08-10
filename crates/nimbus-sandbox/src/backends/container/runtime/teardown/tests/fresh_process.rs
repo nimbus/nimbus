@@ -900,7 +900,7 @@ fn command_for(
         manifest.spec.tenant_id,
         id.clone(),
         manifest.execution_attempt_id,
-        CONTAINER_EXECUTION_PROVIDER_KEY,
+        CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY,
         operation,
         claim,
     )

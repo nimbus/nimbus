@@ -1,6 +1,6 @@
 # NNC6.5d4 Forwarded-Machine Teardown Provider
 
-Status: `implementation in progress. bands 1-4 complete`
+Status: `implementation in progress. bands 1-5 complete`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -647,6 +647,12 @@ membership, transport, routing, and super-net fencing remain separate.
 | Band 5b behavior | Async journal tests pass `7/7` with one declared child-only process entry point. They cover lock retention through await and publication, caller cancellation, current-thread runtime progress, stale inspection, read-only `InProgress` and `Ambiguous` evidence, explicit still-startable Execute authority, and two subprocess contenders with one effect/result winner. Provision barrier tests pass `3/3`; Container child execution passes `3/3`; exact child stop ordering passes `1/1`; provision phases pass `27/27`. Full `nimbus-sandbox` passes `1,133` executed with `48` declared platform or child-process ignores. Full `nimbus-compute` passes `381/381` with one declared child-only ignore. |
 | Band 5b recovery boundary | The async generic journal survives waiter cancellation and process contention through one existing durable root. The Container child remains independently replayable from its manifest. If an earlier provision producer process dies after admission and after an ambiguous child effect, NNC8.2 still owns the pre-existing provision/restart live-claim recovery debt. Band 5b adds no second journal or speculative compatibility path to hide that distinct debt. |
 | Band 5b quality and modularity | All-target Sandbox check, strict affected Clippy, warning-denied affected Rustdoc, format, and diff pass. NNCV008 passes. NNCV024 directly follows the moved lifecycle-lock source and its exact creating-lock mutation fails exclusively. NNCV035 self-test passes `55/55`; direct remains expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. `runner.rs` is reduced from `2,169` to `1,852` lines by moving the coherent `308`-line lifecycle-lock owner into `runner/lifecycle_lock.rs`. The remaining root owns runner handoff, effect recovery, result publication, and cleanup convergence. `provider_command.rs` is a `1,598`-line deep durable state-machine owner; the new async mechanics remain in its `295`-line current-claim child. The `1,754`-line source-contract verifier is the existing canonical multi-contract scanner; this band changes only the exact NNCV024 source and mutation coordinates. New concept-owned test children are `457`, `394`, `201`, and `67` lines. No changed handwritten file reaches `2,000` lines. No route, client, guest sink, parent adapter, caller, dependency, provider effect, or `nimbus-network` path changed. |
+| Band 5c guest composite sink | `GuestWorkloadTeardownPhaseSink` authenticates the installed forwarder, exact guest translation, local node, execution provider, source digest, tenant, and sandbox before journal mutation. It reuses only the existing Container-rooted `ProviderCommandAttemptJournal`. Drain and Stop execute Systemd first and Container second. One generic result becomes terminal only after both exact child results are terminal. The stop bridge binds the exact serialized Systemd success and current Container command with a domain-separated SHA-256 digest; Container independently inspects terminality and records one stop fence without sending a signal. |
+| Band 5c deterministic inspection and retry | Execute and Inspect serialize on the same generic stream. Inspect never polls a child while a claimed effect can still start. It joins Systemd first and Container second, maps missing generic state to `Ambiguous`, preserves child `InProgress` and `Ambiguous`, and publishes no result. One atomic adjacent-epoch transition requires an existing exact nonterminal predecessor; it cannot synthesize an unfenced absent epoch. Exact concurrent adoption reuses a durable result. Serialization failure is nonterminal `Ambiguous` and can never create fallback terminal evidence. |
+| Band 5c accepted audit corrections | The semantic audit found two P1 defects before closeout. First, no-record Inspect returned `NotCompleted` while epoch N still had execute authority; it now returns `Ambiguous`, rejects a forged adjacent epoch N+1, and leaves epoch N replayable. Second, fallible evidence serialization used fallback bytes that could close a terminal journal; encoding failure now remains `Ambiguous` with no failure code or terminal evidence. Focused regressions prove both corrections. No other semantic, static, or modularity finding remains. |
+| Band 5c behavior and recovery | Guest composite tests pass `12` with one declared child-only subprocess entry point. They cover authentication, ordering, exact replay, one generic publication, deterministic inspection, crossed evidence, adjacent retry, two-process contention, serializer failure, and a four-process crash/reopen sequence that recovers from durable Systemd, Container, and generic-journal roots without an in-memory snapshot. Provider-command tests pass `38` with two declared child-process entry points. Systemd teardown tests pass `33`; full node passes `121`. Container teardown passes `37` with two declared child-process entry points. Full Sandbox passes `1,134` with `32` declared platform or child-process ignores; full CLI passes `964` with two declared child-process ignores; full compute passes `381` with one declared child-process ignore. One earlier unrelated Container network subprocess timed out once; its exact rerun, the complete Container teardown rerun, and the full Sandbox rerun pass. |
+| Band 5c capability and failure boundary | Capability reporting remains unavailable through the exact missing-private-route blocker and retains the installed-forwarder and provider blockers. No route is installed. Child absence or retry authority remains nonterminal; uncertainty remains `Ambiguous`; crossed identity, digest, or fence is definite failure. Systemd or Container partial success cannot publish generic success. The sink does not detach or release network authority. |
+| Band 5c quality and modularity | Affected all-target checks, strict Clippy with all features, warning-denied Rustdoc, format, and diff pass. The exact `nimbus-network -> nimbus-core` workspace edge is unchanged. No route, client, parent adapter, attachment composition, caller, coarse-stop token, socket, provider effect, dependency manifest, or `nimbus-network` path changed. NNCV015 follows the shifted test-fixture constructor line. NNCV035 self-test passes `55/55`; direct remains expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. NNCV008 and proof lint pass. Docs pass `108`; the site passes `17/17`. Of `19` Rust paths, `9` are product and `10` are tests. `provider_command.rs` is a `1,670`-line deep durable state-machine owner. `container/runtime.rs` is a `1,625`-line existing composition root and adds only one re-export. Every other changed handwritten file is below `1,500` lines, and no file reaches `2,000`. |
 | Structured review | Not run. Audit and fail-before are partial item work. One review is allowed only after K1-K34 are green. |
 | Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
 | Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
@@ -654,7 +660,8 @@ membership, transport, routing, and super-net fencing remain separate.
 | Durable band 3 checkpoint | The commit that contains this row, the band 3 product and test paths, and the recovery header is the exact band 3 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 4 checkpoint | `1100cbc04` is the exact band 4 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 5a checkpoint | The commit that contains this row, the band 5a product and test paths, and the recovery header is the exact band 5a recovery checkpoint. It is not the item completion commit and has no structured review. |
-| Durable band 5b checkpoint | The commit that contains this row, the band 5b product, test, verifier-coordinate, routing, and recovery-header paths is the exact band 5b recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 5b checkpoint | `824c2f6f0` is the exact band 5b recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 5c checkpoint | The commit that contains this row, the band 5c product, test, census-coordinate, routing, and recovery-header paths is the exact band 5c recovery checkpoint. It is not the item completion commit and has no structured review. |
 
 ## Current Acceptance State
 
@@ -665,17 +672,23 @@ adapter must still prove one journal and five independent durable streams.
 Band 3 completes the transport-vocabulary portions of K11-K15. Band 4
 completes K16 with deterministic durable Systemd production composition. It
 also provides one shared concrete backend behind all three exact traits and
-nonaspirational capability reporting. Bands 5a and 5b provide the two exact
-activation-admission barriers and the one asynchronous generic-journal seam.
-They also provide the nonpublishing Container child prerequisites of K17-K18
-and K21.
+nonaspirational capability reporting.
 
-Guest composition, dispatch, and route availability remain later bands. K5-K6 and
-the remaining end-to-end portions of K7-K10 and K15-K35 remain open.
+Bands 5a-5c provide the two exact
+activation-admission barriers and the one asynchronous generic-journal seam.
+They also complete the nonpublishing Container child. The composite Systemd
+and Container sink completes the execution parts of K17-K18. Its deterministic
+inspection join completes the inspection parts. The sole guest journal
+completes part of K21. The route-specific part of K30 remains truthfully
+unavailable.
+
+Forwarded attachment composition, route availability, the parent adapter, and
+end-to-end compute substitution remain later bands. K5-K6 and the remaining
+end-to-end portions of K7-K10, K15, and K19-K35 remain open.
 
 Band 5 is prospectively split before implementation. These are dependency-
-ordered recovery slices, not separate plan items or review units. Bands 5a
-and 5b are green. Band 5c is next:
+ordered recovery slices, not separate plan items or review units. Bands
+5a-5c are green:
 
 1. Band 5a carries the exact prior receipt prefix into the closed host claim.
    It adds one durable Systemd activation-admission barrier to the existing
@@ -692,16 +705,19 @@ and 5b are green. Band 5c is next:
    one cross-process claimant and no delayed Execute after Inspect reports
    `NotCompleted`. They also prove exact replay and no second guest journal.
    This slice is complete at the commit that contains the band 5b ledger row.
-3. Band 5c adds the concept-owned guest composite execution drain/stop sink.
-   It authenticates the installed forwarder and local node. It composes
+3. Band 5c adds the concept-owned guest composite execution drain/stop sink,
+   which authenticates the installed forwarder and local node. It composes
    Systemd and Container under the one guest journal. The sink requires both
    exact child receipts and applies a deterministic inspection join. Tests add
    replay, contention, and fresh-process cuts. Capability reporting keeps the
    operation unavailable through a separate missing-private-route blocker.
+   This slice is complete at the commit that contains the band 5c ledger row.
 
 Band 5 does not add forwarded attachment composition, a private route, client,
 parent adapter, caller cutover, or coarse-stop deletion. NNC6.5d4 remains the
 sole `in_progress` canonical item and the complete item remains the one future
-review unit.
+review unit. Band 6 is next. It adds only the forwarded Container attachment
+composition and proves retained detach and final release without regressing
+NNC6.5d3.
 
 NNC6.5d4 remains the sole `in_progress` canonical item. There is no blocker.

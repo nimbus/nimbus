@@ -6,6 +6,7 @@ pub use crate::backends::oci::network::{
     MachinePortForwardOutcome, MachinePortForwardReceipt, OciMachinePortForwarderConfig,
 };
 pub use runtime::{
+    CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY, ContainerHostTerminalEvidence,
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
     MachinePortAbsenceEvidence, PreparedContainerServiceWorkload,
     run_prepared_container_service_workload,

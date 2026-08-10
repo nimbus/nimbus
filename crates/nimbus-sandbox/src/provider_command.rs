@@ -754,6 +754,78 @@ impl ProviderCommandAttemptJournal {
         }
     }
 
+    /// Claim one adjacent epoch after the coordinator confirms exact absence.
+    ///
+    /// The caller must authenticate its coordinator-owned inspection receipt
+    /// before it invokes this seam. The journal then binds that receipt to the
+    /// exact prior provider epoch under the same stream lock that publishes the
+    /// successor claim. `Claimed` is never eligible because its Execute token
+    /// can still start. Inspect remains read-only, and a crash cannot leave an
+    /// unfenced gap between absence authorization and the successor claim.
+    pub fn claim_dispatch_epoch_after_inspected_absence(
+        &self,
+        claim: &ProviderCommandClaim,
+        inspected_dispatch_epoch: u64,
+        inspection_evidence: &[u8],
+    ) -> Result<ProviderCommandClaimDecision, ProviderCommandJournalError> {
+        claim.validate()?;
+        if inspected_dispatch_epoch.checked_add(1) != Some(claim.dispatch_epoch) {
+            return Err(ProviderCommandJournalError::RetryWithoutAuthority);
+        }
+        let paths = self.paths(claim);
+        self.establish_directory(&paths.directory)?;
+        let _guard = lock(&paths.lock)?;
+        remove_stale_stage(&paths.stage)?;
+        let Some(current) = read_if_present(&paths.record)? else {
+            return Err(ProviderCommandJournalError::RetryWithoutAuthority);
+        };
+
+        if current.claim == *claim {
+            return Ok(ProviderCommandClaimDecision::AdoptExactAttempt(current));
+        }
+        if !claim.same_attempt_fence(&current.claim) {
+            return match self.reject_stale_or_crossed(&current.claim, claim) {
+                Ok(()) => Err(ProviderCommandJournalError::CrossedClaim),
+                Err(error) => Err(error),
+            };
+        }
+        if current.claim.dispatch_epoch != inspected_dispatch_epoch {
+            return Err(if claim.dispatch_epoch < current.claim.dispatch_epoch {
+                Self::reject_stale_dispatch_epoch(
+                    current.claim.dispatch_epoch,
+                    claim.dispatch_epoch,
+                )
+            } else {
+                ProviderCommandJournalError::CrossedClaim
+            });
+        }
+
+        match current.kind {
+            ProviderCommandObservationKind::Absent
+            | ProviderCommandObservationKind::RetryAuthorized => {
+                self.decide_existing(&paths, current, claim)
+            }
+            ProviderCommandObservationKind::InProgress
+            | ProviderCommandObservationKind::Ambiguous => {
+                let absence = ProviderCommandObservation {
+                    claim: current.claim.clone(),
+                    kind: ProviderCommandObservationKind::Absent,
+                    evidence_sha256: Some(evidence_sha256(inspection_evidence)),
+                    failure_code: None,
+                    retry_lineage: current.retry_lineage.clone(),
+                };
+                self.publish_new_claim(&paths, claim.clone(), Some(absence))
+            }
+            ProviderCommandObservationKind::Claimed => {
+                Err(ProviderCommandJournalError::PriorEffectUnresolved)
+            }
+            ProviderCommandObservationKind::Succeeded
+            | ProviderCommandObservationKind::DefiniteFailure => {
+                Err(ProviderCommandJournalError::RetryWithoutAuthority)
+            }
+        }
+    }
+
     /// Inspect only when the durable authority is the exact attempt and epoch.
     pub fn adopt_exact_attempt(
         &self,

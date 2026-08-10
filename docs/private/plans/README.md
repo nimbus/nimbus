@@ -158,9 +158,14 @@ extension-registry seam before the second concern edits `extensions.rs`.
   lifecycle lock and durable drain barrier. The existing Container-rooted
   journal has one cancellation-safe asynchronous exact-current-claim seam,
   and one lock-scoped Container child can complete without publishing generic
-  success. Band 5c is next. It adds the guest composite drain/stop sink and
-  deterministic inspection join while a separate route blocker keeps the
-  operation unavailable.
+  success. Band 5c is green. One strict guest composite sink reuses that
+  journal, sequences exact Systemd then Container drain/stop, publishes only
+  after both child successes, joins inspection deterministically, and
+  recovers contention and fresh-process cuts from durable roots. Missing
+  generic state and serialization uncertainty remain `Ambiguous`. A separate
+  route blocker keeps the operation unavailable. Band 6 is next and adds only
+  forwarded Container attachment composition with retained detach and
+  proof-gated final release.
   Compose down, physical-machine stop, product caller cutover, public-route
   growth, and a CLI-local saga store remain forbidden.
   NNC8.2 owns the

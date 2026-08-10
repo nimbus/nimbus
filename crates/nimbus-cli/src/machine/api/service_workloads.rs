@@ -17,6 +17,7 @@ use nimbus_machine::{
     api::{
         MachineApiWorkloadProvisionCommandEnvelope, MachineApiWorkloadProvisionObservation,
         MachineApiWorkloadRestartCommandEnvelope, MachineApiWorkloadRestartObservation,
+        MachineApiWorkloadTeardownCommandEnvelope, MachineApiWorkloadTeardownObservation,
     },
 };
 use nimbus_node::{
@@ -40,6 +41,7 @@ use super::{MachineApiHttpError, sandbox_error_to_http_error};
 mod composition_tests;
 pub(super) mod provision;
 pub(super) mod restart;
+pub(super) mod teardown;
 
 const SERVICE_WORKLOAD_DEFAULT_CPU_WEIGHT: u64 = 100;
 const SERVICE_WORKLOAD_CPU_WEIGHT_PER_VCPU: u64 = 100;
@@ -115,6 +117,28 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
             Err(MachineApiHttpError {
                 status: StatusCode::SERVICE_UNAVAILABLE,
                 message: "machine API workload facade has no strict restart-phase sink".to_owned(),
+            })
+        })
+    }
+
+    /// Execute or inspect one exact compute-confirmed teardown phase.
+    ///
+    /// A generic facade has no provider authority and must fail closed. The
+    /// production guest owner overrides this method with the composed Systemd
+    /// and Container sink.
+    #[allow(
+        dead_code,
+        reason = "the private Machine API route is deliberately installed in the next acceptance band"
+    )]
+    fn teardown_phase<'a>(
+        &'a self,
+        _command: &'a MachineApiWorkloadTeardownCommandEnvelope,
+        _installed_forwarder: &'a MachineForwarderAuthority,
+    ) -> MachineApiServiceFuture<'a, MachineApiWorkloadTeardownObservation> {
+        Box::pin(async move {
+            Err(MachineApiHttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: "machine API workload facade has no strict teardown-phase sink".to_owned(),
             })
         })
     }
@@ -199,6 +223,37 @@ impl GuestNodeWorkloadService {
         let stop = Arc::as_ptr(&self.execution_stop_provider) as *const ();
         lifecycle == drain && lifecycle == stop
     }
+
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "the guest teardown integration harness is added with the composite crash-cut tests"
+    )]
+    fn new_for_teardown_test<C>(
+        node_id: NodeIdentity,
+        provider: Arc<C>,
+        bundle_materializer: Arc<ContainerSandboxBackend>,
+        state_root: impl Into<PathBuf>,
+    ) -> Self
+    where
+        C: HostLifecycleBackend + HostExecutionDrainProvider + HostExecutionStopProvider + 'static,
+    {
+        let lifecycle_backend: Arc<dyn HostLifecycleBackend> = provider.clone();
+        let execution_drain_provider: Arc<dyn HostExecutionDrainProvider> = provider.clone();
+        let execution_stop_provider: Arc<dyn HostExecutionStopProvider> = provider;
+        let service = Self {
+            node_id,
+            lifecycle_backend,
+            execution_drain_provider,
+            execution_stop_provider,
+            lifecycle_blockers: Vec::new(),
+            teardown_provider_blockers: Vec::new(),
+            bundle_materializer,
+            state_view: ContainerSandboxStateView::new(state_root),
+        };
+        assert!(service.provider_views_share_one_backend());
+        service
+    }
 }
 
 impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {
@@ -216,6 +271,10 @@ impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {
 
     fn teardown_provider_blockers(&self) -> Vec<String> {
         self.teardown_provider_blockers.clone()
+    }
+
+    fn teardown_execution_blockers(&self) -> Vec<String> {
+        Vec::new()
     }
 
     fn inspect<'a>(
@@ -313,6 +372,14 @@ impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {
         command: &'a MachineApiWorkloadRestartCommandEnvelope,
     ) -> MachineApiServiceFuture<'a, MachineApiWorkloadRestartObservation> {
         Box::pin(restart::dispatch(self, command))
+    }
+
+    fn teardown_phase<'a>(
+        &'a self,
+        command: &'a MachineApiWorkloadTeardownCommandEnvelope,
+        installed_forwarder: &'a MachineForwarderAuthority,
+    ) -> MachineApiServiceFuture<'a, MachineApiWorkloadTeardownObservation> {
+        Box::pin(teardown::dispatch(self, command, installed_forwarder))
     }
 }
 

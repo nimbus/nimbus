@@ -23,6 +23,8 @@ use super::*;
 
 #[path = "tests/composite_substep.rs"]
 mod composite_substep;
+#[path = "tests/external_stop_bridge.rs"]
+mod external_stop_bridge;
 #[path = "tests/fresh_process.rs"]
 mod fresh_process;
 #[path = "tests/network_teardown.rs"]
@@ -42,6 +44,8 @@ struct ScriptedRuntime {
     backend: ContainerSandboxBackend,
     now_unix_millis: Arc<AtomicU64>,
     terminal: Arc<AtomicBool>,
+    terminal_unknown: Arc<AtomicBool>,
+    terminal_inspections: Arc<AtomicU64>,
     process_observation: Arc<Mutex<RuntimeProcessIdentityObservation>>,
     signals: Arc<Mutex<Vec<i32>>>,
 }
@@ -52,6 +56,8 @@ impl ScriptedRuntime {
             backend,
             now_unix_millis: Arc::new(AtomicU64::new(now_unix_millis)),
             terminal: Arc::new(AtomicBool::new(false)),
+            terminal_unknown: Arc::new(AtomicBool::new(false)),
+            terminal_inspections: Arc::new(AtomicU64::new(0)),
             process_observation: Arc::new(Mutex::new(RuntimeProcessIdentityObservation::ExactLive)),
             signals: Arc::new(Mutex::new(Vec::new())),
         }
@@ -68,6 +74,14 @@ impl ScriptedRuntime {
             .expect("scripted process observation lock should be healthy") = observation;
     }
 
+    fn set_terminal_unknown(&self, value: bool) {
+        self.terminal_unknown.store(value, Ordering::Release);
+    }
+
+    fn terminal_inspections(&self) -> u64 {
+        self.terminal_inspections.load(Ordering::Acquire)
+    }
+
     fn signals(&self) -> Vec<i32> {
         self.signals
             .lock()
@@ -82,6 +96,12 @@ impl effects::ContainerExecutionTeardownRuntime for ScriptedRuntime {
     }
 
     fn execution_is_terminal(&self, _manifest: &ContainerSandboxManifest) -> crate::Result<bool> {
+        self.terminal_inspections.fetch_add(1, Ordering::AcqRel);
+        if self.terminal_unknown.load(Ordering::Acquire) {
+            return Err(SandboxError::OperationFailed {
+                message: "scripted Container runtime terminality is unknown".to_owned(),
+            });
+        }
         Ok(self.terminal.load(Ordering::Acquire))
     }
 
@@ -151,6 +171,40 @@ impl TeardownFixture {
         backend
             .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), plan)
             .expect("teardown fixture should reserve its exact plan");
+        Self {
+            root,
+            backend,
+            id,
+            execution_attempt_id,
+        }
+    }
+
+    fn materialized_plan_only(label: &str) -> Self {
+        let root = tempfile::tempdir().expect("temporary root should exist");
+        let backend =
+            ContainerSandboxBackend::new(super::super::ContainerSandboxBackendConfig::plan_only(
+                root.path().join("bundles"),
+                root.path().join("state"),
+            ));
+        let id = crate::SandboxId::new(format!("container-teardown-{label}"));
+        let spec = sample_spec_for_tenant(
+            &format!("container-teardown-{label}"),
+            &format!("workload-{label}"),
+        );
+        let execution_attempt_id = sample_execution_attempt_id(&id);
+        let plan = sample_provision_network_plan(&spec, &id, label);
+        backend
+            .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), plan)
+            .expect("PlanOnly teardown fixture should reserve its exact plan");
+        backend
+            .prepare_provision_workload(&id, &execution_attempt_id)
+            .expect("PlanOnly teardown fixture should materialize its workload");
+        let manifest = backend
+            .read_manifest(&id)
+            .expect("PlanOnly manifest should read")
+            .expect("PlanOnly manifest should exist");
+        assert_eq!(manifest.start_mode, ContainerStartMode::PlanOnly);
+        assert!(manifest.provision_prepared);
         Self {
             root,
             backend,
@@ -235,17 +289,37 @@ impl TeardownFixture {
             .provision_network_plan
             .as_ref()
             .expect("fixture has an exact provision plan");
+        self.command_with_execution_and_plan(
+            execution_attempt_id,
+            operation,
+            attempt,
+            epoch,
+            plan.generation().as_u64(),
+            plan.network_plan().digest().to_string(),
+        )
+    }
+
+    fn command_with_execution_and_plan(
+        &self,
+        execution_attempt_id: &crate::SandboxExecutionAttemptId,
+        operation: SandboxExecutionTeardownOperation,
+        attempt: &str,
+        epoch: u64,
+        workload_generation: u64,
+        network_plan_digest: String,
+    ) -> SandboxExecutionTeardownCommand {
+        let manifest = self.manifest();
         let claim = crate::ProviderCommandClaim::new(ProviderCommandClaimInput {
             authority_id: "authority-container-teardown".to_owned(),
             effect_subject: format!("{{\"sandbox\":\"{}\"}}", self.id),
             source_attempt_id: None,
             attempt_id: attempt.to_owned(),
             dispatch_epoch: epoch,
-            workload_generation: plan.generation().as_u64(),
+            workload_generation,
             restart_ordinal: 0,
             desired_digest: "1".repeat(64),
             source_digest: "2".repeat(64),
-            network_plan_digest: plan.network_plan().digest().to_string(),
+            network_plan_digest,
             provider_target_digest: "3".repeat(64),
             operation: match operation {
                 SandboxExecutionTeardownOperation::Drain => {
@@ -259,7 +333,7 @@ impl TeardownFixture {
             manifest.spec.tenant_id,
             self.id.clone(),
             execution_attempt_id.clone(),
-            CONTAINER_EXECUTION_PROVIDER_KEY,
+            CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY,
             operation,
             claim,
         )
@@ -1266,4 +1340,14 @@ fn snapshot_files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut files = BTreeMap::new();
     visit(root, root, &mut files);
     files
+}
+
+fn provider_journal_files(fixture: &TeardownFixture) -> BTreeMap<PathBuf, Vec<u8>> {
+    snapshot_files(&fixture.backend.config.workload_state_root)
+        .into_iter()
+        .filter(|(path, _)| {
+            path.components()
+                .any(|component| component.as_os_str() == ".nimbus-provider-command-attempts")
+        })
+        .collect()
 }

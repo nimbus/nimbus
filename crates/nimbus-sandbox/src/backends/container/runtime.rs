@@ -104,6 +104,7 @@ pub use runner::run_prepared_container_service_workload;
 #[cfg(test)]
 use status::running_status;
 use status::{synchronize_handle_status, visible_published_endpoints};
+pub use teardown::{CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY, ContainerHostTerminalEvidence};
 
 #[derive(Clone)]
 pub struct ContainerSandboxBackend {
