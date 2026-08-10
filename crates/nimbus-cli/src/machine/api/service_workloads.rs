@@ -20,8 +20,9 @@ use nimbus_machine::{
     },
 };
 use nimbus_node::{
-    HostLifecycleBackend, HostLifecycleBackendKind, HostLifecycleRequest,
-    NodeBackendCapabilitySource, NodeIdentity, RunnerSpec, TenantWorkloadPhase,
+    HostExecutionDrainProvider, HostExecutionStopProvider, HostLifecycleBackend,
+    HostLifecycleBackendKind, HostLifecycleRequest, NodeBackendCapabilitySource, NodeIdentity,
+    RunnerSpec, SystemdDbusClient, SystemdTransientUnitBackend, TenantWorkloadPhase,
 };
 use nimbus_sandbox::{
     SandboxBackend, SandboxCleanupObservation, SandboxExecutionObservation, SandboxInspection,
@@ -34,6 +35,9 @@ use nimbus_workloads::WorkloadExecutionId;
 
 use super::{MachineApiHttpError, sandbox_error_to_http_error};
 
+#[cfg(test)]
+#[path = "service_workloads/composition_tests.rs"]
+mod composition_tests;
 pub(super) mod provision;
 pub(super) mod restart;
 
@@ -63,6 +67,18 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
     /// this method together with `restart_phase`.
     fn restart_execution_blockers(&self) -> Vec<String> {
         vec!["machine API workload facade has no strict restart-phase sink".to_owned()]
+    }
+
+    /// Provider-specific blockers for future strict teardown-phase dispatch.
+    ///
+    /// This is not operation advertisement. The private route and composite
+    /// phase sink remain absent until their later acceptance band.
+    fn teardown_provider_blockers(&self) -> Vec<String> {
+        vec!["machine API workload facade has no exact teardown provider bundle".to_owned()]
+    }
+
+    fn teardown_execution_blockers(&self) -> Vec<String> {
+        vec!["machine API workload facade has no strict teardown-phase sink".to_owned()]
     }
 
     fn inspect<'a>(
@@ -107,20 +123,23 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
 pub(crate) struct GuestNodeWorkloadService {
     node_id: NodeIdentity,
     lifecycle_backend: Arc<dyn HostLifecycleBackend>,
+    execution_drain_provider: Arc<dyn HostExecutionDrainProvider>,
+    execution_stop_provider: Arc<dyn HostExecutionStopProvider>,
     lifecycle_blockers: Vec<String>,
+    teardown_provider_blockers: Vec<String>,
     bundle_materializer: Arc<ContainerSandboxBackend>,
     state_view: ContainerSandboxStateView,
 }
 
 impl GuestNodeWorkloadService {
-    pub(crate) fn new<B>(
+    pub(crate) fn new<C>(
         node_id: NodeIdentity,
-        lifecycle_backend: B,
+        lifecycle_backend: SystemdTransientUnitBackend<C>,
         bundle_materializer: Arc<ContainerSandboxBackend>,
         state_root: impl Into<PathBuf>,
     ) -> Self
     where
-        B: HostLifecycleBackend + NodeBackendCapabilitySource,
+        C: SystemdDbusClient,
     {
         let lifecycle_blockers = lifecycle_backend
             .node_backend_capabilities()
@@ -146,13 +165,39 @@ impl GuestNodeWorkloadService {
                 }
             })
             .collect();
-        Self {
+        let teardown_provider_blockers = lifecycle_backend
+            .execution_teardown_capabilities()
+            .failure_reasons()
+            .iter()
+            .map(|reason| format!("guest execution teardown provider unavailable: {reason}"))
+            .collect();
+        let lifecycle_backend = Arc::new(lifecycle_backend);
+        let lifecycle_provider: Arc<dyn HostLifecycleBackend> = lifecycle_backend.clone();
+        let execution_drain_provider: Arc<dyn HostExecutionDrainProvider> =
+            lifecycle_backend.clone();
+        let execution_stop_provider: Arc<dyn HostExecutionStopProvider> = lifecycle_backend;
+        let service = Self {
             node_id,
-            lifecycle_backend: Arc::new(lifecycle_backend),
+            lifecycle_backend: lifecycle_provider,
+            execution_drain_provider,
+            execution_stop_provider,
             lifecycle_blockers,
+            teardown_provider_blockers,
             bundle_materializer,
             state_view: ContainerSandboxStateView::new(state_root),
-        }
+        };
+        assert!(
+            service.provider_views_share_one_backend(),
+            "guest lifecycle, drain, and stop providers must share one concrete backend"
+        );
+        service
+    }
+
+    fn provider_views_share_one_backend(&self) -> bool {
+        let lifecycle = Arc::as_ptr(&self.lifecycle_backend) as *const ();
+        let drain = Arc::as_ptr(&self.execution_drain_provider) as *const ();
+        let stop = Arc::as_ptr(&self.execution_stop_provider) as *const ();
+        lifecycle == drain && lifecycle == stop
     }
 }
 
@@ -167,6 +212,10 @@ impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {
 
     fn restart_execution_blockers(&self) -> Vec<String> {
         self.lifecycle_blockers.clone()
+    }
+
+    fn teardown_provider_blockers(&self) -> Vec<String> {
+        self.teardown_provider_blockers.clone()
     }
 
     fn inspect<'a>(

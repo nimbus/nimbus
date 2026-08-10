@@ -93,9 +93,9 @@ impl SystemdTransientUnitBackend<zbus_client::ZbusSystemdClient> {
     /// keep the fail-closed `SystemdTransientUnitBackend::unavailable(...)`
     /// path. Returns `Err` if the system bus cannot be opened (callers may fall
     /// back to `unavailable`).
-    pub async fn linux_systemd_default() -> Result<Self> {
+    pub async fn linux_systemd_default(teardown_state_root: impl AsRef<Path>) -> Result<Self> {
         let client = zbus_client::ZbusSystemdClient::new(zbus_client::BusKind::System).await?;
-        Ok(Self::new(client))
+        Self::new_with_teardown_state_root(client, teardown_state_root)
     }
 }
 
@@ -132,6 +132,17 @@ where
 
     pub fn backend_capabilities(&self) -> HostLifecycleBackendCapabilities {
         self.client.capabilities().to_backend_capabilities()
+    }
+
+    /// Report whether this backend can execute the exact teardown protocol.
+    ///
+    /// General lifecycle capability does not require the teardown store. The
+    /// exact drain and stop providers do, so their capability view adds that
+    /// requirement without disabling healthy provision or restart behavior.
+    pub fn execution_teardown_capabilities(&self) -> HostLifecycleBackendCapabilities {
+        self.client
+            .capabilities()
+            .to_execution_teardown_backend_capabilities(self.teardown_store.is_some())
     }
 
     async fn activate_provider_exact(
@@ -535,13 +546,35 @@ impl SystemdTransientCapabilities {
     }
 
     pub fn to_backend_capabilities(&self) -> HostLifecycleBackendCapabilities {
+        self.to_backend_capabilities_with_teardown_state(None)
+    }
+
+    fn to_execution_teardown_backend_capabilities(
+        &self,
+        durable_teardown_state: bool,
+    ) -> HostLifecycleBackendCapabilities {
+        self.to_backend_capabilities_with_teardown_state(Some(durable_teardown_state))
+    }
+
+    fn to_backend_capabilities_with_teardown_state(
+        &self,
+        durable_teardown_state: Option<bool>,
+    ) -> HostLifecycleBackendCapabilities {
+        let durable_state_available = durable_teardown_state.unwrap_or(true);
         let mut capabilities = HostLifecycleBackendCapabilities::new(
             HostLifecycleBackendKind::SystemdTransientUnit,
-            self.dbus_available && self.transient_units && self.service_units,
+            self.dbus_available
+                && self.transient_units
+                && self.service_units
+                && durable_state_available,
         )
         .with_feature("dbus", self.dbus_available)
         .with_feature("transient_units", self.transient_units)
         .with_feature("service_units", self.service_units);
+        if let Some(durable_teardown_state) = durable_teardown_state {
+            capabilities =
+                capabilities.with_feature("durable_teardown_state", durable_teardown_state);
+        }
         if !self.dbus_available {
             capabilities = capabilities
                 .with_failure_reason("systemd D-Bus is unavailable for transient unit backend")
@@ -555,6 +588,11 @@ impl SystemdTransientCapabilities {
         if !self.service_units {
             capabilities = capabilities
                 .with_failure_reason("systemd service units are unavailable")
+                .expect("static failure reason should be valid");
+        }
+        if durable_teardown_state == Some(false) {
+            capabilities = capabilities
+                .with_failure_reason("durable systemd teardown state store is unavailable")
                 .expect("static failure reason should be valid");
         }
         capabilities

@@ -465,7 +465,7 @@
       "verification": "source-occurrence",
       "category": "unix-pre-bound-consumer",
       "path": "crates/nimbus-cli/src/machine/api.rs",
-      "line": 171,
+      "line": 175,
       "symbol": "serve_machine_api",
       "authority_kinds": [
         "listener-ownership-slot",
@@ -626,7 +626,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve_machine_api",
       "ordinal": 1,
-      "line": 172
+      "line": 176
     },
     {
       "site_id": "machine-api-unix-consumer",

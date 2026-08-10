@@ -32,6 +32,14 @@ pub(super) fn machine_container_state_root(control_data_dir: &Path) -> PathBuf {
         .join("state")
 }
 
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn machine_systemd_teardown_state_root(control_data_dir: &Path) -> PathBuf {
+    control_data_dir
+        .join("service-sandboxes")
+        .join("systemd")
+        .join("teardown")
+}
+
 pub(super) fn machine_api_summary_from_container_summary(
     summary: nimbus_sandbox::backends::container::ContainerSandboxSummary,
 ) -> MachineApiServiceSandboxSummary {

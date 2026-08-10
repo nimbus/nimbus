@@ -32,8 +32,8 @@ use nimbus_machine::api::{
     MACHINE_API_INSPECT_CURRENT_OPERATION, MACHINE_API_INSPECT_OPERATION,
     MACHINE_API_LIST_OPERATION, MACHINE_API_LOGS_OPERATION, MACHINE_API_PS_OPERATION,
     MACHINE_API_ROLE, MACHINE_API_STOP_OPERATION, MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION,
-    MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION, MachineApiBinaryStatus,
-    MachineApiBootcOperationResponse, MachineApiBootcRollbackRequest,
+    MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION, MACHINE_API_WORKLOAD_TEARDOWN_PHASE_OPERATION,
+    MachineApiBinaryStatus, MachineApiBootcOperationResponse, MachineApiBootcRollbackRequest,
     MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest, MachineApiBootcUpgradeRequest,
     MachineApiCapabilityResponse, MachineApiErrorResponse, MachineApiHealthResponse,
     MachineApiOperationStatus, MachineApiServiceExecutionDriver, MachineApiServiceExecutionMode,
@@ -72,6 +72,8 @@ pub(crate) use self::service_workloads::{
     machine_api_node_workload_facade_from_sandbox_backend,
     machine_api_node_workload_facade_from_sandbox_backend_with_absence,
 };
+#[cfg(target_os = "linux")]
+use self::state::machine_systemd_teardown_state_root;
 
 const MACHINE_API_OPERATION_BLOCKER: &str =
     "guest machine API does not yet expose service lifecycle operations";
@@ -138,14 +140,16 @@ pub(super) async fn run_machine_api_command(
     let (listener, listen_mode) = resolve_machine_api_listener(&command)?;
     let bundle_materializer = network_composition.backend();
     #[cfg(target_os = "linux")]
-    let node_lifecycle_backend =
-        SystemdTransientUnitBackend::linux_systemd_default()
+    let node_lifecycle_backend = {
+        let teardown_state_root = machine_systemd_teardown_state_root(&control_data_dir);
+        SystemdTransientUnitBackend::linux_systemd_default(&teardown_state_root)
             .await
             .map_err(|error| {
                 Error::Internal(format!(
                     "machine API service workloads require guest systemd transient unit support: {error}"
                 ))
-            })?;
+            })?
+    };
     #[cfg(not(target_os = "linux"))]
     let node_lifecycle_backend = SystemdTransientUnitBackend::unavailable(
         "machine API service workloads require a Linux guest systemd manager",

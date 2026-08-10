@@ -1109,6 +1109,83 @@ async fn concurrent_equal_systemd_activation_creates_one_unit() {
 }
 
 #[test]
+fn systemd_execution_teardown_capability_requires_durable_state() {
+    let storeless = SystemdTransientUnitBackend::new(FakeSystemdDbusClient::available());
+    let storeless_capabilities = storeless.execution_teardown_capabilities();
+
+    assert!(storeless.backend_capabilities().available());
+    assert!(!storeless_capabilities.available());
+    assert_eq!(
+        storeless_capabilities
+            .features()
+            .get("durable_teardown_state"),
+        Some(&false)
+    );
+    assert_eq!(
+        storeless_capabilities.failure_reasons(),
+        ["durable systemd teardown state store is unavailable"]
+    );
+
+    let state = tempfile::tempdir().expect("teardown state root should create");
+    let durable = SystemdTransientUnitBackend::new_with_teardown_state_root(
+        FakeSystemdDbusClient::available(),
+        state.path(),
+    )
+    .expect("durable systemd backend should construct");
+    let durable_capabilities = durable.execution_teardown_capabilities();
+    assert!(durable_capabilities.available());
+    assert_eq!(
+        durable_capabilities
+            .features()
+            .get("durable_teardown_state"),
+        Some(&true)
+    );
+    assert!(durable_capabilities.failure_reasons().is_empty());
+}
+
+#[test]
+fn systemd_execution_teardown_capability_preserves_backend_blockers() {
+    let state = tempfile::tempdir().expect("teardown state root should create");
+    let unavailable = SystemdTransientUnitBackend::new_with_teardown_state_root(
+        UnavailableSystemdDbusClient::new("test host has no system bus"),
+        state.path(),
+    )
+    .expect("durable state should not hide an unavailable systemd client");
+    let capabilities = unavailable.execution_teardown_capabilities();
+
+    assert!(!capabilities.available());
+    assert_eq!(
+        capabilities.features().get("durable_teardown_state"),
+        Some(&true)
+    );
+    assert!(
+        capabilities
+            .failure_reasons()
+            .iter()
+            .any(|reason| reason.contains("D-Bus is unavailable"))
+    );
+    assert!(
+        !capabilities
+            .failure_reasons()
+            .iter()
+            .any(|reason| reason.contains("teardown state store"))
+    );
+}
+
+#[test]
+fn systemd_teardown_store_open_failure_prevents_backend_construction() {
+    let parent = tempfile::tempdir().expect("temporary parent should create");
+    let not_a_directory = parent.path().join("plain-file");
+    std::fs::write(&not_a_directory, b"not a directory").expect("plain file fixture should write");
+
+    let result = SystemdTransientUnitBackend::new_with_teardown_state_root(
+        FakeSystemdDbusClient::available(),
+        not_a_directory.join("teardown"),
+    );
+    assert!(result.is_err(), "an unusable state root must fail closed");
+}
+
+#[test]
 fn systemd_backend_fails_closed_when_dbus_or_features_are_unavailable() {
     let binding = binding();
     for (capabilities, expected) in [

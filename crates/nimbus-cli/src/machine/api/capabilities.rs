@@ -41,6 +41,19 @@ pub(super) fn machine_api_capability_response(
     if let Some(workloads) = state.service_workloads.as_ref() {
         restart_blockers.extend(workloads.restart_execution_blockers());
     }
+    let mut teardown_blockers = shared_blockers.clone();
+    if state.forwarder_authority.is_none() {
+        teardown_blockers.push(
+            "workload-teardown.phase requires parent-issued machine forwarder authority".to_owned(),
+        );
+    }
+    if let Some(workloads) = state.service_workloads.as_ref() {
+        teardown_blockers.extend(workloads.teardown_execution_blockers());
+        teardown_blockers.extend(workloads.teardown_provider_blockers());
+    } else {
+        teardown_blockers
+            .push("machine API workload facade has no strict teardown-phase sink".to_owned());
+    }
     let bootc_status_blockers =
         missing_binary_blockers(&binary_statuses, MACHINE_API_BOOTC_STATUS_OPERATION);
     let bootc_switch_blockers =
@@ -84,6 +97,10 @@ pub(super) fn machine_api_capability_response(
         machine_api_operation_status(
             MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION,
             restart_blockers,
+        ),
+        machine_api_operation_status(
+            MACHINE_API_WORKLOAD_TEARDOWN_PHASE_OPERATION,
+            teardown_blockers,
         ),
         machine_api_operation_status(
             MACHINE_API_STOP_OPERATION,

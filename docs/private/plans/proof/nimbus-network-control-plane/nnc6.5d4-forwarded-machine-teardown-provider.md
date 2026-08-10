@@ -1,6 +1,6 @@
 # NNC6.5d4 Forwarded-Machine Teardown Provider
 
-Status: `implementation in progress. bands 1-2 complete`
+Status: `implementation in progress. bands 1-4 complete`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -630,11 +630,18 @@ membership, transport, routing, and super-net fencing remain separate.
 | Band 3 adjacent wire correction | `WorkloadTeardownAttempt` now requires explicit presence for its digest-bound `selectionEvidence` and `successorFence` fields. Explicit `null` remains canonical when the semantic value is absent. `WorkloadTeardownSuccessEvidence::matches_step_and_subjects` is the one public portable correlation seam used by receipts, inspections, and Machine API response validation. |
 | Band 3 behavior | Focused Machine API teardown wire tests pass `7/7`. They cover both modes across all four guest steps, unique complete digests, strict fields, crossed source/plan/translation/authority, parent withdrawal, incomplete and crossed prior history, eight closed outcomes, cross-mode rejection, success evidence, and every response fence. The focused workloads optional-field regression passes `1/1`. Full `nimbus-workloads` passes `219/219`. Full `nimbus-machine` passes `41/41` unit tests plus `5/5` integration tests. |
 | Band 3 quality and modularity | Format, diff, strict affected Clippy, and warning-denied affected Rustdoc pass. NNCV008 passes. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The production Machine API composition root remains `1,047` lines. The new transport-only child is `847` lines and its concept-owned pure-wire test child is `806` lines. No changed handwritten file crosses the `1,500`-line threshold. |
+| Band 4 read-only audit | Three bounded packets inspected the production guest composition, live Linux factory, Systemd store, lifecycle and teardown traits, capability response, routes, dependencies, tests, and file sizes. They changed zero paths. All three confirmed that production erased the drain and stop views and opened no teardown store. Two packets identified the important capability distinction: missing teardown state must not disable otherwise-healthy provision or restart lifecycle capability. |
+| Band 4 deterministic fail-before | `rg` checks for `machine_systemd_teardown_state_root`, retained `HostExecutionDrainProvider`, retained `HostExecutionStopProvider`, and a production `new_with_teardown_state_root` call each exited `1`. The guest had no durable composition or retained exact provider views. Separate audit checks confirmed that the zero-argument production factory and `teardown_store: None` existed. |
+| Band 4 production composition | Linux production now passes the deterministic `<control>/service-sandboxes/systemd/teardown` root into the live factory. The factory opens the existing locked and checksummed `SystemdTeardownStore`; construction failure prevents an available backend. `GuestNodeWorkloadService` allocates one concrete Systemd backend and coerces that same `Arc` behind lifecycle, drain, and stop traits. One construction invariant and one pointer-identity test prove that three backend instances cannot drift. |
+| Band 4 capability semantics | General Systemd lifecycle capability remains unchanged for provision and restart. Exact teardown capability separately requires D-Bus, transient units, service units, and `durable_teardown_state`; it keeps precise backend blockers and adds `durable systemd teardown state store is unavailable` only when the store is absent. The Machine API lists teardown readiness as unavailable while the strict sink is missing and includes provider blockers. It does not add teardown to `supported_operations` or the router. |
+| Band 4 behavior | Focused Systemd capability and store-open tests pass `3/3`; guest composition tests pass `4/4`; existing capability response tests pass `5/5`; restart capability passes `1/1`; Systemd pre-call and unknown-submission reopen proofs pass `2/2`. Full `nimbus-node` passes `108/108`. Full `nimbus-cli` passes `952/952` with one declared child-process ignore. Provision and restart capability behavior stays green. |
+| Band 4 quality and modularity | Format, diff, strict affected Clippy, warning-denied affected Rustdoc, NNCV008, proof lint with zero diagnostics, docs `108`, and site `17/17` pass. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. One shifted local-listener fingerprint and one new test-only backend construction are reconciled in the source-derived censuses; NNCV006 and NNCV015 pass. Linux cross-check stops before Nimbus compilation because the host lacks `aarch64-linux-gnu-gcc` and the target sysroot; this is an environment limitation, not passing Linux evidence. Product files are below threshold: Systemd root `1,407`, guest composition root `570`, API root `263`, state root `88`, and the concept-owned composition test child `142` lines. No dependency, route, client, provider effect, journal, caller, protocol-version, or `nimbus-network` path changed. |
 | Structured review | Not run. Audit and fail-before are partial item work. One review is allowed only after K1-K34 are green. |
 | Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
 | Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 2 checkpoint | The commit that contains this row, the band 2 product and test paths, and the recovery header is the exact band 2 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 3 checkpoint | The commit that contains this row, the band 3 product and test paths, and the recovery header is the exact band 3 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 4 checkpoint | The commit that contains this row, the band 4 product and test paths, and the recovery header is the exact band 4 recovery checkpoint. It is not the item completion commit and has no structured review. |
 
 ## Current Acceptance State
 
@@ -642,12 +649,18 @@ K1-K4 are green at the audit, portable-prefix, compute-authentication, and
 forwarded-wire seams. Band 2 completes the operation-family,
 claim-derivation, and injected-journal prerequisites of K7. The future parent
 adapter must still prove one journal and five independent durable streams.
-Band 3 completes the transport-vocabulary portions of K11-K15. Guest provider
-composition and route availability remain later bands. K5-K6 and the
-remaining end-to-end portions of K7-K10 and K15-K35 remain open.
+Band 3 completes the transport-vocabulary portions of K11-K15. Band 4
+completes K16 with deterministic durable Systemd production composition. It
+also provides one shared concrete backend behind all three exact traits and
+nonaspirational capability reporting. Guest dispatch and route availability
+remain later bands. K5-K6 and the remaining end-to-end portions of K7-K10 and
+K15-K35 remain open.
 
-Band 4 is next. It adds durable Systemd production composition and retains the
-exact lifecycle, drain, and stop trait objects. It adds capability and
-unavailable-mode tests. It does not add a teardown route, client, guest
-composite state machine, parent adapter, or caller cutover. NNC6.5d4 remains
-the sole `in_progress` canonical item. There is no blocker.
+Band 5 is next. It adds only the guest composite execution drain and stop
+state machine and exact phase sink. It reuses the retained Systemd traits,
+Container journal, and current node and Container progress stores. It adds
+replay, contention, and fresh-process cuts. It does not add forwarded
+attachment composition, a private route, client, parent adapter, or caller
+cutover.
+
+NNC6.5d4 remains the sole `in_progress` canonical item. There is no blocker.

@@ -147,9 +147,11 @@ extension-registry seam before the second concern edits `extensions.rs`.
   final-withdraw command, one strict private Machine API envelope, composite
   Systemd/Container guest execution proof, parent publication withdrawal
   before guest drain/stop, final parent release after exact guest/provider
-  absence, complete-batch fencing, and independent two-realm recovery. The
-  next implementation band adds the receipt-prefix contract through compute
-  command and result authentication.
+  absence, complete-batch fencing, and independent two-realm recovery. Bands
+  1-4 are durable through the strict receipt prefix, teardown-family journal
+  injection, transport vocabulary, and production Systemd provider
+  composition. The next implementation band adds only the guest composite
+  drain/stop state machine and exact phase sink.
   Compose down, physical-machine stop, product caller cutover, public-route
   growth, and a CLI-local saga store remain forbidden.
   NNC8.2 owns the
