@@ -139,11 +139,17 @@ extension-registry seam before the second concern edits `extensions.rs`.
   revalidate the exact no-follow child descriptor, and 12 deterministic K14
   cases pass. K29 is green, review cadence is exhausted, and the commit
   containing its ledger row is the durable item checkpoint. NNC6.5d4 is now
-  the sole active item. It starts with the frozen read-only parent/guest
-  substitution audit and an acceptance-bearing proof before product edits.
-  It owns distinct forwarded-machine provider identities, exact guest phase
-  envelopes, parent publication withdrawal before guest drain/stop, final
-  parent release after exact guest/provider absence, and two-realm recovery.
+  the sole active item. Its three read-only parent, guest/wire, and
+  compute/shared audits and fail-before baseline are frozen in
+  `proof/nimbus-network-control-plane/nnc6.5d4-forwarded-machine-teardown-provider.md`;
+  product source is unchanged. K1-K35 require exact ordered prior-receipt
+  transport, distinct forwarded provider identities, one teardown-family
+  final-withdraw command, one strict private Machine API envelope, composite
+  Systemd/Container guest execution proof, parent publication withdrawal
+  before guest drain/stop, final parent release after exact guest/provider
+  absence, complete-batch fencing, and independent two-realm recovery. The
+  next implementation band adds the receipt-prefix contract through compute
+  command and result authentication.
   Compose down, physical-machine stop, product caller cutover, public-route
   growth, and a CLI-local saga store remain forbidden.
   NNC8.2 owns the
