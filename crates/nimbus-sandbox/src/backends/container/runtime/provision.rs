@@ -18,6 +18,11 @@ use crate::provision::{
 use super::machine_port_publication::DurableMachinePortPublicationObservation;
 use super::*;
 
+#[cfg(test)]
+mod test_probe;
+#[cfg(test)]
+pub(in crate::backends::container::runtime) use test_probe::ProvisionAdmissionTestProbe;
+
 fn phase_evidence(phase: &'static str, value: &impl Serialize) -> Result<Vec<u8>> {
     serde_json::to_vec(&(phase, value)).map_err(|error| SandboxError::OperationFailed {
         message: format!("failed to encode container {phase} evidence: {error}"),
@@ -104,42 +109,34 @@ impl ContainerSandboxBackend {
                     .to_owned(),
             });
         }
-        if let Some(mut manifest) = self.read_manifest(&sandbox_id)? {
-            let resolved = resolve_start_spec(&spec, None)?;
-            if manifest.spec != resolved.spec
-                || manifest.execution_attempt_id != execution_attempt_id
-                || manifest.provision_network_plan.as_ref() != Some(&network_plan)
-                || manifest.start_mode != self.config.start_mode
-                || manifest.provision_prepared
-            {
-                return Err(SandboxError::OperationFailed {
-                    message: format!(
-                        "container provision reservation for {sandbox_id} crossed its exact durable spec, network plan, backend mode, or phase"
-                    ),
-                });
-            }
-            if manifest.network_config.is_some() {
-                return Err(SandboxError::OperationFailed {
-                    message: format!(
-                        "container provision reservation for {sandbox_id} already has a durable manifest; inspect it instead of replacing it"
-                    ),
-                });
-            }
-            let reservation_claim = manifest
-                .launch_reservation_claim
-                .clone()
-                .ok_or_else(|| SandboxError::OperationFailed {
-                    message: format!(
-                        "container provision reservation for {sandbox_id} has a durable desired plan without its reservation claim"
-                    ),
-                })?;
-            self.resume_execute_launch_network_reservation(
-                &mut manifest,
+        if let Some(snapshot) = self.read_manifest(&sandbox_id)? {
+            let (_lifecycle, manifest) =
+                super::runner::lock_current_provision_lifecycle_for_backend(self, &snapshot)?;
+            return self.resume_provision_network_reservation(
+                manifest,
+                &spec,
+                &execution_attempt_id,
                 &network_plan,
-                &reservation_claim,
-            )?;
-            return Ok(manifest.handle);
+            );
         }
+        let conmon_layout = OciConmonLayout::new_for_tenant(
+            &self.config.workload_state_root,
+            &spec.tenant_id,
+            &sandbox_id,
+        );
+        let _lifecycle = super::runner::lock_new_provision_lifecycle_for_backend(
+            self,
+            &conmon_layout.container_state_dir,
+        )?;
+        if let Some(manifest) = self.read_manifest(&sandbox_id)? {
+            return self.resume_provision_network_reservation(
+                manifest,
+                &spec,
+                &execution_attempt_id,
+                &network_plan,
+            );
+        }
+        self.pause_after_provision_admission_for_test()?;
         let plan = self.plan_start_with_id_with_network_reservation(
             &spec,
             &sandbox_id,
@@ -153,6 +150,54 @@ impl ContainerSandboxBackend {
             },
         )?;
         Ok(plan.manifest.handle)
+    }
+
+    fn resume_provision_network_reservation(
+        &self,
+        mut manifest: ContainerSandboxManifest,
+        spec: &SandboxSpec,
+        execution_attempt_id: &crate::SandboxExecutionAttemptId,
+        network_plan: &SandboxProvisionNetworkPlan,
+    ) -> Result<SandboxHandle> {
+        let resolved = resolve_start_spec(spec, None)?;
+        if manifest.spec != resolved.spec
+            || &manifest.execution_attempt_id != execution_attempt_id
+            || manifest.provision_network_plan.as_ref() != Some(network_plan)
+            || manifest.start_mode != self.config.start_mode
+            || manifest.provision_prepared
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container provision reservation for {} crossed its exact durable spec, network plan, backend mode, or phase",
+                    manifest.handle.id
+                ),
+            });
+        }
+        manifest.require_execution_admission_open("container provision reservation")?;
+        self.pause_after_provision_admission_for_test()?;
+        if manifest.network_config.is_some() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container provision reservation for {} already has a durable manifest; inspect it instead of replacing it",
+                    manifest.handle.id
+                ),
+            });
+        }
+        let reservation_claim = manifest
+            .launch_reservation_claim
+            .clone()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "container provision reservation for {} has a durable desired plan without its reservation claim",
+                    manifest.handle.id
+                ),
+            })?;
+        self.resume_execute_launch_network_reservation(
+            &mut manifest,
+            network_plan,
+            &reservation_claim,
+        )?;
+        Ok(manifest.handle)
     }
 
     /// Inspect exact reservation evidence without acquiring resources.
@@ -202,13 +247,17 @@ impl ContainerSandboxBackend {
         sandbox_id: &SandboxId,
         expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<SandboxHandle> {
-        let Some(mut manifest) = self.read_manifest(sandbox_id)? else {
+        let Some(snapshot) = self.read_manifest(sandbox_id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             });
         };
+        let (_lifecycle, mut manifest) =
+            super::runner::lock_current_provision_lifecycle_for_backend(self, &snapshot)?;
         manifest
             .require_execution_attempt(expected_attempt_id, "container provision preparation")?;
+        manifest.require_execution_admission_open("container provision preparation")?;
+        self.pause_after_provision_admission_for_test()?;
         if manifest.network_config.is_none() || manifest.launch_reservation_claim.is_none() {
             return Err(SandboxError::OperationFailed {
                 message: format!(
@@ -327,16 +376,21 @@ impl ContainerSandboxBackend {
         sandbox_id: &SandboxId,
         expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<(
+        super::runner::RunnerHandoffGuard,
         ContainerSandboxManifest,
         nimbus_network::NetworkReservationClaim,
     )> {
-        let manifest = self
+        let snapshot = self
             .read_manifest(sandbox_id)?
             .ok_or_else(|| SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             })?;
+        let (lifecycle, manifest) =
+            super::runner::lock_current_provision_lifecycle_for_backend(self, &snapshot)?;
         manifest
             .require_execution_attempt(expected_attempt_id, "container provision attachment")?;
+        manifest.require_execution_admission_open("container provision attachment")?;
+        self.pause_after_provision_admission_for_test()?;
         if !manifest.provision_prepared {
             return Err(SandboxError::OperationFailed {
                 message: format!(
@@ -361,7 +415,7 @@ impl ContainerSandboxBackend {
             })?
             .clone();
         manifest.require_network_config()?;
-        Ok((manifest, claim))
+        Ok((lifecycle, manifest, claim))
     }
 
     fn require_never_bound_provision_attachment(
@@ -434,16 +488,19 @@ impl ContainerSandboxBackend {
         sandbox_id: &SandboxId,
         expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
+        let (_lifecycle, mut manifest, reservation_claim) =
+            self.prepared_provision_attachment(sandbox_id, expected_attempt_id)?;
         if matches!(
-            self.inspect_provision_network_attachment(sandbox_id, expected_attempt_id)?,
-            crate::SandboxProvisionPhaseObservation::Succeeded { .. }
+            self.non_routable_attachment_readiness(
+                &manifest,
+                self.authenticated_egress_readiness(&manifest)?,
+            )?,
+            OciAttachmentBaseReadinessState::Ready(_)
         ) {
             return Ok(crate::SandboxProvisionPhaseObservation::Succeeded {
                 evidence: phase_evidence("network_attachment_replayed", sandbox_id)?,
             });
         }
-        let (mut manifest, reservation_claim) =
-            self.prepared_provision_attachment(sandbox_id, expected_attempt_id)?;
         if self.recover_active_planned_pep_after_owner_death(
             &manifest,
             expected_attempt_id,
@@ -486,7 +543,7 @@ impl ContainerSandboxBackend {
         sandbox_id: &SandboxId,
         expected_attempt_id: &crate::SandboxExecutionAttemptId,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
-        let (manifest, reservation_claim) =
+        let (_lifecycle, manifest, reservation_claim) =
             self.prepared_provision_attachment(sandbox_id, expected_attempt_id)?;
         if self.recover_active_planned_pep_after_owner_death(
             &manifest,
@@ -876,15 +933,19 @@ impl ContainerSandboxBackend {
         provider_generation: NetworkResourceGeneration,
         publish: impl FnOnce(&ContainerSandboxManifest) -> Result<()>,
     ) -> Result<crate::SandboxProvisionPhaseObservation> {
-        let manifest = self
+        let snapshot = self
             .read_manifest(sandbox_id)?
             .ok_or_else(|| SandboxError::NotFound {
                 sandbox_id: sandbox_id.as_str().to_owned(),
             })?;
+        let (_lifecycle, manifest) =
+            super::runner::lock_current_provision_lifecycle_for_backend(self, &snapshot)?;
         manifest.require_execution_attempt(
             expected_attempt_id,
             "container provision machine publication",
         )?;
+        manifest.require_execution_admission_open("container provision machine publication")?;
+        self.pause_after_provision_admission_for_test()?;
         self.authenticate_machine_publication_request(
             &manifest,
             network_plan,

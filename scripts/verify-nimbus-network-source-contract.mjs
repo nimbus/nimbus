@@ -689,7 +689,7 @@ function verifySideEffectFreeSandboxInspection() {
     } else if (mutation === "creating-lock") {
       replaceIn(
         sandboxSources,
-        "crates/nimbus-sandbox/src/backends/container/runtime/runner.rs",
+        "crates/nimbus-sandbox/src/backends/container/runtime/runner/lifecycle_lock.rs",
         ".write(true)\n        .open(&lock_path)",
         ".write(true)\n        .create(true)\n        .open(&lock_path)",
       );
@@ -862,7 +862,7 @@ function verifySideEffectFreeSandboxInspection() {
   };
   for (const [file, functionName] of [
     [
-      "crates/nimbus-sandbox/src/backends/container/runtime/runner.rs",
+      "crates/nimbus-sandbox/src/backends/container/runtime/runner/lifecycle_lock.rs",
       "lock_current_inspection_with_timeout",
     ],
     [

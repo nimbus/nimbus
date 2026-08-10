@@ -152,12 +152,15 @@ extension-registry seam before the second concern edits `extensions.rs`.
   injection, transport vocabulary, and production Systemd provider
   composition. Band 5 is prospectively split into dependency-ordered recovery
   slices while NNC6.5d4 remains one review unit. Band 5a is green: the exact
-  prior-receipt host claim now closes durable Systemd activation admission
-  before drain and fences stop with the matching receipt. Band 5b is next. It
-  closes the remaining Container provision producers and
-  adds the one-journal async composition seam and Container substep. Band 5c
-  finally adds the guest composite drain/stop sink while a
-  separate route blocker keeps the operation unavailable.
+  prior-receipt host claim closes durable Systemd activation admission before
+  drain and fences stop with the matching receipt. Band 5b is also green. All
+  four remaining Container provision producers now serialize under the one
+  lifecycle lock and durable drain barrier. The existing Container-rooted
+  journal has one cancellation-safe asynchronous exact-current-claim seam,
+  and one lock-scoped Container child can complete without publishing generic
+  success. Band 5c is next. It adds the guest composite drain/stop sink and
+  deterministic inspection join while a separate route blocker keeps the
+  operation unavailable.
   Compose down, physical-machine stop, product caller cutover, public-route
   growth, and a CLI-local saga store remain forbidden.
   NNC8.2 owns the

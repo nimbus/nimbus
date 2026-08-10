@@ -638,6 +638,36 @@ impl ProviderCommandExecutionClaim {
     }
 }
 
+/// Borrowed proof that one exact Execute claim is current under its journal lock.
+///
+/// Only `ProviderCommandAttemptJournal` can construct this capability. A
+/// provider substep can borrow it but cannot retain or recreate effect
+/// authority after the journal releases the exact stream lock.
+#[doc(hidden)]
+pub struct ProviderCommandCurrentExecution {
+    observation: ProviderCommandObservation,
+}
+
+impl ProviderCommandCurrentExecution {
+    pub fn observation(&self) -> &ProviderCommandObservation {
+        &self.observation
+    }
+
+    pub fn claim(&self) -> &ProviderCommandClaim {
+        self.observation.claim()
+    }
+}
+
+/// Read-only result while an exact provider stream stays locked.
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum ProviderCommandCurrentInspection<T> {
+    /// A durable Execute token can still start after this inspection returns.
+    EffectCanStillStart(Box<ProviderCommandObservation>),
+    /// The current durable state already fences every older Execute token.
+    Inspected(T),
+}
+
 /// Typed fail-before or durable-store error.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ProviderCommandJournalError {

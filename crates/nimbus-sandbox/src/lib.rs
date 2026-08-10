@@ -37,8 +37,9 @@ pub use inspection::{
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
 pub use provider_command::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
-    ProviderCommandClaimInput, ProviderCommandExecutionClaim, ProviderCommandJournalError,
-    ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
+    ProviderCommandClaimInput, ProviderCommandCurrentExecution, ProviderCommandCurrentInspection,
+    ProviderCommandExecutionClaim, ProviderCommandJournalError, ProviderCommandObservation,
+    ProviderCommandObservationKind, ProviderCommandOperation,
 };
 pub use provision::{
     SandboxProvisionDependencyListener, SandboxProvisionIngressRoute,

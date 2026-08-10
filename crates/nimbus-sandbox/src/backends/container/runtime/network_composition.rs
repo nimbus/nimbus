@@ -218,6 +218,8 @@ impl ContainerSandboxBackend {
             #[cfg(test)]
             runner_lifecycle_lock_test_probe: None,
             #[cfg(test)]
+            provision_admission_test_probe: None,
+            #[cfg(test)]
             post_egress_reload_ack_observer: None,
             #[cfg(test)]
             network_teardown_checkpoint_test_probe: None,

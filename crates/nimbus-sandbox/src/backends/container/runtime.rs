@@ -95,6 +95,8 @@ use manifest::{
     ContainerNetworkPublicationMode, ContainerRunnerExecutionConfig, ContainerSandboxManifest,
     ContainerStartPlan,
 };
+#[cfg(test)]
+use provision::ProvisionAdmissionTestProbe;
 use runner::RUNNER_MANIFEST_POINTER_FILE;
 #[cfg(test)]
 use runner::RunnerLifecycleLockTestProbe;
@@ -124,6 +126,8 @@ pub struct ContainerSandboxBackend {
     runner_handoff_failure: Option<RunnerHandoffFailure>,
     #[cfg(test)]
     runner_lifecycle_lock_test_probe: Option<RunnerLifecycleLockTestProbe>,
+    #[cfg(test)]
+    provision_admission_test_probe: Option<ProvisionAdmissionTestProbe>,
     #[cfg(test)]
     post_egress_reload_ack_observer: Option<Arc<dyn Fn() + Send + Sync>>,
     #[cfg(test)]
@@ -232,6 +236,25 @@ impl ContainerSandboxBackend {
     ) -> Self {
         self.runner_lifecycle_lock_test_probe = Some(probe);
         self
+    }
+
+    #[cfg(test)]
+    fn with_provision_admission_test_probe(mut self, probe: ProvisionAdmissionTestProbe) -> Self {
+        self.provision_admission_test_probe = Some(probe);
+        self
+    }
+
+    #[cfg(test)]
+    fn pause_after_provision_admission_for_test(&self) -> Result<()> {
+        if let Some(probe) = self.provision_admission_test_probe.as_ref() {
+            probe.pause()?;
+        }
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn pause_after_provision_admission_for_test(&self) -> Result<()> {
+        Ok(())
     }
 
     #[cfg(test)]

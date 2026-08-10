@@ -21,6 +21,8 @@ use crate::{
 
 use super::*;
 
+#[path = "tests/composite_substep.rs"]
+mod composite_substep;
 #[path = "tests/fresh_process.rs"]
 mod fresh_process;
 #[path = "tests/network_teardown.rs"]

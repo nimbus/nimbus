@@ -4,9 +4,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::backends::conmon::lifecycle::read_exit_code;
@@ -19,6 +18,8 @@ use super::{ContainerSandboxBackend, synchronize_handle_status, visible_publishe
 
 mod identity;
 use identity::{execution_identity_sha256, pre_effect_authority_sha256, prepared_manifest_sha256};
+mod lifecycle_lock;
+pub(in crate::backends::container::runtime) use lifecycle_lock::*;
 mod recovery;
 #[cfg(test)]
 pub(super) use recovery::RUNNER_RESULT_ANCHOR_FILE;
@@ -45,18 +46,6 @@ const RUNNER_HANDOFF_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNNER_HANDOFF_LOCK_RETRY: Duration = Duration::from_millis(10);
 const RUNNER_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
 const RUNNER_CONVERGENCE_ATTEMPTS: usize = 4;
-
-/// Process-scoped ownership of a prepared runner's decision and manifest
-/// transition. Closing the file releases the OS lock, so a successor can
-/// replay an already-durable Execute decision after owner death.
-#[derive(Debug)]
-pub(super) struct RunnerHandoffGuard {
-    _lock: File,
-}
-
-pub(super) struct RunnerInspectionGuard {
-    _lock: File,
-}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -652,148 +641,6 @@ pub(super) fn publish_runner_lifecycle_ownership(
     )
 }
 
-/// Test seam for holding the same Execute lifecycle lock as production paths.
-#[cfg(test)]
-pub(super) fn lock_execute_lifecycle(
-    manifest: &ContainerSandboxManifest,
-) -> Result<RunnerHandoffGuard> {
-    lock_current_execute_lifecycle(manifest, None).map(|(handoff, _)| handoff)
-}
-
-/// Acquire the bounded Execute lifecycle lock and return the canonical
-/// manifest authenticated under that lock.
-///
-/// Reload needs the reread as its mutation base: using the pre-lock snapshot
-/// after waiting would allow a stopped or finalized manifest to be overwritten.
-pub(super) fn lock_current_execute_lifecycle_for_backend(
-    backend: &ContainerSandboxBackend,
-    manifest: &ContainerSandboxManifest,
-) -> Result<(RunnerHandoffGuard, ContainerSandboxManifest)> {
-    lock_current_execute_lifecycle(manifest, Some(backend))
-}
-
-/// Acquire the Execute lifecycle lock and return the current durable manifest.
-///
-/// Exact teardown commands authenticate the returned manifest under this lock.
-/// They must not reject a legitimate, newer teardown checkpoint only because
-/// it changed while the command waited for lifecycle ownership.
-pub(super) fn lock_execute_lifecycle_and_read_current_for_backend(
-    backend: &ContainerSandboxBackend,
-    manifest: &ContainerSandboxManifest,
-) -> Result<(RunnerHandoffGuard, ContainerSandboxManifest)> {
-    if manifest.start_mode != ContainerStartMode::Execute {
-        return Err(SandboxError::InvalidSpec {
-            message: "execute lifecycle lock requires an Execute manifest".to_owned(),
-        });
-    }
-    let handoff = lock_runner_handoff_with_deadline(
-        manifest,
-        Some(Instant::now() + RUNNER_HANDOFF_LOCK_TIMEOUT),
-        Some(backend),
-    )?;
-    let persisted = read_runner_manifest(&manifest.conmon_layout.manifest_path)?;
-    Ok((handoff, persisted))
-}
-
-/// Acquire the existing lifecycle lock in shared mode and authenticate the
-/// exact manifest snapshot used by a read-only inspection.
-///
-/// Unlike command-side lifecycle locking, this query seam never creates a
-/// directory or lock artifact. A missing synchronization artifact is an
-/// explicit ambiguity and therefore fails closed.
-pub(super) fn lock_current_inspection_for_backend(
-    backend: &ContainerSandboxBackend,
-    manifest: &ContainerSandboxManifest,
-) -> Result<(RunnerInspectionGuard, ContainerSandboxManifest)> {
-    lock_current_inspection_with_timeout(backend, manifest, RUNNER_HANDOFF_LOCK_TIMEOUT)
-}
-
-#[cfg(test)]
-pub(super) fn lock_current_inspection_for_backend_with_timeout_for_test(
-    backend: &ContainerSandboxBackend,
-    manifest: &ContainerSandboxManifest,
-    timeout: Duration,
-) -> Result<(RunnerInspectionGuard, ContainerSandboxManifest)> {
-    lock_current_inspection_with_timeout(backend, manifest, timeout)
-}
-
-fn lock_current_inspection_with_timeout(
-    backend: &ContainerSandboxBackend,
-    manifest: &ContainerSandboxManifest,
-    timeout: Duration,
-) -> Result<(RunnerInspectionGuard, ContainerSandboxManifest)> {
-    #[cfg(not(test))]
-    let _ = backend;
-    let lock_path = manifest
-        .conmon_layout
-        .container_state_dir
-        .join(RUNNER_HANDOFF_LOCK_FILE);
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&lock_path)
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to open existing container inspection lock {}: {error}; \
-                 inspection cannot create synchronization state",
-                lock_path.display()
-            ),
-        })?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        match FileExt::try_lock_shared(&lock) {
-            Ok(()) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                #[cfg(test)]
-                if let Some(probe) = backend.runner_lifecycle_lock_test_probe.as_ref() {
-                    probe.record_contended()?;
-                }
-                if Instant::now() >= deadline {
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "timed out acquiring existing container inspection lock {}; \
-                             observation remains unknown",
-                            lock_path.display()
-                        ),
-                    });
-                }
-                thread::sleep(RUNNER_HANDOFF_LOCK_RETRY);
-            }
-            Err(error) => {
-                return Err(SandboxError::OperationFailed {
-                    message: format!(
-                        "failed to acquire existing container inspection lock {}: {error}",
-                        lock_path.display()
-                    ),
-                });
-            }
-        }
-    }
-    let persisted = read_runner_manifest(&manifest.conmon_layout.manifest_path)?;
-    Ok((RunnerInspectionGuard { _lock: lock }, persisted))
-}
-
-fn lock_current_execute_lifecycle(
-    manifest: &ContainerSandboxManifest,
-    test_observer: Option<&ContainerSandboxBackend>,
-) -> Result<(RunnerHandoffGuard, ContainerSandboxManifest)> {
-    if manifest.start_mode != ContainerStartMode::Execute {
-        return Err(SandboxError::InvalidSpec {
-            message: "execute lifecycle lock requires an Execute manifest".to_owned(),
-        });
-    }
-    let handoff = lock_runner_handoff_with_deadline(
-        manifest,
-        Some(Instant::now() + RUNNER_HANDOFF_LOCK_TIMEOUT),
-        test_observer,
-    )?;
-    let persisted = read_runner_manifest(&manifest.conmon_layout.manifest_path)?;
-    if persisted != *manifest {
-        return Err(changed_runner_manifest_error(manifest));
-    }
-    Ok((handoff, persisted))
-}
-
 fn persist_claimed_runner_execution_ownership(
     backend: &ContainerSandboxBackend,
     manifest: &mut ContainerSandboxManifest,
@@ -1074,115 +921,6 @@ fn runner_handoff_decision_path(manifest: &ContainerSandboxManifest) -> PathBuf 
         .conmon_layout
         .container_state_dir
         .join(RUNNER_HANDOFF_DECISION_FILE)
-}
-
-fn lock_runner_handoff(manifest: &ContainerSandboxManifest) -> Result<RunnerHandoffGuard> {
-    lock_runner_handoff_with_deadline(
-        manifest,
-        Some(Instant::now() + RUNNER_HANDOFF_LOCK_TIMEOUT),
-        None,
-    )
-}
-
-/// Establish the command-side synchronization artifact before the first
-/// manifest publication. Query-side inspection is intentionally forbidden
-/// from calling this creator.
-pub(super) fn ensure_runner_handoff_lock_artifact(
-    manifest: &ContainerSandboxManifest,
-) -> Result<()> {
-    let lock_path = manifest
-        .conmon_layout
-        .container_state_dir
-        .join(RUNNER_HANDOFF_LOCK_FILE);
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
-        .map(|_| ())
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to establish container lifecycle lock {} before manifest publication: {error}",
-                lock_path.display()
-            ),
-        })
-}
-
-fn converge_runner_lifecycle_lock(
-    backend: &ContainerSandboxBackend,
-    manifest: &ContainerSandboxManifest,
-) -> Result<RunnerHandoffGuard> {
-    lock_runner_handoff_with_deadline(
-        manifest,
-        Some(Instant::now() + RUNNER_HANDOFF_LOCK_TIMEOUT),
-        Some(backend),
-    )
-}
-
-#[cfg(test)]
-pub(super) fn converge_runner_lifecycle_lock_with_timeout_for_test(
-    backend: &ContainerSandboxBackend,
-    manifest: &ContainerSandboxManifest,
-    timeout: Duration,
-) -> Result<RunnerHandoffGuard> {
-    lock_runner_handoff_with_deadline(manifest, Some(Instant::now() + timeout), Some(backend))
-}
-
-fn lock_runner_handoff_with_deadline(
-    manifest: &ContainerSandboxManifest,
-    deadline: Option<Instant>,
-    test_observer: Option<&ContainerSandboxBackend>,
-) -> Result<RunnerHandoffGuard> {
-    let lock_path = manifest
-        .conmon_layout
-        .container_state_dir
-        .join(RUNNER_HANDOFF_LOCK_FILE);
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to open container runner handoff lock {}: {error}",
-                lock_path.display()
-            ),
-        })?;
-    loop {
-        match FileExt::try_lock_exclusive(&lock) {
-            Ok(()) => return Ok(RunnerHandoffGuard { _lock: lock }),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                #[cfg(test)]
-                if let Some(probe) = test_observer
-                    .and_then(|backend| backend.runner_lifecycle_lock_test_probe.as_ref())
-                {
-                    probe.record_contended()?;
-                }
-                #[cfg(not(test))]
-                let _ = test_observer;
-                if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "timed out acquiring container runner handoff lock {}; \
-                             execution and cancellation remain fenced",
-                            lock_path.display()
-                        ),
-                    });
-                }
-                thread::sleep(RUNNER_HANDOFF_LOCK_RETRY);
-            }
-            Err(error) => {
-                return Err(SandboxError::OperationFailed {
-                    message: format!(
-                        "failed to acquire container runner handoff lock {}: {error}",
-                        lock_path.display()
-                    ),
-                });
-            }
-        }
-    }
 }
 
 fn validate_durable_prepared_manifest(manifest: &ContainerSandboxManifest) -> Result<()> {

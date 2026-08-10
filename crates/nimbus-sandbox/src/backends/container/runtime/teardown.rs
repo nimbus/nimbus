@@ -12,9 +12,9 @@ use crate::backends::conmon::runtime_process::{
     RuntimeProcessIdentityObservation, RuntimeProcessSignal, RuntimeProcessSignalOutcome,
 };
 use crate::{
-    ProviderCommandClaim, ProviderCommandExecutionClaim, ProviderCommandJournalError,
-    ProviderCommandObservation, ProviderCommandObservationKind, SandboxError,
-    SandboxExecutionTeardownCommand, SandboxExecutionTeardownObservation,
+    ProviderCommandClaim, ProviderCommandCurrentExecution, ProviderCommandExecutionClaim,
+    ProviderCommandJournalError, ProviderCommandObservation, ProviderCommandObservationKind,
+    SandboxError, SandboxExecutionTeardownCommand, SandboxExecutionTeardownObservation,
     SandboxExecutionTeardownOperation,
 };
 
@@ -66,27 +66,41 @@ impl ContainerSandboxBackend {
         let journal = self.attempt_idempotency_journal()?;
         let (_, provider_observation) =
             journal.execute_current_claim(execution_claim, |current_claim| {
-                let sandbox_observation = match self
-                    .execute_execution_teardown_inner_with_runtime_and_authorization(
-                        command,
-                        self.teardown_runtime_provider.as_ref(),
-                        Some(current_claim.observation()),
-                    ) {
-                    Ok(observation) => observation,
-                    Err(error @ SandboxError::InvalidSpec { .. }) => {
-                        definite_failure("sandbox_teardown_command_crossed", error.to_string())
-                    }
-                    Err(error @ SandboxError::NotFound { .. }) => {
-                        ambiguous(format!("exact Container manifest is absent: {error}"))
-                    }
-                    Err(error) => ambiguous(error.to_string()),
-                };
+                let sandbox_observation =
+                    self.execute_execution_teardown_substep(command, current_claim);
                 let kind = execution_observation_kind(&sandbox_observation);
                 let failure_code = sandbox_observation.failure_code().map(str::to_owned);
                 let evidence = sandbox_observation.evidence().to_vec();
                 (sandbox_observation, kind, failure_code, evidence)
             })?;
         Ok(provider_observation)
+    }
+
+    /// Run one Container child effect under a caller-owned exact stream lock.
+    ///
+    /// This method never opens or publishes the provider journal. The caller
+    /// retains the generic result authority until all sibling effects settle.
+    #[doc(hidden)]
+    pub fn execute_execution_teardown_substep(
+        &self,
+        command: &SandboxExecutionTeardownCommand,
+        current_execution: &ProviderCommandCurrentExecution,
+    ) -> SandboxExecutionTeardownObservation {
+        if current_execution.claim() != command.provider_claim()
+            || current_execution.observation().kind() != ProviderCommandObservationKind::Claimed
+        {
+            return definite_failure(
+                "sandbox_teardown_command_crossed",
+                "Container execution authorization crossed its provider command",
+            );
+        }
+        execution_result(
+            self.execute_execution_teardown_inner_with_runtime_and_authorization(
+                command,
+                self.teardown_runtime_provider.as_ref(),
+                Some(current_execution.observation()),
+            ),
+        )
     }
 
     /// Inspect exact drain or stop progress without a provider effect or write.
@@ -108,6 +122,16 @@ impl ContainerSandboxBackend {
 
     /// Inspect after the one provider journal authenticates the current claim.
     pub fn inspect_execution_teardown_with_observation(
+        &self,
+        command: &SandboxExecutionTeardownCommand,
+        provider_observation: &ProviderCommandObservation,
+    ) -> SandboxExecutionTeardownObservation {
+        self.inspect_execution_teardown_substep(command, provider_observation)
+    }
+
+    /// Inspect one Container child without publishing the generic result.
+    #[doc(hidden)]
+    pub fn inspect_execution_teardown_substep(
         &self,
         command: &SandboxExecutionTeardownCommand,
         provider_observation: &ProviderCommandObservation,
@@ -884,6 +908,21 @@ fn execution_observation_kind(
         SandboxExecutionTeardownObservation::InProgress { .. } => {
             ProviderCommandObservationKind::InProgress
         }
+    }
+}
+
+fn execution_result(
+    result: crate::Result<SandboxExecutionTeardownObservation>,
+) -> SandboxExecutionTeardownObservation {
+    match result {
+        Ok(observation) => observation,
+        Err(error @ SandboxError::InvalidSpec { .. }) => {
+            definite_failure("sandbox_teardown_command_crossed", error.to_string())
+        }
+        Err(error @ SandboxError::NotFound { .. }) => {
+            ambiguous(format!("exact Container manifest is absent: {error}"))
+        }
+        Err(error) => ambiguous(error.to_string()),
     }
 }
 

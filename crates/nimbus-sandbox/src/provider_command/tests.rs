@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 
 use super::*;
 
+#[path = "tests/async_current_claim.rs"]
+mod async_current_claim;
 #[path = "tests/network_recovery.rs"]
 mod network_recovery;
 
