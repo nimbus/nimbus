@@ -74,8 +74,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.5e complete; NNC6.5f in progress`.
-  The NNC6.5e item commit contains its self-authenticating durable checkpoint;
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5f complete; NNC6.5f1 in progress`.
+  NNC6.5e is durably complete at `18377b1a2b17e21249c582ba49b8158280e0ff6d`;
   the prior exact checkpoint is `6b685627c94e`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,
   path, and verification contract. NNC6.5a completed the strict portable
@@ -214,12 +214,32 @@ extension-registry seam before the second concern edits `extensions.rs`.
   NNC8.2 owns the
   earlier provision and restart producers that do not yet retain live claim
   authority through their effect boundaries.
-  The four implementation units cover Container execution, Krun execution, shared
-  host-managed attachment, and end-to-end forwarded-machine provider
-  substitution. NNC6.5f-NNC6.5g retain Compose/machine cutover and final
-  compensation, tenant-retirement, and deletion convergence. NNC6.5f is
-  active and begins with a source-derived read-only substitution audit before
-  product edits. NNCV035 remains the sole
+  The four completed provider units cover Container execution, Krun execution,
+  shared host-managed attachment, and end-to-end forwarded-machine provider
+  substitution. NNC6.5f is the active read-only caller-substitution audit. It
+  prospectively splits the remaining value into NNC6.5f1 canonical forwarded
+  composition and the foreground retirement facade, NNC6.5f2 Engine-backed
+  Compose down plus coarse guest-envelope deletion, and NNC6.5f3 the
+  compute-owned desired-authority/provider-witness decision plus the
+  provider-owned admission guard, durable barrier persistence, and
+  authentication. Initial and restart Engine desire CAS operations hold the
+  provider guard; stop persists the barrier before its Engine scan; all three
+  provider admissions and five physical callers use the same fence. The
+  provider journal does not become desired authority or own stop policy. NNC6.5g keeps
+  compensation, tenant retirement, remaining legacy deletion, and final
+  convergence. NNC6.5f is complete with `115/115` plan/ledger IDs and A1-A20
+  green. Its sole full Sol/xhigh/fast review accepted eight findings, and its
+  sole narrow correction review accepted nine P2 false-green verifier gaps.
+  All seventeen findings are corrected and proven. The strengthened NNCV035
+  helper passes `138/138`, aggregate mutations pass `552/552`, live NNCV035
+  remains `0/7`, and the live aggregate remains exact `35/36`. Format,
+  Prettier, diff, syntax, focused ShellCheck, strict proof lint,
+  dependency/effect, ledger/routing, docs `108`, and site `17/17` are green.
+  Review cadence is exhausted, and product source is unchanged. NNC6.5f1 is
+  active and starts with a read-only audit of the one returned canonical
+  forwarded composition and narrow foreground retirement facade before any
+  product edit.
+  NNCV035 remains the sole
   expected-red implementation condition until NNC6.5g. NNC6.1e's R1-R15
   portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
@@ -263,7 +283,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
   NNC6.3a-NNC6.3b. Revised NNC6.4 atomically adds real provider commands,
   replaces every native/runtime/Compose/Machine provision caller, and deletes
   every coarse path in the same item. NNC6.4a retains restart; the prospective
-  NNC6.5a-NNC6.5g sequence retains teardown; NNC6.6 retains resolution caller
+  NNC6.5a-NNC6.5f3 plus NNC6.5g sequence retains teardown; NNC6.6 retains resolution caller
   fencing; NNC6.1e2 retains final fresh-process convergence.
   The existing sole coordinator now owns one effect-free `submit_intent` seam:
   one load, at most one CAS, one ambiguity read only after an ambiguous CAS,

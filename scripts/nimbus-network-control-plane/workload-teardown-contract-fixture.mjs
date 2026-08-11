@@ -3,6 +3,35 @@ import {
   withoutCfgTestItems,
 } from "./source-contract-scanner.mjs";
 
+export const COMPOSE_DOWN_TESTS = [
+  "compose_down_local_uses_engine_saga_and_compute_teardown",
+  "compose_down_forwarded_uses_engine_saga_and_exact_machine_phases",
+  "compose_down_unresolved_submission_makes_zero_provider_calls",
+  "compose_down_replay_is_idempotent_and_reports_durable_outcome",
+  "compose_down_crossed_or_stale_identity_fails_before_provider_effects",
+  "compose_down_ambiguous_result_reopens_with_inspection_only",
+  "compose_down_process_reopen_resumes_same_attempt_without_duplicate_effect",
+  "compose_down_partial_sibling_failure_preserves_completed_and_unissued_services",
+  "compose_down_cancellation_after_submission_is_replayable",
+];
+
+export const PHYSICAL_MACHINE_STOP_TESTS = [
+  "machine_stop_rejects_active_workload_saga_authority",
+  "standalone_machine_stop_fails_closed_without_engine_drain_authority",
+  "machine_stop_exact_empty_fence_precedes_publication_and_vmm_effects",
+  "machine_stop_active_authority_makes_zero_publication_ssh_vmm_or_state_effects",
+  "machine_stop_stale_or_crossed_machine_generation_makes_zero_effects",
+  "machine_stop_ambiguous_unavailable_or_corrupt_authority_fails_closed",
+  "machine_stop_reopen_rediscovers_active_durable_authority",
+  "machine_stop_and_concurrent_admission_linearize_at_one_fence",
+  "machine_workload_desire_commit_holds_admission_guard_through_engine_cas",
+  "machine_stop_barrier_waits_for_inflight_engine_desire_commit",
+  "machine_restart_cannot_bypass_active_workload_fence",
+  "machine_os_restart_cannot_bypass_active_workload_fence",
+  "stopped_machine_with_active_durable_authority_returns_typed_conflict",
+  "machine_stop_ignores_observed_projection_and_address_identity",
+];
+
 export const BEHAVIOR_TESTS = [
   "service_stop_persists_then_observes_complete_teardown_order",
   "sandbox_stop_persists_then_observes_complete_teardown_order",
@@ -10,14 +39,10 @@ export const BEHAVIOR_TESTS = [
   "definition_delete_keeps_source_and_sessions_until_recorded_teardown",
   "definition_delete_fences_and_joins_inflight_provision_before_removing_source",
   "late_provision_result_after_force_delete_is_retired_before_definition_removal",
-  "compose_down_local_uses_engine_saga_and_compute_teardown",
-  "compose_down_forwarded_uses_engine_saga_and_exact_machine_phases",
-  "compose_down_unresolved_submission_makes_zero_provider_calls",
-  "compose_down_replay_is_idempotent_and_reports_durable_outcome",
+  ...COMPOSE_DOWN_TESTS,
   "parent_publication_withdraws_before_guest_stop_and_releases_after_exact_absence",
   "crossed_machine_teardown_fences_fail_before_effects",
-  "machine_stop_rejects_active_workload_saga_authority",
-  "standalone_machine_stop_fails_closed_without_engine_drain_authority",
+  ...PHYSICAL_MACHINE_STOP_TESTS,
   "final_ingress_withdrawal_cancels_joins_closes_and_settles_exact_leases",
   "ingress_settlement_failure_retains_cleanup_and_blocks_recorded",
   "tenant_delete_waits_for_every_durable_workload_teardown_before_storage_delete",
@@ -88,17 +113,18 @@ export function greenTeardownFixture() {
   const nativeTestsByFile = new Map([
     [
       "crates/nimbus-compute/src/resource_retirement/tests/native.rs",
-      NATIVE_SOURCE_RETIREMENT_TESTS.filter((name) =>
-        ![
-          "definition_delete_keeps_source_and_sessions_until_recorded_teardown",
-          "definition_delete_fences_and_joins_inflight_provision_before_removing_source",
-          "force_delete_unresolved_submission_keeps_definition_and_makes_zero_stop_effects",
-          "late_provision_result_after_force_delete_is_retired_before_definition_removal",
-          "definition_delete_cleanup_pending_keeps_definition_observation_and_sessions",
-          "definition_delete_cancellation_after_submission_is_replayable",
-          "session_binding_rejects_a_later_execution_with_the_same_source_generation",
-          "concurrent_start_and_stop_linearize_at_the_source_fence",
-        ].includes(name),
+      NATIVE_SOURCE_RETIREMENT_TESTS.filter(
+        (name) =>
+          ![
+            "definition_delete_keeps_source_and_sessions_until_recorded_teardown",
+            "definition_delete_fences_and_joins_inflight_provision_before_removing_source",
+            "force_delete_unresolved_submission_keeps_definition_and_makes_zero_stop_effects",
+            "late_provision_result_after_force_delete_is_retired_before_definition_removal",
+            "definition_delete_cleanup_pending_keeps_definition_observation_and_sessions",
+            "definition_delete_cancellation_after_submission_is_replayable",
+            "session_binding_rejects_a_later_execution_with_the_same_source_generation",
+            "concurrent_start_and_stop_linearize_at_the_source_fence",
+          ].includes(name),
       ),
     ],
     [
@@ -107,7 +133,9 @@ export function greenTeardownFixture() {
     ],
     [
       "crates/nimbus-services/src/manager/tests/sessions.rs",
-      ["session_binding_rejects_a_later_execution_with_the_same_source_generation"],
+      [
+        "session_binding_rejects_a_later_execution_with_the_same_source_generation",
+      ],
     ],
     [
       "crates/nimbus-compute/src/workload_provisioner/tests.rs",
@@ -128,11 +156,14 @@ export function greenTeardownFixture() {
   for (const names of Object.values(FORWARDED_MACHINE_TESTS)) {
     for (const name of names) {
       const file =
-        name === "forwarded_two_realm_fresh_process_matrix_recovers_every_frozen_cut"
+        name ===
+        "forwarded_two_realm_fresh_process_matrix_recovers_every_frozen_cut"
           ? "crates/nimbus-cli/src/machine/backend/provision/tests/teardown_substitution/process_recovery.rs"
-          : name === "dead_pre_checkpoint_provider_batches_retain_and_unadopted_release_replays"
+          : name ===
+              "dead_pre_checkpoint_provider_batches_retain_and_unadopted_release_replays"
             ? "crates/nimbus-network/src/port_lease/lifetime/batch_reservation/tests.rs"
-            : name === "inspected_absence_invalidates_a_delayed_started_token_before_io"
+            : name ===
+                "inspected_absence_invalidates_a_delayed_started_token_before_io"
               ? "crates/nimbus-sandbox/src/provider_command/tests/async_current_claim.rs"
               : "crates/nimbus-cli/src/machine/backend/provision/tests/teardown_substitution.rs";
       const tests = forwardedTestEntries.get(file) ?? [];
@@ -396,14 +427,202 @@ fn settle_exact_listener_leases() {}
 fn prove_exact_ingress_absence() {}
 fn propagate_listener_settlement_failure() {}
 `),
-    cli: withoutCfgTestItems(`
-fn compose_down_engine_workload_saga_store() { EngineWorkloadSagaStore; }
+    composeCommand: withoutCfgTestItems(`
+async fn run_compose_command(persistence_config: &EnginePersistenceConfig) {
+    run_compose_down(command, persistence_config).await;
+}
+async fn run_compose_down(persistence_config: &EnginePersistenceConfig) {
+    let engine = Engine::new_with_persistence_config(persistence_config.clone()).await;
+    retire_compose_services(Arc::clone(&engine), prepared).await;
+    engine.quiesce().await;
+}
+`),
+    composeRetirement: withoutCfgTestItems(`
+async fn retire_compose_services(engine: Arc<Engine>, prepared: PreparedComposeProvision) {
+    let saga_store = Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
+    let runtime = prepared.activate(Arc::clone(&engine), Arc::clone(&saga_store));
+    let retirer = runtime.resource_retirer();
+    let outcome = retirer.submit_service_teardown(tenant_context, service_name).await;
+    match outcome.disposition() {
+        WorkloadTeardownDisposition::Recorded => {
+            let execution = outcome.terminal_execution_reference();
+            return ComposeServiceRetirementOutcome::recorded(
+                outcome.disposition(),
+                execution,
+            );
+        }
+        _ => return Err(ComposeRetirementIncomplete),
+    }
+}
+`),
+    forwardedCanonicalComposition: withoutCfgTestItems(`
+fn prepare_forwarded_workload_profile(backend: &ForwardedMachineApiSandboxBackend) -> PreparedForwardedWorkloadProfile {
+    let registrations = backend.teardown_capabilities();
+    let teardown = WorkloadTeardownCapabilityRegistry::new(
+        registrations.attachment,
+        registrations.execution,
+        registrations.ingress,
+    );
+    PreparedForwardedWorkloadProfile::new(
+        ServerWorkloadProviders::new().with_teardown_capabilities(teardown),
+    )
+}
+`),
+    forwardedServerComposition: withoutCfgTestItems(`
+fn compose_forwarded_server(backend: &ForwardedMachineApiSandboxBackend) -> PreparedForwardedWorkloadProfile {
+    prepare_forwarded_workload_profile(backend)
+}
+`),
+    forwardedComposeComposition: withoutCfgTestItems(`
+fn compose_forwarded_foreground(backend: &ForwardedMachineApiSandboxBackend) -> PreparedForwardedWorkloadProfile {
+    prepare_forwarded_workload_profile(backend)
+}
+`),
+    exactGuestTeardown: withoutCfgTestItems(`
 struct MachineApiWorkloadTeardownCommandEnvelope;
-fn dispatch_machine_teardown_phase() {}
-fn authenticate_machine_teardown_attempt_and_epoch() {}
-fn withdraw_parent_publication_before_guest_stop() {}
-fn release_parent_publication_after_guest_absence() {}
-fn ensure_no_active_workload_sagas_before_machine_stop() {}
+fn build_remote_request() {}
+fn validate_source_and_target() {}
+fn validate_subjects() {}
+fn validate_retirement_order() {}
+fn validate() {
+    validate_source_and_target();
+    validate_subjects();
+    validate_retirement_order();
+}
+async fn dispatch() {
+    let validated = self.validate();
+    self.execute(validated).await;
+}
+async fn execute(validated: ValidatedForwardedMachineTeardown) {
+    let remote_request = validated.remote_request.clone();
+    claim_execute_started(validated);
+    execute_started_claim_async(validated, || match remote_request {
+        Some(request) => remote_result(&request),
+        None => local_withdrawal_result(),
+    });
+}
+fn remote_result(request: &MachineApiWorkloadTeardownPhaseRequest) {
+    client.teardown_workload_phase_prepared(request);
+}
+fn settle_parent_release() {
+    release_parent_batch_after_guest_release();
+}
+`),
+    coarseGuestApi: withoutCfgTestItems(``),
+    physicalDesireAdmissions: withoutCfgTestItems(`
+async fn submit_intent() {
+    with_machine_desire_admission_guard(|| async {
+        self.commit_loaded(loaded.as_ref(), next.clone()).await
+    }).await;
+}
+async fn compare_and_swap_restart_admission() {
+    with_machine_desire_admission_guard(|| async {
+        self.commit_loaded(Some(&current), candidate.clone()).await
+    }).await;
+}
+`),
+    physicalStopDecision: withoutCfgTestItems(`
+pub enum MachineWorkloadStopDecision {
+    EmptyWithFence(ConfirmedMachineStopAuthorization),
+    ActiveWorkloadTeardownRequired,
+    AuthorityUnavailable,
+    Ambiguous,
+    Corrupt,
+    Stale,
+    Crossed,
+}
+async fn authorize_machine_stop() {
+    let fence = claim_machine_stop_admission_barrier();
+    let after = list_machine_workload_authority_from_engine();
+    let decision = classify_machine_stop_authority(fence, after);
+    if decision.requires_active_conflict() {
+        clear_unchanged_effect_free_machine_stop_barrier(fence);
+    }
+    decision
+}
+`),
+    physicalStopDecisionStoreAdapter: withoutCfgTestItems(`
+fn list_machine_authority_from_engine_adapter() {}
+`),
+    physicalStopProvider: withoutCfgTestItems(`
+struct MachineStopAdmissionBarrier;
+fn claim_machine_stop_admission_barrier() {
+    self.mutate(|body| {
+        authenticate_exact_machine_incarnation(body);
+        persist_machine_stop_admission_barrier(body);
+    });
+}
+async fn with_machine_desire_admission_guard(operation: impl AsyncOperation) {
+    self.mutate_async(|body| async move {
+        authenticate_no_machine_stop_barrier(body);
+        let result = operation().await;
+        settle_machine_desire_admission_guard(body, &result);
+        result
+    }).await
+}
+fn authenticate_forwarded_workload_admission_barrier() {
+    self.mutate(|body| {
+        authenticate_no_machine_stop_barrier(body);
+    });
+}
+fn retain_ambiguous_machine_stop_barrier() {}
+`),
+    physicalProviderAdmissions: withoutCfgTestItems(`
+fn execute_exact_phase() {
+    authenticate_forwarded_workload_admission_barrier();
+    claim_dispatch_epoch_started();
+    self.phases.execute();
+}
+fn publish() {
+    authenticate_forwarded_workload_admission_barrier();
+    reserve_parent_batch();
+    commit_before_machine_api();
+    provision_workload_phase();
+}
+fn execute_restart_phase() {
+    authenticate_forwarded_workload_admission_barrier();
+    claim_restart_dispatch_started();
+    self.restart_phases.execute();
+}
+`),
+    physicalStopEffects: withoutCfgTestItems(`
+pub(super) fn stop_machine(authorization: ConfirmedMachineStopAuthorization) {
+    authorization.authenticate_exact_machine_generation();
+    withdraw_machine_publications();
+    withdraw_machine_ssh_port();
+    stop_provider_machine();
+    stop_pid();
+    stop_exact_process();
+    super::write_json_file();
+}
+`),
+    physicalStopStandalone: withoutCfgTestItems(`
+fn run_machine_stop() {
+    let authorization = authorize_machine_stop();
+    stop_machine_with_authorization(authorization);
+}
+`),
+    physicalStopServer: withoutCfgTestItems(`
+fn stop_machine<'a>() {
+    let authorization = authorize_machine_stop();
+    stop_machine_with_authorization(authorization);
+}
+fn restart_machine<'a>() {
+    let authorization = authorize_machine_stop();
+    stop_machine_with_authorization(authorization);
+}
+`),
+    physicalStopOs: withoutCfgTestItems(`
+fn restart_bootc_machine() {
+    let authorization = authorize_machine_stop();
+    stop_machine_with_authorization(authorization);
+}
+fn apply_machine_os_change() {
+    let authorization = authorize_machine_stop();
+    stop_machine_with_authorization(authorization);
+}
+`),
+    cli: withoutCfgTestItems(`
 fn register_local_krun_teardown_capabilities() {
     KrunTeardownAdapter;
     KrunAttachmentTeardownAdapter;

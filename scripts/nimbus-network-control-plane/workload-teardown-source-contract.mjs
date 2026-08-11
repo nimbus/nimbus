@@ -224,6 +224,10 @@ function productionSources(root) {
       root,
       "docs/private/plans/proof/nimbus-network-control-plane/nnc6.5-teardown-choreography-substitution-audit.md",
     ),
+    readText(
+      root,
+      "docs/private/plans/proof/nimbus-network-control-plane/nnc6.5f-compose-machine-caller-substitution-audit.md",
+    ),
   ].join("\n");
   const nativeCallerPaths = [
     "crates/nimbus-compute/src/resource_retirement.rs",
@@ -277,6 +281,95 @@ function productionSources(root) {
     localComposition: readText(
       root,
       "crates/nimbus-cli/src/network_composition.rs",
+      { lexical: true },
+    ),
+    composeCommand: readText(root, "crates/nimbus-cli/src/compose/mod.rs", {
+      lexical: true,
+    }),
+    composeRetirement: [
+      "crates/nimbus-cli/src/compose/lifecycle.rs",
+      "crates/nimbus-cli/src/compose/retirement.rs",
+    ]
+      .map((candidate) => readText(root, candidate, { lexical: true }))
+      .join("\n"),
+    forwardedServerComposition: readText(
+      root,
+      "crates/nimbus-cli/src/network_composition/forwarded.rs",
+      { lexical: true },
+    ),
+    forwardedComposeComposition: readText(
+      root,
+      "crates/nimbus-cli/src/compose/provision.rs",
+      { lexical: true },
+    ),
+    forwardedCanonicalComposition: readText(
+      root,
+      "crates/nimbus-cli/src/network_composition/forwarded/profile.rs",
+      { lexical: true },
+    ),
+    exactGuestTeardown: [
+      "crates/nimbus-cli/src/machine/backend/teardown.rs",
+      "crates/nimbus-cli/src/machine/api/service_workloads/teardown.rs",
+      "crates/nimbus-machine/src/api/teardown.rs",
+    ]
+      .map((candidate) => readText(root, candidate, { lexical: true }))
+      .join("\n"),
+    coarseGuestApi: [
+      "crates/nimbus-cli/src/machine/backend.rs",
+      "crates/nimbus-cli/src/machine/client.rs",
+      "crates/nimbus-cli/src/machine/api/capabilities.rs",
+      "crates/nimbus-cli/src/machine/api/routes.rs",
+      "crates/nimbus-cli/src/machine/api/service_workloads.rs",
+      "crates/nimbus-machine/src/api.rs",
+    ]
+      .map((candidate) => readText(root, candidate, { lexical: true }))
+      .join("\n"),
+    physicalDesireAdmissions: [
+      "crates/nimbus-compute/src/workload_saga/ingress.rs",
+      "crates/nimbus-compute/src/workload_saga/restart_decision.rs",
+    ]
+      .map((candidate) => readText(root, candidate, { lexical: true }))
+      .join("\n"),
+    physicalStopDecision: readText(
+      root,
+      "crates/nimbus-compute/src/machine_stop_authority.rs",
+      { lexical: true },
+    ),
+    physicalStopDecisionStoreAdapter: readText(
+      root,
+      "crates/nimbus-server/src/workload_saga_store/machine_authority.rs",
+      { lexical: true },
+    ),
+    physicalStopProvider: [
+      "crates/nimbus-cli/src/machine/publication_authority/confirmed/stop_barrier.rs",
+      "crates/nimbus-cli/src/machine/publication_authority/confirmed.rs",
+    ]
+      .map((candidate) => readText(root, candidate, { lexical: true }))
+      .join("\n"),
+    physicalProviderAdmissions: [
+      "crates/nimbus-cli/src/machine/backend/provision.rs",
+      "crates/nimbus-cli/src/machine/backend/provision/restart.rs",
+    ]
+      .map((candidate) => readText(root, candidate, { lexical: true }))
+      .join("\n"),
+    physicalStopEffects: readText(
+      root,
+      "crates/nimbus-cli/src/machine/manager/stop.rs",
+      { lexical: true },
+    ),
+    physicalStopStandalone: readText(
+      root,
+      "crates/nimbus-cli/src/machine/handlers.rs",
+      { lexical: true },
+    ),
+    physicalStopServer: readText(
+      root,
+      "crates/nimbus-cli/src/machine/server_control.rs",
+      { lexical: true },
+    ),
+    physicalStopOs: readText(
+      root,
+      "crates/nimbus-cli/src/machine/handlers/os.rs",
       { lexical: true },
     ),
     httpServices: readText(root, "crates/nimbus-server/src/http/services.rs", {
@@ -344,6 +437,51 @@ function appearsInOrder(source, tokens) {
   return true;
 }
 
+function countOccurrences(source, token) {
+  if (token.length === 0) return 0;
+  return source.split(token).length - 1;
+}
+
+function appearsBeforeEvery(source, before, afterTokens) {
+  const beforeIndex = source.indexOf(before);
+  return (
+    beforeIndex >= 0 &&
+    afterTokens.every(
+      (token) => source.indexOf(token, beforeIndex + before.length) >= 0,
+    )
+  );
+}
+
+function itemBody(item) {
+  const open = item.indexOf("{");
+  return open >= 0 && item.endsWith("}") ? item.slice(open + 1, -1).trim() : "";
+}
+
+function extractCall(source, marker) {
+  const start = source.indexOf(marker);
+  const open = source.indexOf("(", start);
+  if (start < 0 || open < 0) return "";
+  let depth = 0;
+  for (let cursor = open; cursor < source.length; cursor += 1) {
+    if (source[cursor] === "(") depth += 1;
+    else if (source[cursor] === ")") depth -= 1;
+    if (depth === 0) return source.slice(start, cursor + 1);
+  }
+  return "";
+}
+
+function escapedRegex(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function returnsCallResult(item, callee) {
+  const escaped = escapedRegex(callee);
+  return new RegExp(
+    `(?:return\\s+${escaped}\\s*\\([^;{}]*\\)\\s*;|${escaped}\\s*\\([^;{}]*\\))\\s*$`,
+    "u",
+  ).test(itemBody(item));
+}
+
 function enumVariants(source, name) {
   return extractItem(source, `enum ${name}`)
     .split("\n")
@@ -352,13 +490,14 @@ function enumVariants(source, name) {
 }
 
 function behaviorTestsPass(sources) {
-  return nativeSourceRetirementTestsPass(sources) && [...new Set([
-    ...BEHAVIOR_TESTS,
-    ...NATIVE_SOURCE_RETIREMENT_TESTS,
-  ])].every((name) =>
-    sources.testEntries.some((entry) =>
-      hasTestsAt(sources, entry.file, [name]),
-    ),
+  return (
+    nativeSourceRetirementTestsPass(sources) &&
+    [...new Set([...BEHAVIOR_TESTS, ...NATIVE_SOURCE_RETIREMENT_TESTS])].every(
+      (name) =>
+        sources.testEntries.some((entry) =>
+          hasTestsAt(sources, entry.file, [name]),
+        ),
+    )
   );
 }
 
@@ -366,18 +505,23 @@ function nativeSourceRetirementTestsPass(sources) {
   const definitionTests = new Set(NATIVE_SOURCE_RETIREMENT_TESTS.slice(6, 12));
   const sessionTest =
     "session_binding_rejects_a_later_execution_with_the_same_source_generation";
-  const contenderTest = "concurrent_start_and_stop_linearize_at_the_source_fence";
+  const contenderTest =
+    "concurrent_start_and_stop_linearize_at_the_source_fence";
   return NATIVE_SOURCE_RETIREMENT_TESTS.every((name) => {
     const owns = (file) => {
       if (definitionTests.has(name)) {
-        return file ===
-          "crates/nimbus-server/src/tests/service_manager/definition_retirement.rs";
+        return (
+          file ===
+          "crates/nimbus-server/src/tests/service_manager/definition_retirement.rs"
+        );
       }
       if (name === sessionTest) {
         return file === "crates/nimbus-services/src/manager/tests/sessions.rs";
       }
       if (name === contenderTest) {
-        return file === "crates/nimbus-compute/src/workload_provisioner/tests.rs";
+        return (
+          file === "crates/nimbus-compute/src/workload_provisioner/tests.rs"
+        );
       }
       return (
         file === "crates/nimbus-compute/src/resource_retirement/tests.rs" ||
@@ -392,7 +536,9 @@ function nativeSourceRetirementTestsPass(sources) {
 
 function forwardedMachineTestsPass(sources, names) {
   return names.every((name) =>
-    sources.testEntries.some((entry) => hasTestsAt(sources, entry.file, [name])),
+    sources.testEntries.some((entry) =>
+      hasTestsAt(sources, entry.file, [name]),
+    ),
   );
 }
 
@@ -417,9 +563,12 @@ function replaceOnceInNamedTest(sources, name, before, after) {
   const entry = sources.testEntries.find((candidate) =>
     candidate.source.includes(`fn ${name}`),
   );
-  if (!entry) throw new Error(`teardown named test mutation target missing: ${name}`);
+  if (!entry)
+    throw new Error(`teardown named test mutation target missing: ${name}`);
   if (!entry.source.includes(before)) {
-    throw new Error(`teardown named test body mutation target missing: ${name}:${before}`);
+    throw new Error(
+      `teardown named test body mutation target missing: ${name}:${before}`,
+    );
   }
   entry.source = entry.source.replace(before, after);
   remaskTeardownTestSources(sources);
@@ -444,11 +593,7 @@ function applyFixtureMutation(sources, mutation) {
       "fn materialize_teardown_candidate()",
       "fn omitted_teardown_candidate()",
     ],
-    "missing-revision-fence": [
-      "compute",
-      "    confirm_transition();\n",
-      "",
-    ],
+    "missing-revision-fence": ["compute", "    confirm_transition();\n", ""],
     "missing-commit-loaded": [
       "compute",
       "    confirm_teardown_transition();\n",
@@ -629,45 +774,235 @@ function applyFixtureMutation(sources, mutation) {
       "delete_service_definition(&tenant_context)",
       "delete_service_definition(tenant_context.tenant_id())",
     ],
+    "missing-compose-persistence": [
+      "composeCommand",
+      "run_compose_down(command, persistence_config).await;",
+      "run_compose_down(command).await;",
+    ],
+    "missing-compose-engine": [
+      "composeCommand",
+      "    let engine = Engine::new_with_persistence_config(persistence_config.clone()).await;\n",
+      "",
+    ],
     "missing-compose-store": [
-      "cli",
-      "fn compose_down_engine_workload_saga_store() { EngineWorkloadSagaStore; }",
+      "composeRetirement",
+      "    let saga_store = Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));\n",
+      "",
+    ],
+    "compose-store-not-wired": [
+      "composeRetirement",
+      "    let runtime = prepared.activate(Arc::clone(&engine), Arc::clone(&saga_store));\n",
+      "    let runtime = prepared.activate(Arc::clone(&engine), Arc::new(UnrelatedSagaStore));\n",
+    ],
+    "compose-wired-activation-discarded": [
+      "composeRetirement",
+      "    let runtime = prepared.activate(Arc::clone(&engine), Arc::clone(&saga_store));\n",
+      "    prepared.activate(Arc::clone(&engine), Arc::clone(&saga_store));\n    let runtime = prepared.activate(Arc::clone(&engine), Arc::new(UnrelatedSagaStore));\n",
+    ],
+    "missing-compose-retirer": [
+      "composeRetirement",
+      "    let retirer = runtime.resource_retirer();\n",
       "",
     ],
     "missing-compose-submit": [
-      "compute",
-      "fn submit_compose_teardown() {}",
+      "composeRetirement",
+      "    let outcome = retirer.submit_service_teardown(tenant_context, service_name).await;\n",
       "",
     ],
-    "missing-compose-wait": [
-      "compute",
-      "fn wait_for_teardown_outcome() {}",
-      "",
+    "missing-compose-recorded": [
+      "composeRetirement",
+      "            return ComposeServiceRetirementOutcome::recorded(\n                outcome.disposition(),\n                execution,\n            );",
+      "            return Err(ComposeRetirementIncomplete);",
+    ],
+    "compose-terminal-reference-discarded": [
+      "composeRetirement",
+      "            let execution = outcome.terminal_execution_reference();",
+      "            outcome.terminal_execution_reference();\n            let execution = None;",
+    ],
+    "compose-recorded-omits-terminal-binding": [
+      "composeRetirement",
+      "                execution,\n",
+      "                None,\n",
     ],
     "missing-machine-envelope": [
-      "cli",
+      "exactGuestTeardown",
       "struct MachineApiWorkloadTeardownCommandEnvelope;",
       "",
     ],
     "missing-machine-phase": [
-      "cli",
-      "fn dispatch_machine_teardown_phase() {}",
+      "exactGuestTeardown",
+      "fn build_remote_request() {}",
       "",
     ],
     "missing-machine-fence": [
-      "cli",
-      "fn authenticate_machine_teardown_attempt_and_epoch() {}",
+      "exactGuestTeardown",
+      "    validate_source_and_target();\n    validate_subjects();\n    validate_retirement_order();",
       "",
+    ],
+    "guest-dispatch-skips-validation": [
+      "exactGuestTeardown",
+      "    let validated = self.validate();\n    self.execute(validated).await;",
+      "    self.execute(ValidatedForwardedMachineTeardown::unchecked()).await;",
+    ],
+    "guest-dispatch-discards-validation": [
+      "exactGuestTeardown",
+      "    let validated = self.validate();\n    self.execute(validated).await;",
+      "    let validated = self.validate();\n    self.execute(ValidatedForwardedMachineTeardown::unchecked()).await;",
+    ],
+    "guest-remote-before-journal-claim": [
+      "exactGuestTeardown",
+      "    claim_execute_started(validated);\n",
+      "    remote_result(&unchecked_request);\n    claim_execute_started(validated);\n",
+    ],
+    "guest-aliased-remote-before-journal-claim": [
+      "exactGuestTeardown",
+      "    claim_execute_started(validated);\n",
+      "    client.teardown_workload_phase_prepared(&unchecked_request);\n    claim_execute_started(validated);\n",
     ],
     "parent-release-before-absence": [
-      "cli",
-      "fn release_parent_publication_after_guest_absence() {}",
-      "",
+      "exactGuestTeardown",
+      "release_parent_batch_after_guest_release",
+      "release_parent_batch_before_guest_release",
     ],
     "missing-machine-active-fence": [
-      "cli",
-      "fn ensure_no_active_workload_sagas_before_machine_stop() {}",
+      "physicalStopDecision",
+      "    EmptyWithFence(ConfirmedMachineStopAuthorization),\n",
       "",
+    ],
+    "missing-machine-rescan": [
+      "physicalStopDecision",
+      "    let after = list_machine_workload_authority_from_engine();\n",
+      "    let after = WorkloadAuthoritySnapshot::unavailable();\n",
+    ],
+    "untyped-machine-active-conflict": [
+      "physicalStopDecision",
+      "    ActiveWorkloadTeardownRequired,\n",
+      "    Other(String),\n",
+    ],
+    "projection-address-machine-authority": [
+      "physicalStopDecision",
+      "list_machine_workload_authority_from_engine",
+      "list_machine_workload_authority_from_system_projection_and_ip_address",
+    ],
+    "unavailable-machine-authority-allows-stop": [
+      "physicalStopDecision",
+      "    AuthorityUnavailable,\n",
+      "    AuthorityUnavailableButProceed,\n",
+    ],
+    "crossed-machine-authority-allows-stop": [
+      "physicalStopDecision",
+      "    Crossed,\n",
+      "    CrossedButProceed,\n",
+    ],
+    "machine-barrier-after-publication": [
+      "physicalStopEffects",
+      "    authorization.authenticate_exact_machine_generation();\n    withdraw_machine_publications();",
+      "    withdraw_machine_publications();\n    authorization.authenticate_exact_machine_generation();",
+    ],
+    "machine-standalone-bypass": [
+      "physicalStopStandalone",
+      "fn run_machine_stop() {\n    let authorization = authorize_machine_stop();\n    stop_machine_with_authorization(authorization);\n}",
+      "fn run_machine_stop() {\n    raw_machine_stop();\n}",
+    ],
+    "machine-server-bypass": [
+      "physicalStopServer",
+      "fn stop_machine<'a>() {\n    let authorization = authorize_machine_stop();\n    stop_machine_with_authorization(authorization);\n}",
+      "fn stop_machine<'a>() {\n    raw_machine_stop();\n}",
+    ],
+    "machine-restart-bypass": [
+      "physicalStopServer",
+      "fn restart_machine<'a>() {\n    let authorization = authorize_machine_stop();\n    stop_machine_with_authorization(authorization);\n}",
+      "fn restart_machine<'a>() {\n    raw_machine_stop();\n}",
+    ],
+    "machine-bootc-restart-bypass": [
+      "physicalStopOs",
+      "fn restart_bootc_machine() {\n    let authorization = authorize_machine_stop();\n    stop_machine_with_authorization(authorization);\n}",
+      "fn restart_bootc_machine() {\n    raw_machine_stop();\n}",
+    ],
+    "machine-os-apply-restart-bypass": [
+      "physicalStopOs",
+      "fn apply_machine_os_change() {\n    let authorization = authorize_machine_stop();\n    stop_machine_with_authorization(authorization);\n}",
+      "fn apply_machine_os_change() {\n    raw_machine_stop();\n}",
+    ],
+    "machine-admission-after-empty-scan": [
+      "physicalStopDecision",
+      "    let fence = claim_machine_stop_admission_barrier();\n    let after = list_machine_workload_authority_from_engine();",
+      "    let after = list_machine_workload_authority_from_engine();\n    allow_forwarded_workload_admission();\n    let fence = claim_machine_stop_admission_barrier();",
+    ],
+    "missing-machine-active-barrier-clear": [
+      "physicalStopDecision",
+      "        clear_unchanged_effect_free_machine_stop_barrier(fence);\n",
+      "",
+    ],
+    "missing-initial-desire-admission-guard": [
+      "physicalDesireAdmissions",
+      "async fn submit_intent() {\n    with_machine_desire_admission_guard(|| async {\n        self.commit_loaded(loaded.as_ref(), next.clone()).await\n    }).await;\n}",
+      "async fn submit_intent() {\n    self.commit_loaded(loaded.as_ref(), next.clone()).await;\n}",
+    ],
+    "initial-desire-guard-released-before-cas": [
+      "physicalDesireAdmissions",
+      "async fn submit_intent() {\n    with_machine_desire_admission_guard(|| async {\n        self.commit_loaded(loaded.as_ref(), next.clone()).await\n    }).await;\n}",
+      "async fn submit_intent() {\n    with_machine_desire_admission_guard(|| async {}).await;\n    self.commit_loaded(loaded.as_ref(), next.clone()).await;\n}",
+    ],
+    "missing-restart-desire-admission-guard": [
+      "physicalDesireAdmissions",
+      "async fn compare_and_swap_restart_admission() {\n    with_machine_desire_admission_guard(|| async {\n        self.commit_loaded(Some(&current), candidate.clone()).await\n    }).await;\n}",
+      "async fn compare_and_swap_restart_admission() {\n    self.commit_loaded(Some(&current), candidate.clone()).await;\n}",
+    ],
+    "restart-desire-guard-released-before-cas": [
+      "physicalDesireAdmissions",
+      "async fn compare_and_swap_restart_admission() {\n    with_machine_desire_admission_guard(|| async {\n        self.commit_loaded(Some(&current), candidate.clone()).await\n    }).await;\n}",
+      "async fn compare_and_swap_restart_admission() {\n    with_machine_desire_admission_guard(|| async {}).await;\n    self.commit_loaded(Some(&current), candidate.clone()).await;\n}",
+    ],
+    "missing-machine-admission-authentication": [
+      "physicalStopProvider",
+      "fn authenticate_forwarded_workload_admission_barrier() {\n    self.mutate(|body| {\n        authenticate_no_machine_stop_barrier(body);\n    });\n}",
+      "",
+    ],
+    "machine-desire-guard-does-not-hold-lock": [
+      "physicalStopProvider",
+      "async fn with_machine_desire_admission_guard(operation: impl AsyncOperation) {\n    self.mutate_async(|body| async move {\n        authenticate_no_machine_stop_barrier(body);\n        let result = operation().await;\n        settle_machine_desire_admission_guard(body, &result);\n        result\n    }).await\n}",
+      "async fn with_machine_desire_admission_guard(operation: impl AsyncOperation) {\n    self.mutate(|body| authenticate_no_machine_stop_barrier(body));\n    operation().await\n}",
+    ],
+    "machine-barrier-claim-outside-provider-lock": [
+      "physicalStopProvider",
+      "fn claim_machine_stop_admission_barrier() {\n    self.mutate(|body| {\n        authenticate_exact_machine_incarnation(body);\n        persist_machine_stop_admission_barrier(body);\n    });\n}",
+      "fn claim_machine_stop_admission_barrier() {\n    persist_machine_stop_admission_barrier_without_lock();\n}",
+    ],
+    "machine-provider-auth-outside-provider-lock": [
+      "physicalStopProvider",
+      "fn authenticate_forwarded_workload_admission_barrier() {\n    self.mutate(|body| {\n        authenticate_no_machine_stop_barrier(body);\n    });\n}",
+      "fn authenticate_forwarded_workload_admission_barrier() {\n    authenticate_no_machine_stop_barrier_without_lock();\n}",
+    ],
+    "machine-provision-admission-bypasses-barrier": [
+      "physicalProviderAdmissions",
+      "fn execute_exact_phase() {\n    authenticate_forwarded_workload_admission_barrier();\n    claim_dispatch_epoch_started();\n    self.phases.execute();\n}",
+      "fn execute_exact_phase() {\n    claim_dispatch_epoch_started();\n    self.phases.execute();\n}",
+    ],
+    "machine-provision-effect-before-barrier-auth": [
+      "physicalProviderAdmissions",
+      "fn execute_exact_phase() {\n    authenticate_forwarded_workload_admission_barrier();\n    claim_dispatch_epoch_started();\n    self.phases.execute();\n}",
+      "fn execute_exact_phase() {\n    self.phases.execute();\n    authenticate_forwarded_workload_admission_barrier();\n    claim_dispatch_epoch_started();\n}",
+    ],
+    "machine-publication-admission-bypasses-barrier": [
+      "physicalProviderAdmissions",
+      "fn publish() {\n    authenticate_forwarded_workload_admission_barrier();\n    reserve_parent_batch();\n    commit_before_machine_api();\n    provision_workload_phase();\n}",
+      "fn publish() {\n    reserve_parent_batch();\n    commit_before_machine_api();\n    provision_workload_phase();\n}",
+    ],
+    "machine-publication-effect-before-barrier-auth": [
+      "physicalProviderAdmissions",
+      "fn publish() {\n    authenticate_forwarded_workload_admission_barrier();\n    reserve_parent_batch();\n    commit_before_machine_api();\n    provision_workload_phase();\n}",
+      "fn publish() {\n    reserve_parent_batch();\n    authenticate_forwarded_workload_admission_barrier();\n    commit_before_machine_api();\n    provision_workload_phase();\n}",
+    ],
+    "machine-restart-admission-bypasses-barrier": [
+      "physicalProviderAdmissions",
+      "fn execute_restart_phase() {\n    authenticate_forwarded_workload_admission_barrier();\n    claim_restart_dispatch_started();\n    self.restart_phases.execute();\n}",
+      "fn execute_restart_phase() {\n    claim_restart_dispatch_started();\n    self.restart_phases.execute();\n}",
+    ],
+    "machine-restart-effect-before-barrier-auth": [
+      "physicalProviderAdmissions",
+      "fn execute_restart_phase() {\n    authenticate_forwarded_workload_admission_barrier();\n    claim_restart_dispatch_started();\n    self.restart_phases.execute();\n}",
+      "fn execute_restart_phase() {\n    self.restart_phases.execute();\n    authenticate_forwarded_workload_admission_barrier();\n    claim_restart_dispatch_started();\n}",
     ],
     "missing-ingress-capability": [
       "server",
@@ -736,6 +1071,31 @@ function applyFixtureMutation(sources, mutation) {
       "    NetworkAttachmentTeardownCapabilities::new();\n",
       "",
     ],
+    "missing-forwarded-canonical-registry": [
+      "forwardedCanonicalComposition",
+      "    let teardown = WorkloadTeardownCapabilityRegistry::new(\n",
+      "    let teardown = IncompleteTeardownRegistry::new(\n",
+    ],
+    "missing-forwarded-server-registry": [
+      "forwardedServerComposition",
+      "    prepare_forwarded_workload_profile(backend)\n",
+      "    prepare_forwarded_workload_without_teardown(backend)\n",
+    ],
+    "forwarded-server-discards-canonical-result": [
+      "forwardedServerComposition",
+      "    prepare_forwarded_workload_profile(backend)\n",
+      "    prepare_forwarded_workload_profile(backend);\n    prepare_forwarded_workload_without_teardown(backend)\n",
+    ],
+    "missing-forwarded-compose-registry": [
+      "forwardedComposeComposition",
+      "    prepare_forwarded_workload_profile(backend)\n",
+      "    prepare_forwarded_workload_without_teardown(backend)\n",
+    ],
+    "forwarded-compose-discards-canonical-result": [
+      "forwardedComposeComposition",
+      "    prepare_forwarded_workload_profile(backend)\n",
+      "    prepare_forwarded_workload_profile(backend);\n    prepare_forwarded_workload_without_teardown(backend)\n",
+    ],
     "missing-forwarded-lifecycle-prepared-start": [
       "sandbox",
       "fn claim_dispatch_epoch_started() {}",
@@ -777,6 +1137,33 @@ function applyFixtureMutation(sources, mutation) {
     );
   } else if (mutation === "cli-local-saga-store") {
     sources.cli += "\nstruct CliWorkloadSagaStore;\n";
+  } else if (mutation === "compose-direct-stop") {
+    sources.composeRetirement +=
+      "\nasync fn coarse_compose_stop(backend: &dyn SandboxBackend) { backend.stop(sandbox_id).await; }\n";
+  } else if (mutation === "coarse-guest-route-survives") {
+    sources.coarseGuestApi +=
+      '\nfn stop_service_sandbox() {}\nconst COARSE_OPERATION: &str = "service-sandboxes.stop";\n';
+  } else if (mutation === "coarse-guest-wire-survives") {
+    sources.coarseGuestApi +=
+      "\nstruct MachineApiServiceSandboxStopResponseWire;\nstruct MachineApiServiceSandboxStopResponse;\n";
+  } else if (mutation === "coarse-guest-capability-survives") {
+    sources.coarseGuestApi +=
+      "\nfn machine_api_capabilities() {\n    machine_api_operation_status(MACHINE_API_STOP_OPERATION, Vec::new());\n}\n";
+  } else if (mutation === "physical-effect-authentication-outside-stop-body") {
+    replaceOnce(
+      sources,
+      "physicalStopEffects",
+      "    authorization.authenticate_exact_machine_generation();\n",
+      "",
+    );
+    sources.physicalStopEffects +=
+      "\nfn unrelated_authentication(authorization: ConfirmedMachineStopAuthorization) {\n    authorization.authenticate_exact_machine_generation();\n}\n";
+  } else if (mutation === "machine-stop-policy-moved-to-server-adapter") {
+    sources.physicalStopDecisionStoreAdapter +=
+      "\nenum MachineWorkloadStopDecision { Crossed }\nfn classify_machine_stop_authority() {}\n";
+  } else if (mutation === "machine-barrier-persistence-moved-to-backend") {
+    sources.physicalProviderAdmissions +=
+      "\nfn persist_machine_stop_admission_barrier() {}\n";
   } else if (mutation === "missing-attributed-tests") {
     replaceOnceInNamedTest(
       sources,
@@ -866,12 +1253,7 @@ function applyFixtureMutation(sources, mutation) {
       "",
     );
   } else if (mutation === "missing-late-result-drain") {
-    replaceOnce(
-      sources,
-      "compute",
-      "fn retire_late_provision_result() {}",
-      "",
-    );
+    replaceOnce(sources, "compute", "fn retire_late_provision_result() {}", "");
     replaceOnce(
       sources,
       "resourceRetirement",
@@ -961,7 +1343,10 @@ export function verifyWorkloadTeardownContract() {
     sources.compute,
     "fn confirm_teardown_transition",
   );
-  const teardownDriver = extractItem(sources.compute, "impl WorkloadTeardownDriver");
+  const teardownDriver = extractItem(
+    sources.compute,
+    "impl WorkloadTeardownDriver",
+  );
   requireContract(
     hasAll(sources.workloads, [
       "WorkloadTeardownAttemptId",
@@ -973,7 +1358,10 @@ export function verifyWorkloadTeardownContract() {
         "record_resource_free_teardown_step",
         "record_terminal_teardown",
       ]) &&
-      hasAll(confirmation, ["confirm_transition", "WorkloadSagaConfirmation"]) &&
+      hasAll(confirmation, [
+        "confirm_transition",
+        "WorkloadSagaConfirmation",
+      ]) &&
       hasAll(teardownDriver, [
         "decide_teardown",
         "materialize_teardown_candidate",
@@ -1030,9 +1418,11 @@ export function verifyWorkloadTeardownContract() {
         "WorkloadSagaPhase::NetworkReleased",
         "ProposedWorkloadTeardownTransition::RecordTerminal",
       ]) &&
-      hasTestsAt(sources, "crates/nimbus-compute/src/workload_saga/teardown_driver/tests.rs", [
-        "teardown_driver_records_exact_five_step_order",
-      ]),
+      hasTestsAt(
+        sources,
+        "crates/nimbus-compute/src/workload_saga/teardown_driver/tests.rs",
+        ["teardown_driver_records_exact_five_step_order"],
+      ),
     workloadTeardownDiagnostics.order,
   );
 
@@ -1068,13 +1458,12 @@ export function verifyWorkloadTeardownContract() {
     sources.serverComposition,
     "pub struct ServerWorkloadProviders",
   );
-  const providerImpl = extractItem(
-    sources.serverComposition,
-    "impl ServerWorkloadProviders",
-  ) || extractItem(
-    sources.serverComposition,
-    "impl<Attachment, Execution, Ingress> ServerWorkloadProviders",
-  );
+  const providerImpl =
+    extractItem(sources.serverComposition, "impl ServerWorkloadProviders") ||
+    extractItem(
+      sources.serverComposition,
+      "impl<Attachment, Execution, Ingress> ServerWorkloadProviders",
+    );
   const intoManagedCompute = extractItem(
     sources.serverComposition,
     "fn into_managed_compute",
@@ -1083,12 +1472,18 @@ export function verifyWorkloadTeardownContract() {
     sources.computeState,
     "pub enum ComputeWorkloadComposition",
   );
-  const computeFromConfig = extractItem(sources.computeState, "pub fn from_config");
+  const computeFromConfig = extractItem(
+    sources.computeState,
+    "pub fn from_config",
+  );
   const localComposition = extractItem(
     sources.localComposition,
     "fn into_workload_composition",
   );
-  const serviceRoute = extractItem(sources.httpServices, "fn service_lifecycle_route");
+  const serviceRoute = extractItem(
+    sources.httpServices,
+    "fn service_lifecycle_route",
+  );
   const definitionRoute = extractItem(
     sources.httpServices,
     "fn delete_service_definition",
@@ -1102,7 +1497,10 @@ export function verifyWorkloadTeardownContract() {
     sources.computeServices,
     "fn delete_service_definition",
   );
-  const computeSandboxStop = extractItem(sources.computeSandboxes, "fn stop_sandbox");
+  const computeSandboxStop = extractItem(
+    sources.computeSandboxes,
+    "fn stop_sandbox",
+  );
   const serviceProvisionSettlement = extractItem(
     sources.provisionSettlementTests,
     "fn service_stop_joins_inflight_provision_and_retires_late_success",
@@ -1134,7 +1532,10 @@ export function verifyWorkloadTeardownContract() {
         "with_teardown_capabilities",
         "Some(teardown_capabilities)",
       ]) &&
-      hasAll(intoManagedCompute, ["teardown_capabilities", "ComputeWorkloadComposition::Managed"]) &&
+      hasAll(intoManagedCompute, [
+        "teardown_capabilities",
+        "ComputeWorkloadComposition::Managed",
+      ]) &&
       hasAll(computeComposition, [
         "teardown_capabilities",
         "ExactWorkloadTeardownCapabilityRealm",
@@ -1146,7 +1547,9 @@ export function verifyWorkloadTeardownContract() {
       /teardown_capabilities\s*:\s*Option\s*<\s*ExactWorkloadTeardownCapabilityRealm\s*>/u.test(
         serverWorkloadComposition,
       ) &&
-      sources.serverComposition.includes("ExactWorkloadTeardownCapabilityRealm::new") &&
+      sources.serverComposition.includes(
+        "ExactWorkloadTeardownCapabilityRealm::new",
+      ) &&
       hasAll(computeFromConfig, [
         "teardown_capabilities",
         "WorkloadTeardownRuntime::new",
@@ -1185,11 +1588,28 @@ export function verifyWorkloadTeardownContract() {
         "WorkloadExecutionReference",
       ]) &&
       hasAll(serviceRoute, ["tenant_context", "service_lifecycle"]) &&
-      hasAll(definitionRoute, ["tenant_context", "delete_service_definition", "&tenant_context"]) &&
-      hasAll(sandboxRoute, ["tenant_context", "stop_sandbox", "&authorization.tenant_context"]) &&
-      hasAll(computeServiceLifecycle, ["TenantIsolationContext", "submit_service_teardown"]) &&
-      hasAll(computeDefinitionDelete, ["TenantIsolationContext", "submit_definition_teardown"]) &&
-      hasAll(computeSandboxStop, ["TenantIsolationContext", "submit_sandbox_teardown"]) &&
+      hasAll(definitionRoute, [
+        "tenant_context",
+        "delete_service_definition",
+        "&tenant_context",
+      ]) &&
+      hasAll(sandboxRoute, [
+        "tenant_context",
+        "stop_sandbox",
+        "&authorization.tenant_context",
+      ]) &&
+      hasAll(computeServiceLifecycle, [
+        "TenantIsolationContext",
+        "submit_service_teardown",
+      ]) &&
+      hasAll(computeDefinitionDelete, [
+        "TenantIsolationContext",
+        "submit_definition_teardown",
+      ]) &&
+      hasAll(computeSandboxStop, [
+        "TenantIsolationContext",
+        "submit_sandbox_teardown",
+      ]) &&
       !/\b(?:retire_service_for_decision_async|retire_sandbox_resource_async)\b/u.test(
         sources.nativeCallers,
       ) &&
@@ -1213,37 +1633,383 @@ export function verifyWorkloadTeardownContract() {
       ]) &&
       !/yield_now\s*\(/u.test(sandboxProvisionSettlement) &&
       hasAll(sourceClaimWait, ["wait_for_signal", "entered", "source"]) &&
-      hasAll(sourceSignalWait, [
-        "tokio::time::timeout",
-        "entered.acquire",
-      ]) &&
+      hasAll(sourceSignalWait, ["tokio::time::timeout", "entered.acquire"]) &&
       !/yield_now\s*\(/u.test(`${sourceClaimWait}\n${sourceSignalWait}`) &&
       nativeSourceRetirementTestsPass(sources),
   );
 
+  const composeCommandRouter =
+    extractItem(
+      sources.composeCommand,
+      "pub(crate) async fn run_compose_command",
+    ) || extractItem(sources.composeCommand, "async fn run_compose_command");
+  const composeDown = extractItem(
+    sources.composeCommand,
+    "async fn run_compose_down",
+  );
+  const composeRetirement = extractItem(
+    sources.composeRetirement,
+    "async fn retire_compose_services",
+  );
+  const composeRuntimeBinding =
+    composeRetirement.match(
+      /\blet\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*prepared\s*\.\s*activate\s*\([^;{}]*\bsaga_store\b[^;{}]*\)\s*\??\s*;/u,
+    )?.[1] ?? "";
+  const composeExecutionBinding =
+    composeRetirement.match(
+      /\blet\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*outcome\s*\.\s*terminal_execution_reference\s*\(\s*\)\s*;/u,
+    )?.[1] ?? "";
+  const composeRecordedCall = extractCall(
+    composeRetirement,
+    "ComposeServiceRetirementOutcome::recorded",
+  );
   requireContract(
-    hasAll(sources.cli, [
-      "compose_down_engine_workload_saga_store",
-      "EngineWorkloadSagaStore",
-    ]) &&
-      hasAll(sources.compute, [
-        "submit_compose_teardown",
-        "wait_for_teardown_outcome",
+    /run_compose_down\s*\([^;{}]*persistence_config[^;{}]*\)\s*\.await/u.test(
+      composeCommandRouter,
+    ) &&
+      hasAll(composeDown, [
+        "EnginePersistenceConfig",
+        "Engine::new_with_persistence_config",
+        "retire_compose_services",
+        "quiesce",
       ]) &&
-      !/\bCliWorkloadSagaStore\b/u.test(sources.cli) &&
-      !/\bstop_service_target\b/u.test(sources.cli),
+      appearsInOrder(composeDown, [
+        "Engine::new_with_persistence_config",
+        "retire_compose_services",
+        "quiesce",
+      ]) &&
+      hasAll(composeRetirement, [
+        "EngineWorkloadSagaStore::new",
+        "prepared.activate",
+        "resource_retirer",
+        "submit_service_teardown",
+        "WorkloadTeardownDisposition::Recorded",
+        "terminal_execution_reference",
+        "ComposeServiceRetirementOutcome::recorded",
+      ]) &&
+      appearsInOrder(composeRetirement, [
+        "EngineWorkloadSagaStore::new",
+        "prepared.activate",
+        "resource_retirer",
+        "submit_service_teardown",
+        "WorkloadTeardownDisposition::Recorded",
+        "terminal_execution_reference",
+        "ComposeServiceRetirementOutcome::recorded",
+      ]) &&
+      composeRuntimeBinding.length > 0 &&
+      new RegExp(
+        `\\b${escapedRegex(composeRuntimeBinding)}\\s*\\.\\s*resource_retirer\\s*\\(`,
+        "u",
+      ).test(composeRetirement) &&
+      composeExecutionBinding.length > 0 &&
+      new RegExp(`\\b${escapedRegex(composeExecutionBinding)}\\b`, "u").test(
+        composeRecordedCall,
+      ) &&
+      /return\s+ComposeServiceRetirementOutcome::recorded\s*\(/u.test(
+        composeRetirement,
+      ) &&
+      !/\bCliWorkloadSagaStore\b/u.test(
+        `${sources.cli}\n${sources.composeRetirement}`,
+      ) &&
+      !/\bstop_service_target\b|\bstop_service_sandbox\b|\bservice-sandboxes\.stop\b/u.test(
+        `${sources.composeCommand}\n${sources.composeRetirement}`,
+      ) &&
+      !/\bbackend\s*\.\s*stop\s*\(/u.test(sources.composeRetirement),
     workloadTeardownDiagnostics.compose,
   );
 
+  const exactGuestValidation = extractItem(
+    sources.exactGuestTeardown,
+    "fn validate(",
+  );
+  const exactGuestDispatch = extractItem(
+    sources.exactGuestTeardown,
+    "async fn dispatch(",
+  );
+  const exactGuestExecute = extractItem(
+    sources.exactGuestTeardown,
+    "async fn execute(",
+  );
+  const exactGuestRemoteResult = extractItem(
+    sources.exactGuestTeardown,
+    "fn remote_result(",
+  );
+  const exactGuestValidatedBinding =
+    exactGuestDispatch.match(
+      /\blet\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*self\s*\.\s*validate\s*\([^;]*\)\s*\??\s*;/u,
+    )?.[1] ?? "";
+  const exactGuestClaimIndex = exactGuestExecute.indexOf(
+    "claim_execute_started",
+  );
+  const exactGuestPreClaim =
+    exactGuestClaimIndex >= 0
+      ? exactGuestExecute.slice(0, exactGuestClaimIndex)
+      : exactGuestExecute;
+  const guestRemoteEffectTokens = [
+    "remote_result",
+    "teardown_workload_phase_prepared",
+    "teardown_workload_phase",
+    "provision_workload_phase",
+  ];
+  const coarseGuestTokens = [
+    "stop_service_sandbox",
+    "service-sandboxes.stop",
+    "MACHINE_API_SERVICE_SANDBOX_STOP_PATH",
+    "MACHINE_API_STOP_OPERATION",
+    "machine_api_service_sandbox_stop_path",
+    "MachineApiServiceSandboxStopRequest",
+    "MachineApiServiceSandboxStopResponse",
+    "MachineApiServiceSandboxStopResponseWire",
+  ];
+  const initialDesireAdmission =
+    extractItem(
+      sources.physicalDesireAdmissions,
+      "pub async fn submit_intent(",
+    ) ||
+    extractItem(sources.physicalDesireAdmissions, "async fn submit_intent(");
+  const restartDesireAdmission = extractItem(
+    sources.physicalDesireAdmissions,
+    "async fn compare_and_swap_restart_admission(",
+  );
+  const initialDesireGuard = extractItem(
+    initialDesireAdmission,
+    "with_machine_desire_admission_guard",
+  );
+  const restartDesireGuard = extractItem(
+    restartDesireAdmission,
+    "with_machine_desire_admission_guard",
+  );
+  const physicalStopDecision = extractItem(
+    sources.physicalStopDecision,
+    "async fn authorize_machine_stop(",
+  );
+  const desireAdmissionGuard = extractItem(
+    sources.physicalStopProvider,
+    "fn with_machine_desire_admission_guard(",
+  );
+  const desireAdmissionLockedMutation = extractItem(
+    desireAdmissionGuard,
+    "self.mutate_async",
+  );
+  const machineStopBarrierClaim = extractItem(
+    sources.physicalStopProvider,
+    "fn claim_machine_stop_admission_barrier(",
+  );
+  const providerAdmissionAuthentication = extractItem(
+    sources.physicalStopProvider,
+    "fn authenticate_forwarded_workload_admission_barrier(",
+  );
+  const provisionAdmission = extractItem(
+    sources.physicalProviderAdmissions,
+    "fn execute_exact_phase(",
+  );
+  const publicationAdmission = extractItem(
+    sources.physicalProviderAdmissions,
+    "fn publish(",
+  );
+  const restartProviderAdmission = extractItem(
+    sources.physicalProviderAdmissions,
+    "fn execute_restart_phase(",
+  );
+  const standaloneStop = extractItem(
+    sources.physicalStopStandalone,
+    "fn run_machine_stop(",
+  );
+  const serverStop = extractItem(
+    sources.physicalStopServer,
+    "fn stop_machine<'a>(",
+  );
+  const restartStop = extractItem(
+    sources.physicalStopServer,
+    "fn restart_machine<'a>(",
+  );
+  const bootcRestartStop = extractItem(
+    sources.physicalStopOs,
+    "fn restart_bootc_machine(",
+  );
+  const osApplyRestartStop = extractItem(
+    sources.physicalStopOs,
+    "fn apply_machine_os_change(",
+  );
+  const guardedStopCallers = [
+    standaloneStop,
+    serverStop,
+    restartStop,
+    bootcRestartStop,
+    osApplyRestartStop,
+  ];
+  const physicalStopDecisionVariants = enumVariants(
+    sources.physicalStopDecision,
+    "MachineWorkloadStopDecision",
+  );
+  const physicalStopEffect =
+    extractItem(sources.physicalStopEffects, "pub(super) fn stop_machine(") ||
+    extractItem(sources.physicalStopEffects, "fn stop_machine(");
+  const machineStopPolicyTokens = [
+    "MachineWorkloadStopDecision",
+    "classify_machine_stop_authority",
+    "list_machine_workload_authority_from_engine",
+  ];
+  const machineStopPolicyWrongOwners = [
+    sources.physicalStopDecisionStoreAdapter,
+    sources.physicalStopProvider,
+    sources.physicalProviderAdmissions,
+  ];
+  const machineStopBarrierWrongOwners = [
+    sources.physicalStopDecision,
+    sources.physicalStopDecisionStoreAdapter,
+    sources.physicalProviderAdmissions,
+    sources.physicalStopEffects,
+    sources.physicalStopStandalone,
+    sources.physicalStopServer,
+    sources.physicalStopOs,
+  ];
+  const machineStopBarrierDefinition =
+    /\b(?:struct\s+MachineStopAdmissionBarrier|fn\s+(?:claim_machine_stop_admission_barrier|persist_machine_stop_admission_barrier|clear_unchanged_effect_free_machine_stop_barrier|retain_ambiguous_machine_stop_barrier|authenticate_forwarded_workload_admission_barrier)\s*\()/u;
   requireContract(
-    hasAll(sources.cli, [
+    hasAll(sources.exactGuestTeardown, [
       "MachineApiWorkloadTeardownCommandEnvelope",
-      "dispatch_machine_teardown_phase",
-      "authenticate_machine_teardown_attempt_and_epoch",
-      "withdraw_parent_publication_before_guest_stop",
-      "release_parent_publication_after_guest_absence",
-      "ensure_no_active_workload_sagas_before_machine_stop",
-    ]) && !/\bstop_service_sandbox\b/u.test(sources.cli),
+      "fn build_remote_request",
+      "validate_source_and_target",
+      "validate_subjects",
+      "validate_retirement_order",
+      "claim_execute_started",
+      "release_parent_batch_after_guest_release",
+    ]) &&
+      appearsInOrder(exactGuestValidation, [
+        "validate_source_and_target",
+        "validate_subjects",
+        "validate_retirement_order",
+      ]) &&
+      exactGuestValidatedBinding.length > 0 &&
+      new RegExp(
+        `self\\s*\\.\\s*execute\\s*\\(\\s*${escapedRegex(exactGuestValidatedBinding)}\\s*\\)`,
+        "u",
+      ).test(exactGuestDispatch) &&
+      /\bremote_request\s*=\s*validated\s*\.\s*remote_request\b/u.test(
+        exactGuestExecute,
+      ) &&
+      exactGuestClaimIndex >= 0 &&
+      guestRemoteEffectTokens.every(
+        (token) => !exactGuestPreClaim.includes(token),
+      ) &&
+      appearsInOrder(exactGuestExecute, [
+        "claim_execute_started",
+        "execute_started_claim_async",
+        "remote_result",
+      ]) &&
+      exactGuestRemoteResult.includes("teardown_workload_phase_prepared") &&
+      coarseGuestTokens.every(
+        (token) => !sources.coarseGuestApi.includes(token),
+      ) &&
+      !/machine_api_operation_status\s*\(\s*MACHINE_API_STOP_OPERATION\b/u.test(
+        sources.coarseGuestApi,
+      ) &&
+      [
+        "EmptyWithFence",
+        "ActiveWorkloadTeardownRequired",
+        "AuthorityUnavailable",
+        "Ambiguous",
+        "Corrupt",
+        "Stale",
+        "Crossed",
+      ].every((variant) => physicalStopDecisionVariants.includes(variant)) &&
+      initialDesireGuard.includes("commit_loaded") &&
+      restartDesireGuard.includes("commit_loaded") &&
+      hasAll(sources.physicalStopDecision, machineStopPolicyTokens) &&
+      machineStopPolicyWrongOwners.every((owner) =>
+        machineStopPolicyTokens.every((token) => !owner.includes(token)),
+      ) &&
+      appearsInOrder(physicalStopDecision, [
+        "claim_machine_stop_admission_barrier",
+        "list_machine_workload_authority_from_engine",
+        "classify_machine_stop_authority",
+        "clear_unchanged_effect_free_machine_stop_barrier",
+      ]) &&
+      !/system_projection|ip_address|socket_addr/u.test(
+        sources.physicalStopDecision,
+      ) &&
+      hasAll(sources.physicalStopProvider, [
+        "MachineStopAdmissionBarrier",
+        "claim_machine_stop_admission_barrier",
+        "authenticate_forwarded_workload_admission_barrier",
+        "retain_ambiguous_machine_stop_barrier",
+      ]) &&
+      appearsInOrder(machineStopBarrierClaim, [
+        "self.mutate",
+        "authenticate_exact_machine_incarnation",
+        "persist_machine_stop_admission_barrier",
+      ]) &&
+      appearsInOrder(desireAdmissionGuard, [
+        "self.mutate",
+        "authenticate_no_machine_stop_barrier",
+        "operation().await",
+        "settle_machine_desire_admission_guard",
+        "result",
+      ]) &&
+      appearsInOrder(desireAdmissionLockedMutation, [
+        "authenticate_no_machine_stop_barrier",
+        "operation().await",
+        "settle_machine_desire_admission_guard",
+        "result",
+      ]) &&
+      appearsInOrder(providerAdmissionAuthentication, [
+        "self.mutate",
+        "authenticate_no_machine_stop_barrier",
+      ]) &&
+      appearsBeforeEvery(
+        provisionAdmission,
+        "authenticate_forwarded_workload_admission_barrier",
+        ["claim_dispatch_epoch_started", "self.phases.execute"],
+      ) &&
+      appearsBeforeEvery(
+        publicationAdmission,
+        "authenticate_forwarded_workload_admission_barrier",
+        [
+          "reserve_parent_batch",
+          "commit_before_machine_api",
+          "provision_workload_phase",
+        ],
+      ) &&
+      appearsBeforeEvery(
+        restartProviderAdmission,
+        "authenticate_forwarded_workload_admission_barrier",
+        ["claim_restart_dispatch_started", "self.restart_phases.execute"],
+      ) &&
+      hasAll(physicalStopEffect, [
+        "ConfirmedMachineStopAuthorization",
+        "authenticate_exact_machine_generation",
+        "withdraw_machine_publications",
+        "withdraw_machine_ssh_port",
+        "stop_provider_machine",
+        "stop_pid",
+        "stop_exact_process",
+        "super::write_json_file",
+      ]) &&
+      appearsInOrder(physicalStopEffect, [
+        "authenticate_exact_machine_generation",
+        "withdraw_machine_publications",
+        "withdraw_machine_ssh_port",
+        "stop_provider_machine",
+        "stop_pid",
+        "stop_exact_process",
+        "super::write_json_file",
+      ]) &&
+      machineStopBarrierWrongOwners.every(
+        (owner) => !machineStopBarrierDefinition.test(owner),
+      ) &&
+      guardedStopCallers.every((caller) =>
+        appearsInOrder(caller, [
+          "authorize_machine_stop",
+          "stop_machine_with_authorization",
+        ]),
+      ) &&
+      !/\braw_machine_stop\s*\(/u.test(
+        `${sources.physicalStopStandalone}\n${sources.physicalStopServer}\n${sources.physicalStopOs}`,
+      ) &&
+      !/\bstop_machine\s*\(\s*network\s*,\s*paths\s*,\s*config\s*,\s*state\s*\)/u.test(
+        sources.physicalStopOs,
+      ),
     workloadTeardownDiagnostics.machine,
   );
 
@@ -1255,6 +2021,37 @@ export function verifyWorkloadTeardownContract() {
       "WorkloadExecutionTeardownCapabilities::new",
       "IngressTeardownCapabilities::new",
     ]) &&
+      hasAll(sources.forwardedCanonicalComposition, [
+        "teardown_capabilities",
+        "WorkloadTeardownCapabilityRegistry::new",
+        "with_teardown_capabilities",
+      ]) &&
+      countOccurrences(
+        `${sources.forwardedCanonicalComposition}\n${sources.forwardedServerComposition}\n${sources.forwardedComposeComposition}`,
+        "WorkloadTeardownCapabilityRegistry::new",
+      ) === 1 &&
+      returnsCallResult(
+        extractItem(
+          sources.forwardedServerComposition,
+          "fn compose_forwarded_server(",
+        ),
+        "prepare_forwarded_workload_profile",
+      ) &&
+      returnsCallResult(
+        extractItem(
+          sources.forwardedComposeComposition,
+          "fn compose_forwarded_foreground(",
+        ),
+        "prepare_forwarded_workload_profile",
+      ) &&
+      !hasAll(sources.forwardedServerComposition, [
+        "teardown_capabilities",
+        "WorkloadTeardownCapabilityRegistry::new",
+      ]) &&
+      !hasAll(sources.forwardedComposeComposition, [
+        "teardown_capabilities",
+        "WorkloadTeardownCapabilityRegistry::new",
+      ]) &&
       forwardedMachineTestsPass(sources, FORWARDED_MACHINE_TESTS.registry),
     workloadTeardownDiagnostics.forwardedMachineRegistry,
   );
@@ -1287,8 +2084,7 @@ export function verifyWorkloadTeardownContract() {
       "execute_started_claim_async",
       "adopt_inspect",
       "inspect_current_claim_async_and_publish",
-    ]) &&
-      forwardedMachineTestsPass(sources, FORWARDED_MACHINE_TESTS.recovery),
+    ]) && forwardedMachineTestsPass(sources, FORWARDED_MACHINE_TESTS.recovery),
     workloadTeardownDiagnostics.forwardedMachineRecovery,
   );
 
