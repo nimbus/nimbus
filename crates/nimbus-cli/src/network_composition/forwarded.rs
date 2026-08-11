@@ -4,33 +4,25 @@
 //! selection. This child owns the forwarded profile's delayed activation and
 //! exact provider composition after the caller supplies its `Engine`.
 
+mod profile;
+
 use std::path::Path;
 use std::sync::Arc;
 
-use nimbus::{
-    Engine, LocalBuildAdmission, SandboxBackend, ServiceDefinitionCatalog, ServiceManager,
-};
-use nimbus_server::{ServeOptions, ServerWorkloadComposition, ServerWorkloadProviders};
+use nimbus::Engine;
+use nimbus_server::{ServeOptions, ServerWorkloadComposition};
+
+pub(crate) use profile::{PreparedForwardedWorkloadProfile, prepare_forwarded_workload_profile};
 
 use super::{
-    FrozenLocalNetworkComposition, LocalNetworkCompositionError, PreparedLocalNetworkComposition,
-    PreparedServerWorkloadProfile, StagedLocalNetworkComposition,
+    LocalNetworkCompositionError, PreparedLocalNetworkComposition, PreparedServerWorkloadProfile,
+    StagedLocalNetworkComposition,
 };
 use crate::compose::discovery::ResolvedComposeSelection;
 use crate::compose::{
     PreparedForwardedComposeProvisionSource, prepare_forwarded_compose_provision_source,
 };
-use crate::machine::{
-    ForwardedMachineApiSandboxBackend, HostMachineNetworkAuthority,
-    PreparedDefaultMachineProvisionSource,
-};
-
-pub(crate) struct PreparedForwardedServerWorkload {
-    pub(super) network: FrozenLocalNetworkComposition,
-    pub(super) source: PreparedDefaultMachineProvisionSource,
-    pub(super) catalog: Arc<dyn ServiceDefinitionCatalog>,
-    pub(super) local_build_admission: LocalBuildAdmission,
-}
+use crate::machine::HostMachineNetworkAuthority;
 
 pub(super) fn prepare_source(
     staged: &StagedLocalNetworkComposition,
@@ -74,16 +66,16 @@ pub(super) fn prepare_server_workload_profile(
         );
     }
     Ok(Some(PreparedServerWorkloadProfile::Forwarded(Box::new(
-        PreparedForwardedServerWorkload {
-            network: composition.frozen.clone(),
-            source: forwarded.source.clone(),
-            catalog: Arc::clone(&forwarded.catalog),
-            local_build_admission: forwarded.local_build_admission,
-        },
+        PreparedForwardedWorkloadProfile::new(
+            composition.frozen.clone(),
+            forwarded.source.clone(),
+            Arc::clone(&forwarded.catalog),
+            forwarded.local_build_admission,
+        ),
     ))))
 }
 
-impl PreparedForwardedServerWorkload {
+impl PreparedForwardedWorkloadProfile {
     pub(super) fn complete(
         self,
         engine: Arc<Engine>,
@@ -97,68 +89,29 @@ impl PreparedForwardedServerWorkload {
         self,
         engine: Arc<Engine>,
     ) -> Result<ServerWorkloadComposition, LocalNetworkCompositionError> {
-        let selection = self.source.selection().clone();
-        let requirements = self.source.requirements().clone();
-        let sovereignty = self.source.sovereignty().clone();
-        let local_node = self.source.node_identity().clone();
-        let execution_provider_id = self.source.execution_provider_id().clone();
-        self.network
-            .manager()
-            .capability_registry()
-            .select_exact(&selection, &requirements)
-            .map_err(LocalNetworkCompositionError::CapabilitySelection)?;
-        let activated = self
-            .source
-            .activate()
-            .map_err(LocalNetworkCompositionError::Compose)?;
-        let (client, adapter) = activated.into_parts();
-        let parent_network = HostMachineNetworkAuthority::injected(self.network.authority());
-        let read_retirement_backend: Arc<dyn SandboxBackend> = Arc::new(
-            ForwardedMachineApiSandboxBackend::with_provision_adapter(
-                client,
-                &parent_network,
-                Arc::clone(&adapter),
-            )
-            .map_err(LocalNetworkCompositionError::Compose)?,
-        );
-        let service_manager = Arc::new(
-            ServiceManager::new(self.catalog, read_retirement_backend)
-                .with_local_build_admission(self.local_build_admission),
-        );
-        let providers = ServerWorkloadProviders::new(
-            selection.attachment_provider_id().clone(),
-            Arc::clone(&adapter),
-            execution_provider_id,
-            Arc::clone(&adapter),
-            selection.ingress_provider_id().clone(),
-            adapter,
-        )
-        .with_restart_capabilities();
-        ServerWorkloadComposition::new(
-            engine,
-            self.network.manager(),
-            service_manager,
-            local_node,
-            selection,
-            sovereignty,
-            providers,
-        )
-        .map_err(LocalNetworkCompositionError::ServerWorkload)
+        compose_forwarded_server(self, engine)
     }
+}
+
+fn compose_forwarded_server(
+    prepared: PreparedForwardedWorkloadProfile,
+    engine: Arc<Engine>,
+) -> Result<ServerWorkloadComposition, LocalNetworkCompositionError> {
+    prepare_forwarded_workload_profile(prepared, engine)
 }
 
 #[cfg(test)]
 pub(crate) fn prepare_forwarded_server_profile_for_test(
     staged: StagedLocalNetworkComposition,
-    source: PreparedDefaultMachineProvisionSource,
+    source: crate::machine::PreparedDefaultMachineProvisionSource,
 ) -> Result<PreparedServerWorkloadProfile, LocalNetworkCompositionError> {
     let network = staged.freeze_bundle(source.bundle().clone())?;
     Ok(PreparedServerWorkloadProfile::Forwarded(Box::new(
-        PreparedForwardedServerWorkload {
+        PreparedForwardedWorkloadProfile::new(
             network,
             source,
-            catalog: Arc::new(nimbus::EmptyServiceDefinitionCatalog),
-            local_build_admission: LocalBuildAdmission::Denied,
-        },
+            Arc::new(nimbus::EmptyServiceDefinitionCatalog),
+            nimbus::LocalBuildAdmission::Denied,
+        ),
     )))
 }

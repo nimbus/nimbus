@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[cfg(all(test, target_os = "linux"))]
-use nimbus::ServiceManager;
 use nimbus::{Engine, EnginePersistenceConfig, Error, SandboxBackend};
 #[cfg(test)]
 use nimbus::{SandboxHandle, TenantId};
@@ -32,8 +30,6 @@ use self::commands::{
     ComposeExportSubcommand, ComposeInspectCommand, ComposeLogsCommand, ComposePsCommand,
     ComposeQuadletExportMode, ComposeSubcommand, ComposeTopCommand, ComposeUpCommand,
 };
-#[cfg(all(test, target_os = "linux"))]
-use self::execution::load_host_backed_service_manager_for_platform_selection_with_admission;
 pub(crate) use self::execution::prepare_local_service_manager_for_selection_with_isolation_mode;
 use self::execution::{
     LocalKrunExecutionSurface, ServiceExecutionSurface, ServiceHostPlatform,
@@ -118,21 +114,6 @@ pub(crate) fn load_compose_project_context_for_selection_with_isolation_mode(
     ComposeProjectContext::load_selection_with_admission(
         selection,
         control_data_dir,
-        compose_admission_mode_for_tenant_isolation(tenant_isolation_mode),
-    )
-}
-
-#[cfg(all(test, target_os = "linux"))]
-pub(crate) fn load_host_backed_service_manager_for_selection_with_isolation_mode(
-    selection: &ResolvedComposeSelection,
-    control_data_dir: &std::path::Path,
-    tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
-) -> Result<ServiceManager, Error> {
-    load_host_backed_service_manager_for_platform_selection_with_admission(
-        selection,
-        control_data_dir,
-        ServiceHostPlatform::current(),
-        None,
         compose_admission_mode_for_tenant_isolation(tenant_isolation_mode),
     )
 }

@@ -243,11 +243,18 @@ fn compose_local_and_forwarded_restart_use_compute() {
     let local = include_str!("../../network_composition.rs");
     let forwarded_server = include_str!("../../network_composition/forwarded.rs");
     let forwarded_foreground = include_str!("../provision.rs");
+    let canonical_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/network_composition/forwarded/profile.rs");
+    let canonical = std::fs::read_to_string(&canonical_path).unwrap_or_else(|error| {
+        panic!(
+            "the canonical forwarded composition must exist at {}: {error}",
+            canonical_path.display()
+        )
+    });
 
     for (owner, source) in [
         ("local server profile", local),
-        ("forwarded server profile", forwarded_server),
-        ("forwarded foreground Compose", forwarded_foreground),
+        ("canonical forwarded profile", canonical.as_str()),
     ] {
         assert_eq!(
             source.matches(".with_restart_capabilities()").count(),
@@ -258,6 +265,37 @@ fn compose_local_and_forwarded_restart_use_compute() {
             !source.contains("submit_service_restart") && !source.contains("stop_service_sandbox"),
             "{owner} must not compose an explicit or stop/start restart path"
         );
+    }
+    assert_eq!(
+        canonical
+            .matches("WorkloadTeardownCapabilityRegistry::new")
+            .count(),
+        1,
+        "the canonical forwarded composition must construct one exact teardown registry"
+    );
+    assert!(canonical.contains(".with_teardown_capabilities(teardown_capabilities)"));
+    for (owner, source, function) in [
+        (
+            "forwarded server profile",
+            forwarded_server,
+            "fn compose_forwarded_server(",
+        ),
+        (
+            "forwarded foreground Compose",
+            forwarded_foreground,
+            "fn compose_forwarded_foreground(",
+        ),
+    ] {
+        assert!(
+            source.contains(function),
+            "{owner} must retain its thin consumer"
+        );
+        assert!(
+            source.contains("prepare_forwarded_workload_profile("),
+            "{owner} must return the canonical forwarded composition"
+        );
+        assert!(!source.contains("WorkloadTeardownCapabilityRegistry::new"));
+        assert!(!source.contains(".with_restart_capabilities()"));
     }
 }
 

@@ -55,12 +55,17 @@
       "kind": "behavioral",
       "artifact": "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4-atomic-provision-caller-cutover.md",
       "marker": "NNCV033 is green at `40/40`, its standalone"
+    },
+    "nnc6.5f1": {
+      "kind": "behavioral",
+      "artifact": "docs/private/plans/proof/nimbus-network-control-plane/nnc6.5f1-canonical-forwarded-composition.md",
+      "marker": "| K1 | `network_composition/forwarded/profile.rs` is the sole forwarded activation and provider-composition owner. |"
     }
   },
   "summary": {
-    "occurrences": 116,
+    "occurrences": 115,
     "owning_managers": 25,
-    "manager_derived_handles": 42,
+    "manager_derived_handles": 41,
     "admitted_cross_process_reconstructions": 24,
     "test_fixtures": 25
   },
@@ -80,7 +85,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_down",
       "ordinal": 1,
-      "line": 236,
+      "line": 217,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -90,7 +95,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_ps",
       "ordinal": 1,
-      "line": 259,
+      "line": 240,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -100,7 +105,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_inspect",
       "ordinal": 1,
-      "line": 281,
+      "line": 262,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -110,7 +115,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_logs",
       "ordinal": 1,
-      "line": 303,
+      "line": 284,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -120,7 +125,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_top",
       "ordinal": 1,
-      "line": 329,
+      "line": 310,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -130,7 +135,7 @@
       "kind": "local-node-root-resolver",
       "symbol": "prepare_standalone_compose_network",
       "ordinal": 1,
-      "line": 353,
+      "line": 334,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -140,7 +145,7 @@
       "kind": "cli-staged-manager-claim",
       "symbol": "prepare_standalone_compose_network",
       "ordinal": 1,
-      "line": 357,
+      "line": 338,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -150,7 +155,7 @@
       "kind": "cli-attachment-only-composition",
       "symbol": "prepare_standalone_compose_network",
       "ordinal": 1,
-      "line": 359,
+      "line": 340,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -160,7 +165,7 @@
       "kind": "local-node-root-resolver",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 116,
+      "line": 110,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc6.4"
@@ -170,7 +175,7 @@
       "kind": "cli-staged-manager-claim",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 120,
+      "line": 114,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc6.4"
@@ -180,7 +185,7 @@
       "kind": "cli-complete-composition",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 125,
+      "line": 119,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc6.4"
@@ -190,17 +195,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 145,
-      "classification": "manager-derived-handle",
-      "os_node_realm": "parent-host",
-      "evidence": "nnc6.4"
-    },
-    {
-      "path": "crates/nimbus-cli/src/compose/provision.rs",
-      "kind": "manager-derived-parent-machine-authority",
-      "symbol": "activate",
-      "ordinal": 1,
-      "line": 195,
+      "line": 139,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.4"
@@ -450,7 +445,7 @@
       "kind": "capability-bundle-construction",
       "symbol": "into_registry",
       "ordinal": 1,
-      "line": 83,
+      "line": 85,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -460,7 +455,7 @@
       "kind": "capability-registry-construction",
       "symbol": "into_registry",
       "ordinal": 1,
-      "line": 88,
+      "line": 90,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -470,7 +465,7 @@
       "kind": "manager-bootstrap",
       "symbol": "claim",
       "ordinal": 1,
-      "line": 104,
+      "line": 106,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -480,7 +475,7 @@
       "kind": "oci-process-construction",
       "symbol": "prepare_krun_process",
       "ordinal": 1,
-      "line": 143,
+      "line": 145,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -490,20 +485,20 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "prepare_source",
       "ordinal": 1,
-      "line": 43,
+      "line": 35,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.4"
     },
     {
-      "path": "crates/nimbus-cli/src/network_composition/forwarded.rs",
+      "path": "crates/nimbus-cli/src/network_composition/forwarded/profile.rs",
       "kind": "manager-derived-parent-machine-authority",
-      "symbol": "into_workload_composition",
+      "symbol": "prepare_forwarded_workload_profile",
       "ordinal": 1,
-      "line": 115,
+      "line": 68,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
-      "evidence": "nnc6.4"
+      "evidence": "nnc6.5f1"
     },
     {
       "path": "crates/nimbus-cli/src/start/boot.rs",

@@ -14,7 +14,12 @@ use nimbus_compute::workload_network_plan::{
 };
 use nimbus_compute::workload_saga::{
     ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadRestartCommand,
+    ConfirmedWorkloadTeardownCommand, FinalIngressWithdrawalCapability,
+    IngressTeardownCapabilities, NetworkAttachmentTeardownCapabilities,
+    NetworkDetachmentCapability, NetworkReleaseCapability, WorkloadExecutionDrainCapability,
+    WorkloadExecutionStopCapability, WorkloadExecutionTeardownCapabilities,
     WorkloadProvisionCapabilityFuture, WorkloadRestartCapabilityFuture,
+    WorkloadTeardownCapabilityFuture,
 };
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
@@ -113,6 +118,26 @@ macro_rules! effect_capability {
     };
 }
 
+macro_rules! effect_teardown_capability {
+    ($provider:ty, $trait_name:ident) => {
+        impl $trait_name for $provider {
+            fn execute<'a>(
+                &'a self,
+                _command: &'a ConfirmedWorkloadTeardownCommand,
+            ) -> WorkloadTeardownCapabilityFuture<'a> {
+                panic!("composition must not execute a teardown provider effect")
+            }
+
+            fn inspect<'a>(
+                &'a self,
+                _command: &'a ConfirmedWorkloadTeardownCommand,
+            ) -> WorkloadTeardownCapabilityFuture<'a> {
+                panic!("composition must not inspect teardown provider state")
+            }
+        }
+    };
+}
+
 effect_capability!(
     EffectForbiddenAttachmentProvider,
     NetworkReservationCapability
@@ -125,6 +150,11 @@ effect_restart_capability!(
     EffectForbiddenAttachmentProvider,
     NetworkRestartAttachmentCapability
 );
+effect_teardown_capability!(
+    EffectForbiddenAttachmentProvider,
+    NetworkDetachmentCapability
+);
+effect_teardown_capability!(EffectForbiddenAttachmentProvider, NetworkReleaseCapability);
 
 struct EffectForbiddenExecutionProvider;
 
@@ -184,6 +214,14 @@ inspect_restart_capability!(
     EffectForbiddenExecutionProvider,
     WorkloadRestartReadinessCapability
 );
+effect_teardown_capability!(
+    EffectForbiddenExecutionProvider,
+    WorkloadExecutionDrainCapability
+);
+effect_teardown_capability!(
+    EffectForbiddenExecutionProvider,
+    WorkloadExecutionStopCapability
+);
 
 struct EffectForbiddenIngressProvider;
 
@@ -215,6 +253,10 @@ effect_restart_capability!(EffectForbiddenIngressProvider, RestartPublicationCap
 inspect_restart_capability!(
     EffectForbiddenIngressProvider,
     RestartPublicationObservationCapability
+);
+effect_teardown_capability!(
+    EffectForbiddenIngressProvider,
+    FinalIngressWithdrawalCapability
 );
 
 #[derive(Default)]
@@ -377,6 +419,50 @@ fn providers(
     .with_restart_capabilities()
 }
 
+fn teardown_capabilities(
+    attachment_provider_id: NetworkProviderId,
+    ingress_provider_id: NetworkProviderId,
+    execution_provider_id: WorkloadExecutionProviderId,
+) -> WorkloadTeardownCapabilityRegistry {
+    let attachment = Arc::new(EffectForbiddenAttachmentProvider);
+    let execution = Arc::new(EffectForbiddenExecutionProvider);
+    let ingress = Arc::new(EffectForbiddenIngressProvider);
+    WorkloadTeardownCapabilityRegistry::new(
+        [NetworkAttachmentTeardownCapabilities::new(
+            attachment_provider_id,
+            attachment.clone(),
+            attachment,
+        )],
+        [WorkloadExecutionTeardownCapabilities::new(
+            execution_provider_id,
+            execution.clone(),
+            execution,
+        )],
+        [IngressTeardownCapabilities::new(
+            ingress_provider_id,
+            ingress,
+        )],
+    )
+    .expect("one exact effect-forbidden teardown realm should validate")
+}
+
+fn providers_with_teardown(
+    attachment_provider_id: NetworkProviderId,
+    ingress_provider_id: NetworkProviderId,
+    execution_provider_id: WorkloadExecutionProviderId,
+) -> TestProviders {
+    providers(
+        attachment_provider_id.clone(),
+        ingress_provider_id.clone(),
+        execution_provider_id.clone(),
+    )
+    .with_teardown_capabilities(teardown_capabilities(
+        attachment_provider_id,
+        ingress_provider_id,
+        execution_provider_id,
+    ))
+}
+
 fn sovereignty() -> NetworkSovereigntyRequirements {
     NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true)
 }
@@ -396,6 +482,23 @@ fn valid_composition(fixture: &Fixture) -> ServerWorkloadComposition {
         ),
     )
     .expect("complete exact fixture should compose")
+}
+
+fn valid_teardown_composition(fixture: &Fixture) -> ServerWorkloadComposition {
+    ServerWorkloadComposition::new(
+        Arc::clone(&fixture.engine),
+        Arc::clone(&fixture.manager),
+        Arc::clone(&fixture.service_manager),
+        NodeIdentity::new("server-composition-node").expect("fixture node should validate"),
+        fixture.selection.clone(),
+        sovereignty(),
+        providers_with_teardown(
+            fixture.attachment_provider_id.clone(),
+            fixture.ingress_provider_id.clone(),
+            fixture.execution_provider_id.clone(),
+        ),
+    )
+    .expect("complete exact teardown fixture should compose")
 }
 
 fn snapshot_regular_files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
@@ -607,6 +710,110 @@ async fn foreground_runtime_retains_exact_injected_authority_without_eager_effec
     assert_eq!(
         snapshot_regular_files(fixture.network_root.path()),
         before_network,
+    );
+}
+
+#[test]
+fn foreground_retirement_facade_fails_closed_without_exact_teardown_composition() {
+    let fixture = fixture();
+    let before_engine = snapshot_regular_files(fixture.engine_root.path());
+    let before_network = snapshot_regular_files(fixture.network_root.path());
+    let injected_store = Arc::new(InjectedSagaStore::default());
+    let runtime = valid_composition(&fixture).into_foreground_runtime(injected_store.clone());
+
+    let error = match runtime.resource_retirer() {
+        Ok(_) => panic!("a provision-only foreground realm must not expose retirement authority"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("native workload retirement requires exact teardown composition"),
+        "missing exact teardown must retain the compute-owned error: {error}"
+    );
+    assert_eq!(injected_store.loads.load(Ordering::Acquire), 0);
+    assert_eq!(
+        snapshot_regular_files(fixture.engine_root.path()),
+        before_engine
+    );
+    assert_eq!(
+        snapshot_regular_files(fixture.network_root.path()),
+        before_network
+    );
+}
+
+#[test]
+fn foreground_retirement_facade_resolves_exact_realm_without_effects() {
+    let fixture = fixture();
+    let before_engine = snapshot_regular_files(fixture.engine_root.path());
+    let before_network = snapshot_regular_files(fixture.network_root.path());
+    let injected_store = Arc::new(InjectedSagaStore::default());
+    let runtime =
+        valid_teardown_composition(&fixture).into_foreground_runtime(injected_store.clone());
+
+    let _first = runtime
+        .resource_retirer()
+        .expect("the exact foreground realm should expose retirement authority");
+    let _second = runtime
+        .resource_retirer()
+        .expect("repeated resolution should reuse the same compute-owned authorities");
+
+    assert_eq!(injected_store.loads.load(Ordering::Acquire), 0);
+    assert_eq!(
+        snapshot_regular_files(fixture.engine_root.path()),
+        before_engine
+    );
+    assert_eq!(
+        snapshot_regular_files(fixture.network_root.path()),
+        before_network
+    );
+}
+
+#[test]
+fn crossed_teardown_execution_rejects_before_runtime_or_effects() {
+    let fixture = fixture();
+    let before_engine = snapshot_regular_files(fixture.engine_root.path());
+    let before_network = snapshot_regular_files(fixture.network_root.path());
+    let crossed_execution =
+        WorkloadExecutionProviderId::for_registration_key("crossed-server-teardown-execution");
+    let providers = providers(
+        fixture.attachment_provider_id.clone(),
+        fixture.ingress_provider_id.clone(),
+        fixture.execution_provider_id.clone(),
+    )
+    .with_teardown_capabilities(teardown_capabilities(
+        fixture.attachment_provider_id.clone(),
+        fixture.ingress_provider_id.clone(),
+        crossed_execution,
+    ));
+
+    let error = match ServerWorkloadComposition::new(
+        Arc::clone(&fixture.engine),
+        Arc::clone(&fixture.manager),
+        Arc::clone(&fixture.service_manager),
+        NodeIdentity::new("server-composition-node").expect("fixture node should validate"),
+        fixture.selection.clone(),
+        sovereignty(),
+        providers,
+    ) {
+        Ok(_) => panic!("a crossed teardown execution realm must fail before runtime construction"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        ServerWorkloadCompositionError::TeardownCapabilityRegistry(
+            WorkloadTeardownCapabilityRegistryError::IncompleteExactRealm { .. }
+        )
+    ));
+    assert_eq!(
+        snapshot_regular_files(fixture.engine_root.path()),
+        before_engine
+    );
+    assert_eq!(
+        snapshot_regular_files(fixture.network_root.path()),
+        before_network
     );
 }
 

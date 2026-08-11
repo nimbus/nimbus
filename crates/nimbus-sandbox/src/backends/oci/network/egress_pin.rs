@@ -32,6 +32,8 @@ use std::sync::{
 use std::time::Duration;
 
 use crate::backends::oci::command::run_bounded_command_output;
+#[cfg(target_os = "linux")]
+use crate::backends::oci::command::run_bounded_command_with_input;
 use crate::backends::oci::egress::EgressProxyAssignment;
 use crate::error::{Result, SandboxError};
 
@@ -175,48 +177,24 @@ fn render_pin_ruleset(proxy: &EgressProxyAssignment) -> Result<String> {
 
 #[cfg(target_os = "linux")]
 fn apply_netns_nftables(layout: &OciNetworkLayout, ruleset: &str) -> Result<()> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::process::Command;
 
     let netns_path = &layout.netns_path;
-    let mut child = Command::new("nsenter")
+    let mut command = Command::new("nsenter");
+    command
         .arg(format!("--net={}", netns_path.display()))
         .arg("--")
         .arg("nft")
         .arg("-f")
-        .arg("-")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to spawn nsenter/nft to pin egress in netns {}: {error}",
-                netns_path.display()
-            ),
-        })?;
-    // Take, write, and DROP stdin so `nft` sees EOF before we wait for it.
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| SandboxError::OperationFailed {
-                message: "failed to open stdin for the egress-pin nft process".to_owned(),
-            })?;
-        stdin
-            .write_all(ruleset.as_bytes())
+        .arg("-");
+    let output =
+        run_bounded_command_with_input(&mut command, ruleset.as_bytes(), NFT_COMMAND_TIMEOUT)
             .map_err(|error| SandboxError::OperationFailed {
-                message: format!("failed to feed the egress-pin nft ruleset: {error}"),
+                message: format!(
+                    "failed to apply the egress pin within its deadline for netns {}: {error}",
+                    netns_path.display()
+                ),
             })?;
-    }
-    let output = wait_for_command_output(child, NFT_COMMAND_TIMEOUT).map_err(|error| {
-        SandboxError::OperationFailed {
-            message: format!(
-                "failed to await the egress-pin nft process for netns {}: {error}",
-                netns_path.display()
-            ),
-        }
-    })?;
     if !output.status.success() {
         return Err(SandboxError::OperationFailed {
             message: format!(

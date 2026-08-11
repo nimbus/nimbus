@@ -13,7 +13,9 @@ use nimbus_compute::config::control_plane::ControlPlaneConfig;
 use nimbus_compute::config::deployment::DeploymentConfig;
 use nimbus_compute::config::node_services::NodeServicesConfig;
 use nimbus_compute::config::runtime::RuntimeGovernorConfig;
-use nimbus_compute::state::{ComputeState, ComputeStateConfig, ComputeWorkloadComposition};
+use nimbus_compute::state::{
+    ComputeError, ComputeState, ComputeStateConfig, ComputeWorkloadComposition,
+};
 use nimbus_compute::workload_saga::{
     ExactWorkloadTeardownCapabilityRealm, IngressProvisionCapabilities,
     IngressPublicationCapability, IngressPublicationInspectionCapability,
@@ -31,7 +33,7 @@ use nimbus_compute::workload_saga::{
     WorkloadTeardownCapabilityRegistryError,
 };
 use nimbus_compute::{
-    ComputeResourceProvisioner, ServiceManagerWorkloadProjectionSink,
+    ComputeResourceProvisioner, ComputeResourceRetirer, ServiceManagerWorkloadProjectionSink,
     ServiceManagerWorkloadProvisionSourceAuthority,
 };
 use nimbus_compute::{
@@ -177,8 +179,8 @@ pub struct ServerWorkloadComposition {
 
 /// Transport-free lifetime carrier for foreground managed workload owners.
 ///
-/// This runtime deliberately exposes only the native resource facade. It owns
-/// the same compute composition used by server `AppState`, so
+/// This runtime exposes only the native resource facades. It owns the same
+/// compute composition used by server `AppState`, so
 /// standalone callers do not need to construct HTTP state and cannot create a
 /// second workload store, coordinator, or provisioner.
 pub struct ServerForegroundWorkloadRuntime {
@@ -210,6 +212,14 @@ impl ServerForegroundWorkloadRuntime {
     /// The canonical native resource facade for this managed lifecycle realm.
     pub const fn resource_provisioner(&self) -> &ComputeResourceProvisioner {
         &self.resource_provisioner
+    }
+
+    /// Resolve the canonical native retirement facade from this compute realm.
+    ///
+    /// A foreground profile without exact teardown composition fails closed
+    /// without exposing the store, coordinator, registry, or runtime.
+    pub fn resource_retirer(&self) -> Result<ComputeResourceRetirer, ComputeError> {
+        self._compute.resource_retirer()
     }
 
     /// Read-only services source and observed-projection owner for this realm.

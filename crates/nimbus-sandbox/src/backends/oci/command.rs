@@ -1,4 +1,6 @@
 use std::fs::File;
+#[cfg(any(target_os = "linux", test))]
+use std::io::Write;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
@@ -75,8 +77,43 @@ pub(crate) fn run_bounded_command_output(
     run_bounded_command_output_with_termination(command, timeout, OwnedCommandChild::terminate)
 }
 
+/// Run one bounded provider command with exact finite stdin bytes.
+///
+/// An anonymous regular file supplies stdin before spawn. This avoids pipe
+/// ownership and lets the existing bounded child owner handle every outcome.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn run_bounded_command_with_input(
+    command: &mut Command,
+    input: &[u8],
+    timeout: Duration,
+) -> std::io::Result<Output> {
+    let mut stdin = tempfile::tempfile()?;
+    stdin.write_all(input)?;
+    stdin.seek(SeekFrom::Start(0))?;
+    run_bounded_command_output_with_stdin_and_termination(
+        command,
+        Stdio::from(stdin),
+        timeout,
+        OwnedCommandChild::terminate,
+    )
+}
+
 fn run_bounded_command_output_with_termination(
     command: &mut Command,
+    timeout: Duration,
+    terminate: impl FnMut(&mut OwnedCommandChild) -> std::io::Result<()>,
+) -> std::io::Result<Output> {
+    run_bounded_command_output_with_stdin_and_termination(
+        command,
+        Stdio::null(),
+        timeout,
+        terminate,
+    )
+}
+
+fn run_bounded_command_output_with_stdin_and_termination(
+    command: &mut Command,
+    stdin: Stdio,
     timeout: Duration,
     mut terminate: impl FnMut(&mut OwnedCommandChild) -> std::io::Result<()>,
 ) -> std::io::Result<Output> {
@@ -87,7 +124,7 @@ fn run_bounded_command_output_with_termination(
     let mut stdout = tempfile::tempfile()?;
     let mut stderr = tempfile::tempfile()?;
     command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::from(stdout.try_clone()?))
         .stderr(Stdio::from(stderr.try_clone()?));
     #[cfg(unix)]
@@ -354,6 +391,24 @@ mod tests {
             render_command_failure(b"", b""),
             "stdout and stderr were empty"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_command_supplies_exact_finite_stdin() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "cat"]);
+
+        let output = run_bounded_command_with_input(
+            &mut command,
+            b"exact provider input",
+            Duration::from_secs(1),
+        )
+        .expect("the bounded command should consume finite stdin");
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"exact provider input");
+        assert!(output.stderr.is_empty());
     }
 
     #[cfg(unix)]

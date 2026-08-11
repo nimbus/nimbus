@@ -1238,7 +1238,7 @@ impl SystemdUnitStatus {
         })
     }
 
-    #[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
+    #[cfg(test)]
     pub(crate) fn explicitly_absent(
         execution_id: WorkloadExecutionId,
         unit_name: SystemdUnitName,

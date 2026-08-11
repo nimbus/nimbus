@@ -58,13 +58,6 @@ pub(crate) struct ForwardedMachineTeardownRegistrations {
 }
 
 impl ForwardedMachineTeardownRegistrations {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "NNC6.5f consumes the staged teardown registry seam"
-        )
-    )]
     pub(crate) fn into_parts(
         self,
     ) -> (

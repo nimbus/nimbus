@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.5f complete; NNC6.5f1 in progress`.
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5f1 complete; NNC6.5f2 in progress`.
   NNC6.5e is durably complete at `18377b1a2b17e21249c582ba49b8158280e0ff6d`;
   the prior exact checkpoint is `6b685627c94e`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,
@@ -216,8 +216,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   authority through their effect boundaries.
   The four completed provider units cover Container execution, Krun execution,
   shared host-managed attachment, and end-to-end forwarded-machine provider
-  substitution. NNC6.5f is the active read-only caller-substitution audit. It
-  prospectively splits the remaining value into NNC6.5f1 canonical forwarded
+  substitution. NNC6.5f is complete. Its audit prospectively splits the
+  remaining value into NNC6.5f1 canonical forwarded
   composition and the foreground retirement facade, NNC6.5f2 Engine-backed
   Compose down plus coarse guest-envelope deletion, and NNC6.5f3 the
   compute-owned desired-authority/provider-witness decision plus the
@@ -236,9 +236,14 @@ extension-registry seam before the second concern edits `extensions.rs`.
   Prettier, diff, syntax, focused ShellCheck, strict proof lint,
   dependency/effect, ledger/routing, docs `108`, and site `17/17` are green.
   Review cadence is exhausted, and product source is unchanged. NNC6.5f1 is
-  active and starts with a read-only audit of the one returned canonical
-  forwarded composition and narrow foreground retirement facade before any
-  product edit.
+  complete with K1-K20 and its acceptance state recorded in
+  `proof/nimbus-network-control-plane/nnc6.5f1-canonical-forwarded-composition.md`.
+  It installs one shared forwarded composition and a delegated fallible
+  `ComputeResourceRetirer` facade without changing Compose down. The frozen
+  implementation and K1-K20 are green. Its full Sol/xhigh/fast review accepted
+  one P2 error-classification regression. The correction is proven, and the
+  narrow review is clean at confidence `0.99`. NNC6.5f2 is active and must
+  reconcile current main before source edits.
   NNCV035 remains the sole
   expected-red implementation condition until NNC6.5g. NNC6.1e's R1-R15
   portable discovery, pure recovery decisions,

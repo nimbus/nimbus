@@ -39,9 +39,11 @@ use nimbus_server::{
 };
 use nimbus_workloads::{NodeIdentity, WorkloadSagaStore};
 
-use self::forwarded::PreparedForwardedServerWorkload;
 #[cfg(test)]
 pub(crate) use self::forwarded::prepare_forwarded_server_profile_for_test;
+pub(crate) use self::forwarded::{
+    PreparedForwardedWorkloadProfile, prepare_forwarded_workload_profile,
+};
 use crate::compose::discovery::ResolvedComposeSelection;
 use crate::compose::{
     PreparedForwardedComposeProvisionSource,
@@ -228,7 +230,7 @@ pub(crate) enum PreparedServerWorkloadProfile {
         network_manager: Arc<LocalNetworkManager>,
     },
     LocalKrun(Box<PreparedLocalKrunServerWorkload>),
-    Forwarded(Box<PreparedForwardedServerWorkload>),
+    Forwarded(Box<PreparedForwardedWorkloadProfile>),
 }
 
 pub(crate) struct PreparedLocalKrunServerWorkload {
@@ -841,6 +843,8 @@ mod tests {
 
     use serial_test::serial;
 
+    #[cfg(target_os = "linux")]
+    use super::ResolvedComposeSelection;
     use super::{
         LocalCapabilitySources, LocalNetworkCompositionError, PreparedLocalNetworkComposition,
         PreparedServerWorkloadProfile, StagedLocalNetworkComposition,
@@ -1292,29 +1296,22 @@ services:
             attachment.provider_id().clone(),
             ingress.provider_id().clone(),
         );
-        let selected = prepared
-            .frozen
-            .manager()
-            .capability_registry()
-            .select_exact(
-                &expected_selection,
-                nimbus_sandbox::sandbox_network_plan_requirements(
-                    nimbus_sandbox::SandboxBackendKind::Krun,
-                )
-                .capability_requirements(),
-            )
-            .expect("the exact real source pair should satisfy");
-        assert_eq!(selected.attachment(), &attachment);
-        assert_eq!(selected.ingress(), &ingress);
-        assert_eq!(
-            prepared
-                .frozen
-                .manager()
+        {
+            let manager = prepared.frozen.manager();
+            let selected = manager
                 .capability_registry()
-                .selections()
-                .count(),
-            1
-        );
+                .select_exact(
+                    &expected_selection,
+                    nimbus_sandbox::sandbox_network_plan_requirements(
+                        nimbus_sandbox::SandboxBackendKind::Krun,
+                    )
+                    .capability_requirements(),
+                )
+                .expect("the exact real source pair should satisfy");
+            assert_eq!(selected.attachment(), &attachment);
+            assert_eq!(selected.ingress(), &ingress);
+            assert_eq!(manager.capability_registry().selections().count(), 1);
+        }
         let expected_manager = prepared.manager();
         let expected_service_manager = prepared
             .local_service_manager()
@@ -1365,6 +1362,10 @@ services:
         LocalNetworkManager::bootstrap(node_root.as_path())
             .expect_err("attachment-bearing prepared composition must retain the process claim");
         drop(options);
+        drop(expected_backend);
+        drop(expected_service_manager);
+        drop(expected_manager);
+        drop(prepared);
         let reopened = LocalNetworkManager::bootstrap(node_root.as_path())
             .expect("final attachment-bearing composition drop should permit reopen");
         assert_eq!(

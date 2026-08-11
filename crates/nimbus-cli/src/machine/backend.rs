@@ -88,13 +88,6 @@ impl ForwardedMachineApiSandboxBackend {
         })
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "NNC6.5f consumes the staged teardown registry seam"
-        )
-    )]
     pub(crate) fn teardown_capabilities(
         &self,
     ) -> Result<ForwardedMachineTeardownRegistrations, Error> {

@@ -6,26 +6,24 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use nimbus::{
-    Engine, Error, LocalBuildAdmission, SandboxBackend, SandboxBackendKind,
-    ServiceDefinitionCatalog, ServiceManager,
-};
+use nimbus::{Engine, Error, LocalBuildAdmission, SandboxBackendKind, ServiceDefinitionCatalog};
 use nimbus_compute::embedded_local_node_identity;
 use nimbus_operator::LocalNodeNetworkRoot;
 use nimbus_server::{
-    ServerForegroundWorkloadRuntime, ServerWorkloadComposition, ServerWorkloadProviders,
+    ServerForegroundWorkloadRuntime, ServerWorkloadComposition,
     nimbus_owned_workload_ingress_registration,
 };
 use nimbus_tenant::TenantIsolationMode;
 use nimbus_workloads::WorkloadSagaStore;
 
 use crate::machine::{
-    ForwardedMachineApiSandboxBackend, HostMachineNetworkAuthority,
-    PreparedDefaultMachineProvisionSource, prepare_default_machine_provision_source,
+    HostMachineNetworkAuthority, PreparedDefaultMachineProvisionSource,
+    prepare_default_machine_provision_source,
 };
 use crate::network_composition::{
-    FrozenLocalNetworkComposition, PreparedLocalNetworkComposition, PreparedServerWorkloadProfile,
-    StagedLocalNetworkComposition,
+    LocalNetworkCompositionError, PreparedForwardedWorkloadProfile,
+    PreparedLocalNetworkComposition, PreparedServerWorkloadProfile, StagedLocalNetworkComposition,
+    prepare_forwarded_workload_profile,
 };
 
 use super::discovery::ResolvedComposeSelection;
@@ -91,11 +89,7 @@ pub(crate) fn prepare_forwarded_compose_provision_source(
 /// Exact effect-free Compose provider source, frozen before Engine/provider work.
 pub(super) enum PreparedComposeProvision {
     Local(PreparedServerWorkloadProfile),
-    Forwarded {
-        network: FrozenLocalNetworkComposition,
-        source: Box<PreparedDefaultMachineProvisionSource>,
-        catalog: Arc<dyn ServiceDefinitionCatalog>,
-    },
+    Forwarded(Box<PreparedForwardedWorkloadProfile>),
 }
 
 impl PreparedComposeProvision {
@@ -156,11 +150,14 @@ impl PreparedComposeProvision {
                         host_platform,
                         ComposeAdmissionMode::LocalDevelopment,
                     )?;
-                Ok(Self::Forwarded {
-                    network,
-                    source: Box::new(source),
-                    catalog,
-                })
+                Ok(Self::Forwarded(Box::new(
+                    PreparedForwardedWorkloadProfile::new(
+                        network,
+                        source,
+                        catalog,
+                        LocalBuildAdmission::Allowed,
+                    ),
+                )))
             }
         }
     }
@@ -174,56 +171,47 @@ impl PreparedComposeProvision {
             Self::Local(profile) => profile
                 .complete_foreground(engine, saga_store)
                 .map_err(|error| Error::InvalidInput(error.to_string())),
-            Self::Forwarded {
-                network,
-                source,
-                catalog,
-            } => {
-                let source = *source;
-                let selection = source.selection().clone();
-                let requirements = source.requirements().clone();
-                let sovereignty = source.sovereignty().clone();
-                let local_node = source.node_identity().clone();
-                let execution_provider_id = source.execution_provider_id().clone();
-                network
-                    .manager()
-                    .capability_registry()
-                    .select_exact(&selection, &requirements)
-                    .map_err(|error| Error::InvalidInput(error.to_string()))?;
-                let activated = source.activate()?;
-                let (client, adapter) = activated.into_parts();
-                let parent_network = HostMachineNetworkAuthority::injected(network.authority());
-                let read_retirement_backend: Arc<dyn SandboxBackend> =
-                    Arc::new(ForwardedMachineApiSandboxBackend::with_provision_adapter(
-                        client,
-                        &parent_network,
-                        Arc::clone(&adapter),
-                    )?);
-                let service_manager = Arc::new(
-                    ServiceManager::new(catalog, read_retirement_backend)
-                        .with_local_build_admission(LocalBuildAdmission::Allowed),
-                );
-                let providers = ServerWorkloadProviders::new(
-                    selection.attachment_provider_id().clone(),
-                    Arc::clone(&adapter),
-                    execution_provider_id,
-                    Arc::clone(&adapter),
-                    selection.ingress_provider_id().clone(),
-                    adapter,
-                )
-                .with_restart_capabilities();
-                let composition = ServerWorkloadComposition::new(
-                    engine,
-                    network.manager(),
-                    service_manager,
-                    local_node,
-                    selection,
-                    sovereignty,
-                    providers,
-                )
-                .map_err(|error| Error::InvalidInput(error.to_string()))?;
+            Self::Forwarded(prepared) => {
+                let composition = compose_forwarded_foreground(*prepared, engine)
+                    .map_err(forwarded_compose_activation_error)?;
                 Ok(composition.into_foreground_runtime(saga_store))
             }
         }
+    }
+}
+
+fn compose_forwarded_foreground(
+    prepared: PreparedForwardedWorkloadProfile,
+    engine: Arc<Engine>,
+) -> Result<ServerWorkloadComposition, LocalNetworkCompositionError> {
+    prepare_forwarded_workload_profile(prepared, engine)
+}
+
+fn forwarded_compose_activation_error(error: LocalNetworkCompositionError) -> Error {
+    match error {
+        LocalNetworkCompositionError::Compose(error) => error,
+        error => Error::InvalidInput(error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forwarded_activation_preserves_operational_errors_and_classifies_validation_errors() {
+        let operational =
+            forwarded_compose_activation_error(LocalNetworkCompositionError::Compose(
+                Error::PreconditionFailed("machine provider identity changed".to_owned()),
+            ));
+        assert!(matches!(
+            operational,
+            Error::PreconditionFailed(message) if message == "machine provider identity changed"
+        ));
+
+        let validation = forwarded_compose_activation_error(
+            LocalNetworkCompositionError::ForwardedServerWorkloadUnavailable,
+        );
+        assert!(matches!(validation, Error::InvalidInput(_)));
     }
 }

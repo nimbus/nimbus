@@ -429,7 +429,7 @@ pub(super) fn create_persistent_network_namespace(path: &Path) -> Result<()> {
         if path.exists() {
             remove_persistent_network_namespace(path)?;
         }
-        File::create(path).map_err(|error| SandboxError::OperationFailed {
+        fs::File::create(path).map_err(|error| SandboxError::OperationFailed {
             message: format!(
                 "failed to create network-namespace file {}: {error}",
                 path.display()
