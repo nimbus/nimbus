@@ -302,12 +302,27 @@ fn provision_references(
     intent: &WorkloadSagaIntent,
     publication: Option<&WorkloadPublicationReference>,
 ) -> WorkloadEffectReferences {
-    let publication = if intent.publication() == WorkloadPublicationIntent::PublishWhenReady
-        && matches!(
-            phase,
-            WorkloadSagaPhase::Ready | WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed
-        ) {
+    let settled_publication = matches!(
+        phase,
+        WorkloadSagaPhase::Ready | WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed
+    );
+    let publication = if settled_publication
+        && intent.publication() == WorkloadPublicationIntent::PublishWhenReady
+    {
         publication.cloned()
+    } else if settled_publication
+        && intent.publication() == WorkloadPublicationIntent::Withheld
+        && intent
+            .network()
+            .compiled_plan()
+            .content()
+            .listeners()
+            .is_empty()
+    {
+        Some(
+            WorkloadPublicationReference::new([], intent)
+                .expect("zero-listener fixture needs explicit empty publication authority"),
+        )
     } else {
         None
     };
@@ -990,6 +1005,13 @@ fn teardown_matrix_accepts_every_origin_and_no_op_step() {
             assert_eq!(
                 !detail.terminal_observations().is_empty(),
                 references.publication().is_some()
+                    && origin
+                        .active_intent()
+                        .network()
+                        .compiled_plan()
+                        .content()
+                        .capability_selection_evidence()
+                        .is_some()
                     && origin.phase().recovery_order()
                         >= WorkloadSagaPhase::Published.recovery_order()
             );
@@ -1510,7 +1532,7 @@ fn validated_record_rejects_successor_while_provision_remains_active() {
 }
 
 #[test]
-fn effect_reference_deserialization_enforces_intrinsic_invariants() {
+fn effect_reference_deserialization_and_context_validation_enforce_invariants() {
     let intent = running_intent(1, WorkloadPublicationIntent::PublishWhenReady);
     let references = WorkloadEffectReferences::provision(&intent, None).unwrap();
     let execution = references.execution().unwrap();
@@ -1532,7 +1554,25 @@ fn effect_reference_deserialization_enforces_intrinsic_invariants() {
     .unwrap();
     let mut empty = serde_json::to_value(&publication).unwrap();
     empty["endpoints"] = json!([]);
-    assert!(serde_json::from_value::<WorkloadPublicationReference>(empty).is_err());
+    let empty: WorkloadPublicationReference =
+        serde_json::from_value(empty).expect("an empty endpoint set is intrinsically ordered");
+    assert!(
+        empty.validate_for(&intent).is_err(),
+        "an empty endpoint set must reject a publishable nonempty intent"
+    );
+
+    let zero_listener = stopped_intent(2);
+    let explicit_empty = WorkloadPublicationReference::new([], &zero_listener)
+        .expect("a withheld zero-listener intent should retain explicit empty authority");
+    assert!(explicit_empty.endpoints().is_empty());
+    let round_trip: WorkloadPublicationReference = serde_json::from_value(
+        serde_json::to_value(&explicit_empty).expect("empty reference should encode"),
+    )
+    .expect("empty reference should decode");
+    assert_eq!(round_trip, explicit_empty);
+    round_trip
+        .validate_for(&zero_listener)
+        .expect("empty reference should authenticate its exact zero-listener intent");
 
     let endpoint = publication.endpoints()[0].clone();
     let mut duplicate = serde_json::to_value(&publication).unwrap();

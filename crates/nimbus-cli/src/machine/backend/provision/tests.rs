@@ -62,6 +62,9 @@ use tempfile::TempDir;
 use super::super::ForwardedMachineApiSandboxBackend;
 use super::*;
 
+#[path = "tests/teardown_substitution.rs"]
+mod teardown_substitution;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_registry_substitution_publishes_and_observes_exact_forwarded_command() {
     let fixture = Fixture::new([
@@ -905,12 +908,20 @@ struct Fixture {
 
 impl Fixture {
     fn new(responses: impl IntoIterator<Item = ResponseMode>) -> Self {
+        Self::with_listener_count(responses, 1)
+    }
+
+    fn with_listener_count(
+        responses: impl IntoIterator<Item = ResponseMode>,
+        listener_count: usize,
+    ) -> Self {
         let root = TempDir::new().expect("fixture root should exist");
         let authority = forwarder_authority();
         let server = FakeMachineApi::start(root.path().join("machine-api.sock"), responses);
         let port_authority =
             LocalPortLeaseAuthority::open(root.path()).expect("fixture port authority should open");
-        let (intent, compiled_plan, provider_reports) = workload_intent(&authority);
+        let (intent, compiled_plan, provider_reports) =
+            workload_intent_with_listener_count(&authority, listener_count);
         Self {
             root,
             server,
@@ -1162,19 +1173,37 @@ pub(super) fn workload_intent(
     CompiledWorkloadNetworkPlan,
     NetworkCapabilityRegistry,
 ) {
+    workload_intent_with_listener_count(authority, 1)
+}
+
+fn workload_intent_with_listener_count(
+    authority: &MachineForwarderAuthority,
+    listener_count: usize,
+) -> (
+    WorkloadSagaIntent,
+    CompiledWorkloadNetworkPlan,
+    NetworkCapabilityRegistry,
+) {
     let tenant = tenant();
     let generation = 7;
-    let spec = SandboxSpec::new(
+    let mut spec = SandboxSpec::new(
         tenant.clone(),
         SandboxOwnerSpec::standalone_named("machine-api"),
         SandboxBackendKind::Container,
         SandboxRootSpec::rootfs("/fixture/rootfs"),
         SandboxProcessSpec::new(["/bin/true"]),
-    )
-    .with_port_binding(
-        SandboxPortBinding::new("http", EndpointProtocol::Http, 38_080, 8_080)
-            .with_host_address(IpAddr::V4(Ipv4Addr::LOCALHOST)),
     );
+    for index in 0..listener_count {
+        spec = spec.with_port_binding(
+            SandboxPortBinding::new(
+                listener_name(index),
+                EndpointProtocol::Http,
+                38_080 + u16::try_from(index).expect("fixture listener index should fit u16"),
+                8_080 + u16::try_from(index).expect("fixture listener index should fit u16"),
+            )
+            .with_host_address(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        );
+    }
     let executable = encode_sandbox_spec(&spec).expect("fixture executable should encode");
     let source_plan = source_plan(MachineProvider::Krunkit, authority.clone());
     let attachment_provider = source_plan.selection().attachment_provider_id().clone();
@@ -1188,25 +1217,36 @@ pub(super) fn workload_intent(
     .expect("fixture plan identity should validate");
     let attachment = WorkloadNetworkAttachmentBlueprint::new(&identity, "default")
         .expect("fixture attachment should validate");
-    let listener = WorkloadNetworkListenerBlueprint::new(
-        &identity,
-        "http",
-        EndpointProtocol::Http,
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        WorkloadNetworkPortRequestMode::Exact {
-            port: std::num::NonZeroU16::new(38_080).expect("fixture port is non-zero"),
-        },
-        WorkloadNetworkEndpointSemantics::new(
-            WorkloadNetworkForwardingBehavior::PortForwarded,
-            NetworkTlsBehavior::Disabled,
-        ),
-        Some(8_080),
-    )
-    .expect("fixture listener should validate");
+    let listeners = (0..listener_count)
+        .map(|index| {
+            let offset = u16::try_from(index).expect("fixture listener index should fit u16");
+            WorkloadNetworkListenerBlueprint::new(
+                &identity,
+                listener_name(index),
+                EndpointProtocol::Http,
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                WorkloadNetworkPortRequestMode::Exact {
+                    port: std::num::NonZeroU16::new(38_080 + offset)
+                        .expect("fixture port is non-zero"),
+                },
+                WorkloadNetworkEndpointSemantics::new(
+                    WorkloadNetworkForwardingBehavior::PortForwarded,
+                    NetworkTlsBehavior::Disabled,
+                ),
+                Some(8_080 + offset),
+            )
+            .expect("fixture listener should validate")
+        })
+        .collect::<Vec<_>>();
     let selection = bundle.selection();
     let selection_evidence = bundle.selection_evidence();
     let provider_reports =
         NetworkCapabilityRegistry::new([bundle]).expect("fixture provider reports should validate");
+    let publication = if listeners.is_empty() {
+        WorkloadPublicationIntent::Withheld
+    } else {
+        WorkloadPublicationIntent::PublishWhenReady
+    };
     let content = WorkloadNetworkPlanContent::new(
         identity,
         requirements,
@@ -1214,10 +1254,10 @@ pub(super) fn workload_intent(
         Some(selection_evidence),
         Some(attachment),
         [],
-        [listener],
+        listeners,
         [],
         WorkloadActivationIntent::ActivateWhenAttached,
-        WorkloadPublicationIntent::PublishWhenReady,
+        publication,
     )
     .expect("fixture plan content should validate");
     let compiled_plan = CompiledWorkloadNetworkPlan::from_content(content)
@@ -1241,7 +1281,7 @@ pub(super) fn workload_intent(
         source,
         WorkloadNetworkIntent::new(compiled_plan.clone()),
         WorkloadActivationIntent::ActivateWhenAttached,
-        WorkloadPublicationIntent::PublishWhenReady,
+        publication,
         WorkloadAdmissionEvidence::new(
             format!("tid_{}", "11".repeat(32))
                 .try_into()
@@ -1254,6 +1294,14 @@ pub(super) fn workload_intent(
     )
     .expect("fixture intent should validate");
     (intent, compiled_plan, provider_reports)
+}
+
+fn listener_name(index: usize) -> String {
+    if index == 0 {
+        "http".to_owned()
+    } else {
+        format!("http-{index}")
+    }
 }
 
 fn tenant() -> TenantId {

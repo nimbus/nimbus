@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.5d3 complete; NNC6.5d4
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5d4 complete; NNC6.5e
   in progress`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,
   path, and verification contract. NNC6.5a completed the strict portable
@@ -138,8 +138,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   defect was accepted and corrected: inspect, read, and remove now retain and
   revalidate the exact no-follow child descriptor, and 12 deterministic K14
   cases pass. K29 is green, review cadence is exhausted, and the commit
-  containing its ledger row is the durable item checkpoint. NNC6.5d4 is now
-  the sole active item. Its three read-only parent, guest/wire, and
+  containing its ledger row is the durable item checkpoint. NNC6.5d4 is
+  complete. Its three read-only parent, guest/wire, and
   compute/shared audits and fail-before baseline are frozen in
   `proof/nimbus-network-control-plane/nnc6.5d4-forwarded-machine-teardown-provider.md`;
   product source is unchanged. K1-K35 require exact ordered prior-receipt
@@ -181,9 +181,21 @@ extension-registry seam before the second concern edits `extensions.rs`.
   withdraws the complete forwarding batch before guest work, and releases the
   complete parent port batch only after exact guest and provider absence. The
   Unix gvproxy retirement provider and runtime/socket confinement are also
-  proven. Band 9 is next. It owns real compute registry substitution and the
-  complete two-realm crash, contention, sibling-batch, empty-batch, and
-  effect-order acceptance proofs.
+  proven. Band 9 is implemented. Real compute registry substitution, exact
+  request-before-send and Inspect-before-retry, complete retained-port batch
+  recovery, explicit zero-listener publication evidence, and the fresh-process
+  two-realm crash matrix are green. Full affected crates pass; NNCV035 passes
+  `67/67`, direct remains the planned `0/7`, and the live aggregate remains
+  `35/36` with only NNCV035 red. Strict quality and proof gates, aggregate
+  mutation `481/481`, docs `108`, and site `17/17` pass. The one full
+  Sol/xhigh/fast review reported one P1 and one P2 at confidence `0.99`. The
+  P1 is rejected by the unchanged two-cut process proof and the composite
+  Systemd/Container inspection join. The P2 is accepted and corrected with
+  bounded Unix accept, restored blocking reads, deterministic missing-call
+  failure, and bounded child kill/reap. Corrected serialized CLI passes
+  `995 + 3 ignores`. The sole narrow Sol/xhigh/fast review is clean at `0.99`.
+  K1-K35 are green, review cadence is exhausted, and NNC6.5e is now the sole
+  active item. Its first action is a read-only native caller-cutover audit.
   Compose down, physical-machine stop, product caller cutover, public-route
   growth, and a CLI-local saga store remain forbidden.
   NNC8.2 owns the

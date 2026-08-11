@@ -55,9 +55,7 @@ impl ContainerSandboxBackend {
         prior_observation: &ProviderCommandObservation,
         expected_forwarder: &OciMachinePortForwarderConfig,
     ) -> SandboxNetworkTeardownObservation {
-        if current_execution.claim() != command.provider_claim()
-            || current_execution.observation().kind() != ProviderCommandObservationKind::Claimed
-        {
+        if !current_execution.authenticates(command.provider_claim()) {
             return NetworkTeardownAdapterError::crossed(
                 "Container forwarded network authorization",
             )

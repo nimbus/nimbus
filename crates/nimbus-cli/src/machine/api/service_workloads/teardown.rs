@@ -23,11 +23,12 @@ use nimbus_node::{
     HostTeardownProviderClaimInput,
 };
 use nimbus_sandbox::{
-    ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
-    ProviderCommandClaimInput, ProviderCommandCurrentExecution, ProviderCommandCurrentInspection,
-    ProviderCommandJournalError, ProviderCommandObservation, ProviderCommandObservationKind,
-    ProviderCommandOperation, SandboxExecutionAttemptId, SandboxExecutionTeardownCommand,
-    SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation,
+    ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimInput,
+    ProviderCommandCurrentExecution, ProviderCommandCurrentInspection, ProviderCommandJournalError,
+    ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
+    ProviderCommandStartedClaimDecision, SandboxExecutionAttemptId,
+    SandboxExecutionTeardownCommand, SandboxExecutionTeardownObservation,
+    SandboxExecutionTeardownOperation,
     backends::container::{
         CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY, ContainerHostTerminalEvidence,
         ContainerSandboxBackend,
@@ -306,6 +307,15 @@ fn provider_claim(
     execution_provider_claim_for(command, command.claim(), installed_forwarder, local_node)
 }
 
+#[cfg(test)]
+pub(crate) fn provider_claim_for_test(
+    command: &MachineApiWorkloadTeardownCommandEnvelope,
+    installed_forwarder: &MachineForwarderAuthority,
+    local_node: &nimbus_workloads::NodeIdentity,
+) -> Result<ProviderCommandClaim, ProviderCommandJournalError> {
+    provider_claim(command, installed_forwarder, local_node)
+}
+
 fn execution_provider_claim_for(
     command: &MachineApiWorkloadTeardownCommandEnvelope,
     claim: &nimbus_workloads::WorkloadTeardownClaim,
@@ -359,40 +369,30 @@ async fn execute(
     journal: ProviderCommandAttemptJournal,
 ) -> Result<MachineApiWorkloadTeardownObservation, MachineApiHttpError> {
     let provider_claim = validated.provider_claim.clone();
+    let prepared = match serde_json::to_vec(command) {
+        Ok(prepared) => prepared,
+        Err(_) => return Ok(ambiguous(command.mode())),
+    };
     let claim_decision = match command.claim().authorization() {
         WorkloadTeardownDispatchAuthorization::Initial => {
-            journal.claim_dispatch_epoch(&validated.provider_claim)
+            journal.claim_dispatch_epoch_started(&validated.provider_claim, &prepared)
         }
         WorkloadTeardownDispatchAuthorization::RetryAfterNotCompleted(evidence) => {
             let encoded = match serde_json::to_vec(evidence) {
                 Ok(encoded) => encoded,
                 Err(_) => return Ok(ambiguous(command.mode())),
             };
-            journal.claim_dispatch_epoch_after_inspected_absence(
+            journal.claim_dispatch_epoch_after_inspected_absence_started(
                 &validated.provider_claim,
                 evidence.dispatch_epoch().as_u64(),
                 &encoded,
+                &prepared,
             )
         }
     };
     let execution = match claim_decision {
-        Ok(ProviderCommandClaimDecision::ExecuteClaimed(execution)) => execution,
-        Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation))
-            if observation.kind() == ProviderCommandObservationKind::Claimed =>
-        {
-            match journal.resume_current_claim(&observation) {
-                Ok(execution) => execution,
-                Err(error) => {
-                    return Ok(exact_race_observation(
-                        command,
-                        &journal,
-                        &provider_claim,
-                        &error,
-                    ));
-                }
-            }
-        }
-        Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation)) => {
+        Ok(ProviderCommandStartedClaimDecision::ExecuteStarted(execution)) => execution,
+        Ok(ProviderCommandStartedClaimDecision::AdoptExactAttempt(observation)) => {
             return Ok(journal_observation(command, &observation));
         }
         Err(error) => return Ok(journal_error(command.mode(), &error)),
@@ -410,7 +410,7 @@ async fn execute(
     let step = command.step();
 
     let result = journal
-        .execute_current_claim_async(execution, move |current| {
+        .execute_started_claim_async(execution, move |current| {
             Box::pin(async move {
                 let composite = execute_children(
                     systemd_drain,

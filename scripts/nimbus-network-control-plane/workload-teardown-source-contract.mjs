@@ -9,6 +9,7 @@ import path from "node:path";
 import { maskNonCode, walkRust } from "./source-contract-scanner.mjs";
 import {
   BEHAVIOR_TESTS,
+  FORWARDED_MACHINE_TESTS,
   greenTeardownFixture,
 } from "./workload-teardown-contract-fixture.mjs";
 import {
@@ -33,6 +34,12 @@ export const workloadTeardownDiagnostics = {
     "teardown-contract/compose: Compose down bypasses the canonical Engine-backed compute saga",
   machine:
     "teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences",
+  forwardedMachineRegistry:
+    "teardown-contract/forwarded-machine-registry: forwarded teardown does not expose the exact five-phase compute registry substitution",
+  forwardedMachineLifecycle:
+    "teardown-contract/forwarded-machine-lifecycle: parent and guest lifecycle authority is incomplete or not batch fenced",
+  forwardedMachineRecovery:
+    "teardown-contract/forwarded-machine-recovery: request-loss and two-realm crash recovery proofs are incomplete",
   ingress:
     "teardown-contract/ingress: final ingress withdrawal cannot prove exact worker, route, and lease settlement",
   tenant:
@@ -191,6 +198,7 @@ function productionSources(root) {
   const serverEntries = crate("nimbus-server");
   const cliEntries = crate("nimbus-cli");
   const machineEntries = crate("nimbus-machine");
+  const sandboxEntries = crate("nimbus-sandbox");
   const networkEntries = crate("nimbus-network");
   const testEntries = collectTestSources(root, [
     "crates/nimbus-workloads/src",
@@ -202,6 +210,7 @@ function productionSources(root) {
     "crates/nimbus-server/tests",
     "crates/nimbus-sandbox/src",
     "crates/nimbus-sandbox/tests",
+    "crates/nimbus-network/src",
     "crates/nimbus-node/src",
     "crates/nimbus-machine/src",
     "crates/nimbus-cli/src",
@@ -219,6 +228,7 @@ function productionSources(root) {
     services: joinSources(serviceEntries),
     server: joinSources(serverEntries),
     cli: joinSources([...cliEntries, ...machineEntries]),
+    sandbox: joinSources(sandboxEntries),
     network: joinSources(networkEntries),
     tests: joinSources(testEntries),
     testEntries,
@@ -268,6 +278,12 @@ function behaviorTestsPass(sources) {
     sources.testEntries.some((entry) =>
       hasTestsAt(sources, entry.file, [name]),
     ),
+  );
+}
+
+function forwardedMachineTestsPass(sources, names) {
+  return names.every((name) =>
+    sources.testEntries.some((entry) => hasTestsAt(sources, entry.file, [name])),
   );
 }
 
@@ -499,6 +515,46 @@ function applyFixtureMutation(sources, mutation) {
       "pub struct NetworkAttachmentId(String);",
       "pub struct NetworkAttachmentId(String); trait TeardownProvider {}",
     ],
+    "missing-forwarded-registry-registrations": [
+      "cli",
+      "struct ForwardedMachineTeardownRegistrations;",
+      "",
+    ],
+    "missing-forwarded-registry-capability": [
+      "cli",
+      "    NetworkAttachmentTeardownCapabilities::new();\n",
+      "",
+    ],
+    "missing-forwarded-lifecycle-prepared-start": [
+      "sandbox",
+      "fn claim_dispatch_epoch_started() {}",
+      "",
+    ],
+    "missing-forwarded-lifecycle-absence-retry": [
+      "sandbox",
+      "fn claim_dispatch_epoch_after_inspected_absence_started() {}",
+      "",
+    ],
+    "missing-forwarded-lifecycle-batch-retain": [
+      "network",
+      "fn retain_provider_managed_batch_after_confirmed_absence() {}",
+      "",
+    ],
+    "missing-forwarded-lifecycle-batch-release": [
+      "network",
+      "fn release_retained_provider_managed_batch_after_confirmed_absence() {}",
+      "",
+    ],
+    "missing-forwarded-recovery-request-start": [
+      "cli",
+      "    claim_execute_started();\n",
+      "",
+    ],
+    "missing-forwarded-recovery-inspect": [
+      "cli",
+      "    inspect_current_claim_async_and_publish();\n",
+      "",
+    ],
   };
 
   if (mutation === "open-phase-enum") {
@@ -556,6 +612,30 @@ function applyFixtureMutation(sources, mutation) {
     sources.historicalAuditChangedPaths = ["__invalid_nnc65_item_checkpoint__"];
   } else if (mutation === "missing-ledger-token") {
     replaceOnce(sources, "plan", "candidate-frozen", "candidate-open");
+  } else if (mutation === "missing-forwarded-registry-test") {
+    replaceOnceInTest(
+      sources,
+      `fn ${FORWARDED_MACHINE_TESTS.registry[0]}`,
+      "fn missing_forwarded_registry_test",
+    );
+  } else if (mutation === "missing-forwarded-registry-inspect-test") {
+    replaceOnceInTest(
+      sources,
+      `fn ${FORWARDED_MACHINE_TESTS.registry[1]}`,
+      "fn missing_forwarded_registry_inspect_test",
+    );
+  } else if (mutation === "missing-forwarded-recovery-response-loss-test") {
+    replaceOnceInTest(
+      sources,
+      `fn ${FORWARDED_MACHINE_TESTS.recovery[0]}`,
+      "fn missing_forwarded_response_loss_test",
+    );
+  } else if (mutation === "missing-forwarded-recovery-process-test") {
+    replaceOnceInTest(
+      sources,
+      `fn ${FORWARDED_MACHINE_TESTS.recovery[1]}`,
+      "fn missing_forwarded_process_test",
+    );
   } else if (mutation in replacements) {
     replaceOnce(sources, ...replacements[mutation]);
   } else if (mutation) {
@@ -744,6 +824,51 @@ export function verifyWorkloadTeardownContract() {
       "ensure_no_active_workload_sagas_before_machine_stop",
     ]) && !/\bstop_service_sandbox\b/u.test(sources.cli),
     workloadTeardownDiagnostics.machine,
+  );
+
+  requireContract(
+    hasAll(sources.cli, [
+      "ForwardedMachineTeardownRegistrations",
+      "PROVIDER_JOURNAL_NAMESPACE",
+      "NetworkAttachmentTeardownCapabilities::new",
+      "WorkloadExecutionTeardownCapabilities::new",
+      "IngressTeardownCapabilities::new",
+    ]) &&
+      forwardedMachineTestsPass(sources, FORWARDED_MACHINE_TESTS.registry),
+    workloadTeardownDiagnostics.forwardedMachineRegistry,
+  );
+
+  requireContract(
+    hasAll(sources.sandbox, [
+      "ProviderCommandCurrentExecution",
+      "fn authenticates",
+      "claim_dispatch_epoch_started",
+      "claim_dispatch_epoch_after_inspected_absence_started",
+      "execute_started_claim_async",
+    ]) &&
+      hasAll(sources.network, [
+        "retain_provider_managed_batch_after_confirmed_absence",
+        "release_retained_provider_managed_batch_after_confirmed_absence",
+      ]) &&
+      hasAll(sources.cli, [
+        "begin_parent_publication_withdrawal",
+        "record_parent_publication_withdrawn_retained",
+        "begin_parent_publication_release",
+        "record_parent_publication_released",
+      ]) &&
+      forwardedMachineTestsPass(sources, FORWARDED_MACHINE_TESTS.lifecycle),
+    workloadTeardownDiagnostics.forwardedMachineLifecycle,
+  );
+
+  requireContract(
+    hasAll(sources.cli, [
+      "claim_execute_started",
+      "execute_started_claim_async",
+      "adopt_inspect",
+      "inspect_current_claim_async_and_publish",
+    ]) &&
+      forwardedMachineTestsPass(sources, FORWARDED_MACHINE_TESTS.recovery),
+    workloadTeardownDiagnostics.forwardedMachineRecovery,
   );
 
   requireContract(

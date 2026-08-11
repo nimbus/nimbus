@@ -27,11 +27,12 @@ use nimbus_workloads::{
     WorkloadProvisionProviderTarget, WorkloadProvisionSourceEvidence,
     WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
     WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep, WorkloadProvisionSubjects,
-    WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadRestartAdmissionInput,
-    WorkloadRestartAdmissionUpdate, WorkloadRestartCommandClaim, WorkloadRestartEpoch,
-    WorkloadRestartEvidenceDigest, WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy,
-    WorkloadRestartRequestId, WorkloadRestartTrigger, WorkloadSagaIntent, WorkloadSagaKey,
-    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaRevision, WorkloadSagaTransitionId,
+    WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadPublicationReference,
+    WorkloadRestartAdmissionInput, WorkloadRestartAdmissionUpdate, WorkloadRestartCommandClaim,
+    WorkloadRestartEpoch, WorkloadRestartEvidenceDigest, WorkloadRestartNotBeforeUnixMillis,
+    WorkloadRestartPolicy, WorkloadRestartRequestId, WorkloadRestartTrigger, WorkloadSagaIntent,
+    WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaRevision,
+    WorkloadSagaTransitionId,
 };
 
 use super::*;
@@ -1260,7 +1261,15 @@ fn restart_provision_detail(
     phase: WorkloadSagaPhase,
     intent: &WorkloadSagaIntent,
 ) -> WorkloadPhaseDetail {
-    let references = WorkloadEffectReferences::provision(intent, None)
+    let settled_publication = matches!(
+        phase,
+        WorkloadSagaPhase::Ready | WorkloadSagaPhase::Observed
+    );
+    let publication = settled_publication.then(|| {
+        WorkloadPublicationReference::new([], intent)
+            .expect("zero-listener restart fixture needs explicit publication authority")
+    });
+    let references = WorkloadEffectReferences::provision(intent, publication)
         .expect("restart references should validate");
     let network = references
         .network()

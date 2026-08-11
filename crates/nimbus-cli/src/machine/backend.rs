@@ -18,7 +18,7 @@ use super::publication_authority::{
     authenticate_exact_durable_plan, port_authority_error, recover_dead_batch,
 };
 use provision::ForwardedMachineProvisionAdapter;
-use teardown::ForwardedMachineTeardownAdapter;
+use teardown::{ForwardedMachineTeardownAdapter, ForwardedMachineTeardownRegistrations};
 
 pub(crate) mod provision;
 pub(crate) mod teardown;
@@ -33,7 +33,8 @@ pub(crate) struct ForwardedMachineApiSandboxBackend {
     provision_adapter: Option<Arc<ForwardedMachineProvisionAdapter>>,
     // Band 8 composes and retains the exact teardown sink. Band 9 transfers
     // these traits into the compute registry without reopening its authorities.
-    _teardown_adapter: Option<Arc<ForwardedMachineTeardownAdapter>>,
+    // NNC6.5f owns the product composition-root cutover.
+    teardown_adapter: Option<Arc<ForwardedMachineTeardownAdapter>>,
 }
 
 impl ForwardedMachineApiSandboxBackend {
@@ -83,8 +84,29 @@ impl ForwardedMachineApiSandboxBackend {
             port_leases,
             publication_journal,
             provision_adapter,
-            _teardown_adapter: teardown_adapter,
+            teardown_adapter,
         })
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "NNC6.5f consumes the staged teardown registry seam"
+        )
+    )]
+    pub(crate) fn teardown_capabilities(
+        &self,
+    ) -> Result<ForwardedMachineTeardownRegistrations, Error> {
+        self.teardown_adapter
+            .as_ref()
+            .map(|adapter| Arc::clone(adapter).registrations())
+            .ok_or_else(|| {
+                Error::PreconditionFailed(
+                    "forwarded machine teardown capabilities require the exact provision authority"
+                        .to_owned(),
+                )
+            })
     }
 
     fn retire(&self, sandbox_id: &SandboxId) -> Result<(), Error> {

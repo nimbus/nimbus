@@ -60,6 +60,18 @@ run_self_test() {
     'missing-machine-fence|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
     'parent-release-before-absence|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
     'missing-machine-active-fence|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'missing-forwarded-registry-registrations|teardown-contract/forwarded-machine-registry: forwarded teardown does not expose the exact five-phase compute registry substitution'
+    'missing-forwarded-registry-capability|teardown-contract/forwarded-machine-registry: forwarded teardown does not expose the exact five-phase compute registry substitution'
+    'missing-forwarded-registry-test|teardown-contract/forwarded-machine-registry: forwarded teardown does not expose the exact five-phase compute registry substitution'
+    'missing-forwarded-registry-inspect-test|teardown-contract/forwarded-machine-registry: forwarded teardown does not expose the exact five-phase compute registry substitution'
+    'missing-forwarded-lifecycle-prepared-start|teardown-contract/forwarded-machine-lifecycle: parent and guest lifecycle authority is incomplete or not batch fenced'
+    'missing-forwarded-lifecycle-absence-retry|teardown-contract/forwarded-machine-lifecycle: parent and guest lifecycle authority is incomplete or not batch fenced'
+    'missing-forwarded-lifecycle-batch-retain|teardown-contract/forwarded-machine-lifecycle: parent and guest lifecycle authority is incomplete or not batch fenced'
+    'missing-forwarded-lifecycle-batch-release|teardown-contract/forwarded-machine-lifecycle: parent and guest lifecycle authority is incomplete or not batch fenced'
+    'missing-forwarded-recovery-request-start|teardown-contract/forwarded-machine-recovery: request-loss and two-realm crash recovery proofs are incomplete'
+    'missing-forwarded-recovery-inspect|teardown-contract/forwarded-machine-recovery: request-loss and two-realm crash recovery proofs are incomplete'
+    'missing-forwarded-recovery-response-loss-test|teardown-contract/forwarded-machine-recovery: request-loss and two-realm crash recovery proofs are incomplete'
+    'missing-forwarded-recovery-process-test|teardown-contract/forwarded-machine-recovery: request-loss and two-realm crash recovery proofs are incomplete'
     'missing-ingress-capability|teardown-contract/ingress: final ingress withdrawal cannot prove exact worker, route, and lease settlement'
     'missing-ingress-join|teardown-contract/ingress: final ingress withdrawal cannot prove exact worker, route, and lease settlement'
     'missing-ingress-settlement|teardown-contract/ingress: final ingress withdrawal cannot prove exact worker, route, and lease settlement'
@@ -126,12 +138,12 @@ run_self_test() {
       "${passed}" "${failures}"
     return 1
   fi
-  if [ "${passed}" -ne 55 ]; then
-    printf 'NNC6.5 teardown contract self-test: expected 55 mutations, observed %d\n' \
+  if [ "${passed}" -ne 67 ]; then
+    printf 'NNC6.5 teardown contract self-test: expected 67 mutations, observed %d\n' \
       "${passed}"
     return 1
   fi
-  printf 'NNC6.5 teardown contract self-test: 55 passed, 0 failed\n'
+  printf 'NNC6.5 teardown contract self-test: 67 passed, 0 failed\n'
 }
 
 case "${1:-}" in

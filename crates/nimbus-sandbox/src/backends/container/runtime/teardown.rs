@@ -174,9 +174,7 @@ impl ContainerSandboxBackend {
         command: &SandboxExecutionTeardownCommand,
         current_execution: &ProviderCommandCurrentExecution,
     ) -> SandboxExecutionTeardownObservation {
-        if current_execution.claim() != command.provider_claim()
-            || current_execution.observation().kind() != ProviderCommandObservationKind::Claimed
-        {
+        if !current_execution.authenticates(command.provider_claim()) {
             return definite_failure(
                 "sandbox_teardown_command_crossed",
                 "Container execution authorization crossed its provider command",
@@ -235,8 +233,7 @@ impl ContainerSandboxBackend {
         host_terminal: &ContainerHostTerminalEvidence,
         runtime: &dyn ContainerExecutionTeardownRuntime,
     ) -> SandboxExecutionTeardownObservation {
-        if current_execution.claim() != command.provider_claim()
-            || current_execution.observation().kind() != ProviderCommandObservationKind::Claimed
+        if !current_execution.authenticates(command.provider_claim())
             || !host_terminal.authenticates(command)
         {
             return definite_failure(

@@ -862,7 +862,10 @@ impl WorkloadExecutionReference {
     }
 }
 
-/// Stable reference to the endpoint set intended for publication.
+/// Stable reference to the exact endpoint set governed by publication.
+///
+/// A withheld workload with no listeners carries an empty set so teardown can
+/// record explicit empty-batch withdrawal without inventing an endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkloadPublicationReference {
@@ -915,9 +918,17 @@ impl WorkloadPublicationReference {
         execution: WorkloadExecutionReference,
     ) -> Result<Self, WorkloadSagaError> {
         let mut endpoints: Vec<_> = endpoints.into_iter().collect();
-        if endpoints.is_empty() {
+        if endpoints.is_empty()
+            && (intent.publication() != WorkloadPublicationIntent::Withheld
+                || !intent
+                    .network()
+                    .compiled_plan()
+                    .content()
+                    .listeners()
+                    .is_empty())
+        {
             return Err(WorkloadSagaError::InvalidEvidence(
-                "publication reference requires at least one endpoint",
+                "empty publication reference requires a withheld zero-listener intent",
             ));
         }
         let original_len = endpoints.len();
@@ -949,9 +960,9 @@ impl WorkloadPublicationReference {
     }
 
     fn validate_intrinsic(&self) -> Result<(), WorkloadSagaError> {
-        if self.endpoints.is_empty() || !self.endpoints.windows(2).all(|pair| pair[0] < pair[1]) {
+        if !self.endpoints.windows(2).all(|pair| pair[0] < pair[1]) {
             return Err(WorkloadSagaError::InvalidEvidence(
-                "publication reference is empty, unsorted, or duplicated",
+                "publication reference is unsorted or duplicated",
             ));
         }
         Ok(())
@@ -962,6 +973,19 @@ impl WorkloadPublicationReference {
         if self.network != WorkloadNetworkReference::for_intent(intent) {
             return Err(WorkloadSagaError::InvalidEvidence(
                 "publication reference is crossed with another network intent",
+            ));
+        }
+        if self.endpoints.is_empty()
+            && (intent.publication() != WorkloadPublicationIntent::Withheld
+                || !intent
+                    .network()
+                    .compiled_plan()
+                    .content()
+                    .listeners()
+                    .is_empty())
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "empty publication reference crosses a nonempty or publishable intent",
             ));
         }
         self.execution.validate_for(intent)?;

@@ -705,8 +705,9 @@ impl ProviderCommandStartedExecutionClaim {
 /// Borrowed proof that one exact Execute claim is current under its journal lock.
 ///
 /// Only `ProviderCommandAttemptJournal` can construct this capability. A
-/// provider substep can borrow it but cannot retain or recreate effect
-/// authority after the journal releases the exact stream lock.
+/// provider substep can borrow it for either a claimed effect or an atomically
+/// prepared start, but cannot retain or recreate effect authority after the
+/// journal releases the exact stream lock.
 #[doc(hidden)]
 pub struct ProviderCommandCurrentExecution {
     observation: ProviderCommandObservation,
@@ -719,6 +720,11 @@ impl ProviderCommandCurrentExecution {
 
     pub fn claim(&self) -> &ProviderCommandClaim {
         self.observation.claim()
+    }
+
+    /// Authenticate the exact provider claim carried by this locked capability.
+    pub fn authenticates(&self, claim: &ProviderCommandClaim) -> bool {
+        self.claim() == claim
     }
 }
 

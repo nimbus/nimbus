@@ -73,8 +73,9 @@ pub(crate) use self::service_workloads::teardown::tests::acceptance::{
 pub(crate) use self::service_workloads::{GuestNodeWorkloadService, MachineApiNodeWorkloadFacade};
 #[cfg(test)]
 pub(crate) use self::service_workloads::{
-    machine_api_node_workload_facade_from_sandbox_backend,
+    guest_teardown_provider_claim_for_test, machine_api_node_workload_facade_from_sandbox_backend,
     machine_api_node_workload_facade_from_sandbox_backend_with_absence,
+    sandbox_network_plan_for_teardown_test,
 };
 #[cfg(target_os = "linux")]
 use self::state::machine_systemd_teardown_state_root;

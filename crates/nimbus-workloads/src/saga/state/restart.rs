@@ -1523,12 +1523,13 @@ impl WorkloadSagaRecord {
             "restart completion requires exact retained reservation evidence",
         ))?;
         let execution = restart_target_execution(self, active);
-        let publication =
-            if self.active_intent.publication == WorkloadPublicationIntent::PublishWhenReady {
-                Some(restart_target_publication(self, active)?)
-            } else {
-                None
-            };
+        let publication = self
+            .phase_detail
+            .references()
+            .publication()
+            .is_some()
+            .then(|| restart_target_publication(self, active))
+            .transpose()?;
         let references =
             WorkloadEffectReferences::new(Some(retained_network), Some(execution), publication);
         let mut observations = Vec::with_capacity(1 + target_observations.len());

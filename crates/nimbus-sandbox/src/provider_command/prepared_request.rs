@@ -31,6 +31,85 @@ impl ProviderCommandAttemptJournal {
         }
     }
 
+    /// Atomically start one adjacent epoch after exact inspected absence.
+    ///
+    /// This is the prepared-request counterpart of
+    /// `claim_dispatch_epoch_after_inspected_absence`. It authenticates the
+    /// coordinator receipt and publishes the successor directly as
+    /// `InProgress`, so a crash cannot recreate a resumable `Claimed` gap.
+    pub fn claim_dispatch_epoch_after_inspected_absence_started(
+        &self,
+        claim: &ProviderCommandClaim,
+        inspected_dispatch_epoch: u64,
+        inspection_evidence: &[u8],
+        prepared_request: &[u8],
+    ) -> Result<ProviderCommandStartedClaimDecision, ProviderCommandJournalError> {
+        claim.validate()?;
+        validate_prepared_request(prepared_request)?;
+        if inspected_dispatch_epoch.checked_add(1) != Some(claim.dispatch_epoch) {
+            return Err(ProviderCommandJournalError::RetryWithoutAuthority);
+        }
+        let paths = self.paths(claim);
+        self.establish_directory(&paths.directory)?;
+        let _guard = lock(&paths.lock)?;
+        remove_stale_stage(&paths.stage)?;
+        let Some(current) = read_if_present(&paths.record)? else {
+            return Err(ProviderCommandJournalError::RetryWithoutAuthority);
+        };
+
+        if current.claim == *claim {
+            return self.decide_existing_started(&paths, current, claim, prepared_request);
+        }
+        if !claim.same_attempt_fence(&current.claim) {
+            return match self.reject_stale_or_crossed(&current.claim, claim) {
+                Ok(()) => Err(ProviderCommandJournalError::CrossedClaim),
+                Err(error) => Err(error),
+            };
+        }
+        if current.claim.dispatch_epoch != inspected_dispatch_epoch {
+            return Err(if claim.dispatch_epoch < current.claim.dispatch_epoch {
+                Self::reject_stale_dispatch_epoch(
+                    current.claim.dispatch_epoch,
+                    claim.dispatch_epoch,
+                )
+            } else {
+                ProviderCommandJournalError::CrossedClaim
+            });
+        }
+
+        match current.kind {
+            ProviderCommandObservationKind::Absent
+            | ProviderCommandObservationKind::RetryAuthorized => {
+                self.decide_existing_started(&paths, current, claim, prepared_request)
+            }
+            ProviderCommandObservationKind::InProgress
+            | ProviderCommandObservationKind::Ambiguous => {
+                let absence = ProviderCommandObservation {
+                    claim: current.claim.clone(),
+                    kind: ProviderCommandObservationKind::Absent,
+                    evidence_sha256: Some(evidence_sha256(inspection_evidence)),
+                    prepared_request: current.prepared_request.clone(),
+                    prepared_request_sha256: current.prepared_request_sha256.clone(),
+                    failure_code: None,
+                    retry_lineage: current.retry_lineage.clone(),
+                };
+                self.publish_new_started_claim(
+                    &paths,
+                    claim.clone(),
+                    Some(absence),
+                    prepared_request,
+                )
+            }
+            ProviderCommandObservationKind::Claimed => {
+                Err(ProviderCommandJournalError::PriorEffectUnresolved)
+            }
+            ProviderCommandObservationKind::Succeeded
+            | ProviderCommandObservationKind::DefiniteFailure => {
+                Err(ProviderCommandJournalError::RetryWithoutAuthority)
+            }
+        }
+    }
+
     fn publish_new_started_claim(
         &self,
         paths: &JournalPaths,

@@ -23,9 +23,9 @@ use nimbus_node::{
     HostTeardownFuture,
 };
 use nimbus_sandbox::{
-    ProviderCommandClaimDecision, SandboxBackendKind, SandboxExecutionAttemptId, SandboxId,
-    SandboxOwnerSpec, SandboxProcessSpec, SandboxProvisionDependencyListener,
-    SandboxProvisionNetworkPlan, SandboxRootSpec, SandboxSpec,
+    ProviderCommandClaimDecision, ProviderCommandStartedClaimDecision, SandboxBackendKind,
+    SandboxExecutionAttemptId, SandboxId, SandboxOwnerSpec, SandboxProcessSpec,
+    SandboxProvisionDependencyListener, SandboxProvisionNetworkPlan, SandboxRootSpec, SandboxSpec,
     backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig},
     sandbox_network_plan_requirements,
 };
@@ -846,12 +846,15 @@ fn write_terminal_runtime_receipt(state_root: &Path) {
 }
 
 fn assert_execute_succeeded(observation: &MachineApiWorkloadTeardownObservation) {
-    assert!(matches!(
-        observation,
-        MachineApiWorkloadTeardownObservation::Execute(
-            MachineApiWorkloadTeardownExecuteObservation::Succeeded { .. }
-        )
-    ));
+    assert!(
+        matches!(
+            observation,
+            MachineApiWorkloadTeardownObservation::Execute(
+                MachineApiWorkloadTeardownExecuteObservation::Succeeded { .. }
+            )
+        ),
+        "expected exact Execute::Succeeded, got {observation:?}"
+    );
 }
 
 fn not_completed_evidence(
@@ -1128,7 +1131,11 @@ async fn guest_workload_teardown_never_publishes_terminal_for_one_child() {
         &fs::read(harness.state_root.join(&records[0])).expect("journal record should read"),
     )
     .unwrap();
-    assert_eq!(envelope["observation"]["kind"], "claimed");
+    assert_eq!(envelope["observation"]["kind"], "in_progress");
+    assert!(
+        envelope["observation"]["preparedRequest"].is_array(),
+        "the request-may-exist boundary must retain exact prepared command bytes"
+    );
     assert_eq!(
         manifest_bytes(&harness.state_root),
         manifest_before,
@@ -1227,7 +1234,7 @@ fn assert_definite_failure(observation: &MachineApiWorkloadTeardownObservation) 
 }
 
 #[test]
-fn guest_workload_teardown_fresh_process_recovers_claim_and_replays_terminal_result() {
+fn guest_workload_teardown_fresh_process_inspects_prepared_start_and_retries_once() {
     let harness = AcceptanceHarness::new(ScriptedHostProvider::default());
     let execute = harness.command(
         WorkloadTeardownStep::DrainExecution,
@@ -1238,9 +1245,9 @@ fn guest_workload_teardown_fresh_process_recovers_claim_and_replays_terminal_res
         WorkloadTeardownCommandMode::Inspect,
     );
 
-    let claimed = run_process_child(&harness, &execute, "claim", "claim");
-    assert_eq!(claimed["outcome"], "claimed");
-    let claimed_bytes = snapshot(&harness.state_root);
+    let started = run_process_child(&harness, &execute, "start", "start");
+    assert_eq!(started["outcome"], "started");
+    let started_bytes = snapshot(&harness.state_root);
 
     let inspected = run_process_child(&harness, &inspect, "dispatch", "inspect");
     let inspected_observation: MachineApiWorkloadTeardownObservation =
@@ -1248,21 +1255,24 @@ fn guest_workload_teardown_fresh_process_recovers_claim_and_replays_terminal_res
     assert!(matches!(
         inspected_observation,
         MachineApiWorkloadTeardownObservation::Inspect(
-            MachineApiWorkloadTeardownInspectObservation::InProgress { .. }
+            MachineApiWorkloadTeardownInspectObservation::NotCompleted { .. }
         )
     ));
     assert_eq!(inspected["drainExecutes"], 0);
-    assert_eq!(inspected["drainInspects"], 0);
-    assert_eq!(snapshot(&harness.state_root), claimed_bytes);
+    assert_eq!(inspected["drainInspects"], 1);
+    assert_eq!(snapshot(&harness.state_root), started_bytes);
 
-    let executed = run_process_child(&harness, &execute, "dispatch", "execute");
+    let retry = harness
+        .fixture
+        .retry_command(&inspect, not_completed_evidence(&inspected_observation));
+    let executed = run_process_child(&harness, &retry, "dispatch", "execute");
     let executed_observation: MachineApiWorkloadTeardownObservation =
         serde_json::from_value(executed["observation"].clone()).unwrap();
     assert_execute_succeeded(&executed_observation);
     assert_eq!(executed["drainExecutes"], 1);
     let terminal_bytes = snapshot(&harness.state_root);
 
-    let replayed = run_process_child(&harness, &execute, "dispatch", "replay");
+    let replayed = run_process_child(&harness, &retry, "dispatch", "replay");
     let replayed_observation: MachineApiWorkloadTeardownObservation =
         serde_json::from_value(replayed["observation"].clone()).unwrap();
     assert_eq!(executed_observation, replayed_observation);
@@ -1312,16 +1322,19 @@ fn guest_workload_teardown_process_child() {
         &state_root,
     );
 
-    let output = if role == "claim" {
+    let output = if role == "start" {
         let claim = provider_claim(&command, &forwarder, &node).unwrap();
         assert!(matches!(
             backend
                 .attempt_idempotency_journal()
                 .unwrap()
-                .claim_dispatch_epoch(&claim),
-            Ok(ProviderCommandClaimDecision::ExecuteClaimed(_))
+                .claim_dispatch_epoch_started(
+                    &claim,
+                    &serde_json::to_vec(&command).expect("prepared command should encode"),
+                ),
+            Ok(ProviderCommandStartedClaimDecision::ExecuteStarted(_))
         ));
-        json!({ "outcome": "claimed" })
+        json!({ "outcome": "started" })
     } else {
         assert_eq!(role, "dispatch");
         let runtime = tokio::runtime::Builder::new_current_thread()

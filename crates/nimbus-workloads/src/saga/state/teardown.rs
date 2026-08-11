@@ -1227,7 +1227,14 @@ fn teardown_subject_for_step(
     let references = detail.retained_references();
     Ok(match step {
         WorkloadTeardownStep::WithdrawPublication
-            if origin_rank >= WorkloadSagaPhase::Published.recovery_order() =>
+            if origin_rank >= WorkloadSagaPhase::Published.recovery_order()
+                && record
+                    .active_intent
+                    .network()
+                    .compiled_plan()
+                    .content()
+                    .capability_selection_evidence()
+                    .is_some() =>
         {
             references
                 .publication()

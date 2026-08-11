@@ -490,14 +490,12 @@ fn phase_detail_after_success(
             execution,
             evidence,
         } => {
+            let listeners = intent.network().compiled_plan().content().listeners();
             let publication = if intent.publication() == WorkloadPublicationIntent::PublishWhenReady
+                || listeners.is_empty()
             {
                 Some(WorkloadPublicationReference::new(
-                    intent
-                        .network()
-                        .compiled_plan()
-                        .content()
-                        .listeners()
+                    listeners
                         .iter()
                         .map(|listener| listener.endpoint_id().clone()),
                     intent,

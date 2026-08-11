@@ -1514,11 +1514,18 @@ fn validate_provision_detail(
         ));
     }
 
-    let publication_required = intent.publication == WorkloadPublicationIntent::PublishWhenReady
-        && matches!(
-            phase,
-            WorkloadSagaPhase::Ready | WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed
-        );
+    let publication_required = matches!(
+        phase,
+        WorkloadSagaPhase::Ready | WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed
+    ) && (intent.publication
+        == WorkloadPublicationIntent::PublishWhenReady
+        || (intent.publication == WorkloadPublicationIntent::Withheld
+            && intent
+                .network()
+                .compiled_plan()
+                .content()
+                .listeners()
+                .is_empty()));
     if detail.references.publication.is_some() != publication_required {
         return Err(WorkloadSagaError::InvalidEvidence(
             "publication reference presence does not match phase and publication intent",
@@ -1644,11 +1651,18 @@ fn validate_origin_references(
             "effect-bearing origin must retain network and execution references",
         ));
     }
-    let publication_required = intent.publication == WorkloadPublicationIntent::PublishWhenReady
-        && matches!(
-            origin,
-            WorkloadSagaPhase::Ready | WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed
-        );
+    let publication_required = matches!(
+        origin,
+        WorkloadSagaPhase::Ready | WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed
+    ) && (intent.publication
+        == WorkloadPublicationIntent::PublishWhenReady
+        || (intent.publication == WorkloadPublicationIntent::Withheld
+            && intent
+                .network()
+                .compiled_plan()
+                .content()
+                .listeners()
+                .is_empty()));
     if references.publication.is_some() != publication_required {
         return Err(WorkloadSagaError::InvalidEvidence(
             "teardown retained publication reference does not match its origin",
@@ -1682,6 +1696,7 @@ fn expected_terminal_observations(
     let mut expected = Vec::new();
     if rank >= 1
         && references.publication.is_some()
+        && provider_managed_network
         && origin_rank >= WorkloadSagaPhase::Published.recovery_order()
     {
         expected.push(TerminalObservationKind::PublicationAbsent);

@@ -48,6 +48,10 @@ pub enum PortLeaseOperation {
     BeginLifetime,
     /// Retain an ambiguous effect under an exclusive recovery generation.
     MarkCleanupPending,
+    /// Retain a provider-managed slot after the effect owner proves absence.
+    RetainAfterConfirmedAbsence,
+    /// Release a retained provider-managed slot after workload teardown.
+    ReleaseRetainedAfterConfirmedAbsence,
     /// Transfer an exact surviving provider-managed binding to a new owner.
     ReclaimProviderManagedBinding,
     /// Release a process-bound effect after its exact owner lifetime died.
@@ -78,6 +82,10 @@ impl Display for PortLeaseOperation {
             Self::Activate => "activate",
             Self::BeginLifetime => "begin process-lifetime generation",
             Self::MarkCleanupPending => "mark cleanup pending",
+            Self::RetainAfterConfirmedAbsence => "retain after confirmed provider absence",
+            Self::ReleaseRetainedAfterConfirmedAbsence => {
+                "release retained slot after confirmed provider absence"
+            }
             Self::ReclaimProviderManagedBinding => "reclaim surviving provider-managed binding",
             Self::ReleaseAfterOwnerDeath => "release after process-owner death",
             Self::PrepareRebindAfterOwnerDeath => "prepare rebind after process-owner death",

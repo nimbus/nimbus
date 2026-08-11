@@ -43,6 +43,9 @@ pub(super) mod provision;
 pub(super) mod restart;
 pub(super) mod teardown;
 
+#[cfg(test)]
+pub(crate) use teardown::provider_claim_for_test as guest_teardown_provider_claim_for_test;
+
 const SERVICE_WORKLOAD_DEFAULT_CPU_WEIGHT: u64 = 100;
 const SERVICE_WORKLOAD_CPU_WEIGHT_PER_VCPU: u64 = 100;
 const SERVICE_WORKLOAD_MAX_CPU_WEIGHT: u64 = 10_000;
@@ -231,11 +234,7 @@ impl GuestNodeWorkloadService {
     }
 
     #[cfg(test)]
-    #[allow(
-        dead_code,
-        reason = "the guest teardown integration harness is added with the composite crash-cut tests"
-    )]
-    fn new_for_teardown_test<C>(
+    pub(crate) fn new_for_teardown_test<C>(
         node_id: NodeIdentity,
         provider: Arc<C>,
         bundle_materializer: Arc<ContainerSandboxBackend>,
@@ -261,6 +260,15 @@ impl GuestNodeWorkloadService {
         assert!(service.provider_views_share_one_backend());
         service
     }
+}
+
+#[cfg(test)]
+pub(crate) fn sandbox_network_plan_for_teardown_test(
+    compiled_network_plan: &nimbus_workloads::CompiledWorkloadNetworkPlan,
+    generation: nimbus_workloads::WorkloadGeneration,
+    spec: &nimbus::SandboxSpec,
+) -> Result<nimbus_sandbox::SandboxProvisionNetworkPlan, MachineApiWorkloadProvisionObservation> {
+    provision::sandbox_network_plan_for(compiled_network_plan, generation, spec)
 }
 
 impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {

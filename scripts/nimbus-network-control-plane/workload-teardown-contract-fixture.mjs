@@ -26,6 +26,24 @@ export const BEHAVIOR_TESTS = [
   "restart_result_is_settled_before_withdrawal_committed",
 ];
 
+export const FORWARDED_MACHINE_TESTS = {
+  registry: [
+    "real_forwarded_teardown_registry_runs_all_five_phases_through_compute_cas",
+    "real_forwarded_teardown_registry_inspects_all_five_phases_without_fallback",
+  ],
+  lifecycle: [
+    "forwarded_parent_sibling_matrix_retains_complete_batch_until_exact_absence",
+    "forwarded_parent_release_requires_exact_guest_and_provider_absence",
+    "forwarded_zero_listener_teardown_runs_all_five_phases_without_synthetic_port",
+    "dead_pre_checkpoint_provider_batches_retain_and_unadopted_release_replays",
+  ],
+  recovery: [
+    "forwarded_parent_response_loss_recovers_with_exact_inspect_before_retry",
+    "forwarded_two_realm_fresh_process_matrix_recovers_every_frozen_cut",
+    "inspected_absence_invalidates_a_delayed_started_token_before_io",
+  ],
+};
+
 const testSource = (name) =>
   maskNonCode(`
 #[test]
@@ -45,6 +63,25 @@ export function greenTeardownFixture() {
     file: "crates/nimbus-compute/src/workload_saga/teardown_driver/tests.rs",
     source: testSource("teardown_driver_records_exact_five_step_order"),
   });
+  const forwardedTestEntries = new Map();
+  for (const names of Object.values(FORWARDED_MACHINE_TESTS)) {
+    for (const name of names) {
+      const file =
+        name === "forwarded_two_realm_fresh_process_matrix_recovers_every_frozen_cut"
+          ? "crates/nimbus-cli/src/machine/backend/provision/tests/teardown_substitution/process_recovery.rs"
+          : name === "dead_pre_checkpoint_provider_batches_retain_and_unadopted_release_replays"
+            ? "crates/nimbus-network/src/port_lease/lifetime/batch_reservation/tests.rs"
+            : name === "inspected_absence_invalidates_a_delayed_started_token_before_io"
+              ? "crates/nimbus-sandbox/src/provider_command/tests/async_current_claim.rs"
+              : "crates/nimbus-cli/src/machine/backend/provision/tests/teardown_substitution.rs";
+      const tests = forwardedTestEntries.get(file) ?? [];
+      tests.push(testSource(name));
+      forwardedTestEntries.set(file, tests);
+    }
+  }
+  for (const [file, tests] of forwardedTestEntries) {
+    testEntries.push({ file, source: tests.join("\n") });
+  }
   return {
     workloads: withoutCfgTestItems(`
 pub enum WorkloadSagaPhase {
@@ -177,8 +214,40 @@ fn authenticate_machine_teardown_attempt_and_epoch() {}
 fn withdraw_parent_publication_before_guest_stop() {}
 fn release_parent_publication_after_guest_absence() {}
 fn ensure_no_active_workload_sagas_before_machine_stop() {}
+struct ForwardedMachineTeardownRegistrations;
+const PROVIDER_JOURNAL_NAMESPACE: &str = "forwarded-machine-teardown";
+fn registrations() {
+    NetworkAttachmentTeardownCapabilities::new();
+    WorkloadExecutionTeardownCapabilities::new();
+    IngressTeardownCapabilities::new();
+}
+fn forwarded_request_lifecycle() {
+    claim_execute_started();
+    execute_started_claim_async();
+    adopt_inspect();
+    inspect_current_claim_async_and_publish();
+}
+fn parent_forwarding_lifecycle() {
+    begin_parent_publication_withdrawal();
+    record_parent_publication_withdrawn_retained();
+    begin_parent_publication_release();
+    record_parent_publication_released();
+}
 `),
-    network: withoutCfgTestItems(`pub struct NetworkAttachmentId(String);`),
+    sandbox: withoutCfgTestItems(`
+struct ProviderCommandCurrentExecution;
+impl ProviderCommandCurrentExecution {
+    fn authenticates() {}
+}
+fn claim_dispatch_epoch_started() {}
+fn claim_dispatch_epoch_after_inspected_absence_started() {}
+fn execute_started_claim_async() {}
+`),
+    network: withoutCfgTestItems(`
+pub struct NetworkAttachmentId(String);
+fn retain_provider_managed_batch_after_confirmed_absence() {}
+fn release_retained_provider_managed_batch_after_confirmed_absence() {}
+`),
     tests: testEntries.map((entry) => entry.source).join("\n"),
     testEntries,
     plan: `

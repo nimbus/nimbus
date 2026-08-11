@@ -124,6 +124,30 @@ async fn inspected_absence_invalidates_a_delayed_started_token_before_io() {
         .expect_err("the inspected result must invalidate the delayed token");
     assert_eq!(error, ProviderCommandJournalError::PriorEffectUnresolved);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+    let retry = stop_claim(14);
+    let retry_request = b"exact adjacent retry request";
+    let retry_execution = match journal
+        .claim_dispatch_epoch_after_inspected_absence_started(
+            &retry,
+            claim.dispatch_epoch(),
+            b"provider proves the request never completed",
+            retry_request,
+        )
+        .expect("exact inspected absence should atomically start one adjacent retry")
+    {
+        ProviderCommandStartedClaimDecision::ExecuteStarted(execution) => execution,
+        ProviderCommandStartedClaimDecision::AdoptExactAttempt(_) => unreachable!(),
+    };
+    assert_eq!(
+        retry_execution.observation().kind(),
+        ProviderCommandObservationKind::InProgress
+    );
+    assert_eq!(
+        retry_execution.observation().prepared_request(),
+        Some(retry_request.as_slice())
+    );
+    assert_eq!(retry_execution.observation().retry_lineage.len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

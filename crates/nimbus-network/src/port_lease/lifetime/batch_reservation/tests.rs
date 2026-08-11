@@ -992,6 +992,88 @@ fn active_and_ambiguous_plan_withdrawal_preserve_exact_cleanup_evidence() {
         assert!(record.bind_claim().is_none());
         assert!(record.active_lifetime().is_some());
     }
+    drop(active_lifetimes);
+    let recoveries = active_authority
+        .recover_dead_lifetimes(&active_requests)
+        .expect("the stopped provider batch should recover as one exact set");
+    let before_partial = authority_bytes(active_root.path());
+    assert!(matches!(
+        active_authority.retain_provider_managed_batch_after_confirmed_absence(
+            &active_requests,
+            &recoveries[..1],
+        ),
+        Err(PortLeaseError::LifetimeMismatch { .. })
+    ));
+    assert_eq!(
+        authority_bytes(active_root.path()),
+        before_partial,
+        "partial absence authority must leave the complete batch byte-stable"
+    );
+    let retained = active_authority
+        .retain_provider_managed_batch_after_confirmed_absence(&active_requests, &recoveries)
+        .expect("confirmed provider absence should retain one non-bindable batch");
+    for (record, (_, _, expected_binding)) in retained.iter().zip(&bindings) {
+        assert_eq!(record.phase(), PortLeasePhase::CleanupPending);
+        assert_eq!(record.binding(), Some(expected_binding));
+        assert!(record.adoption_claim().is_some());
+        assert!(record.bind_claim().is_none());
+        assert!(record.active_lifetime().is_none());
+    }
+    let retained_bytes = authority_bytes(active_root.path());
+    assert_eq!(
+        active_authority
+            .retain_provider_managed_batch_after_confirmed_absence(&active_requests, &recoveries,)
+            .expect("the exact retained absence checkpoint should replay"),
+        retained
+    );
+    assert_eq!(
+        authority_bytes(active_root.path()),
+        retained_bytes,
+        "retained absence replay must be byte-stable"
+    );
+    assert!(matches!(
+        active_authority.retain_provider_managed_batch_after_confirmed_absence(
+            &active_requests[..1],
+            &recoveries[..1],
+        ),
+        Err(PortLeaseError::PlanMembershipConflict { .. })
+    ));
+    assert_eq!(
+        authority_bytes(active_root.path()),
+        retained_bytes,
+        "an equal-length retained subset must not mutate any sibling"
+    );
+    let before_partial_release = authority_bytes(active_root.path());
+    assert!(matches!(
+        active_authority.release_retained_provider_managed_batch_after_confirmed_absence(
+            &active_requests[..1],
+        ),
+        Err(PortLeaseError::PlanMembershipConflict { .. })
+    ));
+    assert_eq!(
+        authority_bytes(active_root.path()),
+        before_partial_release,
+        "a retained plan subset must not release any sibling"
+    );
+    drop(recoveries);
+    drop(active_authority);
+    let active_authority = LocalPortLeaseAuthority::open(active_root.path())
+        .expect("retained authority should reopen");
+    let released = active_authority
+        .release_retained_provider_managed_batch_after_confirmed_absence(&active_requests)
+        .expect("the complete retained absence batch should release atomically");
+    assert!(released.iter().all(|record| {
+        record.phase() == PortLeasePhase::Released
+            && record.active_lifetime().is_none()
+            && record.binding().is_some()
+            && record.adoption_claim().is_some()
+    }));
+    assert_eq!(
+        active_authority
+            .release_retained_provider_managed_batch_after_confirmed_absence(&active_requests)
+            .expect("the exact terminal batch should replay"),
+        released
+    );
 
     let pending_root = tempfile::tempdir().expect("pending state root should exist");
     let pending_authority =
@@ -1020,6 +1102,139 @@ fn active_and_ambiguous_plan_withdrawal_preserve_exact_cleanup_evidence() {
         assert!(record.adoption_claim().is_none());
         assert!(record.active_lifetime().is_some());
     }
+}
+
+#[test]
+fn dead_pre_checkpoint_provider_batches_retain_and_unadopted_release_replays() {
+    let active_root = tempfile::tempdir().expect("active state root should exist");
+    let active_authority =
+        LocalPortLeaseAuthority::open(active_root.path()).expect("active authority should open");
+    let active_claims = [
+        (planned_request_for("alpha", PORT), bind_claim("alpha")),
+        (planned_request_for("beta", PORT + 1), bind_claim("beta")),
+    ];
+    let active_reservation = active_authority
+        .reserve_and_claim_provider_managed_batch_with_lifetimes(&active_claims)
+        .expect("active plan should reserve");
+    let (_, active_lifetimes) = active_reservation.into_parts();
+    let bindings = [
+        (
+            active_claims[0].0.clone(),
+            active_claims[0].1.clone(),
+            binding("alpha", PORT),
+        ),
+        (
+            active_claims[1].0.clone(),
+            active_claims[1].1.clone(),
+            binding("beta", PORT + 1),
+        ),
+    ];
+    active_authority
+        .adopt_claimed_and_activate_batch_with_lifetimes(&bindings, None, &active_lifetimes)
+        .expect("active plan should activate");
+    let active_requests = active_claims
+        .iter()
+        .map(|(request, _)| request.clone())
+        .collect::<Vec<_>>();
+    drop(active_lifetimes);
+    let active_recoveries = active_authority
+        .recover_dead_lifetimes(&active_requests)
+        .expect("dead active batch should recover before a withdrawal checkpoint exists");
+    let active_retained = active_authority
+        .retain_provider_managed_batch_after_confirmed_absence(&active_requests, &active_recoveries)
+        .expect("exact provider absence should retain the dead active batch");
+    for (record, (_, _, expected_binding)) in active_retained.iter().zip(&bindings) {
+        assert_eq!(record.phase(), PortLeasePhase::CleanupPending);
+        assert_eq!(record.binding(), Some(expected_binding));
+        assert!(record.adoption_claim().is_some());
+        assert!(record.bind_claim().is_none());
+        assert!(record.active_lifetime().is_none());
+    }
+
+    let pending_root = tempfile::tempdir().expect("pending state root should exist");
+    let pending_authority =
+        LocalPortLeaseAuthority::open(pending_root.path()).expect("pending authority should open");
+    let pending_claims = [
+        (planned_request_for("alpha", PORT), bind_claim("alpha")),
+        (planned_request_for("beta", PORT + 1), bind_claim("beta")),
+    ];
+    let pending_reservation = pending_authority
+        .reserve_and_claim_provider_managed_batch_with_lifetimes(&pending_claims)
+        .expect("unadopted plan should reserve");
+    let (_, pending_lifetimes) = pending_reservation.into_parts();
+    let pending_requests = pending_claims
+        .iter()
+        .map(|(request, _)| request.clone())
+        .collect::<Vec<_>>();
+    drop(pending_lifetimes);
+    let pending_recoveries = pending_authority
+        .recover_dead_lifetimes(&pending_requests)
+        .expect("dead reserved batch should recover before a withdrawal checkpoint exists");
+    let retained = pending_authority
+        .retain_provider_managed_batch_after_confirmed_absence(
+            &pending_requests,
+            &pending_recoveries,
+        )
+        .expect("exact provider absence should retain the dead unadopted batch");
+    assert!(
+        retained
+            .iter()
+            .zip(&pending_claims)
+            .all(|(record, (_, claim))| {
+                record.phase() == PortLeasePhase::CleanupPending
+                    && record.bind_claim() == Some(claim)
+                    && record.binding().is_none()
+                    && record.adoption_claim().is_none()
+                    && record.active_lifetime().is_none()
+            })
+    );
+    let retained_bytes = authority_bytes(pending_root.path());
+    assert_eq!(
+        pending_authority
+            .retain_provider_managed_batch_after_confirmed_absence(
+                &pending_requests,
+                &pending_recoveries,
+            )
+            .expect("the exact unadopted retained checkpoint should replay"),
+        retained
+    );
+    assert_eq!(
+        authority_bytes(pending_root.path()),
+        retained_bytes,
+        "unadopted retained replay must be byte-stable"
+    );
+    let before_partial_release = authority_bytes(pending_root.path());
+    assert!(matches!(
+        pending_authority.release_retained_provider_managed_batch_after_confirmed_absence(
+            &pending_requests[..1],
+        ),
+        Err(PortLeaseError::PlanMembershipConflict { .. })
+    ));
+    assert_eq!(
+        authority_bytes(pending_root.path()),
+        before_partial_release,
+        "an unadopted retained subset must leave every sibling byte-stable"
+    );
+    drop(pending_recoveries);
+    drop(pending_authority);
+    let pending_authority = LocalPortLeaseAuthority::open(pending_root.path())
+        .expect("unadopted retained authority should reopen");
+    let released = pending_authority
+        .release_retained_provider_managed_batch_after_confirmed_absence(&pending_requests)
+        .expect("the complete unadopted retained batch should release atomically");
+    assert!(released.iter().all(|record| {
+        record.phase() == PortLeasePhase::Released
+            && record.bind_claim().is_none()
+            && record.binding().is_none()
+            && record.adoption_claim().is_none()
+            && record.active_lifetime().is_none()
+    }));
+    assert_eq!(
+        pending_authority
+            .release_retained_provider_managed_batch_after_confirmed_absence(&pending_requests)
+            .expect("the exact unadopted terminal batch should replay"),
+        released
+    );
 }
 
 #[test]

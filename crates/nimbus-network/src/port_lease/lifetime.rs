@@ -2131,6 +2131,166 @@ impl LocalPortLeaseAuthority {
         })
     }
 
+    /// Retain a complete provider-managed batch after exact provider absence.
+    ///
+    /// The effect adapter owns the absence proof. Recovery guards authenticate
+    /// the dead process generation. This transition clears only live process
+    /// authority: the complete batch remains `CleanupPending`, non-bindable,
+    /// and auditable until the workload teardown reaches terminal release.
+    pub fn retain_provider_managed_batch_after_confirmed_absence(
+        &self,
+        requests: &[PortLeaseRequest],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let recoveries = exact_recovery_batch(requests, recoveries)?;
+        self.transaction(|state| {
+            let requested = requests.iter().collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &requested)?;
+            let mut adopted_batch = None;
+            for request in requests {
+                let recovery = recoveries[request.lease_id()];
+                if recovery.lifetime.effect_scope != PortLeaseEffectScope::ProviderManaged {
+                    return Err(PortLeaseOperationError::LifetimeScopeMismatch {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                let record = exact_record(state, request)?;
+                let exact_replay = record.phase == PortLeasePhase::CleanupPending
+                    && record.active_lifetime.is_none()
+                    && record.last_lifetime_generation == recovery.lifetime.generation.as_u64()
+                    && recovery.request == *request;
+                if !exact_replay {
+                    authenticate_recovery(record, request, recovery)?;
+                }
+                let adopted = matches!(
+                    record.phase,
+                    PortLeasePhase::Active
+                        | PortLeasePhase::Withdrawing
+                        | PortLeasePhase::CleanupPending
+                ) && record.binding.is_some()
+                    && record.adoption_claim.is_some()
+                    && record.bind_claim.is_none();
+                let unadopted = matches!(
+                    record.phase,
+                    PortLeasePhase::Reserved | PortLeasePhase::CleanupPending
+                ) && record.binding.is_none()
+                    && record.adoption_claim.is_none()
+                    && record.bind_claim.is_some();
+                if (!adopted && !unadopted) || record.failure.is_some() {
+                    return Err(PortLeaseOperationError::InvalidTransition {
+                        lease_id: request.lease_id().clone(),
+                        phase: record.phase,
+                        operation: PortLeaseOperation::RetainAfterConfirmedAbsence,
+                    });
+                }
+                if adopted_batch.is_some_and(|current| current != adopted) {
+                    return Err(PortLeaseOperationError::InvalidTransition {
+                        lease_id: request.lease_id().clone(),
+                        phase: record.phase,
+                        operation: PortLeaseOperation::RetainAfterConfirmedAbsence,
+                    });
+                }
+                adopted_batch = Some(adopted);
+            }
+            for request in requests {
+                let record = exact_record_mut(state, request)?;
+                record.phase = PortLeasePhase::CleanupPending;
+                record.active_lifetime = None;
+            }
+            requests
+                .iter()
+                .map(|request| exact_record(state, request).cloned())
+                .collect()
+        })
+    }
+
+    /// Release a complete provider-managed batch from retained absence truth.
+    ///
+    /// `retain_provider_managed_batch_after_confirmed_absence` clears the
+    /// process lifetime while preserving the exact binding audit trail. This
+    /// transition consumes that durable non-bindable state after the workload
+    /// owner confirms its network teardown. Exact terminal replay is
+    /// idempotent; mixed retained and terminal batches are rejected.
+    pub fn release_retained_provider_managed_batch_after_confirmed_absence(
+        &self,
+        requests: &[PortLeaseRequest],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        self.transaction(|state| {
+            let requested = requests.iter().collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &requested)?;
+            let mut batch_shape = None;
+            for request in requests {
+                let record = exact_record(state, request)?;
+                let candidate = match record.phase {
+                    PortLeasePhase::CleanupPending
+                        if record.binding.is_some()
+                            && record.adoption_claim.is_some()
+                            && record.bind_claim.is_none()
+                            && record.failure.is_none()
+                            && record.active_lifetime.is_none() =>
+                    {
+                        (true, true)
+                    }
+                    PortLeasePhase::CleanupPending
+                        if record.binding.is_none()
+                            && record.adoption_claim.is_none()
+                            && record.bind_claim.is_some()
+                            && record.failure.is_none()
+                            && record.active_lifetime.is_none() =>
+                    {
+                        (false, true)
+                    }
+                    PortLeasePhase::Released
+                        if record.binding.is_some()
+                            && record.adoption_claim.is_some()
+                            && record.bind_claim.is_none()
+                            && record.failure.is_none()
+                            && record.active_lifetime.is_none() =>
+                    {
+                        (true, false)
+                    }
+                    PortLeasePhase::Released
+                        if record.binding.is_none()
+                            && record.adoption_claim.is_none()
+                            && record.bind_claim.is_none()
+                            && record.failure.is_none()
+                            && record.active_lifetime.is_none() =>
+                    {
+                        (false, false)
+                    }
+                    phase => {
+                        return Err(PortLeaseOperationError::InvalidTransition {
+                            lease_id: request.lease_id().clone(),
+                            phase,
+                            operation: PortLeaseOperation::ReleaseRetainedAfterConfirmedAbsence,
+                        });
+                    }
+                };
+                if batch_shape.is_some_and(|current| current != candidate) {
+                    return Err(PortLeaseOperationError::InvalidTransition {
+                        lease_id: request.lease_id().clone(),
+                        phase: record.phase,
+                        operation: PortLeaseOperation::ReleaseRetainedAfterConfirmedAbsence,
+                    });
+                }
+                batch_shape = Some(candidate);
+            }
+            if batch_shape.is_some_and(|(_, retained)| retained) {
+                for request in requests {
+                    let record = exact_record_mut(state, request)?;
+                    record.phase = PortLeasePhase::Released;
+                    record.reservation_claim = None;
+                    record.bind_claim = None;
+                    record.confirmed_stopped_binding = None;
+                }
+            }
+            requests
+                .iter()
+                .map(|request| exact_record(state, request).cloned())
+                .collect()
+        })
+    }
+
     /// Retain a provider-managed batch after its adapter proves exact absence.
     ///
     /// Process death grants only the recovery guards. The sandbox/provider

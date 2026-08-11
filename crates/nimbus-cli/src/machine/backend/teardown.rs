@@ -8,10 +8,12 @@ use nimbus_compute::workload_saga::teardown_provider_command::{
 };
 use nimbus_compute::workload_saga::{
     ConfirmedWorkloadTeardownCommand, FinalIngressWithdrawalCapability,
+    IngressTeardownCapabilities, NetworkAttachmentTeardownCapabilities,
     NetworkDetachmentCapability, NetworkReleaseCapability, WorkloadExecutionDrainCapability,
-    WorkloadExecutionStopCapability, WorkloadTeardownCapabilityFuture,
-    WorkloadTeardownExecuteOutcome, WorkloadTeardownInspectOutcome,
-    WorkloadTeardownProviderObservation, WorkloadTeardownProviderOutcome,
+    WorkloadExecutionStopCapability, WorkloadExecutionTeardownCapabilities,
+    WorkloadTeardownCapabilityFuture, WorkloadTeardownExecuteOutcome,
+    WorkloadTeardownInspectOutcome, WorkloadTeardownProviderObservation,
+    WorkloadTeardownProviderOutcome,
 };
 use nimbus_machine::api::{
     MachineApiWorkloadTeardownCommandEnvelope, MachineApiWorkloadTeardownCommandEnvelopeInput,
@@ -49,6 +51,31 @@ pub(crate) struct ForwardedMachineTeardownAdapter {
     forwarding: Arc<dyn MachinePortForwardingRetirement>,
 }
 
+pub(crate) struct ForwardedMachineTeardownRegistrations {
+    attachment: NetworkAttachmentTeardownCapabilities,
+    execution: WorkloadExecutionTeardownCapabilities,
+    ingress: IngressTeardownCapabilities,
+}
+
+impl ForwardedMachineTeardownRegistrations {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "NNC6.5f consumes the staged teardown registry seam"
+        )
+    )]
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        NetworkAttachmentTeardownCapabilities,
+        WorkloadExecutionTeardownCapabilities,
+        IngressTeardownCapabilities,
+    ) {
+        (self.attachment, self.execution, self.ingress)
+    }
+}
+
 impl ForwardedMachineTeardownAdapter {
     pub(crate) fn new(provision: Arc<ForwardedMachineProvisionAdapter>) -> Result<Self, Error> {
         let journal = ProviderCommandAttemptJournal::open(
@@ -64,6 +91,43 @@ impl ForwardedMachineTeardownAdapter {
             provision.teardown_source_plan().forwarder_config().clone(),
         ));
         Self::with_authorities(provision, journal, forwarding)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        provision: Arc<ForwardedMachineProvisionAdapter>,
+        forwarding: Arc<dyn MachinePortForwardingRetirement>,
+    ) -> Result<Self, Error> {
+        let journal = ProviderCommandAttemptJournal::open(
+            provision.teardown_state_root(),
+            PROVIDER_JOURNAL_NAMESPACE,
+        )
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to open forwarded machine teardown journal: {error}"
+            ))
+        })?;
+        Self::with_authorities(provision, journal, forwarding)
+    }
+
+    pub(crate) fn registrations(self: Arc<Self>) -> ForwardedMachineTeardownRegistrations {
+        let source = self.provision.teardown_source_plan();
+        ForwardedMachineTeardownRegistrations {
+            attachment: NetworkAttachmentTeardownCapabilities::new(
+                source.selection().attachment_provider_id().clone(),
+                self.clone(),
+                self.clone(),
+            ),
+            execution: WorkloadExecutionTeardownCapabilities::new(
+                source.execution_provider_id().clone(),
+                self.clone(),
+                self.clone(),
+            ),
+            ingress: IngressTeardownCapabilities::new(
+                source.selection().ingress_provider_id().clone(),
+                self,
+            ),
+        }
     }
 
     fn with_authorities(

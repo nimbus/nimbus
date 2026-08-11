@@ -77,7 +77,7 @@ impl ForwardedMachineProvisionAdapter {
             let recoveries = recover_dead_batch(&self.port_leases, &requests)?;
             let retained = self
                 .port_leases
-                .mark_cleanup_pending_batch_after_owner_death(&requests, &recoveries)
+                .retain_provider_managed_batch_after_confirmed_absence(&requests, &recoveries)
                 .map_err(port_authority_error)?;
             (receipts, retained)
         } else if exact_retained_batch(&records) {
@@ -97,7 +97,7 @@ impl ForwardedMachineProvisionAdapter {
             let receipts = withdraw_and_prove_absent(forwarding, &withdrawing)?;
             let retained = self
                 .port_leases
-                .mark_cleanup_pending_batch_after_owner_death(&requests, &recoveries)
+                .retain_provider_managed_batch_after_confirmed_absence(&requests, &recoveries)
                 .map_err(port_authority_error)?;
             (receipts, retained)
         };
@@ -224,9 +224,8 @@ impl ForwardedMachineProvisionAdapter {
             {
                 current
             } else if exact_retained_batch(&current) {
-                let recoveries = recover_dead_batch(&self.port_leases, &requests)?;
                 self.port_leases
-                    .release_provider_managed_batch_after_confirmed_stop(&requests, &recoveries)
+                    .release_retained_provider_managed_batch_after_confirmed_absence(&requests)
                     .map_err(port_authority_error)?
             } else {
                 return Err(Error::PreconditionFailed(

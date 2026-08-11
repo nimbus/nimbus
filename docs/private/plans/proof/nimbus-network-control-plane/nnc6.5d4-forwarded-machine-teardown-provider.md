@@ -1,6 +1,6 @@
 # NNC6.5d4 Forwarded-Machine Teardown Provider
 
-Status: `implementation in progress. bands 1-8 complete`
+Status: `complete. K1-K35 green`
 
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
 
@@ -677,7 +677,16 @@ membership, transport, routing, and super-net fencing remain separate.
 | Band 8 wire and provider corrections | Successful Release responses require non-null exact release-absence evidence during deserialization. The Unix gvproxy provider uses an owned canonical services socket, bounded nonblocking connection, one parsed `/services/forwarder/all` request, strict HTTP and JSON validation, and exact batch retirement. Runtime directories and sockets reject symlinks and foreign ownership and use owner-only permissions. No socket or provider effect enters `nimbus-network`. |
 | Band 8 behavior and recovery | Parent-forwarder tests pass `2/2`; direct five-capability adapter and ordering tests pass `3/3`; sandbox forwarding tests pass `27/27`; provider-command tests pass `42` with two declared child-process ignores; and the Machine Release wire regression passes `1/1`. Full Machine passes `42` library plus `5` integration tests. Full Sandbox passes `1,164` with `48` declared platform or child-process ignores. Full Compute passes `381` with one declared child-process ignore. Full CLI passes `986` with two declared child-process ignores. |
 | Band 8 quality and modularity | Affected all-target checking, strict all-feature Clippy, warning-denied Rustdoc, format, diff, dependency, effect, bind, composition, attachment-readiness, and batch-convergence checks pass. The live aggregate remains exact `35/36` with only NNCV035 red. NNCV035 self-test passes `55/55`, and direct remains expected red at `0/7`. The aggregate verifier self-test passes `469/469`. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The `1,721`-line confirmed-publication file is the concept-owned durable authority; retirement progression is in a `110`-line child. The `1,669`-line provision test owner remains test-only. The `1,697`-line provision composition root retains its recorded exception and moves parent teardown to an `879`-line child with a `66`-line test child. Forwarding is `1,218` lines with a `110`-line retirement child. No changed handwritten file reaches `2,000`. |
-| Structured review | Not run. Band 8 is a partial recovery slice of one canonical item. One full review is allowed only after K1-K34 are green and the complete item is candidate-frozen. |
+| Band 9 registry and order | One real substitution fixture installs all five forwarded capabilities through the exact compute registry. It proves parent-local withdrawal before guest Drain, Stop, Detach, and Release; every remote Execute is durably prepared before send; every ambiguous or recovered request is inspected before an adjacent retry; and every provider result traverses compute's existing exact result CAS. Missing or crossed registration fails closed without fallback. Product caller cutover remains out of scope. |
+| Band 9 batch and recovery | Provider-managed port retention accepts the exact recoverable `Active` or `Reserved` pre-checkpoint shapes after confirmed provider absence, preserves complete plan membership and binding or bind-claim evidence, and supports exact byte-stable retained replay. Terminal release supports adopted and unadopted batches, clears only active authority, preserves audit evidence, and replays exact terminal records. Partial recovery, equal-length subsets, mixed phases, crossed plan membership, and incomplete absence mutate no member. Reopen tests cover retained release, terminal replay, and crashes before the withdrawal checkpoint. |
+| Band 9 two-realm proof | One two-cut fresh-process matrix uses separate parent and guest durable roots. It covers loss of a durably committed guest response and guest death after the generic claim but before the first child effect. Recovery uses only each process's own root, forces exact Inspect before retry, invalidates delayed execution authority after proved absence, and produces one guest effect and one terminal result. Opposite-realm byte snapshots stay unchanged. |
+| Band 9 zero-listener and saga truth | Explicit empty `WorkloadPublicationReference` values preserve the zero-listener lifecycle through workload restart and teardown. The real forwarded registry still executes all five phases without a synthetic listener, port, forwarding receipt, or inferred absence. Resource-free withdrawal creates no provider observation or receipt, terminal publication absence is required only for provider-managed selection, and restart preserves the exact publication reference. |
+| Band 9 affected behavior | Full Workloads passes `219`; Network passes `274` with one declared child-process ignore; Compute passes `381` with one declared child-process ignore; Sandbox passes `1,164` with `48` declared platform or child-process ignores; Machine passes `47`; Node passes `121`; and corrected serialized CLI passes `995` with three declared child-process ignores. The default-parallel CLI run had one inherited process-global network-composition-root fixture collision; its exact serial rerun passes, and the complete serialized suite passes. Network remains fully green. The corrected focused forwarded CLI lane passes `27` with one declared child-process ignore, and the missing-call timeout regression passes `1/1` in `0.11` seconds. |
+| Band 9 source contract | NNCV035 has three new source-derived diagnostics for registry substitution, lifecycle order, and recovery. Its `67` sole-diagnostic mutations pass. Direct NNCV035 remains the intended `0/7`: service, definition deletion, Compose, machine, tenant, compensation, and behavior are later-owned. The live aggregate is exact `35/36`, with NNCV035 as the sole expected red condition. |
+| Band 9 modularity | The candidate changes `34` paths, including `26` Rust paths. The two new substitution and process-recovery test children are `1,044` and `980` lines. Changed files from `1,500` through `1,999` lines are concept-owned pure saga/reducer or durable journal state machines, or coherent test-only contract matrices. The `2,951`-line `port_lease/lifetime.rs` retains the recorded strong exception: one durable lifetime state machine owns lock order, exact lifetime authentication, owner-death recovery, and atomic transitions; complete-batch mechanics and tests already live in concept-owned children, and splitting a transition would duplicate invariants. No other changed handwritten file reaches `2,000`. |
+| Band 9 quality and static proof | Strict affected all-feature Clippy and warning-denied Rustdoc pass; only unchanged vendored Brotli warnings remain outside the warning-denied Nimbus crates. Format and diff pass. NNCV000-NNCV034 are green; the live aggregate is the exact planned `35/36` with only NNCV035 red. NNCV035 self-test passes `67/67`, and the complete aggregate mutation harness passes `481/481`. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The dependency and effect scans preserve `nimbus-network -> nimbus-core` as the only initial workspace edge and find no new socket, provider, policy, naming, transport, or allocation effect in `nimbus-network`. |
+| Full structured review | The one GPT-5.6 Sol/xhigh/fast review used staged tree `7440423203e010ad6d42cc13d97b22ec7e0c5613`, patch SHA-256 `7e455251c72fb15af7c8ce75800deb62d7d09750de8f7c3f5f7c3bf2e1e254ad`, and thread `019feeef-9501-7772-bca7-ecfa538657d5`. It reported one P1 and one P2 at confidence `0.99`. The P1 is rejected: the unchanged two-cut fresh-process proof passes and shows Inspect epoch `0`, adjacent Drain Execute epoch `1`, one `drain_execute`, and zero `stop_execute`; the finding omitted the composite Systemd and Container inspection join. The P2 is accepted: both exact-call-count Unix test servers now use bounded accept, restore accepted streams to blocking reads, and fail deterministically on a missing call. The parent also kills and reaps a timed-out child. |
+| Narrow correction review | The sole narrow GPT-5.6 Sol/xhigh/fast review used staged tree `cddb5db89fe32db1743ca45e6c39ed926194b27c`, patch SHA-256 `085d9a6a6f9c89982982848743b6784db8c2dbbd4af291fbe79e2912d181b895`, and thread `019feeff-debb-7021-bc42-1733d2766e85`. It reported zero findings and confirmed both the P2 correction and the P1 rejection at confidence `0.99`. Review cadence is exhausted. No further review is authorized or needed. |
 | Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
 | Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 2 checkpoint | The commit that contains this row, the band 2 product and test paths, and the recovery header is the exact band 2 recovery checkpoint. It is not the item completion commit and has no structured review. |
@@ -689,6 +698,7 @@ membership, transport, routing, and super-net fencing remain separate.
 | Durable band 6 checkpoint | `a98841aaa` is the exact band 6 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 7 checkpoint | The commit that contains this row, the band 7 product and test paths, the source-derived census updates, and the recovery header is the exact band 7 recovery checkpoint. It is not the item completion commit and has no structured review. |
 | Durable band 8 checkpoint | The commit that contains this row, the band 8 product and test paths, the source-derived verifier updates, and the recovery header is the exact band 8 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable item checkpoint | The commit that contains this row, the `done` ledger row, and the routing closeout is the exact NNC6.5d4 item commit. |
 
 ## Current Acceptance State
 
@@ -728,9 +738,12 @@ restart. It withdraws the complete forwarding batch before guest work and
 releases the complete parent port batch only after exact guest and provider
 absence.
 
-Band 9 must complete real compute substitution and the end-to-end portions of
-K22-K29. K31-K34 and the candidate-frozen K35 review also remain open. No
-structured review ran.
+Band 9 completes real compute substitution and the end-to-end portions of
+K22-K29.
+
+Affected behavior and quality are green. Static, mutation, proof, and
+documentation gates are green. The full and narrow reviews complete K35. No
+review gate remains.
 
 Band 5 is prospectively split before implementation. These are dependency-
 ordered recovery slices, not separate plan items or review units. Bands
@@ -760,12 +773,16 @@ ordered recovery slices, not separate plan items or review units. Bands
    This slice is complete at the commit that contains the band 5c ledger row.
 
 Band 5 excludes forwarded attachment composition, the private route, the
-client, the parent adapter, caller cutover, and coarse-stop deletion. Band 6 is
-now green. It adds only the forwarded Container attachment composition and
-proves retained detach and final release without regressing NNC6.5d3. Band 7
-is also green. It adds only the strict private route, truthful capability
-advertisement, and one-shot client transport. Band 8 is next. It adds the
-parent publication progression and `ForwardedMachineTeardownAdapter`, including
-durable remote-request ambiguity and enforced Inspect-before-retry.
+client, and the parent adapter. It also excludes caller cutover and coarse-stop
+deletion. Band 6 is now green. It adds only the forwarded Container attachment
+composition. It proves retained detach and final release without a regression.
 
-NNC6.5d4 remains the sole `in_progress` canonical item. There is no blocker.
+Band 7 adds only the strict private route, truthful capability advertisement,
+and one-shot client transport.
+
+Band 8 adds the parent publication progression and
+`ForwardedMachineTeardownAdapter`, including durable remote-request ambiguity
+and enforced Inspect-before-retry. Band 9 implements the complete acceptance
+matrix. All K1-K35 gates are green.
+
+NNC6.5d4 is complete. NNC6.5e is now `in_progress`. There is no blocker.

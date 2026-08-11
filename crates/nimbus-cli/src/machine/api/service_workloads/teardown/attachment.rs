@@ -16,9 +16,9 @@ use nimbus_machine::{
 };
 use nimbus_network::NetworkCapabilitySourceDigest;
 use nimbus_sandbox::{
-    ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
-    ProviderCommandClaimInput, ProviderCommandCurrentInspection, ProviderCommandObservation,
-    ProviderCommandObservationKind, SandboxExecutionAttemptId, SandboxId,
+    ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimInput,
+    ProviderCommandCurrentInspection, ProviderCommandObservation, ProviderCommandObservationKind,
+    ProviderCommandStartedClaimDecision, SandboxExecutionAttemptId, SandboxId,
     SandboxNetworkTeardownCommand, SandboxNetworkTeardownCommandInput,
     SandboxNetworkTeardownIdentity, SandboxNetworkTeardownIdentityInput,
     SandboxNetworkTeardownObservation, SandboxNetworkTeardownOperation,
@@ -481,35 +481,30 @@ async fn execute(
     journal: ProviderCommandAttemptJournal,
 ) -> MachineApiWorkloadTeardownObservation {
     let provider_claim = validated.provider_claim.clone();
+    let prepared = match serde_json::to_vec(command) {
+        Ok(prepared) => prepared,
+        Err(_) => return ambiguous(command.mode()),
+    };
     let decision = match command.claim().authorization() {
         WorkloadTeardownDispatchAuthorization::Initial => {
-            journal.claim_dispatch_epoch(&validated.provider_claim)
+            journal.claim_dispatch_epoch_started(&validated.provider_claim, &prepared)
         }
         WorkloadTeardownDispatchAuthorization::RetryAfterNotCompleted(evidence) => {
             let encoded = match serde_json::to_vec(evidence) {
                 Ok(encoded) => encoded,
                 Err(_) => return ambiguous(command.mode()),
             };
-            journal.claim_dispatch_epoch_after_inspected_absence(
+            journal.claim_dispatch_epoch_after_inspected_absence_started(
                 &validated.provider_claim,
                 evidence.dispatch_epoch().as_u64(),
                 &encoded,
+                &prepared,
             )
         }
     };
     let execution = match decision {
-        Ok(ProviderCommandClaimDecision::ExecuteClaimed(execution)) => execution,
-        Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation))
-            if observation.kind() == ProviderCommandObservationKind::Claimed =>
-        {
-            match journal.resume_current_claim(&observation) {
-                Ok(execution) => execution,
-                Err(error) => {
-                    return exact_race_observation(command, &journal, &provider_claim, &error);
-                }
-            }
-        }
-        Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation)) => {
+        Ok(ProviderCommandStartedClaimDecision::ExecuteStarted(execution)) => execution,
+        Ok(ProviderCommandStartedClaimDecision::AdoptExactAttempt(observation)) => {
             return journal_observation(command, &observation);
         }
         Err(error) => return journal_error(command.mode(), &error),
@@ -519,7 +514,7 @@ async fn execute(
     let prior_observation = validated.prior_observation.clone();
     let expected_forwarder = validated.expected_forwarder.clone();
     let result = journal
-        .execute_current_claim_async(execution, move |current| {
+        .execute_started_claim_async(execution, move |current| {
             Box::pin(async move {
                 let observation = container.execute_forwarded_network_teardown_substep(
                     &sandbox_command,
