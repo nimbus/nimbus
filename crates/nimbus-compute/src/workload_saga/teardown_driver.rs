@@ -1,5 +1,7 @@
 //! Bounded durable driver for one workload teardown generation.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use nimbus_workloads::{
@@ -15,6 +17,10 @@ use super::teardown_dispatch::{WorkloadTeardownDispatchError, WorkloadTeardownDi
 use super::{WorkloadSagaConfirmation, WorkloadSagaCoordinator};
 
 const MAX_TEARDOWN_DECISIONS_PER_RUN: usize = 64;
+
+type WorkloadTeardownRunFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<WorkloadTeardownRun, WorkloadTeardownRunError>> + Send + 'a>,
+>;
 
 /// Why one bounded teardown run returned control to its caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,111 +81,109 @@ impl WorkloadTeardownDriver {
     }
 
     /// Reopen durable state for one exact key and advance only its teardown.
-    pub async fn resume(
-        &self,
-        key: &WorkloadSagaKey,
-    ) -> Result<WorkloadTeardownRun, WorkloadTeardownRunError> {
-        let record = self
-            .coordinator
-            .load(key)
-            .await?
-            .ok_or(WorkloadTeardownRunError::Missing)?;
-        self.drive(record).await
+    pub fn resume<'a>(&'a self, key: &'a WorkloadSagaKey) -> WorkloadTeardownRunFuture<'a> {
+        Box::pin(async move {
+            let record = self
+                .coordinator
+                .load(key)
+                .await?
+                .ok_or(WorkloadTeardownRunError::Missing)?;
+            self.drive(record).await
+        })
     }
 
-    async fn drive(
-        &self,
-        mut record: WorkloadSagaRecord,
-    ) -> Result<WorkloadTeardownRun, WorkloadTeardownRunError> {
-        let mut confirmed: Option<ConfirmedWorkloadTeardownTransition> = None;
-        let mut decisions = 0;
+    fn drive<'a>(&'a self, mut record: WorkloadSagaRecord) -> WorkloadTeardownRunFuture<'a> {
+        Box::pin(async move {
+            let mut confirmed: Option<ConfirmedWorkloadTeardownTransition> = None;
+            let mut decisions = 0;
 
-        loop {
-            if let Some(transition) = confirmed.take() {
-                let Some(durable) = transition.confirmed_record().cloned() else {
-                    match transition.confirmation() {
-                        WorkloadSagaConfirmation::Conflict { .. } => {
-                            record = self
-                                .coordinator
-                                .load(record.key())
-                                .await?
-                                .ok_or(WorkloadTeardownRunError::Missing)?;
-                            continue;
+            loop {
+                if let Some(transition) = confirmed.take() {
+                    let Some(durable) = transition.confirmed_record().cloned() else {
+                        match transition.confirmation() {
+                            WorkloadSagaConfirmation::Conflict { .. } => {
+                                record = self
+                                    .coordinator
+                                    .load(record.key())
+                                    .await?
+                                    .ok_or(WorkloadTeardownRunError::Missing)?;
+                                continue;
+                            }
+                            WorkloadSagaConfirmation::UnresolvedAmbiguity => {
+                                return Ok(waiting(record));
+                            }
+                            _ => return Err(WorkloadTeardownRunError::UnconfirmedTransition),
                         }
-                        WorkloadSagaConfirmation::UnresolvedAmbiguity => {
-                            return Ok(waiting(record));
+                    };
+                    if let Some(command) = transition.command().cloned() {
+                        require_decision_budget(&mut decisions)?;
+                        let result = self
+                            .dispatcher
+                            .dispatch_confirmed(&transition)
+                            .await?
+                            .ok_or(WorkloadTeardownRunError::UnconfirmedTransition)?;
+                        match apply_teardown_result(&durable, &command, result)? {
+                            WorkloadTeardownResultDecision::PersistCandidate(candidate) => {
+                                // A received provider result is always followed by
+                                // its durable CAS before any budget or caller boundary.
+                                confirmed = Some(
+                                    self.coordinator
+                                        .confirm_teardown_transition(&durable, *candidate)
+                                        .await?,
+                                );
+                            }
+                            WorkloadTeardownResultDecision::Waiting => {
+                                return Ok(waiting(durable));
+                            }
                         }
-                        _ => return Err(WorkloadTeardownRunError::UnconfirmedTransition),
-                    }
-                };
-                if let Some(command) = transition.command().cloned() {
-                    require_decision_budget(&mut decisions)?;
-                    let result = self
-                        .dispatcher
-                        .dispatch_confirmed(&transition)
-                        .await?
-                        .ok_or(WorkloadTeardownRunError::UnconfirmedTransition)?;
-                    match apply_teardown_result(&durable, &command, result)? {
-                        WorkloadTeardownResultDecision::PersistCandidate(candidate) => {
-                            // A received provider result is always followed by
-                            // its durable CAS before any budget or caller boundary.
-                            confirmed = Some(
-                                self.coordinator
-                                    .confirm_teardown_transition(&durable, *candidate)
-                                    .await?,
-                            );
-                        }
-                        WorkloadTeardownResultDecision::Waiting => {
-                            return Ok(waiting(durable));
-                        }
+                        record = durable;
+                        continue;
                     }
                     record = durable;
-                    continue;
                 }
-                record = durable;
-            }
 
-            match record
-                .decide_teardown()
-                .map_err(WorkloadSagaStoreError::InvalidTransition)?
-            {
-                WorkloadTeardownDecision::Quiescent => {
-                    return Ok(WorkloadTeardownRun {
-                        record,
-                        disposition: WorkloadTeardownRunDisposition::Completed,
-                    });
-                }
-                WorkloadTeardownDecision::RestartSettlementPending(_) => {
-                    return Ok(WorkloadTeardownRun {
-                        record,
-                        disposition: WorkloadTeardownRunDisposition::RestartSettlementPending,
-                    });
-                }
-                WorkloadTeardownDecision::CleanupPending { .. } => {
-                    return Ok(WorkloadTeardownRun {
-                        record,
-                        disposition: WorkloadTeardownRunDisposition::CleanupPending,
-                    });
-                }
-                WorkloadTeardownDecision::InspectExact(_) => {
-                    require_decision_budget(&mut decisions)?;
-                    confirmed = Some(
-                        self.coordinator
-                            .inspect_confirmed_teardown(record.key())
-                            .await?,
-                    );
-                }
-                WorkloadTeardownDecision::PersistCandidate(proposed) => {
-                    require_decision_budget(&mut decisions)?;
-                    let candidate = materialize_teardown_candidate(&record, &proposed)?;
-                    confirmed = Some(
-                        self.coordinator
-                            .confirm_teardown_transition(&record, candidate)
-                            .await?,
-                    );
+                match record
+                    .decide_teardown()
+                    .map_err(WorkloadSagaStoreError::InvalidTransition)?
+                {
+                    WorkloadTeardownDecision::Quiescent => {
+                        return Ok(WorkloadTeardownRun {
+                            record,
+                            disposition: WorkloadTeardownRunDisposition::Completed,
+                        });
+                    }
+                    WorkloadTeardownDecision::RestartSettlementPending(_) => {
+                        return Ok(WorkloadTeardownRun {
+                            record,
+                            disposition: WorkloadTeardownRunDisposition::RestartSettlementPending,
+                        });
+                    }
+                    WorkloadTeardownDecision::CleanupPending { .. } => {
+                        return Ok(WorkloadTeardownRun {
+                            record,
+                            disposition: WorkloadTeardownRunDisposition::CleanupPending,
+                        });
+                    }
+                    WorkloadTeardownDecision::InspectExact(_) => {
+                        require_decision_budget(&mut decisions)?;
+                        confirmed = Some(
+                            self.coordinator
+                                .inspect_confirmed_teardown(record.key())
+                                .await?,
+                        );
+                    }
+                    WorkloadTeardownDecision::PersistCandidate(proposed) => {
+                        require_decision_budget(&mut decisions)?;
+                        let candidate = materialize_teardown_candidate(&record, &proposed)?;
+                        confirmed = Some(
+                            self.coordinator
+                                .confirm_teardown_transition(&record, candidate)
+                                .await?,
+                        );
+                    }
                 }
             }
-        }
+        })
     }
 }
 

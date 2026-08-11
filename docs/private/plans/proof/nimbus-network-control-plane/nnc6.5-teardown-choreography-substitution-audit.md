@@ -193,7 +193,7 @@ first-available fallback.
 | NNC6.5b | Compute decision, confirmed-command gate, dispatcher, driver, registry, and runtime | NNC6.5a | CAS-before-effect, one winner, crash cuts, exact routing, same-attempt retry, cancellation, no provider implementation. |
 | NNC6.5c | Server ingress plus DirectProcess/Systemd execution adapters | NNC6.5b | Exact final ingress withdrawal and exact drain/stop substitution. Worker settlement failure blocks progress. |
 | NNC6.5d | Container/Krun execution drain/stop plus host-managed and forwarded-machine detach/release adapters | NNC6.5b | Honest drain, stop, detach, and release evidence over existing provider journals. Host-managed and machine-forwarded crash/race matrices. |
-| NNC6.5e | Native service/sandbox stop and definition deletion cutover | NNC6.5c-NNC6.5d | All native callers use compute. A late provision result drains. Removal waits. Services loses effect authority. |
+| NNC6.5e | Native service/sandbox stop and definition deletion cutover | NNC6.5c-NNC6.5d | K1-K32 in `nnc6.5e-native-source-retirement-cutover.md` pass. All native callers use compute. A late provision result drains. Removal waits. Services loses effect authority. Source and execution generations remain distinct. |
 | NNC6.5f | Compose, guest, forwarded, and physical-machine boundary cutover | NNC6.5c-NNC6.5d | Compose uses Engine/compute. Exact remote envelopes preserve parent-before-guest order. Physical stop fails closed with active workload authority. |
 | NNC6.5g | Failed-provision compensation, tenant-retirement cutover, convergence, and deletion gate | NNC6.5e-NNC6.5f | Failed resources retire in exact reverse effect order. Tenant delete waits. The item deletes coarse stop paths and unused lifecycle bypasses. NNCV035 is green. |
 
@@ -250,12 +250,24 @@ owner changes them serially. They do not define product ownership.
   owns OCI attachment-lifecycle, IPAM, segment, forwarding, process, port, and
   egress roots and children. Its scope includes execution drain and stop, not
   only network release.
-- NNC6.5e owns `crates/nimbus-compute/src/services.rs`, `sandboxes.rs`, and
-  `resource_provision.rs`. It owns server `workload_composition.rs` and its
-  tests. It owns services `manager/definitions.rs`, `definition_mutation.rs`,
-  `source.rs`, `sessions.rs`, `handles.rs`, and their definition, sandbox,
-  source, session, and server-manager tests. It excludes `manager.rs`,
-  `manager/retirement.rs`, and `manager/tests/tenant_teardown.rs`.
+- NNC6.5e owns `crates/nimbus-compute/src/services.rs`, `sandboxes.rs`,
+  `resource_provision.rs`, and new concept-owned `resource_retirement.rs`.
+  It has narrow composition, source-fence, settlement, and projection
+  exceptions in compute `state.rs`, `workload_saga.rs`, `lib.rs`,
+  `workload_provisioner.rs`, `workload_saga/restart_runtime.rs`, and
+  `workload_projection.rs`; NNC6.5g retains tenant deletion, failed-provision
+  compensation, and final convergence in those roots. It owns server
+  `workload_composition.rs`, native HTTP service/sandbox context adapters, and
+  their exact tests. It owns the local-only CLI `network_composition.rs`
+  registration; forwarded and Compose composition remain NNC6.5f-owned. It
+  owns services `catalog.rs`, `lib.rs`, `manager.rs`, `manager/types.rs`,
+  `manager/definitions.rs`, `definition_mutation.rs`, `source.rs`, `sessions.rs`,
+  `session_channels.rs`, `sandboxes.rs`, and `handles.rs` only for source
+  claim/finalize policy and distinct source/execution projections. It excludes
+  `manager/retirement.rs` and `manager/tests/tenant_teardown.rs`. Compute owns
+  in-flight provision/restart settlement; services does not acquire provider
+  or lifecycle-coordinator authority. The exact superseding path and seam
+  contract is in `nnc6.5e-native-source-retirement-cutover.md`.
 - NNC6.5f owns `crates/nimbus-compute/src/machines.rs` and
   `machine_lifecycle.rs`. It owns `crates/nimbus-machine/src/api.rs`, its new
   teardown child, tests, and the machine `lib.rs`. It owns the CLI Compose
@@ -373,7 +385,7 @@ Upper integration tests must include:
 - `sandbox_stop_persists_then_observes_complete_teardown_order`.
 - `force_delete_unresolved_submission_keeps_definition_and_makes_zero_stop_effects`.
 - `definition_delete_keeps_source_and_sessions_until_recorded_teardown`.
-- `definition_delete_cancels_and_joins_inflight_provision_before_removing_source`.
+- `definition_delete_fences_and_joins_inflight_provision_before_removing_source`.
 - `late_provision_result_after_force_delete_is_retired_before_definition_removal`.
 - `compose_down_local_uses_engine_saga_and_compute_teardown`.
 - `compose_down_forwarded_uses_engine_saga_and_exact_machine_phases`.

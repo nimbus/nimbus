@@ -220,6 +220,7 @@ fn snapshot_tree(root: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
 }
 
 #[test]
+#[serial_test::serial]
 fn parent_forwarder_uses_the_exact_machine_services_socket_and_authority() {
     let fixture = Fixture::new(MachineProvider::Krunkit, MachineStateRecord::initialized());
     let paths = fixture.roots.paths(DEFAULT_MACHINE_NAME);

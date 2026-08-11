@@ -21,6 +21,7 @@ use nimbus_services::{
     ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog, ServiceManager,
 };
 use nimbus_testing::ServerFixture;
+use nimbus_workloads::WorkloadTeardownStep;
 use serde_json::{Map, Value, json};
 
 use super::managed_workload::{TestSandboxActivation, managed_router_config};
@@ -29,6 +30,8 @@ use crate::local_server::{
     load_or_create_local_admin_token,
 };
 
+#[path = "service_manager/definition_retirement.rs"]
+mod definition_retirement;
 #[path = "service_manager/definitions.rs"]
 mod definitions;
 #[path = "service_manager/redaction.rs"]
@@ -88,6 +91,7 @@ impl ServiceDefinitionCatalog for StubServiceDefinitionCatalog {
 struct ReadySandboxBackend {
     image_starts: AtomicUsize,
     stop_calls: AtomicUsize,
+    teardown_steps: std::sync::Mutex<Vec<WorkloadTeardownStep>>,
     handles: std::sync::Mutex<BTreeMap<String, SandboxHandle>>,
 }
 
@@ -177,6 +181,21 @@ impl TestSandboxActivation for ReadySandboxBackend {
             .expect("ready sandbox handles lock should remain healthy")
             .get(execution_id.as_str())
             .cloned()
+    }
+
+    fn teardown_for_test(
+        &self,
+        step: WorkloadTeardownStep,
+        execution_id: &SandboxId,
+    ) -> SandboxFuture<()> {
+        self.teardown_steps
+            .lock()
+            .expect("ready sandbox teardown log should remain healthy")
+            .push(step);
+        if step == WorkloadTeardownStep::StopExecution {
+            return self.stop(execution_id);
+        }
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -1316,9 +1335,13 @@ async fn service_definition_force_delete_requires_separate_policy_and_exact_serv
         .expect("unauthorized force delete should send");
     assert_eq!(unauthorized_force.status(), StatusCode::FORBIDDEN);
     assert_eq!(
-        backend.stop_calls.load(Ordering::SeqCst),
-        0,
-        "unauthorized force delete must not stop the service backend"
+        backend
+            .teardown_steps
+            .lock()
+            .expect("ready sandbox teardown log should remain healthy")
+            .clone(),
+        Vec::<WorkloadTeardownStep>::new(),
+        "unauthorized force delete must not enter the teardown capability seam"
     );
 
     let force_delete = server
@@ -1331,7 +1354,20 @@ async fn service_definition_force_delete_requires_separate_policy_and_exact_serv
         .await
         .expect("authorized force delete should send");
     assert_eq!(force_delete.status(), StatusCode::NO_CONTENT);
-    assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        backend
+            .teardown_steps
+            .lock()
+            .expect("ready sandbox teardown log should remain healthy")
+            .clone(),
+        vec![
+            WorkloadTeardownStep::WithdrawPublication,
+            WorkloadTeardownStep::DrainExecution,
+            WorkloadTeardownStep::StopExecution,
+            WorkloadTeardownStep::DetachNetwork,
+            WorkloadTeardownStep::ReleaseNetwork,
+        ]
+    );
 }
 
 #[tokio::test]
@@ -1420,6 +1456,15 @@ async fn service_definition_update_rejects_active_backend_until_stopped() {
     assert_eq!(
         stopped_update_body["spec"]["backend"]["kind"],
         json!("builtIn")
+    );
+    assert!(
+        manager
+            .service_definition_observation_for_tenant(
+                &TenantId::new("tenant").expect("tenant id should parse"),
+                "worker",
+            )
+            .is_none(),
+        "source replacement must remove the stopped projection from the prior lifecycle"
     );
 }
 

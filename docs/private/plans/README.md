@@ -74,8 +74,9 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.5d4 complete; NNC6.5e
-  in progress`. NNC6.5 froze the source-derived teardown owner, caller,
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5e complete; NNC6.5f in progress`.
+  The NNC6.5e item commit contains its self-authenticating durable checkpoint;
+  the prior exact checkpoint is `6b685627c94e`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,
   path, and verification contract. NNC6.5a completed the strict portable
   protocol, reducer, exact provision/restart handoff validators, server
@@ -194,8 +195,20 @@ extension-registry seam before the second concern edits `extensions.rs`.
   bounded Unix accept, restored blocking reads, deterministic missing-call
   failure, and bounded child kill/reap. Corrected serialized CLI passes
   `995 + 3 ignores`. The sole narrow Sol/xhigh/fast review is clean at `0.99`.
-  K1-K35 are green, review cadence is exhausted, and NNC6.5e is now the sole
-  active item. Its first action is a read-only native caller-cutover audit.
+  K1-K35 are green, review cadence is exhausted, and NNC6.5e has completed its
+  native caller-cutover implementation and correction gates
+  are green in
+  `proof/nimbus-network-control-plane/nnc6.5e-native-source-retirement-cutover.md`.
+  K1-K31 pass, including the exact 23-test roster, all seven affected suites,
+  `88/88` teardown mutations, `502/502` aggregate mutations, native `1/1`, and
+  the exact live `35/36` transitional result. The one full and sole narrow
+  Sol/xhigh/fast review invocations are fully dispositioned. Their ten accepted
+  findings are corrected and proven. The narrow fixed-count-poll claim is
+  rejected because the remaining server loop is deadline-bounded semantic
+  observation and its exact test passes `1/1`. Review cadence is exhausted.
+  K32, the docs gates, and the recovery/routing transition are green. Compute owns the
+  provision/restart join and one optional teardown runtime; services owns
+  source claim/finalize policy and distinct source/execution projections.
   Compose down, physical-machine stop, product caller cutover, public-route
   growth, and a CLI-local saga store remain forbidden.
   NNC8.2 owns the
@@ -203,9 +216,10 @@ extension-registry seam before the second concern edits `extensions.rs`.
   authority through their effect boundaries.
   The four implementation units cover Container execution, Krun execution, shared
   host-managed attachment, and end-to-end forwarded-machine provider
-  substitution. NNC6.5e-NNC6.5g retain
-  native caller cutover, Compose/machine cutover, and final compensation,
-  tenant-retirement, and deletion convergence. NNCV035 remains the sole
+  substitution. NNC6.5f-NNC6.5g retain Compose/machine cutover and final
+  compensation, tenant-retirement, and deletion convergence. NNC6.5f is
+  active and begins with a source-derived read-only substitution audit before
+  product edits. NNCV035 remains the sole
   expected-red implementation condition until NNC6.5g. NNC6.1e's R1-R15
   portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast

@@ -782,7 +782,11 @@ async fn concurrent_exact_callers_share_one_tracked_run_and_provider_effect_per_
     );
     assert_eq!(provider.ingress_observations.load(Ordering::Acquire), 0);
     assert_eq!(projection_sink.calls.load(Ordering::Acquire), 1);
-    assert_eq!(reservations.load(Ordering::Acquire), 1);
+    assert_eq!(
+        reservations.load(Ordering::Acquire),
+        2,
+        "each exact caller must revalidate source authority under the keyed lock"
+    );
     let calls = provider.calls();
     assert_eq!(calls.len(), 6);
     for step in [
@@ -950,5 +954,113 @@ async fn retained_cancellation_wakes_multiple_waiters_at_the_wait_boundary() {
         .resume(key(), &WorkloadProvisionCancellation::default())
         .await
         .expect("retained task or exact resume should converge");
+    assert_eq!(provider.calls().len(), 6);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_start_and_stop_linearize_at_the_source_fence() {
+    // Schedule one: the retirement claim wins before keyed insertion. The
+    // provisioner's keyed guard rejects both raw submission and public resume
+    // before store or provider effects.
+    let store = Arc::new(DurableStore::default());
+    let source = RecordingSourceAuthority::with_evidence(source_evidence(1));
+    let provider = Arc::new(RecordingProvider::default());
+    let stop_wins_provisioner = provisioner(store.clone(), source, provider.clone());
+    let entered = Arc::new(std::sync::Barrier::new(2));
+    let release = Arc::new(std::sync::Barrier::new(2));
+    stop_wins_provisioner.install_test_submission_boundary(entered.clone(), release.clone());
+    let start_provisioner = stop_wins_provisioner.clone();
+    let start = tokio::spawn(async move {
+        start_provisioner
+            .provision(
+                request("node-a", 1),
+                &WorkloadProvisionCancellation::default(),
+            )
+            .await
+    });
+    entered.wait();
+    let (claimed, joined) = stop_wins_provisioner
+        .claim_retirement_and_join(&key(), || Ok::<_, nimbus_core::Error>("retirement-claim"))
+        .await
+        .expect("retirement should acquire the source fence");
+    assert_eq!(claimed, "retirement-claim");
+    assert!(joined.is_none());
+    let resume = stop_wins_provisioner
+        .resume(key(), &WorkloadProvisionCancellation::default())
+        .await;
+    assert!(matches!(
+        resume.as_ref().map_err(Arc::as_ref),
+        Err(WorkloadProvisionError::RetirementInProgress)
+    ));
+    release.wait();
+    let start = start.await.expect("start contender should join");
+    assert!(matches!(
+        start.as_ref().map_err(Arc::as_ref),
+        Err(WorkloadProvisionError::RetirementInProgress)
+    ));
+    assert_eq!(store.compare_and_swaps.load(Ordering::Acquire), 0);
+    assert!(provider.calls().is_empty());
+
+    // Schedule two: keyed provision insertion wins. Retirement acquires its
+    // claim and joins the exact retained completion before it can continue.
+    let store = DurableStore::pausing();
+    let source = RecordingSourceAuthority::with_evidence(source_evidence(1));
+    let provider = Arc::new(RecordingProvider::default());
+    let provisioner = provisioner(store.clone(), source, provider.clone());
+    let start_provisioner = provisioner.clone();
+    let start = tokio::spawn(async move {
+        start_provisioner
+            .provision(
+                request("node-a", 1),
+                &WorkloadProvisionCancellation::default(),
+            )
+            .await
+    });
+    store
+        .first_submission_applied
+        .acquire()
+        .await
+        .expect("durable submission signal should remain open")
+        .forget();
+
+    let claim_entered = Arc::new(Semaphore::new(0));
+    let join_provisioner = provisioner.clone();
+    let join_signal = claim_entered.clone();
+    let stop = tokio::spawn(async move {
+        join_provisioner
+            .claim_retirement_and_join(&key(), move || {
+                join_signal.add_permits(1);
+                Ok::<_, nimbus_core::Error>("retirement-claim")
+            })
+            .await
+    });
+    claim_entered
+        .acquire()
+        .await
+        .expect("retirement claim signal should remain open")
+        .forget();
+    assert!(provider.calls().is_empty());
+    assert!(
+        !stop.is_finished(),
+        "retirement must join retained provision"
+    );
+
+    store.release_first_submission.add_permits(1);
+    let start = start
+        .await
+        .expect("start task should join")
+        .expect("winning start should complete");
+    let (claim, joined) = stop
+        .await
+        .expect("stop task should join")
+        .expect("stop should join the winning provision");
+    assert_eq!(claim, "retirement-claim");
+    assert_eq!(
+        joined
+            .expect("retirement should retain exact provision outcome")
+            .record(),
+        start.record()
+    );
+    assert_eq!(store.compare_and_swaps.load(Ordering::Acquire), 13);
     assert_eq!(provider.calls().len(), 6);
 }

@@ -521,7 +521,7 @@ async fn native_service_and_sandbox_callers_use_compute_dispatch() {
         .as_ref()
         .expect("standalone dispatch should project exact provider evidence");
     assert_eq!(
-        standalone_observation.observed_generation,
+        standalone_observation.source_generation,
         standalone.source.generation
     );
     assert_eq!(
@@ -542,7 +542,7 @@ async fn native_service_and_sandbox_callers_use_compute_dispatch() {
         .as_ref()
         .expect("service dispatch should project exact provider evidence");
     assert_eq!(
-        service_observation.observed_generation,
+        service_observation.source_generation,
         service.definition.generation
     );
 

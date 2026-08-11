@@ -108,7 +108,8 @@ pub struct SandboxResourceSource {
 pub struct SandboxResourceObservation {
     pub tenant_id: TenantId,
     pub id: String,
-    pub observed_generation: u64,
+    pub source_generation: u64,
+    pub observed_execution_generation: u64,
     pub execution: WorkloadExecutionReference,
     pub handle: SandboxHandle,
     pub observed_at_millis: u64,
@@ -126,7 +127,8 @@ pub struct SandboxResourceSnapshot {
 pub struct ServiceDefinitionObservation {
     pub tenant_id: TenantId,
     pub name: String,
-    pub observed_generation: u64,
+    pub source_generation: u64,
+    pub observed_execution_generation: u64,
     pub execution: WorkloadExecutionReference,
     pub handle: SandboxHandle,
     pub observed_at_millis: u64,

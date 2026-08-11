@@ -219,7 +219,7 @@ pub(super) async fn provision_compose_service(
             ))
         })?;
     if let Some(observation) = provision.observation(tenant_id, service_name)
-        && observation.observed_generation == definition.generation
+        && observation.source_generation == definition.generation
     {
         validate_service_observation(&definition, &observation)?;
         if matches!(
@@ -271,7 +271,7 @@ fn validate_service_observation(
     };
     if observation.tenant_id != definition.tenant_id
         || observation.name != definition.name
-        || observation.observed_generation != definition.generation
+        || observation.source_generation != definition.generation
         || observation.handle.tenant_id != definition.tenant_id
         || observation.handle.name != definition.name
         || observation.handle.backend != spec.backend

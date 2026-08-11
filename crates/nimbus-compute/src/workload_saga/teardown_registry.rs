@@ -5,7 +5,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use nimbus_network::{NetworkCapabilitySelectionEvidence, NetworkPlanDigest, NetworkProviderId};
+use nimbus_network::{
+    NetworkCapabilitySelection, NetworkCapabilitySelectionEvidence, NetworkPlanDigest,
+    NetworkProviderId,
+};
 use nimbus_workloads::{
     NodeIdentity, WorkloadDesiredDigest, WorkloadExecutionProviderId, WorkloadExecutionReference,
     WorkloadGeneration, WorkloadProvisionSourceDigest, WorkloadProvisionSourceEvidence,
@@ -284,6 +287,13 @@ pub enum WorkloadTeardownCapabilityRegistryError {
         step: WorkloadTeardownStep,
         provider_target: WorkloadTeardownProviderTarget,
     },
+    #[error(
+        "teardown registry is not the exclusive exact provider realm network={network}, execution={execution_provider_id}"
+    )]
+    IncompleteExactRealm {
+        network: NetworkCapabilitySelection,
+        execution_provider_id: WorkloadExecutionProviderId,
+    },
 }
 
 /// Immutable exact registry for the five teardown lifecycle concepts.
@@ -363,6 +373,26 @@ impl WorkloadTeardownCapabilityRegistry {
         Ok(registry)
     }
 
+    /// Report whether one exact admitted provider realm has all five teardown
+    /// roles. Composition uses this effect-free check before it exposes native
+    /// retirement authority.
+    pub fn contains_exact_realm(
+        &self,
+        network: &NetworkCapabilitySelection,
+        execution_provider_id: &WorkloadExecutionProviderId,
+    ) -> bool {
+        self.ingress_withdrawal
+            .contains_key(network.ingress_provider_id())
+            && self.execution_drain.contains_key(execution_provider_id)
+            && self.execution_stop.contains_key(execution_provider_id)
+            && self
+                .network_detach
+                .contains_key(network.attachment_provider_id())
+            && self
+                .network_release
+                .contains_key(network.attachment_provider_id())
+    }
+
     pub(super) fn select_exact(
         &self,
         command: &ConfirmedWorkloadTeardownCommand,
@@ -431,6 +461,58 @@ impl WorkloadTeardownCapabilityRegistry {
                 provider_target: target.clone(),
             },
         )
+    }
+}
+
+/// A complete and exclusive five-role teardown registry for one admitted
+/// provider realm. Public composition accepts this validated type instead of
+/// discovering missing capability only after source or saga mutation.
+pub struct ExactWorkloadTeardownCapabilityRealm {
+    registry: WorkloadTeardownCapabilityRegistry,
+    network: NetworkCapabilitySelection,
+    execution_provider_id: WorkloadExecutionProviderId,
+}
+
+impl ExactWorkloadTeardownCapabilityRealm {
+    pub fn new(
+        registry: WorkloadTeardownCapabilityRegistry,
+        network: &NetworkCapabilitySelection,
+        execution_provider_id: &WorkloadExecutionProviderId,
+    ) -> Result<Self, WorkloadTeardownCapabilityRegistryError> {
+        let exclusive = registry.ingress_withdrawal.len() == 1
+            && registry.execution_drain.len() == 1
+            && registry.execution_stop.len() == 1
+            && registry.network_detach.len() == 1
+            && registry.network_release.len() == 1;
+        if !exclusive || !registry.contains_exact_realm(network, execution_provider_id) {
+            return Err(
+                WorkloadTeardownCapabilityRegistryError::IncompleteExactRealm {
+                    network: network.clone(),
+                    execution_provider_id: execution_provider_id.clone(),
+                },
+            );
+        }
+        Ok(Self {
+            registry,
+            network: network.clone(),
+            execution_provider_id: execution_provider_id.clone(),
+        })
+    }
+
+    pub(crate) fn into_registry_for(
+        self,
+        network: &NetworkCapabilitySelection,
+        execution_provider_id: &WorkloadExecutionProviderId,
+    ) -> Result<WorkloadTeardownCapabilityRegistry, WorkloadTeardownCapabilityRegistryError> {
+        if self.network != *network || self.execution_provider_id != *execution_provider_id {
+            return Err(
+                WorkloadTeardownCapabilityRegistryError::IncompleteExactRealm {
+                    network: network.clone(),
+                    execution_provider_id: execution_provider_id.clone(),
+                },
+            );
+        }
+        Ok(self.registry)
     }
 }
 

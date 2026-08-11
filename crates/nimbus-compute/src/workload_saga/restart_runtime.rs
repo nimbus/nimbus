@@ -199,8 +199,15 @@ pub(crate) struct WorkloadRestartRuntime {
     watch_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
     _hint_handle: RestartHintHandle,
     explicit_submitter: ExplicitWorkloadRestartSubmitter,
-    _driver: Arc<WorkloadRestartDriver>,
-    _clock: Arc<dyn RestartClock>,
+    coordinator: Arc<WorkloadSagaCoordinator>,
+    driver: Arc<WorkloadRestartDriver>,
+    clock: Arc<dyn RestartClock>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkloadRestartSettlement {
+    Settled,
+    Pending,
 }
 
 impl WorkloadRestartRuntime {
@@ -243,7 +250,7 @@ impl WorkloadRestartRuntime {
                     .expect("restart watch interval is nonzero"),
                 Arc::clone(&clock),
                 cancellation.clone(),
-                coordinator,
+                Arc::clone(&coordinator),
                 watch_supervisor,
             )
             .map_err(|error| error.to_string())?,
@@ -268,8 +275,9 @@ impl WorkloadRestartRuntime {
             watch_thread: Mutex::new(Some(watch_thread)),
             _hint_handle: hint_handle,
             explicit_submitter,
-            _driver: driver,
-            _clock: clock,
+            coordinator,
+            driver,
+            clock,
         })
     }
 
@@ -279,6 +287,38 @@ impl WorkloadRestartRuntime {
         cancellation: &WorkloadRestartCancellationToken,
     ) -> Result<ExplicitWorkloadRestartSubmission, ExplicitWorkloadRestartError> {
         self.explicit_submitter.submit(request, cancellation).await
+    }
+
+    /// Resolve exact issued restart work after a stopped successor has fenced
+    /// new execution. Absence of an active restart is terminal evidence; an
+    /// active result that remains unresolved is a typed wait, never inferred
+    /// from polling.
+    pub(crate) async fn settle_for_teardown(
+        &self,
+        key: &nimbus_workloads::WorkloadSagaKey,
+    ) -> Result<WorkloadRestartSettlement, String> {
+        let run = self
+            .driver
+            .resume(key, self.clock.now_unix_millis())
+            .await
+            .map_err(|error| error.to_string())?;
+        if run.record().restart_state().active().is_none() {
+            return Ok(WorkloadRestartSettlement::Settled);
+        }
+        if matches!(
+            run.record()
+                .restart_state()
+                .active()
+                .map(|active| active.disposition()),
+            Some(nimbus_workloads::WorkloadRestartDisposition::SuccessorVetoed { .. })
+        ) {
+            self.coordinator
+                .commit_restart_settlement_teardown(run.record())
+                .await
+                .map_err(|error| error.to_string())?;
+            return Ok(WorkloadRestartSettlement::Settled);
+        }
+        Ok(WorkloadRestartSettlement::Pending)
     }
 }
 

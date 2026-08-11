@@ -12,7 +12,7 @@ use crate::{SandboxResourceSource, ServiceBackend, ServiceDefinition, ServiceDef
 use super::ServiceManager;
 use super::clock::now_millis;
 use super::sandboxes::{same_sandbox_resource_desire, validate_sandbox_resource_spec};
-use super::types::TenantSandboxResourceKey;
+use super::types::{TenantSandboxResourceKey, TenantServiceKey, WorkloadSourceRetirementKey};
 
 /// Exact desired standalone source plus the policy input that must admit it.
 ///
@@ -147,6 +147,15 @@ impl ServiceManager {
             .state
             .lock()
             .expect("manager lock should not be poisoned");
+        if Self::source_retirement_claim_exists(
+            &state,
+            &WorkloadSourceRetirementKey::Sandbox(key.clone()),
+        ) {
+            return Err(Error::conflict(format!(
+                "sandbox resource `{}` has a retirement claim in progress",
+                source.id
+            )));
+        }
         if let Some(existing) = state.sandbox_resource_sources.get(&key) {
             if same_sandbox_resource_desire(existing, &source) {
                 return Ok(existing.clone());
@@ -237,7 +246,6 @@ impl ServiceManager {
             &definition.name,
             None,
             spec,
-            definition.generation,
         )?;
         decision
             .service_access(&definition.name, "sandbox-backed service provision")?
@@ -249,6 +257,52 @@ impl ServiceManager {
             .volume_policy
             .ensure_sandbox_mounts_match(spec, "sandbox-backed service provision")?;
         self.admit_sandbox_root(decision, spec)
+    }
+
+    /// Revalidate and fence an exact service source at provision insertion.
+    /// This callback performs no source mutation; it shares the manager lock
+    /// with retirement claims so start and stop have one local linearization.
+    pub fn reserve_sandbox_service_provision_source(
+        &self,
+        decision: &TenantIsolationDecision,
+        prepared: SandboxServiceProvisionSource,
+    ) -> Result<(), Error> {
+        self.validate_sandbox_service_provision_decision(decision, &prepared)?;
+        let definition = prepared.definition;
+        let catalog_definition = self
+            .service_definitions
+            .service_definition_for_tenant(&definition.tenant_id, &definition.name);
+        let key = TenantServiceKey::new(&definition.tenant_id, &definition.name);
+        let state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        if Self::source_retirement_claim_exists(
+            &state,
+            &WorkloadSourceRetirementKey::Service(key.clone()),
+        ) {
+            return Err(Error::conflict(format!(
+                "service `{}` for tenant `{}` has a retirement claim in progress",
+                definition.name, definition.tenant_id
+            )));
+        }
+        let current = state
+            .definitions
+            .get(&key)
+            .or(catalog_definition.as_ref())
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "service `{}` for tenant `{}` was not found",
+                    definition.name, definition.tenant_id
+                ))
+            })?;
+        if current != &definition {
+            return Err(Error::PreconditionFailed(format!(
+                "service `{}` changed before provision insertion",
+                definition.name
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -263,7 +317,6 @@ fn validate_standalone_decision(
         &source.profile,
         Some(&source.id),
         &source.spec,
-        source.generation,
     )?;
     decision.ensure_sandbox_spec_matches(
         &source.spec,
@@ -286,7 +339,6 @@ fn validate_exact_decision_workload(
     expected_name: &str,
     expected_sandbox_id: Option<&str>,
     spec: &SandboxSpec,
-    expected_generation: u64,
 ) -> Result<(), Error> {
     let workload = decision.workload();
     let identity = decision.workload_identity();
@@ -295,10 +347,10 @@ fn validate_exact_decision_workload(
         || workload.name() != expected_name
         || workload.sandbox_backend() != Some(spec.backend)
         || workload.sandbox_id() != expected_sandbox_id
-        || identity.deployment_generation() != Some(expected_generation)
+        || identity.deployment_generation().is_none()
     {
         return Err(Error::InvalidInput(format!(
-            "tenant isolation decision {} is crossed with desired workload `{expected_name}` generation {expected_generation}",
+            "tenant isolation decision {} is crossed with desired workload `{expected_name}` or lacks its compute-owned lifecycle generation",
             decision.id().as_str()
         )));
     }

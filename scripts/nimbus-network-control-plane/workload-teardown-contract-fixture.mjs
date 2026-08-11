@@ -8,7 +8,7 @@ export const BEHAVIOR_TESTS = [
   "sandbox_stop_persists_then_observes_complete_teardown_order",
   "force_delete_unresolved_submission_keeps_definition_and_makes_zero_stop_effects",
   "definition_delete_keeps_source_and_sessions_until_recorded_teardown",
-  "definition_delete_cancels_and_joins_inflight_provision_before_removing_source",
+  "definition_delete_fences_and_joins_inflight_provision_before_removing_source",
   "late_provision_result_after_force_delete_is_retired_before_definition_removal",
   "compose_down_local_uses_engine_saga_and_compute_teardown",
   "compose_down_forwarded_uses_engine_saga_and_exact_machine_phases",
@@ -24,6 +24,32 @@ export const BEHAVIOR_TESTS = [
   "failed_service_start_enters_durable_compensation_without_caller_stop",
   "failed_sandbox_start_enters_durable_compensation_without_caller_stop",
   "restart_result_is_settled_before_withdrawal_committed",
+];
+
+export const NATIVE_SOURCE_RETIREMENT_TESTS = [
+  "service_stop_persists_then_observes_complete_teardown_order",
+  "sandbox_stop_persists_then_observes_complete_teardown_order",
+  "native_stop_without_teardown_composition_fails_before_source_or_effect",
+  "native_stop_unresolved_submission_makes_zero_provider_calls",
+  "service_stop_joins_inflight_provision_and_retires_late_success",
+  "sandbox_stop_joins_inflight_provision_and_retires_late_success",
+  "definition_delete_keeps_source_and_sessions_until_recorded_teardown",
+  "definition_delete_fences_and_joins_inflight_provision_before_removing_source",
+  "force_delete_unresolved_submission_keeps_definition_and_makes_zero_stop_effects",
+  "late_provision_result_after_force_delete_is_retired_before_definition_removal",
+  "definition_delete_cleanup_pending_keeps_definition_observation_and_sessions",
+  "definition_delete_cancellation_after_submission_is_replayable",
+  "service_start_after_recorded_stop_uses_next_lifecycle_generation",
+  "sandbox_start_after_recorded_stop_uses_next_lifecycle_generation",
+  "source_generation_remains_stable_across_stop_and_later_start",
+  "session_binding_rejects_a_later_execution_with_the_same_source_generation",
+  "concurrent_start_and_stop_linearize_at_the_source_fence",
+  "active_restart_settles_before_withdrawal_committed",
+  "generation_overflow_fails_before_source_store_or_provider_effect",
+  "missing_saga_with_provider_observation_fails_closed",
+  "service_stop_fences_start_before_its_first_saga_commit",
+  "sandbox_stop_fences_start_before_its_first_saga_commit",
+  "definition_delete_fences_start_before_its_first_saga_commit",
 ];
 
 export const FORWARDED_MACHINE_TESTS = {
@@ -59,6 +85,41 @@ export function greenTeardownFixture() {
     file: `__fixture__/${name}.rs`,
     source: testSource(name),
   }));
+  const nativeTestsByFile = new Map([
+    [
+      "crates/nimbus-compute/src/resource_retirement/tests/native.rs",
+      NATIVE_SOURCE_RETIREMENT_TESTS.filter((name) =>
+        ![
+          "definition_delete_keeps_source_and_sessions_until_recorded_teardown",
+          "definition_delete_fences_and_joins_inflight_provision_before_removing_source",
+          "force_delete_unresolved_submission_keeps_definition_and_makes_zero_stop_effects",
+          "late_provision_result_after_force_delete_is_retired_before_definition_removal",
+          "definition_delete_cleanup_pending_keeps_definition_observation_and_sessions",
+          "definition_delete_cancellation_after_submission_is_replayable",
+          "session_binding_rejects_a_later_execution_with_the_same_source_generation",
+          "concurrent_start_and_stop_linearize_at_the_source_fence",
+        ].includes(name),
+      ),
+    ],
+    [
+      "crates/nimbus-server/src/tests/service_manager/definition_retirement.rs",
+      NATIVE_SOURCE_RETIREMENT_TESTS.slice(6, 12),
+    ],
+    [
+      "crates/nimbus-services/src/manager/tests/sessions.rs",
+      ["session_binding_rejects_a_later_execution_with_the_same_source_generation"],
+    ],
+    [
+      "crates/nimbus-compute/src/workload_provisioner/tests.rs",
+      ["concurrent_start_and_stop_linearize_at_the_source_fence"],
+    ],
+  ]);
+  for (const [file, names] of nativeTestsByFile) {
+    testEntries.push({
+      file,
+      source: names.map(testSource).join("\n"),
+    });
+  }
   testEntries.push({
     file: "crates/nimbus-compute/src/workload_saga/teardown_driver/tests.rs",
     source: testSource("teardown_driver_records_exact_five_step_order"),
@@ -175,6 +236,10 @@ impl WorkloadTeardownDriver {
 }
 fn submit_service_teardown() {}
 fn submit_sandbox_teardown() {}
+fn compose_native_teardown_runtime() { WorkloadTeardownRuntime; }
+fn fence_and_join_inflight_provision() {}
+fn retire_late_provision_result() {}
+fn settle_issued_restart_before_native_teardown() {}
 fn submit_compose_teardown() {}
 fn wait_for_teardown_outcome() {}
 fn list_tenant_sagas() {}
@@ -189,11 +254,136 @@ fn enter_withdrawal_committed_after_restart_settlement() {}
 `),
     services: withoutCfgTestItems(`
 fn claim_service_definition_retirement() {}
-fn cancel_and_join_inflight_provision() {}
-fn retire_late_provision_result() {}
 fn finalize_service_definition_after_recorded() {}
-fn project_recorded_service_teardown() {}
-fn project_recorded_sandbox_teardown() {}
+fn project_recorded_service_teardown(source_generation: SourceGeneration, observed_execution_generation: WorkloadGeneration, execution: WorkloadExecutionReference) {}
+fn project_recorded_sandbox_teardown(source_generation: SourceGeneration, observed_execution_generation: WorkloadGeneration, execution: WorkloadExecutionReference) {}
+`),
+    nativeCallers: withoutCfgTestItems(`
+fn submit_service_teardown() {}
+fn submit_sandbox_teardown() {}
+fn claim_service_definition_retirement() {}
+fn finalize_service_definition_after_recorded() {}
+`),
+    nativeSourceRetirement: withoutCfgTestItems(`
+fn finalize_unstarted_source_stop() {}
+fn finalize_unstarted_service_definition_deletion() {}
+fn finalize_service_definition_after_recorded() {}
+`),
+    provisionSettlementTests: maskNonCode(`
+#[test]
+fn service_stop_joins_inflight_provision_and_retires_late_success() {
+    let service_source_claim = install_source_claim_signal();
+    wait_for_source_claim(&service_source_claim, "service");
+    assert!(service_source_is_fenced());
+}
+#[test]
+fn sandbox_stop_joins_inflight_provision_and_retires_late_success() {
+    let sandbox_source_claim = install_source_claim_signal();
+    wait_for_source_claim(&sandbox_source_claim, "sandbox");
+    assert!(sandbox_source_is_fenced());
+}
+`),
+    provisionSettlementSupport: maskNonCode(`
+async fn wait_for_source_claim(&self, entered: &Semaphore, source: &str) {
+    self.wait_for_signal(entered, source).await;
+}
+async fn wait_for_signal(&self, entered: &Semaphore, diagnostic: &str) {
+    tokio::time::timeout(Duration::from_secs(2), entered.acquire())
+        .await
+        .expect(diagnostic)
+        .expect("source-claim signal should remain open");
+}
+`),
+    computeState: withoutCfgTestItems(`
+pub enum ComputeWorkloadComposition {
+    ProtocolOnly,
+    Managed {
+        execution_provider_id: WorkloadExecutionProviderId,
+        teardown_capabilities: Option<Box<ExactWorkloadTeardownCapabilityRealm>>,
+    },
+}
+impl ComputeState {
+    pub fn from_config() {
+        teardown_capabilities.map(|capabilities| {
+            let capabilities = capabilities.into_registry_for(
+                &capability_selection,
+                &execution_provider_id,
+            );
+            WorkloadTeardownRuntime::new(capabilities)
+        });
+    }
+}
+`),
+    serverComposition: withoutCfgTestItems(`
+pub struct ServerWorkloadProviders {
+    teardown_capabilities: Option<WorkloadTeardownCapabilityRegistry>,
+}
+impl ServerWorkloadProviders {
+    pub fn new() -> Self { Self { teardown_capabilities: None } }
+    pub fn with_teardown_capabilities(mut self, teardown_capabilities: WorkloadTeardownCapabilityRegistry) -> Self {
+        self.teardown_capabilities = Some(teardown_capabilities);
+        self
+    }
+}
+struct ServerWorkloadComposition {
+    execution_provider_id: WorkloadExecutionProviderId,
+    teardown_capabilities: Option<ExactWorkloadTeardownCapabilityRealm>,
+}
+impl ServerWorkloadComposition {
+    fn new() {
+        let teardown_capabilities = ExactWorkloadTeardownCapabilityRealm::new(
+            raw_teardown_capabilities,
+        );
+        Ok(Self { teardown_capabilities, execution_provider_id });
+    }
+    fn into_managed_compute() {
+        ComputeWorkloadComposition::Managed {
+            execution_provider_id: self.execution_provider_id,
+            teardown_capabilities: self.teardown_capabilities.map(Box::new),
+        };
+    }
+}
+`),
+    localComposition: withoutCfgTestItems(`
+fn into_workload_composition() {
+    let execution_teardown = KrunTeardownAdapter::new();
+    let attachment_teardown = KrunAttachmentTeardownAdapter::new();
+    let ingress_teardown = IngressTeardownCapabilities::new(ServerIngressPublicationAdapter);
+    let teardown = WorkloadTeardownCapabilityRegistry::new(
+        [attachment_teardown.capabilities()],
+        [execution_teardown.capabilities()],
+        [ingress_teardown],
+    );
+    ServerWorkloadProviders::new().with_teardown_capabilities(teardown);
+}
+`),
+    httpServices: withoutCfgTestItems(`
+async fn service_lifecycle_route() { service_lifecycle(&tenant_context); }
+async fn delete_service_definition() { delete_service_definition(&tenant_context); }
+`),
+    httpSandboxes: withoutCfgTestItems(`
+async fn stop_sandbox() { stop_sandbox(&authorization.tenant_context); }
+`),
+    computeServices: withoutCfgTestItems(`
+async fn service_lifecycle(tenant_context: &TenantIsolationContext) { submit_service_teardown(tenant_context); }
+async fn delete_service_definition(tenant_context: &TenantIsolationContext) { submit_definition_teardown(tenant_context); }
+`),
+    computeSandboxes: withoutCfgTestItems(`
+async fn stop_sandbox(tenant_context: &TenantIsolationContext) { submit_sandbox_teardown(tenant_context); }
+`),
+    resourceRetirement: withoutCfgTestItems(`
+fn compose_native_teardown_runtime() { WorkloadTeardownRuntime; }
+fn fence_and_join_inflight_provision() {}
+fn retire_late_provision_result() {}
+fn settle_issued_restart_before_native_teardown() {}
+`),
+    serviceDefinitions: withoutCfgTestItems(`
+fn claim_service_definition_retirement() {}
+fn finalize_service_definition_after_recorded() {}
+`),
+    serviceProjections: withoutCfgTestItems(`
+fn project_recorded_service_teardown(source_generation: SourceGeneration, observed_execution_generation: WorkloadGeneration, execution: WorkloadExecutionReference) {}
+fn project_recorded_sandbox_teardown(source_generation: SourceGeneration, observed_execution_generation: WorkloadGeneration, execution: WorkloadExecutionReference) {}
 `),
     server: withoutCfgTestItems(`
 trait FinalIngressWithdrawalCapability {
@@ -214,6 +404,11 @@ fn authenticate_machine_teardown_attempt_and_epoch() {}
 fn withdraw_parent_publication_before_guest_stop() {}
 fn release_parent_publication_after_guest_absence() {}
 fn ensure_no_active_workload_sagas_before_machine_stop() {}
+fn register_local_krun_teardown_capabilities() {
+    KrunTeardownAdapter;
+    KrunAttachmentTeardownAdapter;
+    ServerIngressPublicationAdapter;
+}
 struct ForwardedMachineTeardownRegistrations;
 const PROVIDER_JOURNAL_NAMESPACE: &str = "forwarded-machine-teardown";
 fn registrations() {

@@ -313,15 +313,46 @@ pub fn update_service_definition(
 /// called); this only performs the manager-side delete.
 pub async fn delete_service_definition(
     compute: &ComputeState,
-    tenant_id: &TenantId,
+    tenant_context: &TenantIsolationContext,
     service_name: &str,
     expected_generation: u64,
     force: bool,
 ) -> Result<(), ComputeError> {
     let manager = service_manager(compute)?;
-    manager
-        .delete_service_definition_async(tenant_id, service_name, expected_generation, force)
-        .await?;
+    let definition = manager
+        .service_definition_for_tenant(tenant_context.tenant_id(), service_name)
+        .ok_or_else(|| {
+            ComputeError::from(Error::NotFound(format!(
+                "service `{service_name}` was not found for tenant `{}`",
+                tenant_context.tenant_id()
+            )))
+        })?;
+    if definition.source != ServiceDefinitionSource::Dynamic {
+        return Err(ComputeError::from(Error::conflict(format!(
+            "service `{service_name}` for tenant `{}` is static and cannot be deleted through dynamic service definition routes",
+            tenant_context.tenant_id()
+        ))));
+    }
+    if definition.generation != expected_generation {
+        return Err(ComputeError::from(Error::PreconditionFailed(format!(
+            "service `{service_name}` has generation {}, but delete expected {expected_generation}",
+            definition.generation
+        ))));
+    }
+    if !matches!(definition.backend, ServiceBackend::Sandbox(_)) {
+        manager.finalize_unmanaged_service_definition_deletion(
+            tenant_context.tenant_id(),
+            service_name,
+            expected_generation,
+            force,
+        )?;
+        return Ok(());
+    }
+    compute
+        .resource_retirer()?
+        .submit_definition_teardown(tenant_context, service_name, expected_generation, force)
+        .await
+        .map_err(|error| error.into_compute_error())?;
     Ok(())
 }
 
@@ -377,26 +408,26 @@ pub async fn service_lifecycle(
             )
         }
         ServiceLifecycleVerb::Start => {
-            let snapshot = compute
-                .resource_provisioner()?
-                .provision_sandbox_service(
-                    tenant_context,
-                    service_name,
-                    &WorkloadProvisionCancellation::default(),
-                )
-                .await
-                .map_err(|error| error.into_compute_error())?;
+            let provisioner = compute.resource_provisioner()?;
+            let cancellation = WorkloadProvisionCancellation::default();
+            let snapshot = Box::pin(provisioner.provision_sandbox_service(
+                tenant_context,
+                service_name,
+                &cancellation,
+            ))
+            .await
+            .map_err(|error| error.into_compute_error())?;
             (
                 snapshot.definition,
                 snapshot.observation.map(|observation| observation.handle),
             )
         }
         ServiceLifecycleVerb::Stop => {
-            let retirement = compute
-                .resource_provisioner()?
-                .retire_sandbox_service(tenant_context, service_name)
-                .await
-                .map_err(|error| error.into_compute_error())?;
+            let retirer = compute.resource_retirer()?;
+            let retirement =
+                Box::pin(retirer.submit_service_teardown(tenant_context, service_name))
+                    .await
+                    .map_err(|error| error.into_compute_error())?;
             (retirement.definition, retirement.retired_handle)
         }
     };

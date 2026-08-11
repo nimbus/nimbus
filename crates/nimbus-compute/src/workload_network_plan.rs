@@ -315,6 +315,38 @@ impl WorkloadNetworkPlanCompiler {
         )?;
         CompiledWorkloadNetworkPlan::from_content(content).map_err(Into::into)
     }
+
+    /// Compile the resource-free terminal successor of one admitted plan.
+    ///
+    /// Retirement advances only the desired network generation. The stable
+    /// workload-incarnation identity and the complete admitted sovereignty
+    /// baseline remain unchanged while all provider selections and desired
+    /// connectivity resources are withdrawn.
+    pub(crate) fn compile_terminal_empty_successor(
+        &self,
+        base: &CompiledWorkloadNetworkPlan,
+        generation: NetworkResourceGeneration,
+    ) -> Result<CompiledWorkloadNetworkPlan, WorkloadNetworkPlanCompileError> {
+        let base = base.content();
+        let identity = WorkloadNetworkPlanIdentity::new(
+            base.identity().tenant_id().clone(),
+            base.identity().workload_incarnation_key(),
+            generation,
+        )?;
+        let content = WorkloadNetworkPlanContent::new(
+            identity,
+            empty_requirements(base.sovereignty_requirements().clone()),
+            None,
+            None,
+            None,
+            [],
+            [],
+            [],
+            WorkloadActivationIntent::PrepareOnly,
+            WorkloadPublicationIntent::Withheld,
+        )?;
+        CompiledWorkloadNetworkPlan::from_content(content).map_err(Into::into)
+    }
 }
 
 fn network_workload_incarnation_key(

@@ -16,6 +16,7 @@ pub mod machines;
 pub mod node_workloads;
 pub mod pagination;
 pub mod resource_provision;
+pub mod resource_retirement;
 pub mod runtime_manager;
 pub mod sandbox_spec;
 pub mod sandboxes;
@@ -33,7 +34,9 @@ pub mod workload_saga;
 
 pub use resource_provision::{
     ComputeResourceProvisionError, ComputeResourceProvisioner, SandboxServiceProvisionSnapshot,
-    SandboxServiceRetirementOutcome,
+};
+pub use resource_retirement::{
+    ComputeResourceRetirementError, ComputeResourceRetirer, SandboxServiceRetirementOutcome,
 };
 pub use workload_projection::{
     ServiceManagerWorkloadProjectionSink, WorkloadExecutionObservationCapability,

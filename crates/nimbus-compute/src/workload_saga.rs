@@ -106,12 +106,12 @@ pub use teardown_driver::{
 };
 pub use teardown_node::NodeExecutionTeardownAdapter;
 pub use teardown_registry::{
-    FinalIngressWithdrawalCapability, IngressTeardownCapabilities,
-    NetworkAttachmentTeardownCapabilities, NetworkDetachmentCapability, NetworkReleaseCapability,
-    WorkloadExecutionDrainCapability, WorkloadExecutionStopCapability,
-    WorkloadExecutionTeardownCapabilities, WorkloadTeardownCapabilityFuture,
-    WorkloadTeardownCapabilityRegistry, WorkloadTeardownCapabilityRegistryError,
-    WorkloadTeardownProviderObservation,
+    ExactWorkloadTeardownCapabilityRealm, FinalIngressWithdrawalCapability,
+    IngressTeardownCapabilities, NetworkAttachmentTeardownCapabilities,
+    NetworkDetachmentCapability, NetworkReleaseCapability, WorkloadExecutionDrainCapability,
+    WorkloadExecutionStopCapability, WorkloadExecutionTeardownCapabilities,
+    WorkloadTeardownCapabilityFuture, WorkloadTeardownCapabilityRegistry,
+    WorkloadTeardownCapabilityRegistryError, WorkloadTeardownProviderObservation,
 };
 pub use teardown_runtime::{
     WorkloadTeardownCancellationToken, WorkloadTeardownRuntime, WorkloadTeardownSubmissionError,
@@ -136,6 +136,39 @@ impl WorkloadSagaCoordinator {
         key: &WorkloadSagaKey,
     ) -> Result<Option<WorkloadSagaRecord>, WorkloadSagaStoreError> {
         self.store.load(key).await
+    }
+
+    /// Promote the exact queued successor after its predecessor reaches
+    /// `Recorded` and return the confirmed durable terminal record.
+    pub(crate) async fn promote_recorded_successor(
+        &self,
+        recorded: &WorkloadSagaRecord,
+    ) -> Result<WorkloadSagaRecord, WorkloadSagaStoreError> {
+        let promoted = recorded.promote_successor()?;
+        self.commit_loaded(Some(recorded), promoted.clone()).await?;
+        Ok(promoted)
+    }
+
+    /// Hand an exact terminal restart result to the durable teardown state.
+    pub(crate) async fn commit_restart_settlement_teardown(
+        &self,
+        settled: &WorkloadSagaRecord,
+    ) -> Result<WorkloadSagaRecord, WorkloadSagaStoreError> {
+        let withdrawal = settled.commit_restart_settlement_teardown()?;
+        self.commit_loaded(Some(settled), withdrawal.clone())
+            .await?;
+        Ok(withdrawal)
+    }
+
+    /// Hand one exact settled prior-process provision result to teardown.
+    pub(crate) async fn commit_provision_settlement_teardown(
+        &self,
+        settled: &WorkloadSagaRecord,
+    ) -> Result<WorkloadSagaRecord, WorkloadSagaStoreError> {
+        let withdrawal = settled.commit_queued_successor_teardown()?;
+        self.commit_loaded(Some(settled), withdrawal.clone())
+            .await?;
+        Ok(withdrawal)
     }
 
     async fn commit_loaded(

@@ -159,7 +159,8 @@ impl RecordingComposeProvision {
         let observation = ServiceDefinitionObservation {
             tenant_id: tenant.clone(),
             name: "db".to_owned(),
-            observed_generation: definition.generation,
+            source_generation: definition.generation,
+            observed_execution_generation: execution.generation().as_u64(),
             execution,
             handle: SandboxHandle::new(
                 tenant,

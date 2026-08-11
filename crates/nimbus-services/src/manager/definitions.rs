@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use nimbus_core::{Error, TenantId};
+use nimbus_sandbox::SandboxStatus;
 use url::Url;
 
 use crate::{
@@ -11,7 +12,7 @@ use crate::{
 use super::ServiceManager;
 use super::clock::{next_version, now_millis};
 use super::session_channels::close_session_channels;
-use super::types::{ServiceManagerState, TenantServiceKey};
+use super::types::{ServiceManagerState, TenantServiceKey, WorkloadSourceRetirementKey};
 
 const SUPPORTED_BUILT_IN_PROVIDERS: &[&str] = &[
     "loadBalancer",
@@ -141,8 +142,16 @@ impl ServiceManager {
                 current.generation
             )));
         }
+        let has_live_observation = state
+            .service_definition_observations
+            .get(&key)
+            .is_some_and(|observation| observation.handle.status != SandboxStatus::Stopped);
         if state.definition_mutations_in_progress.contains(&key)
-            || state.service_definition_observations.contains_key(&key)
+            || Self::source_retirement_claim_exists(
+                &state,
+                &WorkloadSourceRetirementKey::Service(key.clone()),
+            )
+            || has_live_observation
         {
             return Err(Error::conflict(format!(
                 "service `{service_name}` for tenant `{tenant_id}` has an active backend; stop the service before updating its definition"
@@ -155,6 +164,7 @@ impl ServiceManager {
         updated.resource_version = next_version(&mut state.next_definition_version, "svcdef");
         updated.updated_at_millis = now_millis();
         updated.labels = labels;
+        state.service_definition_observations.remove(&key);
         state.definitions.insert(key, updated.clone());
         Ok(updated)
     }

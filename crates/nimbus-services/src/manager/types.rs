@@ -5,7 +5,7 @@ use nimbus_sandbox::SandboxError;
 
 use crate::{
     SandboxResourceObservation, SandboxResourceSource, ServiceDefinition,
-    ServiceDefinitionObservation, SessionResource,
+    ServiceDefinitionObservation, SessionResource, WorkloadSourceRetirementClaim,
 };
 
 use super::session_channels::{SessionChannelKey, SessionChannelState};
@@ -40,6 +40,12 @@ impl TenantSandboxResourceKey {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum WorkloadSourceRetirementKey {
+    Service(TenantServiceKey),
+    Sandbox(TenantSandboxResourceKey),
+}
+
 #[derive(Default)]
 pub(super) struct ServiceManagerState {
     pub(super) service_definition_observations:
@@ -50,6 +56,11 @@ pub(super) struct ServiceManagerState {
         BTreeMap<TenantSandboxResourceKey, SandboxResourceObservation>,
     pub(super) sessions: BTreeMap<String, SessionResource>,
     pub(super) session_channels: BTreeMap<SessionChannelKey, SessionChannelState>,
+    /// Process-local services policy claims. Durable lifecycle authority stays
+    /// in the workload saga store; these claims only fence source mutation,
+    /// provision insertion, session admission, and terminal projection.
+    pub(super) source_retirement_claims:
+        BTreeMap<WorkloadSourceRetirementKey, WorkloadSourceRetirementClaim>,
     /// Dynamic-definition mutations currently spanning an async retirement.
     ///
     /// This gate cannot authorize provision or provider start. It only keeps

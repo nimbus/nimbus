@@ -11,7 +11,8 @@ use super::types::TenantSandboxResourceKey;
 struct SandboxResourceObservationProjection<'a> {
     tenant_id: &'a TenantId,
     stable_resource_id: &'a str,
-    observed_generation: u64,
+    source_generation: Option<u64>,
+    observed_execution_generation: u64,
     expected_resource_version: Option<&'a str>,
     expected_attempt_id: &'a WorkloadExecutionAttemptId,
     exact_execution: Option<&'a WorkloadExecutionReference>,
@@ -24,14 +25,15 @@ impl ServiceManager {
         &self,
         tenant_id: &TenantId,
         stable_resource_id: &str,
-        observed_generation: u64,
+        observed_execution_generation: u64,
         expected_attempt_id: &WorkloadExecutionAttemptId,
         handle: SandboxHandle,
     ) -> Result<SandboxResourceObservation, Error> {
         self.project_sandbox_resource_observation_inner(SandboxResourceObservationProjection {
             tenant_id,
             stable_resource_id,
-            observed_generation,
+            source_generation: None,
+            observed_execution_generation,
             expected_resource_version: None,
             expected_attempt_id,
             exact_execution: None,
@@ -48,7 +50,7 @@ impl ServiceManager {
         &self,
         tenant_id: &TenantId,
         stable_resource_id: &str,
-        observed_generation: u64,
+        source_generation: u64,
         expected_resource_version: &str,
         execution: &WorkloadExecutionReference,
         handle: SandboxHandle,
@@ -56,7 +58,8 @@ impl ServiceManager {
         self.project_sandbox_resource_observation_inner(SandboxResourceObservationProjection {
             tenant_id,
             stable_resource_id,
-            observed_generation,
+            source_generation: Some(source_generation),
+            observed_execution_generation: execution.generation().as_u64(),
             expected_resource_version: Some(expected_resource_version),
             expected_attempt_id: execution.attempt_id(),
             exact_execution: Some(execution),
@@ -71,7 +74,8 @@ impl ServiceManager {
         let SandboxResourceObservationProjection {
             tenant_id,
             stable_resource_id,
-            observed_generation,
+            source_generation,
+            observed_execution_generation,
             expected_resource_version,
             expected_attempt_id,
             exact_execution,
@@ -92,9 +96,17 @@ impl ServiceManager {
                 "sandbox resource `{stable_resource_id}` was not found for tenant `{tenant_id}`"
             )));
         }
-        if source.generation != observed_generation {
+        let existing = state.sandbox_resource_observations.get(&key);
+        let source_generation = source_generation
+            .or_else(|| existing.map(|observation| observation.source_generation))
+            .ok_or_else(|| {
+                Error::PreconditionFailed(format!(
+                    "sandbox resource `{stable_resource_id}` requires exact source generation before its first projection"
+                ))
+            })?;
+        if source.generation != source_generation {
             return Err(Error::PreconditionFailed(format!(
-                "sandbox resource `{stable_resource_id}` has generation {}, but observation expected generation {observed_generation}",
+                "sandbox resource `{stable_resource_id}` has source generation {}, but observation expected source generation {source_generation}",
                 source.generation
             )));
         }
@@ -106,7 +118,7 @@ impl ServiceManager {
         }
         validate_sandbox_observation_identity(source, &handle)?;
         if exact_execution.is_some_and(|execution| {
-            execution.generation().as_u64() != observed_generation
+            execution.generation().as_u64() != observed_execution_generation
                 || handle.id.as_str() != execution.execution_id().as_str()
         }) {
             return Err(Error::InvalidInput(format!(
@@ -130,28 +142,43 @@ impl ServiceManager {
                 handle.id
             )));
         }
-        if let Some(existing) = state.sandbox_resource_observations.get(&key) {
-            if existing.observed_generation > observed_generation {
+        if let Some(existing) = existing {
+            if existing.source_generation != source_generation {
                 return Err(Error::PreconditionFailed(format!(
-                    "sandbox resource `{stable_resource_id}` already has newer observed generation {}",
-                    existing.observed_generation
+                    "sandbox resource `{stable_resource_id}` projection crossed source generation {}",
+                    existing.source_generation
                 )));
             }
-            if existing.observed_generation == observed_generation
+            if existing.observed_execution_generation > observed_execution_generation {
+                return Err(Error::PreconditionFailed(format!(
+                    "sandbox resource `{stable_resource_id}` already has newer observed execution generation {}",
+                    existing.observed_execution_generation
+                )));
+            }
+            if existing.observed_execution_generation == observed_execution_generation
                 && !same_provider_identity(&existing.handle, &handle)
             {
                 return Err(Error::conflict(format!(
-                    "sandbox resource `{stable_resource_id}` generation {observed_generation} already has a different provider observation"
+                    "sandbox resource `{stable_resource_id}` execution generation {observed_execution_generation} already has a different provider observation"
                 )));
             }
-            validate_attempt_progression(
-                tenant_id,
-                stable_resource_id,
-                existing,
-                expected_attempt_id,
-                exact_execution,
-            )?;
-            if existing.handle == handle && existing.execution.attempt_id() == expected_attempt_id {
+            if existing.observed_execution_generation == observed_execution_generation {
+                validate_attempt_progression(
+                    tenant_id,
+                    stable_resource_id,
+                    existing,
+                    expected_attempt_id,
+                    exact_execution,
+                )?;
+            } else if exact_execution.is_none() {
+                return Err(Error::PreconditionFailed(format!(
+                    "sandbox resource `{stable_resource_id}` requires an exact execution reference to advance lifecycle generation"
+                )));
+            }
+            if existing.handle == handle
+                && existing.execution.attempt_id() == expected_attempt_id
+                && existing.observed_execution_generation == observed_execution_generation
+            {
                 return Ok(existing.clone());
             }
         }
@@ -167,7 +194,8 @@ impl ServiceManager {
         let observation = SandboxResourceObservation {
             tenant_id: tenant_id.clone(),
             id: stable_resource_id.to_owned(),
-            observed_generation,
+            source_generation,
+            observed_execution_generation,
             execution,
             handle,
             observed_at_millis: now_millis(),

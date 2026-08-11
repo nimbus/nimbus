@@ -4,7 +4,7 @@
 //! durable submission, bounded driving, and retained keyed supervision. It does
 //! not expose the coordinator, dispatcher, or driver choreography to products.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use nimbus_network::{
@@ -14,10 +14,10 @@ use nimbus_network::{
 use nimbus_sandbox::SandboxSpec;
 use nimbus_tenant::TenantIsolationDecision;
 use nimbus_workloads::{
-    NodeIdentity, WorkloadActivationIntent, WorkloadExecutionProviderId,
+    DesiredWorkloadState, NodeIdentity, WorkloadActivationIntent, WorkloadExecutionProviderId,
     WorkloadNetworkForwardingBehavior, WorkloadProvisionSourceGeneration,
     WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent, WorkloadSagaIntent,
-    WorkloadSagaKey,
+    WorkloadSagaKey, WorkloadSagaStoreError,
 };
 use thiserror::Error;
 use tokio::sync::watch;
@@ -188,6 +188,8 @@ pub enum WorkloadProvisionError {
     WaiterCancelled,
     #[error("workload provision request is crossed with the tracked request for the same key")]
     CrossedTrackedRequest,
+    #[error("workload retirement owns the tracked lifecycle boundary for this key")]
+    RetirementInProgress,
     #[error("workload desired-source reservation failed: {0}")]
     SourceReservation(nimbus_core::Error),
     #[error("workload provision composition failed: {0}")]
@@ -231,19 +233,28 @@ struct InFlightProvision {
     _task: Option<JoinHandle<()>>,
 }
 
+#[derive(Default)]
+struct WorkloadProvisionSupervisor {
+    in_flight: BTreeMap<WorkloadSagaKey, InFlightProvision>,
+    retiring: BTreeSet<WorkloadSagaKey>,
+}
+
 /// Sole product composition of provision facts, persistence, and provider drive.
 pub struct WorkloadProvisioner {
     local_node: NodeIdentity,
     provider_reports: NetworkCapabilityRegistry,
     capability_selection: NetworkCapabilitySelection,
     sovereignty: NetworkSovereigntyRequirements,
+    coordinator: Arc<WorkloadSagaCoordinator>,
     driver: Arc<WorkloadProvisionDriver>,
     projection: Arc<WorkloadProjectionOrchestrator>,
-    in_flight: Arc<Mutex<BTreeMap<WorkloadSagaKey, InFlightProvision>>>,
+    supervisor: Arc<Mutex<WorkloadProvisionSupervisor>>,
     #[cfg(test)]
     test_submission_boundary: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
     #[cfg(test)]
     test_wait_boundary: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    #[cfg(test)]
+    test_retirement_claim_boundary: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
 }
 
 impl WorkloadProvisioner {
@@ -280,16 +291,19 @@ impl WorkloadProvisioner {
             provider_reports,
             capability_selection,
             sovereignty,
+            coordinator: Arc::clone(&coordinator),
             driver: Arc::new(WorkloadProvisionDriver::new(coordinator, dispatcher)),
             projection: Arc::new(WorkloadProjectionOrchestrator::new(
                 provision_capabilities,
                 projection_sink,
             )),
-            in_flight: Arc::new(Mutex::new(BTreeMap::new())),
+            supervisor: Arc::new(Mutex::new(WorkloadProvisionSupervisor::default())),
             #[cfg(test)]
             test_submission_boundary: Mutex::new(None),
             #[cfg(test)]
             test_wait_boundary: Mutex::new(None),
+            #[cfg(test)]
+            test_retirement_claim_boundary: Mutex::new(None),
         })
     }
 
@@ -309,6 +323,43 @@ impl WorkloadProvisioner {
         &self.sovereignty
     }
 
+    /// Select the workload lifecycle generation independently from the
+    /// services-owned source generation. Exact running replay keeps the active
+    /// generation; a changed or stopped source advances durable saga truth.
+    pub async fn lifecycle_generation_for_start(
+        &self,
+        key: &WorkloadSagaKey,
+        source_generation: WorkloadProvisionSourceGeneration,
+        resource_version: &WorkloadProvisionSourceResourceVersion,
+    ) -> Result<u64, nimbus_core::Error> {
+        let Some(record) = self
+            .coordinator
+            .load(key)
+            .await
+            .map_err(map_saga_load_error)?
+        else {
+            return Ok(source_generation.as_u64());
+        };
+        if record.successor_intent().is_some() {
+            return Err(nimbus_core::Error::conflict(
+                "workload retirement successor is already durable; retry start after retirement reaches Recorded"
+                    .to_owned(),
+            ));
+        }
+        let active = record.active_intent();
+        let exact_source = active.source().source_generation() == source_generation
+            && active.source().resource_version() == resource_version;
+        if exact_source && active.desired_state() == DesiredWorkloadState::Running {
+            return Ok(active.generation().as_u64());
+        }
+        let next = active.generation().checked_next().ok_or_else(|| {
+            nimbus_core::Error::PreconditionFailed(
+                "workload lifecycle generation overflow prevents a later start".to_owned(),
+            )
+        })?;
+        Ok(next.as_u64())
+    }
+
     /// Compose, durably submit, and drive one exact generation.
     pub async fn provision(
         self: &Arc<Self>,
@@ -323,8 +374,9 @@ impl WorkloadProvisioner {
     /// synchronous desired-source reservation with cancellation and keyed
     /// in-flight insertion.
     ///
-    /// The callback runs only for the winning new insertion. Exact in-flight
-    /// replay reuses the tracked result without repeating source mutation.
+    /// The callback revalidates source authority for every attempt while the
+    /// keyed lock is held. Exact in-flight replay reuses the tracked result;
+    /// the callback must therefore be idempotent for the same source facts.
     pub async fn provision_with_source_reservation<Reserve>(
         self: &Arc<Self>,
         request: WorkloadProvisionRequest,
@@ -374,10 +426,69 @@ impl WorkloadProvisioner {
         if cancellation.is_cancelled() {
             return Err(Arc::new(WorkloadProvisionError::CancelledBeforeSubmission));
         }
-        let receiver = self.track_resume(key, cancellation)?;
+        let receiver = self.track_resume(key, cancellation, false)?;
         #[cfg(test)]
         self.notify_test_wait_boundary();
         wait_for_completion(receiver, cancellation).await
+    }
+
+    /// Acquire one services-owned source claim while holding the same
+    /// insertion lock as provision, then join the exact retained provision if
+    /// one exists. The source claim remains owned by services if this waiter is
+    /// cancelled or the retained work reports an error.
+    pub async fn claim_retirement_and_join<Claim, Claimed>(
+        self: &Arc<Self>,
+        key: &WorkloadSagaKey,
+        claim_source: Claim,
+    ) -> Result<(Claimed, Option<WorkloadProvisionOutcome>), Arc<WorkloadProvisionError>>
+    where
+        Claim: FnOnce() -> Result<Claimed, nimbus_core::Error> + Send,
+    {
+        let (claimed, completion) = {
+            let mut supervisor = self
+                .supervisor
+                .lock()
+                .expect("workload provision supervisor lock should not be poisoned");
+            let claimed = claim_source()
+                .map_err(WorkloadProvisionError::SourceReservation)
+                .map_err(Arc::new)?;
+            supervisor.retiring.insert(key.clone());
+            #[cfg(test)]
+            self.notify_test_retirement_claim_boundary();
+            let completion = supervisor
+                .in_flight
+                .get(key)
+                .map(|entry| entry.completion.clone());
+            (claimed, completion)
+        };
+        let Some(completion) = completion else {
+            return Ok((claimed, None));
+        };
+        let cancellation = WorkloadProvisionCancellation::default();
+        wait_for_completion(completion, &cancellation)
+            .await
+            .map(|outcome| (claimed, Some(outcome)))
+    }
+
+    /// Resume durable provision truth only as part of an already-fenced
+    /// retirement. Public resume and new submissions remain rejected.
+    pub(crate) async fn resume_for_retirement(
+        self: &Arc<Self>,
+        key: WorkloadSagaKey,
+    ) -> WorkloadProvisionResult {
+        let cancellation = WorkloadProvisionCancellation::default();
+        let receiver = self.track_resume(key, &cancellation, true)?;
+        wait_for_completion(receiver, &cancellation).await
+    }
+
+    /// Release the compute-local retirement fence after services completes
+    /// the exact terminal source mutation.
+    pub(crate) fn release_retirement_fence(&self, key: &WorkloadSagaKey) {
+        self.supervisor
+            .lock()
+            .expect("workload provision supervisor lock should not be poisoned")
+            .retiring
+            .remove(key);
     }
 
     fn track_submission<Reserve>(
@@ -400,21 +511,24 @@ impl WorkloadProvisioner {
         }
         #[cfg(test)]
         self.pause_at_test_submission_boundary();
-        let mut in_flight = self
-            .in_flight
+        let mut supervisor = self
+            .supervisor
             .lock()
             .expect("workload provision supervisor lock should not be poisoned");
-        if let Some(existing) = in_flight.get(&key) {
+        if supervisor.retiring.contains(&key) {
+            return Err(Arc::new(WorkloadProvisionError::RetirementInProgress));
+        }
+        reserve_source()
+            .map_err(WorkloadProvisionError::SourceReservation)
+            .map_err(Arc::new)?;
+        if let Some(existing) = supervisor.in_flight.get(&key) {
             if existing.intent.as_ref() == Some(&intent) {
                 return Ok(existing.completion.clone());
             }
             return Err(Arc::new(WorkloadProvisionError::CrossedTrackedRequest));
         }
-        reserve_source()
-            .map_err(WorkloadProvisionError::SourceReservation)
-            .map_err(Arc::new)?;
         let (sender, receiver) = watch::channel(None);
-        in_flight.insert(
+        supervisor.in_flight.insert(
             key.clone(),
             InFlightProvision {
                 intent: Some(intent.clone()),
@@ -422,7 +536,7 @@ impl WorkloadProvisioner {
                 _task: None,
             },
         );
-        drop(in_flight);
+        drop(supervisor);
         drop(cancellation_guard);
 
         let provisioner = Arc::clone(self);
@@ -441,15 +555,17 @@ impl WorkloadProvisioner {
             };
             sender.send_replace(Some(result));
             provisioner
-                .in_flight
+                .supervisor
                 .lock()
                 .expect("workload provision supervisor lock should not be poisoned")
+                .in_flight
                 .remove(&task_key);
         });
         if let Some(entry) = self
-            .in_flight
+            .supervisor
             .lock()
             .expect("workload provision supervisor lock should not be poisoned")
+            .in_flight
             .get_mut(&key)
         {
             entry._task = Some(task);
@@ -461,20 +577,24 @@ impl WorkloadProvisioner {
         self: &Arc<Self>,
         key: WorkloadSagaKey,
         cancellation: &WorkloadProvisionCancellation,
+        allow_retirement: bool,
     ) -> Result<watch::Receiver<Option<WorkloadProvisionResult>>, Arc<WorkloadProvisionError>> {
         let cancellation_guard = cancellation.signal.borrow();
         if *cancellation_guard {
             return Err(Arc::new(WorkloadProvisionError::CancelledBeforeSubmission));
         }
-        let mut in_flight = self
-            .in_flight
+        let mut supervisor = self
+            .supervisor
             .lock()
             .expect("workload provision supervisor lock should not be poisoned");
-        if let Some(existing) = in_flight.get(&key) {
+        if supervisor.retiring.contains(&key) && !allow_retirement {
+            return Err(Arc::new(WorkloadProvisionError::RetirementInProgress));
+        }
+        if let Some(existing) = supervisor.in_flight.get(&key) {
             return Ok(existing.completion.clone());
         }
         let (sender, receiver) = watch::channel(None);
-        in_flight.insert(
+        supervisor.in_flight.insert(
             key.clone(),
             InFlightProvision {
                 intent: None,
@@ -482,7 +602,7 @@ impl WorkloadProvisioner {
                 _task: None,
             },
         );
-        drop(in_flight);
+        drop(supervisor);
         drop(cancellation_guard);
 
         let provisioner = Arc::clone(self);
@@ -497,15 +617,17 @@ impl WorkloadProvisioner {
             };
             sender.send_replace(Some(result));
             provisioner
-                .in_flight
+                .supervisor
                 .lock()
                 .expect("workload provision supervisor lock should not be poisoned")
+                .in_flight
                 .remove(&task_key);
         });
         if let Some(entry) = self
-            .in_flight
+            .supervisor
             .lock()
             .expect("workload provision supervisor lock should not be poisoned")
+            .in_flight
             .get_mut(&key)
         {
             entry._task = Some(task);
@@ -558,6 +680,35 @@ impl WorkloadProvisioner {
             entered.add_permits(1);
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn install_test_retirement_claim_boundary(
+        &self,
+        entered: Arc<tokio::sync::Semaphore>,
+    ) {
+        *self
+            .test_retirement_claim_boundary
+            .lock()
+            .expect("test retirement-claim boundary lock should not be poisoned") = Some(entered);
+    }
+
+    #[cfg(test)]
+    fn notify_test_retirement_claim_boundary(&self) {
+        if let Some(entered) = self
+            .test_retirement_claim_boundary
+            .lock()
+            .expect("test retirement-claim boundary lock should not be poisoned")
+            .as_ref()
+        {
+            entered.add_permits(1);
+        }
+    }
+}
+
+fn map_saga_load_error(error: WorkloadSagaStoreError) -> nimbus_core::Error {
+    nimbus_core::Error::Internal(format!(
+        "failed to load durable workload lifecycle generation: {error}"
+    ))
 }
 
 async fn wait_for_completion(

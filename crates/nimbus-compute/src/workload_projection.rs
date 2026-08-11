@@ -455,7 +455,8 @@ impl WorkloadProjectionOrchestrator {
         disposition: WorkloadProvisionRunDisposition,
     ) -> WorkloadProjectionState {
         match disposition {
-            WorkloadProvisionRunDisposition::Waiting => {
+            WorkloadProvisionRunDisposition::Waiting
+            | WorkloadProvisionRunDisposition::SuccessorSettlementReady => {
                 return WorkloadProjectionState::Pending(
                     WorkloadProjectionPendingReason::ProvisionWaiting,
                 );

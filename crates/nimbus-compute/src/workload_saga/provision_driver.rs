@@ -30,6 +30,9 @@ pub enum WorkloadProvisionRunDisposition {
     Observed,
     /// The generation is valid but awaits provider progress or an external trigger.
     Waiting,
+    /// An exact issued provision result is durable and the queued terminal
+    /// successor can enter withdrawal without another provider call.
+    SuccessorSettlementReady,
     /// A definite provider failure is durably recorded at the last completed phase.
     DefiniteFailure,
 }
@@ -112,6 +115,12 @@ impl WorkloadProvisionDriver {
         &self,
         mut record: WorkloadSagaRecord,
     ) -> Result<WorkloadProvisionRun, WorkloadProvisionRunError> {
+        if provision_successor_settlement_ready(&record) {
+            return Ok(WorkloadProvisionRun {
+                record,
+                disposition: WorkloadProvisionRunDisposition::SuccessorSettlementReady,
+            });
+        }
         let mut decision = WorkloadProvisionDecision::plan(&record)
             .map_err(WorkloadSagaStoreError::InvalidTransition)?;
         let mut inspection_dispatched = false;
@@ -209,6 +218,12 @@ impl WorkloadProvisionDriver {
                             _ => return Err(WorkloadProvisionRunError::UnconfirmedTransition),
                         }
                     };
+                    if provision_successor_settlement_ready(&durable) {
+                        return Ok(WorkloadProvisionRun {
+                            record: durable,
+                            disposition: WorkloadProvisionRunDisposition::SuccessorSettlementReady,
+                        });
+                    }
                     match confirmed.command().cloned() {
                         Some(command) => {
                             if decisions == MAX_DECISIONS_PER_RUN {
@@ -236,6 +251,10 @@ impl WorkloadProvisionDriver {
             }
         }
     }
+}
+
+fn provision_successor_settlement_ready(record: &WorkloadSagaRecord) -> bool {
+    record.successor_intent().is_some() && record.commit_queued_successor_teardown().is_ok()
 }
 
 #[cfg(test)]

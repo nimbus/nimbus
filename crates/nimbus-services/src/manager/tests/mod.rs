@@ -30,6 +30,7 @@ mod definition_lifecycle;
 mod sandbox_resources;
 mod sessions;
 mod source_projection;
+mod source_retirement;
 mod tenant_teardown;
 
 fn execution_reference_for_handle(

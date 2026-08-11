@@ -191,7 +191,7 @@ pub(crate) async fn delete_service_definition(
     }
     nimbus_compute::services::delete_service_definition(
         &state,
-        tenant_context.tenant_id(),
+        &tenant_context,
         &service_name,
         expected_generation,
         force,

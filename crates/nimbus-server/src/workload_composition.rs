@@ -15,10 +15,10 @@ use nimbus_compute::config::node_services::NodeServicesConfig;
 use nimbus_compute::config::runtime::RuntimeGovernorConfig;
 use nimbus_compute::state::{ComputeState, ComputeStateConfig, ComputeWorkloadComposition};
 use nimbus_compute::workload_saga::{
-    IngressProvisionCapabilities, IngressPublicationCapability,
-    IngressPublicationInspectionCapability, NetworkAttachmentCapability,
-    NetworkAttachmentProvisionCapabilities, NetworkReservationCapability,
-    NetworkRestartAttachmentCapability, RestartPublicationCapability,
+    ExactWorkloadTeardownCapabilityRealm, IngressProvisionCapabilities,
+    IngressPublicationCapability, IngressPublicationInspectionCapability,
+    NetworkAttachmentCapability, NetworkAttachmentProvisionCapabilities,
+    NetworkReservationCapability, NetworkRestartAttachmentCapability, RestartPublicationCapability,
     RestartPublicationObservationCapability, RestartPublicationWithdrawalCapability,
     WorkloadActivationCapability, WorkloadActivationPrerequisiteCapability,
     WorkloadExecutionProvisionCapabilities, WorkloadExecutionQuiescenceCapability,
@@ -27,7 +27,8 @@ use nimbus_compute::workload_saga::{
     WorkloadRestartActivationCapability, WorkloadRestartActivationPrerequisiteCapability,
     WorkloadRestartCapabilities, WorkloadRestartCapabilityRegistry,
     WorkloadRestartCapabilityRegistryError, WorkloadRestartPreparationCapability,
-    WorkloadRestartReadinessCapability,
+    WorkloadRestartReadinessCapability, WorkloadTeardownCapabilityRegistry,
+    WorkloadTeardownCapabilityRegistryError,
 };
 use nimbus_compute::{
     ComputeResourceProvisioner, ServiceManagerWorkloadProjectionSink,
@@ -62,6 +63,7 @@ pub struct ServerWorkloadProviders<Attachment, Execution, Ingress> {
     ingress_provider_id: NetworkProviderId,
     ingress: Arc<Ingress>,
     restart_capabilities: Option<WorkloadRestartCapabilities>,
+    teardown_capabilities: Option<WorkloadTeardownCapabilityRegistry>,
 }
 
 impl<Attachment, Execution, Ingress> ServerWorkloadProviders<Attachment, Execution, Ingress> {
@@ -81,6 +83,7 @@ impl<Attachment, Execution, Ingress> ServerWorkloadProviders<Attachment, Executi
             ingress_provider_id,
             ingress,
             restart_capabilities: None,
+            teardown_capabilities: None,
         }
     }
 
@@ -115,6 +118,16 @@ impl<Attachment, Execution, Ingress> ServerWorkloadProviders<Attachment, Executi
         ));
         self
     }
+
+    /// Register the complete exact teardown capability set for this realm.
+    /// Provision and restart support never imply teardown support.
+    pub fn with_teardown_capabilities(
+        mut self,
+        teardown_capabilities: WorkloadTeardownCapabilityRegistry,
+    ) -> Self {
+        self.teardown_capabilities = Some(teardown_capabilities);
+        self
+    }
 }
 
 /// Validation failure before managed lifecycle authority exists.
@@ -144,6 +157,8 @@ pub enum ServerWorkloadCompositionError {
     CapabilityRegistry(#[from] WorkloadProvisionCapabilityRegistryError),
     #[error("workload restart capability registry rejected the complete provider set: {0}")]
     RestartCapabilityRegistry(#[from] WorkloadRestartCapabilityRegistryError),
+    #[error("workload teardown capability registry rejected the complete provider set: {0}")]
+    TeardownCapabilityRegistry(#[from] WorkloadTeardownCapabilityRegistryError),
 }
 
 /// Complete server-owned input for one managed workload lifecycle realm.
@@ -153,9 +168,11 @@ pub struct ServerWorkloadComposition {
     service_manager: Arc<ServiceManager>,
     local_node: NodeIdentity,
     capability_selection: NetworkCapabilitySelection,
+    execution_provider_id: WorkloadExecutionProviderId,
     sovereignty: NetworkSovereigntyRequirements,
     provision_capabilities: WorkloadProvisionCapabilityRegistry,
     restart_capabilities: WorkloadRestartCapabilityRegistry,
+    teardown_capabilities: Option<ExactWorkloadTeardownCapabilityRealm>,
 }
 
 /// Transport-free lifetime carrier for foreground managed workload owners.
@@ -259,8 +276,19 @@ impl ServerWorkloadComposition {
                 )),
             };
         }
+        let execution_provider_id = providers.execution_provider_id.clone();
         let restart_capabilities =
             WorkloadRestartCapabilityRegistry::new(providers.restart_capabilities)?;
+        let teardown_capabilities = providers
+            .teardown_capabilities
+            .map(|registry| {
+                ExactWorkloadTeardownCapabilityRealm::new(
+                    registry,
+                    &capability_selection,
+                    &providers.execution_provider_id,
+                )
+            })
+            .transpose()?;
         let provision_capabilities = WorkloadProvisionCapabilityRegistry::new(
             [NetworkAttachmentProvisionCapabilities::new(
                 providers.attachment_provider_id,
@@ -281,9 +309,11 @@ impl ServerWorkloadComposition {
             service_manager,
             local_node,
             capability_selection,
+            execution_provider_id,
             sovereignty,
             provision_capabilities,
             restart_capabilities,
+            teardown_capabilities,
         })
     }
 
@@ -324,12 +354,14 @@ impl ServerWorkloadComposition {
             workload: ComputeWorkloadComposition::Managed {
                 network_manager: self.network_manager,
                 local_node: self.local_node,
-                capability_selection: self.capability_selection,
+                capability_selection: Box::new(self.capability_selection),
+                execution_provider_id: self.execution_provider_id,
                 sovereignty: self.sovereignty,
                 saga_store,
                 source_authority,
                 provision_capabilities: Box::new(self.provision_capabilities),
                 restart_capabilities: Box::new(self.restart_capabilities),
+                teardown_capabilities: self.teardown_capabilities.map(Box::new),
                 projection_sink,
             },
         }

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use nimbus_core::TenantId;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_services::{SandboxResourceSnapshot, ServiceManager};
+use nimbus_tenant::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -210,14 +211,14 @@ pub async fn get_sandbox(
 
 pub async fn stop_sandbox(
     compute: &ComputeState,
-    tenant_id: &TenantId,
+    tenant_context: &TenantIsolationContext,
     sandbox_id: &str,
 ) -> Result<SandboxResourceResponse, ComputeError> {
-    let manager = service_manager(compute)?;
-    let snapshot = manager
-        .retire_sandbox_resource_async(tenant_id, sandbox_id)
-        .await?
-        .ok_or_else(|| sandbox_not_found(tenant_id, sandbox_id))?;
+    let snapshot = compute
+        .resource_retirer()?
+        .submit_sandbox_teardown(tenant_context, sandbox_id)
+        .await
+        .map_err(|error| error.into_compute_error())?;
     Ok(SandboxResourceResponse::from_snapshot(snapshot))
 }
 
@@ -285,7 +286,7 @@ impl SandboxResourceResponse {
                     observed_generation: observed
                         .as_ref()
                         .map_or(source.generation, |observation| {
-                            observation.observed_generation
+                            observation.observed_execution_generation
                         }),
                     last_transition_time: updated_at,
                 }],

@@ -289,6 +289,17 @@ impl TestSandboxActivation for HarnessSandboxBackend {
             .get(execution_id.as_str())
             .cloned()
     }
+
+    fn teardown_for_test(
+        &self,
+        step: nimbus_workloads::WorkloadTeardownStep,
+        execution_id: &SandboxId,
+    ) -> SandboxFuture<()> {
+        if step == nimbus_workloads::WorkloadTeardownStep::StopExecution {
+            return self.stop(execution_id);
+        }
+        Box::pin(async { Ok(()) })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

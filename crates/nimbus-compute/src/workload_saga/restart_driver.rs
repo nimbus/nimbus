@@ -5,6 +5,8 @@
 //! later command, including the direct next-epoch retry after authenticated
 //! absence.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use nimbus_workloads::{
@@ -21,6 +23,9 @@ use super::{
 
 /// Hard bound for one caller-owned restart convergence attempt.
 const MAX_RESTART_DECISIONS_PER_RUN: usize = 64;
+
+type WorkloadRestartRunFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<WorkloadRestartRun, WorkloadRestartRunError>> + Send + 'a>>;
 
 /// Why one bounded restart run returned control to its caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +44,6 @@ pub(super) struct WorkloadRestartRun {
 }
 
 impl WorkloadRestartRun {
-    #[cfg(test)]
     pub(super) fn record(&self) -> &WorkloadSagaRecord {
         &self.record
     }
@@ -83,17 +87,19 @@ impl WorkloadRestartDriver {
     }
 
     /// Reopen durable state and advance only its active restart epoch.
-    pub(super) async fn resume(
-        &self,
-        key: &WorkloadSagaKey,
+    pub(super) fn resume<'a>(
+        &'a self,
+        key: &'a WorkloadSagaKey,
         now_unix_millis: WorkloadRestartNotBeforeUnixMillis,
-    ) -> Result<WorkloadRestartRun, WorkloadRestartRunError> {
-        let record = self
-            .coordinator
-            .load(key)
-            .await?
-            .ok_or(WorkloadRestartRunError::Missing)?;
-        self.drive_confirmed_restart(record, now_unix_millis).await
+    ) -> WorkloadRestartRunFuture<'a> {
+        Box::pin(async move {
+            let record = self
+                .coordinator
+                .load(key)
+                .await?
+                .ok_or(WorkloadRestartRunError::Missing)?;
+            self.drive_confirmed_restart(record, now_unix_millis).await
+        })
     }
 
     /// Advance an already-confirmed restart admission under the same bound.
@@ -105,127 +111,132 @@ impl WorkloadRestartDriver {
         self.drive_confirmed_restart(record, now_unix_millis).await
     }
 
-    async fn drive_confirmed_restart(
-        &self,
+    fn drive_confirmed_restart<'a>(
+        &'a self,
         mut record: WorkloadSagaRecord,
         now_unix_millis: WorkloadRestartNotBeforeUnixMillis,
-    ) -> Result<WorkloadRestartRun, WorkloadRestartRunError> {
-        let mut saw_active_restart = record.restart_state().active().is_some();
-        let mut inspection_dispatched = false;
-        let mut confirmed: Option<ConfirmedWorkloadRestartTransition> = None;
-        let mut decisions = 0;
+    ) -> WorkloadRestartRunFuture<'a> {
+        Box::pin(async move {
+            let mut saw_active_restart = record.restart_state().active().is_some();
+            let mut inspection_dispatched = false;
+            let mut confirmed: Option<ConfirmedWorkloadRestartTransition> = None;
+            let mut decisions = 0;
 
-        loop {
-            if let Some(transition) = confirmed.take() {
-                let Some(durable) = transition.confirmed_record().cloned() else {
-                    match transition.confirmation() {
-                        WorkloadSagaConfirmation::Conflict { .. } => {
-                            record = self
-                                .coordinator
-                                .load(record.key())
-                                .await?
-                                .ok_or(WorkloadRestartRunError::Missing)?;
-                            continue;
+            loop {
+                if let Some(transition) = confirmed.take() {
+                    let Some(durable) = transition.confirmed_record().cloned() else {
+                        match transition.confirmation() {
+                            WorkloadSagaConfirmation::Conflict { .. } => {
+                                record = self
+                                    .coordinator
+                                    .load(record.key())
+                                    .await?
+                                    .ok_or(WorkloadRestartRunError::Missing)?;
+                                continue;
+                            }
+                            WorkloadSagaConfirmation::UnresolvedAmbiguity => {
+                                return Ok(waiting(record));
+                            }
+                            _ => return Err(WorkloadRestartRunError::UnconfirmedTransition),
                         }
-                        WorkloadSagaConfirmation::UnresolvedAmbiguity => {
-                            return Ok(waiting(record));
+                    };
+                    saw_active_restart |= durable.restart_state().active().is_some();
+                    if let Some(command) = transition.command().cloned() {
+                        require_decision_budget(&mut decisions)?;
+                        let result = self
+                            .dispatcher
+                            .dispatch_confirmed(&transition)
+                            .await?
+                            .ok_or(WorkloadRestartRunError::UnconfirmedTransition)?;
+                        inspection_dispatched =
+                            command.mode() == WorkloadRestartCommandMode::Inspect;
+                        let result_decision = apply_restart_result(&durable, &command, result)?;
+                        match result_decision {
+                            WorkloadRestartDecision::Proposed(proposed) => {
+                                // Confirm every received result before a budget or
+                                // caller boundary can return control.
+                                confirmed = Some(
+                                    self.coordinator
+                                        .compare_and_swap_restart_result(&durable, &proposed)
+                                        .await?,
+                                );
+                            }
+                            WorkloadRestartDecision::InspectExact(_) if inspection_dispatched => {
+                                return Ok(waiting(durable));
+                            }
+                            WorkloadRestartDecision::InspectExact(_) => {}
+                            WorkloadRestartDecision::DefiniteFailure => {
+                                return Ok(WorkloadRestartRun {
+                                    record: durable,
+                                    disposition: WorkloadRestartRunDisposition::DefiniteFailure,
+                                });
+                            }
+                            WorkloadRestartDecision::WaitUntil(deadline) => {
+                                return Ok(WorkloadRestartRun {
+                                    record: durable,
+                                    disposition: WorkloadRestartRunDisposition::WaitingUntil(
+                                        deadline,
+                                    ),
+                                });
+                            }
+                            WorkloadRestartDecision::Wait => return Ok(waiting(durable)),
                         }
-                        _ => return Err(WorkloadRestartRunError::UnconfirmedTransition),
-                    }
-                };
-                saw_active_restart |= durable.restart_state().active().is_some();
-                if let Some(command) = transition.command().cloned() {
-                    require_decision_budget(&mut decisions)?;
-                    let result = self
-                        .dispatcher
-                        .dispatch_confirmed(&transition)
-                        .await?
-                        .ok_or(WorkloadRestartRunError::UnconfirmedTransition)?;
-                    inspection_dispatched = command.mode() == WorkloadRestartCommandMode::Inspect;
-                    let result_decision = apply_restart_result(&durable, &command, result)?;
-                    match result_decision {
-                        WorkloadRestartDecision::Proposed(proposed) => {
-                            // Confirm every received result before a budget or
-                            // caller boundary can return control.
-                            confirmed = Some(
-                                self.coordinator
-                                    .compare_and_swap_restart_result(&durable, &proposed)
-                                    .await?,
-                            );
-                        }
-                        WorkloadRestartDecision::InspectExact(_) if inspection_dispatched => {
-                            return Ok(waiting(durable));
-                        }
-                        WorkloadRestartDecision::InspectExact(_) => {}
-                        WorkloadRestartDecision::DefiniteFailure => {
-                            return Ok(WorkloadRestartRun {
-                                record: durable,
-                                disposition: WorkloadRestartRunDisposition::DefiniteFailure,
-                            });
-                        }
-                        WorkloadRestartDecision::WaitUntil(deadline) => {
-                            return Ok(WorkloadRestartRun {
-                                record: durable,
-                                disposition: WorkloadRestartRunDisposition::WaitingUntil(deadline),
-                            });
-                        }
-                        WorkloadRestartDecision::Wait => return Ok(waiting(durable)),
+                        record = durable;
+                        continue;
                     }
                     record = durable;
-                    continue;
+                    inspection_dispatched = false;
                 }
-                record = durable;
-                inspection_dispatched = false;
-            }
 
-            let decision = decide_restart_progress(&record, now_unix_millis)
-                .map_err(WorkloadSagaStoreError::InvalidTransition)?;
-            match decision {
-                WorkloadRestartDecision::Wait => {
-                    let disposition =
-                        if saw_active_restart && record.restart_state().active().is_none() {
-                            WorkloadRestartRunDisposition::Completed
-                        } else {
-                            WorkloadRestartRunDisposition::Waiting
-                        };
-                    return Ok(WorkloadRestartRun {
-                        record,
-                        disposition,
-                    });
-                }
-                WorkloadRestartDecision::WaitUntil(deadline) => {
-                    return Ok(WorkloadRestartRun {
-                        record,
-                        disposition: WorkloadRestartRunDisposition::WaitingUntil(deadline),
-                    });
-                }
-                WorkloadRestartDecision::DefiniteFailure => {
-                    return Ok(WorkloadRestartRun {
-                        record,
-                        disposition: WorkloadRestartRunDisposition::DefiniteFailure,
-                    });
-                }
-                WorkloadRestartDecision::InspectExact(_) if inspection_dispatched => {
-                    return Ok(waiting(record));
-                }
-                WorkloadRestartDecision::InspectExact(_) => {
-                    require_decision_budget(&mut decisions)?;
-                    confirmed = Some(
-                        self.coordinator
-                            .inspect_confirmed_restart(record.key())
-                            .await?,
-                    );
-                }
-                WorkloadRestartDecision::Proposed(proposed) => {
-                    require_decision_budget(&mut decisions)?;
-                    confirmed = Some(
-                        self.dispatcher
-                            .confirm_transition(&self.coordinator, &record, &proposed)
-                            .await?,
-                    );
+                let decision = decide_restart_progress(&record, now_unix_millis)
+                    .map_err(WorkloadSagaStoreError::InvalidTransition)?;
+                match decision {
+                    WorkloadRestartDecision::Wait => {
+                        let disposition =
+                            if saw_active_restart && record.restart_state().active().is_none() {
+                                WorkloadRestartRunDisposition::Completed
+                            } else {
+                                WorkloadRestartRunDisposition::Waiting
+                            };
+                        return Ok(WorkloadRestartRun {
+                            record,
+                            disposition,
+                        });
+                    }
+                    WorkloadRestartDecision::WaitUntil(deadline) => {
+                        return Ok(WorkloadRestartRun {
+                            record,
+                            disposition: WorkloadRestartRunDisposition::WaitingUntil(deadline),
+                        });
+                    }
+                    WorkloadRestartDecision::DefiniteFailure => {
+                        return Ok(WorkloadRestartRun {
+                            record,
+                            disposition: WorkloadRestartRunDisposition::DefiniteFailure,
+                        });
+                    }
+                    WorkloadRestartDecision::InspectExact(_) if inspection_dispatched => {
+                        return Ok(waiting(record));
+                    }
+                    WorkloadRestartDecision::InspectExact(_) => {
+                        require_decision_budget(&mut decisions)?;
+                        confirmed = Some(
+                            self.coordinator
+                                .inspect_confirmed_restart(record.key())
+                                .await?,
+                        );
+                    }
+                    WorkloadRestartDecision::Proposed(proposed) => {
+                        require_decision_budget(&mut decisions)?;
+                        confirmed = Some(
+                            self.dispatcher
+                                .confirm_transition(&self.coordinator, &record, &proposed)
+                                .await?,
+                        );
+                    }
                 }
             }
-        }
+        })
     }
 }
 

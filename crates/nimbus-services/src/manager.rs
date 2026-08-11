@@ -15,6 +15,7 @@ mod sandboxes;
 mod session_channels;
 mod sessions;
 mod source;
+mod source_retirement;
 mod system_state;
 mod types;
 mod verification;
@@ -27,6 +28,10 @@ use verification::DefaultTenantImageVerificationProvider;
 
 pub use retirement::{TenantServiceRetirement, TenantServiceRetirementFuture};
 pub use source::{SandboxServiceProvisionSource, StandaloneSandboxProvisionSource};
+pub use source_retirement::{
+    WorkloadSourceRetirementClaim, WorkloadSourceRetirementIdentity,
+    WorkloadSourceRetirementOperation,
+};
 pub use system_state::{NoopServiceEvidenceWriter, ServiceEvidenceFuture, ServiceEvidenceWriter};
 
 const DEFAULT_DEFINITION_MUTATION_TIMEOUT: Duration = Duration::from_secs(10);

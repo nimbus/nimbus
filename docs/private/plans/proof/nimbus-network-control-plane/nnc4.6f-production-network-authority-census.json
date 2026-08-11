@@ -450,7 +450,7 @@
       "kind": "capability-bundle-construction",
       "symbol": "into_registry",
       "ordinal": 1,
-      "line": 80,
+      "line": 83,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -460,7 +460,7 @@
       "kind": "capability-registry-construction",
       "symbol": "into_registry",
       "ordinal": 1,
-      "line": 85,
+      "line": 88,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -470,7 +470,7 @@
       "kind": "manager-bootstrap",
       "symbol": "claim",
       "ordinal": 1,
-      "line": 101,
+      "line": 104,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -480,7 +480,7 @@
       "kind": "oci-process-construction",
       "symbol": "prepare_krun_process",
       "ordinal": 1,
-      "line": 140,
+      "line": 143,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"

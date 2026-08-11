@@ -10,6 +10,7 @@ import { maskNonCode, walkRust } from "./source-contract-scanner.mjs";
 import {
   BEHAVIOR_TESTS,
   FORWARDED_MACHINE_TESTS,
+  NATIVE_SOURCE_RETIREMENT_TESTS,
   greenTeardownFixture,
 } from "./workload-teardown-contract-fixture.mjs";
 import {
@@ -30,6 +31,8 @@ export const workloadTeardownDiagnostics = {
     "teardown-contract/service: service or sandbox stop retains direct provider-effect authority",
   definitionDelete:
     "teardown-contract/definition-delete: definition removal can cross unresolved or late lifecycle work",
+  nativeSourceRetirement:
+    "teardown-contract/native-source-retirement: native stop or definition deletion bypasses the exact compute teardown, source fence, generation split, or attributed proof",
   compose:
     "teardown-contract/compose: Compose down bypasses the canonical Engine-backed compute saga",
   machine:
@@ -222,6 +225,18 @@ function productionSources(root) {
       "docs/private/plans/proof/nimbus-network-control-plane/nnc6.5-teardown-choreography-substitution-audit.md",
     ),
   ].join("\n");
+  const nativeCallerPaths = [
+    "crates/nimbus-compute/src/resource_retirement.rs",
+    "crates/nimbus-compute/src/services.rs",
+    "crates/nimbus-compute/src/sandboxes.rs",
+    "crates/nimbus-services/src/manager/definitions.rs",
+    "crates/nimbus-services/src/manager/definition_mutation.rs",
+    "crates/nimbus-services/src/manager/source.rs",
+    "crates/nimbus-services/src/manager/source_retirement.rs",
+    "crates/nimbus-services/src/manager/sandboxes.rs",
+    "crates/nimbus-server/src/http/services.rs",
+    "crates/nimbus-server/src/http/sandboxes.rs",
+  ];
   return {
     workloads: joinSources(workloadEntries),
     compute: joinSources(computeEntries),
@@ -233,6 +248,69 @@ function productionSources(root) {
     tests: joinSources(testEntries),
     testEntries,
     plan,
+    nativeCallers: nativeCallerPaths
+      .map((candidate) => readText(root, candidate, { lexical: true }))
+      .join("\n"),
+    nativeSourceRetirement: readText(
+      root,
+      "crates/nimbus-services/src/manager/source_retirement.rs",
+      { lexical: true },
+    ),
+    provisionSettlementTests: readText(
+      root,
+      "crates/nimbus-compute/src/resource_retirement/tests/provision_settlement.rs",
+      { lexical: true },
+    ),
+    provisionSettlementSupport: readText(
+      root,
+      "crates/nimbus-compute/src/resource_retirement/tests/support.rs",
+      { lexical: true },
+    ),
+    computeState: readText(root, "crates/nimbus-compute/src/state.rs", {
+      lexical: true,
+    }),
+    serverComposition: readText(
+      root,
+      "crates/nimbus-server/src/workload_composition.rs",
+      { lexical: true },
+    ),
+    localComposition: readText(
+      root,
+      "crates/nimbus-cli/src/network_composition.rs",
+      { lexical: true },
+    ),
+    httpServices: readText(root, "crates/nimbus-server/src/http/services.rs", {
+      lexical: true,
+    }),
+    httpSandboxes: readText(
+      root,
+      "crates/nimbus-server/src/http/sandboxes.rs",
+      { lexical: true },
+    ),
+    computeServices: readText(root, "crates/nimbus-compute/src/services.rs", {
+      lexical: true,
+    }),
+    computeSandboxes: readText(root, "crates/nimbus-compute/src/sandboxes.rs", {
+      lexical: true,
+    }),
+    resourceRetirement: readText(
+      root,
+      "crates/nimbus-compute/src/resource_retirement.rs",
+      { lexical: true },
+    ),
+    serviceDefinitions: [
+      "crates/nimbus-services/src/manager/definitions.rs",
+      "crates/nimbus-services/src/manager/source_retirement.rs",
+    ]
+      .map((candidate) => readText(root, candidate, { lexical: true }))
+      .join("\n"),
+    serviceProjections: [
+      "crates/nimbus-services/src/manager/handles.rs",
+      "crates/nimbus-services/src/manager/sandboxes.rs",
+      "crates/nimbus-services/src/manager/source_retirement.rs",
+    ]
+      .map((candidate) => readText(root, candidate, { lexical: true }))
+      .join("\n"),
     ...auditPathSources(root, plan),
   };
 }
@@ -274,11 +352,42 @@ function enumVariants(source, name) {
 }
 
 function behaviorTestsPass(sources) {
-  return BEHAVIOR_TESTS.every((name) =>
+  return nativeSourceRetirementTestsPass(sources) && [...new Set([
+    ...BEHAVIOR_TESTS,
+    ...NATIVE_SOURCE_RETIREMENT_TESTS,
+  ])].every((name) =>
     sources.testEntries.some((entry) =>
       hasTestsAt(sources, entry.file, [name]),
     ),
   );
+}
+
+function nativeSourceRetirementTestsPass(sources) {
+  const definitionTests = new Set(NATIVE_SOURCE_RETIREMENT_TESTS.slice(6, 12));
+  const sessionTest =
+    "session_binding_rejects_a_later_execution_with_the_same_source_generation";
+  const contenderTest = "concurrent_start_and_stop_linearize_at_the_source_fence";
+  return NATIVE_SOURCE_RETIREMENT_TESTS.every((name) => {
+    const owns = (file) => {
+      if (definitionTests.has(name)) {
+        return file ===
+          "crates/nimbus-server/src/tests/service_manager/definition_retirement.rs";
+      }
+      if (name === sessionTest) {
+        return file === "crates/nimbus-services/src/manager/tests/sessions.rs";
+      }
+      if (name === contenderTest) {
+        return file === "crates/nimbus-compute/src/workload_provisioner/tests.rs";
+      }
+      return (
+        file === "crates/nimbus-compute/src/resource_retirement/tests.rs" ||
+        file.startsWith("crates/nimbus-compute/src/resource_retirement/tests/")
+      );
+    };
+    return sources.testEntries.some(
+      (entry) => owns(entry.file) && hasTestsAt(sources, entry.file, [name]),
+    );
+  });
 }
 
 function forwardedMachineTestsPass(sources, names) {
@@ -300,6 +409,18 @@ function replaceOnceInTest(sources, before, after) {
   );
   if (!entry)
     throw new Error(`teardown test mutation target missing: ${before}`);
+  entry.source = entry.source.replace(before, after);
+  remaskTeardownTestSources(sources);
+}
+
+function replaceOnceInNamedTest(sources, name, before, after) {
+  const entry = sources.testEntries.find((candidate) =>
+    candidate.source.includes(`fn ${name}`),
+  );
+  if (!entry) throw new Error(`teardown named test mutation target missing: ${name}`);
+  if (!entry.source.includes(before)) {
+    throw new Error(`teardown named test body mutation target missing: ${name}:${before}`);
+  }
   entry.source = entry.source.replace(before, after);
   remaskTeardownTestSources(sources);
 }
@@ -390,12 +511,12 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "missing-service-projection": [
       "services",
-      "fn project_recorded_service_teardown() {}",
+      "fn project_recorded_service_teardown(source_generation: SourceGeneration, observed_execution_generation: WorkloadGeneration, execution: WorkloadExecutionReference) {}",
       "",
     ],
     "missing-sandbox-projection": [
       "services",
-      "fn project_recorded_sandbox_teardown() {}",
+      "fn project_recorded_sandbox_teardown(source_generation: SourceGeneration, observed_execution_generation: WorkloadGeneration, execution: WorkloadExecutionReference) {}",
       "",
     ],
     "missing-definition-claim": [
@@ -404,12 +525,12 @@ function applyFixtureMutation(sources, mutation) {
       "",
     ],
     "missing-provision-join": [
-      "services",
-      "fn cancel_and_join_inflight_provision() {}",
+      "compute",
+      "fn fence_and_join_inflight_provision() {}",
       "",
     ],
     "missing-late-result-drain": [
-      "services",
+      "compute",
       "fn retire_late_provision_result() {}",
       "",
     ],
@@ -417,6 +538,96 @@ function applyFixtureMutation(sources, mutation) {
       "services",
       "fn finalize_service_definition_after_recorded() {}",
       "",
+    ],
+    "missing-native-runtime": [
+      "computeState",
+      "WorkloadTeardownRuntime::new(capabilities)",
+      "RemovedTeardownRuntime::build(capabilities)",
+    ],
+    "missing-native-local-registry": [
+      "localComposition",
+      "    ServerWorkloadProviders::new().with_teardown_capabilities(teardown);\n",
+      "",
+    ],
+    "missing-native-restart-settlement": [
+      "resourceRetirement",
+      "fn settle_issued_restart_before_native_teardown() {}",
+      "",
+    ],
+    "missing-native-execution-reference": [
+      "serviceProjections",
+      "WorkloadExecutionReference",
+      "OmittedExecutionReference",
+    ],
+    "source-execution-generation-conflated": [
+      "serviceProjections",
+      "observed_execution_generation",
+      "source_generation",
+    ],
+    "native-direct-effect": [
+      "nativeCallers",
+      "fn submit_service_teardown() {}",
+      "fn submit_service_teardown() { retire_service_for_decision_async(); }",
+    ],
+    "native-direct-sandbox-retirement": [
+      "nativeCallers",
+      "fn submit_sandbox_teardown() {}",
+      "fn submit_sandbox_teardown() { retire_sandbox_resource_async(); }",
+    ],
+    "native-direct-backend-stop": [
+      "nativeCallers",
+      "fn finalize_service_definition_after_recorded() {}",
+      "fn finalize_service_definition_after_recorded() { sandbox_backend.stop(); }",
+    ],
+    "native-source-finalizer-direct-backend-stop": [
+      "nativeSourceRetirement",
+      "fn finalize_unstarted_source_stop() {}",
+      "fn finalize_unstarted_source_stop() { sandbox_backend.stop(); }",
+    ],
+    "native-source-finalizer-aliased-backend-stop": [
+      "nativeSourceRetirement",
+      "fn finalize_unstarted_source_stop() {}",
+      "fn finalize_unstarted_source_stop() { let backend = &self.sandbox_backend; backend.stop(); }",
+    ],
+    "native-source-finalizer-ufcs-backend-stop": [
+      "nativeSourceRetirement",
+      "fn finalize_unstarted_source_stop() {}",
+      "fn finalize_unstarted_source_stop() { SandboxBackend::stop(self.sandbox_backend.as_ref()); }",
+    ],
+    "managed-teardown-raw-registry-field": [
+      "serverComposition",
+      "teardown_capabilities: Option<ExactWorkloadTeardownCapabilityRealm>",
+      "teardown_capabilities: Option<WorkloadTeardownCapabilityRegistry>",
+    ],
+    "managed-teardown-unused-exact-realm": [
+      "serverComposition",
+      "teardown_capabilities: self.teardown_capabilities.map(Box::new)",
+      "teardown_capabilities: raw_teardown_capabilities.map(Box::new)",
+    ],
+    "source-claim-helper-hidden-yield-poll": [
+      "provisionSettlementSupport",
+      "self.wait_for_signal(",
+      "tokio::task::yield_now(); self.wait_for_signal(",
+    ],
+    "service-source-claim-yield-poll": [
+      "provisionSettlementTests",
+      "wait_for_source_claim(&service_source_claim",
+      "tokio::task::yield_now(&service_source_claim",
+    ],
+    "sandbox-source-claim-yield-poll": [
+      "provisionSettlementTests",
+      "wait_for_source_claim(&sandbox_source_claim",
+      "tokio::task::yield_now(&sandbox_source_claim",
+    ],
+    "sandbox-context-downgrade": [
+      "httpSandboxes",
+      "stop_sandbox(&authorization.tenant_context)",
+      "stop_sandbox(authorization.tenant_context.tenant_id())",
+    ],
+    "definition-context-downgrade": [
+      "httpServices",
+      "delete_service_definition(&tenant_context)",
+      "delete_service_definition(tenant_context.tenant_id())",
     ],
     "missing-compose-store": [
       "cli",
@@ -567,32 +778,37 @@ function applyFixtureMutation(sources, mutation) {
   } else if (mutation === "cli-local-saga-store") {
     sources.cli += "\nstruct CliWorkloadSagaStore;\n";
   } else if (mutation === "missing-attributed-tests") {
-    replaceOnceInTest(
+    replaceOnceInNamedTest(
       sources,
-      `fn ${BEHAVIOR_TESTS[0]}`,
+      "compose_down_local_uses_engine_saga_and_compute_teardown",
+      "fn compose_down_local_uses_engine_saga_and_compute_teardown",
       "fn missing_teardown_behavior_test",
     );
   } else if (mutation === "empty-test-body") {
-    replaceOnceInTest(
+    replaceOnceInNamedTest(
       sources,
+      "compose_down_local_uses_engine_saga_and_compute_teardown",
       "    let observed = teardown_trace();\n    let expected = expected_teardown_trace();\n    assert_eq!(observed, expected);",
       "",
     );
   } else if (mutation === "helper-only-test-body") {
-    replaceOnceInTest(
+    replaceOnceInNamedTest(
       sources,
+      "compose_down_local_uses_engine_saga_and_compute_teardown",
       "    let observed = teardown_trace();\n    let expected = expected_teardown_trace();\n    assert_eq!(observed, expected);",
       "    run_teardown_fixture();",
     );
   } else if (mutation === "declaration-only-test-body") {
-    replaceOnceInTest(
+    replaceOnceInNamedTest(
       sources,
+      "compose_down_local_uses_engine_saga_and_compute_teardown",
       "    let observed = teardown_trace();\n    let expected = expected_teardown_trace();\n    assert_eq!(observed, expected);",
       "    let observed = teardown_trace();",
     );
   } else if (mutation === "tautological-test-assertion") {
-    replaceOnceInTest(
+    replaceOnceInNamedTest(
       sources,
+      "compose_down_local_uses_engine_saga_and_compute_teardown",
       "    assert_eq!(observed, expected);",
       "    assert_eq!(observed, observed);",
     );
@@ -636,6 +852,48 @@ function applyFixtureMutation(sources, mutation) {
       `fn ${FORWARDED_MACHINE_TESTS.recovery[1]}`,
       "fn missing_forwarded_process_test",
     );
+  } else if (mutation === "missing-provision-join") {
+    replaceOnce(
+      sources,
+      "compute",
+      "fn fence_and_join_inflight_provision() {}",
+      "",
+    );
+    replaceOnce(
+      sources,
+      "resourceRetirement",
+      "fn fence_and_join_inflight_provision() {}",
+      "",
+    );
+  } else if (mutation === "missing-late-result-drain") {
+    replaceOnce(
+      sources,
+      "compute",
+      "fn retire_late_provision_result() {}",
+      "",
+    );
+    replaceOnce(
+      sources,
+      "resourceRetirement",
+      "fn retire_late_provision_result() {}",
+      "",
+    );
+  } else if (mutation === "missing-native-execution-reference") {
+    sources.serviceProjections = sources.serviceProjections.replaceAll(
+      "WorkloadExecutionReference",
+      "OmittedExecutionReference",
+    );
+  } else if (mutation === "source-execution-generation-conflated") {
+    sources.serviceProjections = sources.serviceProjections.replaceAll(
+      "observed_execution_generation",
+      "source_generation",
+    );
+  } else if (mutation === "missing-native-test") {
+    replaceOnceInTest(
+      sources,
+      `fn ${NATIVE_SOURCE_RETIREMENT_TESTS.at(-1)}`,
+      "fn missing_native_source_retirement_test",
+    );
   } else if (mutation in replacements) {
     replaceOnce(sources, ...replacements[mutation]);
   } else if (mutation) {
@@ -645,6 +903,7 @@ function applyFixtureMutation(sources, mutation) {
 
 export function verifyWorkloadTeardownContract() {
   const fixture = process.env.NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE === "1";
+  const stage = process.env.NIMBUS_NETWORK_VERIFY_TEARDOWN_STAGE ?? "aggregate";
   const root = path.resolve(
     process.env.NIMBUS_NETWORK_VERIFY_TEARDOWN_SCAN_ROOT ?? ".",
   );
@@ -657,8 +916,14 @@ export function verifyWorkloadTeardownContract() {
   }
 
   const errors = [];
+  const nativeErrors = [];
   const requireContract = (condition, diagnostic) => {
     if (!condition) errors.push(diagnostic);
+  };
+  const requireNativeContract = (condition) => {
+    if (!condition) {
+      nativeErrors.push(workloadTeardownDiagnostics.nativeSourceRetirement);
+    }
   };
 
   const phases = enumVariants(sources.workloads, "WorkloadSagaPhase");
@@ -783,9 +1048,6 @@ export function verifyWorkloadTeardownContract() {
       !/\b(?:retire_service_for_decision_async|retire_sandbox_resource_async|TenantServiceRetirement)\b/u.test(
         sources.services,
       ) &&
-      !/sandbox_backend\s*:\s*Arc\s*<\s*dyn\s+SandboxBackend/u.test(
-        sources.services,
-      ) &&
       !/sandbox_backend\s*\.\s*stop\s*\(/u.test(sources.services),
     workloadTeardownDiagnostics.service,
   );
@@ -793,11 +1055,170 @@ export function verifyWorkloadTeardownContract() {
   requireContract(
     hasAll(sources.services, [
       "claim_service_definition_retirement",
-      "cancel_and_join_inflight_provision",
-      "retire_late_provision_result",
       "finalize_service_definition_after_recorded",
-    ]),
+    ]) &&
+      hasAll(sources.compute, [
+        "fence_and_join_inflight_provision",
+        "retire_late_provision_result",
+      ]),
     workloadTeardownDiagnostics.definitionDelete,
+  );
+
+  const providerStruct = extractItem(
+    sources.serverComposition,
+    "pub struct ServerWorkloadProviders",
+  );
+  const providerImpl = extractItem(
+    sources.serverComposition,
+    "impl ServerWorkloadProviders",
+  ) || extractItem(
+    sources.serverComposition,
+    "impl<Attachment, Execution, Ingress> ServerWorkloadProviders",
+  );
+  const intoManagedCompute = extractItem(
+    sources.serverComposition,
+    "fn into_managed_compute",
+  );
+  const computeComposition = extractItem(
+    sources.computeState,
+    "pub enum ComputeWorkloadComposition",
+  );
+  const computeFromConfig = extractItem(sources.computeState, "pub fn from_config");
+  const localComposition = extractItem(
+    sources.localComposition,
+    "fn into_workload_composition",
+  );
+  const serviceRoute = extractItem(sources.httpServices, "fn service_lifecycle_route");
+  const definitionRoute = extractItem(
+    sources.httpServices,
+    "fn delete_service_definition",
+  );
+  const sandboxRoute = extractItem(sources.httpSandboxes, "fn stop_sandbox");
+  const computeServiceLifecycle = extractItem(
+    sources.computeServices,
+    "fn service_lifecycle",
+  );
+  const computeDefinitionDelete = extractItem(
+    sources.computeServices,
+    "fn delete_service_definition",
+  );
+  const computeSandboxStop = extractItem(sources.computeSandboxes, "fn stop_sandbox");
+  const serviceProvisionSettlement = extractItem(
+    sources.provisionSettlementTests,
+    "fn service_stop_joins_inflight_provision_and_retires_late_success",
+  );
+  const sandboxProvisionSettlement = extractItem(
+    sources.provisionSettlementTests,
+    "fn sandbox_stop_joins_inflight_provision_and_retires_late_success",
+  );
+  const sourceClaimWait = extractItem(
+    sources.provisionSettlementSupport,
+    "fn wait_for_source_claim",
+  );
+  const sourceSignalWait = extractItem(
+    sources.provisionSettlementSupport,
+    "fn wait_for_signal",
+  );
+  const serverWorkloadComposition = extractItem(
+    sources.serverComposition,
+    "struct ServerWorkloadComposition",
+  );
+  requireNativeContract(
+    hasAll(providerStruct, [
+      "teardown_capabilities",
+      "Option",
+      "WorkloadTeardownCapabilityRegistry",
+    ]) &&
+      hasAll(providerImpl, [
+        "teardown_capabilities: None",
+        "with_teardown_capabilities",
+        "Some(teardown_capabilities)",
+      ]) &&
+      hasAll(intoManagedCompute, ["teardown_capabilities", "ComputeWorkloadComposition::Managed"]) &&
+      hasAll(computeComposition, [
+        "teardown_capabilities",
+        "ExactWorkloadTeardownCapabilityRealm",
+        "execution_provider_id",
+      ]) &&
+      /teardown_capabilities\s*:\s*Option\s*<\s*Box\s*<\s*ExactWorkloadTeardownCapabilityRealm\s*>\s*>/u.test(
+        computeComposition,
+      ) &&
+      /teardown_capabilities\s*:\s*Option\s*<\s*ExactWorkloadTeardownCapabilityRealm\s*>/u.test(
+        serverWorkloadComposition,
+      ) &&
+      sources.serverComposition.includes("ExactWorkloadTeardownCapabilityRealm::new") &&
+      hasAll(computeFromConfig, [
+        "teardown_capabilities",
+        "WorkloadTeardownRuntime::new",
+        "into_registry_for",
+        "&capability_selection",
+        "&execution_provider_id",
+      ]) &&
+      intoManagedCompute.includes(
+        "teardown_capabilities: self.teardown_capabilities.map(Box::new)",
+      ) &&
+      intoManagedCompute.includes(
+        "execution_provider_id: self.execution_provider_id",
+      ) &&
+      hasAll(localComposition, [
+        "KrunTeardownAdapter::new",
+        "KrunAttachmentTeardownAdapter::new",
+        "IngressTeardownCapabilities::new",
+        "ServerIngressPublicationAdapter",
+        "WorkloadTeardownCapabilityRegistry::new",
+        "with_teardown_capabilities",
+      ]) &&
+      hasAll(sources.resourceRetirement, [
+        "fence_and_join_inflight_provision",
+        "retire_late_provision_result",
+        "settle_issued_restart_before_native_teardown",
+      ]) &&
+      hasAll(sources.serviceDefinitions, [
+        "claim_service_definition_retirement",
+        "finalize_service_definition_after_recorded",
+      ]) &&
+      hasAll(sources.serviceProjections, [
+        "project_recorded_service_teardown",
+        "project_recorded_sandbox_teardown",
+        "source_generation",
+        "observed_execution_generation",
+        "WorkloadExecutionReference",
+      ]) &&
+      hasAll(serviceRoute, ["tenant_context", "service_lifecycle"]) &&
+      hasAll(definitionRoute, ["tenant_context", "delete_service_definition", "&tenant_context"]) &&
+      hasAll(sandboxRoute, ["tenant_context", "stop_sandbox", "&authorization.tenant_context"]) &&
+      hasAll(computeServiceLifecycle, ["TenantIsolationContext", "submit_service_teardown"]) &&
+      hasAll(computeDefinitionDelete, ["TenantIsolationContext", "submit_definition_teardown"]) &&
+      hasAll(computeSandboxStop, ["TenantIsolationContext", "submit_sandbox_teardown"]) &&
+      !/\b(?:retire_service_for_decision_async|retire_sandbox_resource_async)\b/u.test(
+        sources.nativeCallers,
+      ) &&
+      !/sandbox_backend\s*\.\s*stop\s*\(/u.test(sources.nativeCallers) &&
+      hasAll(sources.nativeSourceRetirement, [
+        "finalize_unstarted_source_stop",
+        "finalize_unstarted_service_definition_deletion",
+        "finalize_service_definition_after_recorded",
+      ]) &&
+      !/(?:\.|::)\s*stop\s*\(/u.test(sources.nativeSourceRetirement) &&
+      hasAll(serviceProvisionSettlement, [
+        "install_source_claim_signal",
+        "wait_for_source_claim",
+        "service_source_is_fenced",
+      ]) &&
+      !/yield_now\s*\(/u.test(serviceProvisionSettlement) &&
+      hasAll(sandboxProvisionSettlement, [
+        "install_source_claim_signal",
+        "wait_for_source_claim",
+        "sandbox_source_is_fenced",
+      ]) &&
+      !/yield_now\s*\(/u.test(sandboxProvisionSettlement) &&
+      hasAll(sourceClaimWait, ["wait_for_signal", "entered", "source"]) &&
+      hasAll(sourceSignalWait, [
+        "tokio::time::timeout",
+        "entered.acquire",
+      ]) &&
+      !/yield_now\s*\(/u.test(`${sourceClaimWait}\n${sourceSignalWait}`) &&
+      nativeSourceRetirementTestsPass(sources),
   );
 
   requireContract(
@@ -941,5 +1362,9 @@ export function verifyWorkloadTeardownContract() {
     workloadTeardownDiagnostics.ledger,
   );
 
+  if (stage === "native") return [...new Set(nativeErrors)];
+  if (stage !== "aggregate") {
+    return [`unknown workload teardown contract stage: ${stage}`];
+  }
   return errors;
 }

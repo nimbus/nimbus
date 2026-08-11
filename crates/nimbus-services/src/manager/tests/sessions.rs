@@ -130,9 +130,14 @@ fn session_commit_revalidates_exact_sandbox_source_and_observation() {
         .expect("exact ready sandbox should project");
     let gate = SessionCommitGate::Sandbox {
         id: source.id.clone(),
-        generation: source.generation,
+        source_generation: source.generation,
         resource_version: source.resource_version.clone(),
-        expected_observation: ready,
+        expected_observation: manager
+            .sandbox_resource_snapshot_for_tenant(&tenant_id, &source.id)
+            .expect("snapshot lookup should succeed")
+            .expect("snapshot should exist")
+            .observation
+            .expect("exact observation should exist"),
     };
 
     {
@@ -164,6 +169,79 @@ fn session_commit_revalidates_exact_sandbox_source_and_observation() {
 }
 
 #[test]
+fn session_binding_rejects_a_later_execution_with_the_same_source_generation() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(1));
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        backend.clone(),
+    );
+    let source = reserve_standalone_source(
+        &manager,
+        &tenant_id,
+        "stable-resource",
+        "worker",
+        standalone_resource_spec(&tenant_id, "task"),
+        BTreeMap::new(),
+    );
+    let mut ready = backend.sandbox_handle(&tenant_id, "task", SandboxStatus::Ready);
+    let first_execution = execution_reference_for_handle(&mut ready, source.generation, 0);
+    manager
+        .project_sandbox_resource_execution_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            &source.resource_version,
+            &first_execution,
+            ready.clone(),
+        )
+        .expect("first exact execution should project");
+    let gate = SessionCommitGate::Sandbox {
+        id: source.id.clone(),
+        source_generation: source.generation,
+        resource_version: source.resource_version.clone(),
+        expected_observation: manager
+            .sandbox_resource_snapshot_for_tenant(&tenant_id, &source.id)
+            .expect("snapshot lookup should succeed")
+            .expect("snapshot should exist")
+            .observation
+            .expect("exact observation should exist"),
+    };
+
+    let later_execution = execution_reference_for_handle(&mut ready, source.generation + 1, 0);
+    manager
+        .project_sandbox_resource_execution_observation(
+            &tenant_id,
+            &source.id,
+            source.generation,
+            &source.resource_version,
+            &later_execution,
+            ready,
+        )
+        .expect("later exact execution attempt should project");
+
+    let later = manager
+        .sandbox_resource_snapshot_for_tenant(&tenant_id, &source.id)
+        .expect("later snapshot lookup should succeed")
+        .expect("later snapshot should exist")
+        .observation
+        .expect("later observation should exist");
+    assert_eq!(later.source_generation, source.generation);
+    assert_eq!(later.observed_execution_generation, source.generation + 1);
+
+    let state = manager
+        .state
+        .lock()
+        .expect("manager lock should not be poisoned");
+    assert!(
+        validate_session_commit_gate(&state, &tenant_id, &gate).is_err(),
+        "a session gate captured for an earlier lifecycle generation must reject a later exact execution even when the desired source generation is unchanged"
+    );
+}
+
+#[test]
 fn session_commit_revalidates_dynamic_service_resource_version() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let manager = ServiceManager::new(
@@ -182,7 +260,7 @@ fn session_commit_revalidates_dynamic_service_resource_version() {
         .expect("dynamic service definition should create");
     let gate = SessionCommitGate::Service {
         name: definition.name.clone(),
-        generation: definition.generation,
+        source_generation: definition.generation,
         resource_version: definition.resource_version.clone(),
         source: definition.source,
         expected_observation: None,

@@ -10,14 +10,14 @@ use std::sync::Arc;
 
 use nimbus_core::{Error, TenantId};
 use nimbus_network::{EndpointProtocol, NetworkTlsBehavior};
-use nimbus_sandbox::{SandboxHandle, SandboxSpec};
+use nimbus_sandbox::SandboxSpec;
 use nimbus_services::{
     SandboxResourceSnapshot, ServiceDefinition, ServiceDefinitionObservation, ServiceManager,
 };
 use nimbus_tenant::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
     WorkloadActivationIntent, WorkloadNetworkForwardingBehavior, WorkloadProvisionSourceGeneration,
-    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent,
+    WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent, WorkloadSagaKey,
 };
 use thiserror::Error;
 
@@ -34,13 +34,6 @@ use crate::workload_saga::sandbox_execution_provider_id;
 pub struct SandboxServiceProvisionSnapshot {
     pub definition: ServiceDefinition,
     pub observation: Option<ServiceDefinitionObservation>,
-}
-
-/// Exact definition plus the actual provider handle returned by retirement.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SandboxServiceRetirementOutcome {
-    pub definition: ServiceDefinition,
-    pub retired_handle: Option<SandboxHandle>,
 }
 
 /// Product-facade failure before a truthful native response can be formed.
@@ -100,9 +93,22 @@ impl ComputeResourceProvisioner {
             labels,
         )?;
         let source = prepared.source().clone();
+        let resource_version = source_version(&source.resource_version)?;
+        let key = WorkloadSagaKey::new(
+            context.tenant_id().clone(),
+            nimbus_core::WorkloadId::new(stable_resource_id)?,
+        );
+        let lifecycle_generation = self
+            .provisioner
+            .lifecycle_generation_for_start(
+                &key,
+                WorkloadProvisionSourceGeneration::new(source.generation),
+                &resource_version,
+            )
+            .await?;
         let decision = admit_local_generation(
             context,
-            source.generation,
+            lifecycle_generation,
             self.provisioner.local_node(),
             prepared.policy_input().clone(),
         )?;
@@ -114,7 +120,7 @@ impl ComputeResourceProvisioner {
                 stable_resource_id: source.id.clone(),
                 profile: source.profile.clone(),
                 source_generation: WorkloadProvisionSourceGeneration::new(source.generation),
-                resource_version: source_version(&source.resource_version)?,
+                resource_version,
                 sandbox_spec: source.spec.clone(),
             },
             &source.spec,
@@ -139,7 +145,8 @@ impl ComputeResourceProvisioner {
             })?;
         if outcome.projection() == WorkloadProjectionState::Projected
             && snapshot.observation.as_ref().is_none_or(|observation| {
-                observation.observed_generation != snapshot.source.generation
+                observation.source_generation != snapshot.source.generation
+                    || observation.execution != outcome.record().current_execution_reference()
             })
         {
             return Err(ComputeResourceProvisionError::MissingProjection {
@@ -161,27 +168,43 @@ impl ComputeResourceProvisioner {
             .services
             .prepare_sandbox_service_provision_source(context.tenant_id(), service_name)?;
         let definition = prepared.definition().clone();
+        let resource_version = source_version(&definition.resource_version)?;
+        let key = WorkloadSagaKey::new(
+            context.tenant_id().clone(),
+            nimbus_core::WorkloadId::new(service_name)?,
+        );
+        let lifecycle_generation = self
+            .provisioner
+            .lifecycle_generation_for_start(
+                &key,
+                WorkloadProvisionSourceGeneration::new(definition.generation),
+                &resource_version,
+            )
+            .await?;
         let decision = admit_local_generation(
             context,
-            definition.generation,
+            lifecycle_generation,
             self.provisioner.local_node(),
             prepared.policy_input().clone(),
         )?;
         self.services
             .validate_sandbox_service_provision_decision(&decision, &prepared)?;
         let request = provision_request(
-            decision,
+            decision.clone(),
             WorkloadProvisionSource::SandboxBackedService {
                 service_name: definition.name.clone(),
                 source_generation: WorkloadProvisionSourceGeneration::new(definition.generation),
-                resource_version: source_version(&definition.resource_version)?,
+                resource_version,
                 sandbox_spec: prepared.sandbox_spec().clone(),
             },
             prepared.sandbox_spec(),
         );
+        let services = Arc::clone(&self.services);
         let outcome = self
             .provisioner
-            .provision(request, cancellation)
+            .provision_with_source_reservation(request, cancellation, move || {
+                services.reserve_sandbox_service_provision_source(&decision, prepared)
+            })
             .await
             .map_err(ComputeResourceProvisionError::Provision)?;
         require_accepted_projection(outcome.projection())?;
@@ -189,9 +212,10 @@ impl ComputeResourceProvisioner {
             .services
             .service_definition_observation_for_tenant(context.tenant_id(), service_name);
         if outcome.projection() == WorkloadProjectionState::Projected
-            && observation
-                .as_ref()
-                .is_none_or(|observation| observation.observed_generation != definition.generation)
+            && observation.as_ref().is_none_or(|observation| {
+                observation.source_generation != definition.generation
+                    || observation.execution != outcome.record().current_execution_reference()
+            })
         {
             return Err(ComputeResourceProvisionError::MissingProjection {
                 tenant_id: context.tenant_id().clone(),
@@ -201,35 +225,6 @@ impl ComputeResourceProvisioner {
         Ok(SandboxServiceProvisionSnapshot {
             definition,
             observation,
-        })
-    }
-
-    /// Retire one exact sandbox-backed service through the explicit services
-    /// effect capability. This path cannot provision or restart a workload.
-    pub async fn retire_sandbox_service(
-        &self,
-        context: &TenantIsolationContext,
-        service_name: &str,
-    ) -> Result<SandboxServiceRetirementOutcome, ComputeResourceProvisionError> {
-        let prepared = self
-            .services
-            .prepare_sandbox_service_provision_source(context.tenant_id(), service_name)?;
-        let definition = prepared.definition().clone();
-        let decision = admit_local_generation(
-            context,
-            definition.generation,
-            self.provisioner.local_node(),
-            prepared.policy_input().clone(),
-        )?;
-        self.services
-            .validate_sandbox_service_provision_decision(&decision, &prepared)?;
-        let retired = self
-            .services
-            .retire_service_for_decision_async(&decision, service_name)
-            .await?;
-        Ok(SandboxServiceRetirementOutcome {
-            definition,
-            retired_handle: retired,
         })
     }
 }

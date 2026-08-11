@@ -12,7 +12,10 @@ use std::sync::Arc;
 
 use nimbus::{Engine, Error, ServiceManager};
 use nimbus_compute::embedded_local_node_identity;
-use nimbus_compute::workload_saga::{KrunProvisionAdapter, sandbox_execution_provider_id};
+use nimbus_compute::workload_saga::{
+    IngressTeardownCapabilities, KrunAttachmentTeardownAdapter, KrunProvisionAdapter,
+    KrunTeardownAdapter, WorkloadTeardownCapabilityRegistry, sandbox_execution_provider_id,
+};
 use nimbus_core::{Cidr, CidrError};
 use nimbus_network::{
     LocalNetworkAuthority, LocalNetworkAuthorityRootMismatch, LocalNetworkManager,
@@ -374,6 +377,24 @@ impl PreparedLocalKrunServerWorkload {
             )
             .map_err(LocalNetworkCompositionError::ProviderJournal)?,
         );
+        let teardown_execution = Arc::new(
+            KrunTeardownAdapter::new(Arc::clone(&self.backend))
+                .map_err(LocalNetworkCompositionError::ProviderJournal)?,
+        );
+        let teardown_attachment = Arc::new(
+            KrunAttachmentTeardownAdapter::new(Arc::clone(&self.backend))
+                .map_err(LocalNetworkCompositionError::ProviderJournal)?,
+        );
+        let teardown_capabilities = WorkloadTeardownCapabilityRegistry::new(
+            [teardown_attachment.capabilities()],
+            [teardown_execution.capabilities()],
+            [IngressTeardownCapabilities::new(
+                self.selection.ingress_provider_id().clone(),
+                ingress.clone(),
+            )],
+        )
+        .map_err(ServerWorkloadCompositionError::from)
+        .map_err(LocalNetworkCompositionError::ServerWorkload)?;
         let providers = ServerWorkloadProviders::new(
             self.selection.attachment_provider_id().clone(),
             Arc::clone(&execution),
@@ -382,7 +403,8 @@ impl PreparedLocalKrunServerWorkload {
             self.selection.ingress_provider_id().clone(),
             ingress,
         )
-        .with_restart_capabilities();
+        .with_restart_capabilities()
+        .with_teardown_capabilities(teardown_capabilities);
         ServerWorkloadComposition::new(
             engine,
             self.network_manager,

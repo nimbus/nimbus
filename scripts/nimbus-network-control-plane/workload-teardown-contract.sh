@@ -21,6 +21,21 @@ run_contract() {
   return 1
 }
 
+run_native_stage() {
+  cd "${REPO_ROOT}" || return 1
+  output="$(NIMBUS_NETWORK_VERIFY_TEARDOWN_STAGE=native \
+    node "${SOURCE_CONTRACT}" workload-teardown-contract 2>&1)"
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    printf 'Summary: 1 passed, 0 failed\n'
+    return 0
+  fi
+  printf '%s\n' "${output}"
+  diagnostic_count="$(printf '%s\n' "${output}" | rg -c '^teardown-contract/' || true)"
+  printf 'Summary: 0 passed, %d failed\n' "${diagnostic_count}"
+  return 1
+}
+
 run_self_test() {
   cd "${REPO_ROOT}" || return 1
   failures=0
@@ -102,6 +117,13 @@ run_self_test() {
   fi
 
   if ! NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE=1 \
+    NIMBUS_NETWORK_VERIFY_TEARDOWN_STAGE=native \
+    node "${SOURCE_CONTRACT}" workload-teardown-contract; then
+    printf 'SELFTEST FAIL NNCV035 native green fixture did not pass\n'
+    failures=$((failures + 1))
+  fi
+
+  if ! NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE=1 \
     NIMBUS_NETWORK_VERIFY_TEARDOWN_MUTATION=future-product-path \
     node "${SOURCE_CONTRACT}" workload-teardown-contract; then
     printf 'SELFTEST FAIL NNCV035 future product work changed the frozen audit path range\n'
@@ -133,24 +155,71 @@ run_self_test() {
     fi
   done
 
+  native_cases=(
+    'missing-native-runtime'
+    'missing-native-local-registry'
+    'missing-provision-join'
+    'missing-late-result-drain'
+    'missing-native-restart-settlement'
+    'missing-native-execution-reference'
+    'source-execution-generation-conflated'
+    'missing-native-test'
+    'native-direct-effect'
+    'native-direct-sandbox-retirement'
+    'native-direct-backend-stop'
+    'native-source-finalizer-direct-backend-stop'
+    'native-source-finalizer-aliased-backend-stop'
+    'native-source-finalizer-ufcs-backend-stop'
+    'managed-teardown-raw-registry-field'
+    'managed-teardown-unused-exact-realm'
+    'service-source-claim-yield-poll'
+    'sandbox-source-claim-yield-poll'
+    'source-claim-helper-hidden-yield-poll'
+    'sandbox-context-downgrade'
+    'definition-context-downgrade'
+  )
+  native_diagnostic='teardown-contract/native-source-retirement: native stop or definition deletion bypasses the exact compute teardown, source fence, generation split, or attributed proof'
+  for mutation in "${native_cases[@]}"; do
+    output="$({
+      NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE=1 \
+        NIMBUS_NETWORK_VERIFY_TEARDOWN_STAGE=native \
+        NIMBUS_NETWORK_VERIFY_TEARDOWN_MUTATION="${mutation}" \
+        node "${SOURCE_CONTRACT}" workload-teardown-contract
+    } 2>&1)"
+    status=$?
+    diagnostic_count="$(printf '%s\n' "${output}" | rg -c '^teardown-contract/' || true)"
+    if [ "${status}" -eq 0 ]; then
+      printf 'SELFTEST FAIL NNCV035 native mutation %s unexpectedly passed\n' "${mutation}"
+      failures=$((failures + 1))
+    elif [ "${diagnostic_count}" -ne 1 ] || ! printf '%s\n' "${output}" | rg -q -F -x "${native_diagnostic}"; then
+      printf 'SELFTEST FAIL NNCV035 native mutation %s did not fail with its sole named diagnostic\n' "${mutation}"
+      printf '%s\n' "${output}"
+      failures=$((failures + 1))
+    else
+      printf 'SELFTEST PASS NNCV035 native mutation %s fails closed\n' "${mutation}"
+      passed=$((passed + 1))
+    fi
+  done
+
   if [ "${failures}" -ne 0 ]; then
     printf 'NNC6.5 teardown contract self-test: %d passed, %d failed\n' \
       "${passed}" "${failures}"
     return 1
   fi
-  if [ "${passed}" -ne 67 ]; then
-    printf 'NNC6.5 teardown contract self-test: expected 67 mutations, observed %d\n' \
+  if [ "${passed}" -ne 88 ]; then
+    printf 'NNC6.5 teardown contract self-test: expected 88 mutations, observed %d\n' \
       "${passed}"
     return 1
   fi
-  printf 'NNC6.5 teardown contract self-test: 67 passed, 0 failed\n'
+  printf 'NNC6.5 teardown contract self-test: 88 passed, 0 failed\n'
 }
 
 case "${1:-}" in
   '' | --check) run_contract ;;
+  --native-stage) run_native_stage ;;
   --self-test) run_self_test ;;
   *)
-    printf 'usage: %s [--check|--self-test]\n' "$0" >&2
+    printf 'usage: %s [--check|--native-stage|--self-test]\n' "$0" >&2
     exit 2
     ;;
 esac

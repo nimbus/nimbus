@@ -6,9 +6,9 @@ use nimbus_workloads::{WorkloadChannelDescriptor, WorkloadExecutor};
 use ulid::Ulid;
 
 use crate::{
-    BuiltInServiceSpec, ExternalServiceSpec, ServiceBackend, ServiceDefinition,
-    ServiceDefinitionSource, SessionLifecycleState, SessionResource, SessionTarget,
-    SessionTargetSnapshot,
+    BuiltInServiceSpec, ExternalServiceSpec, SandboxResourceObservation, ServiceBackend,
+    ServiceDefinition, ServiceDefinitionObservation, ServiceDefinitionSource,
+    SessionLifecycleState, SessionResource, SessionTarget, SessionTargetSnapshot,
 };
 
 use super::ServiceManager;
@@ -17,7 +17,9 @@ use super::session_channels::{
     SessionBroker, SessionChannelKey, SessionChannelState, close_session_channels,
     initialize_session_channels,
 };
-use super::types::{ServiceManagerState, TenantSandboxResourceKey, TenantServiceKey};
+use super::types::{
+    ServiceManagerState, TenantSandboxResourceKey, TenantServiceKey, WorkloadSourceRetirementKey,
+};
 
 const DEFAULT_SESSION_TTL_MILLIS: u64 = 15 * 60 * 1000;
 const MAX_SESSION_TTL_MILLIS: u64 = 60 * 60 * 1000;
@@ -78,7 +80,7 @@ impl ServiceManager {
                                 "sandbox-backed service `{name}` has no observed ready generation"
                             ))
                         })?;
-                    if observation.observed_generation != definition.generation
+                    if observation.source_generation != definition.generation
                         || observation.handle.status != SandboxStatus::Ready
                     {
                         return Err(Error::conflict(format!(
@@ -86,18 +88,24 @@ impl ServiceManager {
                             definition.generation
                         )));
                     }
-                    Some(observation.handle)
+                    Some(observation)
                 } else {
                     None
                 };
+                let target_snapshot = service_target_snapshot(
+                    &definition,
+                    expected_observation
+                        .as_ref()
+                        .map(|observation| observation.observed_execution_generation),
+                );
                 let service_gate = SessionCommitGate::Service {
                     name: name.clone(),
-                    generation: definition.generation,
+                    source_generation: definition.generation,
                     resource_version: definition.resource_version.clone(),
                     source: definition.source,
                     expected_observation,
                 };
-                (service_target_snapshot(definition), service_gate)
+                (target_snapshot, service_gate)
             }
             SessionTarget::Sandbox { id } => {
                 validate_path_segment("sandbox id", id)?;
@@ -123,15 +131,15 @@ impl ServiceManager {
                 (
                     SessionTargetSnapshot::Sandbox {
                         id: snapshot.source.id.clone(),
-                        generation: snapshot.source.generation,
+                        generation: observation.observed_execution_generation,
                         profile: snapshot.source.profile.clone(),
                         backend: sandbox_backend_wire(observation.handle.backend),
                     },
                     SessionCommitGate::Sandbox {
                         id: snapshot.source.id,
-                        generation: snapshot.source.generation,
+                        source_generation: snapshot.source.generation,
                         resource_version: snapshot.source.resource_version,
-                        expected_observation: observation.handle.clone(),
+                        expected_observation: observation.clone(),
                     },
                 )
             }
@@ -411,16 +419,16 @@ enum SessionCloseAction {
 pub(super) enum SessionCommitGate {
     Service {
         name: String,
-        generation: u64,
+        source_generation: u64,
         resource_version: String,
         source: ServiceDefinitionSource,
-        expected_observation: Option<nimbus_sandbox::SandboxHandle>,
+        expected_observation: Option<ServiceDefinitionObservation>,
     },
     Sandbox {
         id: String,
-        generation: u64,
+        source_generation: u64,
         resource_version: String,
-        expected_observation: nimbus_sandbox::SandboxHandle,
+        expected_observation: SandboxResourceObservation,
     },
 }
 
@@ -432,7 +440,7 @@ pub(super) fn validate_session_commit_gate(
     match gate {
         SessionCommitGate::Service {
             name,
-            generation,
+            source_generation,
             resource_version,
             source,
             expected_observation,
@@ -443,13 +451,21 @@ pub(super) fn validate_session_commit_gate(
                     "service `{name}` for tenant `{tenant_id}` has a definition mutation in progress; retry session open after it reaches a stable state"
                 )));
             }
+            if ServiceManager::source_retirement_claim_exists(
+                state,
+                &WorkloadSourceRetirementKey::Service(key.clone()),
+            ) {
+                return Err(Error::conflict(format!(
+                    "service `{name}` for tenant `{tenant_id}` has a retirement claim in progress"
+                )));
+            }
             if *source == ServiceDefinitionSource::Dynamic {
                 let Some(current) = state.definitions.get(&key) else {
                     return Err(Error::NotFound(format!(
                         "service `{name}` was deleted before the session could be opened for tenant `{tenant_id}`"
                     )));
                 };
-                if current.generation != *generation
+                if current.generation != *source_generation
                     || current.resource_version != *resource_version
                 {
                     return Err(Error::conflict(format!(
@@ -463,9 +479,9 @@ pub(super) fn validate_session_commit_gate(
                         "sandbox-backed service `{name}` lost its ready observation while opening the session"
                     )));
                 };
-                if current.observed_generation != *generation
+                if current.source_generation != *source_generation
                     || current.handle.status != SandboxStatus::Ready
-                    || current.handle != *expected
+                    || current != expected
                 {
                     return Err(Error::conflict(format!(
                         "sandbox-backed service `{name}` observation changed while opening the session"
@@ -475,11 +491,19 @@ pub(super) fn validate_session_commit_gate(
         }
         SessionCommitGate::Sandbox {
             id,
-            generation,
+            source_generation,
             resource_version,
             expected_observation,
         } => {
             let key = TenantSandboxResourceKey::new(tenant_id, id);
+            if ServiceManager::source_retirement_claim_exists(
+                state,
+                &WorkloadSourceRetirementKey::Sandbox(key.clone()),
+            ) {
+                return Err(Error::conflict(format!(
+                    "sandbox `{id}` for tenant `{tenant_id}` has a retirement claim in progress"
+                )));
+            }
             let Some(source) = state.sandbox_resource_sources.get(&key) else {
                 return Err(Error::NotFound(format!(
                     "sandbox `{id}` was deleted before the session could be opened for tenant `{tenant_id}`"
@@ -490,11 +514,11 @@ pub(super) fn validate_session_commit_gate(
                     "sandbox `{id}` lost its ready observation while opening the session"
                 )));
             };
-            if source.generation != *generation
+            if source.generation != *source_generation
                 || source.resource_version != *resource_version
-                || observation.observed_generation != *generation
+                || observation.source_generation != *source_generation
                 || observation.handle.status != SandboxStatus::Ready
-                || observation.handle != *expected_observation
+                || observation != expected_observation
             {
                 return Err(Error::conflict(format!(
                     "sandbox `{id}` source or observation changed while opening the session"
@@ -596,22 +620,26 @@ fn validate_allowed_channels(
     Ok(())
 }
 
-fn service_target_snapshot(definition: ServiceDefinition) -> SessionTargetSnapshot {
-    match definition.backend {
+fn service_target_snapshot(
+    definition: &ServiceDefinition,
+    observed_execution_generation: Option<u64>,
+) -> SessionTargetSnapshot {
+    match &definition.backend {
         ServiceBackend::BuiltIn(spec) => SessionTargetSnapshot::Service {
-            name: definition.name,
+            name: definition.name.clone(),
             generation: definition.generation,
             backend: "builtIn".to_owned(),
             provider: Some(spec.provider().to_owned()),
         },
         ServiceBackend::Sandbox(_) => SessionTargetSnapshot::Service {
-            name: definition.name,
-            generation: definition.generation,
+            name: definition.name.clone(),
+            generation: observed_execution_generation
+                .expect("sandbox-backed service snapshot requires an exact observation"),
             backend: "sandbox".to_owned(),
             provider: None,
         },
         ServiceBackend::External(_) => SessionTargetSnapshot::Service {
-            name: definition.name,
+            name: definition.name.clone(),
             generation: definition.generation,
             backend: "external".to_owned(),
             provider: None,

@@ -24,7 +24,8 @@ pub use catalog::{
 pub use manager::{
     LocalBuildAdmission, NoopServiceEvidenceWriter, SandboxServiceProvisionSource,
     ServiceEvidenceFuture, ServiceEvidenceWriter, ServiceManager, StandaloneSandboxProvisionSource,
-    TenantServiceRetirement, TenantServiceRetirementFuture,
+    TenantServiceRetirement, TenantServiceRetirementFuture, WorkloadSourceRetirementClaim,
+    WorkloadSourceRetirementIdentity, WorkloadSourceRetirementOperation,
 };
 pub use registry::{
     RuntimeServiceRegistry, ServiceInstanceBindingRegistry, service_binding_from_handle,
