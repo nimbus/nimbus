@@ -714,7 +714,7 @@
       "kind": "tcp-bind",
       "symbol": "start_listener",
       "ordinal": 1,
-      "line": 766
+      "line": 768
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -722,7 +722,7 @@
       "kind": "listener-return-handoff",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 827
+      "line": 829
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -730,7 +730,7 @@
       "kind": "tcp-from-raw-fd",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 874
+      "line": 876
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -738,7 +738,7 @@
       "kind": "tcp-from-std",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 876
+      "line": 878
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -746,7 +746,7 @@
       "kind": "listener-return-handoff",
       "symbol": "activated_systemd_listener",
       "ordinal": 2,
-      "line": 880
+      "line": 882
     },
     {
       "site_id": "kv-direct-listener",
@@ -1590,6 +1590,13 @@
           "cfg_owner": "crates/nimbus-cli/src/machine/api/service_workloads.rs",
           "owner_module": "composition_tests",
           "module": "composition_tests"
+        },
+        {
+          "path": "crates/nimbus-cli/src/machine/publication_authority/confirmed/stop_barrier/process_tests.rs",
+          "declared_from": "crates/nimbus-cli/src/machine/publication_authority/confirmed/stop_barrier.rs",
+          "cfg_owner": "crates/nimbus-cli/src/machine/publication_authority/confirmed/stop_barrier.rs",
+          "owner_module": "process_tests",
+          "module": "process_tests"
         }
       ],
       "allowed_shape": "The exact child path is admitted only while its declaration remains inside the mechanically verified #[cfg(test)] tests module and no production mod, path, or include edge reaches it."

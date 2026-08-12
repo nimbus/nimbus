@@ -98,8 +98,16 @@ fn machine_stop_withdraws_all_publications_before_provider_and_releases_only_aft
     drop(prepared);
     write_exact_gvproxy_process_receipt(&paths, &state, gvproxy_pid);
 
-    super::super::stop::stop_machine(&network, &paths, &config, &mut state)
-        .expect("exact provider stop should converge");
+    let (stop_authority, authorization) = test_machine_stop_authority(&network, &config, &state);
+    super::super::stop::stop_machine(
+        &network,
+        &paths,
+        &config,
+        &mut state,
+        &stop_authority,
+        authorization,
+    )
+    .expect("exact provider stop should converge");
     server.join().expect("endpoint server should finish");
 
     assert!(
@@ -145,8 +153,16 @@ fn machine_stop_withdraws_all_publications_before_provider_and_releases_only_aft
     state.manager = MachineManagerState::Stale;
     state.last_error = Some("simulated post-absence artifact cleanup interruption".to_owned());
     fs::write(&paths.gvproxy_pid_path, i32::MAX.to_string()).expect("stale retry pid should write");
-    super::super::stop::stop_machine(&network, &paths, &config, &mut state)
-        .expect("durable exact absence should make retry independent of stale pid evidence");
+    let (stop_authority, authorization) = test_machine_stop_authority(&network, &config, &state);
+    super::super::stop::stop_machine(
+        &network,
+        &paths,
+        &config,
+        &mut state,
+        &stop_authority,
+        authorization,
+    )
+    .expect("durable exact absence should make retry independent of stale pid evidence");
     assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
     assert!(
         !paths.gvproxy_pid_path.exists(),
@@ -202,8 +218,16 @@ fn exact_gvproxy_absence_settles_network_authority_despite_unrelated_stop_error(
     fs::write(&paths.api_forward_pid_path, "not-a-pid")
         .expect("independent API-forward diagnostic should write");
 
-    let error = super::super::stop::stop_machine(&network, &paths, &config, &mut state)
-        .expect_err("unrelated API-forward cleanup error should remain visible");
+    let (stop_authority, authorization) = test_machine_stop_authority(&network, &config, &state);
+    let error = super::super::stop::stop_machine(
+        &network,
+        &paths,
+        &config,
+        &mut state,
+        &stop_authority,
+        authorization,
+    )
+    .expect_err("unrelated API-forward cleanup error should remain visible");
     assert!(
         error.to_string().contains("failed to parse pid file"),
         "the unrelated cleanup failure must still be reported: {error}"
@@ -331,8 +355,16 @@ fn stop_machine_uses_graceful_vmm_stop_before_cleaning_up_helpers() {
     drop(prepared);
     write_exact_gvproxy_process_receipt(&paths, &state, gvproxy_pid);
 
-    super::super::stop::stop_machine(&network, &paths, &config, &mut state)
-        .expect("machine stop should succeed");
+    let (stop_authority, authorization) = test_machine_stop_authority(&network, &config, &state);
+    super::super::stop::stop_machine(
+        &network,
+        &paths,
+        &config,
+        &mut state,
+        &stop_authority,
+        authorization,
+    )
+    .expect("machine stop should succeed");
     server.join().expect("endpoint server should finish");
 
     assert_eq!(
@@ -433,8 +465,16 @@ fn ambiguous_gvproxy_stop_preserves_runtime_evidence_and_port_fence() {
     // recovery authority for the provider generation.
     drop(prepared);
 
-    let error = super::super::stop::stop_machine(&network, &paths, &config, &mut state)
-        .expect_err("missing exact gvproxy stop evidence must fail closed");
+    let (stop_authority, authorization) = test_machine_stop_authority(&network, &config, &state);
+    let error = super::super::stop::stop_machine(
+        &network,
+        &paths,
+        &config,
+        &mut state,
+        &stop_authority,
+        authorization,
+    )
+    .expect_err("missing exact gvproxy stop evidence must fail closed");
     assert!(error.to_string().contains("stop is incomplete"));
     assert_eq!(state.lifecycle, MachineLifecycle::Failed);
     assert_eq!(state.manager, MachineManagerState::Stale);
@@ -552,8 +592,16 @@ fn stale_gvproxy_pid_preserves_publication_and_ssh_fences() {
     let mut state = running_machine_state(&config, &paths, &image_path, &prepared);
     drop(prepared);
 
-    let error = super::super::stop::stop_machine(&network, &paths, &config, &mut state)
-        .expect_err("stale gvproxy identity must fail closed");
+    let (stop_authority, authorization) = test_machine_stop_authority(&network, &config, &state);
+    let error = super::super::stop::stop_machine(
+        &network,
+        &paths,
+        &config,
+        &mut state,
+        &stop_authority,
+        authorization,
+    )
+    .expect_err("stale gvproxy identity must fail closed");
 
     assert!(
         error
@@ -642,8 +690,16 @@ fn recycled_gvproxy_pid_is_never_signaled_or_used_as_provider_absence() {
     super::super::write_json_file(&paths.gvproxy_process_identity_path, &substituted_receipt)
         .expect("substituted prior-incarnation receipt should write");
 
-    super::super::stop::stop_machine(&network, &paths, &config, &mut state)
-        .expect("a replaced PID proves the exact prior process absent without signaling it");
+    let (stop_authority, authorization) = test_machine_stop_authority(&network, &config, &state);
+    super::super::stop::stop_machine(
+        &network,
+        &paths,
+        &config,
+        &mut state,
+        &stop_authority,
+        authorization,
+    )
+    .expect("a replaced PID proves the exact prior process absent without signaling it");
 
     assert!(
         super::super::stop::read_pid_if_alive(&paths.gvproxy_pid_path)

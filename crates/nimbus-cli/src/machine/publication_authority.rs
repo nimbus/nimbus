@@ -44,9 +44,10 @@ const OWNER_FILE_MODE: u32 = 0o600;
 mod confirmed;
 
 pub(crate) use confirmed::{
-    ConfirmedMachinePublicationJournal, ConfirmedMachinePublicationMember,
-    ConfirmedMachinePublicationObservation, ConfirmedMachinePublicationRetirement,
-    ConfirmedMachinePublicationRetirementPhase, canonical_machine_publication_members,
+    ConfirmedMachineDesireAdmissionGuard, ConfirmedMachinePublicationJournal,
+    ConfirmedMachinePublicationMember, ConfirmedMachinePublicationObservation,
+    ConfirmedMachinePublicationRetirement, ConfirmedMachinePublicationRetirementPhase,
+    ConfirmedMachineStopBarrierAuthority, canonical_machine_publication_members,
     canonical_machine_restart_publication_members,
 };
 

@@ -604,8 +604,17 @@ pub(super) fn stop_machine(
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
+    stop_authority: &super::stop_authority::HostMachineStopAuthority,
+    authorization: nimbus_compute::machine_stop_authority::ConfirmedMachineStopAuthorization,
 ) -> Result<(), Error> {
-    self::stop::stop_machine(&network.lifecycle_handle()?, paths, config, state)
+    self::stop::stop_machine(
+        &network.lifecycle_handle()?,
+        paths,
+        config,
+        state,
+        stop_authority,
+        authorization,
+    )
 }
 
 pub(super) fn release_machine_ssh_port(

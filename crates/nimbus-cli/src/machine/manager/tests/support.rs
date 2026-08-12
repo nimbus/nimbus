@@ -20,6 +20,35 @@ pub(super) fn test_machine_network_lifecycle(
     .expect("test machine network lifecycle handle should open")
 }
 
+pub(super) fn test_machine_stop_authority(
+    network: &crate::machine::network_composition::MachineNetworkLifecycleHandle,
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+) -> (
+    crate::machine::stop_authority::HostMachineStopAuthority,
+    nimbus_compute::machine_stop_authority::ConfirmedMachineStopAuthorization,
+) {
+    let authority =
+        crate::machine::stop_authority::HostMachineStopAuthority::from_port_leases_for_test(
+            network.port_leases(),
+        )
+        .expect("test physical-stop authority should open");
+    let forwarder = state
+        .runtime
+        .as_ref()
+        .expect("test running machine should carry exact forwarder authority")
+        .forwarder_authority
+        .clone();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test authorization runtime should build");
+    let authorization = runtime
+        .block_on(authority.authorize(&config.name, &forwarder))
+        .expect("empty test workload authority should authorize physical stop");
+    (authority, authorization)
+}
+
 pub(super) fn test_network_authority_record(
     base_root: &Path,
     machine_name: &str,

@@ -6,13 +6,26 @@ pub(in crate::machine) fn run_machine_os(
     command: MachineOsCommand,
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     match command.command {
-        MachineOsSubcommand::Apply(apply) => run_machine_os_apply(apply, roots, network),
-        MachineOsSubcommand::Upgrade(upgrade) => run_machine_os_upgrade(upgrade, roots, network),
-        MachineOsSubcommand::Rollback(rollback) => {
-            run_machine_os_rollback(rollback, roots, network)
+        MachineOsSubcommand::Apply(apply) => {
+            run_machine_os_apply(apply, roots, network, authorized)
         }
+        MachineOsSubcommand::Upgrade(upgrade) => {
+            run_machine_os_upgrade(upgrade, roots, network, authorized)
+        }
+        MachineOsSubcommand::Rollback(rollback) => {
+            run_machine_os_rollback(rollback, roots, network, authorized)
+        }
+    }
+}
+
+pub(super) const fn machine_os_requests_restart(command: &MachineOsCommand) -> bool {
+    match &command.command {
+        MachineOsSubcommand::Apply(command) => command.restart,
+        MachineOsSubcommand::Upgrade(command) => command.restart && !command.dry_run,
+        MachineOsSubcommand::Rollback(command) => command.restart,
     }
 }
 
@@ -20,6 +33,7 @@ fn run_machine_os_apply(
     command: MachineOsApplyCommand,
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     let (paths, mut config, mut state) =
         load_initialized_machine(roots, network, DEFAULT_MACHINE_NAME)?;
@@ -32,6 +46,7 @@ fn run_machine_os_apply(
             target_source,
             command.restart,
             network,
+            authorized,
         )?;
         let result = if outcome.changed {
             MachineOsCommandResult::Applied
@@ -53,6 +68,7 @@ fn run_machine_os_apply(
         target_source,
         command.restart,
         network,
+        authorized,
     )?;
 
     let result = if outcome.changed {
@@ -73,11 +89,19 @@ fn run_machine_os_upgrade(
     command: MachineOsUpgradeCommand,
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     let (paths, mut config, mut state) =
         load_initialized_machine(roots, network, DEFAULT_MACHINE_NAME)?;
     if uses_bootc_native_os_lifecycle(&config) {
-        return run_bootc_machine_os_upgrade(command, &paths, &mut config, &mut state, network);
+        return run_bootc_machine_os_upgrade(
+            command,
+            &paths,
+            &mut config,
+            &mut state,
+            network,
+            authorized,
+        );
     }
     let plan = plan_machine_os_upgrade(&config)?;
     if command.dry_run || !plan.update_available {
@@ -106,6 +130,7 @@ fn run_machine_os_upgrade(
         },
         command.restart,
         network,
+        authorized,
     )?;
     emit_machine_stdout(&render_machine_os_upgrade_view(
         MachineOsCommandResult::Upgraded,
@@ -123,6 +148,7 @@ fn run_machine_os_rollback(
     command: MachineOsRollbackCommand,
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     let (paths, mut config, mut state) =
         load_initialized_machine(roots, network, DEFAULT_MACHINE_NAME)?;
@@ -139,7 +165,7 @@ fn run_machine_os_rollback(
         .ok_or_else(|| Error::conflict("bootc status does not report a rollback deployment"))?;
     let operation = client.bootc_rollback()?;
     if command.restart {
-        restart_bootc_machine(&paths, &mut config, &mut state, network)?;
+        restart_bootc_machine(&paths, &mut config, &mut state, network, authorized)?;
     }
     let summary = if command.restart {
         format!(
@@ -164,6 +190,7 @@ fn run_machine_os_rollback(
     _command: MachineOsRollbackCommand,
     _roots: &MachineRootLayout,
     _network: &HostMachineNetworkAuthority,
+    _authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     Err(unsupported_bootc_machine_os_error())
 }
@@ -210,6 +237,7 @@ fn apply_bootc_machine_os_change(
     target_source: MachineImageSource,
     restart: bool,
     network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<MachineOsApplyOutcome, Error> {
     let target_reference = bootc_target_reference_from_source(&target_source)?;
     let client = require_running_bootc_machine_api_client(paths, state)?;
@@ -229,7 +257,7 @@ fn apply_bootc_machine_os_change(
     let _operation = client.bootc_switch(image, Some(transport))?;
 
     let restarted = if restart {
-        restart_bootc_machine(paths, config, state, network)?;
+        restart_bootc_machine(paths, config, state, network, authorized)?;
         true
     } else {
         false
@@ -252,6 +280,7 @@ fn apply_bootc_machine_os_change(
     _target_source: MachineImageSource,
     _restart: bool,
     _network: &HostMachineNetworkAuthority,
+    _authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<MachineOsApplyOutcome, Error> {
     Err(unsupported_bootc_machine_os_error())
 }
@@ -263,6 +292,7 @@ fn run_bootc_machine_os_upgrade(
     config: &mut MachineConfigRecord,
     state: &mut MachineStateRecord,
     network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     let client = require_running_bootc_machine_api_client(paths, state)?;
     let before = client.bootc_status()?;
@@ -297,11 +327,10 @@ fn run_bootc_machine_os_upgrade(
         )?)?;
         return Ok(());
     }
-
     let (transport, image) = bootc_switch_target(&stream.target_image);
     let _operation = client.bootc_switch(image, Some(transport))?;
     let restarted = if command.restart {
-        restart_bootc_machine(paths, config, state, network)?;
+        restart_bootc_machine(paths, config, state, network, authorized)?;
         true
     } else {
         false
@@ -310,9 +339,9 @@ fn run_bootc_machine_os_upgrade(
         MachineOsCommandResult::Upgraded,
         paths,
         &plan,
-        false,
-        command.restart,
         restarted,
+        command.restart,
+        false,
     )?)?;
     Ok(())
 }
@@ -324,6 +353,7 @@ fn run_bootc_machine_os_upgrade(
     _config: &mut MachineConfigRecord,
     _state: &mut MachineStateRecord,
     _network: &HostMachineNetworkAuthority,
+    _authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     Err(unsupported_bootc_machine_os_error())
 }
@@ -377,8 +407,12 @@ fn restart_bootc_machine(
     config: &mut MachineConfigRecord,
     state: &mut MachineStateRecord,
     network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
-    stop_machine(network, paths, config, state)?;
+    let authorization = authorized
+        .take()
+        .ok_or_else(super::missing_machine_stop_authority)?;
+    authorization.stop(network, paths, config, state)?;
     start_machine(network, paths, config, state)
 }
 
@@ -439,6 +473,7 @@ fn apply_machine_os_change(
     target_source: MachineImageSource,
     restart: bool,
     network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<MachineOsApplyOutcome, Error> {
     let previous_image = describe_machine_image_source(&config.guest.image_source);
     let current_image = describe_machine_image_source(&target_source);
@@ -471,7 +506,10 @@ fn apply_machine_os_change(
         )));
     }
     if was_running {
-        stop_machine(network, paths, config, state)?;
+        authorized
+            .take()
+            .ok_or_else(super::missing_machine_stop_authority)?
+            .stop(network, paths, config, state)?;
     }
 
     let target_uses_bootc_native = uses_nimbus_bootc_machine_image_source(&target_source);

@@ -7,7 +7,9 @@
 
 use nimbus::SandboxBackendKind;
 use nimbus_compute::workload_executable::decode_sandbox_spec;
-use nimbus_compute::workload_saga::restart_provider_command::ProviderRestartEffectObservation;
+use nimbus_compute::workload_saga::restart_provider_command::{
+    ProviderRestartEffectObservation, ProviderRestartPhaseAdapter,
+};
 use nimbus_compute::workload_saga::{
     ConfirmedWorkloadRestartCommand, NetworkRestartAttachmentCapability,
     RestartPublicationCapability, RestartPublicationObservationCapability,
@@ -181,6 +183,13 @@ impl ForwardedMachineProvisionAdapter {
         })?;
         let members = canonical_machine_restart_publication_members(&envelope, authority)
             .map_err(|error| restart_definite_failure(error.to_string()))?;
+        self.publication_journal
+            .authenticate_or_stage_restart_witness(&self.machine_name, &envelope, authority)
+            .map_err(|error| {
+                restart_definite_failure(format!(
+                    "machine restart retirement witness is rejected: {error}"
+                ))
+            })?;
         Ok(ValidatedForwardedRestart {
             plan_id: command.compiled_network_plan().plan().plan_id().clone(),
             envelope,
@@ -237,7 +246,9 @@ impl ForwardedMachineProvisionAdapter {
         let validated =
             match self.validate_restart_phase(command, step, WorkloadRestartCommandMode::Execute) {
                 Ok(validated) => validated,
-                Err(error) => return self.restart_phases.execute(command, || error),
+                Err(error) => {
+                    return ProviderRestartPhaseAdapter::reject_before_journal(command, error);
+                }
             };
         self.restart_phases.execute(command, || match step {
             WorkloadRestartStep::WithdrawPublication => {
@@ -293,7 +304,9 @@ impl ForwardedMachineProvisionAdapter {
         let validated =
             match self.validate_restart_phase(command, step, WorkloadRestartCommandMode::Inspect) {
                 Ok(validated) => validated,
-                Err(error) => return self.restart_phases.inspect(command, || error),
+                Err(error) => {
+                    return ProviderRestartPhaseAdapter::reject_before_journal(command, error);
+                }
             };
         let inspect = || {
             let remote = self.forward_restart_phase(&validated);

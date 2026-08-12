@@ -1,6 +1,91 @@
 use super::*;
 
 #[test]
+fn standalone_machine_stop_fails_closed_without_engine_drain_authority() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::test_sibling_roots(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+    let network_root = temp_dir.path().join("network");
+    let network = HostMachineNetworkAuthority::from_port_leases_for_test(
+        nimbus_network::LocalPortLeaseAuthority::open(&network_root)
+            .expect("isolated test port authority should open"),
+    )
+    .expect("isolated host network authority should open");
+    let before = fs::read_dir(temp_dir.path())
+        .expect("test root should inspect")
+        .map(|entry| entry.expect("directory entry should inspect").file_name())
+        .collect::<Vec<_>>();
+
+    let error = run_parent_machine_command(
+        MachineSubcommand::Stop(MachineStopCommand { name: None }),
+        &layout,
+        &network,
+    )
+    .expect_err("authority-less standalone stop must fail before machine state access");
+
+    assert!(
+        matches!(
+            error,
+            Error::RejectedBeforeExecution { ref message }
+                if message == "physical-machine stop requires canonical Engine workload authority"
+        ),
+        "standalone stop must return the exact typed authority error: {error}"
+    );
+    let after = fs::read_dir(temp_dir.path())
+        .expect("test root should inspect")
+        .map(|entry| entry.expect("directory entry should inspect").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(after, before, "standalone rejection must make zero effects");
+}
+
+#[test]
+fn production_machine_stop_fallback_never_invents_engine_persistence() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::test_sibling_roots(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+    let before = fs::read_dir(temp_dir.path())
+        .expect("test root should inspect")
+        .map(|entry| entry.expect("directory entry should inspect").file_name())
+        .collect::<Vec<_>>();
+
+    let error = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime should build")
+        .block_on(run_machine_command_with_layout(
+            MachineCommand {
+                command: MachineSubcommand::Stop(MachineStopCommand { name: None }),
+            },
+            &layout,
+            None,
+        ))
+        .expect_err("a direct fallback without the canonical server Engine must fail closed");
+
+    assert!(
+        matches!(
+            error,
+            Error::RejectedBeforeExecution { ref message }
+                if message == "physical-machine stop requires canonical Engine workload authority"
+        ),
+        "standalone fallback must return the exact typed authority error: {error}"
+    );
+    let after = fs::read_dir(temp_dir.path())
+        .expect("test root should inspect")
+        .map(|entry| entry.expect("directory entry should inspect").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        after, before,
+        "authority rejection must precede default Engine, provider, and network composition"
+    );
+}
+
+#[test]
 #[serial_test::serial]
 fn hidden_machine_api_subcommand_falls_back_without_home() {
     let original_home = std::env::var_os("HOME");

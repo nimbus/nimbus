@@ -11,6 +11,7 @@ import {
   BEHAVIOR_TESTS,
   FORWARDED_MACHINE_TESTS,
   NATIVE_SOURCE_RETIREMENT_TESTS,
+  PHYSICAL_MACHINE_STOP_TESTS,
   greenTeardownFixture,
 } from "./workload-teardown-contract-fixture.mjs";
 import {
@@ -124,7 +125,8 @@ function collectTestSources(root, directories) {
         if (
           relative.includes("/tests/") ||
           entry.name === "tests.rs" ||
-          /#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/u.test(source)
+          /#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/u.test(source) ||
+          /#\s*\[\s*(?:(?:tokio|rstest)\s*::\s*)?test\b/u.test(source)
         ) {
           sources.push({ file: relative, source: maskNonCode(source) });
         }
@@ -442,16 +444,6 @@ function countOccurrences(source, token) {
   return source.split(token).length - 1;
 }
 
-function appearsBeforeEvery(source, before, afterTokens) {
-  const beforeIndex = source.indexOf(before);
-  return (
-    beforeIndex >= 0 &&
-    afterTokens.every(
-      (token) => source.indexOf(token, beforeIndex + before.length) >= 0,
-    )
-  );
-}
-
 function itemBody(item) {
   const open = item.indexOf("{");
   return open >= 0 && item.endsWith("}") ? item.slice(open + 1, -1).trim() : "";
@@ -498,6 +490,14 @@ function behaviorTestsPass(sources) {
           hasTestsAt(sources, entry.file, [name]),
         ),
     )
+  );
+}
+
+function physicalMachineStopTestsPass(sources) {
+  return PHYSICAL_MACHINE_STOP_TESTS.every((name) =>
+    sources.testEntries.some((entry) =>
+      hasTestsAt(sources, entry.file, [name]),
+    ),
   );
 }
 
@@ -876,8 +876,8 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "missing-machine-rescan": [
       "physicalStopDecision",
-      "    let after = list_machine_workload_authority_from_engine();\n",
-      "    let after = WorkloadAuthoritySnapshot::unavailable();\n",
+      "workloads.list_machine_workload_authority_from_engine().await",
+      "WorkloadAuthoritySnapshot::unavailable()",
     ],
     "untyped-machine-active-conflict": [
       "physicalStopDecision",
@@ -901,113 +901,168 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "machine-barrier-after-publication": [
       "physicalStopEffects",
-      "    authorization.authenticate_exact_machine_generation();\n    withdraw_machine_publications();",
-      "    withdraw_machine_publications();\n    authorization.authenticate_exact_machine_generation();",
+      "    let stop_barrier = stop_authority.begin_physical_stop(&authorization);\n    withdraw_machine_publications();",
+      "    withdraw_machine_publications();\n    let stop_barrier = stop_authority.begin_physical_stop(&authorization);",
     ],
     "machine-standalone-bypass": [
       "physicalStopStandalone",
-      "fn run_machine_stop() {\n    let authorization = authorize_machine_stop();\n    stop_machine_with_authorization(authorization);\n}",
-      "fn run_machine_stop() {\n    raw_machine_stop();\n}",
+      "async fn run_machine_stop() {\n    let stop_authority = HostMachineStopAuthority::new();\n    let authorization = stop_authority.authorize().await;\n    stop_machine_with_layout_authorized(stop_authority, authorization);\n}",
+      "async fn run_machine_stop() {\n    raw_machine_stop();\n}",
     ],
     "machine-server-bypass": [
       "physicalStopServer",
-      "fn stop_machine<'a>() {\n    let authorization = authorize_machine_stop();\n    stop_machine_with_authorization(authorization);\n}",
+      "fn stop_machine<'a>() {\n    let authorization = stop_authority.authorize().await;\n    stop_machine_with_layout_authorized(stop_authority, authorization);\n}",
       "fn stop_machine<'a>() {\n    raw_machine_stop();\n}",
     ],
     "machine-restart-bypass": [
       "physicalStopServer",
-      "fn restart_machine<'a>() {\n    let authorization = authorize_machine_stop();\n    stop_machine_with_authorization(authorization);\n}",
+      "fn restart_machine<'a>() {\n    let authorization = stop_authority.authorize().await;\n    restart_machine_with_layout_authorized(stop_authority, authorization);\n}",
       "fn restart_machine<'a>() {\n    raw_machine_stop();\n}",
     ],
     "machine-bootc-restart-bypass": [
       "physicalStopOs",
-      "fn restart_bootc_machine() {\n    let authorization = authorize_machine_stop();\n    stop_machine_with_authorization(authorization);\n}",
+      "fn restart_bootc_machine(authorized: &mut Option<AuthorizedMachineStop>) {\n    let authorization = authorized.take().ok_or_else(missing_machine_stop_authority);\n    authorization.stop();\n    start_machine();\n}",
       "fn restart_bootc_machine() {\n    raw_machine_stop();\n}",
     ],
     "machine-os-apply-restart-bypass": [
       "physicalStopOs",
-      "fn apply_machine_os_change() {\n    let authorization = authorize_machine_stop();\n    stop_machine_with_authorization(authorization);\n}",
+      "fn apply_machine_os_change(authorized: &mut Option<AuthorizedMachineStop>) {\n    let authorization = authorized.take().ok_or_else(missing_machine_stop_authority);\n    authorization.stop();\n    config.guest.image_source = target_source;\n}",
       "fn apply_machine_os_change() {\n    raw_machine_stop();\n}",
     ],
     "machine-admission-after-empty-scan": [
       "physicalStopDecision",
-      "    let fence = claim_machine_stop_admission_barrier();\n    let after = list_machine_workload_authority_from_engine();",
-      "    let after = list_machine_workload_authority_from_engine();\n    allow_forwarded_workload_admission();\n    let fence = claim_machine_stop_admission_barrier();",
+      "    let claim = barriers.claim_effect_free_barrier();\n    let sagas = workloads.list_machine_workload_authority_from_engine().await;",
+      "    let sagas = workloads.list_machine_workload_authority_from_engine().await;\n    allow_forwarded_workload_admission();\n    let claim = barriers.claim_effect_free_barrier();",
     ],
     "missing-machine-active-barrier-clear": [
       "physicalStopDecision",
-      "        clear_unchanged_effect_free_machine_stop_barrier(fence);\n",
+      "            barriers.clear_effect_free_barrier().await;\n",
       "",
     ],
     "missing-initial-desire-admission-guard": [
       "physicalDesireAdmissions",
-      "async fn submit_intent() {\n    with_machine_desire_admission_guard(|| async {\n        self.commit_loaded(loaded.as_ref(), next.clone()).await\n    }).await;\n}",
+      "async fn submit_intent() {\n    let _permit = match &self.desire_admission_guard {\n        Some(guard) => Some(guard.acquire(&admission).await),\n        None => None,\n    };\n    let disposition = self.commit_loaded(loaded.as_ref(), next.clone()).await;\n}",
       "async fn submit_intent() {\n    self.commit_loaded(loaded.as_ref(), next.clone()).await;\n}",
     ],
     "initial-desire-guard-released-before-cas": [
       "physicalDesireAdmissions",
-      "async fn submit_intent() {\n    with_machine_desire_admission_guard(|| async {\n        self.commit_loaded(loaded.as_ref(), next.clone()).await\n    }).await;\n}",
-      "async fn submit_intent() {\n    with_machine_desire_admission_guard(|| async {}).await;\n    self.commit_loaded(loaded.as_ref(), next.clone()).await;\n}",
+      "    let disposition = self.commit_loaded(loaded.as_ref(), next.clone()).await;",
+      "    drop(_permit);\n    let disposition = self.commit_loaded(loaded.as_ref(), next.clone()).await;",
     ],
     "missing-restart-desire-admission-guard": [
       "physicalDesireAdmissions",
-      "async fn compare_and_swap_restart_admission() {\n    with_machine_desire_admission_guard(|| async {\n        self.commit_loaded(Some(&current), candidate.clone()).await\n    }).await;\n}",
+      "async fn compare_and_swap_restart_admission() {\n    let _permit = match &self.desire_admission_guard {\n        Some(guard) => Some(guard.acquire(&admission).await),\n        None => None,\n    };\n    let result = self.commit_loaded(Some(&current), candidate.clone()).await;\n    drop(_permit);\n}",
       "async fn compare_and_swap_restart_admission() {\n    self.commit_loaded(Some(&current), candidate.clone()).await;\n}",
     ],
     "restart-desire-guard-released-before-cas": [
       "physicalDesireAdmissions",
-      "async fn compare_and_swap_restart_admission() {\n    with_machine_desire_admission_guard(|| async {\n        self.commit_loaded(Some(&current), candidate.clone()).await\n    }).await;\n}",
-      "async fn compare_and_swap_restart_admission() {\n    with_machine_desire_admission_guard(|| async {}).await;\n    self.commit_loaded(Some(&current), candidate.clone()).await;\n}",
+      "    let result = self.commit_loaded(Some(&current), candidate.clone()).await;\n    drop(_permit);",
+      "    drop(_permit);\n    let result = self.commit_loaded(Some(&current), candidate.clone()).await;",
+    ],
+    "missing-machine-barrier-digest-machine-name": [
+      "physicalStopProvider",
+      "        machine_name: &self.machine_name,\n",
+      "",
+    ],
+    "missing-machine-barrier-digest-authority": [
+      "physicalStopProvider",
+      "        forwarder_authority: &self.forwarder_authority,\n",
+      "",
+    ],
+    "missing-machine-barrier-digest-epoch": [
+      "physicalStopProvider",
+      "        epoch: self.epoch,\n",
+      "",
+    ],
+    "missing-machine-barrier-digest-state": [
+      "physicalStopProvider",
+      "        state: self.state,\n",
+      "",
+    ],
+    "machine-barrier-digest-disconnected": [
+      "physicalStopProvider",
+      "Sha256::digest(bytes)",
+      'Sha256::digest(b"constant")',
+    ],
+    "missing-machine-admission-barrier-traversal": [
+      "physicalStopProvider",
+      "    let barrier = body.stop_barriers.iter()\n",
+      "    let barrier = unrelated_barriers.iter()\n",
+    ],
+    "missing-machine-admission-provider-comparison": [
+      "physicalStopProvider",
+      "    if barrier.forwarder_authority.provider_instance() != forwarder_authority.provider_instance() {\n",
+      "    if false {\n",
+    ],
+    "missing-machine-admission-generation-comparison": [
+      "physicalStopProvider",
+      "    if barrier.forwarder_authority.generation() != forwarder_authority.generation() {\n",
+      "    if false {\n",
+    ],
+    "machine-admission-provider-fails-open": [
+      "physicalStopProvider",
+      "return Err(Error::Crossed);",
+      "return Ok(());",
+    ],
+    "machine-admission-generation-fails-open": [
+      "physicalStopProvider",
+      "return Err(Error::Stale);",
+      "return Ok(());",
+    ],
+    "machine-admission-fence-fails-open": [
+      "physicalStopProvider",
+      "Err(Error::Fenced)",
+      "Ok(())",
     ],
     "missing-machine-admission-authentication": [
       "physicalStopProvider",
-      "fn authenticate_forwarded_workload_admission_barrier() {\n    self.mutate(|body| {\n        authenticate_no_machine_stop_barrier(body);\n    });\n}",
+      "fn authenticate_workload_admission_absence(body, machine_name, forwarder_authority) {\n    let barrier = body.stop_barriers.iter()\n        .filter(|barrier| barrier.machine_name == machine_name)\n        .max_by_key(|barrier| barrier.epoch)\n        .filter(|barrier| !barrier.state.is_terminal());\n    if barrier.forwarder_authority.provider_instance() != forwarder_authority.provider_instance() {\n        return Err(Error::Crossed);\n    }\n    if barrier.forwarder_authority.generation() != forwarder_authority.generation() {\n        return Err(Error::Stale);\n    }\n    Err(Error::Fenced)\n}",
       "",
     ],
     "machine-desire-guard-does-not-hold-lock": [
       "physicalStopProvider",
-      "async fn with_machine_desire_admission_guard(operation: impl AsyncOperation) {\n    self.mutate_async(|body| async move {\n        authenticate_no_machine_stop_barrier(body);\n        let result = operation().await;\n        settle_machine_desire_admission_guard(body, &result);\n        result\n    }).await\n}",
-      "async fn with_machine_desire_admission_guard(operation: impl AsyncOperation) {\n    self.mutate(|body| authenticate_no_machine_stop_barrier(body));\n    operation().await\n}",
+      "struct ConfirmedMachineDesireAdmissionPermit {\n    _lock: ConfirmedMachinePublicationLock,\n}",
+      "struct ConfirmedMachineDesireAdmissionPermit;",
     ],
     "machine-barrier-claim-outside-provider-lock": [
       "physicalStopProvider",
-      "fn claim_machine_stop_admission_barrier() {\n    self.mutate(|body| {\n        authenticate_exact_machine_incarnation(body);\n        persist_machine_stop_admission_barrier(body);\n    });\n}",
-      "fn claim_machine_stop_admission_barrier() {\n    persist_machine_stop_admission_barrier_without_lock();\n}",
+      "fn claim_machine_stop_barrier() {\n    self.mutate_with_error(|body| {\n        provider_instance();\n        generation();\n        body.stop_barriers.push(barrier);\n        provider_witnesses(body, forwarder_authority);\n    });\n}",
+      "fn claim_machine_stop_barrier() {\n    persist_machine_stop_barrier_without_lock();\n}",
     ],
     "machine-provider-auth-outside-provider-lock": [
       "physicalStopProvider",
-      "fn authenticate_forwarded_workload_admission_barrier() {\n    self.mutate(|body| {\n        authenticate_no_machine_stop_barrier(body);\n    });\n}",
-      "fn authenticate_forwarded_workload_admission_barrier() {\n    authenticate_no_machine_stop_barrier_without_lock();\n}",
+      "fn authenticate_retirement_witness() {\n    self.mutate(|body| {\n        authenticate_workload_admission_absence(body, machine_name, authority);\n        body.retirement_witnesses.push(candidate);\n    });\n}",
+      "fn authenticate_retirement_witness() {\n    authenticate_workload_admission_absence_without_lock();\n    self.mutate(|body| body.retirement_witnesses.push(candidate));\n}",
     ],
     "machine-provision-admission-bypasses-barrier": [
       "physicalProviderAdmissions",
-      "fn execute_exact_phase() {\n    authenticate_forwarded_workload_admission_barrier();\n    claim_dispatch_epoch_started();\n    self.phases.execute();\n}",
-      "fn execute_exact_phase() {\n    claim_dispatch_epoch_started();\n    self.phases.execute();\n}",
+      "fn validate_exact_phase() {\n    self.publication_journal.authenticate_retirement_witness();\n}",
+      "fn validate_exact_phase() {}",
     ],
     "machine-provision-effect-before-barrier-auth": [
       "physicalProviderAdmissions",
-      "fn execute_exact_phase() {\n    authenticate_forwarded_workload_admission_barrier();\n    claim_dispatch_epoch_started();\n    self.phases.execute();\n}",
-      "fn execute_exact_phase() {\n    self.phases.execute();\n    authenticate_forwarded_workload_admission_barrier();\n    claim_dispatch_epoch_started();\n}",
+      "fn execute_exact_phase() {\n    let validated = self.validate_exact_phase();\n    self.phases.execute();\n}",
+      "fn execute_exact_phase() {\n    self.phases.execute();\n    let validated = self.validate_exact_phase();\n}",
     ],
     "machine-publication-admission-bypasses-barrier": [
       "physicalProviderAdmissions",
-      "fn publish() {\n    authenticate_forwarded_workload_admission_barrier();\n    reserve_parent_batch();\n    commit_before_machine_api();\n    provision_workload_phase();\n}",
-      "fn publish() {\n    reserve_parent_batch();\n    commit_before_machine_api();\n    provision_workload_phase();\n}",
+      "    self.authenticate_parent(&validated);\n",
+      "",
     ],
     "machine-publication-effect-before-barrier-auth": [
       "physicalProviderAdmissions",
-      "fn publish() {\n    authenticate_forwarded_workload_admission_barrier();\n    reserve_parent_batch();\n    commit_before_machine_api();\n    provision_workload_phase();\n}",
-      "fn publish() {\n    reserve_parent_batch();\n    authenticate_forwarded_workload_admission_barrier();\n    commit_before_machine_api();\n    provision_workload_phase();\n}",
+      "    self.authenticate_parent(&validated);\n    self.phases.execute(command, || self.publish(&validated));",
+      "    self.phases.execute(command, || self.publish(&validated));\n    self.authenticate_parent(&validated);",
     ],
     "machine-restart-admission-bypasses-barrier": [
       "physicalProviderAdmissions",
-      "fn execute_restart_phase() {\n    authenticate_forwarded_workload_admission_barrier();\n    claim_restart_dispatch_started();\n    self.restart_phases.execute();\n}",
-      "fn execute_restart_phase() {\n    claim_restart_dispatch_started();\n    self.restart_phases.execute();\n}",
+      "fn validate_restart_phase() {\n    self.publication_journal.authenticate_or_stage_restart_witness();\n}",
+      "fn validate_restart_phase() {}",
     ],
     "machine-restart-effect-before-barrier-auth": [
       "physicalProviderAdmissions",
-      "fn execute_restart_phase() {\n    authenticate_forwarded_workload_admission_barrier();\n    claim_restart_dispatch_started();\n    self.restart_phases.execute();\n}",
-      "fn execute_restart_phase() {\n    self.restart_phases.execute();\n    authenticate_forwarded_workload_admission_barrier();\n    claim_restart_dispatch_started();\n}",
+      "fn execute_restart_phase() {\n    let validated = self.validate_restart_phase();\n    self.restart_phases.execute();\n}",
+      "fn execute_restart_phase() {\n    self.restart_phases.execute();\n    let validated = self.validate_restart_phase();\n}",
     ],
     "missing-ingress-capability": [
       "server",
@@ -1158,17 +1213,17 @@ function applyFixtureMutation(sources, mutation) {
     replaceOnce(
       sources,
       "physicalStopEffects",
-      "    authorization.authenticate_exact_machine_generation();\n",
+      "    let stop_barrier = stop_authority.begin_physical_stop(&authorization);\n",
       "",
     );
     sources.physicalStopEffects +=
-      "\nfn unrelated_authentication(authorization: ConfirmedMachineStopAuthorization) {\n    authorization.authenticate_exact_machine_generation();\n}\n";
+      "\nfn unrelated_barrier(stop_authority: &HostMachineStopAuthority, authorization: &ConfirmedMachineStopAuthorization) {\n    stop_authority.begin_physical_stop(authorization);\n}\n";
   } else if (mutation === "machine-stop-policy-moved-to-server-adapter") {
     sources.physicalStopDecisionStoreAdapter +=
       "\nenum MachineWorkloadStopDecision { Crossed }\nfn classify_machine_stop_authority() {}\n";
   } else if (mutation === "machine-barrier-persistence-moved-to-backend") {
     sources.physicalProviderAdmissions +=
-      "\nfn persist_machine_stop_admission_barrier() {}\n";
+      "\nstruct DurableMachineStopBarrier;\n";
   } else if (mutation === "missing-attributed-tests") {
     replaceOnceInNamedTest(
       sources,
@@ -1748,7 +1803,11 @@ export function verifyWorkloadTeardownContract() {
   const exactGuestValidatedBinding =
     exactGuestDispatch.match(
       /\blet\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*self\s*\.\s*validate\s*\([^;]*\)\s*\??\s*;/u,
-    )?.[1] ?? "";
+    )?.[1] ??
+    exactGuestDispatch.match(
+      /\bOk\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*=>/u,
+    )?.[1] ??
+    "";
   const exactGuestClaimIndex = exactGuestExecute.indexOf(
     "claim_execute_started",
   );
@@ -1782,41 +1841,113 @@ export function verifyWorkloadTeardownContract() {
     sources.physicalDesireAdmissions,
     "async fn compare_and_swap_restart_admission(",
   );
-  const initialDesireGuard = extractItem(
-    initialDesireAdmission,
-    "with_machine_desire_admission_guard",
-  );
-  const restartDesireGuard = extractItem(
-    restartDesireAdmission,
-    "with_machine_desire_admission_guard",
-  );
   const physicalStopDecision = extractItem(
     sources.physicalStopDecision,
-    "async fn authorize_machine_stop(",
+    "pub async fn authorize_physical_machine_stop(",
   );
-  const desireAdmissionGuard = extractItem(
+  const desireAdmissionAcquire = extractItem(
     sources.physicalStopProvider,
-    "fn with_machine_desire_admission_guard(",
+    "fn acquire_blocking(",
   );
-  const desireAdmissionLockedMutation = extractItem(
-    desireAdmissionGuard,
-    "self.mutate_async",
-  );
-  const machineStopBarrierClaim = extractItem(
+  const desireAdmissionPermit = extractItem(
     sources.physicalStopProvider,
-    "fn claim_machine_stop_admission_barrier(",
+    "struct ConfirmedMachineDesireAdmissionPermit",
   );
-  const providerAdmissionAuthentication = extractItem(
+  const providerAdmissionAbsence = extractItem(
     sources.physicalStopProvider,
-    "fn authenticate_forwarded_workload_admission_barrier(",
+    "fn authenticate_workload_admission_absence(",
+  );
+  const machineStopBarrierDigest = extractItem(
+    sources.physicalStopProvider,
+    "fn derive_digest(",
+  );
+  const machineStopBarrierDigestBindings = [
+    /\bdomain\s*:\s*STOP_BARRIER_DIGEST_DOMAIN\b/u,
+    /\bformat_version\s*:\s*FORMAT_VERSION\b/u,
+    /\bmachine_name\s*:\s*&\s*self\s*\.\s*machine_name\b/u,
+    /\bforwarder_authority\s*:\s*&\s*self\s*\.\s*forwarder_authority\b/u,
+    /\bepoch\s*:\s*self\s*\.\s*epoch\b/u,
+    /\bstate\s*:\s*self\s*\.\s*state\b/u,
+  ];
+  const machineStopBarrierDigestBytes =
+    machineStopBarrierDigest.match(
+      /\blet\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*serde_json\s*::\s*to_vec\s*\(\s*&\s*DigestPayload\s*\{[\s\S]*?\}\s*\)[\s\S]*?\?\s*;/u,
+    )?.[1] ?? "";
+  const machineStopBarrierReturnsDigest =
+    machineStopBarrierDigestBytes.length > 0 &&
+    new RegExp(
+      `MachineStopBarrierDigest\\s*::\\s*new\\s*\\(\\s*format!\\s*\\(\\s*[^,{}]+,\\s*Sha256\\s*::\\s*digest\\s*\\(\\s*${escapedRegex(machineStopBarrierDigestBytes)}\\s*\\)\\s*\\)\\s*\\)\\s*\\.\\s*map_err\\s*\\(\\s*evidence_error\\s*\\)\\s*$`,
+      "u",
+    ).test(itemBody(machineStopBarrierDigest));
+  const machineAdmissionBarrierTraversal = [
+    /\bbody\s*\.\s*stop_barriers\s*\.\s*iter\s*\(\s*\)/u,
+    /\.\s*filter\s*\(\s*\|barrier\|\s*barrier\s*\.\s*machine_name\s*==\s*machine_name\s*\)/u,
+    /\.\s*max_by_key\s*\(\s*\|barrier\|\s*barrier\s*\.\s*epoch\s*\)/u,
+    /\.\s*filter\s*\(\s*\|barrier\|\s*!\s*barrier\s*\.\s*state\s*\.\s*is_terminal\s*\(\s*\)\s*\)/u,
+  ];
+  const machineAdmissionProviderComparison =
+    /barrier\s*\.\s*forwarder_authority\s*\.\s*provider_instance\s*\(\s*\)\s*!=\s*forwarder_authority\s*\.\s*provider_instance\s*\(\s*\)/u;
+  const machineAdmissionGenerationComparison =
+    /barrier\s*\.\s*forwarder_authority\s*\.\s*generation\s*\(\s*\)\s*!=\s*forwarder_authority\s*\.\s*generation\s*\(\s*\)/u;
+  const machineAdmissionProviderRejection =
+    /if\s+barrier\s*\.\s*forwarder_authority\s*\.\s*provider_instance\s*\(\s*\)\s*!=\s*forwarder_authority\s*\.\s*provider_instance\s*\(\s*\)\s*\{\s*return\s+Err\s*\([^;{}]*\)\s*;\s*\}/u;
+  const machineAdmissionGenerationRejection =
+    /if\s+barrier\s*\.\s*forwarder_authority\s*\.\s*generation\s*\(\s*\)\s*!=\s*forwarder_authority\s*\.\s*generation\s*\(\s*\)\s*\{\s*return\s+Err\s*\([^;{}]*\)\s*;\s*\}/u;
+  const machineAdmissionFenceRejection = /Err\s*\([^;{}]*\)\s*$/u;
+  const machineStopBarrierClaim =
+    extractItem(
+      sources.physicalStopProvider,
+      "pub(crate) fn claim_machine_stop_barrier(",
+    ) ||
+    extractItem(sources.physicalStopProvider, "fn claim_machine_stop_barrier(");
+  const provisionWitnessAdmission =
+    extractItem(
+      sources.physicalStopProvider,
+      "pub(crate) fn authenticate_retirement_witness(",
+    ) ||
+    extractItem(
+      sources.physicalStopProvider,
+      "fn authenticate_retirement_witness(",
+    );
+  const restartWitnessAdmission =
+    extractItem(
+      sources.physicalStopProvider,
+      "pub(crate) fn authenticate_or_stage_restart_witness(",
+    ) ||
+    extractItem(
+      sources.physicalStopProvider,
+      "fn authenticate_or_stage_restart_witness(",
+    );
+  const publicationWitnessAdmission =
+    extractItem(
+      sources.physicalStopProvider,
+      "pub(crate) fn authenticate_or_stage(",
+    ) || extractItem(sources.physicalStopProvider, "fn authenticate_or_stage(");
+  const provisionValidation = extractItem(
+    sources.physicalProviderAdmissions,
+    "fn validate_exact_phase(",
   );
   const provisionAdmission = extractItem(
     sources.physicalProviderAdmissions,
     "fn execute_exact_phase(",
   );
-  const publicationAdmission = extractItem(
+  const publicationValidation = extractItem(
     sources.physicalProviderAdmissions,
-    "fn publish(",
+    "fn validate_publication(",
+  );
+  const publicationAuthentication = extractItem(
+    sources.physicalProviderAdmissions,
+    "fn authenticate_parent(",
+  );
+  const publicationAdmission =
+    extractItem(
+      sources.physicalProviderAdmissions,
+      "impl IngressPublicationCapability",
+    ) ||
+    extractItem(sources.physicalProviderAdmissions, "fn execute_publication(");
+  const restartValidation = extractItem(
+    sources.physicalProviderAdmissions,
+    "fn validate_restart_phase(",
   );
   const restartProviderAdmission = extractItem(
     sources.physicalProviderAdmissions,
@@ -1824,7 +1955,7 @@ export function verifyWorkloadTeardownContract() {
   );
   const standaloneStop = extractItem(
     sources.physicalStopStandalone,
-    "fn run_machine_stop(",
+    "async fn run_machine_stop(",
   );
   const serverStop = extractItem(
     sources.physicalStopServer,
@@ -1842,13 +1973,14 @@ export function verifyWorkloadTeardownContract() {
     sources.physicalStopOs,
     "fn apply_machine_os_change(",
   );
-  const guardedStopCallers = [
-    standaloneStop,
-    serverStop,
-    restartStop,
-    bootcRestartStop,
-    osApplyRestartStop,
-  ];
+  const osRestartAuthorization = extractItem(
+    sources.physicalStopStandalone,
+    "async fn authorize_running_machine_os_restart(",
+  );
+  const authorizedMachineStop = extractItem(
+    sources.physicalStopStandalone,
+    "impl AuthorizedMachineStop",
+  );
   const physicalStopDecisionVariants = enumVariants(
     sources.physicalStopDecision,
     "MachineWorkloadStopDecision",
@@ -1876,7 +2008,7 @@ export function verifyWorkloadTeardownContract() {
     sources.physicalStopOs,
   ];
   const machineStopBarrierDefinition =
-    /\b(?:struct\s+MachineStopAdmissionBarrier|fn\s+(?:claim_machine_stop_admission_barrier|persist_machine_stop_admission_barrier|clear_unchanged_effect_free_machine_stop_barrier|retain_ambiguous_machine_stop_barrier|authenticate_forwarded_workload_admission_barrier)\s*\()/u;
+    /\bstruct\s+DurableMachineStopBarrier\b/u;
   requireContract(
     hasAll(sources.exactGuestTeardown, [
       "MachineApiWorkloadTeardownCommandEnvelope",
@@ -1894,7 +2026,7 @@ export function verifyWorkloadTeardownContract() {
       ]) &&
       exactGuestValidatedBinding.length > 0 &&
       new RegExp(
-        `self\\s*\\.\\s*execute\\s*\\(\\s*${escapedRegex(exactGuestValidatedBinding)}\\s*\\)`,
+        `self\\s*\\.\\s*execute\\s*\\([^)]*\\b${escapedRegex(exactGuestValidatedBinding)}\\b\\s*\\)`,
         "u",
       ).test(exactGuestDispatch) &&
       /\bremote_request\s*=\s*validated\s*\.\s*remote_request\b/u.test(
@@ -1925,96 +2057,183 @@ export function verifyWorkloadTeardownContract() {
         "Stale",
         "Crossed",
       ].every((variant) => physicalStopDecisionVariants.includes(variant)) &&
-      initialDesireGuard.includes("commit_loaded") &&
-      restartDesireGuard.includes("commit_loaded") &&
+      appearsInOrder(initialDesireAdmission, [
+        "guard.acquire",
+        "self.commit_loaded",
+      ]) &&
+      (initialDesireAdmission.indexOf("drop(_permit)") < 0 ||
+        initialDesireAdmission.indexOf("drop(_permit)") >
+          initialDesireAdmission.indexOf("self.commit_loaded")) &&
+      appearsInOrder(restartDesireAdmission, [
+        "guard.acquire",
+        "self.commit_loaded",
+        "drop(_permit)",
+      ]) &&
       hasAll(sources.physicalStopDecision, machineStopPolicyTokens) &&
-      machineStopPolicyWrongOwners.every((owner) =>
-        machineStopPolicyTokens.every((token) => !owner.includes(token)),
+      machineStopPolicyWrongOwners.every(
+        (owner) =>
+          !/\b(?:enum\s+MachineWorkloadStopDecision|fn\s+classify_machine_stop_authority\s*\()/u.test(
+            owner,
+          ),
       ) &&
       appearsInOrder(physicalStopDecision, [
-        "claim_machine_stop_admission_barrier",
+        "claim_effect_free_barrier",
         "list_machine_workload_authority_from_engine",
         "classify_machine_stop_authority",
-        "clear_unchanged_effect_free_machine_stop_barrier",
+        "clear_effect_free_barrier",
       ]) &&
       !/system_projection|ip_address|socket_addr/u.test(
         sources.physicalStopDecision,
       ) &&
       hasAll(sources.physicalStopProvider, [
-        "MachineStopAdmissionBarrier",
-        "claim_machine_stop_admission_barrier",
-        "authenticate_forwarded_workload_admission_barrier",
-        "retain_ambiguous_machine_stop_barrier",
+        "struct DurableMachineStopBarrier",
+        "machine_name",
+        "forwarder_authority",
+        "epoch",
+        "state",
+        "digest",
+        "STOP_BARRIER_DIGEST_DOMAIN",
+        "FORMAT_VERSION",
+        "authenticate_workload_admission_absence",
       ]) &&
+      machineStopBarrierDigestBindings.every((binding) =>
+        binding.test(machineStopBarrierDigest),
+      ) &&
+      machineStopBarrierReturnsDigest &&
+      machineAdmissionBarrierTraversal.every((edge) =>
+        edge.test(providerAdmissionAbsence),
+      ) &&
+      appearsInOrder(providerAdmissionAbsence, [
+        "stop_barriers",
+        "machine_name",
+        "max_by_key",
+        "is_terminal",
+        "provider_instance",
+        "generation",
+      ]) &&
+      machineAdmissionProviderComparison.test(providerAdmissionAbsence) &&
+      machineAdmissionGenerationComparison.test(providerAdmissionAbsence) &&
+      machineAdmissionProviderRejection.test(providerAdmissionAbsence) &&
+      machineAdmissionGenerationRejection.test(providerAdmissionAbsence) &&
+      machineAdmissionFenceRejection.test(itemBody(providerAdmissionAbsence)) &&
       appearsInOrder(machineStopBarrierClaim, [
+        "self.mutate_with_error",
+        "provider_instance",
+        "generation",
+        "stop_barriers.push",
+        "provider_witnesses",
+      ]) &&
+      appearsInOrder(desireAdmissionAcquire, [
+        "acquire_lock",
+        "load_envelope",
+        "stop_barriers",
+        "Ok(lock)",
+      ]) &&
+      hasAll(desireAdmissionPermit, [
+        "ConfirmedMachineDesireAdmissionPermit",
+        "_lock",
+        "ConfirmedMachinePublicationLock",
+      ]) &&
+      appearsInOrder(provisionWitnessAdmission, [
         "self.mutate",
-        "authenticate_exact_machine_incarnation",
-        "persist_machine_stop_admission_barrier",
+        "authenticate_workload_admission_absence",
+        "retirement_witnesses",
       ]) &&
-      appearsInOrder(desireAdmissionGuard, [
+      appearsInOrder(restartWitnessAdmission, [
         "self.mutate",
-        "authenticate_no_machine_stop_barrier",
-        "operation().await",
-        "settle_machine_desire_admission_guard",
-        "result",
+        "authenticate_workload_admission_absence",
+        "retirement_witnesses",
       ]) &&
-      appearsInOrder(desireAdmissionLockedMutation, [
-        "authenticate_no_machine_stop_barrier",
-        "operation().await",
-        "settle_machine_desire_admission_guard",
-        "result",
-      ]) &&
-      appearsInOrder(providerAdmissionAuthentication, [
+      appearsInOrder(publicationWitnessAdmission, [
         "self.mutate",
-        "authenticate_no_machine_stop_barrier",
+        "authenticate_workload_admission_absence",
+        "records",
       ]) &&
-      appearsBeforeEvery(
-        provisionAdmission,
-        "authenticate_forwarded_workload_admission_barrier",
-        ["claim_dispatch_epoch_started", "self.phases.execute"],
-      ) &&
-      appearsBeforeEvery(
-        publicationAdmission,
-        "authenticate_forwarded_workload_admission_barrier",
-        [
-          "reserve_parent_batch",
-          "commit_before_machine_api",
-          "provision_workload_phase",
-        ],
-      ) &&
-      appearsBeforeEvery(
-        restartProviderAdmission,
-        "authenticate_forwarded_workload_admission_barrier",
-        ["claim_restart_dispatch_started", "self.restart_phases.execute"],
-      ) &&
+      provisionValidation.includes("authenticate_retirement_witness") &&
+      appearsInOrder(provisionAdmission, [
+        "validate_exact_phase",
+        "self.phases",
+        "execute",
+      ]) &&
+      publicationValidation.includes("validate_exact_phase") &&
+      publicationAuthentication.includes("authenticate_or_stage") &&
+      appearsInOrder(publicationAdmission, [
+        "validate_publication",
+        "authenticate_parent",
+        "self.phases.execute",
+        "self.publish",
+      ]) &&
+      restartValidation.includes("authenticate_or_stage_restart_witness") &&
+      appearsInOrder(restartProviderAdmission, [
+        "validate_restart_phase",
+        "self.restart_phases.execute",
+      ]) &&
       hasAll(physicalStopEffect, [
         "ConfirmedMachineStopAuthorization",
-        "authenticate_exact_machine_generation",
+        "HostMachineStopAuthority",
+        "authorization.barrier().machine_name()",
+        "authorization.barrier().forwarder_authority()",
+        "begin_physical_stop",
         "withdraw_machine_publications",
         "withdraw_machine_ssh_port",
         "stop_provider_machine",
         "stop_pid",
         "stop_exact_process",
+        "record_physical_stop_absent",
         "super::write_json_file",
       ]) &&
       appearsInOrder(physicalStopEffect, [
-        "authenticate_exact_machine_generation",
+        "authorization.barrier().machine_name()",
+        "authorization.barrier().forwarder_authority()",
+        "begin_physical_stop",
         "withdraw_machine_publications",
         "withdraw_machine_ssh_port",
         "stop_provider_machine",
         "stop_pid",
         "stop_exact_process",
+        "record_physical_stop_absent",
         "super::write_json_file",
       ]) &&
       machineStopBarrierWrongOwners.every(
         (owner) => !machineStopBarrierDefinition.test(owner),
       ) &&
-      guardedStopCallers.every((caller) =>
-        appearsInOrder(caller, [
-          "authorize_machine_stop",
-          "stop_machine_with_authorization",
-        ]),
-      ) &&
+      appearsInOrder(standaloneStop, [
+        "HostMachineStopAuthority::new",
+        ".authorize",
+        "stop_machine_with_layout_authorized",
+      ]) &&
+      appearsInOrder(serverStop, [
+        ".authorize",
+        "stop_machine_with_layout_authorized",
+      ]) &&
+      appearsInOrder(restartStop, [
+        ".authorize",
+        "restart_machine_with_layout_authorized",
+      ]) &&
+      appearsInOrder(osRestartAuthorization, [
+        "HostMachineStopAuthority::new",
+        ".authorize",
+        "AuthorizedMachineStop::new",
+      ]) &&
+      appearsInOrder(authorizedMachineStop, [
+        "stop_machine",
+        "self.stop_authority",
+        "self.authorization",
+      ]) &&
+      appearsInOrder(bootcRestartStop, [
+        "authorized",
+        ".take()",
+        "missing_machine_stop_authority",
+        ".stop",
+        "start_machine",
+      ]) &&
+      appearsInOrder(osApplyRestartStop, [
+        "authorized",
+        ".take()",
+        "missing_machine_stop_authority",
+        ".stop",
+        "config.guest.image_source",
+      ]) &&
       !/\braw_machine_stop\s*\(/u.test(
         `${sources.physicalStopStandalone}\n${sources.physicalStopServer}\n${sources.physicalStopOs}`,
       ) &&
@@ -2170,6 +2389,15 @@ export function verifyWorkloadTeardownContract() {
   );
 
   if (stage === "native") return [...new Set(nativeErrors)];
+  if (stage === "physical-machine") {
+    const physicalErrors = errors.filter(
+      (error) => error === workloadTeardownDiagnostics.machine,
+    );
+    if (!physicalMachineStopTestsPass(sources)) {
+      physicalErrors.push(workloadTeardownDiagnostics.behavior);
+    }
+    return [...new Set(physicalErrors)];
+  }
   if (stage !== "aggregate") {
     return [`unknown workload teardown contract stage: ${stage}`];
   }

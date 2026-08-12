@@ -28,11 +28,11 @@ use nimbus_network::{
     PortLeaseFence, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
 use nimbus_workloads::{
-    CompiledWorkloadNetworkPlan, WorkloadDesiredDigest, WorkloadExecutionReference,
-    WorkloadGeneration, WorkloadNetworkPortRequestMode, WorkloadProvisionAttemptId,
-    WorkloadProvisionCommandMode, WorkloadProvisionDispatchEpoch, WorkloadProvisionProviderTarget,
-    WorkloadProvisionSourceDigest, WorkloadProvisionStep, WorkloadSagaId, WorkloadSagaKey,
-    WorkloadTeardownStep,
+    CompiledWorkloadNetworkPlan, WorkloadDesiredDigest, WorkloadExecutionProviderId,
+    WorkloadExecutionReference, WorkloadGeneration, WorkloadNetworkPortRequestMode,
+    WorkloadProvisionAttemptId, WorkloadProvisionCommandMode, WorkloadProvisionDispatchEpoch,
+    WorkloadProvisionProviderTarget, WorkloadProvisionSourceDigest, WorkloadProvisionStep,
+    WorkloadSagaId, WorkloadSagaKey, WorkloadTeardownStep,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -47,17 +47,29 @@ const STATE_FILE: &str = "confirmed.json";
 const LOCK_FILE: &str = "authority.lock";
 const STAGE_FILE: &str = ".confirmed.stage";
 const FORMAT_MAGIC: &str = "nimbus-confirmed-machine-publications";
-const FORMAT_VERSION: u32 = 3;
+const FORMAT_VERSION: u32 = 4;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCK_RETRY: Duration = Duration::from_millis(10);
+#[cfg(test)]
+pub(super) const LOCK_CONTENTION_FIFO: &str = "lock-contention-observed";
+#[cfg(test)]
+pub(super) const LOCK_CONTENTION_ARMED: &str = "lock-contention-armed";
+#[cfg(test)]
+pub(super) const ADMISSION_PERMIT_HELD_FIFO: &str = "admission-permit-held";
+#[cfg(test)]
+pub(super) const STOP_BARRIER_STAGED_FIFO: &str = "stop-barrier-staged";
 
 mod retirement;
+mod stop_barrier;
 
 pub(crate) use retirement::ConfirmedMachinePublicationRetirementPhase;
 use retirement::{
     ConfirmedGuestReleaseEvidence, ConfirmedMachinePublicationRetirementProgress,
     ConfirmedParentPortBatchEvidence, ConfirmedParentWithdrawalEvidence,
     ConfirmedParentWithdrawalFence,
+};
+pub(crate) use stop_barrier::{
+    ConfirmedMachineDesireAdmissionGuard, ConfirmedMachineStopBarrierAuthority,
 };
 
 #[derive(Clone)]
@@ -71,11 +83,13 @@ pub(crate) struct ConfirmedMachinePublicationJournal {
 impl ConfirmedMachinePublicationJournal {
     pub(crate) fn authenticate_retirement_witness(
         &self,
+        machine_name: &str,
         command: &MachineApiWorkloadProvisionCommandEnvelope,
         authority: &MachineForwarderAuthority,
     ) -> Result<(), Error> {
-        let candidate = ConfirmedMachineRetirementWitness::new(command, authority)?;
+        let candidate = ConfirmedMachineRetirementWitness::new(machine_name, command, authority)?;
         self.mutate(|body| {
+            stop_barrier::authenticate_workload_admission_absence(body, machine_name, authority)?;
             if let Some(existing) = body.retirement_witnesses.iter().find(|existing| {
                 existing.tenant_id == candidate.tenant_id
                     && existing.sandbox_id == candidate.sandbox_id
@@ -99,6 +113,44 @@ impl ConfirmedMachinePublicationJournal {
         })
     }
 
+    /// Authenticate the stop barrier and stage the exact successor execution
+    /// before a restart attempt journal or provider effect can change.
+    pub(crate) fn authenticate_or_stage_restart_witness(
+        &self,
+        machine_name: &str,
+        command: &MachineApiWorkloadRestartCommandEnvelope,
+        authority: &MachineForwarderAuthority,
+    ) -> Result<(), Error> {
+        let candidate =
+            ConfirmedMachineRetirementWitness::new_for_restart(machine_name, command, authority)?;
+        self.mutate(|body| {
+            stop_barrier::authenticate_workload_admission_absence(body, machine_name, authority)?;
+            let existing = body.retirement_witnesses.iter_mut().find(|existing| {
+                existing.tenant_id == candidate.tenant_id
+                    && existing.sandbox_id == candidate.sandbox_id
+            });
+            if let Some(existing) = existing {
+                if !matches!(
+                    existing.progress,
+                    ConfirmedMachinePublicationRetirementProgress::Active
+                ) {
+                    return Err(Error::conflict(
+                        "machine restart cannot resurrect retired execution authority",
+                    ));
+                }
+                existing.authenticate_restart_transition(&candidate)?;
+                *existing = candidate;
+            } else {
+                body.retirement_witnesses.push(candidate);
+                body.retirement_witnesses.sort_by(|left, right| {
+                    (&left.tenant_id, left.sandbox_id.as_str())
+                        .cmp(&(&right.tenant_id, right.sandbox_id.as_str()))
+                });
+            }
+            Ok(())
+        })
+    }
+
     pub(crate) fn open(parent_network_state_root: &Path) -> Result<Self, Error> {
         let root = parent_network_state_root
             .join("networks")
@@ -114,6 +166,19 @@ impl ConfirmedMachinePublicationJournal {
         Ok(store)
     }
 
+    #[cfg(test)]
+    fn existing_for_contention_test(parent_network_state_root: &Path) -> Self {
+        let root = parent_network_state_root
+            .join("networks")
+            .join(STORE_DIRECTORY);
+        Self {
+            state_path: root.join(STATE_FILE),
+            lock_path: root.join(LOCK_FILE),
+            stage_path: root.join(STAGE_FILE),
+            root,
+        }
+    }
+
     /// Authenticate or durably stage the complete parent publication fence.
     ///
     /// Exact replay adopts the same record. One execute command and its later
@@ -121,12 +186,14 @@ impl ConfirmedMachinePublicationJournal {
     /// admitted only after this journal recorded exact provider absence.
     pub(crate) fn authenticate_or_stage(
         &self,
+        machine_name: &str,
         command: &MachineApiWorkloadProvisionCommandEnvelope,
         authority: &MachineForwarderAuthority,
         members: &[ConfirmedMachinePublicationMember],
     ) -> Result<(), Error> {
         let candidate = ConfirmedMachinePublicationRecord::new(command, authority, members)?;
         self.mutate(|body| {
+            stop_barrier::authenticate_workload_admission_absence(body, machine_name, authority)?;
             let witness = body
                 .retirement_witnesses
                 .iter()
@@ -300,9 +367,12 @@ impl ConfirmedMachinePublicationJournal {
                 return Ok(
                     witness.map(|witness| ConfirmedMachinePublicationRetirement {
                         tenant_id: witness.tenant_id.clone(),
+                        workload_key: witness.workload_key.clone(),
                         sandbox_id: witness.sandbox_id.clone(),
+                        execution_provider_id: witness.execution_provider_id.clone(),
                         execution: witness.execution.clone(),
                         generation: witness.generation,
+                        desired_digest: witness.desired_digest,
                         source_digest: witness.source_digest,
                         network_plan_digest: witness.network_plan_digest,
                         forwarder_authority: witness.forwarder_authority.clone(),
@@ -327,8 +397,12 @@ impl ConfirmedMachinePublicationJournal {
                 ));
             };
             if witness.tenant_id != *first.workload_key.tenant_id()
-                || witness.execution != first.execution
+                || witness.workload_key != first.workload_key
+                || witness.execution_provider_id
+                    != *first.commands[0].source().execution_provider_id()
+                || witness.execution.execution_id() != first.execution.execution_id()
                 || witness.generation != first.generation
+                || witness.desired_digest != first.desired_digest
                 || witness.source_digest != first.source_digest
                 || witness.network_plan_digest != first.network_plan_digest
                 || witness.forwarder_authority != first.forwarder_authority
@@ -344,13 +418,16 @@ impl ConfirmedMachinePublicationJournal {
                 ));
             }
             Ok(Some(ConfirmedMachinePublicationRetirement {
-                tenant_id: first.workload_key.tenant_id().clone(),
+                tenant_id: witness.tenant_id.clone(),
+                workload_key: witness.workload_key.clone(),
                 sandbox_id: sandbox_id.clone(),
-                execution: first.execution.clone(),
-                generation: first.generation,
-                source_digest: first.source_digest,
-                network_plan_digest: first.network_plan_digest,
-                forwarder_authority: first.forwarder_authority.clone(),
+                execution_provider_id: witness.execution_provider_id.clone(),
+                execution: witness.execution.clone(),
+                generation: witness.generation,
+                desired_digest: witness.desired_digest,
+                source_digest: witness.source_digest,
+                network_plan_digest: witness.network_plan_digest,
+                forwarder_authority: witness.forwarder_authority.clone(),
                 expected_guest_bindings: witness.expected_guest_bindings.clone(),
                 members: first.members.clone(),
                 progress: witness.progress.clone(),
@@ -718,21 +795,29 @@ impl ConfirmedMachinePublicationJournal {
         &self,
         operation: impl FnOnce(&mut ConfirmedMachinePublicationBody) -> Result<T, Error>,
     ) -> Result<T, Error> {
-        let lock = self.acquire_lock()?;
-        self.validate_directory_entries()?;
-        remove_file_if_exists(&self.stage_path)?;
-        let envelope = self.load_envelope()?;
+        self.mutate_with_error(operation, std::convert::identity)
+    }
+
+    fn mutate_with_error<T, E>(
+        &self,
+        operation: impl FnOnce(&mut ConfirmedMachinePublicationBody) -> Result<T, E>,
+        map_error: impl Fn(Error) -> E,
+    ) -> Result<T, E> {
+        let lock = self.acquire_lock().map_err(&map_error)?;
+        self.validate_directory_entries().map_err(&map_error)?;
+        remove_file_if_exists(&self.stage_path).map_err(&map_error)?;
+        let envelope = self.load_envelope().map_err(&map_error)?;
         let mut body = envelope.body.clone();
-        body.validate()?;
+        body.validate().map_err(&map_error)?;
         let output = operation(&mut body)?;
-        body.validate()?;
+        body.validate().map_err(&map_error)?;
         if body != envelope.body {
             let revision = envelope.revision.checked_add(1).ok_or_else(|| {
-                Error::PreconditionFailed(
+                map_error(Error::PreconditionFailed(
                     "confirmed machine publication revision exhausted".to_owned(),
-                )
+                ))
             })?;
-            self.publish(revision, &body)?;
+            self.publish(revision, &body).map_err(&map_error)?;
         }
         drop(lock);
         Ok(output)
@@ -755,10 +840,17 @@ impl ConfirmedMachinePublicationJournal {
     fn acquire_lock(&self) -> Result<ConfirmedMachinePublicationLock, Error> {
         let file = open_owner_file(&self.lock_path, true)?;
         let deadline = Instant::now() + LOCK_TIMEOUT;
+        #[cfg(test)]
+        let mut contention_reported = false;
         loop {
             match file.try_lock_exclusive() {
                 Ok(()) => return Ok(ConfirmedMachinePublicationLock { file }),
                 Err(error) if lock_is_contended(&error) && Instant::now() < deadline => {
+                    #[cfg(test)]
+                    if !contention_reported {
+                        self.report_lock_contention_for_test()?;
+                        contention_reported = true;
+                    }
                     thread::sleep(LOCK_RETRY);
                 }
                 Err(error) if lock_is_contended(&error) => {
@@ -794,7 +886,11 @@ impl ConfirmedMachinePublicationJournal {
                 )
             })?;
             let name = entry.file_name();
-            if name != STATE_FILE && name != LOCK_FILE && name != STAGE_FILE {
+            if name != STATE_FILE
+                && name != LOCK_FILE
+                && name != STAGE_FILE
+                && !is_test_synchronization_entry(&name)
+            {
                 return Err(Error::PreconditionFailed(format!(
                     "confirmed machine publication directory {} contains an unknown entry",
                     self.root.display()
@@ -802,6 +898,22 @@ impl ConfirmedMachinePublicationJournal {
             }
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn report_lock_contention_for_test(&self) -> Result<(), Error> {
+        let path = self.root.join(LOCK_CONTENTION_FIFO);
+        if !path.exists() || !self.root.join(LOCK_CONTENTION_ARMED).exists() {
+            return Ok(());
+        }
+        let mut fifo = fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .map_err(|error| io_error("open lock-contention test FIFO", &path, error))?;
+        fifo.write_all(b"1")
+            .map_err(|error| io_error("signal lock-contention test FIFO", &path, error))?;
+        fifo.flush()
+            .map_err(|error| io_error("flush lock-contention test FIFO", &path, error))
     }
 
     fn load_envelope(&self) -> Result<ConfirmedMachinePublicationEnvelope, Error> {
@@ -871,6 +983,18 @@ impl ConfirmedMachinePublicationJournal {
     }
 }
 
+#[cfg(test)]
+fn is_test_synchronization_entry(name: &std::ffi::OsStr) -> bool {
+    name == LOCK_CONTENTION_FIFO
+        || name == ADMISSION_PERMIT_HELD_FIFO
+        || name == STOP_BARRIER_STAGED_FIFO
+}
+
+#[cfg(not(test))]
+fn is_test_synchronization_entry(_name: &std::ffi::OsStr) -> bool {
+    false
+}
+
 fn authenticate_retirement_records(
     body: &ConfirmedMachinePublicationBody,
     retirement: &ConfirmedMachinePublicationRetirement,
@@ -892,7 +1016,7 @@ fn authenticate_retirement_records(
             && record.execution.execution_id().as_str() == retirement.sandbox_id.as_str()
     });
     if let Some(first) = related.next() {
-        if first.execution != retirement.execution
+        if first.execution.execution_id() != retirement.execution.execution_id()
             || first.generation != retirement.generation
             || first.source_digest != retirement.source_digest
             || first.network_plan_digest != retirement.network_plan_digest
@@ -938,7 +1062,10 @@ fn authenticate_retirement_identity(
     retirement: &ConfirmedMachinePublicationRetirement,
 ) -> Result<(), Error> {
     if witness.execution != retirement.execution
+        || witness.workload_key != retirement.workload_key
+        || witness.execution_provider_id != retirement.execution_provider_id
         || witness.generation != retirement.generation
+        || witness.desired_digest != retirement.desired_digest
         || witness.source_digest != retirement.source_digest
         || witness.network_plan_digest != retirement.network_plan_digest
         || witness.forwarder_authority != retirement.forwarder_authority
@@ -1138,9 +1265,12 @@ fn canonical_machine_guest_bindings(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfirmedMachinePublicationRetirement {
     tenant_id: TenantId,
+    workload_key: WorkloadSagaKey,
     sandbox_id: SandboxId,
+    execution_provider_id: WorkloadExecutionProviderId,
     execution: WorkloadExecutionReference,
     generation: WorkloadGeneration,
+    desired_digest: WorkloadDesiredDigest,
     source_digest: WorkloadProvisionSourceDigest,
     network_plan_digest: nimbus_network::NetworkPlanDigest,
     forwarder_authority: MachineForwarderAuthority,
@@ -1202,10 +1332,15 @@ pub(crate) enum ConfirmedMachinePublicationObservation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct ConfirmedMachineRetirementWitness {
+    machine_name: String,
     tenant_id: TenantId,
+    workload_key: WorkloadSagaKey,
     sandbox_id: SandboxId,
+    execution_provider_id: WorkloadExecutionProviderId,
     execution: WorkloadExecutionReference,
+    restart_source_execution: Option<WorkloadExecutionReference>,
     generation: WorkloadGeneration,
+    desired_digest: WorkloadDesiredDigest,
     source_digest: WorkloadProvisionSourceDigest,
     network_plan_digest: nimbus_network::NetworkPlanDigest,
     forwarder_authority: MachineForwarderAuthority,
@@ -1215,14 +1350,22 @@ struct ConfirmedMachineRetirementWitness {
 
 impl ConfirmedMachineRetirementWitness {
     fn new(
+        machine_name: &str,
         command: &MachineApiWorkloadProvisionCommandEnvelope,
         authority: &MachineForwarderAuthority,
     ) -> Result<Self, Error> {
+        stop_barrier::validate_machine_name(machine_name)?;
+        let attempt = command.claim().attempt();
         Ok(Self {
-            tenant_id: command.claim().attempt().key().tenant_id().clone(),
+            machine_name: machine_name.to_owned(),
+            tenant_id: attempt.key().tenant_id().clone(),
+            workload_key: attempt.key().clone(),
             sandbox_id: SandboxId::new(command.execution().execution_id().as_str()),
+            execution_provider_id: attempt.execution_provider_id().clone(),
             execution: command.execution().clone(),
+            restart_source_execution: None,
             generation: command.generation(),
+            desired_digest: command.desired_digest(),
             source_digest: command.source_digest(),
             network_plan_digest: command.network_plan_digest(),
             forwarder_authority: authority.clone(),
@@ -1233,11 +1376,67 @@ impl ConfirmedMachineRetirementWitness {
         })
     }
 
-    fn authenticate(&self, candidate: &Self) -> Result<(), Error> {
-        if self.tenant_id == candidate.tenant_id
+    fn new_for_restart(
+        machine_name: &str,
+        command: &MachineApiWorkloadRestartCommandEnvelope,
+        authority: &MachineForwarderAuthority,
+    ) -> Result<Self, Error> {
+        stop_barrier::validate_machine_name(machine_name)?;
+        Ok(Self {
+            machine_name: machine_name.to_owned(),
+            tenant_id: command.key().tenant_id().clone(),
+            workload_key: command.key().clone(),
+            sandbox_id: SandboxId::new(command.execution().execution_id().as_str()),
+            execution_provider_id: command.provider_selection().clone(),
+            execution: command.execution().clone(),
+            restart_source_execution: Some(command.source_execution().clone()),
+            generation: command.generation(),
+            desired_digest: command.desired_digest(),
+            source_digest: command.source().source_digest(),
+            network_plan_digest: command.network_plan_digest(),
+            forwarder_authority: authority.clone(),
+            expected_guest_bindings: canonical_machine_guest_bindings(
+                command.compiled_network_plan(),
+            )?,
+            progress: ConfirmedMachinePublicationRetirementProgress::Active,
+        })
+    }
+
+    fn authenticate_restart_transition(&self, candidate: &Self) -> Result<(), Error> {
+        if self == candidate {
+            return Ok(());
+        }
+        if candidate.restart_source_execution.as_ref() == Some(&self.execution)
+            && self.machine_name == candidate.machine_name
+            && self.tenant_id == candidate.tenant_id
+            && self.workload_key == candidate.workload_key
             && self.sandbox_id == candidate.sandbox_id
-            && self.execution == candidate.execution
+            && self.execution_provider_id == candidate.execution_provider_id
             && self.generation == candidate.generation
+            && self.desired_digest == candidate.desired_digest
+            && self.source_digest == candidate.source_digest
+            && self.network_plan_digest == candidate.network_plan_digest
+            && self.forwarder_authority == candidate.forwarder_authority
+            && self.expected_guest_bindings == candidate.expected_guest_bindings
+        {
+            Ok(())
+        } else {
+            Err(Error::conflict(
+                "machine restart is crossed with durable workload retirement authority",
+            ))
+        }
+    }
+
+    fn authenticate(&self, candidate: &Self) -> Result<(), Error> {
+        if self.machine_name == candidate.machine_name
+            && self.tenant_id == candidate.tenant_id
+            && self.workload_key == candidate.workload_key
+            && self.sandbox_id == candidate.sandbox_id
+            && self.execution_provider_id == candidate.execution_provider_id
+            && self.execution == candidate.execution
+            && self.restart_source_execution == candidate.restart_source_execution
+            && self.generation == candidate.generation
+            && self.desired_digest == candidate.desired_digest
             && self.source_digest == candidate.source_digest
             && self.network_plan_digest == candidate.network_plan_digest
             && self.forwarder_authority == candidate.forwarder_authority
@@ -1252,8 +1451,23 @@ impl ConfirmedMachineRetirementWitness {
     }
 
     fn validate(&self) -> Result<(), Error> {
-        if self.sandbox_id.as_str() != self.execution.execution_id().as_str()
+        stop_barrier::validate_machine_name(&self.machine_name)?;
+        let crossed_restart_source = self
+            .restart_source_execution
+            .as_ref()
+            .is_some_and(|source| {
+                source.workload_uid() != self.execution.workload_uid()
+                    || source.node_identity() != self.execution.node_identity()
+                    || source.execution_id() != self.execution.execution_id()
+                    || source.generation() != self.execution.generation()
+                    || source.desired_digest() != self.execution.desired_digest()
+                    || source.restart_epoch() >= self.execution.restart_epoch()
+            });
+        if self.tenant_id != *self.workload_key.tenant_id()
+            || self.sandbox_id.as_str() != self.execution.execution_id().as_str()
             || self.generation != self.execution.generation()
+            || self.desired_digest != self.execution.desired_digest()
+            || crossed_restart_source
             || self
                 .expected_guest_bindings
                 .iter()
@@ -1535,10 +1749,12 @@ fn canonical_port_exposure(address: std::net::IpAddr) -> PortExposure {
 struct ConfirmedMachinePublicationBody {
     retirement_witnesses: Vec<ConfirmedMachineRetirementWitness>,
     records: Vec<ConfirmedMachinePublicationRecord>,
+    stop_barriers: Vec<stop_barrier::DurableMachineStopBarrier>,
 }
 
 impl ConfirmedMachinePublicationBody {
     fn validate(&self) -> Result<(), Error> {
+        stop_barrier::validate_stop_barrier_history(&self.stop_barriers)?;
         for (index, witness) in self.retirement_witnesses.iter().enumerate() {
             witness.validate()?;
             if self.retirement_witnesses[..index].iter().any(|existing| {
@@ -1554,7 +1770,7 @@ impl ConfirmedMachinePublicationBody {
                 .iter()
                 .find(|record| {
                     record.workload_key.tenant_id() == &witness.tenant_id
-                        && record.execution == witness.execution
+                        && record.execution.execution_id().as_str() == witness.sandbox_id.as_str()
                 })
                 .map_or(&[][..], |record| record.members.as_slice());
             witness
@@ -1568,7 +1784,7 @@ impl ConfirmedMachinePublicationBody {
                 .iter()
                 .find(|witness| {
                     witness.tenant_id == *record.workload_key.tenant_id()
-                        && witness.execution == record.execution
+                        && witness.sandbox_id.as_str() == record.execution.execution_id().as_str()
                 })
                 .ok_or_else(|| {
                     Error::PreconditionFailed(
@@ -1577,7 +1793,11 @@ impl ConfirmedMachinePublicationBody {
                     )
                 })?;
             if witness.tenant_id != *record.workload_key.tenant_id()
+                || witness.workload_key != record.workload_key
+                || witness.execution_provider_id
+                    != *record.commands[0].source().execution_provider_id()
                 || witness.generation != record.generation
+                || witness.desired_digest != record.desired_digest
                 || witness.source_digest != record.source_digest
                 || witness.network_plan_digest != record.network_plan_digest
                 || witness.forwarder_authority != record.forwarder_authority
@@ -1620,11 +1840,13 @@ struct ConfirmedMachinePublicationEnvelope {
 impl ConfirmedMachinePublicationEnvelope {
     fn empty() -> Self {
         let body = ConfirmedMachinePublicationBody::default();
+        let revision = 0;
         Self {
             magic: FORMAT_MAGIC.to_owned(),
             format_version: FORMAT_VERSION,
-            revision: 0,
-            checksum: checksum(&body).expect("the empty confirmed publication body encodes"),
+            revision,
+            checksum: envelope_checksum(FORMAT_MAGIC, FORMAT_VERSION, revision, &body)
+                .expect("the empty confirmed publication envelope encodes"),
             body,
         }
     }
@@ -1634,7 +1856,7 @@ impl ConfirmedMachinePublicationEnvelope {
             magic: FORMAT_MAGIC.to_owned(),
             format_version: FORMAT_VERSION,
             revision,
-            checksum: checksum(&body)?,
+            checksum: envelope_checksum(FORMAT_MAGIC, FORMAT_VERSION, revision, &body)?,
             body,
         })
     }
@@ -1646,7 +1868,9 @@ impl ConfirmedMachinePublicationEnvelope {
                 path.display()
             )));
         }
-        if self.checksum != checksum(&self.body)? {
+        if self.checksum
+            != envelope_checksum(&self.magic, self.format_version, self.revision, &self.body)?
+        {
             return Err(Error::PreconditionFailed(format!(
                 "confirmed machine publication authority {} failed checksum validation",
                 path.display()
@@ -1687,8 +1911,28 @@ fn same_stable_members(
         })
 }
 
-fn checksum(body: &ConfirmedMachinePublicationBody) -> Result<String, Error> {
-    let bytes = serde_json::to_vec(body).map_err(|error| {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfirmedMachinePublicationEnvelopeChecksum<'a> {
+    magic: &'a str,
+    format_version: u32,
+    revision: u64,
+    body: &'a ConfirmedMachinePublicationBody,
+}
+
+fn envelope_checksum(
+    magic: &str,
+    format_version: u32,
+    revision: u64,
+    body: &ConfirmedMachinePublicationBody,
+) -> Result<String, Error> {
+    let bytes = serde_json::to_vec(&ConfirmedMachinePublicationEnvelopeChecksum {
+        magic,
+        format_version,
+        revision,
+        body,
+    })
+    .map_err(|error| {
         Error::Internal(format!(
             "failed to encode confirmed machine publication checksum: {error}"
         ))

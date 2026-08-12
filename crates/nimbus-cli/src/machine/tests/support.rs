@@ -122,5 +122,12 @@ pub(super) fn run_machine_command_for_test(
             command,
             layout,
             &network_state_root,
+            &nimbus::EnginePersistenceConfig::embedded_default(
+                layout
+                    .config_root
+                    .parent()
+                    .unwrap_or(&layout.config_root)
+                    .join("engine"),
+            ),
         ))
 }

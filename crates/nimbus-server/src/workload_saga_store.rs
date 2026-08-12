@@ -6,6 +6,9 @@
 
 use std::sync::Arc;
 
+use nimbus_compute::machine_stop_authority::{
+    MachineWorkloadAuthorityFuture, MachineWorkloadAuthorityStore,
+};
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, Error, PrincipalContext, WriteKey,
     WritePrecondition, WriteSetMode,
@@ -19,6 +22,7 @@ use nimbus_workloads::{
 };
 
 mod codec;
+mod machine_authority;
 mod recovery;
 mod restart_candidates;
 mod schema;
@@ -106,6 +110,21 @@ impl WorkloadSagaStore for EngineWorkloadSagaStore {
         Box::pin(async move {
             self.prepare().await?;
             tenant_enumeration::list_for_tenant(&self.engine, tenant_id, request).await
+        })
+    }
+}
+
+impl MachineWorkloadAuthorityStore for EngineWorkloadSagaStore {
+    fn list_machine_workload_authority_from_engine<'a>(
+        &'a self,
+        execution_provider_id: &'a nimbus_workloads::WorkloadExecutionProviderId,
+    ) -> MachineWorkloadAuthorityFuture<'a> {
+        Box::pin(async move {
+            self.prepare()
+                .await
+                .map_err(machine_authority::map_store_error)?;
+            machine_authority::list_for_execution_provider(&self.engine, execution_provider_id)
+                .await
         })
     }
 }

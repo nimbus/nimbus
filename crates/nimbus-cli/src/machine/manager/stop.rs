@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use libc::{SIGKILL, SIGTERM, kill};
 use nimbus::Error;
+use nimbus_compute::machine_stop_authority::ConfirmedMachineStopAuthorization;
 use nimbus_network::NetworkManagementMode;
 
 use super::super::network_composition::MachineNetworkLifecycleHandle;
@@ -24,32 +25,43 @@ use super::process_identity::{
     ExactProcessObservation, GvproxyProcessReceipt, MachineProcessIdentity, observe_exact_process,
 };
 use super::{HARD_STOP_WAIT_TIMEOUT, MachineManagerState, POLL_INTERVAL};
+use crate::machine::stop_authority::HostMachineStopAuthority;
 
 pub(super) fn stop_machine(
     network: &MachineNetworkLifecycleHandle,
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
+    stop_authority: &HostMachineStopAuthority,
+    authorization: ConfirmedMachineStopAuthorization,
 ) -> Result<(), Error> {
-    if matches!(
-        state.lifecycle,
-        MachineLifecycle::Stopped | MachineLifecycle::Uninitialized
-    ) {
-        return Ok(());
-    }
-
-    match config.provider.network_management_mode() {
-        NetworkManagementMode::NimbusHostManaged => {}
-        NetworkManagementMode::ProviderManaged => {
-            return Err(config.provider.unavailable_error());
-        }
-    }
     let runtime = state.runtime.as_ref().ok_or_else(|| {
         Error::conflict(format!(
             "machine '{}' has no runtime identity for its host SSH listener",
             config.name
         ))
     })?;
+    if authorization.barrier().machine_name() != config.name
+        || authorization.barrier().forwarder_authority() != &runtime.forwarder_authority
+    {
+        return Err(Error::conflict(
+            "physical-machine stop authorization is crossed with the current machine incarnation",
+        ));
+    }
+    match config.provider.network_management_mode() {
+        NetworkManagementMode::NimbusHostManaged => {}
+        NetworkManagementMode::ProviderManaged => {
+            return Err(config.provider.unavailable_error());
+        }
+    }
+    let stop_barrier = stop_authority.begin_physical_stop(&authorization)?;
+    if matches!(
+        state.lifecycle,
+        MachineLifecycle::Stopped | MachineLifecycle::Uninitialized
+    ) {
+        stop_authority.record_physical_stop_absent(&stop_barrier)?;
+        return Ok(());
+    }
     let port_authority = network.port_leases();
     let publication_cleanup = withdraw_machine_publications(
         network.machine_publications(),
@@ -118,6 +130,11 @@ pub(super) fn stop_machine(
 
     if stop_errors.is_empty()
         && let Err(error) = cleanup_runtime_artifacts(paths)
+    {
+        stop_errors.push(error.to_string());
+    }
+    if stop_errors.is_empty()
+        && let Err(error) = stop_authority.record_physical_stop_absent(&stop_barrier)
     {
         stop_errors.push(error.to_string());
     }

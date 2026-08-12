@@ -12,6 +12,7 @@ pub mod config;
 pub mod deploy;
 pub mod execution;
 pub mod machine_lifecycle;
+pub mod machine_stop_authority;
 pub mod machines;
 pub mod node_workloads;
 pub mod pagination;

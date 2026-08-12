@@ -798,6 +798,7 @@ impl RetirementHarness {
                         .expect("empty restart registry should validate"),
                 ),
                 teardown_capabilities: Some(Box::new(teardown_capabilities)),
+                desire_admission_guard: None,
                 projection_sink,
             },
             deployment: DeploymentConfig::default(),

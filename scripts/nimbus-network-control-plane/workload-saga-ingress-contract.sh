@@ -121,7 +121,7 @@ verify_surface() {
     rg -q 'mod[[:space:]]+ingress[[:space:]]*;'; then
     add_error "compute coordinator does not own the ingress child module"
   elif ! printf '%s\n' "${compute_source}" |
-    rg -q 'pub use ingress::.*ConfirmedWorkloadSagaIntent'; then
+    rg -U -q 'pub[[:space:]]+use[[:space:]]+ingress::[^;]*ConfirmedWorkloadSagaIntent'; then
     add_error "compute coordinator does not export the confirmed ingress result"
   else
     pass_check

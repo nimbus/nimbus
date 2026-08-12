@@ -28,8 +28,9 @@ use crate::workload_provisioner::{
 };
 use crate::workload_saga::restart_runtime::{WorkloadRestartRuntime, WorkloadRestartSettlement};
 use crate::workload_saga::{
-    WorkloadProvisionRunDisposition, WorkloadSagaCoordinator, WorkloadTeardownCancellationToken,
-    WorkloadTeardownRunDisposition, WorkloadTeardownRuntime, WorkloadTeardownSubmissionError,
+    WorkloadProvisionRunDisposition, WorkloadSagaCoordinator, WorkloadSagaIngressError,
+    WorkloadTeardownCancellationToken, WorkloadTeardownRunDisposition, WorkloadTeardownRuntime,
+    WorkloadTeardownSubmissionError,
 };
 
 /// Exact native service retirement response facts.
@@ -71,6 +72,8 @@ pub enum ComputeResourceRetirementError {
     ProvisionSettlementPending,
     #[error("workload saga failed: {0}")]
     Saga(#[from] WorkloadSagaStoreError),
+    #[error("workload saga ingress failed: {0}")]
+    Ingress(#[from] WorkloadSagaIngressError),
     #[error("workload teardown submission failed: {0}")]
     Teardown(#[from] WorkloadTeardownSubmissionError),
     #[error("workload restart settlement failed: {0}")]

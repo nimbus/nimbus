@@ -16,7 +16,9 @@ use nimbus_workloads::{
 use thiserror::Error;
 use tokio::sync::watch;
 
-use super::WorkloadSagaCoordinator;
+use super::{
+    WorkloadDesireAdmissionError, WorkloadDesireAdmissionRequest, WorkloadSagaCoordinator,
+};
 
 /// Cancellation observed before durable submission starts.
 ///
@@ -488,6 +490,8 @@ impl ConfirmedWorkloadRestartAdmission {
 pub enum WorkloadRestartAdmissionError {
     #[error("workload restart admission was cancelled before durable submission")]
     Cancelled,
+    #[error("workload restart desire admission failed: {0}")]
+    Admission(#[from] WorkloadDesireAdmissionError),
     #[error("workload restart admission failed: {0}")]
     Saga(#[from] WorkloadSagaStoreError),
 }
@@ -525,7 +529,21 @@ impl WorkloadSagaCoordinator {
             return Err(WorkloadRestartAdmissionError::Cancelled);
         }
 
-        match self.commit_loaded(Some(&current), candidate.clone()).await {
+        let active = candidate.active_intent();
+        let admission = WorkloadDesireAdmissionRequest::new(
+            candidate.key().clone(),
+            active.source().execution_provider_id().clone(),
+            active.generation(),
+            active.desired_digest(),
+            active.source().source_digest(),
+        );
+        let _permit = match &self.desire_admission_guard {
+            Some(guard) => Some(guard.acquire(&admission).await?),
+            None => None,
+        };
+        let result = self.commit_loaded(Some(&current), candidate.clone()).await;
+        drop(_permit);
+        match result {
             Ok(WorkloadSagaCommit::Applied) => Ok(ConfirmedWorkloadRestartAdmission {
                 record: candidate,
                 disposition: WorkloadRestartAdmissionDisposition::Applied,

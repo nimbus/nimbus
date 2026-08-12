@@ -32,6 +32,7 @@ mod composition;
 mod durability;
 mod executable_durability;
 mod ingress;
+mod machine_authority;
 mod provision_driver_process;
 mod provision_fixture;
 mod recovery;
@@ -124,6 +125,22 @@ pub(super) fn provision_source(
     generation: u64,
     attachment_provider_id: nimbus_network::NetworkProviderId,
 ) -> WorkloadProvisionSourceEvidence {
+    provision_source_for_execution_provider(
+        executable,
+        label,
+        generation,
+        attachment_provider_id,
+        nimbus_workloads::WorkloadExecutionProviderId::for_registration_key("fixture-execution"),
+    )
+}
+
+pub(super) fn provision_source_for_execution_provider(
+    executable: &nimbus_workloads::WorkloadExecutableIntent,
+    label: &str,
+    generation: u64,
+    attachment_provider_id: nimbus_network::NetworkProviderId,
+    execution_provider_id: nimbus_workloads::WorkloadExecutionProviderId,
+) -> WorkloadProvisionSourceEvidence {
     WorkloadProvisionSourceEvidence::standalone_sandbox(
         WorkloadProvisionSourceIdentity::standalone_sandbox(label, "fixture")
             .expect("fixture source identity is valid"),
@@ -132,7 +149,7 @@ pub(super) fn provision_source(
             .expect("fixture source version is valid"),
         executable.content_digest(),
         attachment_provider_id,
-        nimbus_workloads::WorkloadExecutionProviderId::for_registration_key("fixture-execution"),
+        execution_provider_id,
     )
     .expect("fixture source evidence is valid")
 }

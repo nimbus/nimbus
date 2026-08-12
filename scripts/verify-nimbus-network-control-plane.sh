@@ -1875,7 +1875,7 @@ NODE
     printf 'SELFTEST FAIL NNCV035 workload teardown mutation suite failed\n'
     sed -n '1,220p' "${temporary}/nnc65-contract-self-test.out"
     self_fail=$((self_fail + 1))
-  elif ! rg -q '^NNC6\.5 teardown contract self-test: 138 passed, 0 failed$' \
+  elif ! rg -q '^NNC6\.5 teardown contract self-test: 150 passed, 0 failed$' \
     "${temporary}/nnc65-contract-self-test.out"; then
     printf 'SELFTEST FAIL NNCV035 workload teardown mutation count is not exact\n'
     self_fail=$((self_fail + 1))

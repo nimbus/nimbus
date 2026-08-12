@@ -1,6 +1,9 @@
 use std::process::Stdio;
+use std::sync::Arc;
 
-use nimbus::Error;
+use nimbus::{Engine, EnginePersistenceConfig, Error};
+use nimbus_compute::machine_stop_authority::ConfirmedMachineStopAuthorization;
+use nimbus_machine::MachineForwarderAuthority;
 use semver::Version;
 
 use crate::cli_ux;
@@ -35,6 +38,7 @@ use super::render::{
     render_machine_info_view, render_machine_inspect_view, render_machine_list_view,
     render_machine_os_apply_view, render_machine_os_upgrade_view, render_machine_status_view,
 };
+use super::stop_authority::HostMachineStopAuthority;
 use super::{
     DEFAULT_MACHINE_NAME, DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY,
     default_machine_image_for_provider, default_machine_volumes, describe_machine_image_source,
@@ -51,7 +55,6 @@ mod transfer;
 
 #[cfg(test)]
 pub(in crate::machine) use os::plan_machine_os_upgrade;
-use os::run_machine_os;
 pub(in crate::machine) use os::{MachineOsApplyOutcome, MachineOsUpgradePlan};
 #[cfg(test)]
 pub(in crate::machine) use transfer::{
@@ -64,7 +67,7 @@ use transfer::{resolve_machine_cp_transfer, resolve_machine_ssh_target};
 
 pub(crate) async fn run_machine_command(command: MachineCommand) -> Result<(), Error> {
     let roots = resolve_roots_for_command(&command)?;
-    run_machine_command_with_layout(command, &roots).await
+    run_machine_command_with_layout(command, &roots, None).await
 }
 
 pub(super) fn resolve_roots_for_command(
@@ -175,9 +178,14 @@ pub(crate) fn ensure_default_machine_api_client_started(
 pub(super) async fn run_machine_command_with_layout(
     command: MachineCommand,
     roots: &MachineRootLayout,
+    persistence_config: Option<&EnginePersistenceConfig>,
 ) -> Result<(), Error> {
     if try_run_lifecycle_command_via_live_server(&command.command, roots).await? {
         return Ok(());
+    }
+    if command_requires_canonical_engine_authority(&command.command) && persistence_config.is_none()
+    {
+        return Err(missing_machine_stop_authority());
     }
 
     match command.command {
@@ -186,7 +194,13 @@ pub(super) async fn run_machine_command_with_layout(
         command => {
             reject_provider_managed_networking_before_composition(&command, roots)?;
             let composition = HostMachineNetworkComposition::claim_default()?;
-            run_parent_machine_command(command, roots, &composition.authority())
+            run_parent_machine_command_with_authority(
+                command,
+                roots,
+                &composition.authority(),
+                persistence_config,
+            )
+            .await
         }
     }
 }
@@ -196,6 +210,7 @@ pub(super) async fn run_machine_command_with_layout_for_test(
     command: MachineCommand,
     roots: &MachineRootLayout,
     network_state_root: &std::path::Path,
+    persistence_config: &EnginePersistenceConfig,
 ) -> Result<(), Error> {
     if try_run_lifecycle_command_via_live_server(&command.command, roots).await? {
         return Ok(());
@@ -213,8 +228,40 @@ pub(super) async fn run_machine_command_with_layout_for_test(
                     ))
                 })?;
             let network = HostMachineNetworkAuthority::from_port_leases_for_test(port_leases)?;
-            run_parent_machine_command(command, roots, &network)
+            run_parent_machine_command_with_authority(
+                command,
+                roots,
+                &network,
+                Some(persistence_config),
+            )
+            .await
         }
+    }
+}
+
+fn command_requires_canonical_engine_authority(command: &MachineSubcommand) -> bool {
+    matches!(command, MachineSubcommand::Stop(_))
+        || matches!(command, MachineSubcommand::Os(command) if os::machine_os_requests_restart(command))
+}
+
+async fn run_parent_machine_command_with_authority(
+    command: MachineSubcommand,
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    persistence_config: Option<&EnginePersistenceConfig>,
+) -> Result<(), Error> {
+    match command {
+        MachineSubcommand::Stop(stop) => {
+            run_machine_stop(
+                stop,
+                roots,
+                network,
+                persistence_config.ok_or_else(missing_machine_stop_authority)?,
+            )
+            .await
+        }
+        MachineSubcommand::Os(os) => run_machine_os(os, roots, network, persistence_config).await,
+        command => run_parent_machine_command(command, roots, network),
     }
 }
 
@@ -306,10 +353,8 @@ pub(super) fn run_parent_machine_command(
             })
         }
         MachineSubcommand::Stop(stop) => {
-            let machine_name = stop.name().to_owned();
-            with_authenticated_machine_lock(roots, network, &machine_name, || {
-                run_machine_stop(stop, roots, network)
-            })
+            let _ = stop;
+            Err(missing_machine_stop_authority())
         }
         MachineSubcommand::Status(status) => {
             let machine_name = status.name().to_owned();
@@ -350,9 +395,8 @@ pub(super) fn run_parent_machine_command(
             })
         }
         MachineSubcommand::Os(os) => {
-            with_authenticated_default_machine_lock(roots, network, || {
-                run_machine_os(os, roots, network)
-            })
+            let _ = os;
+            Err(missing_machine_stop_authority())
         }
         MachineSubcommand::GuestConfig(_) | MachineSubcommand::Api(_) => Err(Error::Internal(
             "guest-only machine command reached the parent authority dispatcher".to_owned(),
@@ -558,27 +602,168 @@ fn start_machine_with_layout_and_command_locked(
     Ok((paths, config, state, created))
 }
 
-fn run_machine_stop(
+async fn run_machine_stop(
     command: MachineStopCommand,
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
+    persistence_config: &EnginePersistenceConfig,
 ) -> Result<(), Error> {
     let machine_name = command.name().to_owned();
-    let (paths, _config, _state) = stop_machine_with_layout_locked(&machine_name, roots, network)?;
+    let forwarder_authority =
+        machine_stop_forwarder_authority_with_layout(&machine_name, roots, network)?;
+    let engine = Arc::new(Engine::new_with_persistence_config(persistence_config.clone()).await?);
+    let stop_authority = HostMachineStopAuthority::new(network, engine)?;
+    let authorization = stop_authority
+        .authorize(&machine_name, &forwarder_authority)
+        .await?;
+    let (paths, _config, _state) = stop_machine_with_layout_authorized(
+        &machine_name,
+        roots,
+        network,
+        &stop_authority,
+        authorization,
+    )?;
     emit_machine_stdout(&render_machine_action_view(
         MachineCommandResult::Stopped,
         &paths,
-    )?)?;
-    Ok(())
+    )?)
 }
 
-pub(crate) fn stop_machine_with_layout(
+pub(super) fn machine_stop_forwarder_authority_with_layout(
     machine_name: &str,
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
+) -> Result<MachineForwarderAuthority, Error> {
+    with_authenticated_machine_lock(roots, network, machine_name, || {
+        let (_paths, config, state) = load_initialized_machine(roots, network, machine_name)?;
+        state
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.forwarder_authority.clone())
+            .ok_or_else(|| {
+                Error::conflict(format!(
+                    "machine '{}' has no runtime identity for physical-stop authorization",
+                    config.name
+                ))
+            })
+    })
+}
+
+pub(super) struct AuthorizedMachineStop {
+    stop_authority: HostMachineStopAuthority,
+    authorization: ConfirmedMachineStopAuthorization,
+}
+
+impl AuthorizedMachineStop {
+    fn new(
+        stop_authority: HostMachineStopAuthority,
+        authorization: ConfirmedMachineStopAuthorization,
+    ) -> Self {
+        Self {
+            stop_authority,
+            authorization,
+        }
+    }
+
+    pub(super) fn stop(
+        self,
+        network: &HostMachineNetworkAuthority,
+        paths: &MachinePaths,
+        config: &MachineConfigRecord,
+        state: &mut MachineStateRecord,
+    ) -> Result<(), Error> {
+        stop_machine(
+            network,
+            paths,
+            config,
+            state,
+            &self.stop_authority,
+            self.authorization,
+        )
+    }
+
+    async fn cancel_effect_free(self) -> Result<(), Error> {
+        self.stop_authority
+            .cancel_effect_free_stop(&self.authorization)
+            .await
+    }
+}
+
+async fn authorize_running_machine_os_restart(
+    command: &MachineOsCommand,
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    persistence_config: Option<&EnginePersistenceConfig>,
+) -> Result<Option<AuthorizedMachineStop>, Error> {
+    if !os::machine_os_requests_restart(command) {
+        return Ok(None);
+    }
+    let persistence_config = persistence_config.ok_or_else(missing_machine_stop_authority)?;
+    let forwarder_authority = with_authenticated_default_machine_lock(roots, network, || {
+        let (_paths, config, state) =
+            load_initialized_machine(roots, network, DEFAULT_MACHINE_NAME)?;
+        if state.lifecycle != MachineLifecycle::Running {
+            return Ok(None);
+        }
+        state
+            .runtime
+            .as_ref()
+            .map(|runtime| Some(runtime.forwarder_authority.clone()))
+            .ok_or_else(|| {
+                Error::conflict(format!(
+                    "machine '{}' is running without exact physical-stop identity",
+                    config.name
+                ))
+            })
+    })?;
+    let Some(forwarder_authority) = forwarder_authority else {
+        return Ok(None);
+    };
+    let engine = Arc::new(Engine::new_with_persistence_config(persistence_config.clone()).await?);
+    let stop_authority = HostMachineStopAuthority::new(network, engine)?;
+    let authorization = stop_authority
+        .authorize(DEFAULT_MACHINE_NAME, &forwarder_authority)
+        .await?;
+    Ok(Some(AuthorizedMachineStop::new(
+        stop_authority,
+        authorization,
+    )))
+}
+
+async fn run_machine_os(
+    command: MachineOsCommand,
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    persistence_config: Option<&EnginePersistenceConfig>,
+) -> Result<(), Error> {
+    let mut authorized =
+        authorize_running_machine_os_restart(&command, roots, network, persistence_config).await?;
+    let result = with_authenticated_default_machine_lock(roots, network, || {
+        os::run_machine_os(command, roots, network, &mut authorized)
+    });
+    let cancellation = match authorized {
+        Some(unused) => unused.cancel_effect_free().await,
+        None => Ok(()),
+    };
+    match (result, cancellation) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(error)) => Err(error),
+        (Err(operation), Err(cancellation)) => Err(Error::Internal(format!(
+            "machine OS operation failed: {operation}; unused physical-stop fence could not be cleared: {cancellation}"
+        ))),
+    }
+}
+
+pub(super) fn stop_machine_with_layout_authorized(
+    machine_name: &str,
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    stop_authority: &HostMachineStopAuthority,
+    authorization: ConfirmedMachineStopAuthorization,
 ) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
     with_authenticated_machine_lock(roots, network, machine_name, || {
-        stop_machine_with_layout_locked(machine_name, roots, network)
+        stop_machine_with_layout_locked(machine_name, roots, network, stop_authority, authorization)
     })
 }
 
@@ -586,20 +771,36 @@ fn stop_machine_with_layout_locked(
     machine_name: &str,
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
+    stop_authority: &HostMachineStopAuthority,
+    authorization: ConfirmedMachineStopAuthorization,
 ) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
     let (paths, config, mut state) = load_initialized_machine(roots, network, machine_name)?;
-    stop_machine(network, &paths, &config, &mut state)?;
+    stop_machine(
+        network,
+        &paths,
+        &config,
+        &mut state,
+        stop_authority,
+        authorization,
+    )?;
     Ok((paths, config, state))
 }
 
-pub(crate) fn restart_machine_with_layout(
+pub(super) fn restart_machine_with_layout_authorized(
     machine_name: &str,
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
+    stop_authority: &HostMachineStopAuthority,
+    authorization: ConfirmedMachineStopAuthorization,
 ) -> Result<(MachineConfigRecord, MachineStateRecord), Error> {
     with_authenticated_machine_lock(roots, network, machine_name, || {
-        let (paths, mut config, mut state) =
-            stop_machine_with_layout_locked(machine_name, roots, network)?;
+        let (paths, mut config, mut state) = stop_machine_with_layout_locked(
+            machine_name,
+            roots,
+            network,
+            stop_authority,
+            authorization,
+        )?;
         paths.ensure_runtime_directories()?;
         let _output_mode_guard = cli_ux::push_output_mode(cli_ux::OutputMode {
             suppress_phase: true,
@@ -609,6 +810,12 @@ pub(crate) fn restart_machine_with_layout(
         start_machine(network, &paths, &mut config, &mut state)?;
         Ok((config, state))
     })
+}
+
+pub(super) fn missing_machine_stop_authority() -> Error {
+    Error::RejectedBeforeExecution {
+        message: "physical-machine stop requires canonical Engine workload authority".to_owned(),
+    }
 }
 
 fn run_machine_status(

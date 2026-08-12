@@ -23,14 +23,14 @@ use nimbus_compute::workload_saga::{
     NetworkReservationCapability, NetworkRestartAttachmentCapability, RestartPublicationCapability,
     RestartPublicationObservationCapability, RestartPublicationWithdrawalCapability,
     WorkloadActivationCapability, WorkloadActivationPrerequisiteCapability,
-    WorkloadExecutionProvisionCapabilities, WorkloadExecutionQuiescenceCapability,
-    WorkloadPreparationCapability, WorkloadProvisionCapabilityRegistry,
-    WorkloadProvisionCapabilityRegistryError, WorkloadReadinessCapability,
-    WorkloadRestartActivationCapability, WorkloadRestartActivationPrerequisiteCapability,
-    WorkloadRestartCapabilities, WorkloadRestartCapabilityRegistry,
-    WorkloadRestartCapabilityRegistryError, WorkloadRestartPreparationCapability,
-    WorkloadRestartReadinessCapability, WorkloadTeardownCapabilityRegistry,
-    WorkloadTeardownCapabilityRegistryError,
+    WorkloadDesireAdmissionGuard, WorkloadExecutionProvisionCapabilities,
+    WorkloadExecutionQuiescenceCapability, WorkloadPreparationCapability,
+    WorkloadProvisionCapabilityRegistry, WorkloadProvisionCapabilityRegistryError,
+    WorkloadReadinessCapability, WorkloadRestartActivationCapability,
+    WorkloadRestartActivationPrerequisiteCapability, WorkloadRestartCapabilities,
+    WorkloadRestartCapabilityRegistry, WorkloadRestartCapabilityRegistryError,
+    WorkloadRestartPreparationCapability, WorkloadRestartReadinessCapability,
+    WorkloadTeardownCapabilityRegistry, WorkloadTeardownCapabilityRegistryError,
 };
 use nimbus_compute::{
     ComputeResourceProvisioner, ComputeResourceRetirer, ServiceManagerWorkloadProjectionSink,
@@ -66,6 +66,7 @@ pub struct ServerWorkloadProviders<Attachment, Execution, Ingress> {
     ingress: Arc<Ingress>,
     restart_capabilities: Option<WorkloadRestartCapabilities>,
     teardown_capabilities: Option<WorkloadTeardownCapabilityRegistry>,
+    desire_admission_guard: Option<Arc<dyn WorkloadDesireAdmissionGuard>>,
 }
 
 impl<Attachment, Execution, Ingress> ServerWorkloadProviders<Attachment, Execution, Ingress> {
@@ -86,6 +87,7 @@ impl<Attachment, Execution, Ingress> ServerWorkloadProviders<Attachment, Executi
             ingress,
             restart_capabilities: None,
             teardown_capabilities: None,
+            desire_admission_guard: None,
         }
     }
 
@@ -128,6 +130,16 @@ impl<Attachment, Execution, Ingress> ServerWorkloadProviders<Attachment, Executi
         teardown_capabilities: WorkloadTeardownCapabilityRegistry,
     ) -> Self {
         self.teardown_capabilities = Some(teardown_capabilities);
+        self
+    }
+
+    /// Fence running desire and restart CAS operations with provider-owned
+    /// physical-machine stop authority for this exact provider realm.
+    pub fn with_desire_admission_guard(
+        mut self,
+        guard: Arc<dyn WorkloadDesireAdmissionGuard>,
+    ) -> Self {
+        self.desire_admission_guard = Some(guard);
         self
     }
 }
@@ -175,6 +187,7 @@ pub struct ServerWorkloadComposition {
     provision_capabilities: WorkloadProvisionCapabilityRegistry,
     restart_capabilities: WorkloadRestartCapabilityRegistry,
     teardown_capabilities: Option<ExactWorkloadTeardownCapabilityRealm>,
+    desire_admission_guard: Option<Arc<dyn WorkloadDesireAdmissionGuard>>,
 }
 
 /// Transport-free lifetime carrier for foreground managed workload owners.
@@ -324,6 +337,7 @@ impl ServerWorkloadComposition {
             provision_capabilities,
             restart_capabilities,
             teardown_capabilities,
+            desire_admission_guard: providers.desire_admission_guard,
         })
     }
 
@@ -372,6 +386,7 @@ impl ServerWorkloadComposition {
                 provision_capabilities: Box::new(self.provision_capabilities),
                 restart_capabilities: Box::new(self.restart_capabilities),
                 teardown_capabilities: self.teardown_capabilities.map(Box::new),
+                desire_admission_guard: self.desire_admission_guard,
                 projection_sink,
             },
         }

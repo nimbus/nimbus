@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.5f2 complete; NNC6.5f3 in progress`.
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.5f3 complete; NNC6.5g in progress`.
   NNC6.5e is durably complete at `18377b1a2b17e21249c582ba49b8158280e0ff6d`;
   the prior exact checkpoint is `6b685627c94e`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,
@@ -243,10 +243,15 @@ extension-registry seam before the second concern edits `extensions.rs`.
   implementation and K1-K20 are green. Its full Sol/xhigh/fast review accepted
   one P2 error-classification regression. The correction is proven, and the
   narrow review is clean at confidence `0.99`. NNC6.5f2 is complete with
-  F2-01–F2-20 green. NNC6.5f3 is active and owns the physical-machine
-  admission barrier and fail-closed stop gate.
-  NNCV035 remains the sole
-  expected-red implementation condition until NNC6.5g. NNC6.1e's R1-R15
+  F2-01–F2-20 green. NNC6.5f3 is complete with F3-01–F3-24 green. Its
+  compute-owned stop decision, Engine adapter, process-safe provider barrier,
+  guarded desire CAS paths, provider admissions, and five physical callers
+  fail closed before effects. The full review's five and narrow review's three
+  P2 findings are corrected and proven. Review cadence is exhausted. Its ledger is in
+  `proof/nimbus-network-control-plane/nnc6.5f3-physical-machine-admission-barrier.md`.
+  NNC6.5g is active for the four remaining service, tenant, compensation, and
+  behavior diagnostics. NNCV035 remains the sole expected-red condition until
+  that convergence item closes. NNC6.1e's R1-R15
   portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the

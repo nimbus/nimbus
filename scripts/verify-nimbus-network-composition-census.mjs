@@ -633,7 +633,7 @@ function validateStartAndKvOrdering() {
     );
     const completedProfile = startBoot.indexOf(".complete(engine.clone())?");
     const machineLifecycle = startBoot.indexOf(
-      "crate::machine::host_machine_lifecycle_manager(prepared_network_authority)?",
+      "crate::machine::host_machine_lifecycle_manager(",
     );
     if (
       activatedPolicy < 0 ||

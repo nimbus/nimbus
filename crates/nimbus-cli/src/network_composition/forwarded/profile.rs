@@ -65,6 +65,9 @@ pub(crate) fn prepare_forwarded_workload_profile(
         .activate()
         .map_err(LocalNetworkCompositionError::Compose)?;
     let (client, adapter) = activated.into_parts();
+    let desire_admission_guard = adapter
+        .desire_admission_guard()
+        .map_err(LocalNetworkCompositionError::Compose)?;
     let parent_network = HostMachineNetworkAuthority::injected(prepared.network.authority());
     let backend = Arc::new(
         ForwardedMachineApiSandboxBackend::with_provision_adapter(
@@ -96,7 +99,8 @@ pub(crate) fn prepare_forwarded_workload_profile(
         adapter,
     )
     .with_restart_capabilities()
-    .with_teardown_capabilities(teardown_capabilities);
+    .with_teardown_capabilities(teardown_capabilities)
+    .with_desire_admission_guard(desire_admission_guard);
     ServerWorkloadComposition::new(
         engine,
         prepared.network.manager(),

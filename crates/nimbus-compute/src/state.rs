@@ -46,8 +46,9 @@ use crate::workload_provisioner::WorkloadProvisioner;
 use crate::workload_saga::WorkloadTeardownRuntime;
 use crate::workload_saga::restart_runtime::WorkloadRestartRuntime;
 use crate::workload_saga::{
-    ExactWorkloadTeardownCapabilityRealm, WorkloadProvisionCapabilityRegistry,
-    WorkloadProvisionSourceAuthority, WorkloadRestartCapabilityRegistry, WorkloadSagaCoordinator,
+    ExactWorkloadTeardownCapabilityRealm, WorkloadDesireAdmissionGuard,
+    WorkloadProvisionCapabilityRegistry, WorkloadProvisionSourceAuthority,
+    WorkloadRestartCapabilityRegistry, WorkloadSagaCoordinator,
 };
 
 /// Explicit workload-lifecycle capabilities available to a compute state.
@@ -66,6 +67,7 @@ pub enum ComputeWorkloadComposition {
         provision_capabilities: Box<WorkloadProvisionCapabilityRegistry>,
         restart_capabilities: Box<WorkloadRestartCapabilityRegistry>,
         teardown_capabilities: Option<Box<ExactWorkloadTeardownCapabilityRealm>>,
+        desire_admission_guard: Option<Arc<dyn WorkloadDesireAdmissionGuard>>,
         projection_sink: Arc<dyn WorkloadProjectionSink>,
     },
 }
@@ -127,6 +129,7 @@ impl ComputeState {
                 provision_capabilities,
                 restart_capabilities,
                 teardown_capabilities,
+                desire_admission_guard,
                 projection_sink,
             } => {
                 assert!(
@@ -140,7 +143,12 @@ impl ComputeState {
                                 "managed workload composition requires the exact configured teardown provider realm",
                             )
                     });
-                let coordinator = Arc::new(WorkloadSagaCoordinator::new(saga_store));
+                let coordinator = Arc::new(match desire_admission_guard {
+                    Some(guard) => {
+                        WorkloadSagaCoordinator::with_desire_admission_guard(saga_store, guard)
+                    }
+                    None => WorkloadSagaCoordinator::new(saga_store),
+                });
                 let provider_reports = network_manager.capability_registry().clone();
                 let provision_capabilities = Arc::new(*provision_capabilities);
                 let provisioner = Arc::new(
@@ -1087,6 +1095,7 @@ mod tests {
                         .expect("empty restart registry should validate"),
                 ),
                 teardown_capabilities: None,
+                desire_admission_guard: None,
                 projection_sink: Arc::new(EffectForbiddenProjectionSink::default()),
             },
             deployment: DeploymentConfig::default(),
@@ -1287,6 +1296,7 @@ mod tests {
                         .expect("empty restart registry should fail closed"),
                 ),
                 teardown_capabilities: Some(Box::new(teardown_capabilities)),
+                desire_admission_guard: None,
                 projection_sink: projection_sink.clone(),
             },
             deployment: DeploymentConfig::default(),
@@ -1405,6 +1415,7 @@ mod tests {
                             .expect("empty restart registry should validate"),
                     ),
                     teardown_capabilities: Some(Box::new(teardown_capabilities)),
+                    desire_admission_guard: None,
                     projection_sink: projection_sink.clone(),
                 },
                 deployment: DeploymentConfig::default(),
@@ -1491,6 +1502,7 @@ mod tests {
                         .expect("empty restart registry should validate"),
                 ),
                 teardown_capabilities: None,
+                desire_admission_guard: None,
                 projection_sink: Arc::new(EffectForbiddenProjectionSink::default()),
             },
             deployment: DeploymentConfig::default(),

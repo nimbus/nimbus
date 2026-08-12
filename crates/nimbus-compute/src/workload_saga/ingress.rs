@@ -1,11 +1,35 @@
 //! Durable submission of complete workload intent without effect dispatch.
 
 use nimbus_workloads::{
-    WorkloadSagaCommit, WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaKey,
-    WorkloadSagaRecord, WorkloadSagaStoreError,
+    DesiredWorkloadState, WorkloadSagaCommit, WorkloadSagaError, WorkloadSagaIntent,
+    WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaRecord, WorkloadSagaStoreError,
+};
+use thiserror::Error;
+
+use super::{
+    WorkloadDesireAdmissionError, WorkloadDesireAdmissionRequest, WorkloadSagaCoordinator,
+    WorkloadSagaDecision,
 };
 
-use super::{WorkloadSagaCoordinator, WorkloadSagaDecision};
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum WorkloadSagaIngressError {
+    #[error("workload saga persistence failed: {0}")]
+    Saga(#[from] WorkloadSagaStoreError),
+    #[error("workload desire admission failed: {0}")]
+    Admission(#[from] WorkloadDesireAdmissionError),
+}
+
+impl From<WorkloadSagaError> for WorkloadSagaIngressError {
+    fn from(error: WorkloadSagaError) -> Self {
+        Self::Saga(WorkloadSagaStoreError::InvalidTransition(error))
+    }
+}
+
+impl PartialEq<WorkloadSagaStoreError> for WorkloadSagaIngressError {
+    fn eq(&self, other: &WorkloadSagaStoreError) -> bool {
+        matches!(self, Self::Saga(error) if error == other)
+    }
+}
 
 /// How the ingress confirmed the returned durable record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,12 +96,21 @@ impl WorkloadSagaCoordinator {
         &self,
         key: WorkloadSagaKey,
         intent: WorkloadSagaIntent,
-    ) -> Result<ConfirmedWorkloadSagaIntent, WorkloadSagaStoreError> {
+    ) -> Result<ConfirmedWorkloadSagaIntent, WorkloadSagaIngressError> {
         let loaded = self.load(&key).await?;
         if loaded.as_ref().is_some_and(|record| record.key() != &key) {
-            return Err(WorkloadSagaStoreError::Corrupt);
+            return Err(WorkloadSagaStoreError::Corrupt.into());
         }
 
+        let admission = (intent.desired_state() == DesiredWorkloadState::Running).then(|| {
+            WorkloadDesireAdmissionRequest::new(
+                key.clone(),
+                intent.source().execution_provider_id().clone(),
+                intent.generation(),
+                intent.desired_digest(),
+                intent.source().source_digest(),
+            )
+        });
         let next = match loaded.as_ref() {
             None => WorkloadSagaRecord::new(key, intent)?,
             Some(current) => match current.apply_intent(intent)? {
@@ -85,17 +118,22 @@ impl WorkloadSagaCoordinator {
                     return ConfirmedWorkloadSagaIntent::new(
                         current.clone(),
                         WorkloadSagaIngressDisposition::ConfirmedReplay,
-                    );
+                    )
+                    .map_err(Into::into);
                 }
                 WorkloadSagaIntentUpdate::Transition(next) => *next,
             },
         };
 
+        let _permit = match (&self.desire_admission_guard, admission.as_ref()) {
+            (Some(guard), Some(admission)) => Some(guard.acquire(admission).await?),
+            _ => None,
+        };
         let disposition = match self.commit_loaded(loaded.as_ref(), next.clone()).await? {
             WorkloadSagaCommit::Applied => WorkloadSagaIngressDisposition::Applied,
             WorkloadSagaCommit::Unchanged => WorkloadSagaIngressDisposition::ConfirmedReplay,
         };
-        ConfirmedWorkloadSagaIntent::new(next, disposition)
+        ConfirmedWorkloadSagaIntent::new(next, disposition).map_err(Into::into)
     }
 }
 

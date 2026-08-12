@@ -511,14 +511,19 @@ fn settle_parent_release() {
     coarseGuestApi: withoutCfgTestItems(``),
     physicalDesireAdmissions: withoutCfgTestItems(`
 async fn submit_intent() {
-    with_machine_desire_admission_guard(|| async {
-        self.commit_loaded(loaded.as_ref(), next.clone()).await
-    }).await;
+    let _permit = match &self.desire_admission_guard {
+        Some(guard) => Some(guard.acquire(&admission).await),
+        None => None,
+    };
+    let disposition = self.commit_loaded(loaded.as_ref(), next.clone()).await;
 }
 async fn compare_and_swap_restart_admission() {
-    with_machine_desire_admission_guard(|| async {
-        self.commit_loaded(Some(&current), candidate.clone()).await
-    }).await;
+    let _permit = match &self.desire_admission_guard {
+        Some(guard) => Some(guard.acquire(&admission).await),
+        None => None,
+    };
+    let result = self.commit_loaded(Some(&current), candidate.clone()).await;
+    drop(_permit);
 }
 `),
     physicalStopDecision: withoutCfgTestItems(`
@@ -531,95 +536,177 @@ pub enum MachineWorkloadStopDecision {
     Stale,
     Crossed,
 }
-async fn authorize_machine_stop() {
-    let fence = claim_machine_stop_admission_barrier();
-    let after = list_machine_workload_authority_from_engine();
-    let decision = classify_machine_stop_authority(fence, after);
-    if decision.requires_active_conflict() {
-        clear_unchanged_effect_free_machine_stop_barrier(fence);
+pub async fn authorize_physical_machine_stop() {
+    let claim = barriers.claim_effect_free_barrier();
+    let sagas = workloads.list_machine_workload_authority_from_engine().await;
+    match classify_machine_stop_authority(claim, sagas) {
+        MachineWorkloadStopDecision::ActiveWorkloadTeardownRequired => {
+            barriers.clear_effect_free_barrier().await;
+        }
+        decision => decision,
     }
-    decision
 }
 `),
     physicalStopDecisionStoreAdapter: withoutCfgTestItems(`
-fn list_machine_authority_from_engine_adapter() {}
+impl MachineWorkloadAuthorityStore for EngineWorkloadSagaStore {
+    fn list_machine_workload_authority_from_engine() {}
+}
 `),
     physicalStopProvider: withoutCfgTestItems(`
-struct MachineStopAdmissionBarrier;
-fn claim_machine_stop_admission_barrier() {
-    self.mutate(|body| {
-        authenticate_exact_machine_incarnation(body);
-        persist_machine_stop_admission_barrier(body);
+struct DurableMachineStopBarrier {
+    machine_name: String,
+    forwarder_authority: MachineForwarderAuthority,
+    epoch: MachineStopBarrierEpoch,
+    state: DurableMachineStopBarrierState,
+    digest: MachineStopBarrierDigest,
+}
+fn derive_digest() {
+    let bytes = serde_json::to_vec(&DigestPayload {
+        domain: STOP_BARRIER_DIGEST_DOMAIN,
+        format_version: FORMAT_VERSION,
+        machine_name: &self.machine_name,
+        forwarder_authority: &self.forwarder_authority,
+        epoch: self.epoch,
+        state: self.state,
+    })?;
+    MachineStopBarrierDigest::new(format!("{:x}", Sha256::digest(bytes)))
+        .map_err(evidence_error)
+}
+fn claim_machine_stop_barrier() {
+    self.mutate_with_error(|body| {
+        provider_instance();
+        generation();
+        body.stop_barriers.push(barrier);
+        provider_witnesses(body, forwarder_authority);
     });
 }
-async fn with_machine_desire_admission_guard(operation: impl AsyncOperation) {
-    self.mutate_async(|body| async move {
-        authenticate_no_machine_stop_barrier(body);
-        let result = operation().await;
-        settle_machine_desire_admission_guard(body, &result);
-        result
-    }).await
+fn acquire_blocking() {
+    let lock = self.journal.acquire_lock();
+    let envelope = self.journal.load_envelope();
+    envelope.body.stop_barriers;
+    Ok(lock)
 }
-fn authenticate_forwarded_workload_admission_barrier() {
+struct ConfirmedMachineDesireAdmissionPermit {
+    _lock: ConfirmedMachinePublicationLock,
+}
+fn authenticate_workload_admission_absence(body, machine_name, forwarder_authority) {
+    let barrier = body.stop_barriers.iter()
+        .filter(|barrier| barrier.machine_name == machine_name)
+        .max_by_key(|barrier| barrier.epoch)
+        .filter(|barrier| !barrier.state.is_terminal());
+    if barrier.forwarder_authority.provider_instance() != forwarder_authority.provider_instance() {
+        return Err(Error::Crossed);
+    }
+    if barrier.forwarder_authority.generation() != forwarder_authority.generation() {
+        return Err(Error::Stale);
+    }
+    Err(Error::Fenced)
+}
+fn authenticate_retirement_witness() {
     self.mutate(|body| {
-        authenticate_no_machine_stop_barrier(body);
+        authenticate_workload_admission_absence(body, machine_name, authority);
+        body.retirement_witnesses.push(candidate);
     });
 }
-fn retain_ambiguous_machine_stop_barrier() {}
+fn authenticate_or_stage_restart_witness() {
+    self.mutate(|body| {
+        authenticate_workload_admission_absence(body, machine_name, authority);
+        body.retirement_witnesses.push(candidate);
+    });
+}
+fn authenticate_or_stage() {
+    self.mutate(|body| {
+        authenticate_workload_admission_absence(body, machine_name, authority);
+        body.records.push(candidate);
+    });
+}
 `),
     physicalProviderAdmissions: withoutCfgTestItems(`
+fn validate_exact_phase() {
+    self.publication_journal.authenticate_retirement_witness();
+}
 fn execute_exact_phase() {
-    authenticate_forwarded_workload_admission_barrier();
-    claim_dispatch_epoch_started();
+    let validated = self.validate_exact_phase();
     self.phases.execute();
 }
+fn validate_publication() {
+    self.validate_exact_phase();
+}
+fn authenticate_parent() {
+    self.publication_journal.authenticate_or_stage();
+}
+fn execute_publication() {
+    let validated = self.validate_publication();
+    self.authenticate_parent(&validated);
+    self.phases.execute(command, || self.publish(&validated));
+}
 fn publish() {
-    authenticate_forwarded_workload_admission_barrier();
     reserve_parent_batch();
     commit_before_machine_api();
     provision_workload_phase();
 }
+fn validate_restart_phase() {
+    self.publication_journal.authenticate_or_stage_restart_witness();
+}
 fn execute_restart_phase() {
-    authenticate_forwarded_workload_admission_barrier();
-    claim_restart_dispatch_started();
+    let validated = self.validate_restart_phase();
     self.restart_phases.execute();
 }
 `),
     physicalStopEffects: withoutCfgTestItems(`
-pub(super) fn stop_machine(authorization: ConfirmedMachineStopAuthorization) {
-    authorization.authenticate_exact_machine_generation();
+pub(super) fn stop_machine(
+    stop_authority: &HostMachineStopAuthority,
+    authorization: ConfirmedMachineStopAuthorization,
+) {
+    authorization.barrier().machine_name();
+    authorization.barrier().forwarder_authority();
+    let stop_barrier = stop_authority.begin_physical_stop(&authorization);
     withdraw_machine_publications();
     withdraw_machine_ssh_port();
     stop_provider_machine();
     stop_pid();
     stop_exact_process();
+    stop_authority.record_physical_stop_absent(&stop_barrier);
     super::write_json_file();
 }
 `),
     physicalStopStandalone: withoutCfgTestItems(`
-fn run_machine_stop() {
-    let authorization = authorize_machine_stop();
-    stop_machine_with_authorization(authorization);
+async fn run_machine_stop() {
+    let stop_authority = HostMachineStopAuthority::new();
+    let authorization = stop_authority.authorize().await;
+    stop_machine_with_layout_authorized(stop_authority, authorization);
+}
+async fn authorize_running_machine_os_restart() {
+    let stop_authority = HostMachineStopAuthority::new();
+    let authorization = stop_authority.authorize().await;
+    AuthorizedMachineStop::new(stop_authority, authorization)
+}
+impl AuthorizedMachineStop {
+    fn stop(self) {
+        stop_machine(&self.stop_authority, self.authorization);
+    }
 }
 `),
     physicalStopServer: withoutCfgTestItems(`
 fn stop_machine<'a>() {
-    let authorization = authorize_machine_stop();
-    stop_machine_with_authorization(authorization);
+    let authorization = stop_authority.authorize().await;
+    stop_machine_with_layout_authorized(stop_authority, authorization);
 }
 fn restart_machine<'a>() {
-    let authorization = authorize_machine_stop();
-    stop_machine_with_authorization(authorization);
+    let authorization = stop_authority.authorize().await;
+    restart_machine_with_layout_authorized(stop_authority, authorization);
 }
 `),
     physicalStopOs: withoutCfgTestItems(`
-fn restart_bootc_machine() {
-    let authorization = authorize_machine_stop();
-    stop_machine_with_authorization(authorization);
+fn restart_bootc_machine(authorized: &mut Option<AuthorizedMachineStop>) {
+    let authorization = authorized.take().ok_or_else(missing_machine_stop_authority);
+    authorization.stop();
+    start_machine();
 }
-fn apply_machine_os_change() {
-    let authorization = authorize_machine_stop();
-    stop_machine_with_authorization(authorization);
+fn apply_machine_os_change(authorized: &mut Option<AuthorizedMachineStop>) {
+    let authorization = authorized.take().ok_or_else(missing_machine_stop_authority);
+    authorization.stop();
+    config.guest.image_source = target_source;
 }
 `),
     cli: withoutCfgTestItems(`

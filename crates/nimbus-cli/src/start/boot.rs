@@ -309,8 +309,10 @@ async fn run_start_command_inner(
     };
 
     if managed_workload_profile {
-        let machine_lifecycle_manager =
-            crate::machine::host_machine_lifecycle_manager(prepared_network_authority)?;
+        let machine_lifecycle_manager = crate::machine::host_machine_lifecycle_manager(
+            prepared_network_authority,
+            Arc::clone(&engine),
+        )?;
         serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
     }
 

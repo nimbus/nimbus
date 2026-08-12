@@ -16,7 +16,8 @@ use thiserror::Error;
 
 use super::{
     WorkloadProvisionDecision, WorkloadProvisionDispatchError, WorkloadProvisionDispatcher,
-    WorkloadSagaConfirmation, WorkloadSagaCoordinator, reduce_command_result,
+    WorkloadSagaConfirmation, WorkloadSagaCoordinator, WorkloadSagaIngressError,
+    reduce_command_result,
 };
 
 /// Hard bound preventing one caller from turning repeated provider uncertainty
@@ -59,6 +60,8 @@ impl WorkloadProvisionRun {
 pub enum WorkloadProvisionRunError {
     #[error("workload provision dispatch failed: {0}")]
     Dispatch(#[from] WorkloadProvisionDispatchError),
+    #[error("workload provision ingress failed: {0}")]
+    Ingress(#[from] WorkloadSagaIngressError),
     #[error("workload provision saga failed: {0}")]
     Saga(#[from] WorkloadSagaStoreError),
     #[error("workload provision recovery record does not exist")]

@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::future::pending;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,8 +25,14 @@ use nimbus_workloads::{
 };
 use tokio::sync::Notify;
 
-use super::{ConfirmedWorkloadSagaIntent, WorkloadSagaCoordinator, WorkloadSagaIngressDisposition};
-use crate::workload_saga::WorkloadSagaAction;
+use super::{
+    ConfirmedWorkloadSagaIntent, WorkloadSagaCoordinator, WorkloadSagaIngressDisposition,
+    WorkloadSagaIngressError,
+};
+use crate::workload_saga::{
+    WorkloadDesireAdmissionError, WorkloadDesireAdmissionFuture, WorkloadDesireAdmissionGuard,
+    WorkloadDesireAdmissionPermit, WorkloadDesireAdmissionRequest, WorkloadSagaAction,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StoreCall {
@@ -58,6 +64,139 @@ impl ScriptedStore {
 
     fn calls(&self) -> Vec<StoreCall> {
         self.calls.lock().expect("call log lock is healthy").clone()
+    }
+}
+
+struct HeldAdmissionPermit {
+    held: Arc<AtomicBool>,
+}
+
+impl Drop for HeldAdmissionPermit {
+    fn drop(&mut self) {
+        assert!(
+            self.held.swap(false, Ordering::SeqCst),
+            "admission permit must be held until its owner drops it"
+        );
+    }
+}
+
+impl WorkloadDesireAdmissionPermit for HeldAdmissionPermit {}
+
+struct RecordingAdmissionGuard {
+    held: Arc<AtomicBool>,
+    requests: Mutex<Vec<WorkloadDesireAdmissionRequest>>,
+    rejection: Option<WorkloadDesireAdmissionError>,
+}
+
+impl RecordingAdmissionGuard {
+    fn allowing(held: Arc<AtomicBool>) -> Arc<Self> {
+        Arc::new(Self {
+            held,
+            requests: Mutex::new(Vec::new()),
+            rejection: None,
+        })
+    }
+
+    fn rejecting(error: WorkloadDesireAdmissionError) -> Arc<Self> {
+        Arc::new(Self {
+            held: Arc::new(AtomicBool::new(false)),
+            requests: Mutex::new(Vec::new()),
+            rejection: Some(error),
+        })
+    }
+
+    fn requests(&self) -> Vec<WorkloadDesireAdmissionRequest> {
+        self.requests
+            .lock()
+            .expect("admission request lock is healthy")
+            .clone()
+    }
+}
+
+impl WorkloadDesireAdmissionGuard for RecordingAdmissionGuard {
+    fn acquire<'a>(
+        &'a self,
+        request: &'a WorkloadDesireAdmissionRequest,
+    ) -> WorkloadDesireAdmissionFuture<'a> {
+        Box::pin(async move {
+            self.requests
+                .lock()
+                .expect("admission request lock is healthy")
+                .push(request.clone());
+            if let Some(error) = self.rejection {
+                return Err(error);
+            }
+            assert!(
+                !self.held.swap(true, Ordering::SeqCst),
+                "test guard cannot issue overlapping permits"
+            );
+            Ok(Box::new(HeldAdmissionPermit {
+                held: self.held.clone(),
+            }) as Box<dyn WorkloadDesireAdmissionPermit>)
+        })
+    }
+}
+
+struct GuardCheckingStore {
+    held: Arc<AtomicBool>,
+    cas_calls: AtomicUsize,
+}
+
+impl GuardCheckingStore {
+    fn new(held: Arc<AtomicBool>) -> Arc<Self> {
+        Arc::new(Self {
+            held,
+            cas_calls: AtomicUsize::new(0),
+        })
+    }
+}
+
+impl WorkloadSagaStore for GuardCheckingStore {
+    fn load<'a>(
+        &'a self,
+        _key: &'a WorkloadSagaKey,
+    ) -> WorkloadSagaFuture<'a, Option<WorkloadSagaRecord>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn compare_and_swap<'a>(
+        &'a self,
+        _expected: WorkloadSagaExpected,
+        _next: WorkloadSagaRecord,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaCommit> {
+        Box::pin(async move {
+            assert!(
+                self.held.load(Ordering::SeqCst),
+                "Engine CAS must execute while the provider permit is held"
+            );
+            self.cas_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(WorkloadSagaCommit::Applied)
+        })
+    }
+
+    fn list_recoverable<'a>(
+        &'a self,
+        request: WorkloadSagaPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaPage> {
+        Box::pin(async move { WorkloadSagaPage::new(&request, Vec::new(), false) })
+    }
+
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
+    ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadRestartCandidatePage>
+    {
+        Box::pin(async move {
+            nimbus_workloads::WorkloadRestartCandidatePage::new(&request, Vec::new(), false)
+        })
+    }
+
+    fn list_for_tenant<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+        request: WorkloadSagaTenantPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
+        Box::pin(async move { WorkloadSagaTenantPage::new(tenant_id, &request, Vec::new(), false) })
     }
 }
 
@@ -294,6 +433,62 @@ fn assert_exact_result(result: &ConfirmedWorkloadSagaIntent, record: &WorkloadSa
 }
 
 #[tokio::test]
+async fn machine_workload_desire_commit_holds_admission_guard_through_engine_cas() {
+    let key = key("guarded-desire");
+    let intent = running_intent("guarded-desire", 1, 23);
+    let expected_request = WorkloadDesireAdmissionRequest::new(
+        key.clone(),
+        intent.source().execution_provider_id().clone(),
+        intent.generation(),
+        intent.desired_digest(),
+        intent.source().source_digest(),
+    );
+    let held = Arc::new(AtomicBool::new(false));
+    let guard = RecordingAdmissionGuard::allowing(held.clone());
+    let store = GuardCheckingStore::new(held.clone());
+    let coordinator =
+        WorkloadSagaCoordinator::with_desire_admission_guard(store.clone(), guard.clone());
+
+    coordinator
+        .submit_intent(key, intent)
+        .await
+        .expect("barrier-free desire should commit");
+
+    assert_eq!(guard.requests(), vec![expected_request]);
+    assert_eq!(store.cas_calls.load(Ordering::SeqCst), 1);
+    assert!(
+        !held.load(Ordering::SeqCst),
+        "permit must release after the exact CAS result"
+    );
+}
+
+#[tokio::test]
+async fn machine_workload_desire_fence_rejects_before_engine_cas() {
+    let key = key("fenced-desire");
+    let intent = running_intent("fenced-desire", 1, 24);
+    let expected_request = WorkloadDesireAdmissionRequest::new(
+        key.clone(),
+        intent.source().execution_provider_id().clone(),
+        intent.generation(),
+        intent.desired_digest(),
+        intent.source().source_digest(),
+    );
+    let guard = RecordingAdmissionGuard::rejecting(WorkloadDesireAdmissionError::Fenced);
+    let store = ScriptedStore::new([Ok(None)], []);
+    let coordinator =
+        WorkloadSagaCoordinator::with_desire_admission_guard(store.clone(), guard.clone());
+
+    assert_eq!(
+        coordinator.submit_intent(key.clone(), intent).await,
+        Err(WorkloadSagaIngressError::Admission(
+            WorkloadDesireAdmissionError::Fenced,
+        ))
+    );
+    assert_eq!(guard.requests(), vec![expected_request]);
+    assert_eq!(store.calls(), vec![StoreCall::Load(key)]);
+}
+
+#[tokio::test]
 async fn missing_intent_is_confirmed_before_decision() {
     let key = key("missing");
     let intent = running_intent("missing", 1, 11);
@@ -409,7 +604,7 @@ async fn conflict_is_not_retried() {
         coordinator
             .submit_intent(current.key().clone(), successor)
             .await,
-        Err(conflict)
+        Err(WorkloadSagaIngressError::Saga(conflict))
     );
     assert_eq!(
         store.calls(),
@@ -479,7 +674,9 @@ async fn ambiguous_nonconfirming_outcomes_use_one_fresh_read() {
             coordinator
                 .submit_intent(current.key().clone(), successor.clone())
                 .await,
-            Err(WorkloadSagaStoreError::Ambiguous)
+            Err(WorkloadSagaIngressError::Saga(
+                WorkloadSagaStoreError::Ambiguous,
+            ))
         );
         assert_eq!(store.calls(), expected_calls(next.key()));
     }
@@ -494,10 +691,12 @@ async fn ambiguous_nonconfirming_outcomes_use_one_fresh_read() {
         coordinator
             .submit_intent(current.key().clone(), successor.clone())
             .await,
-        Err(WorkloadSagaStoreError::Conflict {
-            expected,
-            observed: Some(competing.revision()),
-        })
+        Err(WorkloadSagaIngressError::Saga(
+            WorkloadSagaStoreError::Conflict {
+                expected,
+                observed: Some(competing.revision()),
+            },
+        ))
     );
     assert_eq!(store.calls(), expected_calls(next.key()));
 
@@ -515,7 +714,7 @@ async fn ambiguous_nonconfirming_outcomes_use_one_fresh_read() {
             coordinator
                 .submit_intent(current.key().clone(), successor.clone())
                 .await,
-            Err(error)
+            Err(WorkloadSagaIngressError::Saga(error))
         );
         assert_eq!(store.calls(), expected_calls(next.key()));
     }
@@ -532,7 +731,9 @@ async fn crossed_loaded_key_is_corrupt() {
         coordinator
             .submit_intent(requested.clone(), running_intent("requested", 1, 11))
             .await,
-        Err(WorkloadSagaStoreError::Corrupt)
+        Err(WorkloadSagaIngressError::Saga(
+            WorkloadSagaStoreError::Corrupt,
+        ))
     );
     assert_eq!(store.calls(), vec![StoreCall::Load(requested)]);
 
@@ -550,7 +751,9 @@ async fn crossed_loaded_key_is_corrupt() {
         coordinator
             .submit_intent(current.key().clone(), successor)
             .await,
-        Err(WorkloadSagaStoreError::Corrupt)
+        Err(WorkloadSagaIngressError::Saga(
+            WorkloadSagaStoreError::Corrupt,
+        ))
     );
     assert_eq!(
         store.calls(),
@@ -589,7 +792,7 @@ async fn negative_outcomes_expose_no_confirmed_decision() {
             coordinator
                 .submit_intent(current.key().clone(), candidate)
                 .await,
-            Err(expected)
+            Err(WorkloadSagaIngressError::Saga(expected))
         );
         assert_eq!(store.calls(), vec![StoreCall::Load(current.key().clone())]);
     }
@@ -604,7 +807,7 @@ async fn negative_outcomes_expose_no_confirmed_decision() {
             coordinator
                 .submit_intent(current.key().clone(), current.active_intent().clone())
                 .await,
-            Err(error)
+            Err(WorkloadSagaIngressError::Saga(error))
         );
         assert_eq!(store.calls(), vec![StoreCall::Load(current.key().clone())]);
     }
@@ -616,10 +819,10 @@ async fn negative_outcomes_expose_no_confirmed_decision() {
         coordinator
             .submit_intent(requested.clone(), running_intent("other-tenant", 1, 11))
             .await,
-        Err(WorkloadSagaStoreError::InvalidTransition(
-            WorkloadSagaError::InvalidIntent(
+        Err(WorkloadSagaIngressError::Saga(
+            WorkloadSagaStoreError::InvalidTransition(WorkloadSagaError::InvalidIntent(
                 "active network plan tenant must match workload saga tenant",
-            ),
+            ),),
         ))
     );
     assert_eq!(store.calls(), vec![StoreCall::Load(requested)]);

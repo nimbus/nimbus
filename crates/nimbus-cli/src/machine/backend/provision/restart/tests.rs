@@ -36,7 +36,8 @@ use nimbus_workloads::{
 use tempfile::TempDir;
 
 use super::super::tests::{
-    advance_to_phase, forwarder_authority, source_plan, workload_intent, workload_key,
+    advance_to_phase, forwarder_authority, snapshot_regular_files, source_plan, workload_intent,
+    workload_key,
 };
 use super::*;
 
@@ -361,6 +362,42 @@ fn assert_rebind_ready(authority: &LocalPortLeaseAuthority, plan_id: &NetworkPla
             && record.binding().is_none()
             && record.bind_claim().is_none()
     }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn forwarded_restart_rejects_stop_barrier_before_attempt_journal_or_effect() {
+    let fixture = RestartFixture::new([]);
+    let adapter = fixture.adapter();
+    let authority = forwarder_authority();
+    adapter
+        .publication_journal
+        .claim_machine_stop_barrier(crate::machine::DEFAULT_MACHINE_NAME, &authority)
+        .expect("physical-stop barrier should become durable");
+    let before = snapshot_regular_files(fixture._root.path());
+    let command = fixture
+        .command(
+            "barrier-fenced-restart",
+            WorkloadRestartStep::Publish,
+            false,
+        )
+        .await;
+
+    let result = RestartPublicationCapability::execute(&adapter, &command).await;
+
+    assert!(format!("{result:?}").contains("DefiniteFailure"));
+    assert_eq!(fixture.server.finish().len(), 0);
+    assert!(
+        fixture
+            .port_authority
+            .list_plan(command.compiled_network_plan().plan().plan_id())
+            .expect("parent plan should inspect")
+            .is_empty()
+    );
+    assert_eq!(
+        snapshot_regular_files(fixture._root.path()),
+        before,
+        "restart barrier rejection must precede attempt-journal and provider effects"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

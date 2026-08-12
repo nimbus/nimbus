@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use nimbus_compute::workload_saga::{
     WorkloadSagaCoordinator, WorkloadSagaDecision, WorkloadSagaIngressDisposition,
+    WorkloadSagaIngressError,
 };
 use nimbus_core::TenantId;
 use nimbus_engine::Engine;
@@ -263,9 +264,9 @@ async fn run_contention(root: &Path, role: &str, mode: &str) -> Result<Contentio
             confirmed.disposition(),
             submission_lock.contended(),
         )),
-        Err(WorkloadSagaStoreError::InvalidTransition(
+        Err(WorkloadSagaIngressError::Saga(WorkloadSagaStoreError::InvalidTransition(
             WorkloadSagaError::EqualGenerationConflict(_),
-        )) if submission_lock.contended() && mode == DIVERGENT_CONTENTION => {
+        ))) if submission_lock.contended() && mode == DIVERGENT_CONTENTION => {
             Ok(ContentionOutcome::Lost)
         }
         Err(error) => Err(format!("unexpected {mode} contention error: {error}")),

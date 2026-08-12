@@ -69,6 +69,7 @@ fn native_stop_without_teardown_composition_fails_before_source_or_effect() {
                         .expect("empty restart capabilities should validate"),
                 ),
                 teardown_capabilities: None,
+                desire_admission_guard: None,
                 projection_sink: Arc::new(ServiceManagerWorkloadProjectionSink::new(
                     harness.manager.clone(),
                 )),
@@ -149,8 +150,10 @@ fn native_stop_unresolved_submission_makes_zero_provider_calls() {
 
         assert!(matches!(
             error,
-            ComputeResourceRetirementError::Saga(
-                nimbus_workloads::WorkloadSagaStoreError::Ambiguous
+            ComputeResourceRetirementError::Ingress(
+                crate::workload_saga::WorkloadSagaIngressError::Saga(
+                    nimbus_workloads::WorkloadSagaStoreError::Ambiguous
+                )
             )
         ));
         assert_eq!(harness.teardown_provider.call_count(), 0);

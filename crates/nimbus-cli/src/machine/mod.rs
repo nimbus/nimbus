@@ -49,6 +49,8 @@ mod publication_authority;
 mod record;
 mod render;
 mod server_control;
+#[cfg(unix)]
+mod stop_authority;
 
 #[cfg(test)]
 pub(crate) use self::api::{
@@ -97,7 +99,7 @@ use self::record::{MachineGuestConfig, MachineResources};
 #[cfg(test)]
 use self::render::*;
 
-const DEFAULT_MACHINE_NAME: &str = "default";
+pub(crate) const DEFAULT_MACHINE_NAME: &str = "default";
 const MACHINE_PROVIDER_ENV: &str = "NIMBUS_MACHINE_PROVIDER";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_REPOSITORY: &str = "ghcr.io/nimbus/machine-os";
 const DEFAULT_NIMBUS_MACHINE_IMAGE_TAG: &str = "v0.1.30";

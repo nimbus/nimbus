@@ -12,6 +12,10 @@ use nimbus::{
     EndpointProtocol, SandboxHandle, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
     SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
 };
+use nimbus_compute::machine_stop_authority::{
+    MachineWorkloadAuthorityEvidence, MachineWorkloadAuthoritySnapshot,
+    MachineWorkloadStopDecision, classify_machine_stop_authority,
+};
 use nimbus_compute::workload_executable::encode_sandbox_spec;
 use nimbus_compute::workload_saga::{
     ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadProvisionTransition,
@@ -25,7 +29,7 @@ use nimbus_compute::workload_saga::{
 };
 use nimbus_core::WorkloadId;
 use nimbus_machine::{
-    MachineConnectivityCapabilities,
+    MachineConnectivityCapabilities, MachineForwarderAuthority,
     api::{
         MachineApiServiceSandboxInspectResponse, MachineApiWorkloadProvisionCommandEnvelope,
         MachineApiWorkloadProvisionPhaseRequest, MachineApiWorkloadProvisionPhaseResponse,
@@ -61,6 +65,34 @@ use super::*;
 
 #[path = "tests/teardown_substitution.rs"]
 mod teardown_substitution;
+
+pub(super) fn snapshot_regular_files(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    fn visit(root: &Path, current: &Path, output: &mut Vec<(PathBuf, Vec<u8>)>) {
+        let Ok(entries) = std::fs::read_dir(current) else {
+            return;
+        };
+        for entry in entries {
+            let entry = entry.expect("snapshot directory entry should read");
+            let path = entry.path();
+            let file_type = entry.file_type().expect("snapshot entry type should read");
+            if file_type.is_dir() {
+                visit(root, &path, output);
+            } else if file_type.is_file() {
+                output.push((
+                    path.strip_prefix(root)
+                        .expect("snapshot path should remain below root")
+                        .to_path_buf(),
+                    std::fs::read(&path).expect("snapshot file should read"),
+                ));
+            }
+        }
+    }
+
+    let mut output = Vec::new();
+    visit(root, root, &mut output);
+    output.sort_by(|left, right| left.0.cmp(&right.0));
+    output
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_registry_substitution_publishes_and_observes_exact_forwarded_command() {
@@ -282,6 +314,7 @@ async fn crossed_publication_member_fails_before_journal_or_machine_effect() {
     ));
 
     let result = adapter.publication_journal.authenticate_or_stage(
+        super::super::super::DEFAULT_MACHINE_NAME,
         &validated.envelope,
         &validated.authority,
         &members,
@@ -289,6 +322,46 @@ async fn crossed_publication_member_fails_before_journal_or_machine_effect() {
 
     assert!(result.is_err());
     assert_eq!(fixture.server.finish().len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn forwarded_provision_and_publication_reject_stop_barrier_before_journal_or_effect() {
+    let fixture = Fixture::new([]);
+    let adapter = fixture.adapter(MachineProvider::Krunkit);
+    adapter
+        .publication_journal
+        .claim_machine_stop_barrier(DEFAULT_MACHINE_NAME, &fixture.authority)
+        .expect("physical-stop barrier should become durable");
+    let before = snapshot_regular_files(fixture.root.path());
+
+    let reserve = fixture
+        .command_at_phase(WorkloadSagaPhase::IntentCommitted)
+        .await;
+    let reserve_result = NetworkReservationCapability::execute(&adapter, reserve.command()).await;
+    assert!(matches!(
+        reserve_result,
+        WorkloadProvisionInspectionResult::DefiniteFailure { .. }
+    ));
+
+    let publish = fixture.publish_command().await;
+    let publish_result = IngressPublicationCapability::execute(&adapter, publish.command()).await;
+    assert!(matches!(
+        publish_result,
+        WorkloadProvisionInspectionResult::DefiniteFailure { .. }
+    ));
+    assert_eq!(fixture.server.finish().len(), 0);
+    assert!(
+        fixture
+            .port_authority
+            .list_plan(fixture.compiled_plan.plan().plan_id())
+            .expect("parent plan should inspect")
+            .is_empty()
+    );
+    assert_eq!(
+        snapshot_regular_files(fixture.root.path()),
+        before,
+        "barrier rejection must precede provider attempt journals and lease effects"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -359,6 +432,51 @@ async fn zero_parent_publication_still_stages_exact_nonempty_guest_retirement_au
         "a crossed retirement must not mutate durable authority"
     );
     assert_eq!(fixture.server.finish().len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crossed_provider_witness_cannot_be_hidden_from_machine_stop_classification() {
+    let fixture = Fixture::new([]);
+    let adapter = fixture.adapter(MachineProvider::Krunkit);
+    let prepare = fixture
+        .command_at_phase(WorkloadSagaPhase::NetworkReserved)
+        .await;
+    let command = prepare.command();
+    adapter
+        .validate_exact_phase(
+            command,
+            WorkloadProvisionStep::PrepareWorkload,
+            nimbus_workloads::WorkloadProvisionCommandMode::Execute,
+        )
+        .ok()
+        .expect("confirmed prepare command should stage the provider witness");
+    let crossed_authority = MachineForwarderAuthority::new(
+        NetworkProviderHandle::new(
+            NetworkProviderId::for_registration_key("crossed-machine-provider"),
+            "crossed-machine-provider-handle",
+        )
+        .expect("crossed provider handle should validate"),
+        fixture.authority.generation(),
+    );
+
+    let claim = adapter
+        .publication_journal
+        .claim_machine_stop_barrier(DEFAULT_MACHINE_NAME, &crossed_authority)
+        .expect("a new barrier should return every nonterminal witness for the machine");
+    assert_eq!(
+        claim.provider_witnesses().len(),
+        1,
+        "crossed provider identity must not filter out the machine's durable witness"
+    );
+    let decision = classify_machine_stop_authority(
+        claim.barrier().clone(),
+        command.source().execution_provider_id().clone(),
+        MachineWorkloadAuthorityEvidence::Complete(MachineWorkloadAuthoritySnapshot::new(
+            Vec::new(),
+            claim.provider_witnesses().to_vec(),
+        )),
+    );
+    assert_eq!(decision, MachineWorkloadStopDecision::Crossed);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

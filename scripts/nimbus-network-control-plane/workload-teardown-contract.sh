@@ -36,6 +36,21 @@ run_native_stage() {
   return 1
 }
 
+run_physical_machine_stage() {
+  cd "${REPO_ROOT}" || return 1
+  output="$(NIMBUS_NETWORK_VERIFY_TEARDOWN_STAGE=physical-machine \
+    node "${SOURCE_CONTRACT}" workload-teardown-contract 2>&1)"
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    printf 'Summary: 1 passed, 0 failed\n'
+    return 0
+  fi
+  printf '%s\n' "${output}"
+  diagnostic_count="$(printf '%s\n' "${output}" | rg -c '^teardown-contract/' || true)"
+  printf 'Summary: 0 passed, %d failed\n' "${diagnostic_count}"
+  return 1
+}
+
 run_self_test() {
   cd "${REPO_ROOT}" || return 1
   failures=0
@@ -105,6 +120,17 @@ run_self_test() {
     'initial-desire-guard-released-before-cas|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
     'missing-restart-desire-admission-guard|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
     'restart-desire-guard-released-before-cas|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'missing-machine-barrier-digest-machine-name|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'missing-machine-barrier-digest-authority|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'missing-machine-barrier-digest-epoch|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'missing-machine-barrier-digest-state|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'machine-barrier-digest-disconnected|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'missing-machine-admission-barrier-traversal|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'missing-machine-admission-provider-comparison|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'missing-machine-admission-generation-comparison|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'machine-admission-provider-fails-open|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'machine-admission-generation-fails-open|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
+    'machine-admission-fence-fails-open|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
     'missing-machine-admission-authentication|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
     'machine-desire-guard-does-not-hold-lock|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
     'machine-barrier-claim-outside-provider-lock|teardown-contract/machine: guest or physical-machine teardown lacks exact phase and active-workload fences'
@@ -257,20 +283,21 @@ run_self_test() {
       "${passed}" "${failures}"
     return 1
   fi
-  if [ "${passed}" -ne 139 ]; then
-    printf 'NNC6.5 teardown contract self-test: expected 139 mutations, observed %d\n' \
+  if [ "${passed}" -ne 150 ]; then
+    printf 'NNC6.5 teardown contract self-test: expected 150 mutations, observed %d\n' \
       "${passed}"
     return 1
   fi
-  printf 'NNC6.5 teardown contract self-test: 139 passed, 0 failed\n'
+  printf 'NNC6.5 teardown contract self-test: 150 passed, 0 failed\n'
 }
 
 case "${1:-}" in
   '' | --check) run_contract ;;
   --native-stage) run_native_stage ;;
+  --physical-machine-stage) run_physical_machine_stage ;;
   --self-test) run_self_test ;;
   *)
-    printf 'usage: %s [--check|--native-stage|--self-test]\n' "$0" >&2
+    printf 'usage: %s [--check|--native-stage|--physical-machine-stage|--self-test]\n' "$0" >&2
     exit 2
     ;;
 esac

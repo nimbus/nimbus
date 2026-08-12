@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use nimbus::{Error, SandboxBackendKind};
 use nimbus_compute::workload_saga::provision_provider::{
@@ -55,14 +55,15 @@ use nimbus_workloads::{
     WorkloadPublicationIntent, WorkloadSagaKey,
 };
 
-use super::super::client::MachineApiClient;
 use super::super::network_composition::HostMachineNetworkAuthority;
 use super::super::publication_authority::{
-    ConfirmedMachinePublicationJournal, ConfirmedMachinePublicationMember,
-    ConfirmedMachinePublicationObservation, ConfirmedMachinePublicationRetirement,
-    authenticate_exact_durable_plan, canonical_machine_publication_members,
-    canonical_machine_restart_publication_members, port_authority_error, recover_dead_batch,
+    ConfirmedMachineDesireAdmissionGuard, ConfirmedMachinePublicationJournal,
+    ConfirmedMachinePublicationMember, ConfirmedMachinePublicationObservation,
+    ConfirmedMachinePublicationRetirement, authenticate_exact_durable_plan,
+    canonical_machine_publication_members, canonical_machine_restart_publication_members,
+    port_authority_error, recover_dead_batch,
 };
+use super::super::{DEFAULT_MACHINE_NAME, client::MachineApiClient};
 
 mod teardown_authority;
 
@@ -341,10 +342,22 @@ pub(crate) struct ForwardedMachineProvisionAdapter {
     phases: ProviderProvisionPhaseAdapter,
     restart_phases: ProviderRestartPhaseAdapter,
     live: Mutex<BTreeMap<NetworkPlanId, LivePublicationBatch>>,
+    machine_name: Arc<str>,
     source_plan: ForwardedMachineProvisionSourcePlan,
 }
 
 impl ForwardedMachineProvisionAdapter {
+    pub(crate) fn desire_admission_guard(
+        &self,
+    ) -> Result<Arc<dyn nimbus_compute::workload_saga::WorkloadDesireAdmissionGuard>, Error> {
+        Ok(Arc::new(ConfirmedMachineDesireAdmissionGuard::new(
+            self.publication_journal.clone(),
+            self.machine_name.as_ref(),
+            self.source_plan.forwarder_authority.clone(),
+            self.source_plan.execution_provider_id.clone(),
+        )?))
+    }
+
     #[cfg(test)]
     pub(crate) fn new_for_test(
         client: MachineApiClient,
@@ -389,6 +402,7 @@ impl ForwardedMachineProvisionAdapter {
             phases: ProviderProvisionPhaseAdapter::new(phase_journal),
             restart_phases: ProviderRestartPhaseAdapter::new(restart_phase_journal),
             live: Mutex::new(BTreeMap::new()),
+            machine_name: Arc::from(DEFAULT_MACHINE_NAME),
             source_plan,
         })
     }
@@ -469,7 +483,7 @@ impl ForwardedMachineProvisionAdapter {
         )
         .map_err(|error| definite_failure("machine_phase_envelope_rejected", error.to_string()))?;
         self.publication_journal
-            .authenticate_retirement_witness(&envelope, authority)
+            .authenticate_retirement_witness(&self.machine_name, &envelope, authority)
             .map_err(|error| {
                 definite_failure("machine_retirement_witness_rejected", error.to_string())
             })?;
@@ -687,6 +701,7 @@ impl ForwardedMachineProvisionAdapter {
     ) -> Result<(), ProviderProvisionEffectObservation> {
         self.publication_journal
             .authenticate_or_stage(
+                &self.machine_name,
                 &validated.envelope,
                 &validated.authority,
                 &validated.members,

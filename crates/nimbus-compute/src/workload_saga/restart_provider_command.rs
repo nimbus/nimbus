@@ -43,6 +43,29 @@ impl ProviderRestartPhaseAdapter {
         }
     }
 
+    /// Translate a validation rejection without claiming or mutating the
+    /// provider attempt journal. Use this only for fail-before admission gates
+    /// that must precede all provider-local durable request authority.
+    pub fn reject_before_journal(
+        command: &ConfirmedWorkloadRestartCommand,
+        rejection: ProviderRestartEffectObservation,
+    ) -> WorkloadRestartProviderObservation {
+        let outcome = match rejection {
+            ProviderRestartEffectObservation::DefiniteFailure { evidence } => {
+                WorkloadRestartCommandOutcome::DefiniteFailure {
+                    evidence: WorkloadRestartEvidenceDigest::sha256(evidence),
+                }
+            }
+            ProviderRestartEffectObservation::Ambiguous { .. }
+            | ProviderRestartEffectObservation::Absent { .. }
+            | ProviderRestartEffectObservation::InProgress { .. }
+            | ProviderRestartEffectObservation::Succeeded { .. } => {
+                WorkloadRestartCommandOutcome::Ambiguous
+            }
+        };
+        provider_observation(command, outcome)
+    }
+
     /// Claim provider-local authority, then invoke at most one effect.
     pub fn execute(
         &self,

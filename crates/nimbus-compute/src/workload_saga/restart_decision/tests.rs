@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nimbus_workloads::{
@@ -14,7 +14,11 @@ use super::{
     WorkloadRestartAdmissionRequest, WorkloadRestartCancellationToken, WorkloadRestartDecision,
     decide_restart_admission, decide_restart_progress,
 };
-use crate::workload_saga::{WorkloadSagaCoordinator, test_support};
+use crate::workload_saga::{
+    WorkloadDesireAdmissionError, WorkloadDesireAdmissionFuture, WorkloadDesireAdmissionGuard,
+    WorkloadDesireAdmissionPermit, WorkloadDesireAdmissionRequest, WorkloadSagaCoordinator,
+    test_support,
+};
 use tokio::sync::Barrier;
 
 #[derive(Default)]
@@ -26,6 +30,7 @@ struct RestartStoreState {
 
 struct RestartStore {
     state: Mutex<RestartStoreState>,
+    admission_held: Option<Arc<AtomicBool>>,
 }
 
 impl RestartStore {
@@ -35,6 +40,17 @@ impl RestartStore {
                 record: Some(record),
                 ..RestartStoreState::default()
             }),
+            admission_held: None,
+        }
+    }
+
+    fn guarded(record: WorkloadSagaRecord, admission_held: Arc<AtomicBool>) -> Self {
+        Self {
+            state: Mutex::new(RestartStoreState {
+                record: Some(record),
+                ..RestartStoreState::default()
+            }),
+            admission_held: Some(admission_held),
         }
     }
 
@@ -66,6 +82,12 @@ impl WorkloadSagaStore for RestartStore {
         next: WorkloadSagaRecord,
     ) -> WorkloadSagaFuture<'a, WorkloadSagaCommit> {
         Box::pin(async move {
+            if let Some(held) = &self.admission_held {
+                assert!(
+                    held.load(Ordering::SeqCst),
+                    "restart Engine CAS must execute while the provider permit is held"
+                );
+            }
             let mut state = self.state.lock().expect("restart store lock is healthy");
             state.compare_and_swaps += 1;
             let observed = state.record.as_ref().map(WorkloadSagaRecord::revision);
@@ -105,6 +127,76 @@ impl WorkloadSagaStore for RestartStore {
         request: WorkloadSagaTenantPageRequest,
     ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
         Box::pin(async move { WorkloadSagaTenantPage::new(tenant_id, &request, Vec::new(), false) })
+    }
+}
+
+struct HeldRestartAdmissionPermit {
+    held: Arc<AtomicBool>,
+}
+
+impl Drop for HeldRestartAdmissionPermit {
+    fn drop(&mut self) {
+        assert!(
+            self.held.swap(false, Ordering::SeqCst),
+            "restart admission permit must be held until its owner drops it"
+        );
+    }
+}
+
+impl WorkloadDesireAdmissionPermit for HeldRestartAdmissionPermit {}
+
+struct RestartAdmissionGuard {
+    held: Arc<AtomicBool>,
+    requests: Mutex<Vec<WorkloadDesireAdmissionRequest>>,
+    rejection: Option<WorkloadDesireAdmissionError>,
+}
+
+impl RestartAdmissionGuard {
+    fn allowing(held: Arc<AtomicBool>) -> Arc<Self> {
+        Arc::new(Self {
+            held,
+            requests: Mutex::new(Vec::new()),
+            rejection: None,
+        })
+    }
+
+    fn rejecting(error: WorkloadDesireAdmissionError) -> Arc<Self> {
+        Arc::new(Self {
+            held: Arc::new(AtomicBool::new(false)),
+            requests: Mutex::new(Vec::new()),
+            rejection: Some(error),
+        })
+    }
+
+    fn requests(&self) -> Vec<WorkloadDesireAdmissionRequest> {
+        self.requests
+            .lock()
+            .expect("restart admission request lock is healthy")
+            .clone()
+    }
+}
+
+impl WorkloadDesireAdmissionGuard for RestartAdmissionGuard {
+    fn acquire<'a>(
+        &'a self,
+        request: &'a WorkloadDesireAdmissionRequest,
+    ) -> WorkloadDesireAdmissionFuture<'a> {
+        Box::pin(async move {
+            self.requests
+                .lock()
+                .expect("restart admission request lock is healthy")
+                .push(request.clone());
+            if let Some(error) = self.rejection {
+                return Err(error);
+            }
+            assert!(
+                !self.held.swap(true, Ordering::SeqCst),
+                "test guard cannot issue overlapping restart permits"
+            );
+            Ok(Box::new(HeldRestartAdmissionPermit {
+                held: self.held.clone(),
+            }) as Box<dyn WorkloadDesireAdmissionPermit>)
+        })
     }
 }
 
@@ -251,6 +343,72 @@ fn automatic_and_explicit_restart_use_same_reducer() {
             .trigger(),
         nimbus_workloads::WorkloadRestartTrigger::Explicit
     );
+}
+
+#[tokio::test]
+async fn machine_restart_admission_holds_guard_through_engine_cas() {
+    let record = test_support::restart_observed_record(
+        "guarded-restart",
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+    );
+    let request = automatic_request(&record, 0x41);
+    let active = record.active_intent();
+    let expected_request = WorkloadDesireAdmissionRequest::new(
+        record.key().clone(),
+        active.source().execution_provider_id().clone(),
+        active.generation(),
+        active.desired_digest(),
+        active.source().source_digest(),
+    );
+    let held = Arc::new(AtomicBool::new(false));
+    let guard = RestartAdmissionGuard::allowing(held.clone());
+    let store = Arc::new(RestartStore::guarded(record, held.clone()));
+    let coordinator =
+        WorkloadSagaCoordinator::with_desire_admission_guard(store.clone(), guard.clone());
+
+    coordinator
+        .compare_and_swap_restart_admission(&request, &WorkloadRestartCancellationToken::new())
+        .await
+        .expect("barrier-free restart admission should commit");
+
+    assert_eq!(guard.requests(), vec![expected_request]);
+    assert_eq!(store.calls(), (1, 1));
+    assert!(
+        !held.load(Ordering::SeqCst),
+        "restart permit must release after the exact CAS result"
+    );
+}
+
+#[tokio::test]
+async fn machine_restart_admission_fence_rejects_before_engine_cas() {
+    let record = test_support::restart_observed_record(
+        "fenced-restart",
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+    );
+    let request = automatic_request(&record, 0x42);
+    let active = record.active_intent();
+    let expected_request = WorkloadDesireAdmissionRequest::new(
+        record.key().clone(),
+        active.source().execution_provider_id().clone(),
+        active.generation(),
+        active.desired_digest(),
+        active.source().source_digest(),
+    );
+    let guard = RestartAdmissionGuard::rejecting(WorkloadDesireAdmissionError::Fenced);
+    let store = Arc::new(RestartStore::new(record));
+    let coordinator =
+        WorkloadSagaCoordinator::with_desire_admission_guard(store.clone(), guard.clone());
+
+    assert!(matches!(
+        coordinator
+            .compare_and_swap_restart_admission(&request, &WorkloadRestartCancellationToken::new(),)
+            .await,
+        Err(WorkloadRestartAdmissionError::Admission(
+            WorkloadDesireAdmissionError::Fenced
+        ))
+    ));
+    assert_eq!(guard.requests(), vec![expected_request]);
+    assert_eq!(store.calls(), (1, 0));
 }
 
 #[tokio::test]

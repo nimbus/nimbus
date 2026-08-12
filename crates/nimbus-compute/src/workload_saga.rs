@@ -8,6 +8,7 @@ use nimbus_workloads::{
     WorkloadSagaStore, WorkloadSagaStoreError,
 };
 
+mod desire_admission;
 mod ingress;
 mod provision_decision;
 mod provision_dispatch;
@@ -37,7 +38,13 @@ mod teardown_registry;
 mod teardown_runtime;
 mod teardown_sandbox;
 
-pub use ingress::{ConfirmedWorkloadSagaIntent, WorkloadSagaIngressDisposition};
+pub use desire_admission::{
+    WorkloadDesireAdmissionError, WorkloadDesireAdmissionFuture, WorkloadDesireAdmissionGuard,
+    WorkloadDesireAdmissionPermit, WorkloadDesireAdmissionRequest,
+};
+pub use ingress::{
+    ConfirmedWorkloadSagaIntent, WorkloadSagaIngressDisposition, WorkloadSagaIngressError,
+};
 pub use nimbus_workloads::{
     WorkloadProvisionCommandId, WorkloadProvisionCommandMode, WorkloadTeardownCommandMode,
 };
@@ -124,11 +131,25 @@ pub use teardown_sandbox::{
 /// Sole cross-domain writer of portable workload-saga transitions.
 pub struct WorkloadSagaCoordinator {
     store: Arc<dyn WorkloadSagaStore>,
+    desire_admission_guard: Option<Arc<dyn WorkloadDesireAdmissionGuard>>,
 }
 
 impl WorkloadSagaCoordinator {
     pub fn new(store: Arc<dyn WorkloadSagaStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            desire_admission_guard: None,
+        }
+    }
+
+    pub fn with_desire_admission_guard(
+        store: Arc<dyn WorkloadSagaStore>,
+        desire_admission_guard: Arc<dyn WorkloadDesireAdmissionGuard>,
+    ) -> Self {
+        Self {
+            store,
+            desire_admission_guard: Some(desire_admission_guard),
+        }
     }
 
     pub async fn load(

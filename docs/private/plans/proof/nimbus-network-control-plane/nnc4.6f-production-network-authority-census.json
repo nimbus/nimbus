@@ -315,7 +315,7 @@
       "kind": "capability-bundle-construction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 157,
+      "line": 158,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.4"
@@ -325,7 +325,7 @@
       "kind": "attachment-registration-construction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 158,
+      "line": 159,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.4"
@@ -335,7 +335,7 @@
       "kind": "ingress-registration-construction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 165,
+      "line": 166,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.4"
@@ -425,7 +425,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "host_machine_lifecycle_manager",
       "ordinal": 1,
-      "line": 23,
+      "line": 24,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -485,7 +485,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "prepare_forwarded_workload_profile",
       "ordinal": 1,
-      "line": 68,
+      "line": 71,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.5f1"
