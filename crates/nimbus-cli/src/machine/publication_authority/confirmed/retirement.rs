@@ -46,6 +46,7 @@ pub(crate) enum ConfirmedMachinePublicationRetirementPhase {
 }
 
 impl ConfirmedMachinePublicationRetirementPhase {
+    #[cfg(test)]
     pub(crate) const fn is_released(self) -> bool {
         matches!(self, Self::Released)
     }

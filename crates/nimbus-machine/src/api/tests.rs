@@ -9,9 +9,9 @@ use nimbus_network::{
 };
 #[cfg(unix)]
 use nimbus_sandbox::{
-    MachinePortForwardOutcome, SandboxCleanupObservation, SandboxExecutionObservation,
-    SandboxHandle, SandboxOwnerSpec, SandboxProcessSpec, SandboxRestartAssessment,
-    SandboxRestartBlocker, SandboxRootSpec, SandboxSpec,
+    SandboxCleanupObservation, SandboxExecutionObservation, SandboxHandle, SandboxOwnerSpec,
+    SandboxProcessSpec, SandboxRestartAssessment, SandboxRestartBlocker, SandboxRootSpec,
+    SandboxSpec,
 };
 #[cfg(unix)]
 use nimbus_workloads::{
@@ -81,15 +81,11 @@ fn machine_api_service_sandbox_paths_use_encoded_single_segments() {
         machine_api_service_sandbox_process_snapshot_path("p#q"),
         "/v1/machine-api/service-sandboxes/p%23q/ps"
     );
-    assert_eq!(
-        machine_api_service_sandbox_stop_path("a b%c"),
-        "/v1/machine-api/service-sandboxes/a%20b%25c/stop"
-    );
 }
 
 #[cfg(unix)]
 #[test]
-fn service_sandbox_retirement_dtos_are_strict_and_preserve_exact_evidence() {
+fn service_sandbox_inspection_dto_is_strict_and_preserves_exact_evidence() {
     let sandbox_id = SandboxId::new("sandbox-machine-api-01");
     let authority = MachineForwarderAuthority::new(
         NetworkProviderHandle::new(
@@ -99,23 +95,13 @@ fn service_sandbox_retirement_dtos_are_strict_and_preserve_exact_evidence() {
         .expect("provider fixture should validate"),
         NetworkResourceGeneration::new(11),
     );
-    let bindings = vec![
-        SandboxPortBinding::tcp("http", 18_080, 8_080),
-        SandboxPortBinding::tcp("metrics", 19_090, 9_090),
-    ];
     let spec = SandboxSpec::new(
         TenantId::new("tenant-machine-api").expect("tenant fixture should validate"),
         SandboxOwnerSpec::service("api"),
         SandboxBackendKind::Container,
         SandboxRootSpec::rootfs("/tmp/rootfs"),
         SandboxProcessSpec::new(["/bin/service"]),
-    )
-    .with_port_bindings(bindings.clone());
-
-    let stop_request = MachineApiServiceSandboxStopRequest {
-        forwarder_authority: authority.clone(),
-    };
-    assert_strict_authority_request(&stop_request, "stop request");
+    );
     assert_strict_authority_request(
         &MachineApiBootcSwitchRequest {
             forwarder_authority: authority.clone(),
@@ -179,52 +165,6 @@ fn service_sandbox_retirement_dtos_are_strict_and_preserve_exact_evidence() {
     assert_unknown_field_rejected::<MachineApiServiceSandboxInspectResponse>(
         inspect_value,
         "inspection response",
-    );
-    let absent = bindings
-        .iter()
-        .map(|binding| MachinePortForwardReceipt {
-            outcome: MachinePortForwardOutcome::ExactAlreadyAbsent,
-            tenant_id: spec.tenant_id.clone(),
-            sandbox_id: sandbox_id.clone(),
-            binding: binding.clone(),
-            provider_instance: authority.provider_instance().clone(),
-            provider_generation: authority.generation(),
-        })
-        .collect::<Vec<_>>();
-    let stop = MachineApiServiceSandboxStopResponse {
-        tenant_id: spec.tenant_id.clone(),
-        sandbox_id: SandboxId::new("sandbox-machine-api-01"),
-        stopped: true,
-        forwarder_authority: authority.clone(),
-        confirmed_absent_evidence: absent.clone(),
-    };
-    let stop_value = serde_json::to_value(&stop).expect("stop response should serialize");
-    assert_eq!(
-        serde_json::from_value::<MachineApiServiceSandboxStopResponse>(stop_value.clone())
-            .expect("stop response should deserialize"),
-        stop
-    );
-    assert_eq!(stop.forwarder_authority, authority);
-    assert_eq!(stop.confirmed_absent_evidence, absent);
-    assert_unknown_field_rejected::<MachineApiServiceSandboxStopResponse>(
-        stop_value,
-        "stop response",
-    );
-    let mut stale_stop = serde_json::to_value(&stop).expect("stale stop fixture should serialize");
-    stale_stop["confirmed_absent_evidence"][0]["provider_generation"] =
-        serde_json::json!(authority.generation().as_u64() + 1);
-    assert!(
-        serde_json::from_value::<MachineApiServiceSandboxStopResponse>(stale_stop).is_err(),
-        "the strict response DTO must reject stale stop provider generations"
-    );
-    let mut duplicate_stop =
-        serde_json::to_value(&stop).expect("duplicate stop fixture should serialize");
-    duplicate_stop["confirmed_absent_evidence"][1] =
-        duplicate_stop["confirmed_absent_evidence"][0].clone();
-    assert!(
-        serde_json::from_value::<MachineApiServiceSandboxStopResponse>(duplicate_stop).is_err(),
-        "the strict response DTO must reject duplicate absence evidence that substitutes for \
-         an omitted member"
     );
 }
 

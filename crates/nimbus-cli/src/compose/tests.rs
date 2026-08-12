@@ -22,9 +22,7 @@ use crate::compose::execution::{
     load_host_backed_project_backend, load_host_backed_service_manager_for_platform,
     should_auto_start_default_machine_for_host_loader,
 };
-use crate::compose::lifecycle::{
-    ServiceLifecycleAction, ServiceLifecycleTarget, stop_service_target,
-};
+use crate::compose::lifecycle::ServiceLifecycleAction;
 use crate::compose::logs::{read_log_chunk, resolve_service_ctr_log_path};
 use crate::compose::process::{
     ServiceProcessRow, ServiceProcessSnapshot, parse_process_rows, read_pid_file_if_exists,
@@ -32,7 +30,7 @@ use crate::compose::process::{
 use crate::machine::{
     MachineApiClient, MachineApiListenMode, MachineApiState, bind_direct_listener,
     default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_sandbox_backend,
-    machine_api_node_workload_facade_from_sandbox_backend_with_absence, serve_machine_api,
+    serve_machine_api,
 };
 
 mod forwarded_api;

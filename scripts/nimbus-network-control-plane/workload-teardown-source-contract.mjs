@@ -814,6 +814,11 @@ function applyFixtureMutation(sources, mutation) {
       "            return ComposeServiceRetirementOutcome::recorded(\n                outcome.disposition(),\n                execution,\n            );",
       "            return Err(ComposeRetirementIncomplete);",
     ],
+    "compose-recorded-result-discarded": [
+      "composeRetirement",
+      "            return ComposeServiceRetirementOutcome::recorded(\n                outcome.disposition(),\n                execution,\n            );",
+      "            ComposeServiceRetirementOutcome::recorded(\n                outcome.disposition(),\n                execution,\n            );\n            return ComposeServiceRetirementOutcome::source_finalized();",
+    ],
     "compose-terminal-reference-discarded": [
       "composeRetirement",
       "            let execution = outcome.terminal_execution_reference();",
@@ -1651,6 +1656,7 @@ export function verifyWorkloadTeardownContract() {
     sources.composeRetirement,
     "async fn retire_compose_services",
   );
+  const compactComposeRetirement = composeRetirement.replace(/\s+/gu, "");
   const composeRuntimeBinding =
     composeRetirement.match(
       /\blet\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*prepared\s*\.\s*activate\s*\([^;{}]*\bsaga_store\b[^;{}]*\)\s*\??\s*;/u,
@@ -1663,6 +1669,10 @@ export function verifyWorkloadTeardownContract() {
     composeRetirement,
     "ComposeServiceRetirementOutcome::recorded",
   );
+  const composeRecordedArm =
+    composeRetirement.match(
+      /WorkloadTeardownDisposition\s*::\s*Recorded\s*=>\s*(\{[^{}]*\})/u,
+    )?.[1] ?? "";
   requireContract(
     /run_compose_down\s*\([^;{}]*persistence_config[^;{}]*\)\s*\.await/u.test(
       composeCommandRouter,
@@ -1678,18 +1688,18 @@ export function verifyWorkloadTeardownContract() {
         "retire_compose_services",
         "quiesce",
       ]) &&
-      hasAll(composeRetirement, [
+      hasAll(compactComposeRetirement, [
         "EngineWorkloadSagaStore::new",
-        "prepared.activate",
+        "prepared.activate(",
         "resource_retirer",
         "submit_service_teardown",
         "WorkloadTeardownDisposition::Recorded",
         "terminal_execution_reference",
         "ComposeServiceRetirementOutcome::recorded",
       ]) &&
-      appearsInOrder(composeRetirement, [
+      appearsInOrder(compactComposeRetirement, [
         "EngineWorkloadSagaStore::new",
-        "prepared.activate",
+        "prepared.activate(",
         "resource_retirer",
         "submit_service_teardown",
         "WorkloadTeardownDisposition::Recorded",
@@ -1705,8 +1715,9 @@ export function verifyWorkloadTeardownContract() {
       new RegExp(`\\b${escapedRegex(composeExecutionBinding)}\\b`, "u").test(
         composeRecordedCall,
       ) &&
-      /return\s+ComposeServiceRetirementOutcome::recorded\s*\(/u.test(
-        composeRetirement,
+      returnsCallResult(
+        composeRecordedArm,
+        "ComposeServiceRetirementOutcome::recorded",
       ) &&
       !/\bCliWorkloadSagaStore\b/u.test(
         `${sources.cli}\n${sources.composeRetirement}`,

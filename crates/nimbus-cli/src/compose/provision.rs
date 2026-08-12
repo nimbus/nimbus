@@ -90,6 +90,10 @@ pub(crate) fn prepare_forwarded_compose_provision_source(
 pub(super) enum PreparedComposeProvision {
     Local(PreparedServerWorkloadProfile),
     Forwarded(Box<PreparedForwardedWorkloadProfile>),
+    #[cfg(test)]
+    TestComposition(Box<ServerWorkloadComposition>),
+    #[cfg(test)]
+    TestRuntime(Box<ServerForegroundWorkloadRuntime>),
 }
 
 impl PreparedComposeProvision {
@@ -176,6 +180,12 @@ impl PreparedComposeProvision {
                     .map_err(forwarded_compose_activation_error)?;
                 Ok(composition.into_foreground_runtime(saga_store))
             }
+            #[cfg(test)]
+            Self::TestComposition(composition) => {
+                Ok(composition.into_foreground_runtime(saga_store))
+            }
+            #[cfg(test)]
+            Self::TestRuntime(runtime) => Ok(*runtime),
         }
     }
 }

@@ -3,8 +3,8 @@ use nimbus_network::PublishedEndpoint;
 #[cfg(unix)]
 use nimbus_sandbox::SandboxInspection;
 use nimbus_sandbox::{
-    MachinePortForwardReceipt, SandboxBackendKind, SandboxId, SandboxLifecycleSpec,
-    SandboxPortBinding, SandboxResourceLimits, SandboxStatus,
+    SandboxBackendKind, SandboxId, SandboxLifecycleSpec, SandboxPortBinding, SandboxResourceLimits,
+    SandboxStatus,
 };
 #[cfg(unix)]
 use nimbus_workloads::{
@@ -73,8 +73,6 @@ pub const MACHINE_API_SERVICE_SANDBOX_LOGS_PATH: &str =
     "/v1/machine-api/service-sandboxes/{sandbox_id}/logs";
 pub const MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH: &str =
     "/v1/machine-api/service-sandboxes/{sandbox_id}/ps";
-pub const MACHINE_API_SERVICE_SANDBOX_STOP_PATH: &str =
-    "/v1/machine-api/service-sandboxes/{sandbox_id}/stop";
 pub const MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION: &str = "workload-provision.phase";
 pub const MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION: &str = "workload-restart.phase";
 pub const MACHINE_API_WORKLOAD_TEARDOWN_PHASE_OPERATION: &str = "workload-teardown.phase";
@@ -83,7 +81,6 @@ pub const MACHINE_API_INSPECT_OPERATION: &str = "service-sandboxes.inspect";
 pub const MACHINE_API_INSPECT_CURRENT_OPERATION: &str = "service-sandboxes.inspect-current";
 pub const MACHINE_API_LOGS_OPERATION: &str = "service-sandboxes.logs";
 pub const MACHINE_API_PS_OPERATION: &str = "service-sandboxes.ps";
-pub const MACHINE_API_STOP_OPERATION: &str = "service-sandboxes.stop";
 pub const MACHINE_API_BOOTC_STATUS_OPERATION: &str = "os.bootc.status";
 pub const MACHINE_API_BOOTC_SWITCH_OPERATION: &str = "os.bootc.switch";
 pub const MACHINE_API_BOOTC_UPGRADE_OPERATION: &str = "os.bootc.upgrade";
@@ -94,10 +91,6 @@ pub fn machine_api_service_sandbox_path(sandbox_id: &str) -> String {
         "/v1/machine-api/service-sandboxes/{}",
         machine_api_path_segment(sandbox_id)
     )
-}
-
-pub fn machine_api_service_sandbox_stop_path(sandbox_id: &str) -> String {
-    format!("{}/stop", machine_api_service_sandbox_path(sandbox_id))
 }
 
 pub fn machine_api_service_sandbox_logs_path(sandbox_id: &str, offset: u64) -> String {
@@ -887,79 +880,6 @@ impl StdError for MachineApiWorkloadProvisionWireError {}
 pub struct MachineApiServiceSandboxInspectResponse {
     pub sandbox_id: SandboxId,
     pub inspection: Option<SandboxInspection>,
-}
-
-#[cfg(unix)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MachineApiServiceSandboxStopRequest {
-    pub forwarder_authority: MachineForwarderAuthority,
-}
-
-#[cfg(unix)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MachineApiServiceSandboxStopResponse {
-    pub tenant_id: TenantId,
-    pub sandbox_id: SandboxId,
-    pub stopped: bool,
-    pub forwarder_authority: MachineForwarderAuthority,
-    pub confirmed_absent_evidence: Vec<MachinePortForwardReceipt>,
-}
-
-#[cfg(unix)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MachineApiServiceSandboxStopResponseWire {
-    tenant_id: TenantId,
-    sandbox_id: SandboxId,
-    stopped: bool,
-    forwarder_authority: MachineForwarderAuthority,
-    confirmed_absent_evidence: Vec<MachinePortForwardReceipt>,
-}
-
-#[cfg(unix)]
-impl<'de> Deserialize<'de> for MachineApiServiceSandboxStopResponse {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let wire = MachineApiServiceSandboxStopResponseWire::deserialize(deserializer)?;
-        let mut seen_bindings = Vec::with_capacity(wire.confirmed_absent_evidence.len());
-        for (index, receipt) in wire.confirmed_absent_evidence.iter().enumerate() {
-            if !matches!(
-                receipt.outcome,
-                nimbus_sandbox::MachinePortForwardOutcome::Withdrawn
-                    | nimbus_sandbox::MachinePortForwardOutcome::ExactAlreadyAbsent
-            ) || receipt.tenant_id != wire.tenant_id
-                || receipt.sandbox_id != wire.sandbox_id
-                || receipt.provider_instance != *wire.forwarder_authority.provider_instance()
-                || receipt.provider_generation != wire.forwarder_authority.generation()
-            {
-                return Err(serde::de::Error::custom(format!(
-                    "stop absence evidence member {index} is crossed, stale, or not an exact \
-                     withdrawn/already-absent receipt for the response identity"
-                )));
-            }
-            if seen_bindings
-                .iter()
-                .any(|binding| binding == &receipt.binding)
-            {
-                return Err(serde::de::Error::custom(format!(
-                    "stop absence evidence member {index} duplicates a binding already present \
-                     in the exact response set"
-                )));
-            }
-            seen_bindings.push(receipt.binding.clone());
-        }
-        Ok(Self {
-            tenant_id: wire.tenant_id,
-            sandbox_id: wire.sandbox_id,
-            stopped: wire.stopped,
-            forwarder_authority: wire.forwarder_authority,
-            confirmed_absent_evidence: wire.confirmed_absent_evidence,
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

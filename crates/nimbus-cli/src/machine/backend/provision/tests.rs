@@ -9,8 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nimbus::{
-    EndpointProtocol, SandboxBackend, SandboxHandle, SandboxOwnerSpec, SandboxPortBinding,
-    SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
+    EndpointProtocol, SandboxHandle, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
+    SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
 };
 use nimbus_compute::workload_executable::encode_sandbox_spec;
 use nimbus_compute::workload_saga::{
@@ -27,9 +27,8 @@ use nimbus_core::WorkloadId;
 use nimbus_machine::{
     MachineConnectivityCapabilities,
     api::{
-        MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxStopResponse,
-        MachineApiWorkloadProvisionCommandEnvelope, MachineApiWorkloadProvisionPhaseRequest,
-        MachineApiWorkloadProvisionPhaseResponse,
+        MachineApiServiceSandboxInspectResponse, MachineApiWorkloadProvisionCommandEnvelope,
+        MachineApiWorkloadProvisionPhaseRequest, MachineApiWorkloadProvisionPhaseResponse,
     },
 };
 use nimbus_network::{
@@ -39,8 +38,7 @@ use nimbus_network::{
     PortLeaseEffectScope, PortLeaseFence, PortLeaseId, PortLeaseRequest,
 };
 use nimbus_sandbox::{
-    MachinePortForwardOutcome, MachinePortForwardReceipt, SandboxBackendKind, SandboxInspection,
-    backends::container::OciMachinePortForwarderConfig,
+    SandboxBackendKind, SandboxInspection, backends::container::OciMachinePortForwarderConfig,
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
@@ -59,7 +57,6 @@ use nimbus_workloads::{
 };
 use tempfile::TempDir;
 
-use super::super::ForwardedMachineApiSandboxBackend;
 use super::*;
 
 #[path = "tests/teardown_substitution.rs"]
@@ -362,96 +359,6 @@ async fn zero_parent_publication_still_stages_exact_nonempty_guest_retirement_au
         "a crossed retirement must not mutate durable authority"
     );
     assert_eq!(fixture.server.finish().len(), 0);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn zero_parent_publication_retirement_authenticates_guest_bindings_before_release() {
-    let fixture = Fixture::new([]);
-    let adapter = fixture.adapter(MachineProvider::Krunkit);
-    let prepare = fixture
-        .command_at_phase(WorkloadSagaPhase::NetworkReserved)
-        .await;
-    let command = prepare.command();
-    adapter
-        .validate_exact_phase(
-            command,
-            WorkloadProvisionStep::PrepareWorkload,
-            nimbus_workloads::WorkloadProvisionCommandMode::Execute,
-        )
-        .ok()
-        .expect("confirmed prepare command should stage retirement authority");
-    let sandbox_id = SandboxId::new(command.execution().execution_id().as_str());
-    let retirement = adapter
-        .publication_journal
-        .retirement_for(&sandbox_id)
-        .expect("retirement authority should inspect")
-        .expect("zero-publication retirement authority should exist");
-    assert!(retirement.members().is_empty());
-    assert!(!retirement.expected_guest_bindings().is_empty());
-    assert_eq!(fixture.server.finish().len(), 0);
-
-    let socket_path = fixture.server.socket_path().to_path_buf();
-    std::fs::remove_file(&socket_path).expect("finished fake API socket should unlink");
-    let response = MachineApiServiceSandboxStopResponse {
-        tenant_id: retirement.tenant_id().clone(),
-        sandbox_id: sandbox_id.clone(),
-        stopped: true,
-        forwarder_authority: fixture.authority.clone(),
-        confirmed_absent_evidence: retirement
-            .expected_guest_bindings()
-            .iter()
-            .cloned()
-            .map(|binding| MachinePortForwardReceipt {
-                outcome: MachinePortForwardOutcome::ExactAlreadyAbsent,
-                tenant_id: retirement.tenant_id().clone(),
-                sandbox_id: sandbox_id.clone(),
-                binding,
-                provider_instance: fixture.authority.provider_instance().clone(),
-                provider_generation: fixture.authority.generation(),
-            })
-            .collect(),
-    };
-    let stop_server = start_stop_server(socket_path.clone(), response);
-    let client = MachineApiClient::new_for_test(&socket_path)
-        .with_forwarder_authority(fixture.authority.clone());
-    let backend =
-        ForwardedMachineApiSandboxBackend::new_for_test(client, fixture.port_authority.clone())
-            .expect("retirement backend should open the exact parent authority");
-
-    backend
-        .stop(&sandbox_id)
-        .await
-        .expect("exact nonempty guest absence receipts should authorize retirement");
-
-    let request = stop_server.join().expect("fake stop API should join");
-    assert!(
-        request.starts_with(&format!(
-            "POST /v1/machine-api/service-sandboxes/{sandbox_id}/stop HTTP/1.1"
-        )),
-        "retirement must call the exact sandbox stop route: {request}"
-    );
-    assert!(
-        adapter
-            .publication_journal
-            .retirement_for(&sandbox_id)
-            .expect("retirement authority should inspect")
-            .expect("retirement authority should remain durable")
-            .is_retired(),
-        "authenticated guest absence must durably retire the zero-publication witness"
-    );
-    assert!(
-        fixture
-            .port_authority
-            .list_plan(fixture.compiled_plan.plan().plan_id())
-            .expect("parent lease authority should inspect")
-            .is_empty(),
-        "zero-publication retirement must not create parent leases"
-    );
-
-    backend
-        .stop(&sandbox_id)
-        .await
-        .expect("a durably retired publication must be a local no-op after the guest disappears");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1495,65 +1402,6 @@ fn start_inspection_server(
             .write_all(&body)
             .expect("inspection response body should write");
         String::from_utf8(request).expect("inspection request should be UTF-8")
-    })
-}
-
-fn start_stop_server(
-    path: PathBuf,
-    response: MachineApiServiceSandboxStopResponse,
-) -> thread::JoinHandle<String> {
-    let listener = UnixListener::bind(path).expect("fake stop API should bind");
-    thread::spawn(move || {
-        let (mut stream, _) = listener
-            .accept()
-            .expect("fake stop API should accept one request");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .expect("fake stop request timeout should configure");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut request = Vec::new();
-        let header_end = loop {
-            let mut chunk = [0_u8; 4096];
-            let read = stream
-                .read(&mut chunk)
-                .expect("fake stop request should read");
-            assert!(read > 0, "fake stop request closed before headers");
-            request.extend_from_slice(&chunk[..read]);
-            if let Some(end) = find_bytes(&request, b"\r\n\r\n") {
-                break end + 4;
-            }
-            assert!(Instant::now() < deadline, "fake stop headers timed out");
-        };
-        let headers =
-            std::str::from_utf8(&request[..header_end]).expect("fake stop headers should be UTF-8");
-        let content_length = headers
-            .lines()
-            .find_map(|line| {
-                line.split_once(':').and_then(|(name, value)| {
-                    name.eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse::<usize>().expect("length should parse"))
-                })
-            })
-            .expect("stop request should carry content length");
-        while request.len() < header_end + content_length {
-            let mut chunk = [0_u8; 4096];
-            let read = stream
-                .read(&mut chunk)
-                .expect("fake stop request body should read");
-            assert!(read > 0, "fake stop request closed before its body");
-            request.extend_from_slice(&chunk[..read]);
-        }
-        let body = serde_json::to_vec(&response).expect("stop response should encode");
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-            body.len()
-        )
-        .expect("stop response headers should write");
-        stream
-            .write_all(&body)
-            .expect("stop response body should write");
-        String::from_utf8(request).expect("stop request should be UTF-8")
     })
 }
 

@@ -65,33 +65,6 @@ impl MachineApiNodeWorkloadFacade for RecordingTeardownFacade {
         })
     }
 
-    fn stop<'a>(
-        &'a self,
-        _id: &'a SandboxId,
-    ) -> super::super::service_workloads::MachineApiServiceFuture<'a, ()> {
-        Box::pin(async move {
-            Err(MachineApiHttpError {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                message: "teardown route fixture does not expose coarse stop".to_owned(),
-            })
-        })
-    }
-
-    fn absent_machine_port_receipts<'a>(
-        &'a self,
-        _id: &'a SandboxId,
-    ) -> super::super::service_workloads::MachineApiServiceFuture<
-        'a,
-        Option<nimbus_sandbox::backends::container::MachinePortAbsenceEvidence>,
-    > {
-        Box::pin(async move {
-            Err(MachineApiHttpError {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                message: "teardown route fixture has no coarse absence probe".to_owned(),
-            })
-        })
-    }
-
     fn teardown_phase<'a>(
         &'a self,
         command: &'a MachineApiWorkloadTeardownCommandEnvelope,

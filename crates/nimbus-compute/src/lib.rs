@@ -37,6 +37,7 @@ pub use resource_provision::{
 };
 pub use resource_retirement::{
     ComputeResourceRetirementError, ComputeResourceRetirer, SandboxServiceRetirementOutcome,
+    WorkloadTeardownDisposition,
 };
 pub use workload_projection::{
     ServiceManagerWorkloadProjectionSink, WorkloadExecutionObservationCapability,

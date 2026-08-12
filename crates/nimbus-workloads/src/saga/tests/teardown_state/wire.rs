@@ -19,6 +19,64 @@ fn teardown_record_round_trips_strict_portable_wire() {
 }
 
 #[test]
+fn recorded_terminal_execution_is_explicit_and_survives_successor_promotion_wire() {
+    let recorded = finish_teardown(&withdrawal_record(
+        WorkloadPublicationIntent::PublishWhenReady,
+    ));
+    let WorkloadPhaseDetail::Recorded(detail) = recorded.phase_detail() else {
+        panic!("completed teardown should carry recorded detail");
+    };
+    let terminal_execution = detail
+        .terminal_execution_reference()
+        .expect("completed execution teardown should retain terminal identity")
+        .clone();
+
+    for candidate in [
+        recorded.clone(),
+        recorded
+            .promote_successor()
+            .expect("stopped successor should promote"),
+    ] {
+        let encoded = serde_json::to_value(&candidate).unwrap();
+        assert_eq!(
+            encoded["phaseDetail"]["value"]["terminalExecution"],
+            serde_json::to_value(&terminal_execution).unwrap()
+        );
+        assert_eq!(
+            serde_json::from_value::<WorkloadSagaRecord>(encoded).unwrap(),
+            candidate,
+            "recorded terminal identity must survive a durable reopen"
+        );
+    }
+}
+
+#[test]
+fn recorded_terminal_execution_wire_requires_explicit_value_or_null() {
+    let recorded = finish_teardown(&withdrawal_record(
+        WorkloadPublicationIntent::PublishWhenReady,
+    ));
+    let mut missing = serde_json::to_value(&recorded).unwrap();
+    missing["phaseDetail"]["value"]
+        .as_object_mut()
+        .unwrap()
+        .remove("terminalExecution");
+    assert!(
+        serde_json::from_value::<WorkloadSagaRecord>(missing).is_err(),
+        "missing terminal execution must not collapse into an explicit no-execution outcome"
+    );
+
+    let initial_stopped =
+        WorkloadSagaRecord::new(key("tenant-a", "wire-stopped"), stopped_intent(1)).unwrap();
+    let explicit_null = serde_json::to_value(&initial_stopped).unwrap();
+    assert!(explicit_null["phaseDetail"]["value"]["terminalExecution"].is_null());
+    assert_eq!(
+        serde_json::from_value::<WorkloadSagaRecord>(explicit_null).unwrap(),
+        initial_stopped,
+        "explicit null is the canonical source-only no-execution outcome"
+    );
+}
+
+#[test]
 fn teardown_wire_rejects_unknown_missing_null_and_legacy_disposition_fields() {
     let withdrawal = withdrawal_record(WorkloadPublicationIntent::PublishWhenReady);
     let encoded = serde_json::to_value(&withdrawal).unwrap();

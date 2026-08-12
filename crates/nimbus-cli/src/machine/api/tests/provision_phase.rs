@@ -180,20 +180,6 @@ impl MachineApiNodeWorkloadFacade for RecordingProvisionFacade {
         Box::pin(async { Err(unexpected_legacy_call("inspect")) })
     }
 
-    fn stop<'a>(&'a self, _id: &'a SandboxId) -> MachineApiServiceFuture<'a, ()> {
-        Box::pin(async { Err(unexpected_legacy_call("stop")) })
-    }
-
-    fn absent_machine_port_receipts<'a>(
-        &'a self,
-        _id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<
-        'a,
-        Option<nimbus_sandbox::backends::container::MachinePortAbsenceEvidence>,
-    > {
-        Box::pin(async { Err(unexpected_legacy_call("absence inspect")) })
-    }
-
     fn provision_phase<'a>(
         &'a self,
         command: &'a nimbus_machine::api::MachineApiWorkloadProvisionCommandEnvelope,

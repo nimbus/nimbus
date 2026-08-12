@@ -18,15 +18,13 @@ use nimbus::{
 };
 use nimbus_machine::MachineBootAuthorityEvidence;
 use nimbus_network::{
-    LocalNetworkManager, NetworkPlanId, NetworkProviderHandle, NetworkProviderId,
-    NetworkResourceGeneration,
+    LocalNetworkManager, NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration,
 };
 use nimbus_sandbox::SandboxFuture;
 use serde_json::json;
 use tempfile::{Builder, TempDir};
 
 mod provision_phase;
-mod publication_evidence;
 #[path = "tests/restart.rs"]
 mod restart;
 #[path = "tests/teardown.rs"]
@@ -429,7 +427,6 @@ fn capability_response_reports_machine_port_forwarder_blocker_when_unreachable()
             "service-sandboxes.inspect-current".to_owned(),
             "service-sandboxes.logs".to_owned(),
             "service-sandboxes.ps".to_owned(),
-            MACHINE_API_STOP_OPERATION.to_owned(),
         ]
     );
     assert!(
@@ -481,11 +478,6 @@ fn capability_response_reports_unavailable_node_workload_driver_when_lifecycle_i
     );
     assert!(capabilities.operation_statuses.iter().any(|status| {
         status.name == MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION
-            && !status.available
-            && status.blockers == capabilities.service_execution_blockers
-    }));
-    assert!(capabilities.operation_statuses.iter().any(|status| {
-        status.name == MACHINE_API_STOP_OPERATION
             && !status.available
             && status.blockers == capabilities.service_execution_blockers
     }));
@@ -763,9 +755,7 @@ async fn service_sandbox_id_routes_ignore_standalone_sandbox_records() {
         SandboxStatus::Ready,
     );
 
-    let backend = RecordingRetirementBackend::default();
-    let stopped_sandboxes = backend.stopped_sandboxes();
-    let forwarder_authority = test_forwarder_authority("standalone-stop-test-forwarder");
+    let backend = EmptyInspectionBackend;
     let socket_path = temp_dir.path().join("nimbus.sock");
     let listener = bind_direct_listener(&socket_path).expect("listener should bind");
     let state = MachineApiState {
@@ -777,7 +767,7 @@ async fn service_sandbox_id_routes_ignore_standalone_sandbox_records() {
             Arc::new(backend),
         )),
         machine_port_forwarder: None,
-        forwarder_authority: Some(forwarder_authority.clone()),
+        forwarder_authority: None,
     };
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(serve_machine_api(listener, state, async move {
@@ -793,24 +783,6 @@ async fn service_sandbox_id_routes_ignore_standalone_sandbox_records() {
     assert!(
         inspect_response.contains("\"inspection\":null"),
         "{inspect_response}"
-    );
-
-    let stop_body = serde_json::to_string(&MachineApiServiceSandboxStopRequest {
-        forwarder_authority,
-    })
-    .expect("stop request should serialize");
-    let stop_response = unix_http_post_json(
-        &socket_path,
-        &format!("/v1/machine-api/service-sandboxes/{sandbox_id}/stop"),
-        &stop_body,
-    );
-    assert!(stop_response.contains("404 Not Found"), "{stop_response}");
-    assert!(
-        stopped_sandboxes
-            .lock()
-            .expect("lock should acquire")
-            .is_empty(),
-        "standalone records must be rejected before backend stop"
     );
 
     let _ = shutdown_tx.send(());
@@ -1063,18 +1035,10 @@ fn write_container_manifest_with_owner(
     .expect("manifest should write");
 }
 
-#[derive(Debug, Default)]
-struct RecordingRetirementBackend {
-    stopped_sandboxes: Arc<Mutex<Vec<String>>>,
-}
+#[derive(Debug)]
+struct EmptyInspectionBackend;
 
-impl RecordingRetirementBackend {
-    fn stopped_sandboxes(&self) -> Arc<Mutex<Vec<String>>> {
-        Arc::clone(&self.stopped_sandboxes)
-    }
-}
-
-impl SandboxBackend for RecordingRetirementBackend {
+impl SandboxBackend for EmptyInspectionBackend {
     fn kind(&self) -> SandboxBackendKind {
         SandboxBackendKind::Container
     }
@@ -1083,15 +1047,11 @@ impl SandboxBackend for RecordingRetirementBackend {
         Box::pin(async move { Ok(None) })
     }
 
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        let stopped_sandboxes = Arc::clone(&self.stopped_sandboxes);
-        let sandbox_id = id.clone();
+    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
         Box::pin(async move {
-            stopped_sandboxes
-                .lock()
-                .expect("lock should acquire")
-                .push(sandbox_id.as_str().to_owned());
-            Ok(())
+            Err(nimbus::SandboxError::OperationFailed {
+                message: "empty inspection fixture does not implement stop".to_owned(),
+            })
         })
     }
 }
@@ -1216,33 +1176,6 @@ impl MachineApiNodeWorkloadFacade for CapabilityNodeWorkloadFacade {
             Err(MachineApiHttpError {
                 status: StatusCode::SERVICE_UNAVAILABLE,
                 message: "capability-only test facade should not inspect workloads".to_owned(),
-            })
-        })
-    }
-
-    fn stop<'a>(
-        &'a self,
-        _id: &'a SandboxId,
-    ) -> super::service_workloads::MachineApiServiceFuture<'a, ()> {
-        Box::pin(async move {
-            Err(MachineApiHttpError {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                message: "capability-only test facade should not stop workloads".to_owned(),
-            })
-        })
-    }
-
-    fn absent_machine_port_receipts<'a>(
-        &'a self,
-        _id: &'a SandboxId,
-    ) -> super::service_workloads::MachineApiServiceFuture<
-        'a,
-        Option<nimbus_sandbox::backends::container::MachinePortAbsenceEvidence>,
-    > {
-        Box::pin(async move {
-            Err(MachineApiHttpError {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                message: "capability-only test facade has no provider evidence".to_owned(),
             })
         })
     }

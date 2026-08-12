@@ -206,22 +206,6 @@ pub(super) fn sample_spec(tenant: &TenantId, service_name: &str) -> SandboxSpec 
     )
 }
 
-pub(super) fn stub_handle(
-    tenant: &TenantId,
-    id: &SandboxId,
-    service_name: &str,
-    status: SandboxStatus,
-) -> SandboxHandle {
-    SandboxHandle::new(
-        tenant.clone(),
-        id.clone(),
-        service_name,
-        SandboxBackendKind::Krun,
-        status,
-        Vec::new(),
-    )
-}
-
 #[derive(Default)]
 pub(super) struct StubBackend {
     pub(super) handles: Mutex<BTreeMap<String, SandboxHandle>>,
@@ -240,18 +224,6 @@ impl StubBackend {
                 .insert(handle.id.as_str().to_owned(), handle);
         }
         backend
-    }
-
-    pub(super) fn report_inspection(&self, inspection: SandboxInspection) {
-        let id = inspection.handle.id.clone();
-        self.report_inspection_for(&id, inspection);
-    }
-
-    pub(super) fn report_inspection_for(&self, id: &SandboxId, inspection: SandboxInspection) {
-        self.inspections
-            .lock()
-            .expect("inspections lock should hold")
-            .insert(id.as_str().to_owned(), inspection);
     }
 }
 

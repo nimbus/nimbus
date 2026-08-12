@@ -31,7 +31,7 @@ use nimbus_machine::api::{
     MACHINE_API_BOOTC_SWITCH_OPERATION, MACHINE_API_BOOTC_UPGRADE_OPERATION,
     MACHINE_API_INSPECT_CURRENT_OPERATION, MACHINE_API_INSPECT_OPERATION,
     MACHINE_API_LIST_OPERATION, MACHINE_API_LOGS_OPERATION, MACHINE_API_PS_OPERATION,
-    MACHINE_API_ROLE, MACHINE_API_STOP_OPERATION, MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION,
+    MACHINE_API_ROLE, MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION,
     MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION, MACHINE_API_WORKLOAD_TEARDOWN_PHASE_OPERATION,
     MachineApiBinaryStatus, MachineApiBootcOperationResponse, MachineApiBootcRollbackRequest,
     MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest, MachineApiBootcUpgradeRequest,
@@ -41,8 +41,7 @@ use nimbus_machine::api::{
     MachineApiServiceProcessSnapshotResponse, MachineApiServiceSandboxDetails,
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLogPaths,
-    MachineApiServiceSandboxLookupResponse, MachineApiServiceSandboxStopRequest,
-    MachineApiServiceSandboxStopResponse, MachineApiServiceSandboxSummary, PROTOCOL_VERSION,
+    MachineApiServiceSandboxLookupResponse, MachineApiServiceSandboxSummary, PROTOCOL_VERSION,
 };
 
 mod binaries;
@@ -74,7 +73,6 @@ pub(crate) use self::service_workloads::{GuestNodeWorkloadService, MachineApiNod
 #[cfg(test)]
 pub(crate) use self::service_workloads::{
     guest_teardown_provider_claim_for_test, machine_api_node_workload_facade_from_sandbox_backend,
-    machine_api_node_workload_facade_from_sandbox_backend_with_absence,
     sandbox_network_plan_for_teardown_test,
 };
 #[cfg(target_os = "linux")]

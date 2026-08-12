@@ -1117,11 +1117,12 @@ impl WorkloadSagaRecord {
         };
         let digest =
             WorkloadTerminalEvidenceDigest::for_observations(detail.terminal_observations())?;
+        let terminal_execution = detail.terminal_execution_reference().cloned();
         self.build_next_complete(
             self.active_intent.clone(),
             self.successor_intent.clone(),
             WorkloadSagaPhase::Recorded,
-            WorkloadPhaseDetail::recorded(&self.active_intent, digest),
+            WorkloadPhaseDetail::recorded(&self.active_intent, digest, terminal_execution),
             None,
             None,
             self.restart.clone(),

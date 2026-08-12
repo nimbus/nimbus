@@ -1172,6 +1172,47 @@ async fn engine_skips_the_durable_write_for_an_unchanged_table_schema() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_identical_schema_declarations_append_one_durable_record() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("schema-idempotency", Engine::create_tenant);
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("pre-declaration diagnostics should load")
+        .mutation_journal
+        .frontiers
+        .durable_head;
+
+    let mut declarations = tokio::task::JoinSet::new();
+    for _ in 0..16 {
+        let engine = Arc::clone(&engine);
+        let tenant_id = tenant_id.clone();
+        declarations.spawn(async move {
+            engine
+                .set_table_schema_async(tenant_id, users_schema())
+                .await
+        });
+    }
+    while let Some(declaration) = declarations.join_next().await {
+        declaration
+            .expect("schema declaration task should join")
+            .expect("identical schema declaration should succeed");
+    }
+
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("post-declaration diagnostics should load")
+        .mutation_journal
+        .frontiers
+        .durable_head;
+    assert_eq!(
+        after.0,
+        before.0 + 1,
+        "concurrent identical declarations must append one schema record"
+    );
+}
+
 #[tokio::test]
 async fn engine_validates_insert_against_schema() {
     let fixture = EngineFixture::new(|path| Engine::new(path));

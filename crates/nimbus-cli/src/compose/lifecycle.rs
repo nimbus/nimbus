@@ -3,7 +3,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use nimbus::{Engine, Error, SandboxBackend, SandboxHandle, SandboxStatus, TenantId};
+use nimbus::{Engine, Error, SandboxHandle, SandboxStatus, TenantId};
 use nimbus_compute::{
     ComputeResourceProvisioner, SandboxServiceProvisionSnapshot, WorkloadProvisionCancellation,
 };
@@ -13,23 +13,15 @@ use nimbus_tenant::TenantIsolationContext;
 use nimbus_workloads::WorkloadSagaStore;
 use serde::Serialize;
 
-use crate::compose::discovery::ResolvedComposeSelection;
-use crate::machine::{HostMachineNetworkAuthority, MachineApiClient};
-
 use super::provision::PreparedComposeProvision;
-use super::{
-    ComposeDownCommand, ComposeUpCommand, LocalKrunExecutionSurface, requested_service_names,
-    resolve_remote_service_down_targets, resolve_service_down_targets,
-    resolve_service_execution_surface, validate_forwarded_machine_api_operations,
-};
+use super::{ComposeUpCommand, requested_service_names};
+use crate::compose::discovery::ResolvedComposeSelection;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum ServiceLifecycleAction {
     Started,
     AlreadyRunning,
-    Stopped,
-    AlreadyStopped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -63,27 +55,6 @@ impl ServiceLifecycleAction {
         match self {
             Self::Started => "started",
             Self::AlreadyRunning => "already_running",
-            Self::Stopped => "stopped",
-            Self::AlreadyStopped => "already_stopped",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ServiceLifecycleTarget {
-    pub(super) sandbox_id: nimbus::SandboxId,
-    pub(super) service_name: String,
-    pub(super) status: SandboxStatus,
-}
-
-impl ServiceLifecycleTarget {
-    pub(super) fn from_details(
-        details: nimbus_sandbox::backends::krun::KrunSandboxDetails,
-    ) -> Self {
-        Self {
-            sandbox_id: details.summary.sandbox_id,
-            service_name: details.summary.service_name,
-            status: details.summary.status,
         }
     }
 }
@@ -282,193 +253,4 @@ fn validate_service_observation(
         )));
     }
     Ok(())
-}
-
-pub(super) async fn service_down_outcomes_for_selection(
-    command: &ComposeDownCommand,
-    selection: &ResolvedComposeSelection,
-    control_data_dir: &Path,
-    host_platform: super::ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-    local_krun: Option<LocalKrunExecutionSurface>,
-    network: Option<&HostMachineNetworkAuthority>,
-) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
-    let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
-    let tenant = command
-        .tenant
-        .clone()
-        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
-
-    match resolve_service_execution_surface(
-        &context,
-        command.service.as_deref(),
-        "compose down",
-        host_platform,
-        machine_api_client,
-        local_krun,
-        network,
-    )? {
-        super::ServiceExecutionSurface::Krun {
-            state_view,
-            backend,
-        } => {
-            let targets = resolve_service_down_targets(
-                &state_view,
-                &tenant,
-                command.service.as_deref(),
-                &context.control_plane.project_name,
-            )?;
-            let mut outcomes = Vec::new();
-            for target in targets {
-                outcomes.push(stop_service_target(backend.as_ref(), &tenant, target).await?);
-            }
-            Ok(outcomes)
-        }
-        super::ServiceExecutionSurface::ForwardedContainer { client, backend } => {
-            let required_operations = if command.service.is_some() {
-                vec![
-                    "service-sandboxes.inspect-current",
-                    "service-sandboxes.stop",
-                ]
-            } else {
-                vec![
-                    "service-sandboxes.list",
-                    "service-sandboxes.inspect-current",
-                    "service-sandboxes.stop",
-                ]
-            };
-            validate_forwarded_machine_api_operations(
-                &context,
-                &client,
-                "compose down",
-                &required_operations,
-            )?;
-            let targets = resolve_remote_service_down_targets(
-                &context,
-                &client,
-                &tenant,
-                command.service.as_deref(),
-            )?;
-            let mut outcomes = Vec::new();
-            for target in targets {
-                outcomes.push(stop_service_target(backend.as_ref(), &tenant, target).await?);
-            }
-            Ok(outcomes)
-        }
-    }
-}
-
-pub(super) async fn stop_service_target(
-    backend: &dyn SandboxBackend,
-    tenant: &TenantId,
-    target: ServiceLifecycleTarget,
-) -> Result<ServiceLifecycleOutcome, Error> {
-    let refreshed = backend
-        .inspect(&target.sandbox_id)
-        .await
-        .map_err(|error| backend_operation_error("inspect", tenant, &target.service_name, error))?;
-    if let Some(inspection) = refreshed.as_ref() {
-        validate_compose_inspection_identity(
-            backend,
-            tenant,
-            &target.service_name,
-            &target.sandbox_id,
-            inspection,
-        )?;
-    }
-
-    if refreshed.as_ref().is_none_or(|inspection| {
-        !is_active_status(inspection.handle.status)
-            && inspection.cleanup == nimbus_sandbox::SandboxCleanupObservation::Finalized
-    }) {
-        let status = refreshed
-            .map(|inspection| inspection.handle.status)
-            .unwrap_or(target.status);
-        return Ok(ServiceLifecycleOutcome {
-            action: ServiceLifecycleAction::AlreadyStopped,
-            tenant_id: tenant.clone(),
-            service_name: target.service_name,
-            sandbox_id: target.sandbox_id,
-            status,
-        });
-    }
-
-    backend
-        .stop(&target.sandbox_id)
-        .await
-        .map_err(|error| backend_operation_error("stop", tenant, &target.service_name, error))?;
-    let stopped_inspection = backend
-        .inspect(&target.sandbox_id)
-        .await
-        .map_err(|error| backend_operation_error("inspect", tenant, &target.service_name, error))?;
-    if let Some(inspection) = stopped_inspection.as_ref() {
-        validate_compose_inspection_identity(
-            backend,
-            tenant,
-            &target.service_name,
-            &target.sandbox_id,
-            inspection,
-        )?;
-    }
-    let status = stopped_inspection
-        .map(|inspection| inspection.handle.status)
-        .unwrap_or(SandboxStatus::Stopped);
-
-    Ok(ServiceLifecycleOutcome {
-        action: ServiceLifecycleAction::Stopped,
-        tenant_id: tenant.clone(),
-        service_name: target.service_name,
-        sandbox_id: target.sandbox_id,
-        status,
-    })
-}
-
-fn validate_compose_inspection_identity(
-    backend: &dyn SandboxBackend,
-    tenant: &TenantId,
-    service_name: &str,
-    sandbox_id: &nimbus::SandboxId,
-    inspection: &nimbus_sandbox::SandboxInspection,
-) -> Result<(), Error> {
-    let observed = &inspection.handle;
-    if observed.id == *sandbox_id
-        && observed.tenant_id == *tenant
-        && observed.name == service_name
-        && observed.backend == backend.kind()
-    {
-        return Ok(());
-    }
-
-    Err(Error::Internal(format!(
-        "sandbox backend returned crossed inspection identity for compose service {service_name} \
-         tenant {tenant}: expected sandbox {sandbox_id} tenant {tenant} name {service_name} \
-         backend {:?}, observed sandbox {} tenant {} name {} backend {:?}",
-        backend.kind(),
-        observed.id,
-        observed.tenant_id,
-        observed.name,
-        observed.backend
-    )))
-}
-
-fn backend_operation_error(
-    operation: &str,
-    tenant: &TenantId,
-    service_name: &str,
-    error: nimbus::SandboxError,
-) -> Error {
-    Error::Internal(format!(
-        "failed to {operation} service {} for tenant {}: {error}",
-        service_name, tenant
-    ))
-}
-
-fn is_active_status(status: SandboxStatus) -> bool {
-    matches!(
-        status,
-        SandboxStatus::Starting
-            | SandboxStatus::Ready
-            | SandboxStatus::NotReady
-            | SandboxStatus::Stopping
-    )
 }

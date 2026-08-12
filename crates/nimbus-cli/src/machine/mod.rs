@@ -53,8 +53,7 @@ mod server_control;
 #[cfg(test)]
 pub(crate) use self::api::{
     MachineApiListenMode, MachineApiState, bind_direct_listener, default_guest_helper_binary_dirs,
-    machine_api_node_workload_facade_from_sandbox_backend,
-    machine_api_node_workload_facade_from_sandbox_backend_with_absence, serve_machine_api,
+    machine_api_node_workload_facade_from_sandbox_backend, serve_machine_api,
 };
 pub(crate) use self::backend::ForwardedMachineApiSandboxBackend;
 pub(crate) use self::client::MachineApiClient;

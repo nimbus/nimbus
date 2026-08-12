@@ -977,10 +977,6 @@ function verifySideEffectFreeSandboxInspection() {
     servicesSources,
     "crates/nimbus-services/src/manager/retirement.rs",
   ).source;
-  const composeLifecycle = requiredSource(
-    cliSources,
-    "crates/nimbus-cli/src/compose/lifecycle.rs",
-  ).source;
   const computeProjection = requiredSource(
     computeSources,
     "crates/nimbus-compute/src/workload_projection.rs",
@@ -1006,9 +1002,6 @@ function verifySideEffectFreeSandboxInspection() {
     ) ||
     !/inspection\s*\.\s*cleanup\s*!=\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
       serviceRetirement,
-    ) ||
-    !/inspection\s*\.\s*cleanup\s*==\s*nimbus_sandbox\s*::\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
-      composeLifecycle,
     ) ||
     !/WorkloadProviderObservation\s*<\s*SandboxInspection\s*>/.test(
       computeProjection,

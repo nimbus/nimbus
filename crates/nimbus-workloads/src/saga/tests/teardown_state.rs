@@ -313,6 +313,7 @@ fn teardown_claim_binds_complete_active_and_successor_identity() {
 #[test]
 fn teardown_happy_path_orders_withdraw_drain_stop_detach_release_record() {
     let mut record = withdrawal_record(WorkloadPublicationIntent::PublishWhenReady);
+    let terminal_execution = record.current_execution_reference();
     let expected = [
         (
             WorkloadTeardownStep::WithdrawPublication,
@@ -361,6 +362,11 @@ fn teardown_happy_path_orders_withdraw_drain_stop_detach_release_record() {
         .expect("terminal evidence should record");
     assert_eq!(recorded.phase(), WorkloadSagaPhase::Recorded);
     assert!(recorded.teardown_disposition().is_none());
+    assert_eq!(
+        serde_json::to_value(&recorded).unwrap()["phaseDetail"]["value"]["terminalExecution"],
+        serde_json::to_value(terminal_execution).unwrap(),
+        "Recorded durable truth must retain the exact execution that teardown stopped"
+    );
 }
 
 #[test]

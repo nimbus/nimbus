@@ -1406,6 +1406,27 @@ impl WorkloadTeardownDetail {
     pub fn terminal_observations(&self) -> &[WorkloadTerminalObservation] {
         &self.terminal_observations
     }
+
+    /// Exact execution settled by terminal teardown evidence, when execution
+    /// authority existed for this workload generation.
+    pub fn terminal_execution_reference(&self) -> Option<&WorkloadExecutionReference> {
+        self.terminal_observations
+            .iter()
+            .find_map(|observation| match observation {
+                WorkloadTerminalObservation::ExecutionStopped { reference, .. } => Some(reference),
+                _ => None,
+            })
+            .or_else(|| {
+                self.terminal_observations
+                    .iter()
+                    .find_map(|observation| match observation {
+                        WorkloadTerminalObservation::ExecutionDrained { reference, .. } => {
+                            Some(reference)
+                        }
+                        _ => None,
+                    })
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1430,12 +1451,47 @@ impl WorkloadCleanupPendingDetail {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkloadRecordedDetail {
     completed_generation: WorkloadGeneration,
     desired_digest: WorkloadDesiredDigest,
     terminal_evidence_digest: WorkloadTerminalEvidenceDigest,
+    terminal_execution: Option<WorkloadExecutionReference>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct WorkloadRecordedDetailWire {
+    completed_generation: WorkloadGeneration,
+    desired_digest: WorkloadDesiredDigest,
+    terminal_evidence_digest: WorkloadTerminalEvidenceDigest,
+    #[serde(deserialize_with = "deserialize_required_terminal_execution")]
+    terminal_execution: Option<WorkloadExecutionReference>,
+}
+
+fn deserialize_required_terminal_execution<'de, D>(
+    deserializer: D,
+) -> Result<Option<WorkloadExecutionReference>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::deserialize(deserializer)
+}
+
+impl<'de> Deserialize<'de> for WorkloadRecordedDetail {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = WorkloadRecordedDetailWire::deserialize(deserializer)?;
+        Ok(Self {
+            completed_generation: wire.completed_generation,
+            desired_digest: wire.desired_digest,
+            terminal_evidence_digest: wire.terminal_evidence_digest,
+            terminal_execution: wire.terminal_execution,
+        })
+    }
 }
 
 impl WorkloadRecordedDetail {
@@ -1449,6 +1505,10 @@ impl WorkloadRecordedDetail {
 
     pub fn terminal_evidence_digest(&self) -> WorkloadTerminalEvidenceDigest {
         self.terminal_evidence_digest
+    }
+
+    pub fn terminal_execution_reference(&self) -> Option<&WorkloadExecutionReference> {
+        self.terminal_execution.as_ref()
     }
 }
 
@@ -1521,11 +1581,13 @@ impl WorkloadPhaseDetail {
     pub fn recorded(
         intent: &WorkloadSagaIntent,
         terminal_evidence_digest: WorkloadTerminalEvidenceDigest,
+        terminal_execution: Option<WorkloadExecutionReference>,
     ) -> Self {
         Self::Recorded(WorkloadRecordedDetail {
             completed_generation: intent.generation,
             desired_digest: intent.desired_digest,
             terminal_evidence_digest,
+            terminal_execution,
         })
     }
 

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use hyper::body::HttpBody as _;
 use hyper::{Body, Request, StatusCode};
-use nimbus::{Error, SandboxId, SandboxPortBinding, TenantId};
+use nimbus::{Error, SandboxId, TenantId};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -20,14 +20,13 @@ use nimbus_machine::api::{
     MachineApiServiceProcessSnapshot, MachineApiServiceProcessSnapshotResponse,
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
-    MachineApiServiceSandboxStopRequest, MachineApiServiceSandboxStopResponse,
     MachineApiServiceSandboxSummary, MachineApiWorkloadProvisionCommandEnvelope,
     MachineApiWorkloadProvisionPhaseRequest, MachineApiWorkloadProvisionPhaseResponse,
     MachineApiWorkloadRestartCommandEnvelope, MachineApiWorkloadRestartPhaseRequest,
     MachineApiWorkloadRestartPhaseResponse, PROTOCOL_VERSION,
     machine_api_current_service_sandbox_path, machine_api_service_sandbox_list_path,
     machine_api_service_sandbox_logs_path, machine_api_service_sandbox_path,
-    machine_api_service_sandbox_process_snapshot_path, machine_api_service_sandbox_stop_path,
+    machine_api_service_sandbox_process_snapshot_path,
 };
 use nimbus_sandbox::SandboxInspection;
 
@@ -224,29 +223,6 @@ impl MachineApiClient {
         Ok(response.inspection)
     }
 
-    pub(crate) fn stop_service_sandbox(
-        &self,
-        tenant_id: &TenantId,
-        sandbox_id: &SandboxId,
-        expected_bindings: &[SandboxPortBinding],
-    ) -> Result<MachineApiServiceSandboxStopResponse, Error> {
-        let authority = self.service_forwarder_authority()?.clone();
-        let response: MachineApiServiceSandboxStopResponse = self.post_json(
-            &machine_api_service_sandbox_stop_path(sandbox_id.as_str()),
-            &MachineApiServiceSandboxStopRequest {
-                forwarder_authority: authority.clone(),
-            },
-        )?;
-        validate_stop_response(
-            &response,
-            tenant_id,
-            sandbox_id,
-            &authority,
-            expected_bindings,
-        )?;
-        Ok(response)
-    }
-
     fn service_forwarder_authority(&self) -> Result<&MachineForwarderAuthority, Error> {
         self.forwarder_authority.as_ref().ok_or_else(|| {
             Error::PreconditionFailed(format!(
@@ -366,42 +342,6 @@ impl MachineApiClient {
             ))
         })
     }
-}
-
-fn validate_stop_response(
-    response: &MachineApiServiceSandboxStopResponse,
-    tenant_id: &TenantId,
-    sandbox_id: &SandboxId,
-    authority: &MachineForwarderAuthority,
-    expected_bindings: &[SandboxPortBinding],
-) -> Result<(), Error> {
-    if response.stopped
-        && response.tenant_id == *tenant_id
-        && response.sandbox_id == *sandbox_id
-        && response.forwarder_authority == *authority
-        && response.confirmed_absent_evidence.len() == expected_bindings.len()
-        && response
-            .confirmed_absent_evidence
-            .iter()
-            .zip(expected_bindings)
-            .all(|(receipt, expected)| {
-                matches!(
-                    receipt.outcome,
-                    nimbus_sandbox::MachinePortForwardOutcome::Withdrawn
-                        | nimbus_sandbox::MachinePortForwardOutcome::ExactAlreadyAbsent
-                ) && receipt.tenant_id == *tenant_id
-                    && receipt.sandbox_id == *sandbox_id
-                    && receipt.provider_instance == *authority.provider_instance()
-                    && receipt.provider_generation == authority.generation()
-                    && receipt.binding == *expected
-            })
-    {
-        return Ok(());
-    }
-    Err(Error::Internal(format!(
-        "machine API stop response did not authenticate the exact tenant, sandbox, provider \
-         generation, and complete binding set for {sandbox_id}; the retirement outcome remains ambiguous"
-    )))
 }
 
 fn describe_capability_decode_error(
@@ -666,103 +606,19 @@ mod tests {
     use std::os::unix::net::UnixListener as StdUnixListener;
     use std::time::Duration;
 
-    use nimbus::{
-        Error, SandboxBackendKind, SandboxHandle, SandboxId, SandboxPortBinding, SandboxStatus,
-        TenantId,
-    };
-    use nimbus_machine::MachineForwarderAuthority;
-    use nimbus_network::NetworkResourceGeneration;
-    use nimbus_sandbox::backends::container::OciMachinePortForwarderConfig;
-    use nimbus_sandbox::{MachinePortForwardOutcome, MachinePortForwardReceipt, SandboxInspection};
+    use nimbus::{Error, SandboxBackendKind, SandboxHandle, SandboxId, SandboxStatus, TenantId};
+    use nimbus_sandbox::SandboxInspection;
     use tempfile::{Builder, TempDir};
 
-    use super::{MachineApiClient, validate_stop_response};
+    use super::MachineApiClient;
     use crate::machine::api::{
         MachineApiListenMode, MachineApiState, bind_direct_listener,
         default_guest_helper_binary_dirs, serve_machine_api,
     };
     use nimbus_machine::api::{
         MachineApiHealthResponse, MachineApiServiceExecutionDriver, MachineApiServiceExecutionMode,
-        MachineApiServiceSandboxStopResponse, PROTOCOL_VERSION, machine_api_path_segment,
-        machine_api_query_path,
+        PROTOCOL_VERSION, machine_api_path_segment, machine_api_query_path,
     };
-
-    #[test]
-    fn stop_response_requires_exact_tenant_and_complete_binding_set() {
-        let tenant_id = TenantId::new("tenant-stop").expect("tenant should validate");
-        let sandbox_id = SandboxId::new("sandbox-stop");
-        let authority = test_forwarder_authority();
-        let first = SandboxPortBinding::tcp("http", 18_080, 8_080);
-        let second = SandboxPortBinding::tcp("metrics", 19_090, 9_090);
-        let receipt = |binding: SandboxPortBinding| MachinePortForwardReceipt {
-            outcome: MachinePortForwardOutcome::ExactAlreadyAbsent,
-            tenant_id: tenant_id.clone(),
-            sandbox_id: sandbox_id.clone(),
-            binding,
-            provider_instance: authority.provider_instance().clone(),
-            provider_generation: authority.generation(),
-        };
-        let response = MachineApiServiceSandboxStopResponse {
-            tenant_id: tenant_id.clone(),
-            sandbox_id: sandbox_id.clone(),
-            stopped: true,
-            forwarder_authority: authority.clone(),
-            confirmed_absent_evidence: vec![receipt(first.clone()), receipt(second.clone())],
-        };
-        let expected = [first.clone(), second.clone()];
-        validate_stop_response(&response, &tenant_id, &sandbox_id, &authority, &expected)
-            .expect("exact ordered retirement receipt set should authenticate");
-
-        let mut cases = Vec::new();
-        let mut missing = response.clone();
-        missing.confirmed_absent_evidence.pop();
-        cases.push(missing);
-        let mut extra = response.clone();
-        extra
-            .confirmed_absent_evidence
-            .push(receipt(SandboxPortBinding::tcp("admin", 17_070, 7_070)));
-        cases.push(extra);
-        let mut duplicate = response.clone();
-        duplicate.confirmed_absent_evidence[1] = duplicate.confirmed_absent_evidence[0].clone();
-        cases.push(duplicate);
-        let mut reordered = response.clone();
-        reordered.confirmed_absent_evidence.swap(0, 1);
-        cases.push(reordered);
-        let mut crossed_tenant = response.clone();
-        crossed_tenant.confirmed_absent_evidence[0].tenant_id =
-            TenantId::new("tenant-crossed").expect("tenant should validate");
-        cases.push(crossed_tenant);
-        let mut crossed_sandbox = response.clone();
-        crossed_sandbox.confirmed_absent_evidence[0].sandbox_id = SandboxId::new("sandbox-crossed");
-        cases.push(crossed_sandbox);
-        let mut crossed_provider = response.clone();
-        crossed_provider.confirmed_absent_evidence[0].provider_instance =
-            nimbus_network::NetworkProviderHandle::new(
-                nimbus_network::NetworkProviderId::for_registration_key("foreign-forwarder"),
-                "foreign-forwarder-instance",
-            )
-            .expect("foreign provider should validate");
-        cases.push(crossed_provider);
-        let mut crossed_generation = response.clone();
-        crossed_generation.confirmed_absent_evidence[0].provider_generation =
-            NetworkResourceGeneration::new(authority.generation().as_u64() + 1);
-        cases.push(crossed_generation);
-        let mut non_absent = response.clone();
-        non_absent.confirmed_absent_evidence[0].outcome = MachinePortForwardOutcome::Exposed;
-        cases.push(non_absent);
-        let mut foreign_binding = response.clone();
-        foreign_binding.confirmed_absent_evidence[0].binding =
-            SandboxPortBinding::tcp("foreign", 16_060, 6_060);
-        cases.push(foreign_binding);
-
-        for candidate in cases {
-            assert!(
-                validate_stop_response(&candidate, &tenant_id, &sandbox_id, &authority, &expected,)
-                    .is_err(),
-                "every incomplete, reordered, crossed, or foreign receipt set must fail closed"
-            );
-        }
-    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn client_reads_health_and_capabilities_from_machine_api_socket() {
@@ -1094,84 +950,6 @@ mod tests {
     }
 
     #[test]
-    fn stop_service_sandbox_sends_parent_authority_json_request() {
-        let temp_dir = short_socket_tempdir();
-        let socket_path = temp_dir.path().join("nimbus.sock");
-        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
-        let expected_path = "/v1/machine-api/service-sandboxes/db-1/stop";
-        let tenant_id = TenantId::new("tenant").expect("tenant should validate");
-        let sandbox_id = SandboxId::new("db-1");
-        let authority = test_forwarder_authority();
-        let response_body = serde_json::json!({
-            "tenant_id": tenant_id.clone(),
-            "sandbox_id": sandbox_id.clone(),
-            "stopped": true,
-            "forwarder_authority": authority.clone(),
-            "confirmed_absent_evidence": [],
-        })
-        .to_string();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("request should connect");
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .expect("read timeout should set");
-
-            let mut request = Vec::new();
-            let mut chunk = [0_u8; 1024];
-            loop {
-                match stream.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(read) => {
-                        request.extend_from_slice(&chunk[..read]);
-                        if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                            break;
-                        }
-                    }
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                        ) =>
-                    {
-                        break;
-                    }
-                    Err(error) => panic!("request should read: {error}"),
-                }
-            }
-
-            write!(
-                stream,
-                "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                response_body.len(),
-                response_body
-            )
-            .expect("response should write");
-
-            String::from_utf8(request).expect("request should be valid utf-8")
-        });
-
-        let client =
-            MachineApiClient::new_for_test(socket_path).with_forwarder_authority(authority.clone());
-        client
-            .stop_service_sandbox(&tenant_id, &sandbox_id, &[])
-            .expect("stop should succeed");
-
-        let request = server.join().expect("server should join");
-        assert!(
-            request.starts_with(&format!("POST {expected_path} HTTP/1.1\r\n")),
-            "{request}"
-        );
-        assert!(
-            request.contains("content-type: application/json\r\n"),
-            "typed stop request should advertise JSON: {request}"
-        );
-        assert!(
-            request.contains("\"forwarder_authority\""),
-            "typed stop request must carry parent-issued authority: {request}"
-        );
-    }
-
-    #[test]
     fn machine_api_path_segment_encodes_reserved_and_structural_characters() {
         // The common case (server-minted, all-unreserved) must pass through
         // byte-identical so real traffic is unchanged.
@@ -1317,32 +1095,7 @@ mod tests {
     }
 
     #[test]
-    fn stop_log_and_ps_paths_encode_hostile_id_segment() {
-        // stop: reserved space + percent literal in the id.
-        let tenant_id = TenantId::new("tenant").expect("tenant should validate");
-        let sandbox_id = SandboxId::new("a b%c");
-        let authority = test_forwarder_authority();
-        let stop_response = serde_json::json!({
-            "tenant_id": tenant_id.clone(),
-            "sandbox_id": sandbox_id.clone(),
-            "stopped": true,
-            "forwarder_authority": authority.clone(),
-            "confirmed_absent_evidence": [],
-        })
-        .to_string();
-        let stop_request = capture_machine_api_request_line(&stop_response, move |client| {
-            client
-                .clone()
-                .with_forwarder_authority(authority)
-                .stop_service_sandbox(&tenant_id, &sandbox_id, &[])
-                .expect("stop should succeed");
-        });
-        assert!(
-            stop_request
-                .starts_with("POST /v1/machine-api/service-sandboxes/a%20b%25c/stop HTTP/1.1\r\n"),
-            "{stop_request}"
-        );
-
+    fn log_and_ps_paths_encode_hostile_id_segment() {
         // logs: structural `/` in the id; the literal `?offset=7` delimiter and
         // numeric offset must stay raw after the encoded segment.
         let log_request = capture_machine_api_request_line(
@@ -1419,24 +1172,5 @@ mod tests {
             .prefix("nimbus-mac-")
             .tempdir_in("/tmp")
             .expect("short temp dir should exist")
-    }
-
-    fn test_forwarder_authority() -> MachineForwarderAuthority {
-        let forwarder = test_forwarder_config();
-        MachineForwarderAuthority::new(
-            forwarder.provider_instance().clone(),
-            forwarder.provider_generation(),
-        )
-    }
-
-    fn test_forwarder_config() -> OciMachinePortForwarderConfig {
-        OciMachinePortForwarderConfig::for_provider_instance(
-            "127.0.0.1",
-            65_001,
-            "/services/forwarder",
-            "machine-client-test-provider",
-            NetworkResourceGeneration::new(1),
-        )
-        .expect("test forwarder config should validate")
     }
 }

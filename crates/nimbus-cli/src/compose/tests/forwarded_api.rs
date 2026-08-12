@@ -289,7 +289,7 @@ services:
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn macos_read_commands_use_forwarded_machine_api_and_unfenced_down_fails_closed() {
+async fn macos_read_commands_use_forwarded_machine_api() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let compose_path = write_compose_fixture_with_body(
         temp_dir.path(),
@@ -339,18 +339,11 @@ services:
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
         helper_binary_dirs: default_guest_helper_binary_dirs(),
-        service_workloads: Some(
-            machine_api_node_workload_facade_from_sandbox_backend_with_absence(
-                Arc::new(StubMachineApiContainerBackend::with_handles([
-                    fixture_handle,
-                ])),
-                nimbus_sandbox::backends::container::MachinePortAbsenceEvidence {
-                    tenant_id: fixture_tenant_id,
-                    sandbox_id: fixture_sandbox_id.clone(),
-                    receipts: Vec::new(),
-                },
-            ),
-        ),
+        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            Arc::new(StubMachineApiContainerBackend::with_handles([
+                fixture_handle,
+            ])),
+        )),
         machine_port_forwarder: None,
         forwarder_authority: Some(forwarder_authority.clone()),
     };
@@ -438,32 +431,6 @@ services:
         rendered_top.contains("tracked processes: none"),
         "{rendered_top}"
     );
-
-    let down_error = render_service_down_for_platform(
-        &ComposeDownCommand {
-            service: Some("db".to_owned()),
-            file: vec![compose_path],
-            tenant: None,
-        },
-        &control_data_dir,
-        ServiceHostPlatform::Macos,
-        Some(client.clone()),
-    )
-    .await
-    .expect_err("compose down without durable retirement authority must fail closed");
-    assert!(
-        down_error
-            .to_string()
-            .contains("no confirmed machine workload retirement authority exists"),
-        "{down_error}"
-    );
-    let retained = client
-        .inspect_current_service_sandbox(&context.control_plane.local_tenant_id, "db")
-        .expect("failed retirement must leave guest workload inspectable")
-        .details
-        .expect("failed retirement must not stop the guest workload");
-    assert_eq!(retained.summary.sandbox_id, fixture_sandbox_id);
-    assert_eq!(retained.summary.status, SandboxStatus::Ready);
 
     let _ = shutdown_tx.send(());
     server

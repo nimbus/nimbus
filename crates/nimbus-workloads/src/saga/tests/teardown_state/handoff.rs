@@ -346,6 +346,7 @@ fn restart_result_is_settled_before_withdrawal_committed() {
     forged_terminal["phaseDetail"] = serde_json::to_value(WorkloadPhaseDetail::recorded(
         released.active_intent(),
         terminal_digest,
+        released_detail.terminal_execution_reference().cloned(),
     ))
     .unwrap();
     forged_terminal

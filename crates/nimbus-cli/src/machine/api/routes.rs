@@ -16,12 +16,12 @@ use nimbus_machine::api::{
     MACHINE_API_BOOTC_UPGRADE_PATH, MACHINE_API_CAPABILITIES_PATH,
     MACHINE_API_CURRENT_SERVICE_SANDBOX_PATH, MACHINE_API_HEALTH_PATH,
     MACHINE_API_SERVICE_SANDBOX_LOGS_PATH, MACHINE_API_SERVICE_SANDBOX_PATH,
-    MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH, MACHINE_API_SERVICE_SANDBOX_STOP_PATH,
-    MACHINE_API_SERVICE_SANDBOXES_PATH, MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH,
-    MACHINE_API_WORKLOAD_RESTART_PHASE_PATH, MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH,
-    MachineApiWorkloadProvisionPhaseRequest, MachineApiWorkloadProvisionPhaseResponse,
-    MachineApiWorkloadRestartPhaseRequest, MachineApiWorkloadRestartPhaseResponse,
-    MachineApiWorkloadTeardownPhaseRequest, MachineApiWorkloadTeardownPhaseResponse,
+    MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH, MACHINE_API_SERVICE_SANDBOXES_PATH,
+    MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH, MACHINE_API_WORKLOAD_RESTART_PHASE_PATH,
+    MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH, MachineApiWorkloadProvisionPhaseRequest,
+    MachineApiWorkloadProvisionPhaseResponse, MachineApiWorkloadRestartPhaseRequest,
+    MachineApiWorkloadRestartPhaseResponse, MachineApiWorkloadTeardownPhaseRequest,
+    MachineApiWorkloadTeardownPhaseResponse,
 };
 
 /// Bounded well above the closed JSON envelope while preventing unbounded
@@ -78,10 +78,6 @@ pub(super) fn machine_api_router(state: MachineApiState) -> Router {
         .route(
             MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH,
             get(machine_api_service_sandbox_process_snapshot),
-        )
-        .route(
-            MACHINE_API_SERVICE_SANDBOX_STOP_PATH,
-            post(machine_api_stop_service_sandbox),
         )
         .with_state(state)
 }
@@ -328,40 +324,5 @@ async fn machine_api_service_sandbox_process_snapshot(
             conmon_pid,
             process_rows,
         },
-    }))
-}
-
-async fn machine_api_stop_service_sandbox(
-    State(state): State<MachineApiState>,
-    AxumPath(sandbox_id): AxumPath<String>,
-    Json(request): Json<MachineApiServiceSandboxStopRequest>,
-) -> Result<Json<MachineApiServiceSandboxStopResponse>, MachineApiHttpError> {
-    require_forwarder_authority(&state, &request.forwarder_authority)?;
-    let workloads = require_service_workloads(&state)?;
-    let sandbox_id = nimbus::SandboxId::new(sandbox_id);
-    if workloads.inspect(&sandbox_id).await?.is_some() {
-        workloads.stop(&sandbox_id).await?;
-    }
-    let Some(absence) = workloads.absent_machine_port_receipts(&sandbox_id).await? else {
-        return Err(MachineApiHttpError {
-            status: StatusCode::NOT_FOUND,
-            message: format!("sandbox instance was not found: {sandbox_id}"),
-        });
-    };
-    if absence.sandbox_id != sandbox_id {
-        return Err(MachineApiHttpError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: format!(
-                "machine port absence evidence identified sandbox {} instead of {sandbox_id}",
-                absence.sandbox_id
-            ),
-        });
-    }
-    Ok(Json(MachineApiServiceSandboxStopResponse {
-        tenant_id: absence.tenant_id,
-        sandbox_id,
-        stopped: true,
-        forwarder_authority: request.forwarder_authority,
-        confirmed_absent_evidence: absence.receipts,
     }))
 }

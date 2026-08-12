@@ -63,9 +63,9 @@
     }
   },
   "summary": {
-    "occurrences": 115,
+    "occurrences": 114,
     "owning_managers": 25,
-    "manager_derived_handles": 41,
+    "manager_derived_handles": 40,
     "admitted_cross_process_reconstructions": 24,
     "test_fixtures": 25
   },
@@ -75,7 +75,7 @@
       "kind": "manager-derived-krun-backend-construction",
       "symbol": "prepare_local_service_manager_for_selection_with_isolation_mode",
       "ordinal": 1,
-      "line": 117,
+      "line": 109,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -83,19 +83,9 @@
     {
       "path": "crates/nimbus-cli/src/compose/mod.rs",
       "kind": "manager-derived-parent-machine-authority",
-      "symbol": "run_compose_down",
-      "ordinal": 1,
-      "line": 217,
-      "classification": "manager-derived-handle",
-      "os_node_realm": "parent-host",
-      "evidence": "nnc4.6e"
-    },
-    {
-      "path": "crates/nimbus-cli/src/compose/mod.rs",
-      "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_ps",
       "ordinal": 1,
-      "line": 240,
+      "line": 243,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -105,7 +95,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_inspect",
       "ordinal": 1,
-      "line": 262,
+      "line": 265,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -115,7 +105,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_logs",
       "ordinal": 1,
-      "line": 284,
+      "line": 287,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -125,7 +115,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "run_compose_top",
       "ordinal": 1,
-      "line": 310,
+      "line": 313,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -135,7 +125,7 @@
       "kind": "local-node-root-resolver",
       "symbol": "prepare_standalone_compose_network",
       "ordinal": 1,
-      "line": 334,
+      "line": 337,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -145,7 +135,7 @@
       "kind": "cli-staged-manager-claim",
       "symbol": "prepare_standalone_compose_network",
       "ordinal": 1,
-      "line": 338,
+      "line": 341,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -155,7 +145,7 @@
       "kind": "cli-attachment-only-composition",
       "symbol": "prepare_standalone_compose_network",
       "ordinal": 1,
-      "line": 340,
+      "line": 343,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -165,7 +155,7 @@
       "kind": "local-node-root-resolver",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 110,
+      "line": 114,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc6.4"
@@ -175,7 +165,7 @@
       "kind": "cli-staged-manager-claim",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 114,
+      "line": 118,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc6.4"
@@ -185,7 +175,7 @@
       "kind": "cli-complete-composition",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 119,
+      "line": 123,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc6.4"
@@ -195,7 +185,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 139,
+      "line": 143,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.4"

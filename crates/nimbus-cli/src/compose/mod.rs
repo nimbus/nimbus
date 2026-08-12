@@ -1,16 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nimbus::{Engine, EnginePersistenceConfig, Error, SandboxBackend};
-#[cfg(test)]
-use nimbus::{SandboxHandle, TenantId};
-use nimbus_operator::LocalNodeNetworkRoot;
-#[cfg(test)]
-use nimbus_sandbox::backends::krun::KrunSandboxStateView;
-
 use crate::cli_ux;
 use crate::machine::{HostMachineNetworkAuthority, MachineApiClient};
 use crate::network_composition::{PreparedLocalNetworkComposition, StagedLocalNetworkComposition};
+use nimbus::{Engine, EnginePersistenceConfig, Error};
+#[cfg(test)]
+use nimbus::{SandboxHandle, TenantId};
+use nimbus_operator::LocalNodeNetworkRoot;
 
 mod commands;
 pub(crate) mod discovery;
@@ -23,6 +20,7 @@ mod project;
 mod provision;
 mod quadlet_export;
 mod render;
+mod retirement;
 
 pub(crate) use self::commands::ComposeCommand;
 use self::commands::{
@@ -35,11 +33,10 @@ use self::execution::{
     LocalKrunExecutionSurface, ServiceExecutionSurface, ServiceHostPlatform,
     lookup_current_remote_service_details, machine_api_operation_error,
     missing_persisted_service_error, render_state_lookup_error, requested_service_names,
-    require_krun_backend_for_service_operation, resolve_remote_service_down_targets,
-    resolve_service_down_targets, resolve_service_execution_surface,
+    require_krun_backend_for_service_operation, resolve_service_execution_surface,
     validate_forwarded_machine_api_operations,
 };
-use self::lifecycle::{service_down_outcomes_for_selection, service_up_outcomes_for_selection};
+use self::lifecycle::service_up_outcomes_for_selection;
 pub(crate) use self::provision::{
     PreparedForwardedComposeProvisionSource, prepare_forwarded_compose_provision_source,
 };
@@ -70,7 +67,7 @@ pub(crate) async fn run_compose_command(
             .await
         }
         ComposeSubcommand::Down(down) => {
-            run_compose_down(down, control_data_dir, network_state_dir.as_deref()).await
+            run_compose_down(down, persistence_config, network_state_dir.as_deref()).await
         }
         ComposeSubcommand::Ps(list) => {
             run_compose_ps(list, control_data_dir, network_state_dir.as_deref())
@@ -208,23 +205,29 @@ where
 
 async fn run_compose_down(
     command: ComposeDownCommand,
-    control_data_dir: &Path,
+    persistence_config: &EnginePersistenceConfig,
     network_state_dir: Option<&Path>,
 ) -> Result<(), Error> {
+    let control_data_dir = control_data_dir_from_persistence_config(persistence_config);
     let selection = resolve_required_compose_selection(command.file.as_slice())?;
-    let prepared =
-        prepare_standalone_compose_network(&selection, control_data_dir, network_state_dir)?;
-    let machine_network = HostMachineNetworkAuthority::injected(prepared.authority());
-    let rendered = render_service_down_for_selection(
+    let prepared = provision::PreparedComposeProvision::prepare(
+        &selection,
+        control_data_dir,
+        network_state_dir,
+    )?;
+    let engine = Arc::new(Engine::new_with_persistence_config(persistence_config.clone()).await?);
+    let retirement = retirement::retire_compose_services(
         &command,
         &selection,
         control_data_dir,
-        ServiceHostPlatform::current(),
-        None,
-        local_krun_execution(&prepared),
-        Some(&machine_network),
+        prepared,
+        Arc::clone(&engine),
     )
-    .await?;
+    .await;
+    engine.quiesce().await;
+    let rendered = retirement
+        .map_err(retirement::ComposeRetirementError::into_nimbus_error)?
+        .render();
     emit_service_stdout(&rendered)?;
     Ok(())
 }
@@ -344,13 +347,8 @@ fn prepare_standalone_compose_network(
 fn local_krun_execution(
     prepared: &PreparedLocalNetworkComposition,
 ) -> Option<LocalKrunExecutionSurface> {
-    let backend = prepared.local_krun_backend()?;
     let state_view = prepared.local_krun_state_view()?;
-    let backend: Arc<dyn SandboxBackend> = backend;
-    Some(LocalKrunExecutionSurface {
-        state_view,
-        backend,
-    })
+    Some(LocalKrunExecutionSurface { state_view })
 }
 
 fn emit_service_stdout(rendered: &str) -> Result<(), Error> {
@@ -479,58 +477,6 @@ async fn render_service_up_for_selection(
         service_up_outcomes_for_selection(command, selection, control_data_dir, owner).await?;
     Ok(render_service_lifecycle_action_summary(
         "Compose up completed",
-        &context.control_plane.project_name,
-        &tenant,
-        &outcomes,
-    ))
-}
-
-#[cfg(test)]
-async fn render_service_down_for_platform(
-    command: &ComposeDownCommand,
-    control_data_dir: &Path,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-) -> Result<String, Error> {
-    let selection = resolve_required_compose_selection(command.file.as_slice())?;
-    render_service_down_for_selection(
-        command,
-        &selection,
-        control_data_dir,
-        host_platform,
-        machine_api_client,
-        None,
-        None,
-    )
-    .await
-}
-
-async fn render_service_down_for_selection(
-    command: &ComposeDownCommand,
-    selection: &ResolvedComposeSelection,
-    control_data_dir: &Path,
-    host_platform: ServiceHostPlatform,
-    machine_api_client: Option<MachineApiClient>,
-    local_krun: Option<LocalKrunExecutionSurface>,
-    network: Option<&HostMachineNetworkAuthority>,
-) -> Result<String, Error> {
-    let context = load_compose_project_context_for_selection(selection, control_data_dir)?;
-    let tenant = command
-        .tenant
-        .clone()
-        .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
-    let outcomes = service_down_outcomes_for_selection(
-        command,
-        selection,
-        control_data_dir,
-        host_platform,
-        machine_api_client,
-        local_krun,
-        network,
-    )
-    .await?;
-    Ok(render_service_lifecycle_action_summary(
-        "Compose down completed",
         &context.control_plane.project_name,
         &tenant,
         &outcomes,

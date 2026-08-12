@@ -256,6 +256,7 @@ impl ConfirmedMachinePublicationJournal {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn retirement_for(
         &self,
         sandbox_id: &SandboxId,
@@ -426,6 +427,7 @@ impl ConfirmedMachinePublicationJournal {
         Ok(retirement)
     }
 
+    #[cfg(test)]
     pub(crate) fn mark_retired(
         &self,
         retirement: &ConfirmedMachinePublicationRetirement,
@@ -1172,6 +1174,7 @@ impl ConfirmedMachinePublicationRetirement {
         self.progress.phase()
     }
 
+    #[cfg(test)]
     pub(crate) fn is_retired(&self) -> bool {
         self.progress.phase().is_released()
     }

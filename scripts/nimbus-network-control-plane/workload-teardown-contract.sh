@@ -74,6 +74,7 @@ run_self_test() {
     'missing-compose-retirer|teardown-contract/compose: Compose down bypasses the canonical Engine-backed compute saga'
     'missing-compose-submit|teardown-contract/compose: Compose down bypasses the canonical Engine-backed compute saga'
     'missing-compose-recorded|teardown-contract/compose: Compose down bypasses the canonical Engine-backed compute saga'
+    'compose-recorded-result-discarded|teardown-contract/compose: Compose down bypasses the canonical Engine-backed compute saga'
     'compose-terminal-reference-discarded|teardown-contract/compose: Compose down bypasses the canonical Engine-backed compute saga'
     'compose-recorded-omits-terminal-binding|teardown-contract/compose: Compose down bypasses the canonical Engine-backed compute saga'
     'cli-local-saga-store|teardown-contract/compose: Compose down bypasses the canonical Engine-backed compute saga'
@@ -256,12 +257,12 @@ run_self_test() {
       "${passed}" "${failures}"
     return 1
   fi
-  if [ "${passed}" -ne 138 ]; then
-    printf 'NNC6.5 teardown contract self-test: expected 138 mutations, observed %d\n' \
+  if [ "${passed}" -ne 139 ]; then
+    printf 'NNC6.5 teardown contract self-test: expected 139 mutations, observed %d\n' \
       "${passed}"
     return 1
   fi
-  printf 'NNC6.5 teardown contract self-test: 138 passed, 0 failed\n'
+  printf 'NNC6.5 teardown contract self-test: 139 passed, 0 failed\n'
 }
 
 case "${1:-}" in

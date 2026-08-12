@@ -7,9 +7,9 @@ use nimbus_machine::MachineForwarderAuthority;
 use nimbus_machine::api::{
     MachineApiCapabilityResponse, MachineApiHealthResponse, MachineApiServiceProcessSnapshot,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
-    MachineApiServiceSandboxStopResponse, MachineApiServiceSandboxSummary,
-    MachineApiWorkloadProvisionCommandEnvelope, MachineApiWorkloadProvisionPhaseResponse,
-    MachineApiWorkloadRestartCommandEnvelope, MachineApiWorkloadRestartPhaseResponse,
+    MachineApiServiceSandboxSummary, MachineApiWorkloadProvisionCommandEnvelope,
+    MachineApiWorkloadProvisionPhaseResponse, MachineApiWorkloadRestartCommandEnvelope,
+    MachineApiWorkloadRestartPhaseResponse,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,14 +69,6 @@ impl MachineApiClient {
         &self,
         _sandbox_id: &SandboxId,
     ) -> Result<Option<SandboxInspection>, Error> {
-        Err(unsupported_machine_api_client_error(&self.socket_path))
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn stop_service_sandbox(
-        &self,
-        _sandbox_id: &SandboxId,
-    ) -> Result<MachineApiServiceSandboxStopResponse, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 

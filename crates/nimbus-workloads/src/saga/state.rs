@@ -379,9 +379,11 @@ impl WorkloadSagaRecord {
             };
             let expected =
                 WorkloadTerminalEvidenceDigest::for_observations(&current.terminal_observations)?;
-            if recorded.terminal_evidence_digest != expected {
+            if recorded.terminal_evidence_digest != expected
+                || recorded.terminal_execution.as_ref() != current.terminal_execution_reference()
+            {
                 return Err(WorkloadSagaError::InvalidEvidence(
-                    "recorded terminal evidence digest does not match teardown evidence",
+                    "recorded terminal evidence does not match teardown evidence",
                 ));
             }
         }
@@ -750,7 +752,7 @@ impl WorkloadSagaRecord {
                 .ok_or(WorkloadSagaError::InvalidTransition(
                     "successor promotion requires queued intent",
                 ))?;
-        let (phase, detail) = initial_phase_detail(&successor)?;
+        let (phase, detail) = promoted_phase_detail(self, &successor)?;
         self.build_next(successor, None, phase, detail, None)
     }
 
@@ -796,7 +798,8 @@ impl WorkloadSagaRecord {
                     "promotion must consume the exact queued successor",
                 ));
             }
-            let (initial_phase, initial_detail) = initial_phase_detail(&candidate.active_intent)?;
+            let (initial_phase, initial_detail) =
+                promoted_phase_detail(self, &candidate.active_intent)?;
             if candidate.phase != initial_phase
                 || candidate.phase_detail != initial_detail
                 || candidate.provision_disposition
@@ -1356,9 +1359,11 @@ fn validate_evidence_continuity(
         (WorkloadPhaseDetail::Teardown(previous), WorkloadPhaseDetail::Recorded(recorded)) => {
             let expected =
                 WorkloadTerminalEvidenceDigest::for_observations(&previous.terminal_observations)?;
-            if recorded.terminal_evidence_digest != expected {
+            if recorded.terminal_evidence_digest != expected
+                || recorded.terminal_execution.as_ref() != previous.terminal_execution_reference()
+            {
                 return Err(WorkloadSagaError::InvalidEvidence(
-                    "recorded terminal evidence digest does not match teardown evidence",
+                    "recorded terminal evidence does not match teardown evidence",
                 ));
             }
         }
@@ -1380,9 +1385,32 @@ fn initial_phase_detail(
             WorkloadPhaseDetail::recorded(
                 intent,
                 WorkloadTerminalEvidenceDigest::for_observations(&[])?,
+                None,
             ),
         )),
     }
+}
+
+fn promoted_phase_detail(
+    current: &WorkloadSagaRecord,
+    intent: &WorkloadSagaIntent,
+) -> Result<(WorkloadSagaPhase, WorkloadPhaseDetail), WorkloadSagaError> {
+    if intent.desired_state != DesiredWorkloadState::Stopped {
+        return initial_phase_detail(intent);
+    }
+    let WorkloadPhaseDetail::Recorded(previous) = &current.phase_detail else {
+        return Err(WorkloadSagaError::InvalidTransition(
+            "stopped successor promotion requires recorded predecessor evidence",
+        ));
+    };
+    Ok((
+        WorkloadSagaPhase::Recorded,
+        WorkloadPhaseDetail::recorded(
+            intent,
+            previous.terminal_evidence_digest,
+            previous.terminal_execution.clone(),
+        ),
+    ))
 }
 
 fn legal_phase_edge(
@@ -1470,6 +1498,18 @@ pub(super) fn validate_phase_detail(
                 return Err(WorkloadSagaError::InvalidEvidence(
                     "recorded detail is crossed with another desired generation",
                 ));
+            }
+            if let Some(execution) = &detail.terminal_execution {
+                execution.validate_intrinsic()?;
+                if execution.generation == intent.generation {
+                    execution.validate_for(intent)?;
+                } else if execution.generation > intent.generation
+                    || intent.desired_state != DesiredWorkloadState::Stopped
+                {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "recorded terminal execution is crossed or stale",
+                    ));
+                }
             }
             Ok(())
         }

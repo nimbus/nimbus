@@ -14,9 +14,10 @@ use nimbus_services::{
 };
 use nimbus_tenant::TenantIsolationContext;
 use nimbus_workloads::{
-    DesiredWorkloadState, WorkloadActivationIntent, WorkloadGeneration, WorkloadNetworkIntent,
-    WorkloadPublicationIntent, WorkloadRestartPolicy, WorkloadSagaIntent, WorkloadSagaKey,
-    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaRevision, WorkloadSagaStoreError,
+    DesiredWorkloadState, WorkloadActivationIntent, WorkloadExecutionReference, WorkloadGeneration,
+    WorkloadNetworkIntent, WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadRestartPolicy,
+    WorkloadSagaIntent, WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadSagaRevision, WorkloadSagaStoreError,
 };
 use thiserror::Error;
 
@@ -36,6 +37,27 @@ use crate::workload_saga::{
 pub struct SandboxServiceRetirementOutcome {
     pub definition: ServiceDefinition,
     pub retired_handle: Option<nimbus_sandbox::SandboxHandle>,
+    disposition: WorkloadTeardownDisposition,
+    terminal_execution: Option<WorkloadExecutionReference>,
+}
+
+impl SandboxServiceRetirementOutcome {
+    pub const fn disposition(&self) -> WorkloadTeardownDisposition {
+        self.disposition
+    }
+
+    pub fn terminal_execution_reference(&self) -> Option<&WorkloadExecutionReference> {
+        self.terminal_execution.as_ref()
+    }
+}
+
+/// Terminal durable classification returned to native retirement callers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkloadTeardownDisposition {
+    /// The workload saga reached durable `Recorded` truth.
+    Recorded,
+    /// The source never created a workload saga or execution effect.
+    SourceFinalized,
 }
 
 /// Failure before native retirement can report truthful terminal state.
@@ -148,6 +170,8 @@ impl ComputeResourceRetirer {
             return Ok(SandboxServiceRetirementOutcome {
                 definition,
                 retired_handle: None,
+                disposition: WorkloadTeardownDisposition::SourceFinalized,
+                terminal_execution: None,
             });
         };
         authenticate_record_source(&loaded, &definition.resource_version, definition.generation)?;
@@ -159,6 +183,7 @@ impl ComputeResourceRetirer {
             .drive_recorded_teardown(&key, loaded, claim, joined_provision)
             .await?;
         authenticate_recorded_stop(&run)?;
+        let terminal_execution = recorded_terminal_execution(&run)?;
         let retired_handle = self
             .services
             .project_recorded_service_teardown(&claim, &run)?;
@@ -166,6 +191,8 @@ impl ComputeResourceRetirer {
         Ok(SandboxServiceRetirementOutcome {
             definition,
             retired_handle,
+            disposition: WorkloadTeardownDisposition::Recorded,
+            terminal_execution,
         })
     }
 
@@ -518,6 +545,15 @@ impl ComputeResourceRetirer {
             .await?;
         Ok((confirmed.record().clone(), generation))
     }
+}
+
+fn recorded_terminal_execution(
+    record: &WorkloadSagaRecord,
+) -> Result<Option<WorkloadExecutionReference>, ComputeResourceRetirementError> {
+    let WorkloadPhaseDetail::Recorded(detail) = record.phase_detail() else {
+        return Err(ComputeResourceRetirementError::InvalidRecordedSuccessor);
+    };
+    Ok(detail.terminal_execution_reference().cloned())
 }
 
 impl ComputeState {

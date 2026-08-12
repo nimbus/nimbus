@@ -28,9 +28,7 @@ use nimbus_node::{
 use nimbus_sandbox::{
     SandboxBackend, SandboxCleanupObservation, SandboxExecutionObservation, SandboxInspection,
     SandboxRestartAssessment, SandboxRestartIneligibility,
-    backends::container::{
-        ContainerSandboxBackend, ContainerSandboxStateView, MachinePortAbsenceEvidence,
-    },
+    backends::container::{ContainerSandboxBackend, ContainerSandboxStateView},
 };
 use nimbus_workloads::WorkloadExecutionId;
 
@@ -56,9 +54,9 @@ pub(super) type MachineApiServiceFuture<'a, T> =
 
 /// Narrow Machine API surface implemented by the guest workload owner.
 ///
-/// `inspect` and `stop` are retained read/retirement operations. Provisioning
-/// and restart are possible only through their exact phase commands; there
-/// are intentionally no coarse `start` or `restart` operations.
+/// `inspect` is retained as a read operation. Provisioning, restart, and
+/// teardown are possible only through exact phase commands; there are
+/// intentionally no coarse lifecycle mutations.
 pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
     fn kind(&self) -> SandboxBackendKind;
 
@@ -89,13 +87,6 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
         &'a self,
         id: &'a SandboxId,
     ) -> MachineApiServiceFuture<'a, Option<SandboxInspection>>;
-
-    fn stop<'a>(&'a self, id: &'a SandboxId) -> MachineApiServiceFuture<'a, ()>;
-
-    fn absent_machine_port_receipts<'a>(
-        &'a self,
-        id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<'a, Option<MachinePortAbsenceEvidence>>;
 
     fn provision_phase<'a>(
         &'a self,
@@ -341,39 +332,6 @@ impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {
         })
     }
 
-    fn stop<'a>(&'a self, id: &'a SandboxId) -> MachineApiServiceFuture<'a, ()> {
-        Box::pin(async move {
-            let execution_id =
-                WorkloadExecutionId::try_from(id.as_str().to_owned()).map_err(|error| {
-                    MachineApiHttpError {
-                        status: StatusCode::BAD_REQUEST,
-                        message: format!(
-                            "machine API retirement requires an execution identity: {error}"
-                        ),
-                    }
-                })?;
-            match self.lifecycle_backend.stop(execution_id).await {
-                Ok(_) | Err(Error::NotFound(_)) => {}
-                Err(error) => return Err(core_error_to_http(error)),
-            }
-            self.bundle_materializer
-                .stop(id)
-                .await
-                .map_err(sandbox_error_to_http_error)
-        })
-    }
-
-    fn absent_machine_port_receipts<'a>(
-        &'a self,
-        id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<'a, Option<MachinePortAbsenceEvidence>> {
-        Box::pin(async move {
-            self.bundle_materializer
-                .absent_machine_port_evidence(id)
-                .map_err(sandbox_error_to_http_error)
-        })
-    }
-
     fn provision_phase<'a>(
         &'a self,
         command: &'a MachineApiWorkloadProvisionCommandEnvelope,
@@ -537,27 +495,12 @@ fn core_error_to_http(error: Error) -> MachineApiHttpError {
 pub(crate) fn machine_api_node_workload_facade_from_sandbox_backend(
     backend: Arc<dyn nimbus::SandboxBackend>,
 ) -> Arc<dyn MachineApiNodeWorkloadFacade> {
-    Arc::new(TestSandboxBackendNodeWorkloadFacade {
-        backend,
-        confirmed_absence: None,
-    })
-}
-
-#[cfg(test)]
-pub(crate) fn machine_api_node_workload_facade_from_sandbox_backend_with_absence(
-    backend: Arc<dyn nimbus::SandboxBackend>,
-    confirmed_absence: MachinePortAbsenceEvidence,
-) -> Arc<dyn MachineApiNodeWorkloadFacade> {
-    Arc::new(TestSandboxBackendNodeWorkloadFacade {
-        backend,
-        confirmed_absence: Some(confirmed_absence),
-    })
+    Arc::new(TestSandboxBackendNodeWorkloadFacade { backend })
 }
 
 #[cfg(test)]
 struct TestSandboxBackendNodeWorkloadFacade {
     backend: Arc<dyn nimbus::SandboxBackend>,
-    confirmed_absence: Option<MachinePortAbsenceEvidence>,
 }
 
 #[cfg(test)]
@@ -576,23 +519,6 @@ impl MachineApiNodeWorkloadFacade for TestSandboxBackendNodeWorkloadFacade {
                 .await
                 .map_err(sandbox_error_to_http_error)
         })
-    }
-
-    fn stop<'a>(&'a self, id: &'a SandboxId) -> MachineApiServiceFuture<'a, ()> {
-        Box::pin(async move {
-            self.backend
-                .stop(id)
-                .await
-                .map_err(sandbox_error_to_http_error)
-        })
-    }
-
-    fn absent_machine_port_receipts<'a>(
-        &'a self,
-        _id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<'a, Option<MachinePortAbsenceEvidence>> {
-        let confirmed_absence = self.confirmed_absence.clone();
-        Box::pin(async move { Ok(confirmed_absence) })
     }
 }
 

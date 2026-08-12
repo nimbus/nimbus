@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -11,16 +10,16 @@ use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 
 use crate::compose::discovery::ResolvedComposeSelection;
 #[cfg(test)]
+use crate::machine::ForwardedMachineApiSandboxBackend;
+#[cfg(test)]
 use crate::machine::HostMachineNetworkComposition;
 #[cfg(test)]
 use crate::machine::ensure_default_machine_api_client_started;
 use crate::machine::{
-    ForwardedMachineApiSandboxBackend, HostMachineNetworkAuthority, MachineApiClient,
-    require_default_machine_api_client,
+    HostMachineNetworkAuthority, MachineApiClient, require_default_machine_api_client,
 };
 use crate::network_composition::StagedLocalNetworkComposition;
 
-use super::lifecycle::ServiceLifecycleTarget;
 use super::{ComposeProjectContext, file};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,20 +42,13 @@ impl ServiceHostPlatform {
 }
 
 pub(super) enum ServiceExecutionSurface {
-    Krun {
-        state_view: KrunSandboxStateView,
-        backend: Arc<dyn SandboxBackend>,
-    },
-    ForwardedContainer {
-        client: MachineApiClient,
-        backend: Arc<dyn SandboxBackend>,
-    },
+    Krun { state_view: KrunSandboxStateView },
+    ForwardedContainer { client: MachineApiClient },
 }
 
 #[derive(Clone)]
 pub(crate) struct LocalKrunExecutionSurface {
     pub(crate) state_view: KrunSandboxStateView,
-    pub(crate) backend: Arc<dyn SandboxBackend>,
 }
 
 /// A local service manager prepared under the staged OS-node authority.
@@ -217,72 +209,6 @@ pub(super) fn lookup_current_remote_service_details(
         .inspect_current_service_sandbox(tenant, service_name)
         .map(|response| response.details)
         .map_err(|error| machine_api_operation_error(operation, client, error))
-}
-
-pub(super) fn resolve_remote_service_down_targets(
-    context: &ComposeProjectContext,
-    client: &MachineApiClient,
-    tenant: &TenantId,
-    requested_service: Option<&str>,
-) -> Result<Vec<ServiceLifecycleTarget>, Error> {
-    match requested_service {
-        Some(service_name) => {
-            let details = lookup_current_remote_service_details(
-                context,
-                client,
-                tenant,
-                service_name,
-                "resolve persisted sandbox state",
-            )?
-            .ok_or_else(|| {
-                missing_persisted_service_error(
-                    &context.control_plane.project_name,
-                    tenant,
-                    service_name,
-                )
-            })?;
-            Ok(vec![ServiceLifecycleTarget {
-                sandbox_id: details.summary.sandbox_id,
-                service_name: details.summary.service_name,
-                status: details.summary.status,
-            }])
-        }
-        None => {
-            let summaries = client
-                .list_service_sandboxes(Some(tenant))
-                .map_err(|error| {
-                    machine_api_operation_error("list persisted sandbox state", client, error)
-                })?;
-            let service_names = summaries
-                .into_iter()
-                .map(|summary| summary.service_name)
-                .collect::<BTreeSet<_>>();
-
-            service_names
-                .into_iter()
-                .map(|service_name| {
-                    lookup_current_remote_service_details(
-                        context,
-                        client,
-                        tenant,
-                        &service_name,
-                        "resolve persisted sandbox state",
-                    )?
-                    .map(|details| ServiceLifecycleTarget {
-                        sandbox_id: details.summary.sandbox_id,
-                        service_name: details.summary.service_name,
-                        status: details.summary.status,
-                    })
-                    .ok_or_else(|| {
-                        Error::Internal(format!(
-                            "persisted sandbox state changed while resolving service {} in tenant {} under project {}",
-                            service_name, tenant, context.control_plane.project_name
-                        ))
-                    })
-                })
-                .collect()
-        }
-    }
 }
 
 pub(super) fn missing_persisted_service_error(
@@ -653,7 +579,6 @@ pub(super) fn resolve_service_execution_surface(
             let local_krun = require_local_krun_execution(context, operation, local_krun)?;
             Ok(ServiceExecutionSurface::Krun {
                 state_view: local_krun.state_view,
-                backend: local_krun.backend,
             })
         }
         SandboxBackendKind::Container => {
@@ -664,33 +589,7 @@ pub(super) fn resolve_service_execution_surface(
                 operation,
                 network,
             )?;
-            let backend = match network {
-                Some(network) => ForwardedMachineApiSandboxBackend::new(client.clone(), network)?,
-                #[cfg(test)]
-                None => ForwardedMachineApiSandboxBackend::new_for_test(
-                    client.clone(),
-                    nimbus_network::LocalPortLeaseAuthority::open(
-                        context
-                            .control_plane
-                            .project_root
-                            .join("test-parent-machine-network"),
-                    )
-                    .map_err(|error| {
-                        Error::Internal(format!(
-                            "failed to open isolated test parent publication authority: {error}"
-                        ))
-                    })?,
-                )?,
-                #[cfg(not(test))]
-                None => {
-                    return Err(Error::Internal(
-                        "forwarded service execution requires the retained parent network authority"
-                            .to_owned(),
-                    ));
-                }
-            };
-            let backend: Arc<dyn SandboxBackend> = Arc::new(backend);
-            Ok(ServiceExecutionSurface::ForwardedContainer { client, backend })
+            Ok(ServiceExecutionSurface::ForwardedContainer { client })
         }
     }
 }
@@ -710,7 +609,6 @@ fn require_local_krun_execution(
             .reconstruct_direct_krun_backend_config();
         Ok(LocalKrunExecutionSurface {
             state_view: KrunSandboxStateView::from_config(&config),
-            backend: Arc::new(KrunSandboxBackend::new(config)),
         })
     }
     #[cfg(not(test))]
@@ -801,54 +699,6 @@ pub(super) fn validate_forwarded_machine_api_operations(
         client.socket_path().display(),
         blockers,
     )))
-}
-
-pub(super) fn resolve_service_down_targets(
-    state_view: &KrunSandboxStateView,
-    tenant: &TenantId,
-    requested_service: Option<&str>,
-    project_name: &str,
-) -> Result<Vec<ServiceLifecycleTarget>, Error> {
-    match requested_service {
-        Some(service_name) => {
-            let details = state_view
-                .inspect_service(tenant, service_name)
-                .map_err(|error| render_state_lookup_error("resolve persisted sandbox state", error))?
-                .ok_or_else(|| {
-                    Error::InvalidInput(format!(
-                        "no persisted sandbox state found for service {} in tenant {} under project {}",
-                        service_name, tenant, project_name
-                    ))
-                })?;
-            Ok(vec![ServiceLifecycleTarget::from_details(details)])
-        }
-        None => {
-            let service_names = state_view
-                .list_for_tenant(tenant)
-                .map_err(|error| render_state_lookup_error("list persisted sandbox state", error))?
-                .into_iter()
-                .map(|summary| summary.service_name)
-                .collect::<BTreeSet<_>>();
-
-            service_names
-                .into_iter()
-                .map(|service_name| {
-                    state_view
-                        .inspect_service(tenant, &service_name)
-                        .map_err(|error| {
-                            render_state_lookup_error("resolve persisted sandbox state", error)
-                        })?
-                        .map(ServiceLifecycleTarget::from_details)
-                        .ok_or_else(|| {
-                            Error::Internal(format!(
-                                "persisted sandbox state changed while resolving service {} in tenant {} under project {}",
-                                service_name, tenant, project_name
-                            ))
-                        })
-                })
-                .collect()
-        }
-    }
 }
 
 type MachineApiServiceSandboxDetails = crate::machine::MachineApiServiceSandboxDetails;

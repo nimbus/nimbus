@@ -121,10 +121,6 @@ pub(super) fn machine_api_capability_response(
             MACHINE_API_WORKLOAD_TEARDOWN_PHASE_OPERATION,
             teardown_blockers,
         ),
-        machine_api_operation_status(
-            MACHINE_API_STOP_OPERATION,
-            shared_operation_blockers(state_operations_available, &shared_blockers),
-        ),
     ];
     let service_execution_blockers = operation_statuses
         .iter()

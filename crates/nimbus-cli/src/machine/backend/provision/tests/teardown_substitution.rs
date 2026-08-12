@@ -31,6 +31,7 @@ use nimbus_workloads::{
 };
 
 use super::*;
+use crate::machine::ForwardedMachineApiSandboxBackend;
 use crate::machine::backend::teardown::ForwardedMachineTeardownAdapter;
 
 #[path = "teardown_substitution/process_recovery.rs"]

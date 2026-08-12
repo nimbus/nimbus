@@ -3,6 +3,8 @@ use nimbus_workloads::{
     WorkloadSagaRecord,
 };
 
+use crate::WorkloadTeardownDisposition;
+
 use super::support::{
     RetirementHarness, SANDBOX_ID, SERVICE_NAME, assert_complete_teardown_order, key,
     run_async_test,
@@ -29,6 +31,12 @@ fn service_stop_persists_then_observes_complete_teardown_order() {
             });
 
         assert!(outcome.retired_handle.is_some());
+        assert_eq!(outcome.disposition(), WorkloadTeardownDisposition::Recorded);
+        assert_eq!(
+            outcome.terminal_execution_reference(),
+            Some(&running.current_execution_reference()),
+            "native retirement must return the exact durable execution after projection cleanup"
+        );
         let observation = harness
             .manager
             .service_definition_observation_for_tenant(harness.context.tenant_id(), SERVICE_NAME)
@@ -48,6 +56,28 @@ fn service_stop_persists_then_observes_complete_teardown_order() {
         );
         assert_terminal_network_successor(&running, &record);
         assert_complete_teardown_order(&harness.log.entries(), &key(SERVICE_NAME));
+    });
+}
+
+#[test]
+fn unstarted_service_retirement_reports_source_finalized_without_execution_identity() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.declare_service();
+
+        let outcome = harness
+            .retire
+            .submit_service_teardown(&harness.context, SERVICE_NAME)
+            .await
+            .expect("an unstarted source should finalize without provider effects");
+
+        assert_eq!(
+            outcome.disposition(),
+            WorkloadTeardownDisposition::SourceFinalized
+        );
+        assert!(outcome.terminal_execution_reference().is_none());
+        assert!(outcome.retired_handle.is_none());
+        assert_eq!(harness.teardown_provider.call_count(), 0);
     });
 }
 
