@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "source_head": "8468ddce3b5afc001356ea2a3ee099d29781957c",
+  "source_head": "b1f8969c05df560f76572ae69598c8fda376a298",
   "scope": {
     "production_network": "Every Rust production TCP/UDP allocation, availability probe, bind, provider bind request, pre-bound listener consumer, and inherited socket found by the recorded scans.",
     "local_ipc": "Production Unix-domain binds and inherited descriptors are classified separately because a host TCP/UDP PortLease must not absorb filesystem-path ownership.",
