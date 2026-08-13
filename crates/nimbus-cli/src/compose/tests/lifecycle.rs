@@ -205,6 +205,8 @@ impl RecordingComposeProvision {
                 SandboxStatus::Ready,
                 Vec::new(),
             ),
+            published_endpoints: Vec::new(),
+            endpoint_identity_fence: BTreeMap::new(),
             observed_at_millis: 1,
         };
         Self {

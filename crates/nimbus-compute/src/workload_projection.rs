@@ -15,10 +15,10 @@ use std::sync::Arc;
 use nimbus_network::{
     ListenerId, NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, PortAddressFamily,
     PortBindRealm, PortBindingProvenance, PortBoundEndpoint, PortLeaseId, PortLeaseLifetime,
-    PortProtocol, PublishedEndpoint, PublishedEndpointId,
+    PortProtocol, PublishedEndpoint, PublishedEndpointHandle, PublishedEndpointId,
 };
 use nimbus_sandbox::{SandboxHandle, SandboxId, SandboxInspection, SandboxStatus};
-use nimbus_services::ServiceManager;
+use nimbus_services::{ServiceInstanceObservation, ServiceManager};
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, WorkloadExecutableIntent, WorkloadExecutionReference,
     WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
@@ -271,6 +271,7 @@ pub struct WorkloadObservedProjection {
     source_resource_version: WorkloadProvisionSourceResourceVersion,
     execution: WorkloadExecutionReference,
     handle: SandboxHandle,
+    published_endpoint_handles: Vec<PublishedEndpointHandle>,
 }
 
 impl WorkloadObservedProjection {
@@ -296,6 +297,10 @@ impl WorkloadObservedProjection {
 
     pub fn handle(&self) -> &SandboxHandle {
         &self.handle
+    }
+
+    pub fn published_endpoint_handles(&self) -> &[PublishedEndpointHandle] {
+        &self.published_endpoint_handles
     }
 }
 
@@ -370,17 +375,25 @@ impl WorkloadProjectionSink for ServiceManagerWorkloadProjectionSink {
                         projection.handle().clone(),
                     )
                     .map(|_| ()),
-                WorkloadProvisionSourceKind::SandboxBackedService => self
-                    .manager
-                    .project_service_definition_execution_observation(
-                        tenant_id,
-                        source.stable_name(),
-                        projection.source_generation().as_u64(),
-                        projection.source_resource_version().as_str(),
-                        projection.execution(),
+                WorkloadProvisionSourceKind::SandboxBackedService => {
+                    let instance = ServiceInstanceObservation::new(
                         projection.handle().clone(),
-                    )
-                    .map(|_| ()),
+                        projection.published_endpoint_handles().to_vec(),
+                    );
+                    instance
+                        .and_then(|instance| {
+                            self.manager
+                                .project_service_definition_execution_observation(
+                                    tenant_id,
+                                    source.stable_name(),
+                                    projection.source_generation().as_u64(),
+                                    projection.source_resource_version().as_str(),
+                                    projection.execution(),
+                                    instance,
+                                )
+                        })
+                        .map(|_| ())
+                }
             };
             result.map_err(|error| match error {
                 nimbus_core::Error::Cancelled
@@ -518,13 +531,14 @@ impl WorkloadProjectionOrchestrator {
             Ok(handle) => handle,
             Err(reason) => return WorkloadProjectionState::Rejected(reason),
         };
-        match intent.publication() {
+        let published_endpoint_handles = match intent.publication() {
             WorkloadPublicationIntent::Withheld => {
                 if !handle.published_endpoints.is_empty() {
                     return WorkloadProjectionState::Rejected(
                         WorkloadProjectionRejectedReason::WithheldPublicationCarriedEndpoints,
                     );
                 }
+                Vec::new()
             }
             WorkloadPublicationIntent::PublishWhenReady => {
                 let references = record.phase_detail().references();
@@ -567,13 +581,17 @@ impl WorkloadProjectionOrchestrator {
                         );
                     }
                 };
-                handle.published_endpoints = match validate_ingress_observation(&request, endpoints)
-                {
-                    Ok(endpoints) => endpoints,
+                let endpoint_handles = match validate_ingress_observation(&request, endpoints) {
+                    Ok(endpoint_handles) => endpoint_handles,
                     Err(reason) => return WorkloadProjectionState::Rejected(reason),
                 };
+                handle.published_endpoints = endpoint_handles
+                    .iter()
+                    .map(|endpoint_handle| endpoint_handle.endpoint().clone())
+                    .collect();
+                endpoint_handles
             }
-        }
+        };
 
         let projection = WorkloadObservedProjection {
             key: record.key().clone(),
@@ -582,6 +600,7 @@ impl WorkloadProjectionOrchestrator {
             source_resource_version: intent.source().resource_version().clone(),
             execution: record.current_execution_reference(),
             handle,
+            published_endpoint_handles,
         };
         match self.sink.project(&projection).await {
             Ok(()) => WorkloadProjectionState::Projected,
@@ -631,7 +650,7 @@ fn validate_execution_observation(
 fn validate_ingress_observation(
     request: &WorkloadIngressObservationRequest,
     observations: Vec<WorkloadObservedIngressEndpoint>,
-) -> Result<Vec<PublishedEndpoint>, WorkloadProjectionRejectedReason> {
+) -> Result<Vec<PublishedEndpointHandle>, WorkloadProjectionRejectedReason> {
     let publication = request.publication();
     let plan = request.compiled_plan();
     let content = plan.content();
@@ -708,12 +727,17 @@ fn validate_ingress_observation(
         if let Some(guest_port) = blueprint.guest_port() {
             endpoint = endpoint.with_guest_port(guest_port);
         }
-        published.push(endpoint);
+        let generation = binding.generation();
+        published.push(PublishedEndpointHandle::new(
+            observation.endpoint_id,
+            generation,
+            endpoint,
+        ));
     }
     if endpoint_ids != compiled_endpoint_ids {
         return Err(WorkloadProjectionRejectedReason::InvalidIngressEvidence);
     }
-    published.sort_by(|left, right| left.name.cmp(&right.name));
+    published.sort_by(|left, right| left.endpoint().name.cmp(&right.endpoint().name));
     Ok(published)
 }
 

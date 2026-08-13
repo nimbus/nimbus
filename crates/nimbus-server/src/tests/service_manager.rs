@@ -11,14 +11,17 @@ use nimbus_core::{
     InvocationAuth, RuntimeUserIdentity, TenantId, VerifiedUserIdentity, VerifiedUserIdentityKind,
 };
 use nimbus_engine::Engine;
-use nimbus_network::{EndpointProtocol, PublishedEndpoint};
+use nimbus_network::{
+    EndpointProtocol, PublishedEndpoint, PublishedEndpointHandle, PublishedEndpointId,
+};
 use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
     SandboxInspection, SandboxOciImageSource, SandboxOwnerSpec, SandboxProcessSpec,
     SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
 use nimbus_services::{
-    ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog, ServiceManager,
+    ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog, ServiceInstanceObservation,
+    ServiceManager,
 };
 use nimbus_testing::ServerFixture;
 use nimbus_workloads::WorkloadTeardownStep;

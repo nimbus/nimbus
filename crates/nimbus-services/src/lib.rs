@@ -18,8 +18,8 @@ pub use catalog::{
     EmptyServiceInstanceCatalog, ExternalAuthPolicy, ExternalServiceSpec, HealthCheckPolicy,
     SandboxResource, SandboxResourceObservation, SandboxResourceSnapshot, SandboxResourceSource,
     ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog, ServiceDefinitionObservation,
-    ServiceDefinitionSource, ServiceInstanceCatalog, SessionLifecycleState, SessionResource,
-    SessionTarget, SessionTargetSnapshot,
+    ServiceDefinitionSource, ServiceInstanceCatalog, ServiceInstanceObservation,
+    SessionLifecycleState, SessionResource, SessionTarget, SessionTargetSnapshot,
 };
 pub use manager::{
     LocalBuildAdmission, SandboxServiceProvisionSource, ServiceManager,
@@ -28,7 +28,7 @@ pub use manager::{
     WorkloadSourceRetirementOperation,
 };
 pub use registry::{
-    RuntimeServiceRegistry, ServiceInstanceBindingRegistry, service_binding_from_handle,
+    RuntimeServiceRegistry, ServiceInstanceBindingRegistry, service_binding_from_instance,
 };
 pub use sandbox_templates::{
     ComposeSandboxTemplateService, DeployMode, EffectiveSandboxTemplatePolicy, LeasedSandbox,

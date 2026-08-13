@@ -41,7 +41,10 @@ fn declare_ready_service(
             definition.generation,
             &definition.resource_version,
             &execution,
-            handle,
+            service_instance_observation(
+                handle.clone(),
+                endpoint_handles_for_handle(&handle, definition.generation),
+            ),
         )
         .expect("fixture service observation should project");
     definition
@@ -243,7 +246,10 @@ fn service_projection_is_generation_fenced_and_status_mutable() {
             definition.generation,
             &definition.resource_version,
             &execution,
-            starting.clone(),
+            service_instance_observation(
+                starting.clone(),
+                endpoint_handles_for_handle(&starting, definition.generation),
+            ),
         )
         .expect("exact execution observation should establish the first service projection");
     let mut ready = starting.clone();
@@ -254,7 +260,8 @@ fn service_projection_is_generation_fenced_and_status_mutable() {
             "api",
             definition.generation,
             execution.attempt_id(),
-            ready,
+            ready.clone(),
+            endpoint_handles_for_handle(&ready, definition.generation),
         )
         .expect("same provider identity may advance service status");
     assert_eq!(ready.handle.status, SandboxStatus::Ready);
@@ -268,6 +275,7 @@ fn service_projection_is_generation_fenced_and_status_mutable() {
         definition.generation + 1,
         execution.attempt_id(),
         starting.clone(),
+        endpoint_handles_for_handle(&starting, definition.generation + 1),
     );
     assert!(matches!(stale, Err(Error::PreconditionFailed(_))));
     assert_eq!(
@@ -282,12 +290,205 @@ fn service_projection_is_generation_fenced_and_status_mutable() {
         "api",
         definition.generation,
         execution.attempt_id(),
-        crossed,
+        crossed.clone(),
+        endpoint_handles_for_handle(&crossed, definition.generation),
     );
     assert!(matches!(crossed_result, Err(Error::Conflict { .. })));
     assert_eq!(
         manager.service_definition_observation_for_tenant(&tenant_id, "api"),
         Some(before_rejections)
+    );
+}
+
+#[test]
+fn service_projection_rejects_stale_endpoint_generation_before_mutation() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let (manager, backend) = manager_with_backend();
+    let definition = manager
+        .create_service_definition(
+            &tenant_id,
+            "api",
+            image_service_backend("api", "registry.example.com/api:1"),
+            BTreeMap::new(),
+        )
+        .expect("definition should create");
+    let mut handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let execution = execution_reference_for_handle(&mut handle, definition.generation, 0);
+    let stale_generation = nimbus_network::NetworkResourceGeneration::new(
+        execution
+            .generation()
+            .as_u64()
+            .checked_sub(1)
+            .expect("fixture execution generation should be positive"),
+    );
+    let stale_endpoints = endpoint_handles_for_handle(&handle, definition.generation)
+        .into_iter()
+        .map(|endpoint| {
+            nimbus_network::PublishedEndpointHandle::new(
+                endpoint.endpoint_id().clone(),
+                stale_generation,
+                endpoint.endpoint().clone(),
+            )
+        })
+        .collect();
+
+    let rejected = manager.project_service_definition_execution_observation(
+        &tenant_id,
+        "api",
+        definition.generation,
+        &definition.resource_version,
+        &execution,
+        service_instance_observation(handle, stale_endpoints),
+    );
+
+    assert!(
+        matches!(rejected, Err(Error::PreconditionFailed(_))),
+        "a stale network generation must fail closed: {rejected:?}"
+    );
+    assert_eq!(
+        manager.service_definition_observation_for_tenant(&tenant_id, "api"),
+        None,
+        "stale endpoint evidence must not create observed service state"
+    );
+}
+
+#[test]
+fn service_projection_rejects_crossed_endpoint_identity_without_mutation() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let (manager, backend) = manager_with_backend();
+    let definition = manager
+        .create_service_definition(
+            &tenant_id,
+            "api",
+            image_service_backend("api", "registry.example.com/api:1"),
+            BTreeMap::new(),
+        )
+        .expect("definition should create");
+    let mut handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let execution = execution_reference_for_handle(&mut handle, definition.generation, 0);
+    let endpoint_handles = endpoint_handles_for_handle(&handle, definition.generation);
+    let accepted = manager
+        .project_service_definition_execution_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &execution,
+            service_instance_observation(handle.clone(), endpoint_handles.clone()),
+        )
+        .expect("exact endpoint identity should project");
+    let crossed_endpoints = endpoint_handles
+        .into_iter()
+        .map(|endpoint| {
+            nimbus_network::PublishedEndpointHandle::new(
+                nimbus_network::PublishedEndpointId::for_workload_endpoint(
+                    "crossed-service-incarnation",
+                    &endpoint.endpoint().name,
+                ),
+                endpoint.generation(),
+                endpoint.endpoint().clone(),
+            )
+        })
+        .collect();
+
+    let rejected = manager.project_service_definition_execution_observation(
+        &tenant_id,
+        "api",
+        definition.generation,
+        &definition.resource_version,
+        &execution,
+        service_instance_observation(handle, crossed_endpoints),
+    );
+
+    assert!(matches!(rejected, Err(Error::Conflict { .. })));
+    assert_eq!(
+        manager.service_definition_observation_for_tenant(&tenant_id, "api"),
+        Some(accepted),
+        "crossed stable identity must leave the exact projection unchanged"
+    );
+}
+
+#[test]
+fn service_projection_retains_endpoint_identity_fence_across_withdrawal() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let (manager, backend) = manager_with_backend();
+    let definition = manager
+        .create_service_definition(
+            &tenant_id,
+            "api",
+            image_service_backend("api", "registry.example.com/api:1"),
+            BTreeMap::new(),
+        )
+        .expect("definition should create");
+    let mut ready = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let execution = execution_reference_for_handle(&mut ready, definition.generation, 0);
+    let endpoint_handles = endpoint_handles_for_handle(&ready, definition.generation);
+    manager
+        .project_service_definition_execution_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &execution,
+            service_instance_observation(ready.clone(), endpoint_handles.clone()),
+        )
+        .expect("exact endpoint identity should project");
+    let mut withdrawn = ready.clone();
+    withdrawn.status = SandboxStatus::NotReady;
+    withdrawn.published_endpoints.clear();
+    let withdrawn = manager
+        .project_service_definition_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            execution.attempt_id(),
+            withdrawn,
+            Vec::new(),
+        )
+        .expect("same-generation withdrawal should project");
+    let crossed_endpoints = endpoint_handles
+        .into_iter()
+        .map(|endpoint| {
+            nimbus_network::PublishedEndpointHandle::new(
+                nimbus_network::PublishedEndpointId::for_workload_endpoint(
+                    "crossed-after-withdrawal",
+                    &endpoint.endpoint().name,
+                ),
+                endpoint.generation(),
+                endpoint.endpoint().clone(),
+            )
+        })
+        .collect();
+
+    let rejected = manager.project_service_definition_observation(
+        &tenant_id,
+        "api",
+        definition.generation,
+        execution.attempt_id(),
+        ready.clone(),
+        crossed_endpoints,
+    );
+
+    assert!(matches!(rejected, Err(Error::Conflict { .. })));
+    assert_eq!(
+        manager.service_definition_observation_for_tenant(&tenant_id, "api"),
+        Some(withdrawn.clone()),
+        "withdrawal must retain the stable identity fence and reject crossed republish"
+    );
+    let restored = manager
+        .project_service_definition_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            execution.attempt_id(),
+            ready.clone(),
+            endpoint_handles_for_handle(&ready, definition.generation),
+        )
+        .expect("the authenticated identity may republish after withdrawal");
+    assert_eq!(restored.handle, ready);
+    assert_eq!(
+        restored.endpoint_identity_fence,
+        withdrawn.endpoint_identity_fence
     );
 }
 
@@ -305,6 +506,7 @@ fn exact_service_projection_is_immediately_visible_to_every_read_model_without_p
         .expect("definition should create");
     let mut handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
     let execution = execution_reference_for_handle(&mut handle, definition.generation, 0);
+    let endpoint_handles = endpoint_handles_for_handle(&handle, definition.generation);
     manager
         .project_service_definition_execution_observation(
             &tenant_id,
@@ -312,14 +514,14 @@ fn exact_service_projection_is_immediately_visible_to_every_read_model_without_p
             definition.generation,
             &definition.resource_version,
             &execution,
-            handle.clone(),
+            service_instance_observation(handle.clone(), endpoint_handles.clone()),
         )
         .expect("exact service observation should project");
 
-    assert_eq!(
-        ServiceInstanceCatalog::service_instance_for_name(&manager, &tenant_id, "api"),
-        Some(handle)
-    );
+    let instance = ServiceInstanceCatalog::service_instance_for_name(&manager, &tenant_id, "api")
+        .expect("the exact service instance should be visible");
+    assert_eq!(instance.handle(), &handle);
+    assert_eq!(instance.published_endpoints(), endpoint_handles);
     assert!(
         RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, "api")
             .expect("runtime binding lookup should succeed")
@@ -496,7 +698,10 @@ fn restart_resolution_withdrawal_is_attempt_fenced_and_replay_safe() {
             definition.generation,
             &definition.resource_version,
             &target_execution,
-            target_handle,
+            service_instance_observation(
+                target_handle.clone(),
+                endpoint_handles_for_handle(&target_handle, definition.generation),
+            ),
         )
         .expect("restart target observation should project before release");
     manager
@@ -560,7 +765,10 @@ fn restart_resolution_withdrawal_is_attempt_fenced_and_replay_safe() {
             definition.generation,
             &definition.resource_version,
             &crossed_execution,
-            crossed_handle,
+            service_instance_observation(
+                crossed_handle.clone(),
+                endpoint_handles_for_handle(&crossed_handle, definition.generation),
+            ),
         )
         .expect("second restart target observation should project before release");
     manager
@@ -643,7 +851,10 @@ fn active_restart_resolution_withdrawal_hands_off_without_reopening() {
             definition.generation,
             &definition.resource_version,
             &target_execution,
-            target_handle,
+            service_instance_observation(
+                target_handle.clone(),
+                endpoint_handles_for_handle(&target_handle, definition.generation),
+            ),
         )
         .expect("successor target observation should project");
     manager
@@ -811,6 +1022,7 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
             service_definition.generation,
             service_execution.attempt_id(),
             service_handle.clone(),
+            endpoint_handles_for_handle(&service_handle, service_definition.generation),
         ),
         Err(Error::PreconditionFailed(_))
     ));
@@ -825,7 +1037,10 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
         service_definition.generation,
         &service_definition.resource_version,
         &crossed_service_execution,
-        service_handle.clone(),
+        service_instance_observation(
+            service_handle.clone(),
+            endpoint_handles_for_handle(&service_handle, service_definition.generation),
+        ),
     );
     assert!(matches!(rejected, Err(Error::InvalidInput(_))));
     assert_eq!(
@@ -841,7 +1056,10 @@ fn compute_projection_authenticates_source_version_and_execution_id_before_first
             service_definition.generation,
             &service_definition.resource_version,
             &service_execution,
-            service_handle,
+            service_instance_observation(
+                service_handle.clone(),
+                endpoint_handles_for_handle(&service_handle, service_definition.generation),
+            ),
         )
         .expect("exact service execution should project");
     assert_eq!(service_projection.handle.id.as_str(), expected_execution_id);
@@ -1014,7 +1232,10 @@ fn service_name_reads_only_the_newest_attempt_without_provider_io() {
             definition.generation,
             &definition.resource_version,
             &source_execution,
-            source_handle.clone(),
+            service_instance_observation(
+                source_handle.clone(),
+                endpoint_handles_for_handle(&source_handle, definition.generation),
+            ),
         )
         .expect("source attempt should project");
     let mut target_handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
@@ -1027,7 +1248,10 @@ fn service_name_reads_only_the_newest_attempt_without_provider_io() {
             definition.generation,
             &definition.resource_version,
             &target_execution,
-            target_handle.clone(),
+            service_instance_observation(
+                target_handle.clone(),
+                endpoint_handles_for_handle(&target_handle, definition.generation),
+            ),
         )
         .expect("target attempt should project");
 
@@ -1037,7 +1261,10 @@ fn service_name_reads_only_the_newest_attempt_without_provider_io() {
         definition.generation,
         &definition.resource_version,
         &source_execution,
-        source_handle,
+        service_instance_observation(
+            source_handle.clone(),
+            endpoint_handles_for_handle(&source_handle, definition.generation),
+        ),
     );
     assert!(matches!(delayed, Err(Error::PreconditionFailed(_))));
     assert_eq!(
@@ -1052,13 +1279,17 @@ fn service_name_reads_only_the_newest_attempt_without_provider_io() {
                 definition.generation,
                 &definition.resource_version,
                 &target_execution,
-                target_handle.clone(),
+                service_instance_observation(
+                    target_handle.clone(),
+                    endpoint_handles_for_handle(&target_handle, definition.generation),
+                ),
             )
             .expect("exact target replay should be idempotent"),
         target
     );
     assert_eq!(
-        ServiceInstanceCatalog::service_instance_for_name(&manager, &tenant_id, "api"),
+        ServiceInstanceCatalog::service_instance_for_name(&manager, &tenant_id, "api")
+            .map(|observation| observation.handle().clone()),
         Some(target_handle)
     );
     assert_eq!(backend.image_starts.load(Ordering::SeqCst), 0);

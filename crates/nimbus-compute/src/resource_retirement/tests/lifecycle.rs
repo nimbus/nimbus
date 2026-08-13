@@ -1,4 +1,7 @@
-use nimbus_network::{EndpointProtocol, PublishedEndpoint};
+use nimbus_network::{
+    EndpointProtocol, NetworkResourceGeneration, PublishedEndpoint, PublishedEndpointHandle,
+    PublishedEndpointId,
+};
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_workloads::{
     DesiredWorkloadState, WorkloadActivationIntent, WorkloadProvisionSourceGeneration,
@@ -19,14 +22,43 @@ fn make_service_routable(harness: &RetirementHarness) {
         .manager
         .service_definition_observation_for_tenant(harness.context.tenant_id(), SERVICE_NAME)
         .expect("started service should have an observed projection");
+    let generation = observation.observed_execution_generation;
+    let existing_endpoint_handles = observation.published_endpoints;
     let mut routable = observation.handle;
-    routable.published_endpoints.push(PublishedEndpoint::new(
+    let endpoint = PublishedEndpoint::new(
         "http",
         EndpointProtocol::Http,
         "127.0.0.1:18080"
             .parse()
             .expect("fixture endpoint should parse"),
-    ));
+    );
+    if !routable
+        .published_endpoints
+        .iter()
+        .any(|candidate| candidate.name == endpoint.name)
+    {
+        routable.published_endpoints.push(endpoint);
+    }
+    let endpoint_handles = routable
+        .published_endpoints
+        .iter()
+        .map(|endpoint| {
+            existing_endpoint_handles
+                .iter()
+                .find(|candidate| candidate.endpoint().name == endpoint.name)
+                .cloned()
+                .unwrap_or_else(|| {
+                    PublishedEndpointHandle::new(
+                        PublishedEndpointId::for_workload_endpoint(
+                            "retirement-fixture-service",
+                            &endpoint.name,
+                        ),
+                        NetworkResourceGeneration::new(generation),
+                        endpoint.clone(),
+                    )
+                })
+        })
+        .collect();
     harness
         .manager
         .project_service_definition_observation(
@@ -35,6 +67,7 @@ fn make_service_routable(harness: &RetirementHarness) {
             observation.source_generation,
             observation.execution.attempt_id(),
             routable,
+            endpoint_handles,
         )
         .expect("fixture service should become routable");
 }

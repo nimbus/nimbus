@@ -44,7 +44,7 @@ pub use capability_registry::{
     NetworkCapabilitySelectionEvidence, NetworkCapabilitySourceDigest,
     NetworkIngressProviderRegistration,
 };
-pub use endpoint::{EndpointProtocol, PublishedEndpoint};
+pub use endpoint::{EndpointProtocol, PublishedEndpoint, PublishedEndpointHandle};
 pub use identity::{
     IngressRouteId, ListenerId, NetworkAttachmentId, NetworkLeaseEpoch, NetworkPlanId,
     NetworkProviderId, NetworkResourceGeneration, NetworkResourceIdParseError,

@@ -2,11 +2,12 @@ use std::collections::BTreeMap;
 
 use nimbus_core::{Error, TenantId};
 use nimbus_runtime::{InvocationServiceBinding, InvocationServices};
-use nimbus_sandbox::{SandboxHandle, SandboxStatus};
+use nimbus_sandbox::SandboxStatus;
 use nimbus_workloads::WorkloadExecutionAttemptId;
 
 use crate::ServiceBackend;
-use crate::registry::{RuntimeServiceRegistry, service_binding_from_handle};
+use crate::ServiceInstanceObservation;
+use crate::registry::{RuntimeServiceRegistry, service_binding_from_instance};
 
 use super::ServiceManager;
 use super::types::{
@@ -23,8 +24,8 @@ impl RuntimeServiceRegistry for ServiceManager {
     fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> InvocationServices {
         self.service_instances_for_resolution(tenant_id)
             .into_iter()
-            .filter_map(|(service_name, handle)| {
-                service_binding_from_handle(&handle).map(|binding| (service_name, binding))
+            .filter_map(|(service_name, observation)| {
+                service_binding_from_instance(&observation).map(|binding| (service_name, binding))
             })
             .collect()
     }
@@ -34,10 +35,11 @@ impl RuntimeServiceRegistry for ServiceManager {
         tenant_id: &TenantId,
         service_name: &str,
     ) -> Result<Option<InvocationServiceBinding>, Error> {
-        let Some(handle) = self.service_instance_for_resolution(tenant_id, service_name)? else {
+        let Some(observation) = self.service_instance_for_resolution(tenant_id, service_name)?
+        else {
             return Ok(None);
         };
-        Ok(service_binding_from_handle(&handle))
+        Ok(service_binding_from_instance(&observation))
     }
 }
 
@@ -183,7 +185,7 @@ impl ServiceManager {
     pub(super) fn service_instances_for_resolution(
         &self,
         tenant_id: &TenantId,
-    ) -> BTreeMap<String, SandboxHandle> {
+    ) -> BTreeMap<String, ServiceInstanceObservation> {
         let state = self
             .state
             .lock()
@@ -201,7 +203,12 @@ impl ServiceManager {
                         SandboxStatus::Stopped | SandboxStatus::Failed
                     )
             })
-            .map(|(key, observation)| (key.service_name.clone(), observation.handle.clone()))
+            .filter_map(|(key, observation)| {
+                observation
+                    .service_instance()
+                    .ok()
+                    .map(|instance| (key.service_name.clone(), instance))
+            })
             .collect()
     }
 
@@ -209,7 +216,7 @@ impl ServiceManager {
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Result<Option<SandboxHandle>, Error> {
+    ) -> Result<Option<ServiceInstanceObservation>, Error> {
         let state = self
             .state
             .lock()
@@ -226,7 +233,7 @@ impl ServiceManager {
                 "service observation for `{service_name}` is crossed with tenant `{tenant_id}`"
             )));
         }
-        Ok(Some(observation.handle.clone()))
+        Ok(Some(observation.service_instance()?))
     }
 }
 

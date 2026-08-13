@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
+
 use nimbus_core::{Error, TenantId};
+use nimbus_network::{NetworkResourceGeneration, PublishedEndpointHandle};
 use nimbus_sandbox::SandboxHandle;
 use nimbus_workloads::{WorkloadExecutionAttemptId, WorkloadExecutionReference};
 
-use crate::{ServiceBackend, ServiceDefinitionObservation};
+use crate::{ServiceBackend, ServiceDefinitionObservation, ServiceInstanceObservation};
 
 use super::ServiceManager;
 use super::clock::now_millis;
@@ -17,6 +20,7 @@ struct ServiceDefinitionObservationProjection<'a> {
     expected_attempt_id: &'a WorkloadExecutionAttemptId,
     exact_execution: Option<&'a WorkloadExecutionReference>,
     handle: SandboxHandle,
+    published_endpoints: Vec<PublishedEndpointHandle>,
 }
 
 impl ServiceManager {
@@ -46,6 +50,7 @@ impl ServiceManager {
         observed_execution_generation: u64,
         expected_attempt_id: &WorkloadExecutionAttemptId,
         handle: SandboxHandle,
+        published_endpoints: Vec<PublishedEndpointHandle>,
     ) -> Result<ServiceDefinitionObservation, Error> {
         self.project_service_definition_observation_inner(ServiceDefinitionObservationProjection {
             tenant_id,
@@ -56,6 +61,7 @@ impl ServiceManager {
             expected_attempt_id,
             exact_execution: None,
             handle,
+            published_endpoints,
         })
     }
 
@@ -73,8 +79,10 @@ impl ServiceManager {
         source_generation: u64,
         expected_resource_version: &str,
         execution: &WorkloadExecutionReference,
-        handle: SandboxHandle,
+        instance: ServiceInstanceObservation,
     ) -> Result<ServiceDefinitionObservation, Error> {
+        let handle = instance.handle().clone();
+        let published_endpoints = instance.published_endpoints().to_vec();
         self.project_service_definition_observation_inner(ServiceDefinitionObservationProjection {
             tenant_id,
             service_name,
@@ -84,6 +92,7 @@ impl ServiceManager {
             expected_attempt_id: execution.attempt_id(),
             exact_execution: Some(execution),
             handle,
+            published_endpoints,
         })
     }
 
@@ -100,6 +109,7 @@ impl ServiceManager {
             expected_attempt_id,
             exact_execution,
             handle,
+            published_endpoints,
         } = projection;
         // Static catalog definitions are immutable. Dynamic definitions are
         // selected again under the state lock below so an update cannot race a
@@ -156,6 +166,14 @@ impl ServiceManager {
                 handle.id, handle.tenant_id, handle.name, handle.backend
             )));
         }
+        validate_endpoint_generations(
+            tenant_id,
+            service_name,
+            observed_execution_generation,
+            &published_endpoints,
+        )?;
+        ServiceInstanceObservation::new(handle.clone(), published_endpoints.clone())?;
+        let candidate_endpoint_identities = endpoint_identities(&published_endpoints);
         if exact_execution.is_some_and(|execution| {
             execution.generation().as_u64() != observed_execution_generation
                 || handle.id.as_str() != execution.execution_id().as_str()
@@ -191,6 +209,15 @@ impl ServiceManager {
                     "service `{service_name}` for tenant `{tenant_id}` execution generation {observed_execution_generation} already has a different provider observation"
                 )));
             }
+            if existing.observed_execution_generation == observed_execution_generation
+                && !existing.endpoint_identity_fence.is_empty()
+                && !candidate_endpoint_identities.is_empty()
+                && existing.endpoint_identity_fence != candidate_endpoint_identities
+            {
+                return Err(Error::conflict(format!(
+                    "service `{service_name}` for tenant `{tenant_id}` execution generation {observed_execution_generation} already has different stable endpoint identity"
+                )));
+            }
             if existing.observed_execution_generation == observed_execution_generation {
                 validate_attempt_progression(
                     tenant_id,
@@ -205,6 +232,7 @@ impl ServiceManager {
                 )));
             }
             if existing.handle == handle
+                && existing.published_endpoints == published_endpoints
                 && existing.execution.attempt_id() == expected_attempt_id
                 && existing.observed_execution_generation == observed_execution_generation
             {
@@ -220,6 +248,15 @@ impl ServiceManager {
                 .execution
                 .clone(),
         };
+        let endpoint_identity_fence = match existing {
+            Some(existing)
+                if existing.observed_execution_generation == observed_execution_generation
+                    && candidate_endpoint_identities.is_empty() =>
+            {
+                existing.endpoint_identity_fence.clone()
+            }
+            _ => candidate_endpoint_identities,
+        };
         let observation = ServiceDefinitionObservation {
             tenant_id: tenant_id.clone(),
             name: service_name.to_owned(),
@@ -227,6 +264,8 @@ impl ServiceManager {
             observed_execution_generation,
             execution,
             handle,
+            published_endpoints,
+            endpoint_identity_fence,
             observed_at_millis: now_millis(),
         };
         state
@@ -234,6 +273,32 @@ impl ServiceManager {
             .insert(key, observation.clone());
         Ok(observation)
     }
+}
+
+fn validate_endpoint_generations(
+    tenant_id: &TenantId,
+    service_name: &str,
+    observed_execution_generation: u64,
+    published_endpoints: &[PublishedEndpointHandle],
+) -> Result<(), Error> {
+    let expected = NetworkResourceGeneration::new(observed_execution_generation);
+    for endpoint in published_endpoints {
+        if endpoint.generation() < expected {
+            return Err(Error::PreconditionFailed(format!(
+                "service `{service_name}` for tenant `{tenant_id}` rejected stale endpoint {} generation {}; exact execution generation is {observed_execution_generation}",
+                endpoint.endpoint_id(),
+                endpoint.generation().as_u64()
+            )));
+        }
+        if endpoint.generation() > expected {
+            return Err(Error::InvalidInput(format!(
+                "service `{service_name}` for tenant `{tenant_id}` rejected crossed endpoint {} generation {}; exact execution generation is {observed_execution_generation}",
+                endpoint.endpoint_id(),
+                endpoint.generation().as_u64()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_attempt_progression(
@@ -288,4 +353,24 @@ fn same_provider_identity(left: &SandboxHandle, right: &SandboxHandle) -> bool {
         && left.tenant_id == right.tenant_id
         && left.name == right.name
         && left.backend == right.backend
+}
+
+fn endpoint_identities(
+    endpoints: &[PublishedEndpointHandle],
+) -> BTreeMap<
+    String,
+    (
+        nimbus_network::PublishedEndpointId,
+        NetworkResourceGeneration,
+    ),
+> {
+    endpoints
+        .iter()
+        .map(|endpoint| {
+            (
+                endpoint.endpoint().name.clone(),
+                (endpoint.endpoint_id().clone(), endpoint.generation()),
+            )
+        })
+        .collect()
 }

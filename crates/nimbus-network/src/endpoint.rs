@@ -2,6 +2,8 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::{NetworkResourceGeneration, PublishedEndpointId};
+
 /// Transport semantics of an admitted or published application endpoint.
 ///
 /// This is protocol vocabulary, not a protocol parser or listener
@@ -51,6 +53,49 @@ impl PublishedEndpoint {
     pub fn with_guest_port(mut self, guest_port: u16) -> Self {
         self.guest_port = Some(guest_port);
         self
+    }
+}
+
+/// Portable identity and generation for one observed published endpoint.
+///
+/// The stable ID and desired generation remain separate from the provider's
+/// observed address. Upper layers can therefore carry a reachable location
+/// without treating that location as workload or resource identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PublishedEndpointHandle {
+    endpoint_id: PublishedEndpointId,
+    generation: NetworkResourceGeneration,
+    endpoint: PublishedEndpoint,
+}
+
+impl PublishedEndpointHandle {
+    /// Compose already-authenticated identity, generation, and observation.
+    pub fn new(
+        endpoint_id: PublishedEndpointId,
+        generation: NetworkResourceGeneration,
+        endpoint: PublishedEndpoint,
+    ) -> Self {
+        Self {
+            endpoint_id,
+            generation,
+            endpoint,
+        }
+    }
+
+    /// Stable address-independent endpoint identity.
+    pub fn endpoint_id(&self) -> &PublishedEndpointId {
+        &self.endpoint_id
+    }
+
+    /// Desired network generation authenticated for this observation.
+    pub const fn generation(&self) -> NetworkResourceGeneration {
+        self.generation
+    }
+
+    /// Provider-observed reachable location and protocol.
+    pub fn endpoint(&self) -> &PublishedEndpoint {
+        &self.endpoint
     }
 }
 
@@ -129,5 +174,30 @@ mod tests {
 
         assert_eq!(omitted.guest_port, None);
         assert_eq!(explicit_null, omitted);
+    }
+
+    #[test]
+    fn portable_handle_keeps_identity_and_generation_separate_from_location() {
+        let endpoint_id =
+            PublishedEndpointId::for_workload_endpoint("tenant-a/workload-incarnation-a", "api");
+        let generation = NetworkResourceGeneration::new(7);
+        let endpoint = PublishedEndpoint::new(
+            "api",
+            EndpointProtocol::Https,
+            "127.0.0.1:8443".parse().expect("valid endpoint"),
+        );
+        let handle =
+            PublishedEndpointHandle::new(endpoint_id.clone(), generation, endpoint.clone());
+
+        assert_eq!(handle.endpoint_id(), &endpoint_id);
+        assert_eq!(handle.generation(), generation);
+        assert_eq!(handle.endpoint(), &endpoint);
+        assert_eq!(
+            serde_json::from_value::<PublishedEndpointHandle>(
+                serde_json::to_value(&handle).expect("serialize portable endpoint handle"),
+            )
+            .expect("deserialize portable endpoint handle"),
+            handle
+        );
     }
 }

@@ -5,7 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use nimbus_core::{Error, TenantId};
 use nimbus_egress::EgressPolicy;
-use nimbus_network::{EndpointProtocol, PublishedEndpoint};
+use nimbus_network::{
+    EndpointProtocol, NetworkResourceGeneration, PublishedEndpoint, PublishedEndpointHandle,
+    PublishedEndpointId,
+};
 use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxFuture, SandboxHandle, SandboxId, SandboxInspection,
     SandboxMountSpec, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
@@ -19,7 +22,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     ExternalAuthPolicy, HealthCheckPolicy, RuntimeServiceRegistry, ServiceBackend,
-    ServiceDefinition, ServiceDefinitionCatalog, SessionLifecycleState, SessionTarget,
+    ServiceDefinition, ServiceDefinitionCatalog, ServiceInstanceObservation, SessionLifecycleState,
+    SessionTarget,
 };
 use nimbus_tenant::{TenantIsolationContext, TenantVolumePolicyDecision};
 
@@ -59,6 +63,36 @@ pub(super) fn execution_reference_for_handle(
         "desiredDigest": desired_digest,
     }))
     .expect("fixture execution reference should validate")
+}
+
+pub(super) fn endpoint_handles_for_handle(
+    handle: &SandboxHandle,
+    generation: u64,
+) -> Vec<PublishedEndpointHandle> {
+    let incarnation = format!(
+        "nimbus.services.test-incarnation.v1:{}:{}",
+        handle.tenant_id, handle.name
+    );
+    handle
+        .published_endpoints
+        .iter()
+        .cloned()
+        .map(|endpoint| {
+            PublishedEndpointHandle::new(
+                PublishedEndpointId::for_workload_endpoint(&incarnation, &endpoint.name),
+                NetworkResourceGeneration::new(generation),
+                endpoint,
+            )
+        })
+        .collect()
+}
+
+pub(super) fn service_instance_observation(
+    handle: SandboxHandle,
+    published_endpoints: Vec<PublishedEndpointHandle>,
+) -> ServiceInstanceObservation {
+    ServiceInstanceObservation::new(handle, published_endpoints)
+        .expect("fixture service instance observation should validate")
 }
 
 pub(super) struct StubServiceDefinitionCatalog {

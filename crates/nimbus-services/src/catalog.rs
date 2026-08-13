@@ -1,7 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
 
 use nimbus_core::TenantId;
+use nimbus_network::{NetworkResourceGeneration, PublishedEndpointHandle, PublishedEndpointId};
 use nimbus_sandbox::{SandboxHandle, SandboxSpec};
 use nimbus_tenant::TenantVolumePolicyDecision;
 use nimbus_workloads::WorkloadExecutionReference;
@@ -14,16 +15,101 @@ const SANDBOX_RESOURCE_VERSION_DOMAIN: &[u8] =
     b"nimbus.services.sandbox-resource.resource-version.v1";
 
 pub trait ServiceInstanceCatalog: Send + Sync + 'static {
-    fn service_instances_for_tenant(&self, tenant_id: &TenantId)
-    -> BTreeMap<String, SandboxHandle>;
+    fn service_instances_for_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> BTreeMap<String, ServiceInstanceObservation>;
 
     fn service_instance_for_name(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<SandboxHandle> {
+    ) -> Option<ServiceInstanceObservation> {
         self.service_instances_for_tenant(tenant_id)
             .remove(service_name)
+    }
+}
+
+/// Services-owned readiness observation paired with portable endpoint handles.
+///
+/// Logical service names and readiness remain in this crate. Endpoint IDs and
+/// generations remain network-owned values, and a provider address never
+/// substitutes for either one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceInstanceObservation {
+    handle: SandboxHandle,
+    published_endpoints: Vec<PublishedEndpointHandle>,
+}
+
+impl ServiceInstanceObservation {
+    /// Validate one complete address-to-control-plane correlation.
+    pub fn new(
+        handle: SandboxHandle,
+        published_endpoints: Vec<PublishedEndpointHandle>,
+    ) -> Result<Self, nimbus_core::Error> {
+        if handle.published_endpoints.len() != published_endpoints.len() {
+            return Err(nimbus_core::Error::InvalidInput(
+                "service endpoint handles do not cover the observed endpoint set".to_owned(),
+            ));
+        }
+
+        let mut observed_by_name = BTreeMap::new();
+        for endpoint in &handle.published_endpoints {
+            if observed_by_name
+                .insert(endpoint.name.as_str(), endpoint)
+                .is_some()
+            {
+                return Err(nimbus_core::Error::InvalidInput(format!(
+                    "service observation contains duplicate endpoint name `{}`",
+                    endpoint.name
+                )));
+            }
+        }
+        let mut stable_ids = BTreeSet::new();
+        let mut handle_names = BTreeSet::new();
+        let mut generation = None;
+        for endpoint_handle in &published_endpoints {
+            if !stable_ids.insert(endpoint_handle.endpoint_id()) {
+                return Err(nimbus_core::Error::InvalidInput(
+                    "service observation contains a duplicate stable endpoint ID".to_owned(),
+                ));
+            }
+            if !handle_names.insert(endpoint_handle.endpoint().name.as_str()) {
+                return Err(nimbus_core::Error::InvalidInput(format!(
+                    "service endpoint handles contain duplicate name `{}`",
+                    endpoint_handle.endpoint().name
+                )));
+            }
+            if generation.is_some_and(|current| current != endpoint_handle.generation()) {
+                return Err(nimbus_core::Error::InvalidInput(
+                    "service endpoint handles cross network generations".to_owned(),
+                ));
+            }
+            generation = Some(endpoint_handle.generation());
+            if observed_by_name.get(endpoint_handle.endpoint().name.as_str())
+                != Some(&endpoint_handle.endpoint())
+            {
+                return Err(nimbus_core::Error::InvalidInput(format!(
+                    "service endpoint handle `{}` does not match its observed location",
+                    endpoint_handle.endpoint().name
+                )));
+            }
+        }
+
+        Ok(Self {
+            handle,
+            published_endpoints,
+        })
+    }
+
+    /// Services-owned workload readiness and observed endpoint locations.
+    pub fn handle(&self) -> &SandboxHandle {
+        &self.handle
+    }
+
+    /// Stable endpoint identities, generations, and observed locations.
+    pub fn published_endpoints(&self) -> &[PublishedEndpointHandle] {
+        &self.published_endpoints
     }
 }
 
@@ -131,7 +217,17 @@ pub struct ServiceDefinitionObservation {
     pub observed_execution_generation: u64,
     pub execution: WorkloadExecutionReference,
     pub handle: SandboxHandle,
+    pub published_endpoints: Vec<PublishedEndpointHandle>,
+    /// Last authenticated nonempty stable identity set for this execution.
+    pub endpoint_identity_fence: BTreeMap<String, (PublishedEndpointId, NetworkResourceGeneration)>,
     pub observed_at_millis: u64,
+}
+
+impl ServiceDefinitionObservation {
+    /// Revalidate the observation before logical service resolution.
+    pub fn service_instance(&self) -> Result<ServiceInstanceObservation, nimbus_core::Error> {
+        ServiceInstanceObservation::new(self.handle.clone(), self.published_endpoints.clone())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -659,7 +755,7 @@ impl ServiceInstanceCatalog for EmptyServiceInstanceCatalog {
     fn service_instances_for_tenant(
         &self,
         _tenant_id: &TenantId,
-    ) -> BTreeMap<String, SandboxHandle> {
+    ) -> BTreeMap<String, ServiceInstanceObservation> {
         BTreeMap::new()
     }
 }

@@ -1246,6 +1246,21 @@ fn project_observed_service(
         SandboxId::new(execution.execution_id().as_str()),
         SandboxStatus::Ready,
     );
+    let endpoint_handles = handle
+        .published_endpoints
+        .iter()
+        .cloned()
+        .map(|endpoint| {
+            PublishedEndpointHandle::new(
+                PublishedEndpointId::for_workload_endpoint(
+                    "server-definition-retirement-fixture",
+                    &endpoint.name,
+                ),
+                NetworkResourceGeneration::new(execution.generation().as_u64()),
+                endpoint,
+            )
+        })
+        .collect();
     manager
         .project_service_definition_execution_observation(
             &definition.tenant_id,
@@ -1253,7 +1268,8 @@ fn project_observed_service(
             definition.generation,
             &definition.resource_version,
             &execution,
-            handle,
+            ServiceInstanceObservation::new(handle, endpoint_handles)
+                .expect("retirement service instance should validate"),
         )
         .expect("retirement observed execution should project");
 }

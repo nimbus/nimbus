@@ -2,15 +2,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use nimbus_core::{Error, TenantId};
-use nimbus_network::{EndpointProtocol, PublishedEndpoint};
+use nimbus_network::{EndpointProtocol, PublishedEndpointHandle};
 use nimbus_runtime::{
     InvocationServiceBinding, InvocationServiceEndpoint, InvocationServiceProtocol,
     InvocationServices,
 };
-use nimbus_sandbox::{SandboxHandle, SandboxStatus};
+use nimbus_sandbox::SandboxStatus;
 use nimbus_tenant::TenantServiceAccessDecision;
 
-use crate::ServiceInstanceCatalog;
+use crate::{ServiceInstanceCatalog, ServiceInstanceObservation};
 
 /// Effect-free runtime service naming projection.
 ///
@@ -49,11 +49,13 @@ impl RuntimeServiceRegistry for ServiceInstanceBindingRegistry {
         self.service_instances
             .service_instances_for_tenant(tenant_id)
             .into_iter()
-            .filter_map(|(service_name, handle)| {
-                if &handle.tenant_id != tenant_id {
+            .filter_map(|(service_name, observation)| {
+                if &observation.handle().tenant_id != tenant_id
+                    || observation.handle().name != service_name
+                {
                     return None;
                 }
-                service_binding_from_handle(&handle).map(|binding| (service_name, binding))
+                service_binding_from_instance(&observation).map(|binding| (service_name, binding))
             })
             .collect()
     }
@@ -63,32 +65,38 @@ impl RuntimeServiceRegistry for ServiceInstanceBindingRegistry {
         tenant_id: &TenantId,
         service_name: &str,
     ) -> Result<Option<InvocationServiceBinding>, Error> {
-        let Some(handle) = self
+        let Some(observation) = self
             .service_instances
             .service_instance_for_name(tenant_id, service_name)
         else {
             return Ok(None);
         };
-        if handle.tenant_id != *tenant_id {
+        if observation.handle().tenant_id != *tenant_id || observation.handle().name != service_name
+        {
             return Err(Error::PermissionDenied(format!(
-                "sandbox catalog returned service {service_name} for tenant {}, but runtime lookup requested tenant {tenant_id}",
-                handle.tenant_id
+                "sandbox catalog returned service {} for tenant {}, but runtime lookup requested service {service_name} for tenant {tenant_id}",
+                observation.handle().name,
+                observation.handle().tenant_id
             )));
         }
-        Ok(service_binding_from_handle(&handle))
+        Ok(service_binding_from_instance(&observation))
     }
 }
 
-pub fn service_binding_from_handle(handle: &SandboxHandle) -> Option<InvocationServiceBinding> {
+pub fn service_binding_from_instance(
+    observation: &ServiceInstanceObservation,
+) -> Option<InvocationServiceBinding> {
+    let handle = observation.handle();
     if handle.status != SandboxStatus::Ready {
         return None;
     }
 
-    let primary = select_primary_endpoint(&handle.published_endpoints)?;
-    let endpoints = handle
-        .published_endpoints
+    let primary = select_primary_endpoint(observation.published_endpoints())?;
+    let endpoints = observation
+        .published_endpoints()
         .iter()
-        .map(|endpoint| {
+        .map(|endpoint_handle| {
+            let endpoint = endpoint_handle.endpoint();
             (
                 endpoint.name.clone(),
                 service_endpoint_from_published(endpoint),
@@ -97,15 +105,18 @@ pub fn service_binding_from_handle(handle: &SandboxHandle) -> Option<InvocationS
         .collect::<BTreeMap<_, _>>();
 
     Some(InvocationServiceBinding {
-        host: primary.address.ip().to_string(),
-        port: primary.address.port(),
-        protocol: service_protocol_from_published(primary.protocol),
+        host: primary.endpoint().address.ip().to_string(),
+        port: primary.endpoint().address.port(),
+        protocol: service_protocol_from_published(primary.endpoint().protocol),
         endpoints,
     })
 }
 
-fn select_primary_endpoint(endpoints: &[PublishedEndpoint]) -> Option<&PublishedEndpoint> {
-    endpoints.iter().min_by_key(|endpoint| {
+fn select_primary_endpoint(
+    endpoints: &[PublishedEndpointHandle],
+) -> Option<&PublishedEndpointHandle> {
+    endpoints.iter().min_by_key(|endpoint_handle| {
+        let endpoint = endpoint_handle.endpoint();
         (
             primary_protocol_rank(endpoint.protocol),
             endpoint.name.as_str(),
@@ -122,7 +133,9 @@ fn primary_protocol_rank(protocol: EndpointProtocol) -> u8 {
     }
 }
 
-fn service_endpoint_from_published(endpoint: &PublishedEndpoint) -> InvocationServiceEndpoint {
+fn service_endpoint_from_published(
+    endpoint: &nimbus_network::PublishedEndpoint,
+) -> InvocationServiceEndpoint {
     InvocationServiceEndpoint {
         host: endpoint.address.ip().to_string(),
         port: endpoint.address.port(),
@@ -143,21 +156,43 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use nimbus_core::TenantId;
-    use nimbus_sandbox::{SandboxBackendKind, SandboxId};
+    use nimbus_network::{NetworkResourceGeneration, PublishedEndpoint, PublishedEndpointId};
+    use nimbus_sandbox::{SandboxBackendKind, SandboxHandle, SandboxId};
 
     use super::*;
 
     struct StubServiceInstanceCatalog {
-        sandboxes: BTreeMap<String, SandboxHandle>,
+        sandboxes: BTreeMap<String, ServiceInstanceObservation>,
     }
 
     impl ServiceInstanceCatalog for StubServiceInstanceCatalog {
         fn service_instances_for_tenant(
             &self,
             _tenant_id: &TenantId,
-        ) -> BTreeMap<String, SandboxHandle> {
+        ) -> BTreeMap<String, ServiceInstanceObservation> {
             self.sandboxes.clone()
         }
+    }
+
+    fn instance(handle: SandboxHandle) -> ServiceInstanceObservation {
+        let incarnation = format!(
+            "services-registry-test:{}:{}",
+            handle.tenant_id, handle.name
+        );
+        let endpoints = handle
+            .published_endpoints
+            .iter()
+            .cloned()
+            .map(|endpoint| {
+                PublishedEndpointHandle::new(
+                    PublishedEndpointId::for_workload_endpoint(&incarnation, &endpoint.name),
+                    NetworkResourceGeneration::new(1),
+                    endpoint,
+                )
+            })
+            .collect();
+        ServiceInstanceObservation::new(handle, endpoints)
+            .expect("fixture service observation should validate")
     }
 
     #[test]
@@ -166,7 +201,7 @@ mod tests {
         let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
-                SandboxHandle::new(
+                instance(SandboxHandle::new(
                     tenant_id.clone(),
                     SandboxId::new("sandbox-db"),
                     "db",
@@ -184,7 +219,7 @@ mod tests {
                             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                         ),
                     ],
-                ),
+                )),
             )]),
         }));
 
@@ -209,7 +244,7 @@ mod tests {
         let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
-                SandboxHandle::new(
+                instance(SandboxHandle::new(
                     tenant_id.clone(),
                     SandboxId::new("sandbox-db"),
                     "db",
@@ -220,7 +255,7 @@ mod tests {
                         EndpointProtocol::Tcp,
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                     )],
-                ),
+                )),
             )]),
         }));
 
@@ -233,19 +268,50 @@ mod tests {
     #[test]
     fn not_ready_endpoint_withdrawal_cannot_materialize_a_service_binding() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let handle = SandboxHandle::new(
+        let observation = instance(SandboxHandle::new(
             tenant_id,
             SandboxId::new("sandbox-withdrawn"),
             "db",
             SandboxBackendKind::Krun,
             SandboxStatus::NotReady,
             Vec::new(),
-        );
+        ));
 
         assert!(
-            service_binding_from_handle(&handle).is_none(),
+            service_binding_from_instance(&observation).is_none(),
             "a backend-withdrawn NotReady projection must not become a logical service binding"
         );
+    }
+
+    #[test]
+    fn instance_rejects_endpoint_handle_for_a_different_observed_location() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let observed = PublishedEndpoint::new(
+            "postgres",
+            EndpointProtocol::Tcp,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
+        );
+        let handle = SandboxHandle::new(
+            tenant_id,
+            SandboxId::new("sandbox-db"),
+            "db",
+            SandboxBackendKind::Krun,
+            SandboxStatus::Ready,
+            vec![observed],
+        );
+        let crossed = PublishedEndpointHandle::new(
+            PublishedEndpointId::for_workload_endpoint("registry-test", "postgres"),
+            NetworkResourceGeneration::new(1),
+            PublishedEndpoint::new(
+                "postgres",
+                EndpointProtocol::Tcp,
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 25432),
+            ),
+        );
+
+        let rejected = ServiceInstanceObservation::new(handle, vec![crossed]);
+
+        assert!(matches!(rejected, Err(Error::InvalidInput(_))));
     }
 
     #[test]
@@ -255,7 +321,7 @@ mod tests {
         let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
-                SandboxHandle::new(
+                instance(SandboxHandle::new(
                     other_tenant,
                     SandboxId::new("sandbox-db"),
                     "db",
@@ -266,7 +332,7 @@ mod tests {
                         EndpointProtocol::Tcp,
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                     )],
-                ),
+                )),
             )]),
         }));
 
@@ -282,7 +348,7 @@ mod tests {
         let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
-                SandboxHandle::new(
+                instance(SandboxHandle::new(
                     tenant_id.clone(),
                     SandboxId::new("sandbox-db"),
                     "db",
@@ -293,7 +359,7 @@ mod tests {
                         EndpointProtocol::Tcp,
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                     )],
-                ),
+                )),
             )]),
         }));
 
@@ -313,7 +379,7 @@ mod tests {
         let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
             sandboxes: BTreeMap::from([(
                 "db".to_string(),
-                SandboxHandle::new(
+                instance(SandboxHandle::new(
                     other_tenant,
                     SandboxId::new("sandbox-db"),
                     "db",
@@ -324,7 +390,7 @@ mod tests {
                         EndpointProtocol::Tcp,
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                     )],
-                ),
+                )),
             )]),
         }));
 
@@ -337,6 +403,39 @@ mod tests {
                 .to_string()
                 .contains("returned service db for tenant tenant-b"),
             "error should name the rejected handle tenant: {error}"
+        );
+    }
+
+    #[test]
+    fn resolve_service_binding_rejects_handle_for_a_different_logical_name() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let registry = ServiceInstanceBindingRegistry::new(Arc::new(StubServiceInstanceCatalog {
+            sandboxes: BTreeMap::from([(
+                "api".to_string(),
+                instance(SandboxHandle::new(
+                    tenant_id.clone(),
+                    SandboxId::new("sandbox-crossed"),
+                    "admin",
+                    SandboxBackendKind::Krun,
+                    SandboxStatus::Ready,
+                    vec![PublishedEndpoint::new(
+                        "http",
+                        EndpointProtocol::Http,
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
+                    )],
+                )),
+            )]),
+        }));
+
+        assert!(registry.snapshot_for_tenant(&tenant_id).is_empty());
+        let error = registry
+            .resolve_service_binding(&tenant_id, "api")
+            .expect_err("crossed logical service name should fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("returned service admin for tenant tenant"),
+            "error should name the crossed logical service: {error}"
         );
     }
 }

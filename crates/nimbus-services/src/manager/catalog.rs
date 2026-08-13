@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
 
+use crate::{ServiceInstanceCatalog, ServiceInstanceObservation};
 use nimbus_core::TenantId;
-use nimbus_sandbox::SandboxHandle;
-
-use crate::ServiceInstanceCatalog;
 
 use super::ServiceManager;
 
@@ -18,7 +16,7 @@ impl ServiceInstanceCatalog for ServiceManager {
     fn service_instances_for_tenant(
         &self,
         tenant_id: &TenantId,
-    ) -> BTreeMap<String, SandboxHandle> {
+    ) -> BTreeMap<String, ServiceInstanceObservation> {
         self.service_instances_for_resolution(tenant_id)
     }
 }

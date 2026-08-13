@@ -25,8 +25,9 @@ use nimbus_workloads::{
 use super::*;
 use crate::SessionTarget;
 use crate::manager::tests::{
-    StubSandboxBackend, StubServiceDefinitionCatalog, execution_reference_for_handle,
-    image_service_backend, reserve_standalone_source, standalone_resource_spec,
+    StubSandboxBackend, StubServiceDefinitionCatalog, endpoint_handles_for_handle,
+    execution_reference_for_handle, image_service_backend, reserve_standalone_source,
+    service_instance_observation, standalone_resource_spec,
 };
 use crate::manager::types::TenantSandboxResourceKey;
 
@@ -65,7 +66,10 @@ impl Fixture {
                 definition.generation,
                 &definition.resource_version,
                 &service_execution,
-                service_handle,
+                service_instance_observation(
+                    service_handle.clone(),
+                    endpoint_handles_for_handle(&service_handle, definition.generation),
+                ),
             )
             .expect("service observation should project");
 

@@ -749,6 +749,26 @@ async fn publish_when_ready_requires_exact_provider_assigned_endpoint_evidence()
             .port(),
         0
     );
+    let endpoint_handle = &projections[0].published_endpoint_handles()[0];
+    assert_eq!(
+        endpoint_handle.endpoint_id(),
+        fixture
+            .observed
+            .active_intent()
+            .network()
+            .compiled_plan()
+            .content()
+            .listeners()[0]
+            .endpoint_id()
+    );
+    assert_eq!(
+        endpoint_handle.generation(),
+        NetworkResourceGeneration::new(GENERATION)
+    );
+    assert_eq!(
+        endpoint_handle.endpoint(),
+        &projections[0].handle().published_endpoints[0]
+    );
 }
 
 #[tokio::test]
@@ -774,6 +794,7 @@ async fn ingress_observation_order_is_irrelevant_and_projection_is_canonical() {
     );
     let projections = sink.projections();
     let endpoints = &projections[0].handle().published_endpoints;
+    let endpoint_handles = projections[0].published_endpoint_handles();
     assert_eq!(
         endpoints
             .iter()
@@ -783,6 +804,13 @@ async fn ingress_observation_order_is_irrelevant_and_projection_is_canonical() {
     );
     assert_eq!(endpoints[0].address.port(), 49_153);
     assert_eq!(endpoints[1].address.port(), 49_152);
+    assert_eq!(
+        endpoint_handles
+            .iter()
+            .map(|endpoint| endpoint.endpoint().name.as_str())
+            .collect::<Vec<_>>(),
+        ["admin", "api"]
+    );
     assert_eq!(provider.effect_calls.load(Ordering::Acquire), 0);
 }
 
