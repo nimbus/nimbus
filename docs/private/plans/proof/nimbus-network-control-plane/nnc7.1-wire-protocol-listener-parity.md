@@ -1,6 +1,6 @@
 # NNC7.1 Wire-Protocol Listener Parity
 
-Status: `in progress; source audit complete; acceptance verification next`
+Status: `complete; P1-P12 green; item commit contains this record`
 
 Starting checkpoint: `fb9880e16b9b0a95768fe4f217318fa4532229aa`
 
@@ -84,16 +84,68 @@ It settles only after a confirmed local close.
 | --- | --- | --- |
 | P1 | The source census finds one private `WireProtocolAdapter` seam, exactly MongoDB/DynamoDB/S3 implementations, server-owned sibling binds, one main listener path, and one separate KV listener owner. | pass |
 | P2 | Main and sibling paths prove claim/adopt/activate before serving, observed projection after activation, and confirmed-close settlement without using an address as identity. | pass |
-| P3 | HTTP and WebSocket real-serve, route security, origin, tenant, and subprotocol tests pass. | pending |
-| P4 | MongoDB adapter identity/guard plus real OP_MSG, SCRAM, tenant admission, and cross-tenant tests pass. | pending |
-| P5 | DynamoDB adapter identity/guard plus all five deterministic protocol families pass. | pending |
-| P6 | S3 adapter identity/guard, unsigned refusal, SigV4, placement, and download tests pass. | pending |
-| P7 | RESP listener lifecycle, loopback refusal, tenant auth, RESP2/RESP3, contention, and fresh-process tests pass. | pending |
-| P8 | The complete affected server and KV suites pass with exact counts and intentional ignores recorded. | pending |
-| P9 | The source and dependency scan confirms that no socket, task, protocol, security, projection, or provider effect moved into `nimbus-network`; its only workspace edge remains `nimbus-core`. | pending |
-| P10 | The NNC7.1a expected-red remains ignored in normal suites and reproduces only its named partial-start survivor defect when run explicitly. | pending |
-| P11 | Affected check, strict Clippy/Rustdoc, format/diff, live/static verifier, proof lint, docs, and site gates pass. | pending |
-| P12 | After P1-P11 pass, one GPT-5.6 Sol/xhigh/fast item review passes and the exact verification-only item is committed once. | pending |
+| P3 | HTTP and WebSocket real-serve, route security, origin, tenant, and subprotocol tests pass. | pass |
+| P4 | MongoDB adapter identity/guard plus real OP_MSG, SCRAM, tenant admission, and cross-tenant tests pass. | pass |
+| P5 | DynamoDB adapter identity/guard plus all five deterministic protocol families pass. | pass |
+| P6 | S3 adapter identity/guard, unsigned refusal, SigV4, placement, and download tests pass. | pass |
+| P7 | RESP listener lifecycle, loopback refusal, tenant auth, RESP2/RESP3, contention, and fresh-process tests pass. | pass |
+| P8 | The complete affected server and KV suites pass with exact counts and intentional ignores recorded. | pass |
+| P9 | The source and dependency scan confirms that no socket, task, protocol, security, projection, or provider effect moved into `nimbus-network`; its only workspace edge remains `nimbus-core`. | pass |
+| P10 | The NNC7.1a expected-red remains ignored in normal suites and reproduces only its named partial-start survivor defect when run explicitly. | pass |
+| P11 | Affected check, strict Clippy/Rustdoc, format/diff, live/static verifier, proof lint, docs, and site gates pass. | pass |
+| P12 | After P1-P11 pass, one GPT-5.6 Sol/xhigh/fast item review passes and the exact verification-only item is committed once. | pass |
+
+## Acceptance Evidence
+
+The focused server matrix passes `45/45`:
+
+| Surface | Result |
+| --- | ---: |
+| `WireProtocolAdapter` identity and guards | `6/6` |
+| Main and sibling lease lifecycle | `4/4` |
+| WebSocket negotiation and subscription | `6/6` |
+| HTTP/WebSocket route security | `13/13` |
+| MongoDB wire, tenant, and authentication | `3/3` |
+| DynamoDB protocol families | `5/5` |
+| S3 security and protocol behavior | `8/8` |
+
+The complete KV suite passes `26` tests with three declared ignores. Two
+ignores are child-only process entry points. The third requires a separately
+built Nimbus binary for the Redis client smoke test. Unit tests pass `3/3`,
+cache tests pass `6/6`, network lifecycle tests pass `10/10` with two child
+entries ignored, and RESP integration tests pass `7/7`.
+
+The NNC6.1e2 candidate ran the complete server suite at the same executable
+tree. It passed `741` tests with `36` declared ignores. The two commits after
+that result changed only this private plan and proof. NNC7.1 therefore reuses
+the exact full-suite result instead of repeating a 741-test run after the
+focused protocol matrix.
+
+The explicit NNC7.1a command exits `101` with `0` passed and `1` failed. The
+second adapter reports `AddrInUse`. The first adapter then accepts and returns
+`still-live`, which triggers only the named NNCF17 assertion. The normal server
+suite keeps this test ignored.
+
+Static evidence finds exactly three `WireProtocolAdapter` implementations.
+The effect scan finds no listener, stream, process, router, or mount effect in
+`nimbus-network`. `cargo tree` shows `nimbus-core` as its only Nimbus workspace
+edge. The live architecture verifier passes `36/36`.
+
+Affected `cargo check`, strict Clippy, warning-denied Rustdoc, format, and diff
+checks pass. The ordinary compiler warnings come only from unchanged vendored
+Brotli sources. The Nimbus crates pass the strict `-D warnings` gate.
+
+## Item Review
+
+The one item review used the Nimbus autoreview wrapper with Codex
+`gpt-5.6-sol`, xhigh reasoning, fast service, one pass, and no fallback. It
+reviewed staged tree `2ec4b2dfa373d6b87bf803b3204f3872f82db267`, patch
+SHA-256 `cf6873d05059bfe79fd176c1b457030bf534e523855925a116023fa4f2c04a60`,
+and two private documentation paths. TruffleHog was clean. The review found no
+accepted or actionable finding and rated the patch correct at confidence
+`0.88`. It confirmed the test sums, ignore accounting, unchanged-product
+full-suite reuse, ownership, ordering, security, dependency, effect boundary,
+and NNC7.1a disposition. The review cadence is complete.
 
 ## Verification Commands
 
@@ -138,8 +190,8 @@ bash scripts/verify-nimbus-docs-site.sh
 | Field | Value |
 | --- | --- |
 | Current item | NNC7.1 |
-| Last durable commit | `fb9880e16b9b0a95768fe4f217318fa4532229aa` |
+| Last durable commit | The commit containing this completed record is the NNC7.1 item commit. |
 | Current owned paths | This proof and the canonical plan/index only. Product implementation has not started. |
-| Last green | NNC6.1e2 item commit; NNC7.1 source census P1-P2. |
-| Next action | Run the focused protocol/security matrix, then the one final affected and quality funnel if it remains green. |
+| Last green | P1-P11; focused server `45/45`; complete KV `26 + 3 ignored`; reused exact-product server `741 + 36 ignored`; expected-red NNC7.1a `0/1` at NNCF17; affected quality; live architecture `36/36`; docs `108`; site `17/17`; proof lint zero. |
+| Next action | Begin the read-only NNC7.1a structured listener-group audit from the clean item checkpoint. |
 | Blocker | none |
