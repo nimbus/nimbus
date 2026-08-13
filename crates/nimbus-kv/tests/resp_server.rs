@@ -137,6 +137,32 @@ async fn unauthenticated_command_is_rejected() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn unknown_client_commands_share_one_bounded_metric_label() {
+    let (credentials, credential) = CredentialRegistry::generated_dev(tenant("tenant-a"));
+    let (addr, server) = spawn_test_server(credentials).await;
+    let mut stream = TcpStream::connect(addr).await.expect("connects");
+
+    for index in 0..128 {
+        let name = format!("CLIENT-SUPPLIED-UNKNOWN-{index}");
+        let response = write_command(&mut stream, &[name.as_bytes()]).await;
+        assert_eq!(response, "-NOAUTH Authentication required\r\n");
+    }
+
+    let auth = write_command(&mut stream, &[b"AUTH", credential.password.as_bytes()]).await;
+    assert_eq!(auth, "+OK\r\n");
+    let metrics = write_command(&mut stream, &[b"NIMBUS.METRICS"]).await;
+    assert!(
+        metrics.contains("command.UNKNOWN.calls:128"),
+        "unknown commands must share one metric bucket, got {metrics:?}"
+    );
+    assert!(
+        !metrics.contains("CLIENT-SUPPLIED-UNKNOWN"),
+        "client-supplied command names must not appear in metrics: {metrics:?}"
+    );
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn invalid_utf8_credentials_are_rejected_without_lossy_matching() {
     let lossy_replacement = char::REPLACEMENT_CHARACTER.to_string();
     let credentials =
