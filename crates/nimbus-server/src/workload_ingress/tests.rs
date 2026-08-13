@@ -1678,8 +1678,21 @@ fn restart_publication_for(
         NetworkPlanContentDigest::sha256(b"restart-listener-retention-fixture"),
         requirements,
     );
+    let endpoint_identities = batch.routes.iter().enumerate().map(|(ordinal, route)| {
+        nimbus_sandbox::SandboxProvisionEndpointIdentity::new(
+            route.expected.listener_id.clone(),
+            PublishedEndpointId::for_workload_endpoint(
+                &key.saga_id,
+                &format!("listener-{ordinal}"),
+            ),
+        )
+    });
     let listeners = batch.routes.iter().enumerate().map(|(ordinal, route)| {
         nimbus_sandbox::SandboxProvisionListener::new(
+            PublishedEndpointId::for_workload_endpoint(
+                &key.saga_id,
+                &format!("listener-{ordinal}"),
+            ),
             route.expected.listener_id.clone(),
             nimbus_sandbox::SandboxPortBinding::tcp(format!("listener-{ordinal}"), 0, 9),
             route.expected.request.clone(),
@@ -1690,6 +1703,7 @@ fn restart_publication_for(
         batch.tenant_id.clone(),
         batch.generation,
         batch.attachment_id.clone(),
+        endpoint_identities,
         listeners,
         [],
     )

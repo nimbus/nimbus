@@ -14,6 +14,7 @@ mod error;
 mod execution_attempt;
 mod inspection;
 mod instance;
+mod network_status;
 mod process;
 mod provider_command;
 mod provision;
@@ -39,6 +40,7 @@ pub use inspection::{
     SandboxRestartAssessment, SandboxRestartBlocker, SandboxRestartIneligibility,
 };
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
+pub use network_status::{SandboxNetworkStatus, SandboxNetworkStatusError};
 pub use provider_command::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
     ProviderCommandClaimInput, ProviderCommandCurrentExecution, ProviderCommandCurrentInspection,
@@ -47,10 +49,10 @@ pub use provider_command::{
     ProviderCommandStartedExecutionClaim,
 };
 pub use provision::{
-    SandboxProvisionDependencyListener, SandboxProvisionIngressRoute,
-    SandboxProvisionIngressTargetObservation, SandboxProvisionIngressTargets,
-    SandboxProvisionListener, SandboxProvisionNetworkPlan, SandboxProvisionNetworkPlanError,
-    SandboxProvisionPhaseObservation,
+    SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity,
+    SandboxProvisionIngressRoute, SandboxProvisionIngressTargetObservation,
+    SandboxProvisionIngressTargets, SandboxProvisionListener, SandboxProvisionNetworkPlan,
+    SandboxProvisionNetworkPlanError, SandboxProvisionPhaseObservation,
 };
 pub use spec::{
     SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec, SandboxOciBuildSpec,

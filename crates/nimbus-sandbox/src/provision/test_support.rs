@@ -11,7 +11,8 @@ use nimbus_network::{
 };
 
 use super::{
-    SandboxProvisionDependencyListener, SandboxProvisionListener, SandboxProvisionNetworkPlan,
+    SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity, SandboxProvisionListener,
+    SandboxProvisionNetworkPlan,
 };
 use crate::backends::sandbox_network_plan_requirements;
 use crate::instance::SandboxId;
@@ -68,6 +69,12 @@ fn build_sandbox_provision_network_plan_fixture(
         requirements.capability_requirements().clone(),
     );
     let plan_id = plan.plan_id().clone();
+    let endpoint_identities = spec.port_bindings.iter().map(|binding| {
+        SandboxProvisionEndpointIdentity::new(
+            ListenerId::for_tenant_workload_listener(&spec.tenant_id, incarnation, &binding.name),
+            nimbus_network::PublishedEndpointId::for_workload_endpoint(incarnation, &binding.name),
+        )
+    });
     let listeners = spec.port_bindings.iter().map(|binding| {
         let listener_id =
             ListenerId::for_tenant_workload_listener(&spec.tenant_id, incarnation, &binding.name);
@@ -88,13 +95,19 @@ fn build_sandbox_provision_network_plan_fixture(
             ),
         )
         .with_plan_id(plan_id.clone());
-        SandboxProvisionListener::new(listener_id, binding.clone(), request)
+        SandboxProvisionListener::new(
+            nimbus_network::PublishedEndpointId::for_workload_endpoint(incarnation, &binding.name),
+            listener_id,
+            binding.clone(),
+            request,
+        )
     });
     SandboxProvisionNetworkPlan::new(
         plan,
         spec.tenant_id.clone(),
         generation,
         attachment_id,
+        endpoint_identities,
         listeners,
         [SandboxProvisionDependencyListener::new(
             ListenerId::for_tenant_workload_listener(&spec.tenant_id, incarnation, "egress-pep"),

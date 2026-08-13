@@ -3,8 +3,8 @@ use nimbus_network::PublishedEndpoint;
 #[cfg(unix)]
 use nimbus_sandbox::SandboxInspection;
 use nimbus_sandbox::{
-    SandboxBackendKind, SandboxId, SandboxLifecycleSpec, SandboxPortBinding, SandboxResourceLimits,
-    SandboxStatus,
+    SandboxBackendKind, SandboxId, SandboxLifecycleSpec, SandboxNetworkStatus, SandboxPortBinding,
+    SandboxResourceLimits, SandboxStatus,
 };
 #[cfg(unix)]
 use nimbus_workloads::{
@@ -889,6 +889,7 @@ pub struct MachineApiServiceSandboxSummary {
     pub service_name: String,
     pub status: SandboxStatus,
     pub published_endpoints: Vec<PublishedEndpoint>,
+    pub network_status: Option<SandboxNetworkStatus>,
     pub last_exit_code: Option<i32>,
     pub shutdown_requested: bool,
 }

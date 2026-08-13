@@ -2,16 +2,18 @@
 use nimbus_core::WorkloadId;
 #[cfg(unix)]
 use nimbus_network::{
-    NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
-    NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
-    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkProviderHandle, NetworkProviderId,
-    NetworkResourceGeneration, NetworkSovereigntyRequirements,
+    EndpointProtocol, NetworkAttachmentCapabilitySet, NetworkAttachmentHandle, NetworkAttachmentId,
+    NetworkCapabilityRequirements, NetworkControlPlaneLocality, NetworkEndpointCapabilitySet,
+    NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet, NetworkLifecycleCapabilitySet,
+    NetworkManagementMode, NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration,
+    NetworkSovereigntyRequirements, PublishedEndpoint, PublishedEndpointHandle,
+    PublishedEndpointId,
 };
 #[cfg(unix)]
 use nimbus_sandbox::{
-    SandboxCleanupObservation, SandboxExecutionObservation, SandboxHandle, SandboxOwnerSpec,
-    SandboxProcessSpec, SandboxRestartAssessment, SandboxRestartBlocker, SandboxRootSpec,
-    SandboxSpec,
+    SandboxCleanupObservation, SandboxExecutionAttemptId, SandboxExecutionObservation,
+    SandboxHandle, SandboxNetworkStatus, SandboxOwnerSpec, SandboxProcessSpec,
+    SandboxRestartAssessment, SandboxRestartBlocker, SandboxRootSpec, SandboxSpec,
 };
 #[cfg(unix)]
 use nimbus_workloads::{
@@ -133,7 +135,32 @@ fn service_sandbox_inspection_dto_is_strict_and_preserves_exact_evidence() {
         SandboxStatus::Ready,
         Vec::new(),
     );
-    let inspection = SandboxInspection::provider_reported(handle.clone()).with_provider_projection(
+    let generation = NetworkResourceGeneration::new(9);
+    let endpoint = PublishedEndpoint::new(
+        "api",
+        EndpointProtocol::Https,
+        "127.0.0.1:8443".parse().expect("endpoint should parse"),
+    );
+    let network_status = SandboxNetworkStatus::new(
+        Some(NetworkAttachmentHandle::new(
+            NetworkAttachmentId::for_workload_attachment("machine-api/status", "primary"),
+            generation,
+        )),
+        [PublishedEndpointHandle::new(
+            PublishedEndpointId::for_workload_endpoint("machine-api/status", "api"),
+            generation,
+            endpoint,
+        )],
+    )
+    .expect("portable network status should validate");
+    let inspection = SandboxInspection::provider_authenticated_running_with_network_status(
+        handle.clone(),
+        Some(network_status),
+        SandboxExecutionAttemptId::new("machine-api-status-attempt")
+            .expect("attempt should validate"),
+        b"provider-evidence-does-not-enter-wire-fields",
+    )
+    .with_provider_projection(
         handle.clone(),
         SandboxExecutionObservation::Exited { exit_code: 42 },
         SandboxRestartAssessment::Candidate {
@@ -148,6 +175,11 @@ fn service_sandbox_inspection_dto_is_strict_and_preserves_exact_evidence() {
     };
     let inspect_value =
         serde_json::to_value(&inspect_response).expect("inspection response should serialize");
+    let inspect_json = inspect_value.to_string();
+    assert!(inspect_json.contains("network_status"));
+    assert!(inspect_json.contains("attachmentId"));
+    assert!(!inspect_json.contains("opaque_value"));
+    assert!(!inspect_json.contains("provider-evidence-does-not-enter-wire-fields"));
     assert_eq!(
         serde_json::from_value::<MachineApiServiceSandboxInspectResponse>(inspect_value.clone())
             .expect("inspection response should deserialize"),
@@ -166,6 +198,82 @@ fn service_sandbox_inspection_dto_is_strict_and_preserves_exact_evidence() {
         inspect_value,
         "inspection response",
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn service_sandbox_list_and_lookup_round_trip_portable_network_status() {
+    let tenant_id = TenantId::new("tenant-machine-summary").expect("tenant should validate");
+    let sandbox_id = SandboxId::new("sandbox-machine-summary-01");
+    let generation = NetworkResourceGeneration::new(13);
+    let attachment_id = NetworkAttachmentId::for_workload_attachment("machine-summary", "primary");
+    let endpoint_id = PublishedEndpointId::for_workload_endpoint("machine-summary", "api");
+    let endpoint = PublishedEndpoint::new(
+        "api",
+        EndpointProtocol::Http,
+        "127.0.0.1:8080".parse().expect("endpoint should parse"),
+    )
+    .with_guest_port(8080);
+    let network_status = SandboxNetworkStatus::new(
+        Some(NetworkAttachmentHandle::new(
+            attachment_id.clone(),
+            generation,
+        )),
+        [PublishedEndpointHandle::new(
+            endpoint_id.clone(),
+            generation,
+            endpoint.clone(),
+        )],
+    )
+    .expect("portable status should validate");
+    let summary = MachineApiServiceSandboxSummary {
+        sandbox_id,
+        tenant_id: tenant_id.clone(),
+        service_name: "api".to_owned(),
+        status: SandboxStatus::Ready,
+        published_endpoints: vec![endpoint],
+        network_status: Some(network_status),
+        last_exit_code: None,
+        shutdown_requested: false,
+    };
+    let list = MachineApiServiceSandboxListResponse {
+        sandboxes: vec![summary.clone()],
+    };
+    let lookup = MachineApiServiceSandboxLookupResponse {
+        tenant_id,
+        service_name: "api".to_owned(),
+        details: Some(MachineApiServiceSandboxDetails {
+            summary,
+            resources: SandboxResourceLimits::default(),
+            lifecycle: SandboxLifecycleSpec::default(),
+            port_bindings: Vec::new(),
+            log_paths: MachineApiServiceSandboxLogPaths {
+                ctr_log: "/state/ctr.log".into(),
+                oci_log: "/state/oci.log".into(),
+            },
+            state_dir: "/state".into(),
+            manifest_path: "/state/manifest.json".into(),
+        }),
+    };
+
+    let list_json = serde_json::to_string(&list).expect("list should serialize");
+    let lookup_json = serde_json::to_string(&lookup).expect("lookup should serialize");
+    assert_eq!(
+        serde_json::from_str::<MachineApiServiceSandboxListResponse>(&list_json)
+            .expect("list should deserialize"),
+        list
+    );
+    assert_eq!(
+        serde_json::from_str::<MachineApiServiceSandboxLookupResponse>(&lookup_json)
+            .expect("lookup should deserialize"),
+        lookup
+    );
+    for json in [&list_json, &lookup_json] {
+        assert!(json.contains(attachment_id.as_str()));
+        assert!(json.contains(endpoint_id.as_str()));
+        assert!(!json.contains("provider"));
+        assert!(!json.contains("opaque"));
+    }
 }
 
 #[cfg(unix)]

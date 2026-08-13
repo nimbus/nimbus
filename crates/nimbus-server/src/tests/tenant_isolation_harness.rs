@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use super::managed_workload::{TestSandboxActivation, managed_router_config};
@@ -7,7 +6,7 @@ use super::*;
 use crate::local_server::{
     LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
 };
-use nimbus_network::{EndpointProtocol, PublishedEndpoint};
+use nimbus_network::EndpointProtocol;
 use nimbus_runtime::{InvocationServiceBinding, InvocationServiceProtocol, RuntimeLimits};
 use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
@@ -234,17 +233,25 @@ impl HarnessSandboxBackend {
             ),
         })?;
 
+        let endpoints = spec
+            .port_bindings
+            .iter()
+            .map(|binding| {
+                nimbus_network::PublishedEndpoint::new(
+                    binding.name.clone(),
+                    binding.protocol,
+                    std::net::SocketAddr::new(binding.host_address, binding.host_port),
+                )
+                .with_guest_port(binding.guest_port)
+            })
+            .collect();
         let handle = SandboxHandle::new(
             spec.tenant_id.clone(),
             sandbox_id,
             service,
             SandboxBackendKind::Krun,
             SandboxStatus::Ready,
-            vec![PublishedEndpoint::new(
-                "postgres",
-                EndpointProtocol::Tcp,
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), tenant_service_port(tenant)),
-            )],
+            endpoints,
         );
         self.handles
             .lock()

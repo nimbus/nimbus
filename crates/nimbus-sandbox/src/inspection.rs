@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{SandboxExecutionAttemptId, SandboxHandle};
+use crate::{SandboxExecutionAttemptId, SandboxHandle, SandboxNetworkStatus};
 
 /// Read-only evidence returned by a sandbox backend.
 ///
@@ -11,6 +11,7 @@ use crate::{SandboxExecutionAttemptId, SandboxHandle};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxInspection {
     pub handle: SandboxHandle,
+    pub network_status: Option<SandboxNetworkStatus>,
     pub execution_attempt: SandboxExecutionAttemptObservation,
     pub execution: SandboxExecutionObservation,
     pub restart: SandboxRestartAssessment,
@@ -27,14 +28,35 @@ impl SandboxInspection {
         cleanup: SandboxCleanupObservation,
         snapshot_parts: &[&[u8]],
     ) -> Self {
-        let attempt_evidence = serde_json::to_vec(&execution_attempt)
-            .expect("execution attempt observation serialization is infallible");
+        Self::exact_with_network_status(
+            handle,
+            None,
+            execution_attempt,
+            execution,
+            restart,
+            cleanup,
+            snapshot_parts,
+        )
+    }
+
+    pub(crate) fn exact_with_network_status(
+        handle: SandboxHandle,
+        network_status: Option<SandboxNetworkStatus>,
+        execution_attempt: SandboxExecutionAttemptObservation,
+        execution: SandboxExecutionObservation,
+        restart: SandboxRestartAssessment,
+        cleanup: SandboxCleanupObservation,
+        snapshot_parts: &[&[u8]],
+    ) -> Self {
+        let attempt_evidence = serde_json::to_vec(&(&execution_attempt, &network_status))
+            .expect("inspection identity evidence serialization is infallible");
         let mut version_parts = Vec::with_capacity(snapshot_parts.len() + 1);
         version_parts.extend_from_slice(snapshot_parts);
         version_parts.push(&attempt_evidence);
         let version = SandboxInspectionVersion::sha256(&version_parts);
         Self {
             handle,
+            network_status,
             execution_attempt,
             execution,
             restart,
@@ -80,10 +102,27 @@ impl SandboxInspection {
         execution_attempt: SandboxExecutionAttemptId,
         provider_evidence: &[u8],
     ) -> Self {
+        Self::provider_authenticated_running_with_network_status(
+            handle,
+            None,
+            execution_attempt,
+            provider_evidence,
+        )
+    }
+
+    /// Build an authenticated running observation with exact portable network
+    /// status derived from the same provider snapshot.
+    pub fn provider_authenticated_running_with_network_status(
+        handle: SandboxHandle,
+        network_status: Option<SandboxNetworkStatus>,
+        execution_attempt: SandboxExecutionAttemptId,
+        provider_evidence: &[u8],
+    ) -> Self {
         let rendered = serde_json::to_vec(&handle)
             .expect("SandboxHandle serialization is infallible for observation evidence");
-        Self::exact(
+        Self::exact_with_network_status(
             handle,
+            network_status,
             SandboxExecutionAttemptObservation::Exact(execution_attempt),
             SandboxExecutionObservation::Present,
             SandboxRestartAssessment::Ineligible {
@@ -126,8 +165,9 @@ impl SandboxInspection {
     ) -> Self {
         let rendered = serde_json::to_vec(&(&handle, execution, restart, cleanup))
             .expect("inspection projection serialization is infallible");
-        Self::exact(
+        Self::exact_with_network_status(
             handle,
+            self.network_status,
             self.execution_attempt,
             execution,
             restart,
@@ -230,8 +270,12 @@ impl SandboxInspectionVersion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SandboxBackendKind, SandboxId, SandboxStatus};
+    use crate::{SandboxBackendKind, SandboxId, SandboxNetworkStatus, SandboxStatus};
     use nimbus_core::TenantId;
+    use nimbus_network::{
+        EndpointProtocol, NetworkAttachmentHandle, NetworkAttachmentId, NetworkResourceGeneration,
+        PublishedEndpoint, PublishedEndpointHandle, PublishedEndpointId,
+    };
 
     fn handle(status: SandboxStatus) -> SandboxHandle {
         SandboxHandle::new(
@@ -247,6 +291,8 @@ mod tests {
     #[test]
     fn provider_reported_handle_is_explicitly_non_authoritative() {
         let inspection = SandboxInspection::provider_reported(handle(SandboxStatus::Ready));
+
+        assert_eq!(inspection.network_status, None);
 
         assert_eq!(
             inspection.execution,
@@ -265,6 +311,62 @@ mod tests {
             SandboxCleanupObservation::Retained,
             "handle-only terminal state must not manufacture cleanup finality"
         );
+    }
+
+    #[test]
+    fn portable_network_status_keeps_identity_separate_from_address_and_fails_closed() {
+        let generation = NetworkResourceGeneration::new(7);
+        let attachment_id =
+            NetworkAttachmentId::for_workload_attachment("tenant/workload", "primary");
+        let endpoint_id = PublishedEndpointId::for_workload_endpoint("tenant/workload", "api");
+        let status_at = |address: &str| {
+            SandboxNetworkStatus::new(
+                Some(NetworkAttachmentHandle::new(
+                    attachment_id.clone(),
+                    generation,
+                )),
+                [PublishedEndpointHandle::new(
+                    endpoint_id.clone(),
+                    generation,
+                    PublishedEndpoint::new(
+                        "api",
+                        EndpointProtocol::Https,
+                        address.parse().expect("valid observed address"),
+                    )
+                    .with_guest_port(8443),
+                )],
+            )
+            .expect("coherent portable status")
+        };
+
+        let first = status_at("127.0.0.1:443");
+        let moved = status_at("127.0.0.2:9443");
+        assert_eq!(first.attachment(), moved.attachment());
+        assert_eq!(
+            first.published_endpoints()[0].endpoint_id(),
+            moved.published_endpoints()[0].endpoint_id()
+        );
+        assert_ne!(
+            first.published_endpoints()[0].endpoint().address,
+            moved.published_endpoints()[0].endpoint().address
+        );
+
+        let crossed = SandboxNetworkStatus::new(
+            first.attachment().cloned(),
+            [PublishedEndpointHandle::new(
+                endpoint_id,
+                NetworkResourceGeneration::new(8),
+                PublishedEndpoint::new(
+                    "api",
+                    EndpointProtocol::Https,
+                    "127.0.0.1:443".parse().expect("valid observed address"),
+                ),
+            )],
+        );
+        assert!(matches!(
+            crossed,
+            Err(crate::SandboxNetworkStatusError::GenerationMismatch)
+        ));
     }
 
     #[test]

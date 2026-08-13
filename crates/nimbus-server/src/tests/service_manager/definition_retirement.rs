@@ -51,9 +51,7 @@ use nimbus_network::{
     NetworkResourceGeneration, NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
     NetworkTlsBehavior,
 };
-use nimbus_sandbox::{
-    ProviderCommandAttemptJournal, SandboxExecutionAttemptId, SandboxInspection, SandboxPortBinding,
-};
+use nimbus_sandbox::{ProviderCommandAttemptJournal, SandboxPortBinding};
 use nimbus_services::{ServiceDefinitionSource, SessionLifecycleState, SessionTarget};
 use nimbus_tenant::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
@@ -676,12 +674,9 @@ impl WorkloadExecutionObservationCapability for ControlledProvisionProvider {
             self.backend
                 .activated_handle_for_test(&sandbox_id)
                 .map(|handle| {
-                    SandboxInspection::provider_authenticated_running(
+                    exact_managed_execution_inspection(
+                        request,
                         handle,
-                        SandboxExecutionAttemptId::new(
-                            request.execution().attempt_id().to_string(),
-                        )
-                        .expect("fixture execution attempt should validate"),
                         b"definition-retirement-provider",
                     )
                 })

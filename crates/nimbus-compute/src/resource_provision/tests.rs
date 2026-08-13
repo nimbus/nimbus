@@ -13,8 +13,8 @@ use nimbus_network::{
     NetworkSovereigntyRequirements, NetworkTlsBehavior, PortProtocol,
 };
 use nimbus_sandbox::{
-    SandboxBackendKind, SandboxHandle, SandboxId, SandboxInspection, SandboxOwnerSpec,
-    SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
+    SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
+    SandboxSpec,
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceBackend, ServiceManager};
 use nimbus_tenant::{
@@ -502,22 +502,9 @@ impl crate::workload_projection::WorkloadExecutionObservationCapability
     ) -> crate::workload_projection::WorkloadExecutionObservationFuture<'a> {
         Box::pin(async move {
             self.execution_observations.fetch_add(1, Ordering::AcqRel);
-            let spec = crate::workload_executable::decode_sandbox_spec(request.executable())
-                .expect("native fixture executable should decode");
             crate::workload_projection::WorkloadProviderObservation::Present(
-                SandboxInspection::provider_authenticated_running(
-                    SandboxHandle::new(
-                        request.key().tenant_id().clone(),
-                        SandboxId::new(request.execution().execution_id().as_str()),
-                        spec.display_name(),
-                        spec.backend,
-                        nimbus_sandbox::SandboxStatus::Ready,
-                        Vec::new(),
-                    ),
-                    nimbus_sandbox::SandboxExecutionAttemptId::new(
-                        request.execution().attempt_id().to_string(),
-                    )
-                    .expect("native fixture attempt ID should be valid"),
+                crate::workload_projection::test_support::exact_execution_inspection(
+                    request,
                     b"native-provision-provider",
                 ),
             )

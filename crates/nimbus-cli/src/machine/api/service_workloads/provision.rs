@@ -27,7 +27,8 @@ use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
     ProviderCommandClaimInput, ProviderCommandObservation, ProviderCommandObservationKind,
     ProviderCommandOperation, SandboxExecutionAttemptId, SandboxProvisionDependencyListener,
-    SandboxProvisionListener, SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation,
+    SandboxProvisionEndpointIdentity, SandboxProvisionListener, SandboxProvisionNetworkPlan,
+    SandboxProvisionPhaseObservation,
 };
 use nimbus_workloads::{
     WorkloadNetworkPortRequestMode, WorkloadOwnerEvidenceDigest, WorkloadProvisionCommandMode,
@@ -720,6 +721,7 @@ pub(super) fn sandbox_network_plan_for(
         )
         .with_plan_id(plan_id.clone());
         listeners.push(SandboxProvisionListener::new(
+            blueprint.endpoint_id().clone(),
             blueprint.listener_id().clone(),
             binding,
             request,
@@ -730,6 +732,12 @@ pub(super) fn sandbox_network_plan_for(
             "executable bindings contain a listener absent from the compiled plan",
         ));
     }
+    let endpoint_identities = content.listeners().iter().map(|listener| {
+        SandboxProvisionEndpointIdentity::new(
+            listener.listener_id().clone(),
+            listener.endpoint_id().clone(),
+        )
+    });
     let dependency_listeners = content.dependency_listeners().iter().map(|dependency| {
         SandboxProvisionDependencyListener::new(
             dependency.listener_id().clone(),
@@ -742,6 +750,7 @@ pub(super) fn sandbox_network_plan_for(
         spec.tenant_id.clone(),
         content.identity().generation(),
         attachment.attachment_id().clone(),
+        endpoint_identities,
         listeners,
         dependency_listeners,
     )

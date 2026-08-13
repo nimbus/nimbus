@@ -302,6 +302,7 @@ fn projection_rejection_reason(
         Reason::MissingExecutionObservationCapability => "missing_execution_observation_capability",
         Reason::MissingIngressObservationCapability => "missing_ingress_observation_capability",
         Reason::InvalidExecutionEvidence => "invalid_execution_evidence",
+        Reason::InvalidNetworkStatus => "invalid_network_status",
         Reason::InvalidPublicationReference => "invalid_publication_reference",
         Reason::InvalidIngressEvidence => "invalid_ingress_evidence",
         Reason::WithheldPublicationCarriedEndpoints => "withheld_publication_carried_endpoints",

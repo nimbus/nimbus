@@ -420,6 +420,41 @@ fn reserve_is_durable_and_stays_unprepared_and_unattached() {
 }
 
 #[test]
+fn exact_inspection_projects_reserved_attachment_without_unready_endpoints() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let backend =
+        ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(root.path()));
+    let id = SandboxId::new("wex-container-portable-inspection");
+    let spec = sample_spec();
+    let plan = sample_provision_network_plan(&spec, &id, "container-portable-inspection");
+    let expected_attachment = plan.attachment_id().clone();
+    let expected_generation = plan.generation();
+    backend
+        .reserve_provision_network(spec, id.clone(), sample_execution_attempt_id(&id), plan)
+        .expect("reservation should succeed");
+
+    let inspection = backend
+        .inspect_sync(&id)
+        .expect("exact inspection should succeed")
+        .expect("reserved workload should remain visible");
+    let status = inspection
+        .network_status
+        .expect("exact manifest should project portable status");
+    assert_eq!(
+        status
+            .attachment()
+            .expect("reserved attachment should be visible")
+            .attachment_id(),
+        &expected_attachment
+    );
+    assert_eq!(status.generation(), Some(expected_generation));
+    assert!(
+        status.published_endpoints().is_empty(),
+        "unready inspection must not publish endpoint handles"
+    );
+}
+
+#[test]
 fn every_partial_reservation_cut_reopens_and_converges_exactly_once() {
     for cut in [
         ReservationCrashCut::ClaimPublished,

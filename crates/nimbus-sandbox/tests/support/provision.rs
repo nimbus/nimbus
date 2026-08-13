@@ -33,8 +33,9 @@ use nimbus_sandbox::{
     SandboxExecutionTeardownOperation, SandboxHandle, SandboxId, SandboxNetworkTeardownCommand,
     SandboxNetworkTeardownCommandInput, SandboxNetworkTeardownIdentity,
     SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownOperation,
-    SandboxProvisionDependencyListener, SandboxProvisionListener, SandboxProvisionNetworkPlan,
-    SandboxProvisionPhaseObservation, SandboxSpec, sandbox_network_plan_requirements,
+    SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity, SandboxProvisionListener,
+    SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation, SandboxSpec,
+    sandbox_network_plan_requirements,
 };
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
@@ -377,6 +378,12 @@ fn compiled_network_plan(spec: &SandboxSpec, id: &SandboxId) -> SandboxProvision
         requirements.capability_requirements().clone(),
     );
     let plan_id = plan.plan_id().clone();
+    let endpoint_identities = spec.port_bindings.iter().map(|binding| {
+        SandboxProvisionEndpointIdentity::new(
+            ListenerId::for_tenant_workload_listener(&spec.tenant_id, &incarnation, &binding.name),
+            nimbus_network::PublishedEndpointId::for_workload_endpoint(&incarnation, &binding.name),
+        )
+    });
     let listeners = spec.port_bindings.iter().map(|binding| {
         let listener_id =
             ListenerId::for_tenant_workload_listener(&spec.tenant_id, &incarnation, &binding.name);
@@ -397,13 +404,19 @@ fn compiled_network_plan(spec: &SandboxSpec, id: &SandboxId) -> SandboxProvision
             ),
         )
         .with_plan_id(plan_id.clone());
-        SandboxProvisionListener::new(listener_id, binding.clone(), request)
+        SandboxProvisionListener::new(
+            nimbus_network::PublishedEndpointId::for_workload_endpoint(&incarnation, &binding.name),
+            listener_id,
+            binding.clone(),
+            request,
+        )
     });
     SandboxProvisionNetworkPlan::new(
         plan,
         spec.tenant_id.clone(),
         generation,
         NetworkAttachmentId::for_workload_attachment(&incarnation, "primary"),
+        endpoint_identities,
         listeners,
         [SandboxProvisionDependencyListener::new(
             ListenerId::for_tenant_workload_listener(&spec.tenant_id, &incarnation, "egress-pep"),

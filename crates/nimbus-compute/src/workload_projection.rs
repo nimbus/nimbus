@@ -17,7 +17,9 @@ use nimbus_network::{
     PortBindRealm, PortBindingProvenance, PortBoundEndpoint, PortLeaseId, PortLeaseLifetime,
     PortProtocol, PublishedEndpoint, PublishedEndpointHandle, PublishedEndpointId,
 };
-use nimbus_sandbox::{SandboxHandle, SandboxId, SandboxInspection, SandboxStatus};
+use nimbus_sandbox::{
+    SandboxHandle, SandboxId, SandboxInspection, SandboxNetworkStatus, SandboxStatus,
+};
 use nimbus_services::{ServiceInstanceObservation, ServiceManager};
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, WorkloadExecutableIntent, WorkloadExecutionReference,
@@ -48,6 +50,7 @@ pub struct WorkloadExecutionObservationRequest {
     execution: WorkloadExecutionReference,
     source: WorkloadProvisionSourceEvidence,
     executable: WorkloadExecutableIntent,
+    compiled_network_plan: CompiledWorkloadNetworkPlan,
 }
 
 impl WorkloadExecutionObservationRequest {
@@ -58,6 +61,7 @@ impl WorkloadExecutionObservationRequest {
             execution: record.current_execution_reference(),
             source: intent.source().clone(),
             executable: intent.executable().clone(),
+            compiled_network_plan: intent.network().compiled_plan().clone(),
         }
     }
 
@@ -75,6 +79,12 @@ impl WorkloadExecutionObservationRequest {
 
     pub fn executable(&self) -> &WorkloadExecutableIntent {
         &self.executable
+    }
+
+    /// Exact desired network identity used only to select and authenticate the
+    /// provider observation. It does not prove that any provider effect exists.
+    pub fn compiled_network_plan(&self) -> &CompiledWorkloadNetworkPlan {
+        &self.compiled_network_plan
     }
 }
 
@@ -430,6 +440,7 @@ pub enum WorkloadProjectionRejectedReason {
     MissingExecutionObservationCapability,
     MissingIngressObservationCapability,
     InvalidExecutionEvidence,
+    InvalidNetworkStatus,
     InvalidPublicationReference,
     InvalidIngressEvidence,
     WithheldPublicationCarriedEndpoints,
@@ -527,10 +538,11 @@ impl WorkloadProjectionOrchestrator {
             }
         };
 
-        let mut handle = match validate_execution_observation(record, inspection) {
-            Ok(handle) => handle,
-            Err(reason) => return WorkloadProjectionState::Rejected(reason),
-        };
+        let (mut handle, sandbox_network_status) =
+            match validate_execution_observation(record, inspection) {
+                Ok(validated) => validated,
+                Err(reason) => return WorkloadProjectionState::Rejected(reason),
+            };
         let published_endpoint_handles = match intent.publication() {
             WorkloadPublicationIntent::Withheld => {
                 if !handle.published_endpoints.is_empty() {
@@ -538,9 +550,25 @@ impl WorkloadProjectionOrchestrator {
                         WorkloadProjectionRejectedReason::WithheldPublicationCarriedEndpoints,
                     );
                 }
+                if sandbox_network_status
+                    .as_ref()
+                    .is_some_and(|status| !status.published_endpoints().is_empty())
+                {
+                    return WorkloadProjectionState::Rejected(
+                        WorkloadProjectionRejectedReason::InvalidNetworkStatus,
+                    );
+                }
                 Vec::new()
             }
             WorkloadPublicationIntent::PublishWhenReady => {
+                if !sandbox_status_matches_handle(
+                    sandbox_network_status.as_ref(),
+                    &handle.published_endpoints,
+                ) {
+                    return WorkloadProjectionState::Rejected(
+                        WorkloadProjectionRejectedReason::InvalidNetworkStatus,
+                    );
+                }
                 let references = record.phase_detail().references();
                 let Some(publication) = references.publication().cloned() else {
                     return WorkloadProjectionState::Rejected(
@@ -585,6 +613,14 @@ impl WorkloadProjectionOrchestrator {
                     Ok(endpoint_handles) => endpoint_handles,
                     Err(reason) => return WorkloadProjectionState::Rejected(reason),
                 };
+                if !sandbox_status_matches_ingress(
+                    sandbox_network_status.as_ref(),
+                    &endpoint_handles,
+                ) {
+                    return WorkloadProjectionState::Rejected(
+                        WorkloadProjectionRejectedReason::InvalidNetworkStatus,
+                    );
+                }
                 handle.published_endpoints = endpoint_handles
                     .iter()
                     .map(|endpoint_handle| endpoint_handle.endpoint().clone())
@@ -619,7 +655,7 @@ impl WorkloadProjectionOrchestrator {
 fn validate_execution_observation(
     record: &WorkloadSagaRecord,
     inspection: SandboxInspection,
-) -> Result<SandboxHandle, WorkloadProjectionRejectedReason> {
+) -> Result<(SandboxHandle, Option<SandboxNetworkStatus>), WorkloadProjectionRejectedReason> {
     let intent = record.active_intent();
     let execution = record.current_execution_reference();
     let expected_attempt =
@@ -644,7 +680,105 @@ fn validate_execution_observation(
     {
         return Err(WorkloadProjectionRejectedReason::InvalidExecutionEvidence);
     }
-    Ok(handle)
+    validate_sandbox_network_status(record, inspection.network_status.as_ref())?;
+    Ok((handle, inspection.network_status))
+}
+
+fn validate_sandbox_network_status(
+    record: &WorkloadSagaRecord,
+    status: Option<&SandboxNetworkStatus>,
+) -> Result<(), WorkloadProjectionRejectedReason> {
+    let content = record.active_intent().network().compiled_plan().content();
+    let expected_generation = content.identity().generation();
+    let Some(expected_attachment) = content.attachment() else {
+        if status.is_some_and(|status| !status.is_empty()) {
+            return Err(WorkloadProjectionRejectedReason::InvalidNetworkStatus);
+        }
+        return Ok(());
+    };
+    let status = status.ok_or(WorkloadProjectionRejectedReason::InvalidNetworkStatus)?;
+    let attachment = status
+        .attachment()
+        .ok_or(WorkloadProjectionRejectedReason::InvalidNetworkStatus)?;
+    if attachment.attachment_id() != expected_attachment.attachment_id()
+        || attachment.generation() != expected_generation
+    {
+        return Err(WorkloadProjectionRejectedReason::InvalidNetworkStatus);
+    }
+    if content.publication() == WorkloadPublicationIntent::Withheld
+        && !status.published_endpoints().is_empty()
+    {
+        return Err(WorkloadProjectionRejectedReason::InvalidNetworkStatus);
+    }
+
+    let expected_endpoint_ids = content
+        .listeners()
+        .iter()
+        .map(|listener| listener.endpoint_id().clone())
+        .collect::<BTreeSet<_>>();
+    let observed_endpoint_ids = status
+        .published_endpoints()
+        .iter()
+        .map(|endpoint| endpoint.endpoint_id().clone())
+        .collect::<BTreeSet<_>>();
+    let expected_visible_endpoint_ids =
+        if content.publication() == WorkloadPublicationIntent::PublishWhenReady {
+            expected_endpoint_ids
+        } else {
+            BTreeSet::new()
+        };
+    if observed_endpoint_ids != expected_visible_endpoint_ids {
+        return Err(WorkloadProjectionRejectedReason::InvalidNetworkStatus);
+    }
+
+    for endpoint in status.published_endpoints() {
+        let Some(blueprint) = content
+            .listeners()
+            .iter()
+            .find(|blueprint| blueprint.endpoint_id() == endpoint.endpoint_id())
+        else {
+            return Err(WorkloadProjectionRejectedReason::InvalidNetworkStatus);
+        };
+        if endpoint.generation() != expected_generation
+            || endpoint.endpoint().name != blueprint.name()
+            || endpoint.endpoint().protocol != blueprint.protocol()
+            || endpoint.endpoint().guest_port != blueprint.guest_port()
+            || endpoint.endpoint().address.port() == 0
+            || endpoint.endpoint().address.ip().is_unspecified()
+        {
+            return Err(WorkloadProjectionRejectedReason::InvalidNetworkStatus);
+        }
+    }
+    Ok(())
+}
+
+fn sandbox_status_matches_ingress(
+    status: Option<&SandboxNetworkStatus>,
+    ingress: &[PublishedEndpointHandle],
+) -> bool {
+    status.is_some_and(|status| {
+        status.published_endpoints().len() == ingress.len()
+            && status.published_endpoints().iter().all(|sandbox_endpoint| {
+                ingress.iter().any(|ingress_endpoint| {
+                    ingress_endpoint.endpoint_id() == sandbox_endpoint.endpoint_id()
+                        && ingress_endpoint.generation() == sandbox_endpoint.generation()
+                })
+            })
+    })
+}
+
+fn sandbox_status_matches_handle(
+    status: Option<&SandboxNetworkStatus>,
+    endpoints: &[PublishedEndpoint],
+) -> bool {
+    status.is_some_and(|status| {
+        status.published_endpoints().len() == endpoints.len()
+            && status.published_endpoints().iter().all(|portable| {
+                endpoints
+                    .iter()
+                    .any(|endpoint| endpoint == portable.endpoint())
+            })
+    })
 }
 
 fn validate_ingress_observation(
@@ -776,6 +910,9 @@ fn binding_provenance_matches(
         }
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_support;
 
 #[cfg(test)]
 #[path = "workload_projection/tests.rs"]

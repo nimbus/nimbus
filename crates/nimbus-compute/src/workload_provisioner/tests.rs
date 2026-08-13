@@ -298,22 +298,9 @@ impl crate::workload_projection::WorkloadExecutionObservationCapability for Reco
     ) -> crate::workload_projection::WorkloadExecutionObservationFuture<'a> {
         Box::pin(async move {
             self.execution_observations.fetch_add(1, Ordering::AcqRel);
-            let spec = crate::workload_executable::decode_sandbox_spec(request.executable())
-                .expect("fixture executable should decode");
             crate::workload_projection::WorkloadProviderObservation::Present(
-                nimbus_sandbox::SandboxInspection::provider_authenticated_running(
-                    nimbus_sandbox::SandboxHandle::new(
-                        request.key().tenant_id().clone(),
-                        nimbus_sandbox::SandboxId::new(request.execution().execution_id().as_str()),
-                        spec.display_name(),
-                        spec.backend,
-                        nimbus_sandbox::SandboxStatus::Ready,
-                        Vec::new(),
-                    ),
-                    nimbus_sandbox::SandboxExecutionAttemptId::new(
-                        request.execution().attempt_id().to_string(),
-                    )
-                    .expect("recording fixture attempt ID should be valid"),
+                crate::workload_projection::test_support::exact_execution_inspection(
+                    request,
                     b"recording-provision-provider",
                 ),
             )

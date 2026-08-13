@@ -11,15 +11,16 @@ use std::num::NonZeroU16;
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    ListenerId, NetworkAttachmentId, NetworkPlan, NetworkPlanId, NetworkProviderId,
-    NetworkReservationClaim, NetworkResourceGeneration, NetworkResourceId, PortBindRealm,
-    PortBindTarget, PortExposure, PortIpv6Overlap, PortLeaseAccounting, PortLeaseId,
-    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+    ListenerId, NetworkAttachmentHandle, NetworkAttachmentId, NetworkPlan, NetworkPlanId,
+    NetworkProviderId, NetworkReservationClaim, NetworkResourceGeneration, NetworkResourceId,
+    PortBindRealm, PortBindTarget, PortExposure, PortIpv6Overlap, PortLeaseAccounting, PortLeaseId,
+    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode, PublishedEndpoint,
+    PublishedEndpointHandle, PublishedEndpointId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::SandboxPortBinding;
+use crate::{SandboxNetworkStatus, SandboxNetworkStatusError, SandboxPortBinding};
 
 mod activation;
 pub(crate) use activation::{
@@ -30,22 +31,56 @@ pub(crate) use activation::{
 /// One exact published-listener reservation supplied by the compiled plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxProvisionListener {
+    endpoint_id: PublishedEndpointId,
     listener_id: ListenerId,
     binding: SandboxPortBinding,
     port_lease: PortLeaseRequest,
 }
 
+/// Canonical compiler mapping between one listener and published endpoint.
+///
+/// The mapping is retained separately from the provider reservation input so
+/// sandbox validation can reject a unique but crossed endpoint identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxProvisionEndpointIdentity {
+    listener_id: ListenerId,
+    endpoint_id: PublishedEndpointId,
+}
+
+impl SandboxProvisionEndpointIdentity {
+    pub fn new(listener_id: ListenerId, endpoint_id: PublishedEndpointId) -> Self {
+        Self {
+            listener_id,
+            endpoint_id,
+        }
+    }
+
+    pub fn listener_id(&self) -> &ListenerId {
+        &self.listener_id
+    }
+
+    pub fn endpoint_id(&self) -> &PublishedEndpointId {
+        &self.endpoint_id
+    }
+}
+
 impl SandboxProvisionListener {
     pub fn new(
+        endpoint_id: PublishedEndpointId,
         listener_id: ListenerId,
         binding: SandboxPortBinding,
         port_lease: PortLeaseRequest,
     ) -> Self {
         Self {
+            endpoint_id,
             listener_id,
             binding,
             port_lease,
         }
+    }
+
+    pub fn endpoint_id(&self) -> &PublishedEndpointId {
+        &self.endpoint_id
     }
 
     pub fn listener_id(&self) -> &ListenerId {
@@ -101,11 +136,25 @@ impl SandboxProvisionDependencyListener {
 /// may persist and realize this envelope, but cannot derive replacement
 /// attachment, listener, or lease identities from a `SandboxId`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "SandboxProvisionNetworkPlanWire")]
 pub struct SandboxProvisionNetworkPlan {
     network_plan: NetworkPlan,
     tenant_id: TenantId,
     generation: NetworkResourceGeneration,
     attachment_id: NetworkAttachmentId,
+    endpoint_identities: Vec<SandboxProvisionEndpointIdentity>,
+    listeners: Vec<SandboxProvisionListener>,
+    dependency_listeners: Vec<SandboxProvisionDependencyListener>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SandboxProvisionNetworkPlanWire {
+    network_plan: NetworkPlan,
+    tenant_id: TenantId,
+    generation: NetworkResourceGeneration,
+    attachment_id: NetworkAttachmentId,
+    endpoint_identities: Vec<SandboxProvisionEndpointIdentity>,
     listeners: Vec<SandboxProvisionListener>,
     dependency_listeners: Vec<SandboxProvisionDependencyListener>,
 }
@@ -116,6 +165,7 @@ impl SandboxProvisionNetworkPlan {
         tenant_id: TenantId,
         generation: NetworkResourceGeneration,
         attachment_id: NetworkAttachmentId,
+        endpoint_identities: impl IntoIterator<Item = SandboxProvisionEndpointIdentity>,
         listeners: impl IntoIterator<Item = SandboxProvisionListener>,
         dependency_listeners: impl IntoIterator<Item = SandboxProvisionDependencyListener>,
     ) -> Result<Self, SandboxProvisionNetworkPlanError> {
@@ -123,13 +173,35 @@ impl SandboxProvisionNetworkPlan {
         if network_plan.generation() != generation {
             return Err(SandboxProvisionNetworkPlanError::GenerationMismatch);
         }
+        let endpoint_identities = endpoint_identities.into_iter().collect::<Vec<_>>();
         let listeners = listeners.into_iter().collect::<Vec<_>>();
         let dependency_listeners = dependency_listeners.into_iter().collect::<Vec<_>>();
+        let mut mapped_listener_ids = BTreeSet::new();
+        let mut mapped_endpoint_ids = BTreeSet::new();
+        for identity in &endpoint_identities {
+            if !mapped_listener_ids.insert(identity.listener_id.clone()) {
+                return Err(SandboxProvisionNetworkPlanError::DuplicateEndpointMappingListener);
+            }
+            if !mapped_endpoint_ids.insert(identity.endpoint_id.clone()) {
+                return Err(SandboxProvisionNetworkPlanError::DuplicateEndpoint);
+            }
+        }
         let mut listener_ids = BTreeSet::new();
+        let mut endpoint_ids = BTreeSet::new();
         let mut listener_names = BTreeSet::new();
         let mut lease_ids = BTreeSet::new();
         for listener in &listeners {
             validate_provision_listener(&plan_id, &tenant_id, generation, listener)?;
+            let expected_endpoint = endpoint_identities
+                .iter()
+                .find(|identity| identity.listener_id == listener.listener_id)
+                .ok_or(SandboxProvisionNetworkPlanError::EndpointIdentitySetMismatch)?;
+            if expected_endpoint.endpoint_id != listener.endpoint_id {
+                return Err(SandboxProvisionNetworkPlanError::EndpointIdentityMismatch);
+            }
+            if !endpoint_ids.insert(listener.endpoint_id.clone()) {
+                return Err(SandboxProvisionNetworkPlanError::DuplicateEndpoint);
+            }
             if !listener_ids.insert(listener.listener_id.clone()) {
                 return Err(SandboxProvisionNetworkPlanError::DuplicateListener);
             }
@@ -139,6 +211,9 @@ impl SandboxProvisionNetworkPlan {
             if !lease_ids.insert(listener.port_lease.lease_id().clone()) {
                 return Err(SandboxProvisionNetworkPlanError::DuplicatePortLease);
             }
+        }
+        if endpoint_identities.len() != listeners.len() {
+            return Err(SandboxProvisionNetworkPlanError::EndpointIdentitySetMismatch);
         }
         for dependency in &dependency_listeners {
             if dependency.name.is_empty() {
@@ -156,6 +231,7 @@ impl SandboxProvisionNetworkPlan {
             tenant_id,
             generation,
             attachment_id,
+            endpoint_identities,
             listeners,
             dependency_listeners,
         })
@@ -181,6 +257,10 @@ impl SandboxProvisionNetworkPlan {
         &self.attachment_id
     }
 
+    pub fn endpoint_identities(&self) -> &[SandboxProvisionEndpointIdentity] {
+        &self.endpoint_identities
+    }
+
     pub fn listeners(&self) -> &[SandboxProvisionListener] {
         &self.listeners
     }
@@ -201,6 +281,64 @@ impl SandboxProvisionNetworkPlan {
             .iter()
             .map(|listener| listener.port_lease.clone())
             .collect()
+    }
+
+    /// Project exact portable status from one provider-authenticated manifest.
+    ///
+    /// The observed address remains location only. Listener names, protocols,
+    /// and guest ports correlate it to compiler-issued endpoint identity.
+    pub fn project_portable_status(
+        &self,
+        actual_attachment_id: Option<&NetworkAttachmentId>,
+        published_endpoints: &[PublishedEndpoint],
+    ) -> Result<SandboxNetworkStatus, SandboxProvisionNetworkPlanError> {
+        let attachment = match actual_attachment_id {
+            Some(actual) if actual == &self.attachment_id => Some(NetworkAttachmentHandle::new(
+                self.attachment_id.clone(),
+                self.generation,
+            )),
+            Some(_) => return Err(SandboxProvisionNetworkPlanError::AttachmentIdentityMismatch),
+            None => None,
+        };
+        if !published_endpoints.is_empty() && published_endpoints.len() != self.listeners.len() {
+            return Err(SandboxProvisionNetworkPlanError::ListenerSetMismatch);
+        }
+
+        let mut portable = Vec::with_capacity(published_endpoints.len());
+        for endpoint in published_endpoints {
+            let listener = self
+                .listeners
+                .iter()
+                .find(|listener| listener.binding.name == endpoint.name)
+                .ok_or(SandboxProvisionNetworkPlanError::ListenerSetMismatch)?;
+            if endpoint.protocol != listener.binding.protocol
+                || endpoint.guest_port != Some(listener.binding.guest_port)
+            {
+                return Err(SandboxProvisionNetworkPlanError::EndpointObservationMismatch);
+            }
+            portable.push(PublishedEndpointHandle::new(
+                listener.endpoint_id.clone(),
+                self.generation,
+                endpoint.clone(),
+            ));
+        }
+        SandboxNetworkStatus::new(attachment, portable).map_err(Into::into)
+    }
+}
+
+impl TryFrom<SandboxProvisionNetworkPlanWire> for SandboxProvisionNetworkPlan {
+    type Error = SandboxProvisionNetworkPlanError;
+
+    fn try_from(wire: SandboxProvisionNetworkPlanWire) -> Result<Self, Self::Error> {
+        Self::new(
+            wire.network_plan,
+            wire.tenant_id,
+            wire.generation,
+            wire.attachment_id,
+            wire.endpoint_identities,
+            wire.listeners,
+            wire.dependency_listeners,
+        )
     }
 }
 
@@ -431,6 +569,14 @@ fn published_scope(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum SandboxProvisionNetworkPlanError {
+    #[error("sandbox provision plan contains a duplicate published-endpoint identity")]
+    DuplicateEndpoint,
+    #[error("sandbox provision plan maps one listener to multiple endpoint identities")]
+    DuplicateEndpointMappingListener,
+    #[error("sandbox provision endpoint identities do not cover the exact listener set")]
+    EndpointIdentitySetMismatch,
+    #[error("sandbox provision listener carries a crossed published-endpoint identity")]
+    EndpointIdentityMismatch,
     #[error("sandbox provision plan contains a duplicate listener identity")]
     DuplicateListener,
     #[error("sandbox provision plan contains a duplicate listener name")]
@@ -471,6 +617,10 @@ pub enum SandboxProvisionNetworkPlanError {
     AttachmentIdentityMismatch,
     #[error("sandbox provision manifest listener set differs from the compiled plan")]
     ListenerSetMismatch,
+    #[error("sandbox provision endpoint observation differs from the compiled plan")]
+    EndpointObservationMismatch,
+    #[error(transparent)]
+    InvalidPortableStatus(#[from] SandboxNetworkStatusError),
 }
 
 /// Read-only or effect-result evidence emitted by one narrow sandbox phase.

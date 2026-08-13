@@ -38,22 +38,23 @@ use nimbus_compute::{
 };
 use nimbus_engine::Engine;
 use nimbus_network::{
-    LocalNetworkManager, NetworkAddressFamily, NetworkAttachmentProviderRegistration,
-    NetworkCapabilityBundle, NetworkCapabilityRegistry, NetworkCapabilitySelection,
-    NetworkControlPlaneLocality, NetworkLifecycleCapabilitySet, NetworkLifecycleFeature,
-    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, PortBindRealm, PortBindTarget,
-    PortBindingProvenance, PortBoundEndpoint, PortLeaseLifetime, PortProtocol,
+    LocalNetworkManager, NetworkAddressFamily, NetworkAttachmentHandle,
+    NetworkAttachmentProviderRegistration, NetworkCapabilityBundle, NetworkCapabilityRegistry,
+    NetworkCapabilitySelection, NetworkControlPlaneLocality, NetworkLifecycleCapabilitySet,
+    NetworkLifecycleFeature, NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
+    PortBindRealm, PortBindTarget, PortBindingProvenance, PortBoundEndpoint, PortLeaseLifetime,
+    PortProtocol, PublishedEndpointHandle,
 };
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, SandboxBackend, SandboxBackendKind, SandboxError,
     SandboxExecutionAttemptId, SandboxFuture, SandboxHandle, SandboxId, SandboxInspection,
-    SandboxSpec, sandbox_network_plan_requirements,
+    SandboxNetworkStatus, SandboxSpec, sandbox_network_plan_requirements,
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceManager};
 use nimbus_workloads::{
     NodeIdentity, WorkloadFailureEvidence, WorkloadNetworkPortRequestMode,
-    WorkloadOwnerEvidenceDigest, WorkloadTeardownCommandMode, WorkloadTeardownStep,
-    WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
+    WorkloadOwnerEvidenceDigest, WorkloadPublicationIntent, WorkloadTeardownCommandMode,
+    WorkloadTeardownStep, WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
 };
 
 use crate::network_capabilities::nimbus_owned_workload_ingress_registration;
@@ -87,6 +88,58 @@ pub(super) trait TestSandboxActivation: SandboxBackend {
         step: WorkloadTeardownStep,
         execution_id: &SandboxId,
     ) -> SandboxFuture<()>;
+}
+
+/// Build the exact portable observation emitted by managed test providers.
+///
+/// Desired plan data selects stable IDs and generations. The retained sandbox
+/// handle remains the only evidence that execution and endpoint effects exist.
+pub(super) fn exact_managed_execution_inspection(
+    request: &WorkloadExecutionObservationRequest,
+    handle: SandboxHandle,
+    provider_evidence: &[u8],
+) -> SandboxInspection {
+    let content = request.compiled_network_plan().content();
+    let endpoint_handles = if content.publication() == WorkloadPublicationIntent::PublishWhenReady {
+        content
+            .listeners()
+            .iter()
+            .filter_map(|listener| {
+                handle
+                    .published_endpoints
+                    .iter()
+                    .find(|endpoint| endpoint.name == listener.name())
+                    .cloned()
+                    .map(|endpoint| {
+                        PublishedEndpointHandle::new(
+                            listener.endpoint_id().clone(),
+                            content.identity().generation(),
+                            endpoint,
+                        )
+                    })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let network_status = content.attachment().map(|attachment| {
+        SandboxNetworkStatus::new(
+            Some(NetworkAttachmentHandle::new(
+                attachment.attachment_id().clone(),
+                content.identity().generation(),
+            )),
+            endpoint_handles,
+        )
+        .expect("managed fixture network status should validate")
+    });
+
+    SandboxInspection::provider_authenticated_running_with_network_status(
+        handle,
+        network_status,
+        SandboxExecutionAttemptId::new(request.execution().attempt_id().to_string())
+            .expect("managed fixture attempt ID should be valid"),
+        provider_evidence,
+    )
 }
 
 struct EffectForbiddenSandboxBackend;
@@ -565,12 +618,9 @@ where
             self.backend
                 .activated_handle_for_test(&sandbox_id)
                 .map(|handle| {
-                    SandboxInspection::provider_authenticated_running(
+                    exact_managed_execution_inspection(
+                        request,
                         handle,
-                        SandboxExecutionAttemptId::new(
-                            request.execution().attempt_id().to_string(),
-                        )
-                        .expect("managed fixture attempt ID should be valid"),
                         b"managed-test-workload-provider",
                     )
                 })

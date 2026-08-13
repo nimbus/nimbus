@@ -5,13 +5,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    NetworkAddressFamily, NetworkAttachmentProviderRegistration, NetworkBindRealmKind,
-    NetworkCapabilityBundle, NetworkCapabilityRegistry, NetworkCapabilitySelection,
-    NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkExposure,
-    NetworkForwardingCapabilitySet, NetworkForwardingFeature, NetworkIngressCapabilitySet,
-    NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet, NetworkLifecycleFeature,
-    NetworkPortAssignmentMode, NetworkProviderId, NetworkSovereigntyCapabilities,
-    NetworkSovereigntyRequirements, NetworkTlsBehavior, PortBindTarget,
+    NetworkAddressFamily, NetworkAttachmentHandle, NetworkAttachmentId,
+    NetworkAttachmentProviderRegistration, NetworkBindRealmKind, NetworkCapabilityBundle,
+    NetworkCapabilityRegistry, NetworkCapabilitySelection, NetworkControlPlaneLocality,
+    NetworkEndpointCapabilitySet, NetworkExposure, NetworkForwardingCapabilitySet,
+    NetworkForwardingFeature, NetworkIngressCapabilitySet, NetworkIngressProviderRegistration,
+    NetworkLifecycleCapabilitySet, NetworkLifecycleFeature, NetworkPortAssignmentMode,
+    NetworkProviderId, NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
+    NetworkTlsBehavior, PortBindTarget,
 };
 use nimbus_sandbox::{
     SandboxBackendKind, SandboxExecutionAttemptId, SandboxOwnerSpec, SandboxPortBinding,
@@ -368,18 +369,72 @@ fn exact_inspection(record: &WorkloadSagaRecord) -> SandboxInspection {
     let intent = record.active_intent();
     let execution = record.current_execution_reference();
     let spec = decode_sandbox_spec(intent.executable()).expect("fixture executable should decode");
-    SandboxInspection::provider_authenticated_running(
+    let content = intent.network().compiled_plan().content();
+    let attachment = content
+        .attachment()
+        .expect("sandbox fixture should retain an attachment");
+    let endpoint_handles = content
+        .listeners()
+        .iter()
+        .enumerate()
+        .map(|(ordinal, listener)| {
+            let endpoint = PublishedEndpoint::new(
+                listener.name(),
+                listener.protocol(),
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 49_152 + ordinal as u16)),
+            );
+            let endpoint = listener
+                .guest_port()
+                .map_or(endpoint.clone(), |guest_port| {
+                    endpoint.with_guest_port(guest_port)
+                });
+            PublishedEndpointHandle::new(
+                listener.endpoint_id().clone(),
+                content.identity().generation(),
+                endpoint,
+            )
+        })
+        .collect::<Vec<_>>();
+    let visible_endpoints = endpoint_handles
+        .iter()
+        .map(|handle| handle.endpoint().clone())
+        .collect();
+    let network_status = SandboxNetworkStatus::new(
+        Some(NetworkAttachmentHandle::new(
+            attachment.attachment_id().clone(),
+            content.identity().generation(),
+        )),
+        endpoint_handles,
+    )
+    .expect("fixture network status should validate");
+    SandboxInspection::provider_authenticated_running_with_network_status(
         SandboxHandle::new(
             record.key().tenant_id().clone(),
             SandboxId::new(execution.execution_id().as_str()),
             spec.display_name(),
             spec.backend,
             SandboxStatus::Ready,
-            Vec::new(),
+            visible_endpoints,
         ),
+        Some(network_status),
         SandboxExecutionAttemptId::new(execution.attempt_id().to_string())
             .expect("fixture attempt ID should be valid"),
         b"workload-projection-fixture",
+    )
+}
+
+fn authenticated_inspection_with_status(
+    record: &WorkloadSagaRecord,
+    status: SandboxNetworkStatus,
+) -> SandboxInspection {
+    let exact = exact_inspection(record);
+    let execution = record.current_execution_reference();
+    SandboxInspection::provider_authenticated_running_with_network_status(
+        exact.handle,
+        Some(status),
+        SandboxExecutionAttemptId::new(execution.attempt_id().to_string())
+            .expect("fixture attempt ID should be valid"),
+        b"workload-projection-network-status-case",
     )
 }
 
@@ -628,6 +683,125 @@ async fn observed_withheld_reads_execution_once_and_projects_exact_identity() {
 }
 
 #[tokio::test]
+async fn missing_portable_network_status_is_rejected_before_ingress_or_sink_access() {
+    let fixture = fixture(WorkloadPublicationIntent::PublishWhenReady);
+    let intent = fixture.observed.active_intent();
+    let execution = fixture.observed.current_execution_reference();
+    let spec = decode_sandbox_spec(intent.executable()).expect("fixture executable should decode");
+    let inspection = SandboxInspection::provider_authenticated_running(
+        SandboxHandle::new(
+            fixture.observed.key().tenant_id().clone(),
+            SandboxId::new(execution.execution_id().as_str()),
+            spec.display_name(),
+            spec.backend,
+            SandboxStatus::Ready,
+            Vec::new(),
+        ),
+        SandboxExecutionAttemptId::new(execution.attempt_id().to_string())
+            .expect("fixture attempt ID should be valid"),
+        b"missing-network-status",
+    );
+    let provider = RecordingProvider::new(
+        WorkloadProviderObservation::Present(inspection),
+        WorkloadProviderObservation::Present(vec![exact_ingress(&fixture.observed)]),
+    );
+    let sink = Arc::new(RecordingSink::default());
+
+    assert_eq!(
+        orchestrator(&fixture, provider.clone(), sink.clone())
+            .project_record(&fixture.observed, WorkloadProvisionRunDisposition::Observed)
+            .await,
+        WorkloadProjectionState::Rejected(WorkloadProjectionRejectedReason::InvalidNetworkStatus)
+    );
+    assert_eq!(provider.execution_calls.load(Ordering::Acquire), 1);
+    assert_eq!(provider.ingress_calls.load(Ordering::Acquire), 0);
+    assert_eq!(sink.calls.load(Ordering::Acquire), 0);
+}
+
+#[tokio::test]
+async fn stale_crossed_partial_and_unexpected_network_status_fail_before_ingress() {
+    let fixture = fixture(WorkloadPublicationIntent::PublishWhenReady);
+    let exact = exact_inspection(&fixture.observed);
+    let exact_status = exact
+        .network_status
+        .as_ref()
+        .expect("fixture should have exact network status");
+    let exact_attachment = exact_status
+        .attachment()
+        .expect("fixture should have an attachment");
+    let generation = exact_attachment.generation();
+    let endpoint = exact_status.published_endpoints()[0].clone();
+
+    let crossed = SandboxNetworkStatus::new(
+        Some(NetworkAttachmentHandle::new(
+            NetworkAttachmentId::for_workload_attachment("crossed-workload", "primary"),
+            generation,
+        )),
+        [endpoint.clone()],
+    )
+    .expect("crossed status should be internally consistent");
+    let stale_generation = NetworkResourceGeneration::new(generation.as_u64() + 1);
+    let stale = SandboxNetworkStatus::new(
+        Some(NetworkAttachmentHandle::new(
+            exact_attachment.attachment_id().clone(),
+            stale_generation,
+        )),
+        [PublishedEndpointHandle::new(
+            endpoint.endpoint_id().clone(),
+            stale_generation,
+            endpoint.endpoint().clone(),
+        )],
+    )
+    .expect("stale status should be internally consistent");
+    let partial = SandboxNetworkStatus::new(
+        Some(exact_attachment.clone()),
+        std::iter::empty::<PublishedEndpointHandle>(),
+    )
+    .expect("partial status should be internally consistent");
+    let unexpected = SandboxNetworkStatus::new(
+        Some(exact_attachment.clone()),
+        [
+            endpoint.clone(),
+            PublishedEndpointHandle::new(
+                PublishedEndpointId::for_workload_endpoint("unexpected-workload", "admin"),
+                generation,
+                PublishedEndpoint::new(
+                    "admin",
+                    nimbus_network::EndpointProtocol::Http,
+                    "127.0.0.1:49153"
+                        .parse()
+                        .expect("unexpected endpoint should parse"),
+                )
+                .with_guest_port(9_090),
+            ),
+        ],
+    )
+    .expect("unexpected status should be internally consistent");
+
+    for status in [crossed, stale, partial, unexpected] {
+        let provider = RecordingProvider::new(
+            WorkloadProviderObservation::Present(authenticated_inspection_with_status(
+                &fixture.observed,
+                status,
+            )),
+            WorkloadProviderObservation::Present(vec![exact_ingress(&fixture.observed)]),
+        );
+        let sink = Arc::new(RecordingSink::default());
+        assert_eq!(
+            orchestrator(&fixture, provider.clone(), sink.clone())
+                .project_record(&fixture.observed, WorkloadProvisionRunDisposition::Observed)
+                .await,
+            WorkloadProjectionState::Rejected(
+                WorkloadProjectionRejectedReason::InvalidNetworkStatus
+            )
+        );
+        assert_eq!(provider.execution_calls.load(Ordering::Acquire), 1);
+        assert_eq!(provider.ingress_calls.load(Ordering::Acquire), 0);
+        assert_eq!(sink.calls.load(Ordering::Acquire), 0);
+    }
+}
+
+#[tokio::test]
 async fn crossed_execution_handle_is_rejected_before_ingress_or_sink_access() {
     let fixture = fixture(WorkloadPublicationIntent::PublishWhenReady);
     let mut crossed = exact_inspection(&fixture.observed);
@@ -769,6 +943,43 @@ async fn publish_when_ready_requires_exact_provider_assigned_endpoint_evidence()
         endpoint_handle.endpoint(),
         &projections[0].handle().published_endpoints[0]
     );
+}
+
+#[tokio::test]
+async fn ingress_address_change_preserves_portable_identity() {
+    let fixture = fixture(WorkloadPublicationIntent::PublishWhenReady);
+    let inspection = exact_inspection(&fixture.observed);
+    let sandbox_endpoint = inspection
+        .network_status
+        .as_ref()
+        .expect("fixture should have exact network status")
+        .published_endpoints()[0]
+        .clone();
+    let provider = RecordingProvider::new(
+        WorkloadProviderObservation::Present(inspection),
+        WorkloadProviderObservation::Present(vec![exact_ingress_named(
+            &fixture.observed,
+            "api",
+            50_123,
+        )]),
+    );
+    let sink = Arc::new(RecordingSink::default());
+
+    assert_eq!(
+        orchestrator(&fixture, provider, sink.clone())
+            .project_record(&fixture.observed, WorkloadProvisionRunDisposition::Observed)
+            .await,
+        WorkloadProjectionState::Projected
+    );
+    let projected = sink.projections().pop().expect("projection should exist");
+    let endpoint = &projected.published_endpoint_handles()[0];
+    assert_eq!(endpoint.endpoint_id(), sandbox_endpoint.endpoint_id());
+    assert_eq!(endpoint.generation(), sandbox_endpoint.generation());
+    assert_ne!(
+        endpoint.endpoint().address,
+        sandbox_endpoint.endpoint().address
+    );
+    assert_eq!(endpoint.endpoint().address.port(), 50_123);
 }
 
 #[tokio::test]

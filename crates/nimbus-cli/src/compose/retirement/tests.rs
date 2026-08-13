@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,15 +34,16 @@ use nimbus_compute::{
     WorkloadProviderObservation,
 };
 use nimbus_network::{
-    NetworkAddressFamily, NetworkAttachmentProviderRegistration, NetworkBindRealmKind,
-    NetworkCapabilityBundle, NetworkCapabilityRegistry, NetworkCapabilitySelection,
-    NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkExposure,
-    NetworkForwardingCapabilitySet, NetworkForwardingFeature, NetworkIngressCapabilitySet,
-    NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet, NetworkLifecycleFeature,
-    NetworkPortAssignmentMode, NetworkProviderId, NetworkSovereigntyCapabilities,
-    NetworkSovereigntyRequirements, NetworkTlsBehavior, PortProtocol,
+    NetworkAddressFamily, NetworkAttachmentHandle, NetworkAttachmentProviderRegistration,
+    NetworkBindRealmKind, NetworkCapabilityBundle, NetworkCapabilityRegistry,
+    NetworkCapabilitySelection, NetworkControlPlaneLocality, NetworkEndpointCapabilitySet,
+    NetworkExposure, NetworkForwardingCapabilitySet, NetworkForwardingFeature,
+    NetworkIngressCapabilitySet, NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet,
+    NetworkLifecycleFeature, NetworkPortAssignmentMode, NetworkProviderId,
+    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, NetworkTlsBehavior,
+    PortProtocol, PublishedEndpoint, PublishedEndpointHandle,
 };
-use nimbus_sandbox::{SandboxExecutionAttemptId, SandboxInspection};
+use nimbus_sandbox::{SandboxExecutionAttemptId, SandboxInspection, SandboxNetworkStatus};
 use nimbus_server::{EngineWorkloadSagaStore, ServerWorkloadComposition, ServerWorkloadProviders};
 use nimbus_services::{
     ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog, ServiceManager,
@@ -50,9 +52,9 @@ use nimbus_tenant::TenantIsolationContext;
 use nimbus_workloads::{
     WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest, WorkloadProvisionInspectionResult,
     WorkloadProvisionStep, WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence,
-    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey,
-    WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
-    WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
+    WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
+    WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase,
+    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
     WorkloadSagaTenantPageRequest, WorkloadTeardownCommandMode, WorkloadTeardownStep,
     WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
 };
@@ -334,19 +336,62 @@ impl WorkloadExecutionObservationCapability for RecordingComposeProvider {
             let spec =
                 nimbus_compute::workload_executable::decode_sandbox_spec(request.executable())
                     .expect("fixture executable should decode");
-            WorkloadProviderObservation::Present(SandboxInspection::provider_authenticated_running(
-                SandboxHandle::new(
-                    request.key().tenant_id().clone(),
-                    SandboxId::new(request.execution().execution_id().as_str()),
-                    spec.display_name(),
-                    spec.backend,
-                    SandboxStatus::Ready,
-                    Vec::new(),
+            let content = request.compiled_network_plan().content();
+            let endpoint_handles =
+                if content.publication() == WorkloadPublicationIntent::PublishWhenReady {
+                    content
+                        .listeners()
+                        .iter()
+                        .enumerate()
+                        .map(|(ordinal, listener)| {
+                            let endpoint = PublishedEndpoint::new(
+                                listener.name(),
+                                listener.protocol(),
+                                SocketAddr::from((Ipv4Addr::LOCALHOST, 49_152 + ordinal as u16)),
+                            );
+                            let endpoint = listener
+                                .guest_port()
+                                .map_or(endpoint.clone(), |port| endpoint.with_guest_port(port));
+                            PublishedEndpointHandle::new(
+                                listener.endpoint_id().clone(),
+                                content.identity().generation(),
+                                endpoint,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+            let visible_endpoints = endpoint_handles
+                .iter()
+                .map(|endpoint| endpoint.endpoint().clone())
+                .collect();
+            let network_status = content.attachment().map(|attachment| {
+                SandboxNetworkStatus::new(
+                    Some(NetworkAttachmentHandle::new(
+                        attachment.attachment_id().clone(),
+                        content.identity().generation(),
+                    )),
+                    endpoint_handles,
+                )
+                .expect("fixture network status should validate")
+            });
+            WorkloadProviderObservation::Present(
+                SandboxInspection::provider_authenticated_running_with_network_status(
+                    SandboxHandle::new(
+                        request.key().tenant_id().clone(),
+                        SandboxId::new(request.execution().execution_id().as_str()),
+                        spec.display_name(),
+                        spec.backend,
+                        SandboxStatus::Ready,
+                        visible_endpoints,
+                    ),
+                    network_status,
+                    SandboxExecutionAttemptId::new(request.execution().attempt_id().to_string())
+                        .expect("fixture attempt should validate"),
+                    b"compose-retirement-provider",
                 ),
-                SandboxExecutionAttemptId::new(request.execution().attempt_id().to_string())
-                    .expect("fixture attempt should validate"),
-                b"compose-retirement-provider",
-            ))
+            )
         })
     }
 }

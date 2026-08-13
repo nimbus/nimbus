@@ -449,6 +449,7 @@ fn guest_service(
             lowered.tenant_id().clone(),
             lowered.generation(),
             lowered.attachment_id().clone(),
+            lowered.endpoint_identities().iter().cloned(),
             lowered.listeners().iter().cloned(),
             lowered
                 .dependency_listeners()

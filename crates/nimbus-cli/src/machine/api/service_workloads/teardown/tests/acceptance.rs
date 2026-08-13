@@ -280,6 +280,7 @@ impl AcceptanceHarness {
                 .attachment_id()
                 .clone(),
             [],
+            [],
             [dependency],
         )
         .expect("the exact compiled plan should lower to Container");

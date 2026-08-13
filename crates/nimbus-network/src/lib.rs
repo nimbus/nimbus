@@ -8,6 +8,7 @@
 //! `nimbus-core` is this crate's only workspace dependency. Upper-layer crates
 //! inject provider capabilities without creating reverse dependencies.
 
+mod attachment_handle;
 mod attachment_state;
 mod capability;
 mod capability_registry;
@@ -23,6 +24,7 @@ mod state;
 mod state_store;
 mod status;
 
+pub use attachment_handle::NetworkAttachmentHandle;
 pub use attachment_state::{
     DurableNetworkAttachmentState, LocalNetworkAttachmentAuthority, NetworkAttachmentStateError,
 };
@@ -104,11 +106,32 @@ pub use state_store::test_support;
 mod tests {
     use nimbus_core::Cidr;
 
+    use crate::{NetworkAttachmentHandle, NetworkAttachmentId, NetworkResourceGeneration};
+
     #[test]
     fn core_network_vocabulary_is_available_at_the_dependency_boundary() {
         let cidr =
             Cidr::new("10.89.0.0".parse().expect("valid IPv4 address"), 24).expect("valid CIDR");
 
         assert_eq!(cidr.to_string(), "10.89.0.0/24");
+    }
+
+    #[test]
+    fn portable_attachment_handle_round_trips_without_location_or_provider_material() {
+        let attachment_id =
+            NetworkAttachmentId::for_workload_attachment("tenant/workload", "primary");
+        let generation = NetworkResourceGeneration::new(11);
+        let handle = NetworkAttachmentHandle::new(attachment_id.clone(), generation);
+
+        assert_eq!(handle.attachment_id(), &attachment_id);
+        assert_eq!(handle.generation(), generation);
+        let json = serde_json::to_string(&handle).expect("serialize portable attachment handle");
+        assert!(!json.contains("address"));
+        assert!(!json.contains("provider"));
+        assert_eq!(
+            serde_json::from_str::<NetworkAttachmentHandle>(&json)
+                .expect("deserialize portable attachment handle"),
+            handle
+        );
     }
 }

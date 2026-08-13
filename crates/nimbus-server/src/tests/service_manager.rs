@@ -27,7 +27,9 @@ use nimbus_testing::ServerFixture;
 use nimbus_workloads::WorkloadTeardownStep;
 use serde_json::{Map, Value, json};
 
-use super::managed_workload::{TestSandboxActivation, managed_router_config};
+use super::managed_workload::{
+    TestSandboxActivation, exact_managed_execution_inspection, managed_router_config,
+};
 use crate::local_server::{
     LocalServerAuditRecord, LocalServerPaths, LocalServerSecurityState,
     load_or_create_local_admin_token,

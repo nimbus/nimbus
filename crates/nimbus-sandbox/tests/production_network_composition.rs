@@ -24,8 +24,9 @@ use nimbus_sandbox::backends::{
 use nimbus_sandbox::{
     OciNetworkProcess, OciNetworkProcessError, SandboxBackendKind, SandboxExecutionAttemptId,
     SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
-    SandboxProvisionDependencyListener, SandboxProvisionListener, SandboxProvisionNetworkPlan,
-    SandboxRootSpec, SandboxRootfsSpec, SandboxSpec, sandbox_network_plan_requirements,
+    SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity, SandboxProvisionListener,
+    SandboxProvisionNetworkPlan, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
+    sandbox_network_plan_requirements,
 };
 use serde_json::Value;
 use tempfile::tempdir;
@@ -56,6 +57,12 @@ fn compiled_network_plan(
         requirements.capability_requirements().clone(),
     );
     let plan_id = plan.plan_id().clone();
+    let endpoint_identities = spec.port_bindings.iter().map(|binding| {
+        SandboxProvisionEndpointIdentity::new(
+            ListenerId::for_tenant_workload_listener(&spec.tenant_id, &incarnation, &binding.name),
+            nimbus_network::PublishedEndpointId::for_workload_endpoint(&incarnation, &binding.name),
+        )
+    });
     let listeners = spec.port_bindings.iter().map(|binding| {
         let listener_id =
             ListenerId::for_tenant_workload_listener(&spec.tenant_id, &incarnation, &binding.name);
@@ -102,13 +109,19 @@ fn compiled_network_plan(
             ),
         )
         .with_plan_id(plan_id.clone());
-        SandboxProvisionListener::new(listener_id, binding.clone(), request)
+        SandboxProvisionListener::new(
+            nimbus_network::PublishedEndpointId::for_workload_endpoint(&incarnation, &binding.name),
+            listener_id,
+            binding.clone(),
+            request,
+        )
     });
     SandboxProvisionNetworkPlan::new(
         plan,
         spec.tenant_id.clone(),
         generation,
         NetworkAttachmentId::for_workload_attachment(&incarnation, "primary"),
+        endpoint_identities,
         listeners,
         [SandboxProvisionDependencyListener::new(
             ListenerId::for_tenant_workload_listener(&spec.tenant_id, &incarnation, "egress-pep"),

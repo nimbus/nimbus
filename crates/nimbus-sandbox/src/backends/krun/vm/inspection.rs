@@ -233,6 +233,25 @@ fn exact_inspection_with_provider_evidence(
     cleanup: SandboxCleanupObservation,
     provider_evidence: &[u8],
 ) -> Result<SandboxInspection> {
+    let network_status = manifest
+        .provision_network_plan
+        .as_ref()
+        .map(|plan| {
+            plan.project_portable_status(
+                manifest
+                    .network_config
+                    .as_ref()
+                    .map(|config| &config.attachment_id),
+                &handle.published_endpoints,
+            )
+        })
+        .transpose()
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "krun inspection for {} carries crossed portable network status: {error}",
+                manifest.handle.id
+            ),
+        })?;
     let evidence =
         serde_json::to_vec(&(manifest, &handle, execution, restart, cleanup)).map_err(|error| {
             SandboxError::OperationFailed {
@@ -242,8 +261,9 @@ fn exact_inspection_with_provider_evidence(
                 ),
             }
         })?;
-    Ok(SandboxInspection::exact(
+    Ok(SandboxInspection::exact_with_network_status(
         handle,
+        network_status,
         if manifest.start_mode == KrunStartMode::PlanOnly {
             SandboxExecutionAttemptObservation::PlanOnly
         } else {

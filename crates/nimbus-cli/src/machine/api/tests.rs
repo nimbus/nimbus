@@ -18,9 +18,16 @@ use nimbus::{
 };
 use nimbus_machine::MachineBootAuthorityEvidence;
 use nimbus_network::{
-    LocalNetworkManager, NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration,
+    ListenerId, LocalNetworkManager, NetworkAttachmentId, NetworkLeaseEpoch, NetworkPlan,
+    NetworkPlanContentDigest, NetworkPlanId, NetworkProviderHandle, NetworkProviderId,
+    NetworkResourceGeneration, PortBindRealm, PortBindTarget, PortBindingSpec, PortExposure,
+    PortLeaseAccounting, PortLeaseFence, PortLeaseId, PortLeaseRequest, PortProtocol,
+    PortPublicationIntent, PortRequestMode, PublishedEndpointId,
 };
-use nimbus_sandbox::SandboxFuture;
+use nimbus_sandbox::{
+    SandboxFuture, SandboxProvisionEndpointIdentity, SandboxProvisionListener,
+    SandboxProvisionNetworkPlan, sandbox_network_plan_requirements,
+};
 use serde_json::json;
 use tempfile::{Builder, TempDir};
 
@@ -707,6 +714,10 @@ async fn machine_api_list_and_current_refresh_persisted_service_state_before_rep
         list_response.contains("\"published_endpoints\":[{\"name\":\"default\""),
         "{list_response}"
     );
+    assert!(
+        list_response.contains("\"network_status\":{\"attachment\":{"),
+        "list must transport exact portable status: {list_response}"
+    );
 
     let current_response = wait_for_http_response_contains(
         &socket_path,
@@ -718,6 +729,17 @@ async fn machine_api_list_and_current_refresh_persisted_service_state_before_rep
     assert!(
         current_response.contains("\"published_endpoints\":[{\"name\":\"default\""),
         "{current_response}"
+    );
+    assert!(
+        current_response.contains("\"network_status\":{\"attachment\":{"),
+        "lookup must transport exact portable status: {current_response}"
+    );
+    assert!(
+        list_response.contains("attachmentId")
+            && current_response.contains("attachmentId")
+            && !list_response.contains("opaque")
+            && !current_response.contains("opaque"),
+        "portable status must retain stable identity without provider material"
     );
     let inspected_ids = inspected_ids.lock().expect("lock should acquire").clone();
     assert_eq!(
@@ -1035,6 +1057,90 @@ fn write_container_manifest_with_owner(
     .expect("manifest should write");
 }
 
+fn write_exact_container_manifest(
+    state_root: &Path,
+    sandbox_id: &str,
+    tenant_id: &str,
+    service_name: &str,
+    status: SandboxStatus,
+    published_endpoints: Vec<PublishedEndpoint>,
+) {
+    write_container_manifest(
+        state_root,
+        sandbox_id,
+        tenant_id,
+        service_name,
+        status,
+        published_endpoints,
+    );
+    let tenant_id = TenantId::new(tenant_id).expect("tenant id should parse");
+    let generation = NetworkResourceGeneration::new(23);
+    let network_plan = NetworkPlan::new(
+        NetworkPlanId::for_tenant_workload_plan(&tenant_id, sandbox_id),
+        generation,
+        NetworkPlanContentDigest::sha256(format!("machine-api-status:{sandbox_id}")),
+        sandbox_network_plan_requirements(SandboxBackendKind::Container)
+            .capability_requirements()
+            .clone(),
+    );
+    let listener_id = ListenerId::for_tenant_workload_listener(&tenant_id, sandbox_id, "default");
+    let request = PortLeaseRequest::new(
+        PortLeaseId::for_listener(&listener_id),
+        listener_id.clone().into(),
+        Some(tenant_id.clone()),
+        PortLeaseFence::new(generation, NetworkLeaseEpoch::new(1)),
+        PortLeaseAccounting::TenantPublished,
+        PortPublicationIntent::host(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        PortBindingSpec::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            PortBindTarget::ipv4_specific(Ipv4Addr::LOCALHOST),
+            PortExposure::Loopback,
+            PortRequestMode::Exact(std::num::NonZeroU16::new(18_080).expect("fixture port")),
+        ),
+    )
+    .with_plan_id(network_plan.plan_id().clone());
+    let endpoint_id = PublishedEndpointId::for_workload_endpoint(sandbox_id, "default");
+    let plan = SandboxProvisionNetworkPlan::new(
+        network_plan,
+        tenant_id.clone(),
+        generation,
+        NetworkAttachmentId::for_workload_attachment(sandbox_id, "primary"),
+        [SandboxProvisionEndpointIdentity::new(
+            listener_id.clone(),
+            endpoint_id.clone(),
+        )],
+        [SandboxProvisionListener::new(
+            endpoint_id,
+            listener_id,
+            SandboxPortBinding::tcp("default", 18_080, 8_080),
+            request,
+        )],
+        [],
+    )
+    .expect("exact machine API status plan should validate");
+    let manifest_path = state_root
+        .join("tenants")
+        .join(tenant_id.as_str())
+        .join("sandboxes")
+        .join(sandbox_id)
+        .join("state")
+        .join("containers")
+        .join(sandbox_id)
+        .join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("manifest should read"))
+            .expect("manifest should parse");
+    manifest["provision_network_plan"] =
+        serde_json::to_value(&plan).expect("plan should serialize");
+    manifest["network_config"] = json!({"attachment_id": plan.attachment_id()});
+    fs::write(
+        manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should write");
+}
+
 #[derive(Debug)]
 struct EmptyInspectionBackend;
 
@@ -1081,12 +1187,15 @@ impl SandboxBackend for RefreshingInspectBackend {
                 .lock()
                 .expect("lock should acquire")
                 .push(sandbox_id.as_str().to_owned());
-            let endpoints = vec![PublishedEndpoint::new(
-                "default",
-                EndpointProtocol::Tcp,
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
-            )];
-            write_container_manifest(
+            let endpoints = vec![
+                PublishedEndpoint::new(
+                    "default",
+                    EndpointProtocol::Tcp,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
+                )
+                .with_guest_port(8080),
+            ];
+            write_exact_container_manifest(
                 &state_root,
                 sandbox_id.as_str(),
                 "svc-demo",
