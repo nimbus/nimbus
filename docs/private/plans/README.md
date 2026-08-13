@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.6 complete; NNC6.1e2 in progress`.
+- `nimbus-network-control-plane-plan.md` - `active; NNC6 complete; NNC7.1 in progress`.
   NNC6.5e is durably complete at `18377b1a2b17e21249c582ba49b8158280e0ff6d`;
   the prior exact checkpoint is `6b685627c94e`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,

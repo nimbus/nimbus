@@ -33,6 +33,7 @@ pub struct WorkloadSagaDecision {
     saga_id: WorkloadSagaId,
     revision: WorkloadSagaRevision,
     active_generation: WorkloadGeneration,
+    successor_intent: Option<WorkloadSagaIntent>,
     target_phase: WorkloadSagaPhase,
     action: WorkloadSagaAction,
 }
@@ -82,6 +83,7 @@ impl WorkloadSagaDecision {
             saga_id: record.saga_id().clone(),
             revision: record.revision(),
             active_generation: record.active_intent().generation(),
+            successor_intent: record.successor_intent().cloned(),
             target_phase,
             action,
         }
@@ -101,6 +103,10 @@ impl WorkloadSagaDecision {
 
     pub fn active_generation(&self) -> WorkloadGeneration {
         self.active_generation
+    }
+
+    pub fn successor_intent(&self) -> Option<&WorkloadSagaIntent> {
+        self.successor_intent.as_ref()
     }
 
     pub fn target_phase(&self) -> WorkloadSagaPhase {

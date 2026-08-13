@@ -579,9 +579,12 @@ impl Fixture {
     }
 
     async fn provision(&self, service_names: &[&str]) -> BTreeMap<String, WorkloadSagaRecord> {
-        let store: Arc<dyn WorkloadSagaStore> =
-            Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&self.engine)));
-        let runtime = self.composition().into_foreground_runtime(store);
+        let store = Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&self.engine)));
+        let runtime = self
+            .composition()
+            .into_foreground_runtime(store)
+            .await
+            .expect("foreground startup recovery should complete");
         let context = TenantIsolationContext::system(self.tenant_id.clone(), "compose-test-up");
         for service_name in service_names {
             runtime
@@ -716,6 +719,57 @@ impl WorkloadSagaStore for AmbiguousOnceStore {
     }
 }
 
+impl nimbus_workloads::TenantRetirementStore for AmbiguousOnceStore {
+    fn load_retirement<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+    ) -> nimbus_workloads::TenantRetirementFuture<
+        'a,
+        Option<nimbus_workloads::TenantRetirementRecord>,
+    > {
+        self.inner.load_retirement(tenant_id)
+    }
+
+    fn compare_and_swap_retirement<'a>(
+        &'a self,
+        expected: nimbus_workloads::TenantRetirementExpected,
+        next: nimbus_workloads::TenantRetirementRecord,
+    ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementCommit>
+    {
+        self.inner.compare_and_swap_retirement(expected, next)
+    }
+
+    fn delete_retirement<'a>(
+        &'a self,
+        expected: nimbus_workloads::TenantRetirementRecord,
+    ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementCommit>
+    {
+        self.inner.delete_retirement(expected)
+    }
+
+    fn list_active_retirements<'a>(
+        &'a self,
+        request: nimbus_workloads::TenantRetirementPageRequest,
+    ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementPage> {
+        self.inner.list_active_retirements(request)
+    }
+
+    fn list_retirements<'a>(
+        &'a self,
+        request: nimbus_workloads::TenantRetirementPageRequest,
+    ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementPage> {
+        self.inner.list_retirements(request)
+    }
+
+    fn load_workload_mutation_epoch<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+    ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantWorkloadMutationEpoch>
+    {
+        self.inner.load_workload_mutation_epoch(tenant_id)
+    }
+}
+
 #[test]
 #[serial_test::serial]
 fn compose_down_local_uses_engine_saga_and_compute_teardown() {
@@ -803,11 +857,12 @@ fn compose_down_unresolved_submission_makes_zero_provider_calls() {
         ));
         assert!(fixture.provider.calls().is_empty());
 
-        let faulting_store: Arc<dyn WorkloadSagaStore> =
-            AmbiguousOnceStore::new(Arc::clone(&fixture.engine));
+        let faulting_store = AmbiguousOnceStore::new(Arc::clone(&fixture.engine));
         let runtime = fixture
             .composition()
-            .into_foreground_runtime(faulting_store);
+            .into_foreground_runtime(faulting_store)
+            .await
+            .expect("foreground startup recovery should complete");
 
         let error = retire_compose_services(
             &fixture.command(Some("db")),

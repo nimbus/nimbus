@@ -7,6 +7,7 @@ mod saga;
 mod scheduling;
 mod store;
 mod tenant;
+mod tenant_retirement;
 
 pub use assignment::{NodeAssignment, WorkloadStatusUpdate};
 pub use desired::{
@@ -80,6 +81,14 @@ pub use tenant::{
     TenantPolicyArea, TenantPolicyLifecycle, TenantServiceProjection, TenantStorageProjection,
     TenantSystemEvidenceProjection, TenantWorkloadDeletionState, TenantWorkloadResourcePolicy,
     TenantWorkloadSpec, TenantWorkloadUid, policy_lifecycle,
+};
+pub use tenant_retirement::{
+    MAX_TENANT_RETIREMENT_PAGE_SIZE, TENANT_RETIREMENT_FORMAT_VERSION, TenantRetirementCommit,
+    TenantRetirementCursor, TenantRetirementError, TenantRetirementExpected,
+    TenantRetirementFuture, TenantRetirementId, TenantRetirementPage, TenantRetirementPageRequest,
+    TenantRetirementPhase, TenantRetirementRecord, TenantRetirementRevision,
+    TenantRetirementSource, TenantRetirementStore, TenantRetirementStoreError,
+    TenantWorkloadMutationEpoch,
 };
 
 pub(crate) use desired::validate_component;

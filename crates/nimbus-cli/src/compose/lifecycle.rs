@@ -10,7 +10,6 @@ use nimbus_compute::{
 use nimbus_server::{EngineWorkloadSagaStore, ServerForegroundWorkloadRuntime};
 use nimbus_services::{ServiceDefinition, ServiceDefinitionObservation};
 use nimbus_tenant::TenantIsolationContext;
-use nimbus_workloads::WorkloadSagaStore;
 use serde::Serialize;
 
 use super::provision::PreparedComposeProvision;
@@ -66,13 +65,12 @@ pub(super) struct ComposeForegroundOwner {
 }
 
 impl ComposeForegroundOwner {
-    pub(super) fn open(
+    pub(super) async fn open(
         engine: Arc<Engine>,
         prepared: PreparedComposeProvision,
     ) -> Result<Self, Error> {
-        let saga_store: Arc<dyn WorkloadSagaStore> =
-            Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
-        let runtime = prepared.activate(engine, saga_store)?;
+        let saga_store = Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
+        let runtime = prepared.activate(engine, saga_store).await?;
         Ok(Self {
             runtime,
             cancellation: WorkloadProvisionCancellation::default(),
@@ -91,14 +89,16 @@ impl ComposeForegroundOwner {
     }
 
     #[cfg(test)]
-    pub(super) fn open_composition_for_test(
+    pub(super) async fn open_composition_for_test(
         engine: Arc<Engine>,
         composition: nimbus_server::ServerWorkloadComposition,
     ) -> Self {
-        let saga_store: Arc<dyn WorkloadSagaStore> =
-            Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
+        let saga_store = Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
         Self {
-            runtime: composition.into_foreground_runtime(saga_store),
+            runtime: composition
+                .into_foreground_runtime(saga_store)
+                .await
+                .expect("test foreground startup recovery should complete"),
             cancellation: WorkloadProvisionCancellation::default(),
         }
     }

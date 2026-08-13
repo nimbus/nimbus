@@ -43,6 +43,7 @@ mod restart_settlement_process;
 mod store;
 mod teardown_driver_process;
 mod tenant_enumeration;
+mod tenant_retirement;
 
 fn engine(root: &tempfile::TempDir) -> Arc<Engine> {
     Arc::new(Engine::new(root.path()).expect("fixture Engine should open"))

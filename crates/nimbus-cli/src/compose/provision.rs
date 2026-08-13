@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use nimbus::{Engine, Error, LocalBuildAdmission, SandboxBackendKind, ServiceDefinitionCatalog};
 use nimbus_compute::embedded_local_node_identity;
+use nimbus_compute::state::ComputeError;
 use nimbus_operator::LocalNodeNetworkRoot;
 use nimbus_server::{
     ServerForegroundWorkloadRuntime, ServerWorkloadComposition,
@@ -166,27 +167,45 @@ impl PreparedComposeProvision {
         }
     }
 
-    pub(super) fn activate(
+    pub(super) async fn activate<S>(
         self,
         engine: Arc<Engine>,
-        saga_store: Arc<dyn WorkloadSagaStore>,
-    ) -> Result<ServerForegroundWorkloadRuntime, Error> {
+        saga_store: Arc<S>,
+    ) -> Result<ServerForegroundWorkloadRuntime, Error>
+    where
+        S: WorkloadSagaStore + nimbus_workloads::TenantRetirementStore,
+    {
         match self {
             Self::Local(profile) => profile
                 .complete_foreground(engine, saga_store)
+                .await
                 .map_err(|error| Error::InvalidInput(error.to_string())),
             Self::Forwarded(prepared) => {
                 let composition = compose_forwarded_foreground(*prepared, engine)
                     .map_err(forwarded_compose_activation_error)?;
-                Ok(composition.into_foreground_runtime(saga_store))
+                composition
+                    .into_foreground_runtime(saga_store)
+                    .await
+                    .map_err(foreground_runtime_error)
             }
             #[cfg(test)]
-            Self::TestComposition(composition) => {
-                Ok(composition.into_foreground_runtime(saga_store))
-            }
+            Self::TestComposition(composition) => composition
+                .into_foreground_runtime(saga_store)
+                .await
+                .map_err(foreground_runtime_error),
             #[cfg(test)]
             Self::TestRuntime(runtime) => Ok(*runtime),
         }
+    }
+}
+
+fn foreground_runtime_error(error: ComputeError) -> Error {
+    match error {
+        ComputeError::Core(error) => error,
+        ComputeError::Unauthorized(message) | ComputeError::Forbidden(message) => {
+            Error::PermissionDenied(message)
+        }
+        ComputeError::NotFound(message) => Error::NotFound(message),
     }
 }
 

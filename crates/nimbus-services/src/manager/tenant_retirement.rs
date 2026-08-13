@@ -5,9 +5,10 @@ use std::num::NonZeroU64;
 
 use nimbus_core::{Error, TenantId};
 use nimbus_workloads::{
-    DesiredWorkloadKind, DesiredWorkloadState, WorkloadProvisionSourceGeneration,
-    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceKind,
-    WorkloadProvisionSourceResourceVersion, WorkloadSagaPhase, WorkloadSagaRecord,
+    DesiredWorkloadKind, DesiredWorkloadState, TenantRetirementPhase, TenantRetirementRecord,
+    TenantRetirementSource, WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
+    WorkloadProvisionSourceKind, WorkloadProvisionSourceResourceVersion, WorkloadSagaPhase,
+    WorkloadSagaRecord,
 };
 
 use crate::{ServiceBackend, ServiceDefinition};
@@ -32,39 +33,11 @@ impl TenantSourceRetirementClaim {
     }
 }
 
-/// Immutable source-owner facts captured when tenant retirement wins its
-/// process-local source barrier.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TenantWorkloadSourceSnapshot {
-    identity: WorkloadProvisionSourceIdentity,
-    source_generation: WorkloadProvisionSourceGeneration,
-    resource_version: WorkloadProvisionSourceResourceVersion,
-    has_observation: bool,
-}
-
-impl TenantWorkloadSourceSnapshot {
-    pub fn identity(&self) -> &WorkloadProvisionSourceIdentity {
-        &self.identity
-    }
-
-    pub const fn source_generation(&self) -> WorkloadProvisionSourceGeneration {
-        self.source_generation
-    }
-
-    pub fn resource_version(&self) -> &WorkloadProvisionSourceResourceVersion {
-        &self.resource_version
-    }
-
-    pub const fn has_observation(&self) -> bool {
-        self.has_observation
-    }
-}
-
 /// Exact claim plus the frozen source inventory that compute must retire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantSourceRetirementSnapshot {
     claim: TenantSourceRetirementClaim,
-    sources: Vec<TenantWorkloadSourceSnapshot>,
+    sources: Vec<TenantRetirementSource>,
 }
 
 /// Installed tenant fence. A failed snapshot remains fenced so retry cannot
@@ -103,7 +76,7 @@ impl TenantSourceRetirementSnapshot {
         &self.claim
     }
 
-    pub fn sources(&self) -> &[TenantWorkloadSourceSnapshot] {
+    pub fn sources(&self) -> &[TenantRetirementSource] {
         &self.sources
     }
 }
@@ -158,6 +131,55 @@ impl ServiceManager {
                 Err(error)
             }
         }
+    }
+
+    /// Restore one process-local source-admission barrier from exact durable
+    /// tenant-retirement truth before startup admits workload activity.
+    pub fn restore_tenant_source_retirement(
+        &self,
+        record: &TenantRetirementRecord,
+    ) -> Result<TenantSourceRetirementSnapshot, Error> {
+        record
+            .validate()
+            .map_err(|error| Error::PreconditionFailed(error.to_string()))?;
+        let claim = TenantSourceRetirementClaim {
+            tenant_id: record.tenant_id().clone(),
+            tenant_incarnation: record.tenant_incarnation(),
+        };
+        let snapshot = TenantSourceRetirementSnapshot {
+            claim,
+            sources: record.sources().to_vec(),
+        };
+        let mut state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        if let Some(existing) = state.tenant_source_retirements.get(record.tenant_id()) {
+            let replay = existing.replay()?;
+            if replay != snapshot {
+                return Err(Error::conflict(format!(
+                    "tenant {} source retirement is crossed with durable retirement {}",
+                    record.tenant_id(),
+                    record.retirement_id()
+                )));
+            }
+            return Ok(replay);
+        }
+        authenticate_current_sources(&state, &snapshot)?;
+        let barrier = match record.phase() {
+            TenantRetirementPhase::IntentCommitted | TenantRetirementPhase::ChildrenRecorded => {
+                TenantSourceRetirementBarrier::Claimed(snapshot.clone())
+            }
+            TenantRetirementPhase::SourcesFinalized
+            | TenantRetirementPhase::EngineDeleted
+            | TenantRetirementPhase::Recorded => {
+                TenantSourceRetirementBarrier::Finalized(snapshot.clone())
+            }
+        };
+        state
+            .tenant_source_retirements
+            .insert(record.tenant_id().clone(), barrier);
+        Ok(snapshot)
     }
 
     /// Remove process-local tenant source state only after compute supplies the
@@ -286,7 +308,7 @@ fn tenant_source_snapshot(
     state: &ServiceManagerState,
     tenant_id: &TenantId,
     catalog_definitions: BTreeMap<String, ServiceDefinition>,
-) -> Result<Vec<TenantWorkloadSourceSnapshot>, Error> {
+) -> Result<Vec<TenantRetirementSource>, Error> {
     let mut definitions = catalog_definitions;
     for (key, definition) in &state.definitions {
         if &key.tenant_id != tenant_id {
@@ -311,18 +333,16 @@ fn tenant_source_snapshot(
         }
         let identity = WorkloadProvisionSourceIdentity::sandbox_backed_service(&definition.name)
             .map_err(|error| Error::Internal(error.to_string()))?;
-        sources.push(TenantWorkloadSourceSnapshot {
+        sources.push(TenantRetirementSource::new(
             identity,
-            source_generation: WorkloadProvisionSourceGeneration::new(definition.generation),
-            resource_version: WorkloadProvisionSourceResourceVersion::new(
-                definition.resource_version,
-            )
-            .map_err(|error| Error::Internal(error.to_string()))?,
-            has_observation: state
+            WorkloadProvisionSourceGeneration::new(definition.generation),
+            WorkloadProvisionSourceResourceVersion::new(definition.resource_version)
+                .map_err(|error| Error::Internal(error.to_string()))?,
+            state
                 .service_definition_observations
                 .keys()
                 .any(|key| key.tenant_id == *tenant_id && key.service_name == definition.name),
-        });
+        ));
     }
     for (key, source) in &state.sandbox_resource_sources {
         if &key.tenant_id != tenant_id {
@@ -336,15 +356,13 @@ fn tenant_source_snapshot(
         let identity =
             WorkloadProvisionSourceIdentity::standalone_sandbox(&source.id, &source.profile)
                 .map_err(|error| Error::Internal(error.to_string()))?;
-        sources.push(TenantWorkloadSourceSnapshot {
+        sources.push(TenantRetirementSource::new(
             identity,
-            source_generation: WorkloadProvisionSourceGeneration::new(source.generation),
-            resource_version: WorkloadProvisionSourceResourceVersion::new(
-                source.resource_version.clone(),
-            )
-            .map_err(|error| Error::Internal(error.to_string()))?,
-            has_observation: state.sandbox_resource_observations.contains_key(key),
-        });
+            WorkloadProvisionSourceGeneration::new(source.generation),
+            WorkloadProvisionSourceResourceVersion::new(source.resource_version.clone())
+                .map_err(|error| Error::Internal(error.to_string()))?,
+            state.sandbox_resource_observations.contains_key(key),
+        ));
     }
     sources.sort_by_key(|source| source_identity_key(source.identity()));
     let mut seen_identities = BTreeSet::new();
@@ -400,8 +418,8 @@ fn authenticate_terminal_inventory(
         };
         if record.key().workload_id().as_str() != source.source_identity().stable_name()
             || record.active_intent().kind() != expected_kind
-            || source.source_generation() != expected_source.source_generation
-            || source.resource_version() != &expected_source.resource_version
+            || source.source_generation() != expected_source.source_generation()
+            || source.resource_version() != expected_source.resource_version()
         {
             return Err(terminal_inventory_error(
                 retained.claim.tenant_id(),
@@ -416,7 +434,7 @@ fn authenticate_terminal_inventory(
         }
     }
     if retained.sources.iter().any(|source| {
-        source.has_observation && !observed.contains(&source_identity_key(source.identity()))
+        source.has_observation() && !observed.contains(&source_identity_key(source.identity()))
     }) {
         return Err(terminal_inventory_error(
             retained.claim.tenant_id(),
@@ -453,8 +471,8 @@ fn authenticate_current_sources(
                 "current services state contains a source created after the barrier",
             ));
         };
-        if source.source_generation.as_u64() != definition.generation
-            || source.resource_version.as_str() != definition.resource_version
+        if source.source_generation().as_u64() != definition.generation
+            || source.resource_version().as_str() != definition.resource_version
         {
             return Err(terminal_inventory_error(
                 retained.claim.tenant_id(),
@@ -475,8 +493,8 @@ fn authenticate_current_sources(
                 "current services state contains a sandbox created after the barrier",
             ));
         };
-        if source.source_generation.as_u64() != sandbox.generation
-            || source.resource_version.as_str() != sandbox.resource_version
+        if source.source_generation().as_u64() != sandbox.generation
+            || source.resource_version().as_str() != sandbox.resource_version
         {
             return Err(terminal_inventory_error(
                 retained.claim.tenant_id(),

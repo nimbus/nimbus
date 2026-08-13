@@ -234,7 +234,7 @@
       "verification": "source-occurrence",
       "category": "socket-bind",
       "path": "crates/nimbus-server/src/construction.rs",
-      "line": 490,
+      "line": 495,
       "symbol": "serve_leased",
       "authority_kinds": [
         "listener-ownership-slot",
@@ -1018,7 +1018,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve",
       "ordinal": 1,
-      "line": 379
+      "line": 384
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -1026,7 +1026,7 @@
       "kind": "tcp-bind",
       "symbol": "serve_leased",
       "ordinal": 1,
-      "line": 490
+      "line": 495
     },
     {
       "site_id": "server-main-listener-consumer",

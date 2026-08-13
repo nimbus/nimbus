@@ -1427,6 +1427,42 @@ async fn tenant_runtime_lease_projects_incarnation_and_holds_delete_fence() {
 }
 
 #[tokio::test]
+async fn expected_incarnation_delete_rejects_before_fencing_a_replacement() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+
+    let error = engine
+        .begin_tenant_incarnation_delete_async(
+            tenant_id.clone(),
+            std::num::NonZeroU64::new(2).expect("fixture incarnation is nonzero"),
+        )
+        .await
+        .err()
+        .expect("a stale expected incarnation must fail");
+    assert!(matches!(error, Error::PreconditionFailed(_)));
+
+    let live = engine
+        .enter_tenant_runtime_async(tenant_id.clone())
+        .await
+        .expect("the rejected operation must not fence the live incarnation");
+    assert_eq!(live.tenant_incarnation().get(), 1);
+    drop(live);
+
+    let deletion = engine
+        .begin_tenant_incarnation_delete_async(
+            tenant_id,
+            std::num::NonZeroU64::new(1).expect("fixture incarnation is nonzero"),
+        )
+        .await
+        .expect("the exact incarnation should be fenced");
+    engine
+        .finish_tenant_delete_async(deletion)
+        .await
+        .expect("fixture deletion should finish");
+}
+
+#[tokio::test]
 async fn no_schema_allows_anything() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();

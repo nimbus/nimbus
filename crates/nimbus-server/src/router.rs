@@ -285,7 +285,7 @@ pub(crate) struct RouterBuildConfig {
     runtime: RuntimeGovernorConfig,
 }
 
-struct PreparedRouterState {
+pub(crate) struct PreparedRouterState {
     state: Arc<AppState>,
     cloud_functions_http_enabled: bool,
     cors_allowed_origins: Vec<String>,
@@ -534,6 +534,20 @@ impl RouterBuildConfig {
         Ok(())
     }
 
+    /// Build transport state only after system schemas and the one bounded
+    /// managed-workload recovery attempt are complete. No listener is served
+    /// before this method returns.
+    pub(crate) async fn prepare_for_serving(self) -> nimbus_core::Result<PreparedRouterState> {
+        self.prepare_system_tenant().await?;
+        let prepared = self.into_state();
+        prepared
+            .state
+            .prepare_workload_lifecycle()
+            .await
+            .map_err(|error| nimbus_core::Error::Internal(error.to_string()))?;
+        Ok(prepared)
+    }
+
     fn into_state(self) -> PreparedRouterState {
         let RouterBuildConfig {
             workload,
@@ -588,12 +602,12 @@ impl RouterBuildConfig {
         }
     }
 
-    pub(crate) fn build(self) -> Router {
+    fn build_prepared(prepared: PreparedRouterState) -> Router {
         let PreparedRouterState {
             state,
             cloud_functions_http_enabled,
             cors_allowed_origins,
-        } = self.into_state();
+        } = prepared;
         let runtime_host_resource_budget = state.runtime_host_resource_budget();
         tracing::info!(
             host_millicpus = runtime_host_resource_budget.host_millicpus,
@@ -685,6 +699,14 @@ impl RouterBuildConfig {
             ))
             .with_state(state)
     }
+
+    pub(crate) fn build(self) -> Router {
+        Self::build_prepared(self.into_state())
+    }
+
+    pub(crate) fn build_serving(prepared: PreparedRouterState) -> Router {
+        Self::build_prepared(prepared)
+    }
 }
 
 pub(crate) fn convex_application_auth_verifier(
@@ -695,7 +717,12 @@ pub(crate) fn convex_application_auth_verifier(
 
 /// Builds the Nimbus HTTP/WebSocket router from the canonical option bundle.
 pub fn build_router(options: RouterOptions) -> Router {
-    options.into_build_config().build()
+    let config = options.into_build_config();
+    assert!(
+        !config.workload.is_managed(),
+        "managed workload routers require the asynchronous serving or foreground readiness boundary"
+    );
+    config.build()
 }
 
 fn build_public_router() -> Router<Arc<AppState>> {

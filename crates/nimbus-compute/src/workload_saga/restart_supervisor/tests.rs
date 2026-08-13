@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::Poll;
 
 use tokio::sync::Semaphore;
 
@@ -78,6 +79,33 @@ async fn exact_duplicate_record_tracks_one_task_and_joins() {
         .wait_until_quiescent()
         .await
         .expect("successful task becomes quiescent");
+}
+
+#[tokio::test]
+async fn startup_waiters_join_the_same_retained_restart_task() {
+    let coordinator = ScriptedCoordinator::new([Ok(())]);
+    let supervisor = supervisor(Arc::clone(&coordinator));
+    let record = test_support::scheduled_restart_record("startup-join", 0);
+
+    let first_supervisor = supervisor.clone();
+    let first_record = record.clone();
+    let first = tokio::spawn(async move { first_supervisor.track_and_wait(first_record).await });
+    coordinator.wait_for_calls(1).await;
+    let second = supervisor.track_and_wait(record);
+    tokio::pin!(second);
+    std::future::poll_fn(|context| match second.as_mut().poll(context) {
+        Poll::Pending => Poll::Ready(()),
+        Poll::Ready(result) => {
+            panic!("the joined waiter completed before coordinator release: {result:?}")
+        }
+    })
+    .await;
+    assert_eq!(coordinator.calls.load(Ordering::Acquire), 1);
+    coordinator.release(1);
+
+    assert_eq!(first.await.expect("first waiter remains live"), Ok(()));
+    assert_eq!(second.await, Ok(()));
+    assert_eq!(coordinator.calls.load(Ordering::Acquire), 1);
 }
 
 #[tokio::test]

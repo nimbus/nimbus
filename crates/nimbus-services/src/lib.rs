@@ -24,7 +24,7 @@ pub use catalog::{
 pub use manager::{
     LocalBuildAdmission, SandboxServiceProvisionSource, ServiceManager,
     StandaloneSandboxProvisionSource, TenantSourceRetirementClaim, TenantSourceRetirementSnapshot,
-    TenantWorkloadSourceSnapshot, WorkloadSourceRetirementClaim, WorkloadSourceRetirementIdentity,
+    WorkloadSourceRetirementClaim, WorkloadSourceRetirementIdentity,
     WorkloadSourceRetirementOperation,
 };
 pub use registry::{

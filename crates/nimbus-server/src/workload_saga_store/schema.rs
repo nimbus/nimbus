@@ -10,32 +10,44 @@ use serde_json::Value;
 
 pub(crate) const WORKLOAD_SAGA_TABLE: &str = "_workload_sagas";
 pub(crate) const WORKLOAD_SAGA_TENANT: &str = "_nimbus";
+pub(crate) const TENANT_RETIREMENT_TABLE: &str = "_tenant_retirements";
+pub(crate) const WORKLOAD_SAGA_TENANT_EPOCH_TABLE: &str = "_workload_saga_tenant_epochs";
 
 pub(crate) async fn prepare_exact_schema(
     engine: &Arc<Engine>,
 ) -> Result<(), WorkloadSagaStoreError> {
     let tenant = workload_saga_tenant()?;
-    let table = workload_saga_table()?;
     engine
         .ensure_tenant_ready_async(tenant.clone())
         .await
         .map_err(unavailable)?;
 
+    prepare_table(engine, &tenant, exact_table_schema()).await?;
+    prepare_table(engine, &tenant, exact_tenant_retirement_table_schema()).await?;
+    prepare_table(engine, &tenant, exact_tenant_epoch_table_schema()).await
+}
+
+async fn prepare_table(
+    engine: &Arc<Engine>,
+    tenant: &TenantId,
+    expected: TableSchema,
+) -> Result<(), WorkloadSagaStoreError> {
+    let table = expected.table.clone();
     match engine
         .get_table_schema_async(tenant.clone(), table.clone())
         .await
     {
-        Ok(existing) => verify_exact_schema(&existing),
+        Ok(existing) => verify_exact_schema(&expected, &existing),
         Err(Error::SchemaNotFound(_)) => {
             engine
-                .set_table_schema_async(tenant.clone(), exact_table_schema())
+                .set_table_schema_async(tenant.clone(), expected.clone())
                 .await
                 .map_err(unavailable)?;
             let installed = engine
-                .get_table_schema_async(tenant, table)
+                .get_table_schema_async(tenant.clone(), table)
                 .await
                 .map_err(unavailable)?;
-            verify_exact_schema(&installed)
+            verify_exact_schema(&expected, &installed)
         }
         Err(error) => Err(unavailable(error)),
     }
@@ -47,6 +59,14 @@ pub(crate) fn workload_saga_tenant() -> Result<TenantId, WorkloadSagaStoreError>
 
 pub(crate) fn workload_saga_table() -> Result<TableName, WorkloadSagaStoreError> {
     TableName::new(WORKLOAD_SAGA_TABLE).map_err(unavailable)
+}
+
+pub(crate) fn tenant_retirement_table() -> Result<TableName, WorkloadSagaStoreError> {
+    TableName::new(TENANT_RETIREMENT_TABLE).map_err(unavailable)
+}
+
+pub(crate) fn workload_saga_tenant_epoch_table() -> Result<TableName, WorkloadSagaStoreError> {
+    TableName::new(WORKLOAD_SAGA_TENANT_EPOCH_TABLE).map_err(unavailable)
 }
 
 pub(crate) fn exact_table_schema() -> TableSchema {
@@ -95,8 +115,48 @@ pub(crate) fn exact_table_schema() -> TableSchema {
     }
 }
 
-fn verify_exact_schema(existing: &TableSchema) -> Result<(), WorkloadSagaStoreError> {
-    let mut expected = exact_table_schema();
+pub(crate) fn exact_tenant_retirement_table_schema() -> TableSchema {
+    TableSchema {
+        table: TableName::new(TENANT_RETIREMENT_TABLE)
+            .expect("private tenant-retirement table name should be valid"),
+        fields: vec![
+            field("formatVersion", FieldType::Number, true),
+            field("retirementId", FieldType::String, true),
+            field("tenantId", FieldType::String, true),
+            field("tenantIncarnation", FieldType::String, true),
+            field("revision", FieldType::String, true),
+            field("phase", FieldType::String, true),
+            field("active", FieldType::Boolean, true),
+            field("sources", FieldType::Array, true),
+        ],
+        indexes: vec![
+            IndexDefinition::new("by_retirementId", ["retirementId"]),
+            IndexDefinition::new("by_active_and_retirementId", ["active", "retirementId"]),
+            IndexDefinition::new("by_tenantId", ["tenantId"]),
+        ],
+        access_policy: Some(system_access_policy()),
+    }
+}
+
+pub(crate) fn exact_tenant_epoch_table_schema() -> TableSchema {
+    TableSchema {
+        table: TableName::new(WORKLOAD_SAGA_TENANT_EPOCH_TABLE)
+            .expect("private workload-saga tenant-epoch table name should be valid"),
+        fields: vec![
+            field("formatVersion", FieldType::Number, true),
+            field("tenantId", FieldType::String, true),
+            field("mutationEpoch", FieldType::String, true),
+        ],
+        indexes: Vec::new(),
+        access_policy: Some(system_access_policy()),
+    }
+}
+
+fn verify_exact_schema(
+    expected: &TableSchema,
+    existing: &TableSchema,
+) -> Result<(), WorkloadSagaStoreError> {
+    let mut expected = expected.clone();
     expected.reconcile_index_metadata(Some(existing));
     if &expected == existing {
         Ok(())

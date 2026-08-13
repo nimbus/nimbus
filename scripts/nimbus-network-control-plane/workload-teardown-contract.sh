@@ -183,6 +183,14 @@ run_self_test() {
     'tenant-driver-disconnects-loop-record|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
     'tenant-skips-second-inventory|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
     'tenant-finalizes-before-recorded-proof|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-skips-durable-intent|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-recovery-skips-barrier-restore|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-skips-children-progress|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-skips-sources-progress|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-skips-engine-delete|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-skips-recorded-progress|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-inventory-drops-epoch-fence|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-deletes-progress-before-terminal|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
     'compensation-submits-failed-key|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
     'compensation-cause-drops-result-claim|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
     'compensation-ambiguity-skips-readback|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
@@ -305,12 +313,12 @@ run_self_test() {
       "${passed}" "${failures}"
     return 1
   fi
-  if [ "${passed}" -ne 172 ]; then
-    printf 'NNC6.5 teardown contract self-test: expected 172 mutations, observed %d\n' \
+  if [ "${passed}" -ne 180 ]; then
+    printf 'NNC6.5 teardown contract self-test: expected 180 mutations, observed %d\n' \
       "${passed}"
     return 1
   fi
-  printf 'NNC6.5 teardown contract self-test: 172 passed, 0 failed\n'
+  printf 'NNC6.5 teardown contract self-test: 180 passed, 0 failed\n'
 }
 
 case "${1:-}" in

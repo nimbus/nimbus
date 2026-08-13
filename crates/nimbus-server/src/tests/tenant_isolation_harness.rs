@@ -444,8 +444,17 @@ impl TenantIsolationConformanceReport {
     }
 }
 
-#[tokio::test]
-async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_system_control() {
+#[test]
+fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_system_control() {
+    std::thread::Builder::new()
+        .name("tenant-isolation-conformance".to_owned())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tenant-isolation conformance runtime should build")
+                .block_on(async {
     let mut conformance = TenantIsolationConformanceReport::default();
     let _guard = auth::auth_test_guard().await;
     let temp = tempdir().expect("tempdir should build");
@@ -911,7 +920,12 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
         "tenant-b runtime storage remains readable after tenant-a cleanup",
     );
 
-    conformance.assert_counts(12, 9);
+                    conformance.assert_counts(12, 9);
+                });
+        })
+        .expect("tenant-isolation conformance thread should start")
+        .join()
+        .expect("tenant-isolation conformance thread should complete");
 }
 
 const HARNESS_RUNTIME_BUNDLE: &str = r#"

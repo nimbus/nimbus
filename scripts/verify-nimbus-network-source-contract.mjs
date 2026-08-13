@@ -1230,7 +1230,7 @@ function verifyComputeNetworkManagerInjection() {
     "crates/nimbus-compute/src/state.rs",
   ).source;
   if (
-    !/pub\s+enum\s+ComputeWorkloadComposition\s*\{[\s\S]*?ProtocolOnly[\s\S]*?Managed\s*\{[\s\S]*?network_manager\s*:\s*Arc\s*<\s*LocalNetworkManager\s*>[\s\S]*?saga_store\s*:\s*Arc\s*<\s*dyn\s+WorkloadSagaStore\s*>/s.test(
+    !/pub\s+enum\s+ComputeWorkloadComposition\s*\{[\s\S]*?ProtocolOnly[\s\S]*?Managed\s*\{[\s\S]*?network_manager\s*:\s*Arc\s*<\s*LocalNetworkManager\s*>[\s\S]*?lifecycle_stores\s*:\s*WorkloadLifecycleStores/s.test(
       computeState,
     ) ||
     !/\bnetwork_manager\s*:\s*Option\s*<\s*Arc\s*<\s*LocalNetworkManager\s*>\s*>/.test(

@@ -6,14 +6,16 @@
 
 use std::collections::BTreeSet;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nimbus_compute::config::control_plane::ControlPlaneConfig;
 use nimbus_compute::config::deployment::DeploymentConfig;
 use nimbus_compute::config::node_services::NodeServicesConfig;
 use nimbus_compute::config::runtime::RuntimeGovernorConfig;
-use nimbus_compute::state::{ComputeState, ComputeStateConfig, ComputeWorkloadComposition};
+use nimbus_compute::state::{
+    ComputeState, ComputeStateConfig, ComputeWorkloadComposition, WorkloadLifecycleStores,
+};
 use nimbus_compute::workload_saga::provision_provider::{
     ProviderProvisionEffectObservation, ProviderProvisionPhaseAdapter,
 };
@@ -134,6 +136,7 @@ struct ControlledSagaStore {
     recorded_barrier_used: AtomicBool,
     stale_load_barrier: Mutex<Option<Arc<SemanticBarrier>>>,
     stale_load_used: AtomicBool,
+    mutation_epoch: AtomicU64,
 }
 
 impl ControlledSagaStore {
@@ -147,6 +150,7 @@ impl ControlledSagaStore {
             recorded_barrier_used: AtomicBool::new(false),
             stale_load_barrier: Mutex::new(None),
             stale_load_used: AtomicBool::new(false),
+            mutation_epoch: AtomicU64::new(0),
         })
     }
 
@@ -162,6 +166,7 @@ impl ControlledSagaStore {
             .record
             .lock()
             .expect("controlled saga store lock should remain healthy") = Some(record);
+        self.mutation_epoch.fetch_add(1, Ordering::AcqRel);
     }
 
     fn call_counts(&self) -> (usize, usize) {
@@ -266,6 +271,9 @@ impl WorkloadSagaStore for ControlledSagaStore {
                 }
             };
 
+            if changed {
+                self.mutation_epoch.fetch_add(1, Ordering::AcqRel);
+            }
             if changed
                 && next.phase() == WorkloadSagaPhase::Recorded
                 && !self.recorded_barrier_used.swap(true, Ordering::AcqRel)
@@ -309,6 +317,65 @@ impl WorkloadSagaStore for ControlledSagaStore {
         request: WorkloadSagaTenantPageRequest,
     ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
         Box::pin(async move { WorkloadSagaTenantPage::new(tenant_id, &request, Vec::new(), false) })
+    }
+}
+
+impl nimbus_workloads::TenantRetirementStore for ControlledSagaStore {
+    fn load_retirement<'a>(
+        &'a self,
+        _tenant_id: &'a TenantId,
+    ) -> nimbus_workloads::TenantRetirementFuture<
+        'a,
+        Option<nimbus_workloads::TenantRetirementRecord>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn compare_and_swap_retirement<'a>(
+        &'a self,
+        _expected: nimbus_workloads::TenantRetirementExpected,
+        _next: nimbus_workloads::TenantRetirementRecord,
+    ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementCommit>
+    {
+        Box::pin(async { Err(nimbus_workloads::TenantRetirementStoreError::Unavailable) })
+    }
+
+    fn delete_retirement<'a>(
+        &'a self,
+        _expected: nimbus_workloads::TenantRetirementRecord,
+    ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementCommit>
+    {
+        Box::pin(async { Err(nimbus_workloads::TenantRetirementStoreError::Unavailable) })
+    }
+
+    fn list_active_retirements<'a>(
+        &'a self,
+        request: nimbus_workloads::TenantRetirementPageRequest,
+    ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementPage> {
+        Box::pin(async move {
+            nimbus_workloads::TenantRetirementPage::active(&request, Vec::new(), false)
+        })
+    }
+
+    fn list_retirements<'a>(
+        &'a self,
+        request: nimbus_workloads::TenantRetirementPageRequest,
+    ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementPage> {
+        Box::pin(async move {
+            nimbus_workloads::TenantRetirementPage::retained(&request, Vec::new(), false)
+        })
+    }
+
+    fn load_workload_mutation_epoch<'a>(
+        &'a self,
+        _tenant_id: &'a TenantId,
+    ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantWorkloadMutationEpoch>
+    {
+        Box::pin(async move {
+            Ok(nimbus_workloads::TenantWorkloadMutationEpoch::new(
+                self.mutation_epoch.load(Ordering::Acquire),
+            ))
+        })
     }
 }
 
@@ -774,7 +841,6 @@ impl RetirementHarness {
             .freeze(reports);
         let projection_sink: Arc<dyn WorkloadProjectionSink> =
             Arc::new(ServiceManagerWorkloadProjectionSink::new(manager.clone()));
-        let saga_store: Arc<dyn WorkloadSagaStore> = store.clone();
         let source_owner: Arc<dyn nimbus_compute::workload_saga::WorkloadProvisionSourceAuthority> =
             source_authority;
         let compute = Arc::new(ComputeState::from_config(ComputeStateConfig {
@@ -790,7 +856,7 @@ impl RetirementHarness {
                     BTreeSet::new(),
                     true,
                 ),
-                saga_store,
+                lifecycle_stores: WorkloadLifecycleStores::shared(store.clone()),
                 source_authority: source_owner,
                 provision_capabilities: Box::new(provision_capabilities),
                 restart_capabilities: Box::new(

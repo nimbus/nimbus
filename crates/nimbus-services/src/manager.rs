@@ -27,9 +27,7 @@ pub use source_retirement::{
     WorkloadSourceRetirementClaim, WorkloadSourceRetirementIdentity,
     WorkloadSourceRetirementOperation,
 };
-pub use tenant_retirement::{
-    TenantSourceRetirementClaim, TenantSourceRetirementSnapshot, TenantWorkloadSourceSnapshot,
-};
+pub use tenant_retirement::{TenantSourceRetirementClaim, TenantSourceRetirementSnapshot};
 
 /// Whether the service manager admits local-build sandbox roots.
 ///

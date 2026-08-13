@@ -177,7 +177,7 @@ where
         network_state_dir,
     )?;
     let engine = Arc::new(Engine::new_with_persistence_config(persistence_config.clone()).await?);
-    let owner = lifecycle::ComposeForegroundOwner::open(Arc::clone(&engine), prepared)?;
+    let owner = lifecycle::ComposeForegroundOwner::open(Arc::clone(&engine), prepared).await?;
     let cancellation = owner.cancellation();
     tokio::pin!(shutdown);
     let lifecycle_result = async {

@@ -884,7 +884,7 @@ ${compute_saga_source}"
 
   check_literals "managed-compute-required-dispatch-composition" "${compute_state_source}
 ${server_state_source}" 'provision_capabilities:' 'source_authority:' \
-    'WorkloadProvisioner' 'saga_store:' 'network_manager:'
+    'WorkloadProvisioner' 'lifecycle_stores:' 'network_manager:'
 
   check_literals "reserve-command-mapping" "${compute_dispatch_source}
 ${compute_dispatch_tests_source}" 'ReserveNetwork' 'NetworkReservationCapability' \

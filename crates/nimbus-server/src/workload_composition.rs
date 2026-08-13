@@ -15,6 +15,7 @@ use nimbus_compute::config::node_services::NodeServicesConfig;
 use nimbus_compute::config::runtime::RuntimeGovernorConfig;
 use nimbus_compute::state::{
     ComputeError, ComputeState, ComputeStateConfig, ComputeWorkloadComposition,
+    WorkloadLifecycleStores,
 };
 use nimbus_compute::workload_saga::{
     ExactWorkloadTeardownCapabilityRealm, IngressProvisionCapabilities,
@@ -46,7 +47,9 @@ use nimbus_network::{
     NetworkProviderId, NetworkSovereigntyRequirements,
 };
 use nimbus_services::ServiceManager;
-use nimbus_workloads::{NodeIdentity, WorkloadExecutionProviderId, WorkloadSagaStore};
+use nimbus_workloads::{
+    NodeIdentity, TenantRetirementStore, WorkloadExecutionProviderId, WorkloadSagaStore,
+};
 use thiserror::Error;
 
 use crate::workload_saga_store::EngineWorkloadSagaStore;
@@ -204,7 +207,7 @@ pub struct ServerForegroundWorkloadRuntime {
 }
 
 impl ServerForegroundWorkloadRuntime {
-    fn from_managed(composition: ManagedComputeComposition) -> Self {
+    async fn from_managed(composition: ManagedComputeComposition) -> Result<Self, ComputeError> {
         let node_services = NodeServicesConfig::default()
             .with_service_manager(Arc::clone(&composition.service_manager));
         let compute = ComputeState::from_config(ComputeStateConfig {
@@ -218,10 +221,11 @@ impl ServerForegroundWorkloadRuntime {
         let resource_provisioner = compute.resource_provisioner().expect(
             "foreground runtime is built only from a complete managed workload composition",
         );
-        Self {
+        compute.prepare_workload_lifecycle().await?;
+        Ok(Self {
             _compute: compute,
             resource_provisioner,
-        }
+        })
     }
 
     /// The canonical native resource facade for this managed lifecycle realm.
@@ -354,17 +358,20 @@ impl ServerWorkloadComposition {
 
     /// Consume this validated composition into a transport-free foreground
     /// runtime without constructing HTTP application state.
-    pub fn into_foreground_runtime(
+    pub async fn into_foreground_runtime<S>(
         self,
-        saga_store: Arc<dyn WorkloadSagaStore>,
-    ) -> ServerForegroundWorkloadRuntime {
-        ServerForegroundWorkloadRuntime::from_managed(self.into_managed_compute(saga_store))
+        saga_store: Arc<S>,
+    ) -> Result<ServerForegroundWorkloadRuntime, ComputeError>
+    where
+        S: WorkloadSagaStore + TenantRetirementStore,
+    {
+        ServerForegroundWorkloadRuntime::from_managed(self.into_managed_compute(saga_store)).await
     }
 
-    fn into_managed_compute(
-        self,
-        saga_store: Arc<dyn WorkloadSagaStore>,
-    ) -> ManagedComputeComposition {
+    fn into_managed_compute<S>(self, saga_store: Arc<S>) -> ManagedComputeComposition
+    where
+        S: WorkloadSagaStore + TenantRetirementStore,
+    {
         let source_authority = Arc::new(ServiceManagerWorkloadProvisionSourceAuthority::new(
             Arc::clone(&self.service_manager),
         ));
@@ -380,7 +387,7 @@ impl ServerWorkloadComposition {
                 capability_selection: Box::new(self.capability_selection),
                 execution_provider_id: self.execution_provider_id,
                 sovereignty: self.sovereignty,
-                saga_store,
+                lifecycle_stores: WorkloadLifecycleStores::shared(saga_store),
                 source_authority,
                 provision_capabilities: Box::new(self.provision_capabilities),
                 restart_capabilities: Box::new(self.restart_capabilities),
@@ -436,9 +443,9 @@ impl ServerWorkloadProfile {
         match self {
             Self::ProtocolOnly { engine } => (engine, ComputeWorkloadComposition::ProtocolOnly),
             Self::Managed(composition) => {
-                let saga_store: Arc<dyn WorkloadSagaStore> = Arc::new(
-                    EngineWorkloadSagaStore::new(Arc::clone(&composition.engine)),
-                );
+                let saga_store = Arc::new(EngineWorkloadSagaStore::new(Arc::clone(
+                    &composition.engine,
+                )));
                 let managed = (*composition).into_managed_compute(saga_store);
                 (managed.engine, managed.workload)
             }

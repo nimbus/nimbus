@@ -334,10 +334,25 @@ fn compose_local_and_forwarded_restart_use_compute() {
     }
 }
 
-#[tokio::test]
+#[test]
 #[serial_test::serial]
-async fn foreground_compose_owner_retains_listener_rejects_second_realm_and_settles_before_return()
-{
+fn foreground_compose_owner_retains_listener_rejects_second_realm_and_settles_before_return() {
+    std::thread::Builder::new()
+        .name("compose-foreground-lifecycle".to_owned())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("foreground lifecycle runtime should initialize");
+            runtime.block_on(foreground_compose_lifecycle_body());
+        })
+        .expect("foreground lifecycle test thread should spawn")
+        .join()
+        .expect("foreground lifecycle test thread should not panic");
+}
+
+async fn foreground_compose_lifecycle_body() {
     let engine_root = TempDir::new().expect("Engine root should exist");
     let network_root = TempDir::new().expect("network root should exist");
     let engine = Arc::new(
@@ -422,7 +437,8 @@ async fn foreground_compose_owner_retains_listener_rejects_second_realm_and_sett
         .with_teardown_capabilities(teardown_capabilities),
     )
     .expect("complete foreground composition should validate");
-    let owner = ComposeForegroundOwner::open_composition_for_test(Arc::clone(&engine), composition);
+    let owner =
+        ComposeForegroundOwner::open_composition_for_test(Arc::clone(&engine), composition).await;
     let cancellation = owner.cancellation();
     drop(ingress);
     drop(manager);

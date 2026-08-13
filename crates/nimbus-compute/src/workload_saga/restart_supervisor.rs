@@ -198,6 +198,37 @@ impl RetainedRestartSupervisor {
         }
     }
 
+    /// Submit or join one exact key and wait for its retained coordination
+    /// attempt. Startup and the periodic watch share this state, so neither
+    /// can dispatch a second restart task for the same workload.
+    pub(super) async fn track_and_wait(&self, record: WorkloadSagaRecord) -> Result<(), String> {
+        let key = record.key().clone();
+        if let RestartTrack::Failed(failure) = self.start(record)? {
+            return Err(format!(
+                "retained restart candidate {} failed: {}",
+                failure.key().saga_id(),
+                failure.message()
+            ));
+        }
+        loop {
+            let changed = self.state.changed.notified();
+            let status = match self.state.lock_entries()?.get(&key) {
+                None => return Ok(()),
+                Some(RetainedRestartEntry::Failed(failure)) => {
+                    return Err(format!(
+                        "retained restart candidate {} failed: {}",
+                        failure.key().saga_id(),
+                        failure.message()
+                    ));
+                }
+                Some(RetainedRestartEntry::Active { .. }) => true,
+            };
+            if status {
+                changed.await;
+            }
+        }
+    }
+
     fn start(&self, record: WorkloadSagaRecord) -> Result<RestartTrack, String> {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| "retained restart supervisor requires a Tokio runtime".to_owned())?;

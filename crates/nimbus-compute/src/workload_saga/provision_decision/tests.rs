@@ -177,7 +177,10 @@ fn assert_effect_result_matrix(
             unresolved.revision().as_u64() + 1
         );
         assert!(failed.action_after_confirmation().is_none());
-        assert!(!failed.candidate().requires_recovery());
+        assert!(
+            failed.candidate().requires_recovery(),
+            "durable definite failure must remain discoverable for compensation"
+        );
         assert_eq!(
             WorkloadProvisionDecision::plan(failed.candidate())
                 .expect("definite failure should reopen"),
@@ -286,7 +289,10 @@ fn definite_failure_retains_completed_phase() {
     };
 
     assert_eq!(failed.candidate().phase(), completed.phase());
-    assert!(!failed.candidate().requires_recovery());
+    assert!(
+        failed.candidate().requires_recovery(),
+        "durable definite failure must remain discoverable for compensation"
+    );
     assert_eq!(
         WorkloadProvisionDecision::plan(failed.candidate()).expect("failed state should reopen"),
         WorkloadProvisionDecision::DefiniteFailure,

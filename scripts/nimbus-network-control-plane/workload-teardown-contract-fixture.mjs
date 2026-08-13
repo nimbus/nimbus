@@ -334,8 +334,108 @@ fn retain_late_restart_result() {}
 fn enter_withdrawal_committed_after_restart_settlement() {}
 `),
     tenantRetirement: withoutCfgTestItems(`
-async fn drive_tenant_teardown(&self, snapshot: &TenantSourceRetirementSnapshot) {
+async fn retire(&self, tenant_id: TenantId) {
+    let identity = self.engine.enter_tenant_runtime_async(tenant_id.clone()).await?;
+    let snapshot = self.driver.services
+        .claim_tenant_source_retirement(&tenant_id, identity.tenant_incarnation())?;
+    let record = self.driver.persist_intent(&snapshot).await?;
+    drop(identity);
+    self.resume(record, snapshot).await
+}
+async fn recover_retained(&self) {
+    let records = self.driver.list_retained_retirements().await?;
+    let mut retirements = Vec::new();
+    for record in records {
+        let snapshot = self.driver.services.restore_tenant_source_retirement(&record)?;
+        retirements.push((record, snapshot));
+    }
+    for (record, snapshot) in retirements {
+        self.resume(record, snapshot).await?;
+    }
+    Ok(())
+}
+async fn resume(&self, retained: TenantRetirementRecord, snapshot: TenantSourceRetirementSnapshot) {
+    let mut current = self.driver.adopt_exact_or_later(&retained).await?;
+    let exact_deletion = self.engine
+        .begin_tenant_incarnation_delete_async(current.tenant_id().clone(), current.tenant_incarnation())
+        .await?;
+    self.runtime_manager.retire_tenant_deletion(&exact_deletion).await?;
+    let terminal = self.driver.drive_children_to_recorded(&snapshot).await?;
+    current = self.driver
+        .advance_progress(&current, TenantRetirementPhase::ChildrenRecorded)
+        .await?;
+    self.driver.finalize_recorded_sources(&snapshot, &terminal)?;
+    current = self.driver
+        .advance_progress(&current, TenantRetirementPhase::SourcesFinalized)
+        .await?;
+    self.engine.finish_tenant_delete_async(exact_deletion).await?;
+    current = self.driver
+        .advance_progress(&current, TenantRetirementPhase::EngineDeleted)
+        .await?;
+    current = self.driver
+        .advance_progress(&current, TenantRetirementPhase::Recorded)
+        .await?;
+    self.driver.release_source_fences(&snapshot)?;
+    self.driver.services.release_tenant_source_retirement(snapshot.claim())?;
+    self.driver.delete_terminal(&current).await
+}
+async fn list_retained_retirements(&self) {
+    let mut cursor = None;
+    let mut pages = 0;
+    let mut records = Vec::new();
+    loop {
+        if pages == MAX_TENANT_RETIREMENT_PAGES { return Err(PageLimit); }
+        let request = TenantRetirementPageRequest::new(
+            cursor,
+            nimbus_workloads::MAX_TENANT_RETIREMENT_PAGE_SIZE,
+        )?;
+        let page = self.retirement_store.list_retirements(request).await?;
+        pages += 1;
+        records.extend_from_slice(page.records());
+        let Some(next) = page.next_cursor().cloned() else { break; };
+        cursor = Some(next);
+    }
+    Ok(records)
+}
+async fn persist_intent(&self, snapshot: &TenantSourceRetirementSnapshot) {
+    let intended = TenantRetirementRecord::new(snapshot.claim().tenant_id().clone())?;
+    match self.retirement_store
+        .compare_and_swap_retirement(TenantRetirementExpected::Missing, intended.clone())
+        .await
+    {
+        Ok(TenantRetirementCommit::Applied | TenantRetirementCommit::Unchanged) => Ok(intended),
+        Err(TenantRetirementStoreError::Conflict { .. } | TenantRetirementStoreError::Ambiguous) => {
+            self.adopt_exact_or_later(&intended).await
+        }
+    }
+}
+async fn advance_progress(&self, current: &TenantRetirementRecord, target: TenantRetirementPhase) {
+    let next = current.advance(target)?;
+    match self.retirement_store.compare_and_swap_retirement(
+        TenantRetirementExpected::Revision(current.revision()),
+        next.clone(),
+    ).await {
+        Ok(TenantRetirementCommit::Applied | TenantRetirementCommit::Unchanged) => Ok(next),
+        Err(_) => self.adopt_exact_or_later(&next).await,
+    }
+}
+async fn delete_terminal(&self, terminal: &TenantRetirementRecord) {
+    match self.retirement_store.delete_retirement(terminal.clone()).await {
+        Err(TenantRetirementStoreError::Ambiguous) => {
+            match self.retirement_store.load_retirement(terminal.tenant_id()).await? {
+                None => return Ok(()),
+                Some(current) if current == *terminal => continue,
+                Some(_) => return Err(Crossed),
+            }
+        }
+        result => result,
+    }
+}
+async fn drive_children_to_recorded(&self, snapshot: &TenantSourceRetirementSnapshot) {
+    let source_keys = snapshot_source_keys(snapshot)?;
+    self.resource_retirer.fence_tenant_sources_and_join(&source_keys).await?;
     let initial = self.list_tenant_sagas(snapshot.claim().tenant_id()).await?;
+    authenticate_snapshot_inventory(snapshot, &initial)?;
     for record in initial.values() {
         self.resource_retirer
             .submit_tenant_record_teardown(record.clone())
@@ -343,12 +443,23 @@ async fn drive_tenant_teardown(&self, snapshot: &TenantSourceRetirementSnapshot)
     }
     let final_records = self.list_tenant_sagas(snapshot.claim().tenant_id()).await?;
     require_all_recorded_before_finish_tenant_delete(&initial, &final_records)?;
-    let terminal = final_records.into_values().collect::<Vec<_>>();
-    self.services
-        .finalize_tenant_sources_after_recorded(snapshot.claim(), &terminal)?;
-    Ok(terminal)
+    authenticate_snapshot_inventory(snapshot, &final_records)?;
+    Ok(final_records.into_values().collect())
+}
+async fn load_recorded_children(&self, snapshot: &TenantSourceRetirementSnapshot) {
+    let source_keys = snapshot_source_keys(snapshot)?;
+    self.resource_retirer.fence_tenant_sources_and_join(&source_keys).await?;
+    let records = self.list_tenant_sagas(snapshot.claim().tenant_id()).await?;
+    authenticate_snapshot_inventory(snapshot, &records)?;
+    if records.values().any(|record| {
+        record.phase() != WorkloadSagaPhase::Recorded
+            || record.active_intent().desired_state() != DesiredWorkloadState::Stopped
+            || record.successor_intent().is_some()
+    }) { return Err(InvalidInventory); }
+    Ok(records.into_values().collect())
 }
 async fn list_tenant_sagas(&self, tenant_id: &TenantId) {
+    let epoch_before = self.retirement_store.load_workload_mutation_epoch(tenant_id).await?;
     let mut records = BTreeMap::new();
     let mut cursor: Option<WorkloadSagaTenantCursor> = None;
     loop {
@@ -375,9 +486,12 @@ async fn list_tenant_sagas(&self, tenant_id: &TenantId) {
         }
         match next {
             Some(next) => cursor = Some(next),
-            None => return Ok(records),
+            None => break,
         }
     }
+    let epoch_after = self.retirement_store.load_workload_mutation_epoch(tenant_id).await?;
+    if epoch_before != epoch_after { return Err(InvalidInventory); }
+    Ok(records)
 }
 fn require_all_recorded_before_finish_tenant_delete(initial, final_records) {
     if initial.keys().ne(final_records.keys()) { return Err(InvalidInventory); }

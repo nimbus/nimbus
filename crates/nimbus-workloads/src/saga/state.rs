@@ -273,13 +273,6 @@ impl WorkloadSagaRecord {
         if self.restart.active().is_some() {
             return true;
         }
-        if self
-            .provision_disposition
-            .as_ref()
-            .is_some_and(WorkloadProvisionDisposition::is_definite_failure)
-        {
-            return false;
-        }
         (self.phase == WorkloadSagaPhase::Recorded && self.successor_intent.is_some())
             || (self.phase.is_recoverable()
                 && !(self.phase == WorkloadSagaPhase::NetworkAttached

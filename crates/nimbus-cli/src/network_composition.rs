@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use nimbus::{Engine, Error, ServiceManager};
 use nimbus_compute::embedded_local_node_identity;
+use nimbus_compute::state::ComputeError;
 use nimbus_compute::workload_saga::{
     IngressTeardownCapabilities, KrunAttachmentTeardownAdapter, KrunProvisionAdapter,
     KrunTeardownAdapter, WorkloadTeardownCapabilityRegistry, sandbox_execution_provider_id,
@@ -281,22 +282,43 @@ impl PreparedServerWorkloadProfile {
         }
     }
 
-    pub(crate) fn complete_foreground(
+    pub(crate) async fn complete_foreground<S>(
         self,
         engine: Arc<Engine>,
-        saga_store: Arc<dyn WorkloadSagaStore>,
-    ) -> Result<ServerForegroundWorkloadRuntime, LocalNetworkCompositionError> {
+        saga_store: Arc<S>,
+    ) -> Result<ServerForegroundWorkloadRuntime, LocalNetworkCompositionError>
+    where
+        S: WorkloadSagaStore + nimbus_workloads::TenantRetirementStore,
+    {
         match self {
             Self::ProtocolOnly { .. } => {
                 Err(LocalNetworkCompositionError::ForegroundWorkloadSourcesUnavailable)
             }
-            Self::LocalKrun(prepared) => Ok(prepared
+            Self::LocalKrun(prepared) => prepared
                 .into_workload_composition(engine)?
-                .into_foreground_runtime(saga_store)),
-            Self::Forwarded(prepared) => Ok(prepared
+                .into_foreground_runtime(saga_store)
+                .await
+                .map_err(|error| {
+                    LocalNetworkCompositionError::Compose(foreground_compute_error(error))
+                }),
+            Self::Forwarded(prepared) => prepared
                 .into_workload_composition(engine)?
-                .into_foreground_runtime(saga_store)),
+                .into_foreground_runtime(saga_store)
+                .await
+                .map_err(|error| {
+                    LocalNetworkCompositionError::Compose(foreground_compute_error(error))
+                }),
         }
+    }
+}
+
+fn foreground_compute_error(error: ComputeError) -> Error {
+    match error {
+        ComputeError::Core(error) => error,
+        ComputeError::Unauthorized(message) | ComputeError::Forbidden(message) => {
+            Error::PermissionDenied(message)
+        }
+        ComputeError::NotFound(message) => Error::NotFound(message),
     }
 }
 

@@ -347,7 +347,7 @@ verify_durable_store_contract() {
     "Compose durable saga-store adapter"
   require_source_text \
     crates/nimbus-cli/src/compose/provision.rs \
-    'composition.into_foreground_runtime(saga_store)' \
+    '.into_foreground_runtime(saga_store)' \
     "Compose compute-owned foreground coordinator handoff"
 
   require_source_text \

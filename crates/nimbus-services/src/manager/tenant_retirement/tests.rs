@@ -152,6 +152,129 @@ fn tenant_retirement_barrier_replays_exactly_and_rejects_crossed_incarnation() {
 }
 
 #[test]
+fn fresh_manager_restores_exact_durable_barrier_before_admission() {
+    let original = Fixture::with_sources();
+    let snapshot = original.claim();
+    let record = TenantRetirementRecord::new(
+        original.tenant_id.clone(),
+        snapshot.claim().tenant_incarnation(),
+        snapshot.sources().to_vec(),
+    )
+    .expect("durable retirement should validate");
+
+    let fresh = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        original.backend.kind(),
+    );
+    assert_eq!(
+        fresh
+            .restore_tenant_source_retirement(&record)
+            .expect("fresh manager should restore the durable barrier"),
+        snapshot
+    );
+    assert_eq!(
+        fresh
+            .restore_tenant_source_retirement(&record)
+            .expect("exact restoration should replay"),
+        snapshot
+    );
+    assert!(matches!(
+        fresh.create_service_definition(
+            &original.tenant_id,
+            "late",
+            image_service_backend("late", "registry.example.com/late:1"),
+            BTreeMap::new(),
+        ),
+        Err(Error::Conflict { .. })
+    ));
+
+    let crossed = TenantRetirementRecord::new(
+        original.tenant_id.clone(),
+        NonZeroU64::new(8).expect("fixture incarnation is nonzero"),
+        snapshot.sources().to_vec(),
+    )
+    .expect("crossed durable retirement should validate alone");
+    assert!(matches!(
+        fresh.restore_tenant_source_retirement(&crossed),
+        Err(Error::Conflict { .. })
+    ));
+    assert_eq!(original.backend.retirement_effect_counts(), (0, 0, 0));
+}
+
+#[test]
+fn restored_finalized_barrier_releases_only_after_exact_terminal_progress() {
+    let original = Fixture::with_sources();
+    let snapshot = original.claim();
+    let record = TenantRetirementRecord::new(
+        original.tenant_id.clone(),
+        snapshot.claim().tenant_incarnation(),
+        snapshot.sources().to_vec(),
+    )
+    .unwrap()
+    .advance(TenantRetirementPhase::ChildrenRecorded)
+    .unwrap()
+    .advance(TenantRetirementPhase::SourcesFinalized)
+    .unwrap();
+    let fresh = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        original.backend.kind(),
+    );
+    let restored = fresh
+        .restore_tenant_source_retirement(&record)
+        .expect("finalized durable progress should restore a finalized barrier");
+    fresh
+        .release_tenant_source_retirement(restored.claim())
+        .expect("the exact finalized durable barrier should release");
+    fresh
+        .create_service_definition(
+            &original.tenant_id,
+            "recreated",
+            image_service_backend("recreated", "registry.example.com/recreated:1"),
+            BTreeMap::new(),
+        )
+        .expect("admission should reopen after exact release");
+    assert_eq!(original.backend.retirement_effect_counts(), (0, 0, 0));
+}
+
+#[test]
+fn restore_rejects_current_source_created_after_durable_snapshot() {
+    let original = Fixture::with_sources();
+    let snapshot = original.claim();
+    let record = TenantRetirementRecord::new(
+        original.tenant_id.clone(),
+        snapshot.claim().tenant_incarnation(),
+        snapshot.sources().to_vec(),
+    )
+    .unwrap();
+    original
+        .manager
+        .state
+        .lock()
+        .expect("manager lock should not be poisoned")
+        .tenant_source_retirements
+        .clear();
+    original
+        .manager
+        .create_service_definition(
+            &original.tenant_id,
+            "late",
+            image_service_backend("late", "registry.example.com/late:1"),
+            BTreeMap::new(),
+        )
+        .expect("fixture should create a source after the captured snapshot");
+
+    assert!(matches!(
+        original.manager.restore_tenant_source_retirement(&record),
+        Err(Error::PreconditionFailed(_))
+    ));
+    assert_eq!(original.backend.retirement_effect_counts(), (0, 0, 0));
+}
+
+#[test]
 fn tenant_retirement_barrier_retains_snapshot_failure_and_keeps_admission_closed() {
     let fixture = Fixture::with_sources();
     let crossed_source = crate::SandboxResourceSource::new(
@@ -642,13 +765,13 @@ fn tenant_retirement_finalizer_rejects_incomplete_crossed_duplicate_and_nontermi
             .iter()
             .find(|source| source.has_observation())
             .expect("fixture has an observed source");
-        let orphan = TenantWorkloadSourceSnapshot {
-            identity: WorkloadProvisionSourceIdentity::sandbox_backed_service("orphan")
+        let orphan = TenantRetirementSource::new(
+            WorkloadProvisionSourceIdentity::sandbox_backed_service("orphan")
                 .expect("orphan identity should validate"),
-            source_generation: observed.source_generation(),
-            resource_version: observed.resource_version().clone(),
-            has_observation: true,
-        };
+            observed.source_generation(),
+            observed.resource_version().clone(),
+            true,
+        );
         vec![record_for_source(
             snapshot.claim().tenant_id(),
             &orphan,
@@ -713,7 +836,7 @@ fn observed_records(snapshot: &TenantSourceRetirementSnapshot) -> Vec<WorkloadSa
 
 fn record_for_source(
     tenant_id: &TenantId,
-    source: &TenantWorkloadSourceSnapshot,
+    source: &TenantRetirementSource,
     desired_state: DesiredWorkloadState,
     generation: Option<u64>,
     resource_version: Option<&str>,

@@ -6,7 +6,11 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { maskNonCode, walkRust } from "./source-contract-scanner.mjs";
+import {
+  maskNonCode,
+  walkRust,
+  withoutCfgTestItems,
+} from "./source-contract-scanner.mjs";
 import {
   BEHAVIOR_TESTS,
   FINAL_CONVERGENCE_TESTS,
@@ -525,39 +529,119 @@ function behaviorTestsPass(sources) {
 }
 
 function tenantConvergencePass(sources) {
-  const driver = extractItem(
-    sources.tenantRetirement,
-    "async fn drive_tenant_teardown",
+  const source = withoutCfgTestItems(sources.tenantRetirement);
+  const retire = compactSource(extractItem(source, "async fn retire"));
+  const recover = compactSource(
+    extractItem(source, "async fn recover_retained"),
   );
-  const list = extractItem(
-    sources.tenantRetirement,
-    "async fn list_tenant_sagas",
+  const resume = compactSource(extractItem(source, "async fn resume"));
+  const retained = compactSource(
+    extractItem(source, "async fn list_retained_retirements"),
   );
-  const allRecorded = extractItem(
-    sources.tenantRetirement,
-    "fn require_all_recorded_before_finish_tenant_delete",
+  const persist = compactSource(extractItem(source, "async fn persist_intent"));
+  const advance = compactSource(
+    extractItem(source, "async fn advance_progress"),
+  );
+  const deleteTerminal = compactSource(
+    extractItem(source, "async fn delete_terminal"),
+  );
+  const driver = extractItem(source, "async fn drive_children_to_recorded");
+  const loadRecorded = compactSource(
+    extractItem(source, "async fn load_recorded_children"),
+  );
+  const list = extractItem(source, "async fn list_tenant_sagas");
+  const allRecorded = compactSource(
+    extractItem(
+      source,
+      "fn require_all_recorded_before_finish_tenant_delete",
+    ),
   );
   const perKey = extractItem(driver, "for record in initial.values()");
   const compactDriver = compactSource(driver);
   const compactList = compactSource(list);
   return (
+    appearsInOrder(retire, [
+      "claim_tenant_source_retirement(&tenant_id,identity.tenant_incarnation())?;",
+      "persist_intent(&snapshot).await?;",
+      "drop(identity);",
+      "self.resume(record,snapshot).await",
+    ]) &&
+    appearsInOrder(recover, [
+      "list_retained_retirements().await?;",
+      "forrecordinrecords{",
+      "restore_tenant_source_retirement(&record)?;",
+      "retirements.push((record,snapshot));",
+      "for(record,snapshot)inretirements{",
+      "self.resume(record,snapshot).await?;",
+    ]) &&
+    appearsInOrder(resume, [
+      "adopt_exact_or_later(&retained).await?;",
+      "begin_tenant_incarnation_delete_async(",
+      "retire_tenant_deletion(&exact_deletion)",
+      "drive_children_to_recorded(&snapshot).await?;",
+      "advance_progress(&current,TenantRetirementPhase::ChildrenRecorded)",
+      "finalize_recorded_sources(&snapshot,&terminal)?;",
+      "advance_progress(&current,TenantRetirementPhase::SourcesFinalized)",
+      "finish_tenant_delete_async(exact_deletion)",
+      "advance_progress(&current,TenantRetirementPhase::EngineDeleted)",
+      "advance_progress(&current,TenantRetirementPhase::Recorded)",
+      "release_source_fences(&snapshot)?;",
+      "release_tenant_source_retirement(snapshot.claim())?;",
+      "delete_terminal(&current).await",
+    ]) &&
+    hasAll(retained, [
+      "pages==MAX_TENANT_RETIREMENT_PAGES",
+      "TenantRetirementPageRequest::new(cursor,nimbus_workloads::MAX_TENANT_RETIREMENT_PAGE_SIZE",
+      "self.retirement_store.list_retirements(request).await?",
+      "records.extend_from_slice(page.records())",
+      "cursor=Some(next)",
+    ]) &&
+    hasAll(persist, [
+      "TenantRetirementRecord::new(",
+      "compare_and_swap_retirement(TenantRetirementExpected::Missing,intended.clone())",
+      "TenantRetirementCommit::Applied|TenantRetirementCommit::Unchanged",
+      "TenantRetirementStoreError::Conflict{..}|TenantRetirementStoreError::Ambiguous",
+      "self.adopt_exact_or_later(&intended).await",
+    ]) &&
+    hasAll(advance, [
+      "letnext=current.advance(target)?;",
+      "TenantRetirementExpected::Revision(current.revision())",
+      "next.clone()",
+      "self.adopt_exact_or_later(&next).await",
+    ]) &&
+    hasAll(deleteTerminal, [
+      "delete_retirement(terminal.clone())",
+      "TenantRetirementStoreError::Ambiguous",
+      "load_retirement(terminal.tenant_id())",
+      "None=>returnOk(())",
+      "Some(current)ifcurrent==*terminal=>continue",
+    ]) &&
     countOccurrences(driver, "self.list_tenant_sagas(") === 2 &&
     compactSource(perKey).startsWith("forrecordininitial.values(){") &&
-    hasAll(perKey, [
-      "submit_tenant_record_teardown(record.clone())",
-      ".await?",
+    hasAll(compactSource(perKey), [
+      "submit_tenant_record_teardown(record.clone()).await?",
     ]) &&
     appearsInOrder(compactDriver, [
+      "fence_tenant_sources_and_join(&source_keys).await?;",
       "letinitial=self.list_tenant_sagas(snapshot.claim().tenant_id()).await?;",
+      "authenticate_snapshot_inventory(snapshot,&initial)?;",
       "forrecordininitial.values(){",
       "submit_tenant_record_teardown(record.clone()).await?;",
       "letfinal_records=self.list_tenant_sagas(snapshot.claim().tenant_id()).await?;",
       "require_all_recorded_before_finish_tenant_delete(&initial,&final_records)?;",
-      "letterminal=final_records.into_values().collect::<Vec<_>>();",
-      "finalize_tenant_sources_after_recorded(snapshot.claim(),&terminal)?;",
-      "Ok(terminal)",
+      "authenticate_snapshot_inventory(snapshot,&final_records)?;",
+      "Ok(final_records.into_values().collect())",
+    ]) &&
+    hasAll(loadRecorded, [
+      "fence_tenant_sources_and_join(&source_keys).await?",
+      "list_tenant_sagas(snapshot.claim().tenant_id()).await?",
+      "authenticate_snapshot_inventory(snapshot,&records)?",
+      "record.phase()!=WorkloadSagaPhase::Recorded",
+      "record.active_intent().desired_state()!=DesiredWorkloadState::Stopped",
+      "record.successor_intent().is_some()",
     ]) &&
     hasAll(compactList, [
+      "letepoch_before=self.retirement_store.load_workload_mutation_epoch(tenant_id).await?",
       "WorkloadSagaTenantPageRequest::new(cursor.clone(),self.page_size)?",
       "list_for_tenant(tenant_id,request).await?",
       "page.tenant_id()!=tenant_id",
@@ -568,9 +652,11 @@ function tenantConvergencePass(sources) {
       "next.key()<=cursor.key()",
       "records.insert(record.key().clone(),record).is_some()",
       "Some(next)=>cursor=Some(next)",
-      "None=>returnOk(records)",
+      "letepoch_after=self.retirement_store.load_workload_mutation_epoch(tenant_id).await?",
+      "ifepoch_before!=epoch_after",
+      "Ok(records)",
     ]) &&
-    hasAll(compactSource(allRecorded), [
+    hasAll(allRecorded, [
       "initial.keys().ne(final_records.keys())",
       "record.phase()!=WorkloadSagaPhase::Recorded",
       "record.active_intent().desired_state()!=DesiredWorkloadState::Stopped",
@@ -1414,8 +1500,8 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "missing-tenant-driver": [
       "tenantRetirement",
-      "async fn drive_tenant_teardown",
-      "async fn omit_tenant_teardown",
+      "async fn drive_children_to_recorded",
+      "async fn omit_children_to_recorded",
     ],
     "finish-tenant-delete-early": [
       "tenantRetirement",
@@ -1479,8 +1565,48 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "tenant-finalizes-before-recorded-proof": [
       "tenantRetirement",
-      "    require_all_recorded_before_finish_tenant_delete(&initial, &final_records)?;\n    let terminal = final_records.into_values().collect::<Vec<_>>();\n    self.services\n        .finalize_tenant_sources_after_recorded(snapshot.claim(), &terminal)?;",
-      "    let terminal = final_records.into_values().collect::<Vec<_>>();\n    self.services\n        .finalize_tenant_sources_after_recorded(snapshot.claim(), &terminal)?;\n    require_all_recorded_before_finish_tenant_delete(&initial, &BTreeMap::new())?;",
+      "self.driver.drive_children_to_recorded(&snapshot).await?",
+      "self.driver.load_recorded_children(&snapshot).await?",
+    ],
+    "tenant-skips-durable-intent": [
+      "tenantRetirement",
+      "self.driver.persist_intent(&snapshot).await?",
+      "self.driver.forge_intent(&snapshot).await?",
+    ],
+    "tenant-recovery-skips-barrier-restore": [
+      "tenantRetirement",
+      "restore_tenant_source_retirement(&record)?",
+      "omit_tenant_source_retirement_restore(&record)?",
+    ],
+    "tenant-skips-children-progress": [
+      "tenantRetirement",
+      "advance_progress(&current, TenantRetirementPhase::ChildrenRecorded)",
+      "advance_progress(&current, TenantRetirementPhase::SourcesFinalized)",
+    ],
+    "tenant-skips-sources-progress": [
+      "tenantRetirement",
+      "advance_progress(&current, TenantRetirementPhase::SourcesFinalized)",
+      "advance_progress(&current, TenantRetirementPhase::EngineDeleted)",
+    ],
+    "tenant-skips-engine-delete": [
+      "tenantRetirement",
+      "finish_tenant_delete_async(exact_deletion)",
+      "omit_tenant_delete_async(exact_deletion)",
+    ],
+    "tenant-skips-recorded-progress": [
+      "tenantRetirement",
+      "advance_progress(&current, TenantRetirementPhase::Recorded)",
+      "omit_progress(&current, TenantRetirementPhase::Recorded)",
+    ],
+    "tenant-inventory-drops-epoch-fence": [
+      "tenantRetirement",
+      "load_workload_mutation_epoch(tenant_id)",
+      "load_unfenced_workload_inventory(tenant_id)",
+    ],
+    "tenant-deletes-progress-before-terminal": [
+      "tenantRetirement",
+      "self.driver.delete_terminal(&current).await",
+      "self.driver.delete_unfenced(&current).await",
     ],
     "compensation-submits-failed-key": [
       "provisionCompensation",

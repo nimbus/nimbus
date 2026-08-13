@@ -3,17 +3,262 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 
 use nimbus_workloads::{
-    DesiredWorkloadState, WorkloadSagaPhase, WorkloadSagaStore, WorkloadSagaStoreError,
-    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    DesiredWorkloadState, TenantRetirementPhase, WorkloadSagaPhase, WorkloadSagaStore,
+    WorkloadSagaStoreError, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
 };
 
-use crate::tenant_retirement::{TenantRetirementDriver, TenantRetirementError};
+use crate::config::runtime::RuntimeGovernorConfig;
+use crate::runtime_manager::RuntimeManager;
+use crate::tenant_retirement::{
+    TenantRetirementDriver, TenantRetirementError, TenantRetirementRuntime,
+};
 use crate::workload_saga::WorkloadSagaCoordinator;
 
 use super::support::{
     LifecycleEvent, RetirementHarness, SANDBOX_ID, SERVICE_NAME, TenantPageFault,
     issued_restart_record, key, run_async_test, tenant,
 };
+
+#[test]
+fn durable_tenant_retirement_intent_precedes_effects_and_reaches_terminal_cleanup() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.declare_service();
+        harness.start_service().await;
+        harness.start_sandbox().await;
+        let engine_root = tempfile::tempdir().expect("fixture Engine root should build");
+        let engine = Arc::new(
+            nimbus_engine::Engine::new(engine_root.path()).expect("fixture Engine should build"),
+        );
+        engine
+            .create_tenant_async(tenant())
+            .await
+            .expect("tenant storage should exist before retirement");
+        let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
+        let driver = TenantRetirementDriver::new(
+            Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
+            Arc::clone(&harness.manager),
+            harness.retire.clone(),
+        );
+        let runtime = TenantRetirementRuntime::new(
+            Arc::clone(&engine),
+            RuntimeManager::new(Arc::clone(&engine), RuntimeGovernorConfig::default()),
+            driver,
+        );
+        harness.reset_retirement_evidence();
+
+        runtime
+            .retire(tenant())
+            .await
+            .expect("durable tenant retirement should converge");
+
+        assert!(harness.store.retirement(&tenant()).is_none());
+        assert!(
+            !engine
+                .list_tenants_async()
+                .await
+                .expect("Engine tenant listing should succeed")
+                .contains(&tenant())
+        );
+        let events = harness.log.entries();
+        let phases = events
+            .iter()
+            .filter_map(|event| match event {
+                LifecycleEvent::TenantRetirement(phase) => Some(*phase),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            phases,
+            [
+                TenantRetirementPhase::IntentCommitted,
+                TenantRetirementPhase::ChildrenRecorded,
+                TenantRetirementPhase::SourcesFinalized,
+                TenantRetirementPhase::EngineDeleted,
+                TenantRetirementPhase::Recorded,
+            ]
+        );
+        let intent = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    LifecycleEvent::TenantRetirement(TenantRetirementPhase::IntentCommitted)
+                )
+            })
+            .expect("durable intent should be recorded");
+        let first_effect = events
+            .iter()
+            .position(|event| matches!(event, LifecycleEvent::Teardown(..)))
+            .expect("fixture workloads should require teardown effects");
+        assert!(
+            intent < first_effect,
+            "intent must be durable before effects"
+        );
+    });
+}
+
+#[test]
+fn tenant_retirement_cleanup_pending_retains_every_fence_and_durable_authority() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.declare_service();
+        harness.start_service().await;
+        harness
+            .teardown_provider
+            .fail_definitely_at(nimbus_workloads::WorkloadTeardownStep::StopExecution);
+        let engine_root = tempfile::tempdir().expect("fixture Engine root should build");
+        let engine = Arc::new(
+            nimbus_engine::Engine::new(engine_root.path()).expect("fixture Engine should build"),
+        );
+        engine
+            .create_tenant_async(tenant())
+            .await
+            .expect("tenant storage should exist before retirement");
+        let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
+        let driver = TenantRetirementDriver::new(
+            Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
+            Arc::clone(&harness.manager),
+            harness.retire.clone(),
+        );
+        let runtime = TenantRetirementRuntime::new(
+            Arc::clone(&engine),
+            RuntimeManager::new(Arc::clone(&engine), RuntimeGovernorConfig::default()),
+            driver,
+        );
+        harness.reset_retirement_evidence();
+
+        let error = runtime
+            .retire(tenant())
+            .await
+            .expect_err("definite cleanup failure must retain retirement authority");
+
+        assert!(matches!(
+            error,
+            TenantRetirementError::Teardown(
+                crate::resource_retirement::ComputeResourceRetirementError::TeardownPending(
+                    crate::workload_saga::WorkloadTeardownRunDisposition::CleanupPending
+                )
+            )
+        ));
+        let retained = harness
+            .store
+            .retirement(&tenant())
+            .expect("retirement intent must remain durable");
+        assert_eq!(retained.phase(), TenantRetirementPhase::IntentCommitted);
+        assert_eq!(
+            harness.store.record(&key(SERVICE_NAME)).phase(),
+            WorkloadSagaPhase::CleanupPending
+        );
+        assert!(
+            engine
+                .list_tenants_async()
+                .await
+                .expect("Engine tenant listing should succeed")
+                .contains(&tenant()),
+            "cleanup failure cannot delete durable tenant state"
+        );
+        assert!(
+            engine.enter_tenant_runtime_async(tenant()).await.is_err(),
+            "the dropped deletion lease must leave the tenant runtime fenced"
+        );
+        assert!(
+            harness
+                .manager
+                .service_definition_for_tenant(&tenant(), SERVICE_NAME)
+                .is_some(),
+            "cleanup failure cannot finalize the source"
+        );
+        assert!(
+            harness
+                .manager
+                .create_service_definition(
+                    &tenant(),
+                    "blocked-while-cleanup-pending",
+                    nimbus_services::ServiceBackend::sandbox(super::support::service_spec()),
+                    BTreeMap::new(),
+                )
+                .is_err(),
+            "the exact tenant source barrier must remain closed"
+        );
+        let events = harness.log.entries();
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    LifecycleEvent::TenantRetirement(phase) => Some(*phase),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [TenantRetirementPhase::IntentCommitted]
+        );
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            LifecycleEvent::Teardown(
+                _,
+                nimbus_workloads::WorkloadTeardownStep::DetachNetwork
+                    | nimbus_workloads::WorkloadTeardownStep::ReleaseNetwork,
+                _
+            )
+        )));
+    });
+}
+
+#[test]
+fn retained_tenant_retirement_retries_in_process_after_transient_child_failure() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.declare_service();
+        harness.start_service().await;
+        let engine_root = tempfile::tempdir().expect("fixture Engine root should build");
+        let engine = Arc::new(
+            nimbus_engine::Engine::new(engine_root.path()).expect("fixture Engine should build"),
+        );
+        engine
+            .create_tenant_async(tenant())
+            .await
+            .expect("tenant storage should exist before retirement");
+        let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
+        let driver = TenantRetirementDriver::new(
+            Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
+            Arc::clone(&harness.manager),
+            harness.retire.clone(),
+        );
+        let runtime = TenantRetirementRuntime::new(
+            Arc::clone(&engine),
+            RuntimeManager::new(Arc::clone(&engine), RuntimeGovernorConfig::default()),
+            driver,
+        );
+        harness.store.fail_next_load_for(key(SERVICE_NAME));
+
+        runtime
+            .retire(tenant())
+            .await
+            .expect_err("the injected child-store failure must retain retirement");
+        assert!(harness.store.retirement(&tenant()).is_some());
+        assert!(
+            engine.enter_tenant_runtime_async(tenant()).await.is_err(),
+            "the retained deletion fence must remain closed"
+        );
+
+        runtime
+            .retire(tenant())
+            .await
+            .expect("a later in-process request must adopt and resume retained retirement");
+
+        assert!(harness.store.retirement(&tenant()).is_none());
+        assert!(
+            !engine
+                .list_tenants_async()
+                .await
+                .expect("Engine tenant listing should succeed")
+                .contains(&tenant())
+        );
+    });
+}
 
 #[test]
 fn tenant_driver_retires_every_durable_child_before_effect_free_finalization() {
@@ -34,6 +279,7 @@ fn tenant_driver_retires_every_durable_child_before_effect_free_finalization() {
         let coordinator = Arc::new(WorkloadSagaCoordinator::new(store));
         let driver = TenantRetirementDriver::new(
             coordinator,
+            harness.store.clone(),
             Arc::clone(&harness.manager),
             harness.retire.clone(),
         );
@@ -94,6 +340,7 @@ fn tenant_driver_paginates_and_drives_each_exact_key_once_per_pass() {
         let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
         let driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
             Arc::clone(&harness.manager),
             harness.retire.clone(),
         )
@@ -158,9 +405,11 @@ fn tenant_driver_joins_pre_first_cas_provision_before_inventory_and_finalization
         let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
         let driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
             Arc::clone(&harness.manager),
             harness.retire.clone(),
-        );
+        )
+        .with_page_size_for_test(1);
         let retirement = tokio::spawn(async move { driver.drive_tenant_teardown(&snapshot).await });
         harness
             .wait_for_signal(
@@ -214,17 +463,23 @@ fn tenant_driver_rejects_concurrent_child_insertion_without_duplicate_effects() 
         let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
         let driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
             Arc::clone(&harness.manager),
             harness.retire.clone(),
-        );
+        )
+        .with_page_size_for_test(1);
 
         assert!(matches!(
             driver.drive_tenant_teardown(&snapshot).await,
             Err(TenantRetirementError::InvalidInventory(
-                "durable workload key set changed during tenant retirement"
+                "durable workload inventory changed during paged enumeration"
             ))
         ));
-        assert_eq!(harness.teardown_provider.call_count(), 10);
+        assert_eq!(
+            harness.teardown_provider.call_count(),
+            0,
+            "a behind-cursor mutation must invalidate the authenticated scan before effects"
+        );
         assert!(
             harness
                 .manager
@@ -246,8 +501,8 @@ fn tenant_driver_rejects_concurrent_child_insertion_without_duplicate_effects() 
         ));
         assert_eq!(
             harness.teardown_provider.call_count(),
-            10,
-            "retry must not repeat already recorded sibling effects"
+            0,
+            "retry must not dispatch effects after the authenticated scan failed closed"
         );
     });
 }
@@ -271,6 +526,7 @@ fn tenant_driver_retries_after_one_sibling_store_failure_without_duplicate_effec
         let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
         let driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
             Arc::clone(&harness.manager),
             harness.retire.clone(),
         );
@@ -333,6 +589,7 @@ fn tenant_driver_settles_an_issued_restart_before_teardown() {
         let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
         let driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
             Arc::clone(&harness.manager),
             harness.retire.clone(),
         );
@@ -396,6 +653,7 @@ fn tenant_driver_isolates_other_tenant_and_rejects_orphan_and_store_faults() {
         let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
         let driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
             Arc::clone(&harness.manager),
             harness.retire.clone(),
         );
@@ -424,6 +682,7 @@ fn tenant_driver_isolates_other_tenant_and_rejects_orphan_and_store_faults() {
         let orphan_store: Arc<dyn WorkloadSagaStore> = orphan_harness.store.clone();
         let orphan_driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(orphan_store)),
+            orphan_harness.store.clone(),
             Arc::clone(&orphan_harness.manager),
             orphan_harness.retire.clone(),
         );
@@ -453,6 +712,7 @@ fn tenant_driver_isolates_other_tenant_and_rejects_orphan_and_store_faults() {
             let fault_store: Arc<dyn WorkloadSagaStore> = fault_harness.store.clone();
             let fault_driver = TenantRetirementDriver::new(
                 Arc::new(WorkloadSagaCoordinator::new(fault_store)),
+                fault_harness.store.clone(),
                 Arc::clone(&fault_harness.manager),
                 fault_harness.retire.clone(),
             );
@@ -505,6 +765,7 @@ fn tenant_driver_rejects_pages_not_bound_to_the_issued_tenant_cursor() {
         let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
         let driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
             Arc::clone(&harness.manager),
             harness.retire.clone(),
         )
@@ -541,6 +802,7 @@ fn tenant_driver_rejects_pages_not_bound_to_the_issued_tenant_cursor() {
         let crossed_store: Arc<dyn WorkloadSagaStore> = crossed_harness.store.clone();
         let crossed_driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(crossed_store)),
+            crossed_harness.store.clone(),
             Arc::clone(&crossed_harness.manager),
             crossed_harness.retire.clone(),
         );
@@ -571,6 +833,7 @@ fn unstarted_source_requires_no_fabricated_saga_or_provider_effect() {
         let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
         let driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
             Arc::clone(&harness.manager),
             harness.retire.clone(),
         );
@@ -612,6 +875,7 @@ fn tenant_delete_waits_for_every_durable_workload_teardown_before_storage_delete
         let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
         let driver = TenantRetirementDriver::new(
             Arc::new(WorkloadSagaCoordinator::new(store)),
+            harness.store.clone(),
             Arc::clone(&harness.manager),
             harness.retire.clone(),
         );
@@ -672,5 +936,14 @@ fn tenant_delete_waits_for_every_durable_workload_teardown_before_storage_delete
 }
 
 fn orphan_record_for_retirement_tenant() -> nimbus_workloads::WorkloadSagaRecord {
-    crate::workload_saga::test_support::observed_fixture_record("retirement")
+    let template = crate::workload_saga::test_support::observed_fixture_record("retirement");
+    nimbus_workloads::WorkloadSagaRecord::new(
+        nimbus_workloads::WorkloadSagaKey::new(
+            tenant(),
+            nimbus_core::WorkloadId::new("a-behind")
+                .expect("behind-cursor workload ID should validate"),
+        ),
+        template.active_intent().clone(),
+    )
+    .expect("behind-cursor record should validate")
 }

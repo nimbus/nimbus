@@ -342,16 +342,21 @@ async fn serve_with_router_config(
     let config = config
         .with_listen_addr(listen_addr)
         .with_server_shutdown(shutdown_tx);
-    config
-        .prepare_system_tenant()
+    let prepared = Box::pin(config.prepare_for_serving())
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     match rustls_config {
         Some(rustls_config) => {
-            crate::tls::serve_tls(listener, config.build(), rustls_config, shutdown_rx).await
+            crate::tls::serve_tls(
+                listener,
+                RouterBuildConfig::build_serving(prepared),
+                rustls_config,
+                shutdown_rx,
+            )
+            .await
         }
         None => {
-            axum::serve(listener, config.build())
+            axum::serve(listener, RouterBuildConfig::build_serving(prepared))
                 .with_graceful_shutdown(async move {
                     while !*shutdown_rx.borrow() {
                         if shutdown_rx.changed().await.is_err() {

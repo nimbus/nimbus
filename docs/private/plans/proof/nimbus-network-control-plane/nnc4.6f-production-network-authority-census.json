@@ -155,7 +155,7 @@
       "kind": "local-node-root-resolver",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 114,
+      "line": 115,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc6.4"
@@ -165,7 +165,7 @@
       "kind": "cli-staged-manager-claim",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 118,
+      "line": 119,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc6.4"
@@ -175,7 +175,7 @@
       "kind": "cli-complete-composition",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 123,
+      "line": 124,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc6.4"
@@ -185,7 +185,7 @@
       "kind": "manager-derived-parent-machine-authority",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 143,
+      "line": 144,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.4"
@@ -435,7 +435,7 @@
       "kind": "capability-bundle-construction",
       "symbol": "into_registry",
       "ordinal": 1,
-      "line": 85,
+      "line": 86,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -445,7 +445,7 @@
       "kind": "capability-registry-construction",
       "symbol": "into_registry",
       "ordinal": 1,
-      "line": 90,
+      "line": 91,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -455,7 +455,7 @@
       "kind": "manager-bootstrap",
       "symbol": "claim",
       "ordinal": 1,
-      "line": 106,
+      "line": 107,
       "classification": "owning-manager",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -465,7 +465,7 @@
       "kind": "oci-process-construction",
       "symbol": "prepare_krun_process",
       "ordinal": 1,
-      "line": 145,
+      "line": 146,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"

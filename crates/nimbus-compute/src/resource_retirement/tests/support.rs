@@ -26,13 +26,15 @@ use nimbus_services::{
 };
 use nimbus_tenant::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
-    DesiredWorkloadState, WorkloadGeneration, WorkloadOwnerEvidenceDigest,
-    WorkloadProvisionInspectionResult, WorkloadRestartDisposition, WorkloadRestartStep,
-    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey,
-    WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
-    WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
-    WorkloadSagaTenantPageRequest, WorkloadTeardownCommandMode, WorkloadTeardownStep,
-    WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
+    DesiredWorkloadState, TenantRetirementCommit, TenantRetirementExpected, TenantRetirementFuture,
+    TenantRetirementPage, TenantRetirementPageRequest, TenantRetirementRecord,
+    TenantRetirementStore, TenantWorkloadMutationEpoch, WorkloadFailureEvidence,
+    WorkloadGeneration, WorkloadOwnerEvidenceDigest, WorkloadProvisionInspectionResult,
+    WorkloadRestartDisposition, WorkloadRestartStep, WorkloadSagaCommit, WorkloadSagaExpected,
+    WorkloadSagaFuture, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
+    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
+    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest, WorkloadTeardownCommandMode,
+    WorkloadTeardownStep, WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
 };
 use tokio::sync::Semaphore;
 
@@ -127,6 +129,7 @@ pub(super) fn sandbox_spec() -> SandboxSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum LifecycleEvent {
+    TenantRetirement(nimbus_workloads::TenantRetirementPhase),
     Store {
         phase: WorkloadSagaPhase,
         restart_active: bool,
@@ -189,6 +192,8 @@ pub(super) enum TenantPageFault {
 #[derive(Default)]
 pub(super) struct RetirementSagaStore {
     records: Mutex<BTreeMap<WorkloadSagaKey, WorkloadSagaRecord>>,
+    retirements: Mutex<BTreeMap<TenantId, TenantRetirementRecord>>,
+    mutation_epochs: Mutex<BTreeMap<TenantId, TenantWorkloadMutationEpoch>>,
     next_fault: Mutex<Option<NextCasFault>>,
     next_load_failure_for: Mutex<Option<WorkloadSagaKey>>,
     tenant_page_fault: Mutex<Option<(usize, TenantPageFault)>>,
@@ -216,18 +221,33 @@ impl RetirementSagaStore {
             .expect("fixture saga record should exist")
     }
 
+    pub(super) fn retirement(&self, tenant_id: &TenantId) -> Option<TenantRetirementRecord> {
+        self.retirements
+            .lock()
+            .expect("retirement store should remain healthy")
+            .get(tenant_id)
+            .cloned()
+    }
+
     pub(super) fn replace(&self, record: WorkloadSagaRecord) {
+        let tenant_id = record.key().tenant_id().clone();
         self.records
             .lock()
             .expect("saga store should remain healthy")
             .insert(record.key().clone(), record);
+        self.bump_epoch(&tenant_id);
     }
 
     pub(super) fn remove(&self, key: &WorkloadSagaKey) {
-        self.records
+        if self
+            .records
             .lock()
             .expect("saga store should remain healthy")
-            .remove(key);
+            .remove(key)
+            .is_some()
+        {
+            self.bump_epoch(key.tenant_id());
+        }
     }
 
     pub(super) fn fail_next_cas(&self, fault: NextCasFault) {
@@ -272,6 +292,23 @@ impl RetirementSagaStore {
             self.loads.load(Ordering::Acquire),
             self.compare_and_swaps.load(Ordering::Acquire),
         )
+    }
+
+    fn bump_epoch(&self, tenant_id: &TenantId) {
+        let mut epochs = self
+            .mutation_epochs
+            .lock()
+            .expect("tenant epoch store should remain healthy");
+        let current = epochs
+            .get(tenant_id)
+            .copied()
+            .unwrap_or(TenantWorkloadMutationEpoch::new(0));
+        epochs.insert(
+            tenant_id.clone(),
+            current
+                .checked_next()
+                .expect("fixture tenant mutation epoch must not overflow"),
+        );
     }
 }
 
@@ -362,8 +399,10 @@ impl WorkloadSagaStore for RetirementSagaStore {
             }
             let phase = next.phase();
             let restart_active = next.restart_state().active().is_some();
+            let tenant_id = key.tenant_id().clone();
             records.insert(key, next);
             drop(records);
+            self.bump_epoch(&tenant_id);
             self.log.push(LifecycleEvent::Store {
                 phase,
                 restart_active,
@@ -410,10 +449,16 @@ impl WorkloadSagaStore for RetirementSagaStore {
             match fault {
                 Some(TenantPageFault::Error(error)) => return Err(error),
                 Some(TenantPageFault::Insert(record)) => {
-                    self.records
+                    let record = *record;
+                    let tenant_id = record.key().tenant_id().clone();
+                    let previous = self
+                        .records
                         .lock()
                         .expect("saga store should remain healthy")
-                        .insert(record.key().clone(), *record);
+                        .insert(record.key().clone(), record.clone());
+                    if previous.as_ref() != Some(&record) {
+                        self.bump_epoch(&tenant_id);
+                    }
                 }
                 Some(TenantPageFault::Page(page)) => return Ok(page),
                 None => {}
@@ -436,6 +481,141 @@ impl WorkloadSagaStore for RetirementSagaStore {
             records.truncate(usize::from(request.limit()));
             WorkloadSagaTenantPage::new(tenant_id, &request, records, has_more)
         })
+    }
+}
+
+impl TenantRetirementStore for RetirementSagaStore {
+    fn load_retirement<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+    ) -> TenantRetirementFuture<'a, Option<TenantRetirementRecord>> {
+        Box::pin(async move {
+            Ok(self
+                .retirements
+                .lock()
+                .expect("retirement store should remain healthy")
+                .get(tenant_id)
+                .cloned())
+        })
+    }
+
+    fn compare_and_swap_retirement<'a>(
+        &'a self,
+        expected: TenantRetirementExpected,
+        next: TenantRetirementRecord,
+    ) -> TenantRetirementFuture<'a, TenantRetirementCommit> {
+        Box::pin(async move {
+            next.validate()?;
+            let mut records = self
+                .retirements
+                .lock()
+                .expect("retirement store should remain healthy");
+            if records.get(next.tenant_id()) == Some(&next) {
+                return Ok(TenantRetirementCommit::Unchanged);
+            }
+            let observed = records.get(next.tenant_id());
+            let matches = match (expected, observed) {
+                (TenantRetirementExpected::Missing, None) => true,
+                (TenantRetirementExpected::Revision(expected), Some(record)) => {
+                    record.revision() == expected
+                }
+                _ => false,
+            };
+            if !matches {
+                return Err(nimbus_workloads::TenantRetirementStoreError::Conflict {
+                    expected,
+                    observed: observed.map(TenantRetirementRecord::revision),
+                });
+            }
+            let phase = next.phase();
+            records.insert(next.tenant_id().clone(), next);
+            drop(records);
+            self.log.push(LifecycleEvent::TenantRetirement(phase));
+            Ok(TenantRetirementCommit::Applied)
+        })
+    }
+
+    fn delete_retirement<'a>(
+        &'a self,
+        expected: TenantRetirementRecord,
+    ) -> TenantRetirementFuture<'a, TenantRetirementCommit> {
+        Box::pin(async move {
+            expected.validate()?;
+            let mut records = self
+                .retirements
+                .lock()
+                .expect("retirement store should remain healthy");
+            match records.get(expected.tenant_id()) {
+                None => Ok(TenantRetirementCommit::Unchanged),
+                Some(current) if current == &expected => {
+                    records.remove(expected.tenant_id());
+                    Ok(TenantRetirementCommit::Applied)
+                }
+                Some(current) => Err(nimbus_workloads::TenantRetirementStoreError::Conflict {
+                    expected: TenantRetirementExpected::Revision(expected.revision()),
+                    observed: Some(current.revision()),
+                }),
+            }
+        })
+    }
+
+    fn list_active_retirements<'a>(
+        &'a self,
+        request: TenantRetirementPageRequest,
+    ) -> TenantRetirementFuture<'a, TenantRetirementPage> {
+        Box::pin(async move { self.retirement_page(request, true) })
+    }
+
+    fn list_retirements<'a>(
+        &'a self,
+        request: TenantRetirementPageRequest,
+    ) -> TenantRetirementFuture<'a, TenantRetirementPage> {
+        Box::pin(async move { self.retirement_page(request, false) })
+    }
+
+    fn load_workload_mutation_epoch<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+    ) -> TenantRetirementFuture<'a, TenantWorkloadMutationEpoch> {
+        Box::pin(async move {
+            Ok(self
+                .mutation_epochs
+                .lock()
+                .expect("tenant epoch store should remain healthy")
+                .get(tenant_id)
+                .copied()
+                .unwrap_or(TenantWorkloadMutationEpoch::new(0)))
+        })
+    }
+}
+
+impl RetirementSagaStore {
+    fn retirement_page(
+        &self,
+        request: TenantRetirementPageRequest,
+        active_only: bool,
+    ) -> Result<TenantRetirementPage, nimbus_workloads::TenantRetirementStoreError> {
+        let mut records = self
+            .retirements
+            .lock()
+            .expect("retirement store should remain healthy")
+            .values()
+            .filter(|record| !active_only || !record.phase().is_terminal())
+            .filter(|record| {
+                request
+                    .after()
+                    .is_none_or(|cursor| record.retirement_id() > cursor.retirement_id())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| left.retirement_id().cmp(right.retirement_id()));
+        let has_more = records.len() > usize::from(request.limit());
+        records.truncate(usize::from(request.limit()));
+        if active_only {
+            TenantRetirementPage::active(&request, records, has_more)
+        } else {
+            TenantRetirementPage::retained(&request, records, has_more)
+        }
     }
 }
 
@@ -825,6 +1005,7 @@ pub(super) struct RecordingTeardownProvider {
     calls: AtomicUsize,
     gate: Mutex<Option<TeardownGate>>,
     gate_entered: AtomicBool,
+    definite_failure_step: Mutex<Option<WorkloadTeardownStep>>,
 }
 
 impl RecordingTeardownProvider {
@@ -834,7 +1015,15 @@ impl RecordingTeardownProvider {
             calls: AtomicUsize::new(0),
             gate: Mutex::new(None),
             gate_entered: AtomicBool::new(false),
+            definite_failure_step: Mutex::new(None),
         })
+    }
+
+    pub(super) fn fail_definitely_at(&self, step: WorkloadTeardownStep) {
+        *self
+            .definite_failure_step
+            .lock()
+            .expect("teardown failure lock should remain healthy") = Some(step);
     }
 
     pub(super) fn install_gate(
@@ -884,6 +1073,31 @@ impl RecordingTeardownProvider {
                 .await
                 .expect("teardown gate should remain open")
                 .forget();
+        }
+        if self
+            .definite_failure_step
+            .lock()
+            .expect("teardown failure lock should remain healthy")
+            .as_ref()
+            == Some(&command.step())
+        {
+            let failure = WorkloadFailureEvidence::new(
+                "fixture_teardown_failure",
+                WorkloadOwnerEvidenceDigest::sha256(format!(
+                    "retirement-failure-{:?}",
+                    command.step()
+                )),
+            )
+            .expect("fixture teardown failure should validate");
+            let outcome = match command.mode() {
+                WorkloadTeardownCommandMode::Execute => WorkloadTeardownProviderOutcome::Execute(
+                    WorkloadTeardownExecuteOutcome::DefiniteFailure(failure),
+                ),
+                WorkloadTeardownCommandMode::Inspect => WorkloadTeardownProviderOutcome::Inspect(
+                    WorkloadTeardownInspectOutcome::DefiniteFailure(failure),
+                ),
+            };
+            return WorkloadTeardownProviderObservation::for_command(command, outcome);
         }
         let success = teardown_success(command.step(), command.subjects());
         let outcome = match command.mode() {

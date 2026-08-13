@@ -15,10 +15,12 @@ use nimbus_core::{
 };
 use nimbus_engine::Engine;
 use nimbus_workloads::{
-    WorkloadRestartCandidatePage, WorkloadRestartCandidatePageRequest, WorkloadSagaCommit,
-    WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey, WorkloadSagaPage,
-    WorkloadSagaPageRequest, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
-    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    TenantRetirementCommit, TenantRetirementExpected, TenantRetirementFuture, TenantRetirementPage,
+    TenantRetirementPageRequest, TenantRetirementRecord, TenantRetirementStore,
+    TenantWorkloadMutationEpoch, WorkloadRestartCandidatePage, WorkloadRestartCandidatePageRequest,
+    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey,
+    WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecord, WorkloadSagaStore,
+    WorkloadSagaStoreError, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
 };
 
 mod codec;
@@ -27,6 +29,7 @@ mod recovery;
 mod restart_candidates;
 mod schema;
 mod tenant_enumeration;
+mod tenant_retirement;
 
 use self::codec::{decode_workload_saga_record, encode_workload_saga_record};
 use self::schema::{prepare_exact_schema, workload_saga_table, workload_saga_tenant};
@@ -129,6 +132,91 @@ impl MachineWorkloadAuthorityStore for EngineWorkloadSagaStore {
     }
 }
 
+impl TenantRetirementStore for EngineWorkloadSagaStore {
+    fn load_retirement<'a>(
+        &'a self,
+        tenant_id: &'a nimbus_core::TenantId,
+    ) -> TenantRetirementFuture<'a, Option<TenantRetirementRecord>> {
+        Box::pin(async move {
+            self.prepare().await.map_err(map_retirement_prepare_error)?;
+            let engine = Arc::clone(&self.engine);
+            let tenant_id = tenant_id.clone();
+            tokio::task::spawn_blocking(move || {
+                tenant_retirement::load_retirement_blocking(&engine, &tenant_id)
+            })
+            .await
+            .map_err(|_| nimbus_workloads::TenantRetirementStoreError::Unavailable)?
+        })
+    }
+
+    fn compare_and_swap_retirement<'a>(
+        &'a self,
+        expected: TenantRetirementExpected,
+        next: TenantRetirementRecord,
+    ) -> TenantRetirementFuture<'a, TenantRetirementCommit> {
+        Box::pin(async move {
+            self.prepare().await.map_err(map_retirement_prepare_error)?;
+            let engine = Arc::clone(&self.engine);
+            tokio::task::spawn_blocking(move || {
+                tenant_retirement::compare_and_swap_retirement_blocking(&engine, expected, next)
+            })
+            .await
+            .map_err(|_| nimbus_workloads::TenantRetirementStoreError::Ambiguous)?
+        })
+    }
+
+    fn delete_retirement<'a>(
+        &'a self,
+        expected: TenantRetirementRecord,
+    ) -> TenantRetirementFuture<'a, TenantRetirementCommit> {
+        Box::pin(async move {
+            self.prepare().await.map_err(map_retirement_prepare_error)?;
+            let engine = Arc::clone(&self.engine);
+            tokio::task::spawn_blocking(move || {
+                tenant_retirement::delete_retirement_blocking(&engine, expected)
+            })
+            .await
+            .map_err(|_| nimbus_workloads::TenantRetirementStoreError::Ambiguous)?
+        })
+    }
+
+    fn list_active_retirements<'a>(
+        &'a self,
+        request: TenantRetirementPageRequest,
+    ) -> TenantRetirementFuture<'a, TenantRetirementPage> {
+        Box::pin(async move {
+            self.prepare().await.map_err(map_retirement_prepare_error)?;
+            tenant_retirement::list_active_retirements(&self.engine, request).await
+        })
+    }
+
+    fn list_retirements<'a>(
+        &'a self,
+        request: TenantRetirementPageRequest,
+    ) -> TenantRetirementFuture<'a, TenantRetirementPage> {
+        Box::pin(async move {
+            self.prepare().await.map_err(map_retirement_prepare_error)?;
+            tenant_retirement::list_retirements(&self.engine, request).await
+        })
+    }
+
+    fn load_workload_mutation_epoch<'a>(
+        &'a self,
+        tenant_id: &'a nimbus_core::TenantId,
+    ) -> TenantRetirementFuture<'a, TenantWorkloadMutationEpoch> {
+        Box::pin(async move {
+            self.prepare().await.map_err(map_retirement_prepare_error)?;
+            let engine = Arc::clone(&self.engine);
+            let tenant_id = tenant_id.clone();
+            tokio::task::spawn_blocking(move || {
+                tenant_retirement::load_workload_mutation_epoch_blocking(&engine, &tenant_id)
+            })
+            .await
+            .map_err(|_| nimbus_workloads::TenantRetirementStoreError::Unavailable)?
+        })
+    }
+}
+
 fn load_blocking(
     engine: &Arc<Engine>,
     key: &WorkloadSagaKey,
@@ -151,87 +239,133 @@ fn compare_and_swap_blocking(
     expected: WorkloadSagaExpected,
     next: WorkloadSagaRecord,
 ) -> Result<WorkloadSagaCommit, WorkloadSagaStoreError> {
+    const MAX_TENANT_EPOCH_CONTENTION_ATTEMPTS: usize = 8;
+
     next.validate()?;
     let tenant = workload_saga_tenant()?;
     let table = workload_saga_table()?;
     let document_id = document_id(next.key())?;
-    let unit = engine
-        .begin_mutation_execution_unit(tenant, PrincipalContext::system())
-        .map_err(|_| WorkloadSagaStoreError::Unavailable)?;
-    let loaded_document = unit
-        .get_document(&table, document_id.clone())
-        .map_err(|_| WorkloadSagaStoreError::Unavailable)?;
-    let loaded = loaded_document
-        .as_ref()
-        .map(decode_workload_saga_record)
-        .transpose()?;
+    for attempt in 0..MAX_TENANT_EPOCH_CONTENTION_ATTEMPTS {
+        let unit = engine
+            .begin_mutation_execution_unit(tenant.clone(), PrincipalContext::system())
+            .map_err(|_| WorkloadSagaStoreError::Unavailable)?;
+        let loaded_document = unit
+            .get_document(&table, document_id.clone())
+            .map_err(|_| WorkloadSagaStoreError::Unavailable)?;
+        let loaded = loaded_document
+            .as_ref()
+            .map(decode_workload_saga_record)
+            .transpose()?;
 
-    if loaded.as_ref() == Some(&next) {
-        return Ok(WorkloadSagaCommit::Unchanged);
-    }
-    if loaded.as_ref().is_some_and(|current| {
-        current.last_transition().transition_id() == next.last_transition().transition_id()
-    }) {
-        return Err(WorkloadSagaStoreError::InvalidTransition(
-            nimbus_workloads::WorkloadSagaError::InvalidTransition(
-                "transition id is already bound to different saga content",
-            ),
-        ));
-    }
+        if loaded.as_ref() == Some(&next) {
+            return Ok(WorkloadSagaCommit::Unchanged);
+        }
+        if loaded.as_ref().is_some_and(|current| {
+            current.last_transition().transition_id() == next.last_transition().transition_id()
+        }) {
+            return Err(WorkloadSagaStoreError::InvalidTransition(
+                nimbus_workloads::WorkloadSagaError::InvalidTransition(
+                    "transition id is already bound to different saga content",
+                ),
+            ));
+        }
 
-    let precondition = match (expected, loaded.as_ref(), loaded_document.as_ref()) {
-        (WorkloadSagaExpected::Missing, None, None) => {
-            if next.revision().as_u64() != 0 || next.last_transition().source_phase().is_some() {
-                return Err(WorkloadSagaStoreError::InvalidTransition(
-                    nimbus_workloads::WorkloadSagaError::InvalidTransition(
-                        "missing-store creation requires the initial revision",
-                    ),
+        let precondition = match (expected, loaded.as_ref(), loaded_document.as_ref()) {
+            (WorkloadSagaExpected::Missing, None, None) => {
+                if next.revision().as_u64() != 0 || next.last_transition().source_phase().is_some()
+                {
+                    return Err(WorkloadSagaStoreError::InvalidTransition(
+                        nimbus_workloads::WorkloadSagaError::InvalidTransition(
+                            "missing-store creation requires the initial revision",
+                        ),
+                    ));
+                }
+                WritePrecondition::exists(false)
+            }
+            (WorkloadSagaExpected::Missing, Some(current), _) => {
+                return Err(conflict(expected, Some(current.revision())));
+            }
+            (WorkloadSagaExpected::Revision(revision), Some(current), Some(document))
+                if current.revision() == revision =>
+            {
+                current.validate_successor(&next)?;
+                WritePrecondition::update_time(document.update_time)
+            }
+            (WorkloadSagaExpected::Revision(_), Some(current), _) => {
+                return Err(conflict(expected, Some(current.revision())));
+            }
+            (WorkloadSagaExpected::Revision(_), None, _) => {
+                return Err(conflict(expected, None));
+            }
+            _ => return Err(WorkloadSagaStoreError::Corrupt),
+        };
+
+        let epoch = tenant_retirement::next_epoch_write(&unit, next.key().tenant_id())?;
+        unit.stage_atomic_write_batch(
+            AtomicWriteBatch::new(vec![
+                AtomicWrite::Set {
+                    key: WriteKey::from(DocumentLocator::new(table.clone(), document_id.clone())),
+                    document: encode_workload_saga_record(&next)?,
+                    typed_fields: Default::default(),
+                    mode: WriteSetMode::Overwrite,
+                    precondition,
+                    transforms: Vec::new(),
+                },
+                epoch.write,
+            ])
+            .map_err(|_| WorkloadSagaStoreError::Unavailable)?,
+        )
+        .map_err(|_| WorkloadSagaStoreError::Unavailable)?;
+
+        match unit.commit() {
+            Ok(Some(_)) => return Ok(WorkloadSagaCommit::Applied),
+            Ok(None) => return Err(WorkloadSagaStoreError::Unavailable),
+            Err(Error::Conflict { .. }) => {
+                let observed = load_blocking(engine, next.key())?;
+                if observed.as_ref() == Some(&next) {
+                    return Ok(WorkloadSagaCommit::Unchanged);
+                }
+                if workload_saga_expected_matches(expected, observed.as_ref()) {
+                    if attempt + 1 == MAX_TENANT_EPOCH_CONTENTION_ATTEMPTS {
+                        return Err(WorkloadSagaStoreError::Unavailable);
+                    }
+                    continue;
+                }
+                return Err(conflict(
+                    expected,
+                    observed.as_ref().map(WorkloadSagaRecord::revision),
                 ));
             }
-            WritePrecondition::exists(false)
+            Err(_) => return Err(WorkloadSagaStoreError::Ambiguous),
         }
-        (WorkloadSagaExpected::Missing, Some(current), _) => {
-            return Err(conflict(expected, Some(current.revision())));
-        }
-        (WorkloadSagaExpected::Revision(revision), Some(current), Some(document))
-            if current.revision() == revision =>
-        {
-            current.validate_successor(&next)?;
-            WritePrecondition::update_time(document.update_time)
-        }
-        (WorkloadSagaExpected::Revision(_), Some(current), _) => {
-            return Err(conflict(expected, Some(current.revision())));
-        }
-        (WorkloadSagaExpected::Revision(_), None, _) => {
-            return Err(conflict(expected, None));
-        }
-        _ => return Err(WorkloadSagaStoreError::Corrupt),
-    };
+    }
+    Err(WorkloadSagaStoreError::Unavailable)
+}
 
-    unit.stage_atomic_write_batch(
-        AtomicWriteBatch::new(vec![AtomicWrite::Set {
-            key: WriteKey::from(DocumentLocator::new(table, document_id)),
-            document: encode_workload_saga_record(&next)?,
-            typed_fields: Default::default(),
-            mode: WriteSetMode::Overwrite,
-            precondition,
-            transforms: Vec::new(),
-        }])
-        .map_err(|_| WorkloadSagaStoreError::Unavailable)?,
-    )
-    .map_err(|_| WorkloadSagaStoreError::Unavailable)?;
+fn workload_saga_expected_matches(
+    expected: WorkloadSagaExpected,
+    observed: Option<&WorkloadSagaRecord>,
+) -> bool {
+    match (expected, observed) {
+        (WorkloadSagaExpected::Missing, None) => true,
+        (WorkloadSagaExpected::Revision(expected), Some(record)) => record.revision() == expected,
+        _ => false,
+    }
+}
 
-    match unit.commit() {
-        Ok(Some(_)) => Ok(WorkloadSagaCommit::Applied),
-        Ok(None) => Err(WorkloadSagaStoreError::Unavailable),
-        Err(Error::Conflict { .. }) => {
-            let observed = load_blocking(engine, next.key())
-                .ok()
-                .flatten()
-                .map(|record| record.revision());
-            Err(conflict(expected, observed))
+fn map_retirement_prepare_error(
+    error: WorkloadSagaStoreError,
+) -> nimbus_workloads::TenantRetirementStoreError {
+    match error {
+        WorkloadSagaStoreError::Corrupt | WorkloadSagaStoreError::InvalidTransition(_) => {
+            nimbus_workloads::TenantRetirementStoreError::Corrupt
         }
-        Err(_) => Err(WorkloadSagaStoreError::Ambiguous),
+        WorkloadSagaStoreError::Ambiguous => {
+            nimbus_workloads::TenantRetirementStoreError::Ambiguous
+        }
+        WorkloadSagaStoreError::Unavailable | WorkloadSagaStoreError::Conflict { .. } => {
+            nimbus_workloads::TenantRetirementStoreError::Unavailable
+        }
     }
 }
 

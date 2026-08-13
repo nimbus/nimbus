@@ -200,8 +200,10 @@ impl RestartCandidateCoordinator for AutomaticRestartCoordinator {
 pub(crate) struct WorkloadRestartRuntime {
     cancellation: WorkloadRestartCancellationToken,
     watch_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
+    watch: Arc<DurableRestartWatch>,
     _hint_handle: RestartHintHandle,
     explicit_submitter: ExplicitWorkloadRestartSubmitter,
+    supervisor: Arc<RetainedRestartSupervisor>,
     coordinator: Arc<WorkloadSagaCoordinator>,
     driver: Arc<WorkloadRestartDriver>,
     clock: Arc<dyn RestartClock>,
@@ -214,8 +216,33 @@ pub(crate) enum WorkloadRestartSettlement {
 }
 
 impl WorkloadRestartRuntime {
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn start(
+        coordinator: Arc<WorkloadSagaCoordinator>,
+        source_authority: Arc<dyn WorkloadProvisionSourceAuthority>,
+        provider_reports: NetworkCapabilityRegistry,
+        provision_capabilities: Arc<WorkloadProvisionCapabilityRegistry>,
+        restart_capabilities: Arc<WorkloadRestartCapabilityRegistry>,
+        resolution_fence: Arc<dyn WorkloadRestartResolutionFence>,
+    ) -> Result<Self, String> {
+        let runtime = Self::compose(
+            coordinator,
+            source_authority,
+            provider_reports,
+            provision_capabilities,
+            restart_capabilities,
+            resolution_fence,
+        )?;
+        runtime.activate_watch()?;
+        Ok(runtime)
+    }
+
+    /// Build the one restart runtime without starting periodic discovery.
+    /// Fresh-process recovery uses the same retained supervisor first, then
+    /// activates the watch after the bounded startup pass succeeds.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn compose(
         coordinator: Arc<WorkloadSagaCoordinator>,
         source_authority: Arc<dyn WorkloadProvisionSourceAuthority>,
         provider_reports: NetworkCapabilityRegistry,
@@ -261,6 +288,28 @@ impl WorkloadRestartRuntime {
             .map_err(|error| error.to_string())?,
         );
         let hint_handle = watch.hint_handle();
+        Ok(Self {
+            cancellation,
+            watch_thread: Mutex::new(None),
+            watch,
+            _hint_handle: hint_handle,
+            explicit_submitter,
+            supervisor,
+            coordinator,
+            driver,
+            clock,
+        })
+    }
+
+    pub(crate) fn activate_watch(&self) -> Result<(), String> {
+        let mut retained = self
+            .watch_thread
+            .lock()
+            .map_err(|_| "workload restart watch state is poisoned".to_owned())?;
+        if retained.is_some() {
+            return Ok(());
+        }
+        let watch = Arc::clone(&self.watch);
         let (started, ready) = std::sync::mpsc::sync_channel(1);
         let watch_thread = std::thread::Builder::new()
             .name("nimbus-workload-restart-watch".to_owned())
@@ -275,15 +324,15 @@ impl WorkloadRestartRuntime {
             })
             .map_err(|error| error.to_string())?;
         ready.recv().map_err(|error| error.to_string())??;
-        Ok(Self {
-            cancellation,
-            watch_thread: Mutex::new(Some(watch_thread)),
-            _hint_handle: hint_handle,
-            explicit_submitter,
-            coordinator,
-            driver,
-            clock,
-        })
+        *retained = Some(watch_thread);
+        Ok(())
+    }
+
+    pub(crate) async fn recover_active(&self, record: WorkloadSagaRecord) -> Result<(), String> {
+        if record.restart_state().active().is_none() {
+            return Err("startup restart recovery requires an active durable restart".to_owned());
+        }
+        self.supervisor.track_and_wait(record).await
     }
 
     pub(crate) async fn submit_explicit(

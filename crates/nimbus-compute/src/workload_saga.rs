@@ -32,6 +32,7 @@ pub mod restart_sandbox;
 mod restart_submission;
 mod restart_supervisor;
 mod restart_watch;
+mod startup_recovery;
 mod teardown_command;
 mod teardown_decision;
 mod teardown_dispatch;
@@ -111,6 +112,11 @@ pub use restart_sandbox::{ValidatedSandboxRestartCommand, validate_sandbox_resta
 pub(crate) use restart_submission::{
     ExplicitWorkloadRestartDisposition, ExplicitWorkloadRestartError,
     ExplicitWorkloadRestartRequest,
+};
+pub(crate) use startup_recovery::WorkloadStartupRecovery;
+pub use startup_recovery::{
+    WorkloadStartupDisposition, WorkloadStartupRecoveryError, WorkloadStartupRecoveryOutcome,
+    WorkloadStartupRecoveryReport,
 };
 pub use teardown_command::{
     ConfirmedWorkloadTeardownCommand, ConfirmedWorkloadTeardownTransition,

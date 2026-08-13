@@ -8,7 +8,10 @@ use nimbus_workloads::{
 };
 
 use super::super::EngineWorkloadSagaStore;
-use super::super::schema::{exact_table_schema, workload_saga_table, workload_saga_tenant};
+use super::super::schema::{
+    exact_table_schema, exact_tenant_epoch_table_schema, exact_tenant_retirement_table_schema,
+    workload_saga_table, workload_saga_tenant,
+};
 use super::{document_for, engine, initial_record};
 
 #[test]
@@ -97,6 +100,66 @@ fn exact_schema_includes_optional_teardown_disposition_without_new_index() {
     for rule in [policy.read, policy.create, policy.update, policy.delete] {
         assert!(rule.require_authenticated);
         assert_eq!(rule.predicates.len(), 1);
+    }
+}
+
+#[test]
+fn tenant_retirement_and_epoch_schemas_are_exact_and_system_only() {
+    let retirement = exact_tenant_retirement_table_schema();
+    assert_eq!(
+        retirement
+            .fields
+            .iter()
+            .map(|field| (field.name.as_str(), field.field_type, field.required))
+            .collect::<Vec<_>>(),
+        vec![
+            ("formatVersion", FieldType::Number, true),
+            ("retirementId", FieldType::String, true),
+            ("tenantId", FieldType::String, true),
+            ("tenantIncarnation", FieldType::String, true),
+            ("revision", FieldType::String, true),
+            ("phase", FieldType::String, true),
+            ("active", FieldType::Boolean, true),
+            ("sources", FieldType::Array, true),
+        ]
+    );
+    assert_eq!(
+        retirement
+            .indexes
+            .iter()
+            .map(|index| (index.name.as_str(), index.fields.as_slice()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("by_retirementId", &["retirementId".to_owned()][..],),
+            (
+                "by_active_and_retirementId",
+                &["active".to_owned(), "retirementId".to_owned()][..],
+            ),
+            ("by_tenantId", &["tenantId".to_owned()][..]),
+        ]
+    );
+
+    let epoch = exact_tenant_epoch_table_schema();
+    assert_eq!(
+        epoch
+            .fields
+            .iter()
+            .map(|field| (field.name.as_str(), field.field_type, field.required))
+            .collect::<Vec<_>>(),
+        vec![
+            ("formatVersion", FieldType::Number, true),
+            ("tenantId", FieldType::String, true),
+            ("mutationEpoch", FieldType::String, true),
+        ]
+    );
+    assert!(epoch.indexes.is_empty());
+
+    for schema in [retirement, epoch] {
+        let policy = schema.access_policy.expect("system policy is required");
+        for rule in [policy.read, policy.create, policy.update, policy.delete] {
+            assert!(rule.require_authenticated);
+            assert_eq!(rule.predicates.len(), 1);
+        }
     }
 }
 

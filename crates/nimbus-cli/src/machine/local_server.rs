@@ -393,66 +393,80 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test]
     #[serial_test::serial]
-    async fn lifecycle_command_prefers_running_local_server() {
-        let temp = tempdir().expect("tempdir should build");
-        let local_paths = sample_paths(temp.path());
-        let token =
-            load_or_create_local_admin_token(&local_paths).expect("local admin token should exist");
-        let roots = MachineRootLayout::test_sibling_roots(
-            temp.path().join("machine-config"),
-            temp.path().join("machine-state"),
-            temp.path().join("run"),
-        );
-        let manager = StubMachineLifecycleManager::new(roots.clone());
-        let service =
-            Arc::new(Engine::new(temp.path().join("data")).expect("service should create"));
-        let serve_options = ServeOptions::managed(managed_server_composition(
-            service.clone(),
-            &temp.path().join("network"),
-        ));
-        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .expect("listener should bind");
-        let address = listener
-            .local_addr()
-            .expect("listener address should resolve");
-        let _lease = ServerDiscoveryLease::acquire(&local_paths, address)
-            .expect("server discovery should be recorded");
-        let server_task = tokio::spawn(serve(
-            listener,
-            serve_options
-                .with_local_server_security(Arc::new(LocalServerSecurityState::new(
-                    local_paths.clone(),
-                    token,
-                )))
-                .with_machine_lifecycle_manager(Arc::new(manager.clone())),
-        ));
-        wait_for_server(&address.to_string(), &server_task).await;
+    fn lifecycle_command_prefers_running_local_server() {
+        std::thread::Builder::new()
+            .name("machine-live-server-lifecycle".to_owned())
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("machine live-server fixture runtime should build")
+                    .block_on(async {
+                        let temp = tempdir().expect("tempdir should build");
+                        let local_paths = sample_paths(temp.path());
+                        let token = load_or_create_local_admin_token(&local_paths)
+                            .expect("local admin token should exist");
+                        let roots = MachineRootLayout::test_sibling_roots(
+                            temp.path().join("machine-config"),
+                            temp.path().join("machine-state"),
+                            temp.path().join("run"),
+                        );
+                        let manager = StubMachineLifecycleManager::new(roots.clone());
+                        let service = Arc::new(
+                            Engine::new(temp.path().join("data")).expect("service should create"),
+                        );
+                        let serve_options = ServeOptions::managed(managed_server_composition(
+                            service.clone(),
+                            &temp.path().join("network"),
+                        ));
+                        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                            .await
+                            .expect("listener should bind");
+                        let address = listener
+                            .local_addr()
+                            .expect("listener address should resolve");
+                        let _lease = ServerDiscoveryLease::acquire(&local_paths, address)
+                            .expect("server discovery should be recorded");
+                        let server_task = tokio::spawn(serve(
+                            listener,
+                            serve_options
+                                .with_local_server_security(Arc::new(
+                                    LocalServerSecurityState::new(local_paths.clone(), token),
+                                ))
+                                .with_machine_lifecycle_manager(Arc::new(manager.clone())),
+                        ));
+                        wait_for_server(&address.to_string(), &server_task).await;
 
-        let command = MachineSubcommand::Start(MachineStartCommand {
-            cpus: Some(6),
-            memory_mib: Some(8192),
-            disk_gib: Some(80),
-            bootc_native: true,
-            name: Some("team-a".to_owned()),
-            ..MachineStartCommand::default()
-        });
-        let handled = try_run_lifecycle_command_via_live_server_with_paths(
-            &command,
-            &roots,
-            &local_paths,
-            reqwest::Client::new(),
-        )
-        .await
-        .expect("live server machine command should succeed");
+                        let command = MachineSubcommand::Start(MachineStartCommand {
+                            cpus: Some(6),
+                            memory_mib: Some(8192),
+                            disk_gib: Some(80),
+                            bootc_native: true,
+                            name: Some("team-a".to_owned()),
+                            ..MachineStartCommand::default()
+                        });
+                        let handled = try_run_lifecycle_command_via_live_server_with_paths(
+                            &command,
+                            &roots,
+                            &local_paths,
+                            reqwest::Client::new(),
+                        )
+                        .await
+                        .expect("live server machine command should succeed");
 
-        assert!(handled);
-        assert_eq!(manager.calls(), vec!["create:team-a:true", "start:team-a"]);
+                        assert!(handled);
+                        assert_eq!(manager.calls(), vec!["create:team-a:true", "start:team-a"]);
 
-        server_task.abort();
-        let _ = server_task.await;
+                        server_task.abort();
+                        let _ = server_task.await;
+                    });
+            })
+            .expect("machine live-server fixture thread should start")
+            .join()
+            .expect("machine live-server fixture thread should complete");
     }
 
     #[tokio::test]

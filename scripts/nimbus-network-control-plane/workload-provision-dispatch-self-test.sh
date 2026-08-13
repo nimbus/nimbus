@@ -274,7 +274,7 @@ struct ComputeState {
     workload_provisioner: WorkloadProvisioner,
     provision_capabilities: CapabilityRegistry,
     source_authority: SourceAuthority,
-    saga_store: SagaStore,
+    lifecycle_stores: WorkloadLifecycleStores,
     network_manager: NetworkManager,
 }
 RUST
@@ -298,7 +298,7 @@ struct ServerState {
     workload_provisioner: WorkloadProvisioner,
     provision_capabilities: CapabilityRegistry,
     source_authority: SourceAuthority,
-    saga_store: SagaStore,
+    lifecycle_stores: WorkloadLifecycleStores,
     network_manager: NetworkManager,
 }
 fn attempt_idempotency_journal() {}

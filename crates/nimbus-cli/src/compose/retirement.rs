@@ -12,7 +12,7 @@ use nimbus_compute::state::ComputeError;
 use nimbus_compute::{ComputeResourceRetirementError, WorkloadTeardownDisposition};
 use nimbus_server::EngineWorkloadSagaStore;
 use nimbus_tenant::TenantIsolationContext;
-use nimbus_workloads::{WorkloadExecutionReference, WorkloadSagaStore};
+use nimbus_workloads::WorkloadExecutionReference;
 
 use crate::cli_ux;
 
@@ -191,10 +191,10 @@ pub(super) async fn retire_compose_services(
         .unwrap_or_else(|| context.control_plane.local_tenant_id.clone());
     let service_names = requested_service_names(&context, command.service.as_deref())
         .map_err(ComposeRetirementError::Setup)?;
-    let saga_store: Arc<dyn WorkloadSagaStore> =
-        Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
+    let saga_store = Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
     let runtime = prepared
         .activate(Arc::clone(&engine), Arc::clone(&saga_store))
+        .await
         .map_err(ComposeRetirementError::Setup)?;
     let retirer = runtime
         .resource_retirer()

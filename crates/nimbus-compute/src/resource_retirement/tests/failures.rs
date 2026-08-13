@@ -4,7 +4,7 @@ use nimbus_engine::Engine;
 use nimbus_network::{
     LocalNetworkManager, NetworkControlPlaneLocality, NetworkSovereigntyRequirements,
 };
-use nimbus_workloads::{WorkloadSagaPhase, WorkloadSagaStore};
+use nimbus_workloads::WorkloadSagaPhase;
 use tempfile::tempdir;
 
 use super::super::ComputeResourceRetirementError;
@@ -16,7 +16,9 @@ use crate::config::control_plane::ControlPlaneConfig;
 use crate::config::deployment::DeploymentConfig;
 use crate::config::node_services::NodeServicesConfig;
 use crate::config::runtime::RuntimeGovernorConfig;
-use crate::state::{ComputeState, ComputeStateConfig, ComputeWorkloadComposition};
+use crate::state::{
+    ComputeState, ComputeStateConfig, ComputeWorkloadComposition, WorkloadLifecycleStores,
+};
 use crate::workload_projection::ServiceManagerWorkloadProjectionSink;
 use crate::workload_provision_source::ServiceManagerWorkloadProvisionSourceAuthority;
 use crate::workload_saga::{
@@ -38,7 +40,6 @@ fn native_stop_without_teardown_composition_fails_before_source_or_effect() {
         let source_authority: Arc<dyn WorkloadProvisionSourceAuthority> = Arc::new(
             ServiceManagerWorkloadProvisionSourceAuthority::new(harness.manager.clone()),
         );
-        let store: Arc<dyn WorkloadSagaStore> = harness.store.clone();
         let before_source = harness
             .manager
             .service_definition_for_tenant(harness.context.tenant_id(), SERVICE_NAME);
@@ -58,7 +59,7 @@ fn native_stop_without_teardown_composition_fails_before_source_or_effect() {
                     [],
                     true,
                 ),
-                saga_store: store,
+                lifecycle_stores: WorkloadLifecycleStores::shared(harness.store.clone()),
                 source_authority,
                 provision_capabilities: Box::new(provision_capabilities(
                     harness.provision_provider.clone(),

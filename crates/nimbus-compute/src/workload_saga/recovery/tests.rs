@@ -21,7 +21,7 @@ use nimbus_workloads::{
     WorkloadNetworkIntent, WorkloadNetworkListenerBlueprint, WorkloadNetworkPlanContent,
     WorkloadNetworkPlanIdentity, WorkloadNetworkPortRequestMode, WorkloadOwnerEvidenceDigest,
     WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
-    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion,
+    WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep,
     WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadRestartAdmissionInput,
     WorkloadRestartAdmissionUpdate, WorkloadRestartEffectResult, WorkloadRestartEvidenceDigest,
     WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy, WorkloadRestartRequestId,
@@ -34,6 +34,7 @@ use nimbus_workloads::{
 };
 
 use super::{WorkloadSagaAction, WorkloadSagaCoordinator, WorkloadSagaDecision};
+use crate::workload_saga::test_support::failed_provision_record;
 
 fn tenant(label: &str) -> TenantId {
     TenantId::new(format!("tenant-{label}")).expect("fixture tenant is valid")
@@ -201,7 +202,7 @@ fn intent(
     .expect("fixture intent is valid")
 }
 
-fn running_intent(
+pub(crate) fn running_intent(
     label: &str,
     generation: u64,
     activation: WorkloadActivationIntent,
@@ -430,7 +431,10 @@ pub(crate) fn no_reference_teardown_record(
     finish_teardown(*with_successor, target)
 }
 
-fn recorded_with_successor(label: &str, successor: WorkloadSagaIntent) -> WorkloadSagaRecord {
+pub(crate) fn recorded_with_successor(
+    label: &str,
+    successor: WorkloadSagaIntent,
+) -> WorkloadSagaRecord {
     let observed = provision_record(
         label,
         WorkloadSagaPhase::Observed,
@@ -601,6 +605,26 @@ fn assert_teardown_decision(record: &WorkloadSagaRecord, target: WorkloadSagaPha
         .decide_teardown()
         .expect("valid teardown record is reducible");
     assert_decision(record, target, WorkloadSagaAction::Teardown(teardown));
+}
+
+#[test]
+fn durable_definite_provision_failure_stays_discoverable_for_compensation() {
+    let failed = failed_provision_record(
+        "startup-compensation",
+        WorkloadProvisionStep::PrepareWorkload,
+    );
+    assert!(
+        failed.requires_recovery(),
+        "a crash before the FailedProvision cause CAS must not hide durable compensation work"
+    );
+    assert!(matches!(
+        WorkloadSagaDecision::for_record(&failed)
+            .expect("exact durable failure should remain selectable")
+            .action(),
+        WorkloadSagaAction::Provision(
+            crate::workload_saga::WorkloadProvisionDecision::DefiniteFailure
+        )
+    ));
 }
 
 #[test]
