@@ -50,6 +50,15 @@ impl nimbus_services::ServiceDefinitionCatalog for HarnessServiceDefinitionCatal
         ))
     }
 
+    fn service_definitions_for_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> BTreeMap<String, ServiceDefinition> {
+        self.service_definition_for_tenant(tenant_id, "db")
+            .map(|definition| BTreeMap::from([("db".to_owned(), definition)]))
+            .unwrap_or_default()
+    }
+
     fn service_volume_policy_for_tenant(
         &self,
         _tenant_id: &TenantId,
@@ -104,6 +113,61 @@ impl HarnessSandboxBackend {
 
     fn tenant_artifact_root(&self, kind: &str, tenant_id: &str) -> PathBuf {
         self.root.join(kind).join("tenants").join(tenant_id)
+    }
+
+    fn release_exact_artifacts(&self, execution_id: &SandboxId) -> Result<(), SandboxError> {
+        let record = self
+            .records
+            .lock()
+            .expect("sandbox records lock should not be poisoned")
+            .values()
+            .find(|record| record.handle.id == *execution_id)
+            .cloned()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!("missing sandbox record for exact release {execution_id}"),
+            })?;
+        let bundle_root = record
+            .bundle_path
+            .parent()
+            .and_then(Path::parent)
+            .expect("harness bundle path should retain its sandbox root");
+        let state_root = record
+            .state_dir
+            .parent()
+            .expect("harness state path should retain its sandbox root");
+        for root in [bundle_root, state_root, record.volume_path.as_path()] {
+            if root.exists() {
+                std::fs::remove_dir_all(root).map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to release harness sandbox artifact root {}: {error}",
+                        root.display()
+                    ),
+                })?;
+            }
+        }
+        let tenant = record.handle.tenant_id.as_str();
+        for root in [
+            self.tenant_artifact_root("bundles", tenant),
+            self.tenant_artifact_root("state", tenant),
+        ] {
+            for candidate in [root.join("sandboxes"), root.join("volumes"), root] {
+                match std::fs::remove_dir(&candidate) {
+                    Ok(()) => {}
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::NotFound
+                            || error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {}
+                    Err(error) => {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "failed to prune harness sandbox artifact root {}: {error}",
+                                candidate.display()
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn materialize_record(
@@ -220,15 +284,6 @@ impl SandboxBackend for HarnessSandboxBackend {
         Box::pin(async move { Ok(handle.map(SandboxInspection::provider_reported)) })
     }
 
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        self.stop_calls.fetch_add(1, Ordering::SeqCst);
-        self.handles
-            .lock()
-            .expect("sandbox handles lock should not be poisoned")
-            .remove(id.as_str());
-        Box::pin(async { Ok(()) })
-    }
-
     fn remove_tenant_artifacts(&self, tenant_id: TenantId) -> SandboxFuture<()> {
         let tenant = tenant_id.as_str().to_owned();
         for kind in ["bundles", "state"] {
@@ -296,9 +351,18 @@ impl TestSandboxActivation for HarnessSandboxBackend {
         execution_id: &SandboxId,
     ) -> SandboxFuture<()> {
         if step == nimbus_workloads::WorkloadTeardownStep::StopExecution {
-            return self.stop(execution_id);
+            self.stop_calls.fetch_add(1, Ordering::SeqCst);
+            self.handles
+                .lock()
+                .expect("sandbox handles lock should not be poisoned")
+                .remove(execution_id.as_str());
         }
-        Box::pin(async { Ok(()) })
+        let result = if step == nimbus_workloads::WorkloadTeardownStep::ReleaseNetwork {
+            self.release_exact_artifacts(execution_id)
+        } else {
+            Ok(())
+        };
+        Box::pin(async move { result })
     }
 }
 
@@ -482,7 +546,7 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
     let sandbox_backend = Arc::new(HarnessSandboxBackend::new(temp.path().join("sandbox")));
     let service_manager = Arc::new(ServiceManager::new(
         Arc::new(HarnessServiceDefinitionCatalog),
-        sandbox_backend.clone(),
+        sandbox_backend.kind(),
     ));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();

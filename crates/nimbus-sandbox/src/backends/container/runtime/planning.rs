@@ -879,8 +879,8 @@ fn plan_only_backend_stop_uses_exact_runner_cancellation_authority() {
         .expect("runner authority should reopen");
 
     backend
-        .stop_sync(&prepared.handle.id)
-        .expect("generic backend stop must use exact unadopted runner compensation");
+        .mark_plan_only_service_workload_stopped(&manifest.handle.id)
+        .expect("the runner status owner must use exact unadopted cancellation authority");
 
     for request in &launch_batch {
         assert_eq!(

@@ -242,8 +242,9 @@ fn runner_effects_replay_child() {
     let absent_manifest = read_manifest_bytes(&absent);
     let absent_decision = read_decision_bytes(&absent);
     absent_backend
-        .stop_sync(&absent.handle.id)
-        .expect("terminal absent recovery should replay");
+        .inspect_sync(&absent.handle.id)
+        .expect("terminal absent recovery should inspect")
+        .expect("terminal absent recovery should remain durable");
     assert_eq!(read_manifest_bytes(&absent), absent_manifest);
     assert_eq!(read_decision_bytes(&absent), absent_decision);
 

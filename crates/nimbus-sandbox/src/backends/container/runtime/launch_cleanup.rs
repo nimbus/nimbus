@@ -235,9 +235,20 @@ fn durable_execute_manifest_allows_explicit_stop_after_owner_death_before_effect
         "status rejection must name the runner fence: {status_error}"
     );
 
+    let (handoff, mut current) =
+        super::super::runner::lock_current_execute_lifecycle_for_backend(&backend, &first_owner)
+            .expect("pre-effect compensation must acquire the exact runner lifecycle");
     backend
-        .stop_sync(&first_owner.handle.id)
-        .expect("explicit stop must own authenticated pre-effect compensation");
+        .release_unstarted_launch_artifacts(&mut current)
+        .expect("pre-effect compensation must release its exact launch authority");
+    current.shutdown_requested = true;
+    current.last_exit_code = Some(0);
+    synchronize_handle_status(&mut current, SandboxStatus::Stopped);
+    backend
+        .write_existing_workload_manifest(&current)
+        .expect("pre-effect compensation result must become durable");
+    super::super::runner::publish_runner_lifecycle_ownership(&current, &handoff)
+        .expect("terminal compensation must retire runner lifecycle authority");
     let stopped = backend
         .read_manifest(&first_owner.handle.id)
         .expect("stopped manifest should inspect")
@@ -322,7 +333,7 @@ fn durable_execute_decision_fences_plan_only_cancellation_before_manifest_transi
         .expect("runner should durably win execution before the manifest transition");
 
     let cancellation_error = backend
-        .stop_sync(&manifest.handle.id)
+        .mark_plan_only_service_workload_stopped(&manifest.handle.id)
         .expect_err("cancellation must honor the durable Execute decision");
     assert!(
         cancellation_error
@@ -426,10 +437,10 @@ fn durable_cancel_decision_fences_a_stale_runner_and_replays_idempotently() {
         .expect("the prepared manifest should be the durable handoff barrier");
 
     backend
-        .stop_sync(&stale_runner_manifest.handle.id)
+        .mark_plan_only_service_workload_stopped(&stale_runner_manifest.handle.id)
         .expect("cancellation should durably win the unclaimed handoff");
     backend
-        .stop_sync(&stale_runner_manifest.handle.id)
+        .mark_plan_only_service_workload_stopped(&stale_runner_manifest.handle.id)
         .expect("terminal cancellation replay should be idempotent");
     let runner_error = super::super::runner::persist_runner_execution_ownership(
         &backend,
@@ -478,7 +489,7 @@ fn corrupt_runner_handoff_decision_fences_execution_and_cancellation_without_rel
         super::super::runner::persist_runner_execution_ownership(&backend, &mut manifest)
             .expect_err("corrupt handoff evidence must fence execution");
     let cancellation_error = backend
-        .stop_sync(&manifest.handle.id)
+        .mark_plan_only_service_workload_stopped(&manifest.handle.id)
         .expect_err("corrupt handoff evidence must fence cancellation");
     for error in [runner_error, cancellation_error] {
         assert!(
@@ -927,7 +938,7 @@ fn direct_stop_after_predecision_owner_death_releases_only_unstarted_authority()
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let backend =
         ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
-    let manifest = backend
+    let mut manifest = backend
         .plan_start_with_id(
             &sample_spec().with_port_binding(SandboxPortBinding::tcp("http", 18103, 8080)),
             &SandboxId::new("direct-predecision-stop"),
@@ -941,8 +952,14 @@ fn direct_stop_after_predecision_owner_death_releases_only_unstarted_authority()
         .expect("Execute manifest should become durable before the decision");
 
     backend
-        .stop_sync(&manifest.handle.id)
+        .release_unstarted_launch_artifacts(&mut manifest)
         .expect("owner death before a decision may compensate only unstarted authority");
+    manifest.shutdown_requested = true;
+    manifest.last_exit_code = Some(0);
+    synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
+    backend
+        .write_existing_workload_manifest(&manifest)
+        .expect("exact pre-effect compensation result must become durable");
     let stopped = backend
         .read_manifest(&manifest.handle.id)
         .expect("stopped manifest should inspect")
@@ -1021,8 +1038,9 @@ fn terminal_manifest_write_failure_converges_before_lifecycle_publication() {
         "lifecycle ownership may publish only after the terminal cleanup receipt is durable"
     );
     backend
-        .stop_sync(&initial.handle.id)
-        .expect("terminal cleanup replay should be idempotent after ownership publication");
+        .inspect_sync(&initial.handle.id)
+        .expect("terminal cleanup inspection should remain available")
+        .expect("terminal cleanup manifest should remain durable");
 }
 
 #[test]
@@ -1830,162 +1848,5 @@ fn runner_launch_result_converges_cleanup_and_handoff_before_return() {
     );
 }
 
-#[test]
-fn direct_planning_cleanup_failure_retains_claim_across_restart() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let state_root = temp_dir.path().join("state");
-    let blocked_bundle_root = temp_dir.path().join("blocked-bundle-root");
-    std::fs::write(&blocked_bundle_root, b"not a directory")
-        .expect("bundle-root obstacle should write");
-    let tenant = sample_spec().tenant_id;
-    let first_allocator = Arc::new(
-        RecordingSegmentAllocator::new(tenant.clone(), "10.76.0.0/24", 76)
-            .with_release_reserved_failure("injected reserved-attachment cleanup failure"),
-    );
-    let first_injected: Arc<OciSegmentAllocator> = first_allocator;
-    let mut first_config = ContainerSandboxBackendConfig::under_root(&state_root);
-    first_config.bundle_root = blocked_bundle_root.clone();
-    let first = ContainerSandboxBackend::with_segment_allocator(first_config, first_injected);
-    let id = SandboxId::new("direct-planning-cleanup-restart");
-
-    let error = first
-        .plan_start_with_id(&sample_spec(), &id, None, None)
-        .expect_err("post-reservation bundle failure should trigger injected cleanup failure");
-    assert!(
-        error
-            .to_string()
-            .contains("injected reserved-attachment cleanup failure"),
-        "cleanup failure must remain visible: {error}"
-    );
-    let fenced = first
-        .read_manifest(&id)
-        .expect("failed manifest should inspect")
-        .expect("failed manifest must remain durable");
-    let retained_claim = fenced
-        .launch_reservation_claim
-        .clone()
-        .expect("failed cleanup must retain the exact retry claim");
-    assert_eq!(
-        fenced.status,
-        SandboxStatus::Stopping,
-        "cleanup-pending planning authority must not be published as terminal"
-    );
-    assert!(
-        crate::backends::oci::network::inspect_container_ips(
-            &first.ipam_authority,
-            &fenced.network_layout,
-            &id,
-        )
-        .is_ok(),
-        "failed compensation must safe-leak claim-fenced IPAM for exact retry"
-    );
-    std::fs::remove_file(&blocked_bundle_root)
-        .expect("recovery should remove the injected bundle-root obstacle");
-    std::fs::create_dir_all(&blocked_bundle_root)
-        .expect("recovery should restore a traversable bundle root");
-
-    let recovery_allocator = Arc::new(RecordingSegmentAllocator::new(tenant, "10.76.0.0/24", 76));
-    let recovery_injected: Arc<OciSegmentAllocator> = recovery_allocator;
-    let recovery = ContainerSandboxBackend::with_segment_allocator(
-        ContainerSandboxBackendConfig::under_root(&state_root),
-        recovery_injected,
-    );
-    recovery
-        .stop_sync(&id)
-        .expect("restart recovery should compensate the retained exact claim");
-    let stopped = recovery
-        .read_manifest(&id)
-        .expect("recovered manifest should inspect")
-        .expect("recovered manifest should remain durable");
-    assert_eq!(stopped.status, SandboxStatus::Stopped);
-    assert!(stopped.launch_reservation_claim.is_none());
-    assert_ne!(
-        Some(&retained_claim),
-        stopped.launch_reservation_claim.as_ref(),
-        "successful exact retry must retire the retained claim"
-    );
-    assert!(
-        crate::backends::oci::network::inspect_container_ips(
-            &recovery.ipam_authority,
-            &stopped.network_layout,
-            &id,
-        )
-        .is_err(),
-        "exact recovery must delete the matching IPAM generation"
-    );
-}
-
-#[test]
-fn runner_planning_cleanup_failure_retains_claim_across_restart() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let state_root = temp_dir.path().join("state");
-    let tenant = sample_spec().tenant_id;
-    let first_allocator = Arc::new(
-        RecordingSegmentAllocator::new(tenant.clone(), "10.77.0.0/24", 77)
-            .with_release_reserved_failure("injected runner attachment cleanup failure"),
-    );
-    let first_injected: Arc<OciSegmentAllocator> = first_allocator;
-    let first = ContainerSandboxBackend::with_segment_allocator(
-        ContainerSandboxBackendConfig::plan_only(temp_dir.path().join("bundles"), &state_root),
-        first_injected,
-    )
-    .with_runner_handoff_failure(RunnerHandoffFailure::Manifest);
-
-    let error = first
-        .prepare_plan_only_service_workload(sample_spec())
-        .expect_err("runner handoff failure should trigger injected cleanup failure");
-    assert!(
-        error
-            .to_string()
-            .contains("injected runner attachment cleanup failure"),
-        "runner cleanup failure must remain visible: {error}"
-    );
-    let manifest_paths = crate::artifact_paths::all_manifest_paths(&state_root)
-        .expect("failed runner manifest should enumerate");
-    assert_eq!(manifest_paths.len(), 1);
-    let fenced: ContainerSandboxManifest = serde_json::from_slice(
-        &std::fs::read(&manifest_paths[0]).expect("failed runner manifest should read"),
-    )
-    .expect("failed runner manifest should parse");
-    let id = fenced.handle.id.clone();
-    assert_eq!(fenced.status, SandboxStatus::Stopping);
-    assert_eq!(fenced.handle.status, SandboxStatus::Stopping);
-    assert!(
-        fenced.launch_reservation_claim.is_some(),
-        "failed runner cleanup must retain exact compensation authority"
-    );
-    assert!(
-        crate::backends::oci::network::inspect_container_ips(
-            &first.ipam_authority,
-            &fenced.network_layout,
-            &id,
-        )
-        .is_ok(),
-        "failed runner compensation must retain claim-fenced IPAM"
-    );
-
-    let recovery_allocator = Arc::new(RecordingSegmentAllocator::new(tenant, "10.77.0.0/24", 77));
-    let recovery_injected: Arc<OciSegmentAllocator> = recovery_allocator;
-    let recovery = ContainerSandboxBackend::with_segment_allocator(
-        ContainerSandboxBackendConfig::plan_only(temp_dir.path().join("bundles"), &state_root),
-        recovery_injected,
-    );
-    recovery
-        .stop_sync(&id)
-        .expect("runner restart recovery should compensate the retained claim");
-    let stopped = recovery
-        .read_manifest(&id)
-        .expect("recovered runner manifest should inspect")
-        .expect("recovered runner manifest should remain durable");
-    assert_eq!(stopped.status, SandboxStatus::Stopped);
-    assert!(stopped.launch_reservation_claim.is_none());
-    assert!(
-        crate::backends::oci::network::inspect_container_ips(
-            &recovery.ipam_authority,
-            &stopped.network_layout,
-            &id,
-        )
-        .is_err(),
-        "runner recovery must delete the matching IPAM generation"
-    );
-}
+#[path = "launch_cleanup/planning_failure_recovery.rs"]
+mod planning_failure_recovery;

@@ -574,6 +574,16 @@ impl KrunSandboxBackend {
         manifest: &mut KrunSandboxManifest,
         runtime: &dyn KrunExecutionTeardownRuntime,
     ) -> crate::Result<SandboxExecutionTeardownObservation> {
+        if manifest.creator_handoff == KrunCreatorHandoffState::NotSpawned
+            && matches!(
+                manifest.launch_authority,
+                KrunLaunchAuthority::Reserved { .. }
+                    | KrunLaunchAuthority::Adopting { .. }
+                    | KrunLaunchAuthority::Adopted { .. }
+            )
+        {
+            return self.persist_execution_stopped(claim, manifest, "creator_never_spawned", None);
+        }
         match runtime.observe_execution_terminal(manifest)? {
             KrunExecutionTerminalObservation::ExactExit { exit_code } => {
                 return self.persist_execution_stopped(
@@ -764,6 +774,16 @@ impl KrunSandboxBackend {
         &self,
         manifest: &KrunSandboxManifest,
     ) -> crate::Result<Option<Vec<u8>>> {
+        if manifest.creator_handoff == KrunCreatorHandoffState::NotSpawned
+            && matches!(
+                manifest.launch_authority,
+                KrunLaunchAuthority::Reserved { .. }
+                    | KrunLaunchAuthority::Adopting { .. }
+                    | KrunLaunchAuthority::Adopted { .. }
+            )
+        {
+            return Ok(None);
+        }
         if matches!(
             manifest.creator_handoff,
             KrunCreatorHandoffState::SpawnIntent { .. } | KrunCreatorHandoffState::Pending { .. }

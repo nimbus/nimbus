@@ -1,5 +1,4 @@
 mod attachment_authority;
-mod attachment_recovery;
 mod creator_recovery;
 mod egress_readiness;
 mod endpoint_projection;
@@ -297,15 +296,6 @@ fn plan_only_backend_lowers_before_generic_lifecycle_inspection() {
         .expect("inspect should succeed")
         .expect("plan-only sandbox should persist a manifest");
     assert_eq!(inspected.handle.id, handle.id);
-
-    block_on(backend.stop(&handle.id)).expect("stop should succeed in plan-only mode");
-    let stopped = block_on(backend.inspect(&handle.id))
-        .expect("inspect after stop should succeed")
-        .expect("stopped sandbox should still have a manifest");
-    assert_eq!(
-        stopped.handle.status,
-        crate::instance::SandboxStatus::Stopped
-    );
 }
 
 #[test]
@@ -876,19 +866,6 @@ fn oci_image_root_plan_only_persists_and_then_cleans_up_materialized_rootfs() {
         rootfs_path.exists(),
         "image-backed plan should materialize a rootfs under the krun state root"
     );
-
-    block_on(backend.stop(&handle.id)).expect("plan-only stop should succeed");
-
-    let manifest_after_stop =
-        fs::read_to_string(&manifest_path).expect("manifest should be readable after stop");
-    assert!(
-        manifest_after_stop.contains("\"launch_artifact\": null"),
-        "stop should clear launch-artifact metadata after cleanup"
-    );
-    assert!(
-        !rootfs_path.exists(),
-        "stop should remove the materialized rootfs after cleanup"
-    );
 }
 
 #[test]
@@ -970,8 +947,6 @@ fn oci_image_root_plan_only_previews_ports_without_reserving_them() {
         15000,
         "inert plan-only previews must not treat another manifest as allocation authority"
     );
-
-    block_on(backend.stop(&first.id)).expect("stopping the first sandbox should succeed");
 
     let mut third_spec = sparse_image_spec("third");
     third_spec.root = SandboxRootSpec::oci_image_reference(image_reference);

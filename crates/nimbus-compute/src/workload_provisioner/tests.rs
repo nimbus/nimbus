@@ -506,13 +506,24 @@ fn provisioner_with_sink(
     .expect("fixture capabilities should validate");
     let store: Arc<dyn WorkloadSagaStore> = store;
     let source: Arc<dyn WorkloadProvisionSourceAuthority> = source;
+    let coordinator = Arc::new(WorkloadSagaCoordinator::new(store));
+    let teardown_runtime = Arc::new(WorkloadTeardownRuntime::new(
+        Arc::clone(&coordinator),
+        Arc::clone(&source),
+        provider_reports.clone(),
+        Arc::new(
+            crate::workload_saga::WorkloadTeardownCapabilityRegistry::new([], [], [])
+                .expect("empty teardown registry should validate"),
+        ),
+    ));
     Arc::new(
         WorkloadProvisioner::new(
             NodeIdentity::new("node-a").expect("fixture node should validate"),
             provider_reports,
             selection,
             NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
-            Arc::new(WorkloadSagaCoordinator::new(store)),
+            coordinator,
+            teardown_runtime,
             source,
             capabilities,
             projection_sink,
@@ -713,12 +724,23 @@ async fn crossed_node_source_and_provider_realm_fail_before_cas_or_effect() {
     );
     let empty_capabilities = WorkloadProvisionCapabilityRegistry::new([], [], [])
         .expect("empty capability registry should fail closed");
+    let coordinator = Arc::new(WorkloadSagaCoordinator::new(store.clone()));
+    let teardown_runtime = Arc::new(WorkloadTeardownRuntime::new(
+        Arc::clone(&coordinator),
+        source.clone(),
+        reports.clone(),
+        Arc::new(
+            crate::workload_saga::WorkloadTeardownCapabilityRegistry::new([], [], [])
+                .expect("empty teardown registry should validate"),
+        ),
+    ));
     let crossed_provisioner = WorkloadProvisioner::new(
         NodeIdentity::new("node-a").expect("fixture node should validate"),
         reports,
         crossed_selection,
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
-        Arc::new(WorkloadSagaCoordinator::new(store.clone())),
+        coordinator,
+        teardown_runtime,
         source.clone(),
         empty_capabilities,
         Arc::new(RecordingProjectionSink::default()),

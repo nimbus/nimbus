@@ -297,17 +297,23 @@ async fn in_progress_and_ambiguous_inspection_return_bounded_waiting() {
 }
 
 #[tokio::test]
-async fn restart_settlement_and_cleanup_pending_make_zero_teardown_calls() {
-    for (record, expected) in [
-        (
-            restart_settlement_pending_record("teardown-restart-settlement-pending"),
-            WorkloadTeardownRunDisposition::RestartSettlementPending,
-        ),
-        (
-            cleanup_pending_record("teardown-cleanup-pending"),
-            WorkloadTeardownRunDisposition::CleanupPending,
-        ),
-    ] {
+async fn restart_settlement_records_and_cleanup_pending_waits_without_teardown_calls() {
+    let settlement = restart_settlement_pending_record("teardown-restart-settlement-recorded");
+    let settlement_store = DurableTeardownStore::with_record(settlement.clone());
+    let settlement_provider = RecordingTeardownProvider::new(TeardownProviderBehavior::Succeed);
+    let settlement_driver = driver(settlement_store, &settlement, settlement_provider.clone());
+    let settlement_run = settlement_driver
+        .resume(settlement.key())
+        .await
+        .expect("exact restart settlement should become terminal evidence");
+    assert_eq!(
+        settlement_run.disposition(),
+        WorkloadTeardownRunDisposition::Completed
+    );
+    assert_eq!(settlement_run.record().phase(), WorkloadSagaPhase::Recorded);
+    assert!(settlement_provider.calls().is_empty());
+
+    for record in [cleanup_pending_record("teardown-cleanup-pending")] {
         let store = DurableTeardownStore::with_record(record.clone());
         let provider = RecordingTeardownProvider::new(TeardownProviderBehavior::Succeed);
         let driver = driver(store, &record, provider.clone());
@@ -317,7 +323,10 @@ async fn restart_settlement_and_cleanup_pending_make_zero_teardown_calls() {
             .await
             .expect("later-owned teardown handoff should be typed");
 
-        assert_eq!(run.disposition(), expected);
+        assert_eq!(
+            run.disposition(),
+            WorkloadTeardownRunDisposition::CleanupPending
+        );
         assert_eq!(run.record(), &record);
         assert!(provider.calls().is_empty());
     }

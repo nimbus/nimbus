@@ -48,11 +48,6 @@ pub trait HostLifecycleBackend: Send + Sync + 'static {
         request: HostLifecycleRequest,
     ) -> Result<HostLifecyclePlan>;
 
-    fn stop<'a>(
-        &'a self,
-        execution_id: WorkloadExecutionId,
-    ) -> HostLifecycleFuture<'a, HostLifecycleStatus>;
-
     fn inspect<'a>(
         &'a self,
         execution_id: WorkloadExecutionId,

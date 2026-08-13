@@ -116,6 +116,72 @@ fn pending_restart() -> (WorkloadSagaRecord, WorkloadRestartCommandClaim) {
     (pending, claim)
 }
 
+fn succeed_restart_command(record: WorkloadSagaRecord, label: &str) -> WorkloadSagaRecord {
+    let request_id = record
+        .restart_state()
+        .active()
+        .expect("restart should remain active")
+        .admission()
+        .request_id()
+        .clone();
+    let pending = record
+        .claim_restart_command(&request_id)
+        .expect("restart command should claim");
+    let claim = pending
+        .restart_state()
+        .active()
+        .and_then(|active| active.disposition().claim())
+        .expect("claimed restart should retain its exact command")
+        .clone();
+    pending
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Succeeded {
+                evidence: WorkloadRestartEvidenceDigest::sha256(label),
+            },
+        )
+        .expect("restart command should persist exact success")
+}
+
+fn pending_restart_activation() -> (WorkloadSagaRecord, WorkloadRestartCommandClaim) {
+    let observed = observed_restart_record();
+    let admitted = admit_restart(&observed, "issued-target-activation");
+    let request_id = admitted
+        .restart_state()
+        .active()
+        .expect("restart should remain active")
+        .admission()
+        .request_id()
+        .clone();
+    let mut record = admitted
+        .advance_restart_without_effect(&request_id)
+        .expect("withheld restart should enter source quiescence");
+    record = succeed_restart_command(record, "target-source-quiesced");
+    let due = record
+        .restart_state()
+        .active()
+        .expect("scheduled restart should remain active")
+        .admission()
+        .not_before_unix_millis();
+    record = record
+        .advance_scheduled_restart(&request_id, due)
+        .expect("scheduled restart should become due");
+    for label in ["target-prepared", "target-attached", "target-prerequisites"] {
+        record = succeed_restart_command(record, label);
+    }
+    let pending = record
+        .claim_restart_command(&request_id)
+        .expect("target activation should claim");
+    let claim = pending
+        .restart_state()
+        .active()
+        .and_then(|active| active.disposition().claim())
+        .expect("target activation should retain its exact claim")
+        .clone();
+    assert_eq!(claim.step(), WorkloadRestartStep::ActivateExecution);
+    (pending, claim)
+}
+
 fn successor_vetoed_restart(
     successor_generation: u64,
 ) -> (
@@ -137,6 +203,60 @@ fn successor_vetoed_restart(
         .apply_restart_effect_result(&claim, result.clone())
         .expect("exact terminal result should settle the successor-vetoed restart");
     (settled, claim, result)
+}
+
+fn definite_failure_before_successor_restart(
+    successor_generation: u64,
+) -> (
+    WorkloadSagaRecord,
+    WorkloadRestartCommandClaim,
+    WorkloadRestartEffectResult,
+) {
+    let (pending, claim) = pending_restart();
+    let result = WorkloadRestartEffectResult::Failed {
+        evidence: WorkloadRestartEvidenceDigest::sha256("restart-terminal-failure"),
+    };
+    let failed = pending
+        .apply_restart_effect_result(&claim, result.clone())
+        .expect("exact restart failure should persist before a successor arrives");
+    let WorkloadSagaIntentUpdate::Transition(fenced) = failed
+        .apply_intent(stopped_intent(successor_generation))
+        .expect("successor should fence the terminal restart failure")
+    else {
+        panic!("successor must change the durable record");
+    };
+    (*fenced, claim, result)
+}
+
+fn withdrawal_with_restart_settlement(
+    withdrawal: &WorkloadSagaRecord,
+    settlement: &WorkloadRestartTeardownSettlement,
+) -> Result<WorkloadSagaRecord, serde_json::Error> {
+    let mut encoded = serde_json::to_value(withdrawal)?;
+    encoded["teardownDisposition"]["context"]["restartSettlement"] =
+        serde_json::to_value(settlement)?;
+    rehash_encoded_record(&mut encoded);
+    serde_json::from_value(encoded)
+}
+
+fn withdrawal_with_successor(
+    withdrawal: &WorkloadSagaRecord,
+    successor: &WorkloadSagaIntent,
+) -> Result<WorkloadSagaRecord, serde_json::Error> {
+    let mut encoded = serde_json::to_value(withdrawal)?;
+    encoded["successorIntent"] = serde_json::to_value(successor)?;
+    encoded["teardownDisposition"]["context"]["cause"]["generation"] =
+        serde_json::to_value(successor.generation())?;
+    encoded["teardownDisposition"]["context"]["cause"]["desiredDigest"] =
+        serde_json::to_value(successor.desired_digest())?;
+    encoded["teardownDisposition"]["context"]["successorFence"]["generation"] =
+        serde_json::to_value(successor.generation())?;
+    encoded["teardownDisposition"]["context"]["successorFence"]["desiredDigest"] =
+        serde_json::to_value(successor.desired_digest())?;
+    encoded["lastTransition"]["successorGeneration"] =
+        serde_json::to_value(successor.generation())?;
+    rehash_encoded_record(&mut encoded);
+    serde_json::from_value(encoded)
 }
 
 #[test]
@@ -310,6 +430,41 @@ fn restart_result_is_settled_before_withdrawal_committed() {
     assert_ne!(settlement.source_execution(), settlement.target_execution());
     assert!(withdrawal.commit_restart_settlement_teardown().is_err());
 
+    let (failed_before_successor, failed_claim, failed_result) =
+        definite_failure_before_successor_restart(2);
+    assert_eq!(failed_before_successor.phase(), WorkloadSagaPhase::Observed);
+    assert!(matches!(
+        failed_before_successor
+            .restart_state()
+            .active()
+            .expect("terminal restart failure should remain active until teardown")
+            .disposition(),
+        WorkloadRestartDisposition::DefiniteFailure {
+            claim: retained_claim,
+            result: retained_result,
+        } if retained_claim == &failed_claim && retained_result == &failed_result
+    ));
+    let failure_withdrawal = failed_before_successor
+        .commit_restart_settlement_teardown()
+        .expect("restart failure that preceded its successor should settle before withdrawal");
+    let failure_settlement = failure_withdrawal
+        .teardown_disposition()
+        .expect("withdrawal should own teardown")
+        .context()
+        .restart_settlement()
+        .expect("withdrawal should retain the exact failed restart result");
+    assert_eq!(
+        failure_withdrawal.phase(),
+        WorkloadSagaPhase::WithdrawalCommitted
+    );
+    assert!(failure_withdrawal.restart_state().active().is_none());
+    assert_eq!(failure_settlement.claim(), &failed_claim);
+    assert_eq!(failure_settlement.result(), &failed_result);
+    assert_ne!(
+        failure_settlement.source_execution(),
+        failure_settlement.target_execution()
+    );
+
     let withdrawn = advance_teardown(&withdrawal, WorkloadSagaPhase::Withdrawn);
     let (pending, drain_claim) = claim_teardown_step(&withdrawn);
     let drained = pending
@@ -327,12 +482,12 @@ fn restart_result_is_settled_before_withdrawal_committed() {
     assert!(pending.validate_successor(&dropped_settlement).is_err());
 
     let released = advance_teardown(&drained, WorkloadSagaPhase::NetworkReleased);
-    assert!(matches!(
+    assert_eq!(
         released.decide_teardown().unwrap(),
-        WorkloadTeardownDecision::RestartSettlementPending(retained)
-            if retained.as_ref() == settlement
-    ));
-    assert!(released.record_terminal_teardown().is_err());
+        WorkloadTeardownDecision::PersistCandidate(
+            ProposedWorkloadTeardownTransition::RecordTerminal
+        )
+    );
     let WorkloadPhaseDetail::Teardown(released_detail) = released.phase_detail() else {
         panic!("released teardown should retain terminal observations");
     };
@@ -373,6 +528,306 @@ fn restart_result_is_settled_before_withdrawal_committed() {
             .context()
             .restart_settlement()
             .is_some()
+    );
+    let recorded = recovered
+        .record_terminal_teardown()
+        .expect("exact restart settlement should be consumed into terminal evidence");
+    assert_eq!(recorded.phase(), WorkloadSagaPhase::Recorded);
+    assert!(recorded.teardown_disposition().is_none());
+    let WorkloadPhaseDetail::Recorded(recorded_detail) = recorded.phase_detail() else {
+        panic!("restart settlement teardown should finish with recorded evidence");
+    };
+    assert_ne!(recorded_detail.terminal_evidence_digest(), terminal_digest);
+    assert_eq!(
+        recorded_detail.terminal_execution_reference(),
+        released_detail.terminal_execution_reference()
+    );
+}
+
+#[test]
+fn restart_target_effects_become_exact_teardown_subjects() {
+    let (pending, claim) = pending_restart_activation();
+    let WorkloadSagaIntentUpdate::Transition(fenced) = pending
+        .apply_intent(stopped_intent(2))
+        .expect("stopped successor should fence target activation")
+    else {
+        panic!("stopped successor must change the durable record");
+    };
+    let settled = fenced
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::Succeeded {
+                evidence: WorkloadRestartEvidenceDigest::sha256("target-activation-settled"),
+            },
+        )
+        .expect("exact target activation result should settle after successor veto");
+    let withdrawal = settled
+        .commit_restart_settlement_teardown()
+        .expect("settled target activation should enter canonical teardown");
+    let settlement = withdrawal
+        .teardown_disposition()
+        .and_then(|disposition| disposition.context().restart_settlement())
+        .expect("target teardown should retain exact restart settlement");
+    let WorkloadPhaseDetail::Teardown(detail) = withdrawal.phase_detail() else {
+        panic!("restart target teardown should retain exact phase detail");
+    };
+    assert_eq!(detail.origin(), WorkloadSagaPhase::WorkloadActivated);
+    assert_eq!(
+        detail.retained_references().execution(),
+        Some(settlement.target_execution())
+    );
+    assert_ne!(
+        detail.retained_references().execution(),
+        Some(settlement.source_execution())
+    );
+
+    let released = advance_teardown(&withdrawal, WorkloadSagaPhase::NetworkReleased);
+    let recorded = released
+        .record_terminal_teardown()
+        .expect("target teardown should consume settlement into Recorded");
+    let WorkloadPhaseDetail::Recorded(recorded_detail) = recorded.phase_detail() else {
+        panic!("target teardown should finish with recorded evidence");
+    };
+    assert_eq!(
+        recorded_detail.terminal_execution_reference(),
+        Some(settlement.target_execution())
+    );
+}
+
+#[test]
+fn restart_failure_without_successor_does_not_auto_retire() {
+    let (pending, claim) = pending_restart();
+    let failure = WorkloadRestartEffectResult::Failed {
+        evidence: WorkloadRestartEvidenceDigest::sha256("restart-no-successor-failure"),
+    };
+    let failed = pending
+        .apply_restart_effect_result(&claim, failure.clone())
+        .expect("exact restart failure should persist");
+    let before = serde_json::to_vec(&failed).expect("failed restart should encode");
+
+    assert!(failed.commit_restart_settlement_teardown().is_err());
+    assert_eq!(
+        serde_json::to_vec(&failed).expect("rejected handoff should preserve the record"),
+        before
+    );
+    assert_eq!(failed.phase(), WorkloadSagaPhase::Observed);
+    assert!(failed.successor_intent().is_none());
+    assert!(failed.teardown_disposition().is_none());
+    assert!(matches!(
+        failed.restart_state().active().unwrap().disposition(),
+        WorkloadRestartDisposition::DefiniteFailure {
+            claim: retained_claim,
+            result: retained_result,
+        } if retained_claim == &claim && retained_result == &failure
+    ));
+}
+
+#[test]
+fn crossed_restart_settlement_evidence_is_rejected_without_record_change() {
+    let (settled, claim, result) = definite_failure_before_successor_restart(2);
+    let withdrawal = settled
+        .commit_restart_settlement_teardown()
+        .expect("exact failed restart should enter withdrawal");
+    let retained = withdrawal
+        .teardown_disposition()
+        .unwrap()
+        .context()
+        .restart_settlement()
+        .expect("withdrawal should retain restart settlement");
+    let before = serde_json::to_vec(&settled).expect("settled restart should encode");
+    let source = retained.source_execution().clone();
+    let target = retained.target_execution().clone();
+
+    let crossed_request = WorkloadRestartRequestId::for_explicit(
+        settled.saga_id(),
+        settled.active_intent().source().source_generation(),
+        "crossed-settlement-request",
+    )
+    .expect("crossed request should validate independently");
+    let crossed_request_claim = WorkloadRestartCommandClaim::initial(
+        crossed_request,
+        claim.restart_epoch(),
+        claim.attempt_id().clone(),
+        claim.step(),
+        claim.issuing_revision(),
+    )
+    .expect("crossed request claim should validate independently");
+    let crossed_request_settlement = WorkloadRestartTeardownSettlement::new(
+        crossed_request_claim,
+        result.clone(),
+        source.clone(),
+        target.clone(),
+        retained.owner_observations().to_vec(),
+    )
+    .expect("crossed request settlement should validate internally");
+    let crossed_request_candidate =
+        withdrawal_with_restart_settlement(&withdrawal, &crossed_request_settlement)
+            .expect("crossed request candidate should validate internally");
+    assert!(
+        settled
+            .validate_successor(&crossed_request_candidate)
+            .is_err()
+    );
+
+    let crossed_restart_epoch = claim
+        .restart_epoch()
+        .checked_next()
+        .expect("crossed restart epoch should fit");
+    let crossed_epoch_target = WorkloadExecutionReference::for_restart_epoch(
+        settled.active_intent(),
+        crossed_restart_epoch,
+    );
+    let crossed_epoch_claim = WorkloadRestartCommandClaim::initial(
+        claim.request_id().clone(),
+        crossed_restart_epoch,
+        crossed_epoch_target.attempt_id().clone(),
+        claim.step(),
+        claim.issuing_revision(),
+    )
+    .expect("crossed restart epoch claim should validate independently");
+    let crossed_epoch_settlement = WorkloadRestartTeardownSettlement::new(
+        crossed_epoch_claim,
+        result.clone(),
+        source.clone(),
+        crossed_epoch_target,
+        retained.owner_observations().to_vec(),
+    )
+    .expect("crossed restart epoch settlement should validate internally");
+    let crossed_epoch_candidate =
+        withdrawal_with_restart_settlement(&withdrawal, &crossed_epoch_settlement)
+            .expect("crossed restart epoch candidate should validate internally");
+    assert!(
+        settled
+            .validate_successor(&crossed_epoch_candidate)
+            .is_err()
+    );
+
+    let crossed_target_epoch = crossed_restart_epoch
+        .checked_next()
+        .expect("crossed target epoch should fit");
+    let crossed_target = WorkloadExecutionReference::for_restart_epoch(
+        settled.active_intent(),
+        crossed_target_epoch,
+    );
+    let crossed_target_claim = WorkloadRestartCommandClaim::initial(
+        claim.request_id().clone(),
+        claim.restart_epoch(),
+        crossed_target.attempt_id().clone(),
+        claim.step(),
+        claim.issuing_revision(),
+    )
+    .expect("crossed target claim should validate independently");
+    let crossed_target_settlement = WorkloadRestartTeardownSettlement::new(
+        crossed_target_claim,
+        result.clone(),
+        source.clone(),
+        crossed_target,
+        retained.owner_observations().to_vec(),
+    )
+    .expect("crossed target settlement should validate internally");
+    assert!(
+        withdrawal_with_restart_settlement(&withdrawal, &crossed_target_settlement).is_err(),
+        "target attempt crossed with its restart epoch must fail intrinsic record validation"
+    );
+
+    let (pending, pending_claim) = pending_restart();
+    let inspection = pending
+        .restart_dispatch_to_inspection(&pending_claim)
+        .expect("exact pending claim should enter inspection");
+    let absence = WorkloadRestartAbsenceEvidence::for_inspection(
+        &inspection,
+        &pending_claim,
+        WorkloadRestartEvidenceDigest::sha256("crossed-dispatch-epoch-absence"),
+    )
+    .expect("exact inspection absence should validate");
+    let crossed_dispatch_claim = WorkloadRestartCommandClaim::retry_after_absence(
+        &pending_claim,
+        inspection.revision(),
+        absence,
+    )
+    .expect("next dispatch epoch should validate independently");
+    let crossed_dispatch_settlement = WorkloadRestartTeardownSettlement::new(
+        crossed_dispatch_claim,
+        result.clone(),
+        source.clone(),
+        target.clone(),
+        retained.owner_observations().to_vec(),
+    )
+    .expect("crossed dispatch settlement should validate internally");
+    let crossed_dispatch_candidate =
+        withdrawal_with_restart_settlement(&withdrawal, &crossed_dispatch_settlement)
+            .expect("crossed dispatch candidate should validate internally");
+    assert!(
+        settled
+            .validate_successor(&crossed_dispatch_candidate)
+            .is_err()
+    );
+
+    let crossed_result_settlement = WorkloadRestartTeardownSettlement::new(
+        claim.clone(),
+        WorkloadRestartEffectResult::Failed {
+            evidence: WorkloadRestartEvidenceDigest::sha256("crossed-settlement-result"),
+        },
+        source.clone(),
+        target,
+        retained.owner_observations().to_vec(),
+    )
+    .expect("crossed terminal result should validate independently");
+    let crossed_result_candidate =
+        withdrawal_with_restart_settlement(&withdrawal, &crossed_result_settlement)
+            .expect("crossed result candidate should validate internally");
+    assert!(
+        settled
+            .validate_successor(&crossed_result_candidate)
+            .is_err()
+    );
+
+    let crossed_source = WorkloadExecutionReference::for_restart_epoch(
+        settled.active_intent(),
+        crossed_target_epoch,
+    );
+    let crossed_source_settlement = WorkloadRestartTeardownSettlement::new(
+        claim,
+        result,
+        crossed_source,
+        retained.target_execution().clone(),
+        retained.owner_observations().to_vec(),
+    )
+    .expect("crossed source settlement should validate independently");
+    assert!(
+        withdrawal_with_restart_settlement(&withdrawal, &crossed_source_settlement).is_err(),
+        "crossed source execution must fail intrinsic record validation"
+    );
+
+    let crossed_generation = stopped_intent(3);
+    let crossed_generation_candidate = withdrawal_with_successor(&withdrawal, &crossed_generation)
+        .expect("crossed successor generation should validate internally");
+    assert!(
+        settled
+            .validate_successor(&crossed_generation_candidate)
+            .is_err()
+    );
+
+    let crossed_digest = intent_with(
+        "tenant-a",
+        "workload-a",
+        2,
+        DesiredWorkloadState::Stopped,
+        WorkloadActivationIntent::PrepareOnly,
+        WorkloadPublicationIntent::Withheld,
+        73,
+    );
+    let crossed_digest_candidate = withdrawal_with_successor(&withdrawal, &crossed_digest)
+        .expect("crossed successor digest should validate internally");
+    assert!(
+        settled
+            .validate_successor(&crossed_digest_candidate)
+            .is_err()
+    );
+
+    assert_eq!(
+        serde_json::to_vec(&settled).expect("rejected evidence should preserve the record"),
+        before
     );
 }
 

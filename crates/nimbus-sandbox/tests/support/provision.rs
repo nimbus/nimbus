@@ -14,17 +14,27 @@ use std::thread;
 use std::time::Duration;
 
 use nimbus_network::{
-    ListenerId, NetworkAttachmentId, NetworkLeaseEpoch, NetworkPlan, NetworkPlanContentDigest,
-    NetworkPlanId, NetworkResourceGeneration, PortBindRealm, PortBindTarget, PortBindingSpec,
-    PortExposure, PortIpv6Overlap, PortLeaseAccounting, PortLeaseFence, PortLeaseId,
-    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+    ListenerId, NetworkAttachmentId, NetworkCapabilitySourceDigest, NetworkLeaseEpoch, NetworkPlan,
+    NetworkPlanContentDigest, NetworkPlanId, NetworkResourceGeneration, PortBindRealm,
+    PortBindTarget, PortBindingSpec, PortExposure, PortIpv6Overlap, PortLeaseAccounting,
+    PortLeaseFence, PortLeaseId, PortLeaseRequest, PortProtocol, PortPublicationIntent,
+    PortRequestMode,
 };
-use nimbus_sandbox::backends::container::ContainerSandboxBackend;
+use nimbus_sandbox::backends::container::{
+    CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY, ContainerSandboxBackend,
+};
 use nimbus_sandbox::backends::krun::KrunSandboxBackend;
+use nimbus_sandbox::backends::{
+    CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY, KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
+};
 use nimbus_sandbox::{
-    SandboxExecutionAttemptId, SandboxHandle, SandboxId, SandboxProvisionDependencyListener,
-    SandboxProvisionListener, SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation,
-    SandboxSpec, sandbox_network_plan_requirements,
+    ProviderCommandClaim, ProviderCommandClaimDecision, ProviderCommandClaimInput,
+    ProviderCommandObservationKind, SandboxExecutionAttemptId, SandboxExecutionTeardownCommand,
+    SandboxExecutionTeardownOperation, SandboxHandle, SandboxId, SandboxNetworkTeardownCommand,
+    SandboxNetworkTeardownCommandInput, SandboxNetworkTeardownIdentity,
+    SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownOperation,
+    SandboxProvisionDependencyListener, SandboxProvisionListener, SandboxProvisionNetworkPlan,
+    SandboxProvisionPhaseObservation, SandboxSpec, sandbox_network_plan_requirements,
 };
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
@@ -32,6 +42,15 @@ static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct ProvisionedSandbox {
     pub(crate) handle: SandboxHandle,
     pub(crate) ingress: TestIngressSet,
+    pub(crate) teardown: ExactTeardownFixture,
+}
+
+#[derive(Clone)]
+pub(crate) struct ExactTeardownFixture {
+    tenant_id: nimbus_core::TenantId,
+    sandbox_id: SandboxId,
+    execution_attempt_id: SandboxExecutionAttemptId,
+    network_plan: SandboxProvisionNetworkPlan,
 }
 
 #[allow(dead_code)] // Included separately by Container-only and krun-only integration targets.
@@ -44,6 +63,12 @@ pub(crate) fn provision_container(
     let id = fixture_id("container", spec.display_name());
     let plan = compiled_network_plan(&spec, &id);
     let attempt = fixture_attempt_id(&id);
+    let teardown = ExactTeardownFixture {
+        tenant_id: spec.tenant_id.clone(),
+        sandbox_id: id.clone(),
+        execution_attempt_id: attempt.clone(),
+        network_plan: plan.clone(),
+    };
     backend.reserve_provision_network(spec, id.clone(), attempt.clone(), plan)?;
     backend.prepare_provision_workload(&id, &attempt)?;
     require_succeeded(
@@ -64,7 +89,11 @@ pub(crate) fn provision_container(
     )?;
     let manifest = read_manifest(workload_state_root, &id)?;
     let (handle, ingress) = finish_fixture(manifest, install_ingress)?;
-    Ok(ProvisionedSandbox { handle, ingress })
+    Ok(ProvisionedSandbox {
+        handle,
+        ingress,
+        teardown,
+    })
 }
 
 #[allow(dead_code)] // Included separately by Container-only and krun-only integration targets.
@@ -77,6 +106,12 @@ pub(crate) fn provision_krun(
     let id = fixture_id("krun", spec.display_name());
     let plan = compiled_network_plan(&spec, &id);
     let attempt = fixture_attempt_id(&id);
+    let teardown = ExactTeardownFixture {
+        tenant_id: spec.tenant_id.clone(),
+        sandbox_id: id.clone(),
+        execution_attempt_id: attempt.clone(),
+        network_plan: plan.clone(),
+    };
     backend.reserve_provision_network(spec, id.clone(), attempt.clone(), plan)?;
     backend.prepare_provision_workload(&id, &attempt)?;
     require_succeeded(
@@ -97,7 +132,218 @@ pub(crate) fn provision_krun(
     )?;
     let manifest = read_manifest(workload_state_root, &id)?;
     let (handle, ingress) = finish_fixture(manifest, install_ingress)?;
-    Ok(ProvisionedSandbox { handle, ingress })
+    Ok(ProvisionedSandbox {
+        handle,
+        ingress,
+        teardown,
+    })
+}
+
+/// Drive the same four exact provider streams as compute for a live Container
+/// fixture. The caller must retain the immutable provision identity; an ID-only
+/// cleanup path would recreate the coarse authority that these tests protect.
+#[allow(dead_code)] // Included separately by Container-only and krun-only integration targets.
+pub(crate) fn retire_container(
+    backend: &ContainerSandboxBackend,
+    fixture: &ExactTeardownFixture,
+) -> nimbus_sandbox::Result<()> {
+    retire_exact(
+        fixture,
+        CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY,
+        CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
+        |command, execution| {
+            backend
+                .execute_execution_teardown_with_claim(command, execution)
+                .map_err(provider_journal_error)
+        },
+        |command, execution| {
+            backend
+                .execute_network_teardown_with_claim(command, execution)
+                .map_err(provider_journal_error)
+        },
+        || {
+            backend
+                .attempt_idempotency_journal()
+                .map_err(provider_journal_error)
+        },
+    )
+}
+
+/// Drive the same four exact provider streams as compute for a live Krun
+/// fixture. This is test composition and does not add a backend lifecycle API.
+#[allow(dead_code)] // Included separately by Container-only and krun-only integration targets.
+pub(crate) fn retire_krun(
+    backend: &KrunSandboxBackend,
+    fixture: &ExactTeardownFixture,
+) -> nimbus_sandbox::Result<()> {
+    retire_exact(
+        fixture,
+        "nimbus-sandbox.krun-execution",
+        KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
+        |command, execution| {
+            backend
+                .execute_execution_teardown_with_claim(command, execution)
+                .map_err(provider_journal_error)
+        },
+        |command, execution| {
+            backend
+                .execute_network_teardown_with_claim(command, execution)
+                .map_err(provider_journal_error)
+        },
+        || {
+            backend
+                .attempt_idempotency_journal()
+                .map_err(provider_journal_error)
+        },
+    )
+}
+
+fn retire_exact(
+    fixture: &ExactTeardownFixture,
+    execution_provider_key: &str,
+    attachment_provider_key: &str,
+    mut execute_execution: impl FnMut(
+        &SandboxExecutionTeardownCommand,
+        nimbus_sandbox::ProviderCommandExecutionClaim,
+    ) -> nimbus_sandbox::Result<
+        nimbus_sandbox::ProviderCommandObservation,
+    >,
+    mut execute_network: impl FnMut(
+        &SandboxNetworkTeardownCommand,
+        nimbus_sandbox::ProviderCommandExecutionClaim,
+    ) -> nimbus_sandbox::Result<
+        nimbus_sandbox::ProviderCommandObservation,
+    >,
+    mut journal: impl FnMut() -> nimbus_sandbox::Result<nimbus_sandbox::ProviderCommandAttemptJournal>,
+) -> nimbus_sandbox::Result<()> {
+    for operation in [
+        SandboxExecutionTeardownOperation::Drain,
+        SandboxExecutionTeardownOperation::Stop,
+    ] {
+        let claim = fixture.claim(operation.provider_operation(), "execution-target", 1)?;
+        let command = SandboxExecutionTeardownCommand::new(
+            fixture.tenant_id.clone(),
+            fixture.sandbox_id.clone(),
+            fixture.execution_attempt_id.clone(),
+            execution_provider_key,
+            operation,
+            claim,
+        )
+        .map_err(exact_teardown_error)?;
+        execute_claimed(&journal()?, command.provider_claim(), |execution| {
+            execute_execution(&command, execution)
+        })?;
+    }
+
+    for operation in [
+        SandboxNetworkTeardownOperation::Detach,
+        SandboxNetworkTeardownOperation::Release,
+    ] {
+        let identity = SandboxNetworkTeardownIdentity::new(SandboxNetworkTeardownIdentityInput {
+            tenant_id: fixture.tenant_id.clone(),
+            sandbox_id: fixture.sandbox_id.clone(),
+            execution_attempt_id: fixture.execution_attempt_id.clone(),
+            attachment_id: fixture.network_plan.attachment_id().clone(),
+            network_plan: fixture.network_plan.network_plan().clone(),
+            provider_registration_key: attachment_provider_key.to_owned(),
+            provider_source_digest: NetworkCapabilitySourceDigest::from_bytes([9; 32]),
+        })
+        .map_err(exact_teardown_error)?;
+        let claim = fixture.claim(
+            operation.provider_operation(),
+            &identity.provider_target_digest(),
+            1,
+        )?;
+        let command = SandboxNetworkTeardownCommand::new(SandboxNetworkTeardownCommandInput {
+            identity,
+            operation,
+            provider_claim: claim,
+        })
+        .map_err(exact_teardown_error)?;
+        execute_claimed(&journal()?, command.provider_claim(), |execution| {
+            execute_network(&command, execution)
+        })?;
+    }
+    Ok(())
+}
+
+fn execute_claimed(
+    journal: &nimbus_sandbox::ProviderCommandAttemptJournal,
+    claim: &ProviderCommandClaim,
+    execute: impl FnOnce(
+        nimbus_sandbox::ProviderCommandExecutionClaim,
+    ) -> nimbus_sandbox::Result<nimbus_sandbox::ProviderCommandObservation>,
+) -> nimbus_sandbox::Result<()> {
+    match journal
+        .claim_dispatch_epoch(claim)
+        .map_err(provider_journal_error)?
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => {
+            require_terminal(execute(execution)?)
+        }
+        ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
+            require_terminal(observation)
+        }
+    }
+}
+
+fn require_terminal(
+    observation: nimbus_sandbox::ProviderCommandObservation,
+) -> nimbus_sandbox::Result<()> {
+    if matches!(
+        observation.kind(),
+        ProviderCommandObservationKind::Succeeded | ProviderCommandObservationKind::Absent
+    ) {
+        return Ok(());
+    }
+    Err(nimbus_sandbox::SandboxError::OperationFailed {
+        message: format!(
+            "Linux smoke exact teardown returned nonterminal provider state {:?}",
+            observation.kind()
+        ),
+    })
+}
+
+impl ExactTeardownFixture {
+    #[allow(dead_code)] // Used only by the krun force-teardown integration target.
+    pub(crate) fn sandbox_id(&self) -> &SandboxId {
+        &self.sandbox_id
+    }
+
+    fn claim(
+        &self,
+        operation: nimbus_sandbox::ProviderCommandOperation,
+        provider_target_digest: &str,
+        dispatch_epoch: u64,
+    ) -> nimbus_sandbox::Result<ProviderCommandClaim> {
+        ProviderCommandClaim::new(ProviderCommandClaimInput {
+            authority_id: format!("linux-smoke-authority:{}", self.sandbox_id),
+            effect_subject: format!("{{\"sandbox\":\"{}\"}}", self.sandbox_id),
+            source_attempt_id: None,
+            attempt_id: format!("linux-smoke-retirement:{}", self.sandbox_id),
+            dispatch_epoch,
+            workload_generation: self.network_plan.generation().as_u64(),
+            restart_ordinal: 0,
+            desired_digest: "1".repeat(64),
+            source_digest: "2".repeat(64),
+            network_plan_digest: self.network_plan.network_plan().digest().to_string(),
+            provider_target_digest: provider_target_digest.to_owned(),
+            operation,
+        })
+        .map_err(exact_teardown_error)
+    }
+}
+
+fn provider_journal_error(
+    error: nimbus_sandbox::ProviderCommandJournalError,
+) -> nimbus_sandbox::SandboxError {
+    exact_teardown_error(error)
+}
+
+fn exact_teardown_error(error: impl std::fmt::Display) -> nimbus_sandbox::SandboxError {
+    nimbus_sandbox::SandboxError::OperationFailed {
+        message: format!("Linux smoke exact teardown failed: {error}"),
+    }
 }
 
 fn fixture_id(provider: &str, display_name: &str) -> SandboxId {

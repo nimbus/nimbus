@@ -26,9 +26,14 @@ pub(super) fn validate_restart_state(record: &WorkloadSagaRecord) -> Result<(), 
             "current execution attempt does not match the completed restart epoch",
         ));
     }
+    let restart_teardown_target = record
+        .teardown_disposition()
+        .and_then(|disposition| disposition.context().restart_settlement())
+        .map(WorkloadRestartTeardownSettlement::target_execution);
     if let Some(reference) = record.phase_detail.references().execution()
         && (reference.attempt_id() != &state.current_execution_attempt_id
             || reference.restart_epoch() != state.completed_restart_epoch)
+        && restart_teardown_target != Some(reference)
     {
         return Err(WorkloadSagaError::InvalidEvidence(
             "lifecycle execution evidence is crossed with the current execution attempt",
@@ -36,6 +41,7 @@ pub(super) fn validate_restart_state(record: &WorkloadSagaRecord) -> Result<(), 
     }
     if let Some(reference) = record.phase_detail.references().publication()
         && reference.execution().attempt_id() != &state.current_execution_attempt_id
+        && restart_teardown_target != Some(reference.execution())
     {
         return Err(WorkloadSagaError::InvalidEvidence(
             "publication evidence is crossed with the current execution attempt",
@@ -554,27 +560,33 @@ pub(super) fn validate_restart_state_transition(
                 && matches!(
                     (&previous.disposition, candidate.teardown_disposition()),
                     (
-                        WorkloadRestartDisposition::SuccessorVetoed { claim, result },
+                        WorkloadRestartDisposition::SuccessorVetoed { claim, result }
+                        | WorkloadRestartDisposition::DefiniteFailure { claim, result },
                         Some(disposition),
-                    ) if disposition
-                        .context()
-                        .restart_settlement()
-                        .is_some_and(|settlement| {
-                            settlement.claim() == claim
-                                && settlement.result() == result
-                                && settlement.source_execution()
-                                    == &WorkloadExecutionReference::for_restart_epoch(
-                                        &current.active_intent,
-                                        current.restart.completed_restart_epoch,
-                                    )
-                                && settlement.target_execution()
-                                    == &WorkloadExecutionReference::for_restart_epoch(
-                                        &current.active_intent,
-                                        previous.admission.restart_epoch(),
-                                    )
-                                && settlement.owner_observations()
-                                    == previous.owner_observations
-                        })
+                    ) if (!matches!(
+                        previous.disposition,
+                        WorkloadRestartDisposition::DefiniteFailure { .. }
+                    ) || candidate.successor_intent.as_ref().is_some_and(|successor| {
+                        successor.desired_state() == DesiredWorkloadState::Stopped
+                    })) && disposition
+                            .context()
+                            .restart_settlement()
+                            .is_some_and(|settlement| {
+                                settlement.claim() == claim
+                                    && settlement.result() == result
+                                    && settlement.source_execution()
+                                        == &WorkloadExecutionReference::for_restart_epoch(
+                                            &current.active_intent,
+                                            current.restart.completed_restart_epoch,
+                                        )
+                                    && settlement.target_execution()
+                                        == &WorkloadExecutionReference::for_restart_epoch(
+                                            &current.active_intent,
+                                            previous.admission.restart_epoch(),
+                                        )
+                                    && settlement.owner_observations()
+                                        == previous.owner_observations
+                            })
                 )
     );
     if !unissued_successor_veto

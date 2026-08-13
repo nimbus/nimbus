@@ -566,7 +566,9 @@ pub(crate) fn restart_settlement_pending_record(label: &str) -> WorkloadSagaReco
         released
             .decide_teardown()
             .expect("released restart settlement should reduce"),
-        WorkloadTeardownDecision::RestartSettlementPending(_)
+        WorkloadTeardownDecision::PersistCandidate(
+            ProposedWorkloadTeardownTransition::RecordTerminal
+        )
     ));
     released
 }

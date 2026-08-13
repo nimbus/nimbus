@@ -1,8 +1,8 @@
 //! Exact retained detach choreography.
 
 use nimbus_network::{
-    NetworkAttachmentReservationState, NetworkResourcePhase, NetworkSegmentQuarantineOutcome,
-    PortLeasePhase,
+    NetworkAttachmentReservationState, NetworkAttachmentSegmentAssociation, NetworkResourcePhase,
+    NetworkSegmentQuarantineOutcome, PortLeasePhase,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -10,7 +10,9 @@ use sha2::{Digest, Sha256};
 use super::super::*;
 use super::progress::{
     HostManagedAttachmentDetachPhase, HostManagedAttachmentDetachedProof,
-    HostManagedAttachmentDetachedProofInput, RetainedAttachmentPublicationEvidence,
+    HostManagedAttachmentDetachedProofInput, HostManagedAttachmentEffectDisposition,
+    NeverEffectedAttachmentAuthority, NeverEffectedIpamAuthority, NeverEffectedPortAuthority,
+    NeverEffectedSegmentAuthority, RetainedAttachmentPublicationEvidence,
 };
 use crate::SandboxNetworkTeardownCommand;
 use crate::backends::capabilities::host_managed_attachment_provider_id;
@@ -25,6 +27,15 @@ const EVIDENCE_DIGEST_DOMAIN: &[u8] = b"nimbus.sandbox.host-attachment-evidence.
 struct RetainedDetachActions<RetainPublication, StopAuxiliary> {
     retain_publication: RetainPublication,
     stop_auxiliary: StopAuxiliary,
+}
+
+pub(super) struct NeverEffectedAuthoritySnapshot {
+    pub(super) authority: NeverEffectedAttachmentAuthority,
+    pub(super) provider_delete_evidence_sha256: String,
+    pub(super) pep_evidence_sha256: String,
+    pub(super) listener_evidence_sha256: String,
+    pub(super) ipam_evidence_sha256: String,
+    pub(super) segment_evidence_sha256: String,
 }
 
 impl OciAttachmentAdapter<'_> {
@@ -47,6 +58,22 @@ impl OciAttachmentAdapter<'_> {
                 retain_publication: || Ok(RetainedAttachmentPublicationEvidence::HostManaged),
                 stop_auxiliary,
             },
+        )
+    }
+
+    /// Confirm that this exact attachment never reached IPAM or provider
+    /// effects, while retaining its portable, segment, and port authority for
+    /// the separately fenced release command.
+    pub(crate) fn detach_host_managed_never_effected_retained(
+        &self,
+        lifecycle: &OciAttachmentLifecycle<'_>,
+        command: &SandboxNetworkTeardownCommand,
+        absent_association: Option<&NetworkAttachmentSegmentAssociation>,
+    ) -> Result<HostManagedAttachmentDetachedProof> {
+        lifecycle.detach_host_managed_never_effected_retained(
+            &self.context,
+            command,
+            absent_association,
         )
     }
 
@@ -76,6 +103,113 @@ impl OciAttachmentAdapter<'_> {
 }
 
 impl OciAttachmentLifecycle<'_> {
+    fn detach_host_managed_never_effected_retained(
+        &self,
+        context: &OciAttachmentContext<'_>,
+        command: &SandboxNetworkTeardownCommand,
+        absent_association: Option<&NetworkAttachmentSegmentAssociation>,
+    ) -> Result<HostManagedAttachmentDetachedProof> {
+        authenticate_exact_command_context(context, command, false)?;
+        let association = authority::authenticate_detach_association_with_fallback(
+            self.attachments,
+            self.allocator,
+            context,
+            AttachmentTeardownMode::Final,
+            absent_association,
+        )?;
+        let durable = state::OciAttachmentDurableState::compile(
+            self.attachments,
+            context,
+            association.clone(),
+        )?;
+        let attachment = durable.inspect()?;
+        if attachment.as_ref().is_some_and(|attachment| {
+            attachment.resource().phase() != NetworkResourcePhase::Reserved
+                || attachment.resource().provider_handle().is_some()
+        }) {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "{} attachment {} cannot claim no-effect detach from portable phase {:?}",
+                    context.provider_label,
+                    context.sandbox_id,
+                    attachment
+                        .as_ref()
+                        .map(|attachment| attachment.resource().phase())
+                ),
+            });
+        }
+        let segment = self.allocator.inspect_attachment_reservation(
+            context.tenant_id,
+            &context.config.attachment_id,
+            &context.config.reservation_claim,
+        )?;
+        match segment.state() {
+            NetworkAttachmentReservationState::Adopted => {
+                match quarantine_network_segment_hold(
+                    self.allocator,
+                    context.tenant_id,
+                    &context.config.attachment_id,
+                    &context.config.reservation_claim,
+                )? {
+                    NetworkSegmentQuarantineOutcome::CleanupPending => {}
+                    NetworkSegmentQuarantineOutcome::AlreadyReleased => {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "{} attachment {} lost its segment hold before no-effect detach",
+                                context.provider_label, context.sandbox_id
+                            ),
+                        });
+                    }
+                }
+            }
+            NetworkAttachmentReservationState::ProviderCleanupPending
+            | NetworkAttachmentReservationState::ReservationCleanupPending
+            | NetworkAttachmentReservationState::Absent => {}
+            state => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "{} attachment {} cannot publish no-effect detach from segment state {state:?}",
+                        context.provider_label, context.sandbox_id
+                    ),
+                });
+            }
+        }
+        let snapshot = self.inspect_never_effected_authority(context, &association)?;
+
+        HostManagedAttachmentDetachedProof::new(HostManagedAttachmentDetachedProofInput {
+            command: command.clone(),
+            association,
+            selected_provider_id: attachment
+                .as_ref()
+                .map(|attachment| attachment.selected_provider_id().clone())
+                .unwrap_or_else(|| command.provider_id()),
+            effect_disposition: HostManagedAttachmentEffectDisposition::ConfirmedNoProviderEffect,
+            never_effected_authority: Some(snapshot.authority),
+            stable_handle_sha256: never_effected_stable_handle_digest(
+                context,
+                attachment.as_ref(),
+            )?,
+            provider_delete_evidence_sha256: snapshot.provider_delete_evidence_sha256,
+            namespace_absence_evidence_sha256: evidence_digest(
+                "namespace_absence",
+                &(
+                    "explicitly_absent",
+                    &context.layout.netns_root,
+                    &context.layout.netns_path,
+                ),
+            )?,
+            pep_retained_evidence_sha256: snapshot.pep_evidence_sha256,
+            listener_retained_evidence_sha256: snapshot.listener_evidence_sha256,
+            ipam_retained_evidence_sha256: snapshot.ipam_evidence_sha256,
+            segment_quarantine_evidence_sha256: snapshot.segment_evidence_sha256,
+            attachment_retained_evidence_sha256: never_effected_attachment_authority_digest(
+                context,
+                attachment.as_ref(),
+            )?,
+            publication_evidence: RetainedAttachmentPublicationEvidence::HostManaged,
+        })
+    }
+
     fn detach_host_managed_retained(
         &self,
         context: &OciAttachmentContext<'_>,
@@ -447,6 +581,9 @@ impl OciAttachmentLifecycle<'_> {
             command: command.clone(),
             association: attachment.association().clone(),
             selected_provider_id: attachment.selected_provider_id().clone(),
+            effect_disposition:
+                HostManagedAttachmentEffectDisposition::ProviderEffectMayHaveExisted,
+            never_effected_authority: None,
             stable_handle_sha256: evidence_digest("stable_handle", handle)?,
             provider_delete_evidence_sha256: evidence_digest(
                 "provider_delete",
@@ -480,6 +617,157 @@ impl OciAttachmentLifecycle<'_> {
         })
     }
 
+    pub(super) fn inspect_never_effected_authority(
+        &self,
+        context: &OciAttachmentContext<'_>,
+        association: &nimbus_network::NetworkAttachmentSegmentAssociation,
+    ) -> Result<NeverEffectedAuthoritySnapshot> {
+        let provider = recovery::inspect_provider(self.ipam, context);
+        if provider != recovery::AttachmentProviderObservation::Absent {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "{} attachment {} cannot prove no-effect cleanup from provider state {provider:?}",
+                    context.provider_label, context.sandbox_id
+                ),
+            });
+        }
+        let ipam = inspect_container_ipam_authority(
+            self.ipam,
+            context.layout,
+            context.config,
+            context.sandbox_id,
+        )?;
+        let ipam_authority = match ipam {
+            ContainerIpamAuthorityState::Live => NeverEffectedIpamAuthority::Live,
+            ContainerIpamAuthorityState::Released => NeverEffectedIpamAuthority::Released,
+            ContainerIpamAuthorityState::Absent => NeverEffectedIpamAuthority::Absent,
+        };
+        let provider_delete_evidence_sha256 = match ipam {
+            ContainerIpamAuthorityState::Live => {
+                let operation = inspect_netavark_provider_operation(
+                    self.ipam,
+                    context.layout,
+                    context.config,
+                    context.sandbox_id,
+                )?;
+                if operation.label() != "reserved" {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "{} attachment {} has live IPAM with provider operation {} and cannot prove no effect",
+                            context.provider_label,
+                            context.sandbox_id,
+                            operation.label()
+                        ),
+                    });
+                }
+                evidence_digest("provider_delete", &operation)?
+            }
+            ContainerIpamAuthorityState::Released | ContainerIpamAuthorityState::Absent => {
+                evidence_digest(
+                    "provider_delete",
+                    &(
+                        "confirmed_no_effect",
+                        ipam_authority,
+                        &context.config.attachment_id,
+                        &context.config.reservation_claim,
+                        &context.config.segment_id,
+                    ),
+                )?
+            }
+        };
+
+        let plan_members = complete_port_plan_members(context);
+        let published_batch = self.ports.classify_planned_netavark_cleanup_batch(
+            &plan_members,
+            context.tenant_id,
+            context.bindings,
+            context.leases,
+            context.launch_claim,
+        )?;
+        let (listeners, pep) = self.retained_port_plan_snapshot(context)?;
+        let port_authority = classify_never_effected_port_records(
+            &listeners,
+            &pep,
+            context.launch_claim,
+            "no-effect attachment",
+        )?;
+        let published_matches = match port_authority {
+            NeverEffectedPortAuthority::NoMembers => {
+                published_batch == LaunchPortBatchState::TerminalNoEffect
+            }
+            NeverEffectedPortAuthority::Retained => {
+                published_batch == LaunchPortBatchState::NeverBound
+                    || (context.leases.is_empty()
+                        && published_batch == LaunchPortBatchState::TerminalNoEffect)
+            }
+            NeverEffectedPortAuthority::Released => {
+                published_batch == LaunchPortBatchState::TerminalNoEffect
+            }
+        };
+        if !published_matches {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "{} attachment {} crossed its exact no-effect port batch ({port_authority:?}, {published_batch:?})",
+                    context.provider_label, context.sandbox_id
+                ),
+            });
+        }
+
+        let segment = self.allocator.inspect_attachment_reservation(
+            context.tenant_id,
+            &context.config.attachment_id,
+            &context.config.reservation_claim,
+        )?;
+        let segment_authority = match segment.state() {
+            NetworkAttachmentReservationState::ProviderCleanupPending
+                if segment.association() == Some(association) =>
+            {
+                NeverEffectedSegmentAuthority::ProviderCleanupPending
+            }
+            NetworkAttachmentReservationState::ReservationCleanupPending
+                if segment.association() == Some(association) =>
+            {
+                NeverEffectedSegmentAuthority::ReservationCleanupPending
+            }
+            NetworkAttachmentReservationState::Absent if segment.association().is_none() => {
+                NeverEffectedSegmentAuthority::Absent
+            }
+            state => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "{} attachment {} has crossed no-effect segment state {state:?}",
+                        context.provider_label, context.sandbox_id
+                    ),
+                });
+            }
+        };
+        let authority = NeverEffectedAttachmentAuthority::new(
+            port_authority,
+            ipam_authority,
+            segment_authority,
+        )?;
+        Ok(NeverEffectedAuthoritySnapshot {
+            authority,
+            provider_delete_evidence_sha256,
+            pep_evidence_sha256: evidence_digest("pep_retained", &pep)?,
+            listener_evidence_sha256: evidence_digest("listeners_retained", &listeners)?,
+            ipam_evidence_sha256: evidence_digest(
+                "ipam_retained",
+                &(
+                    "confirmed_no_effect",
+                    ipam_authority,
+                    &context.config.attachment_id,
+                    &context.config.reservation_claim,
+                    &context.config.segment_id,
+                ),
+            )?,
+            segment_evidence_sha256: evidence_digest(
+                "segment_quarantined",
+                &(segment.state() as u8, segment.association()),
+            )?,
+        })
+    }
+
     /// Read published-listener and PEP authority from one host-global lease snapshot.
     pub(super) fn retained_port_plan_snapshot(
         &self,
@@ -505,6 +793,47 @@ impl OciAttachmentLifecycle<'_> {
     }
 }
 
+pub(super) fn classify_never_effected_port_records(
+    listeners: &[nimbus_network::PortLeaseRecord],
+    pep: &[nimbus_network::PortLeaseRecord],
+    launch_claim: Option<&nimbus_network::NetworkReservationClaim>,
+    label: &str,
+) -> Result<NeverEffectedPortAuthority> {
+    let records = listeners.iter().chain(pep).collect::<Vec<_>>();
+    if records.is_empty() {
+        return Ok(NeverEffectedPortAuthority::NoMembers);
+    }
+    let exact_claim = |record: &nimbus_network::PortLeaseRecord| {
+        record.reservation_claim().is_none() || record.reservation_claim() == launch_claim
+    };
+    let common_no_effect = |record: &nimbus_network::PortLeaseRecord| {
+        exact_claim(record)
+            && record.bind_claim().is_none()
+            && record.adoption_claim().is_none()
+            && record.binding().is_none()
+            && record.confirmed_stopped_binding().is_none()
+            && record.failure().is_none()
+            && record.active_lifetime().is_none()
+    };
+    if records
+        .iter()
+        .all(|record| record.phase() == PortLeasePhase::Reserved && common_no_effect(record))
+    {
+        return Ok(NeverEffectedPortAuthority::Retained);
+    }
+    if records
+        .iter()
+        .all(|record| record.phase() == PortLeasePhase::Released && common_no_effect(record))
+    {
+        return Ok(NeverEffectedPortAuthority::Released);
+    }
+    Err(SandboxError::OperationFailed {
+        message: format!(
+            "{label} port authority is neither uniformly retained nor exact terminal no-effect"
+        ),
+    })
+}
+
 /// Digest the immutable portable attachment authority retained across detach.
 ///
 /// Startup reconciliation may conservatively move an exact detached record
@@ -525,6 +854,45 @@ pub(super) fn retained_attachment_authority_digest(
             attachment.resource().provider_handle(),
         ),
     )
+}
+
+pub(super) fn never_effected_stable_handle_digest(
+    context: &OciAttachmentContext<'_>,
+    attachment: Option<&nimbus_network::DurableNetworkAttachmentState>,
+) -> Result<String> {
+    match attachment {
+        Some(attachment) => evidence_digest(
+            "stable_handle",
+            &("not_issued", attachment.resource().version()),
+        ),
+        None => evidence_digest(
+            "stable_handle",
+            &(
+                "not_issued",
+                context.tenant_id,
+                &context.config.attachment_id,
+                &context.config.network_plan,
+            ),
+        ),
+    }
+}
+
+pub(super) fn never_effected_attachment_authority_digest(
+    context: &OciAttachmentContext<'_>,
+    attachment: Option<&nimbus_network::DurableNetworkAttachmentState>,
+) -> Result<String> {
+    match attachment {
+        Some(attachment) => retained_attachment_authority_digest(attachment),
+        None => evidence_digest(
+            "attachment_retained",
+            &(
+                "confirmed_absent",
+                context.tenant_id,
+                &context.config.attachment_id,
+                &context.config.network_plan,
+            ),
+        ),
+    }
 }
 
 pub(super) fn complete_port_plan_members(

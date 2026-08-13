@@ -291,6 +291,16 @@ fn validate_context_for_record(
                 "restart teardown settlement is crossed with source lifecycle state",
             ));
         }
+        let WorkloadPhaseDetail::Teardown(detail) = &record.phase_detail else {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart teardown settlement requires retained teardown detail",
+            ));
+        };
+        settlement.validate_teardown_seed(
+            &record.active_intent,
+            detail.origin(),
+            detail.retained_references(),
+        )?;
     }
     Ok(())
 }
@@ -324,10 +334,9 @@ pub(super) fn validate_teardown_disposition_transition(
             }
             Ok(())
         }
-        (Some(previous), None) => {
+        (Some(_previous), None) => {
             if current.phase == WorkloadSagaPhase::NetworkReleased
                 && candidate.phase == WorkloadSagaPhase::Recorded
-                && previous.context().restart_settlement().is_none()
             {
                 Ok(())
             } else {
@@ -546,11 +555,17 @@ impl WorkloadSagaRecord {
             provision_absence,
             restart_settlement.clone(),
         );
+        let (origin, retained_references) = if let Some(settlement) = &restart_settlement {
+            settlement
+                .teardown_seed_from_source(&self.active_intent, &self.phase_detail.references())?
+        } else {
+            (self.phase, self.phase_detail.references())
+        };
         let detail = WorkloadPhaseDetail::teardown(
             WorkloadSagaPhase::WithdrawalCommitted,
             &self.active_intent,
-            self.phase,
-            self.phase_detail.references(),
+            origin,
+            retained_references,
             Vec::new(),
         )?;
         let restart = if restart_settlement.is_some() {
@@ -720,7 +735,8 @@ impl WorkloadSagaRecord {
         self.commit_teardown_successor(successor, None, None)
     }
 
-    /// Hand a terminal successor-vetoed restart to the durable teardown reducer once.
+    /// Hand an exact terminal restart result fenced by a queued successor to
+    /// the durable teardown reducer once.
     pub fn commit_restart_settlement_teardown(&self) -> Result<Self, WorkloadSagaError> {
         let successor =
             self.successor_intent
@@ -743,9 +759,14 @@ impl WorkloadSagaRecord {
             WorkloadRestartDisposition::SuccessorVetoed { claim, result } => {
                 (claim.clone(), result.clone())
             }
+            WorkloadRestartDisposition::DefiniteFailure { claim, result }
+                if successor.desired_state() == DesiredWorkloadState::Stopped =>
+            {
+                (claim.clone(), result.clone())
+            }
             _ => {
                 return Err(WorkloadSagaError::InvalidTransition(
-                    "restart teardown handoff requires a terminal successor-veto result",
+                    "restart teardown handoff requires an exact terminal result",
                 ));
             }
         };
@@ -828,11 +849,6 @@ impl WorkloadSagaRecord {
             WorkloadTeardownDisposition::Ready { .. } => {}
         }
         if self.phase == WorkloadSagaPhase::NetworkReleased {
-            if let Some(settlement) = disposition.context().restart_settlement() {
-                return Ok(WorkloadTeardownDecision::RestartSettlementPending(
-                    Box::new(settlement.clone()),
-                ));
-            }
             return Ok(WorkloadTeardownDecision::PersistCandidate(
                 ProposedWorkloadTeardownTransition::RecordTerminal,
             ));
@@ -1115,8 +1131,14 @@ impl WorkloadSagaRecord {
                 "terminal teardown requires retained teardown observations",
             ));
         };
-        let digest =
-            WorkloadTerminalEvidenceDigest::for_observations(detail.terminal_observations())?;
+        let restart_settlement = self
+            .teardown_disposition
+            .as_deref()
+            .and_then(|disposition| disposition.context().restart_settlement());
+        let digest = WorkloadTerminalEvidenceDigest::for_teardown(
+            detail.terminal_observations(),
+            restart_settlement,
+        )?;
         let terminal_execution = detail.terminal_execution_reference().cloned();
         self.build_next_complete(
             self.active_intent.clone(),

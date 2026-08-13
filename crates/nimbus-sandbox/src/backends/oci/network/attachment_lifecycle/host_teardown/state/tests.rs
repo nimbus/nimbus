@@ -17,6 +17,37 @@ use crate::{
 
 const BASE_EPOCH: u64 = 7;
 
+#[test]
+fn no_effect_authority_rejects_impossible_cleanup_orderings() {
+    assert!(
+        NeverEffectedAttachmentAuthority::new(
+            NeverEffectedPortAuthority::Retained,
+            NeverEffectedIpamAuthority::Live,
+            NeverEffectedSegmentAuthority::ReservationCleanupPending,
+        )
+        .is_err(),
+        "segment cleanup cannot precede retained port cleanup",
+    );
+    assert!(
+        NeverEffectedAttachmentAuthority::new(
+            NeverEffectedPortAuthority::Retained,
+            NeverEffectedIpamAuthority::Released,
+            NeverEffectedSegmentAuthority::Absent,
+        )
+        .is_err(),
+        "terminal segment absence cannot coexist with retained ports",
+    );
+    assert!(
+        NeverEffectedAttachmentAuthority::new(
+            NeverEffectedPortAuthority::Released,
+            NeverEffectedIpamAuthority::Live,
+            NeverEffectedSegmentAuthority::ReservationCleanupPending,
+        )
+        .is_ok(),
+        "reservation cleanup may persist before IPAM release",
+    );
+}
+
 fn plan() -> NetworkPlan {
     let tenant_id = TenantId::new("tenant-a").expect("tenant fixture should validate");
     NetworkPlan::new(
@@ -103,6 +134,8 @@ fn detached_proof(
         command: detach_command,
         association: association(),
         selected_provider_id,
+        effect_disposition: HostManagedAttachmentEffectDisposition::ProviderEffectMayHaveExisted,
+        never_effected_authority: None,
         stable_handle_sha256: "a".repeat(64),
         provider_delete_evidence_sha256: "b".repeat(64),
         namespace_absence_evidence_sha256: "c".repeat(64),

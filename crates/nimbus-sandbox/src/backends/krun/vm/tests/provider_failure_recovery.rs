@@ -177,7 +177,7 @@ fn provider_failure_network_error_retry_stays_on_cleanup_coordinator_and_converg
             .contains("injected provider-failure finalization cut"),
         "the exact network convergence fault must remain observable: {error}"
     );
-    let checkpoint = backend
+    let mut checkpoint = backend
         .read_manifest(&manifest.handle.id)
         .expect("cleanup checkpoint should inspect")
         .expect("cleanup checkpoint should remain durable");
@@ -189,8 +189,8 @@ fn provider_failure_network_error_retry_stays_on_cleanup_coordinator_and_converg
 
     recorder.clear_finalize_release_failure();
     backend
-        .stop_sync(&manifest.handle.id)
-        .expect("stop must resume provider-failure cleanup without requiring a PID");
+        .resume_provider_failure_cleanup(&mut checkpoint)
+        .expect("the provider-failure coordinator must resume without requiring a PID");
     let terminal = backend
         .read_manifest(&manifest.handle.id)
         .expect("terminal manifest should inspect")
@@ -200,9 +200,6 @@ fn provider_failure_network_error_retry_stays_on_cleanup_coordinator_and_converg
         (KrunLaunchAuthority::Released, SandboxStatus::Failed),
         "recovery must preserve the original failed-launch outcome"
     );
-    backend
-        .stop_sync(&manifest.handle.id)
-        .expect("completed provider-failure cleanup should replay idempotently");
     let replay = backend
         .read_manifest(&manifest.handle.id)
         .expect("replayed manifest should inspect")
@@ -274,8 +271,12 @@ fn provider_failure_runtime_absence_checkpoint_replays_delete_and_inspect() {
     );
 
     let reopened = KrunSandboxBackend::new(config);
+    let mut checkpoint = reopened
+        .read_manifest(&manifest.handle.id)
+        .expect("cleanup-intent checkpoint should inspect after reopen")
+        .expect("cleanup-intent checkpoint should remain durable");
     reopened
-        .stop_sync(&manifest.handle.id)
+        .resume_provider_failure_cleanup(&mut checkpoint)
         .expect("absence-proof replay must re-delete and re-inspect without requiring a PID");
     assert_failed_terminal(&reopened, &manifest.handle.id);
     assert_eq!(
@@ -327,8 +328,12 @@ fn provider_failure_network_release_checkpoint_replays_without_pid() {
     );
 
     let reopened = KrunSandboxBackend::new(config);
+    let mut checkpoint = reopened
+        .read_manifest(&manifest.handle.id)
+        .expect("runtime-absence checkpoint should inspect after reopen")
+        .expect("runtime-absence checkpoint should remain durable");
     reopened
-        .stop_sync(&manifest.handle.id)
+        .resume_provider_failure_cleanup(&mut checkpoint)
         .expect("network release replay must not require a runtime PID");
     assert_failed_terminal(&reopened, &manifest.handle.id);
 }
@@ -370,8 +375,12 @@ fn provider_failure_artifact_release_checkpoint_replays_without_pid() {
     );
 
     let reopened = KrunSandboxBackend::new(config);
+    let mut checkpoint = reopened
+        .read_manifest(&manifest.handle.id)
+        .expect("network-release checkpoint should inspect after reopen")
+        .expect("network-release checkpoint should remain durable");
     reopened
-        .stop_sync(&manifest.handle.id)
+        .resume_provider_failure_cleanup(&mut checkpoint)
         .expect("artifact release replay must not require a runtime PID");
     assert_failed_terminal(&reopened, &manifest.handle.id);
 }
@@ -415,12 +424,13 @@ fn provider_failure_terminal_publication_checkpoint_replays_without_pid() {
     assert_ne!(checkpoint.launch_authority, KrunLaunchAuthority::Released);
 
     let reopened = KrunSandboxBackend::new(config);
+    let mut checkpoint = reopened
+        .read_manifest(&manifest.handle.id)
+        .expect("artifact-release checkpoint should inspect after reopen")
+        .expect("artifact-release checkpoint should remain durable");
     reopened
-        .stop_sync(&manifest.handle.id)
+        .resume_provider_failure_cleanup(&mut checkpoint)
         .expect("terminal publication replay must not require a runtime PID");
     assert_failed_terminal(&reopened, &manifest.handle.id);
-    reopened
-        .stop_sync(&manifest.handle.id)
-        .expect("terminal provider-failure replay should remain idempotent");
     assert_failed_terminal(&reopened, &manifest.handle.id);
 }

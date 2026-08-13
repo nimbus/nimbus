@@ -393,7 +393,7 @@ impl KrunSandboxBackend {
             });
         }
         self.require_never_bound_provision_attachment(&manifest, &reservation_claim)?;
-        manifest.mark_adopting()?;
+        self.mark_attachment_adopting(&mut manifest)?;
         self.persist_effect_barrier(&manifest, "krun provision attachment-adoption intent")?;
         let attachment_id = manifest
             .network_config

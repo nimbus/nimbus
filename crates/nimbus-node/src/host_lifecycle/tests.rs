@@ -42,39 +42,6 @@ impl HostLifecycleBackend for FakeHostLifecycleBackend {
         })
     }
 
-    fn stop<'a>(
-        &'a self,
-        execution_id: WorkloadExecutionId,
-    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-        let statuses = Arc::clone(&self.statuses);
-        Box::pin(async move {
-            let mut statuses = statuses
-                .lock()
-                .expect("fake backend lock should not be poisoned");
-            let previous = statuses.get(&execution_id).cloned().ok_or_else(|| {
-                Error::NotFound(format!(
-                    "fake lifecycle backend has no workload {}",
-                    execution_id.as_str()
-                ))
-            })?;
-            let stopped = HostLifecycleStatus {
-                execution_id: execution_id.clone(),
-                unit_name: previous.unit_name().clone(),
-                phase: TenantWorkloadPhase::Deleting,
-                reason: HostLifecycleStatusReason::Stopped,
-                message: Some("fake backend stopped workload".to_string()),
-                lifecycle_evidence: TenantWorkloadLifecycleEvidence::for_observed_unit(
-                    previous.lifecycle_evidence().backend(),
-                    previous.unit_name(),
-                    HostLifecycleStatusReason::Stopped,
-                )
-                .with_message(Some("fake backend stopped workload".to_string())),
-            };
-            statuses.insert(execution_id, stopped.clone());
-            Ok(stopped)
-        })
-    }
-
     fn inspect<'a>(
         &'a self,
         execution_id: WorkloadExecutionId,
@@ -496,15 +463,9 @@ async fn fake_backend_activates_exact_plan_and_tracks_status() {
         .expect("fake backend should track started workload");
     assert_eq!(inspected.reason(), HostLifecycleStatusReason::Running);
 
-    let stopped = backend
-        .stop(execution_id.clone())
-        .await
-        .expect("fake backend should stop tracked workload");
-    assert_eq!(stopped.reason(), HostLifecycleStatusReason::Stopped);
-
     let inspected = backend
         .inspect(execution_id)
         .await
-        .expect("fake backend should update stopped state");
-    assert_eq!(inspected.reason(), HostLifecycleStatusReason::Stopped);
+        .expect("fake backend should retain the activated state");
+    assert_eq!(inspected.reason(), HostLifecycleStatusReason::Running);
 }

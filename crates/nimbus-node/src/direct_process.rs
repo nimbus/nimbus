@@ -143,30 +143,6 @@ impl HostLifecycleBackend for DirectProcessBackend {
         Ok(plan)
     }
 
-    fn stop<'a>(
-        &'a self,
-        execution_id: WorkloadExecutionId,
-    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-        let state = Arc::clone(&self.state);
-        Box::pin(async move {
-            let mut state = state
-                .lock()
-                .expect("direct process backend lock should not be poisoned");
-            let record = state.record_mut(&execution_id)?;
-            let status = HostLifecycleStatus::from_provider_state(
-                &record.plan,
-                HostBackendObservedState::Stopped,
-            );
-            record.status = status.clone();
-            record.logs.push(format!(
-                "direct-process:{}:stopped:{}",
-                execution_id.as_str(),
-                record.process_id
-            ));
-            Ok(status)
-        })
-    }
-
     fn inspect<'a>(
         &'a self,
         execution_id: WorkloadExecutionId,
@@ -243,18 +219,6 @@ impl DirectProcessState {
             // coordinator relies on this distinction to authorize a same-attempt
             // retry only after exact absence, while crossed observations remain
             // hard failures.
-            Error::NotFound(format!(
-                "direct process backend has no workload {}",
-                execution_id.as_str()
-            ))
-        })
-    }
-
-    fn record_mut(
-        &mut self,
-        execution_id: &WorkloadExecutionId,
-    ) -> Result<&mut DirectProcessRecord> {
-        self.records.get_mut(execution_id).ok_or_else(|| {
             Error::NotFound(format!(
                 "direct process backend has no workload {}",
                 execution_id.as_str()
@@ -350,7 +314,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_process_backend_activates_inspects_and_stops_workloads() {
+    async fn direct_process_backend_activates_and_inspects_workloads() {
         let backend = DirectProcessBackend::new();
         let binding = binding();
         let plan = backend
@@ -371,17 +335,11 @@ mod tests {
             .expect("exactly activated workload should inspect");
         assert_eq!(inspected.reason(), HostLifecycleStatusReason::Running);
 
-        let stopped = backend
-            .stop(execution_id.clone())
-            .await
-            .expect("started workload should stop");
-        assert_eq!(stopped.reason(), HostLifecycleStatusReason::Stopped);
-
         let inspected = backend
             .inspect(execution_id)
             .await
-            .expect("stopped workload should inspect");
-        assert_eq!(inspected.reason(), HostLifecycleStatusReason::Stopped);
+            .expect("started workload should inspect");
+        assert_eq!(inspected.reason(), HostLifecycleStatusReason::Running);
     }
 
     #[tokio::test]
@@ -603,19 +561,6 @@ mod tests {
                 .to_string()
                 .contains(&format!("has no workload {}", unknown.as_str())),
             "inspect error should name missing workload: {error}"
-        );
-
-        let error = backend
-            .stop(unknown)
-            .await
-            .expect_err("unknown workload stop should fail closed");
-        assert!(
-            matches!(error, Error::NotFound(_)),
-            "missing workload stop must be NotFound: {error:?}"
-        );
-        assert!(
-            error.to_string().contains("has no workload"),
-            "stop error should name missing workload: {error}"
         );
     }
 }

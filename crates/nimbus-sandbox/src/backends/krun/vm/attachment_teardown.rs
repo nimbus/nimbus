@@ -2,6 +2,8 @@
 
 use std::cell::RefCell;
 
+use nimbus_network::NetworkAttachmentReservationState;
+
 use crate::backends::KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY;
 use crate::backends::oci::network::{
     AttachmentAuxiliaryDisposition, HostManagedAttachmentCommandInspection,
@@ -15,7 +17,7 @@ use crate::{
 };
 
 use super::teardown::state::KrunNetworkStopRequirementError;
-use super::{KrunSandboxBackend, KrunSandboxManifest, KrunStartMode};
+use super::{KrunLaunchAuthority, KrunSandboxBackend, KrunSandboxManifest, KrunStartMode};
 
 type NetworkTeardownResult<T> = std::result::Result<T, NetworkTeardownAdapterError>;
 
@@ -23,6 +25,12 @@ type NetworkTeardownResult<T> = std::result::Result<T, NetworkTeardownAdapterErr
 enum NetworkTeardownAdapterError {
     Definite { code: &'static str, message: String },
     Ambiguous { message: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InterruptedAdoptionDisposition {
+    Unchanged,
+    ConfirmedNoProviderEffect,
 }
 
 impl KrunSandboxBackend {
@@ -145,6 +153,8 @@ impl KrunSandboxBackend {
             .read_exact_network_manifest(command)
             .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
         self.authenticate_network_teardown_manifest(command, &manifest)?;
+        let interrupted_adoption = self.reconcile_interrupted_attachment_adoption(&mut manifest)?;
+        self.authenticate_network_teardown_manifest(command, &manifest)?;
         require_execution_stopped(
             manifest
                 .execution_teardown
@@ -179,7 +189,7 @@ impl KrunSandboxBackend {
             self.persist_network_progress(&context, &manifest.network_teardown)
                 .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
         }
-        self.apply_network_teardown(command, manifest)
+        self.apply_network_teardown(command, manifest, interrupted_adoption)
             .map_err(NetworkTeardownAdapterError::ambiguous_error)
     }
 
@@ -187,6 +197,7 @@ impl KrunSandboxBackend {
         &self,
         command: &SandboxNetworkTeardownCommand,
         manifest: KrunSandboxManifest,
+        interrupted_adoption: InterruptedAdoptionDisposition,
     ) -> crate::Result<SandboxNetworkTeardownObservation> {
         let context = manifest.clone();
         let progress = RefCell::new(manifest.network_teardown.clone());
@@ -195,38 +206,53 @@ impl KrunSandboxBackend {
         let network_config = context.require_network_config()?;
         let hostname = super::start::hostname_for(&context.spec);
         let adapter = self.retained_attachment_adapter(&context, network_config, &hostname);
+        let confirmed_no_effect = context.creator_handoff
+            == super::KrunCreatorHandoffState::NotSpawned
+            && (interrupted_adoption == InterruptedAdoptionDisposition::ConfirmedNoProviderEffect
+                || matches!(
+                    context.launch_authority,
+                    KrunLaunchAuthority::Adopted { .. }
+                ));
 
         match command.operation() {
             SandboxNetworkTeardownOperation::Detach => {
-                let current_phase = progress.borrow().detach_phase();
-                let proof = adapter.detach_host_managed_retained(
-                    &lifecycle,
-                    command,
-                    current_phase,
-                    |phase| {
-                        let mut next = progress.borrow_mut();
-                        if next.record_detach_phase(command.provider_claim(), phase)? {
-                            self.persist_network_progress(&context, &next)?;
-                        }
-                        Ok(())
-                    },
-                    |disposition| {
-                        if disposition == AttachmentAuxiliaryDisposition::Unknown {
-                            return Err(SandboxError::OperationFailed {
-                                message: "Krun detach has ambiguous PEP ownership".to_owned(),
-                            });
-                        }
-                        self.egress_proxies.stop_for_detach(
-                            &context.spec.tenant_id,
-                            &context.handle.id,
-                            context
-                                .provision_network_plan
-                                .as_ref()
-                                .ok_or_else(|| sandbox_crossed("krun compiled network plan"))?,
-                            context.egress_proxy.as_ref(),
-                        )
-                    },
-                )?;
+                let proof = if confirmed_no_effect {
+                    adapter.detach_host_managed_never_effected_retained(
+                        &lifecycle,
+                        command,
+                        context.adopting_association(),
+                    )?
+                } else {
+                    let current_phase = progress.borrow().detach_phase();
+                    adapter.detach_host_managed_retained(
+                        &lifecycle,
+                        command,
+                        current_phase,
+                        |phase| {
+                            let mut next = progress.borrow_mut();
+                            if next.record_detach_phase(command.provider_claim(), phase)? {
+                                self.persist_network_progress(&context, &next)?;
+                            }
+                            Ok(())
+                        },
+                        |disposition| {
+                            if disposition == AttachmentAuxiliaryDisposition::Unknown {
+                                return Err(SandboxError::OperationFailed {
+                                    message: "Krun detach has ambiguous PEP ownership".to_owned(),
+                                });
+                            }
+                            self.egress_proxies.stop_for_detach(
+                                &context.spec.tenant_id,
+                                &context.handle.id,
+                                context
+                                    .provision_network_plan
+                                    .as_ref()
+                                    .ok_or_else(|| sandbox_crossed("krun compiled network plan"))?,
+                                context.egress_proxy.as_ref(),
+                            )
+                        },
+                    )?
+                };
                 {
                     let mut next = progress.borrow_mut();
                     if next.record_detached_for_command(command, proof)? {
@@ -250,15 +276,32 @@ impl KrunSandboxBackend {
                         Ok(())
                     },
                     || {
-                        self.egress_proxies.release_after_detach(
-                            &context.spec.tenant_id,
-                            &context.handle.id,
-                            context
-                                .provision_network_plan
-                                .as_ref()
-                                .ok_or_else(|| sandbox_crossed("krun compiled network plan"))?,
-                            context.egress_proxy.as_ref(),
-                        )
+                        let plan = context
+                            .provision_network_plan
+                            .as_ref()
+                            .ok_or_else(|| sandbox_crossed("krun compiled network plan"))?;
+                        if proof.confirmed_no_provider_effect() {
+                            let Some(assignment) = context.egress_proxy.as_ref() else {
+                                return Ok(());
+                            };
+                            assignment
+                                .require_compiled_plan_authority(&context.spec.tenant_id, plan)?;
+                            let claim = context.reservation_claim().ok_or_else(|| {
+                                sandbox_crossed("krun no-provider-effect reservation claim")
+                            })?;
+                            ports.release_never_bound_plan_members(
+                                &assignment.compiled_plan_members(plan),
+                                std::slice::from_ref(&assignment.port_lease),
+                                claim,
+                            )
+                        } else {
+                            self.egress_proxies.release_after_detach(
+                                &context.spec.tenant_id,
+                                &context.handle.id,
+                                plan,
+                                context.egress_proxy.as_ref(),
+                            )
+                        }
                     },
                 )?;
             }
@@ -274,6 +317,11 @@ impl KrunSandboxBackend {
     ) -> crate::Result<()> {
         let mut next = context.clone();
         next.network_teardown = progress.clone();
+        if progress.release_phase()
+            == crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+        {
+            next.launch_authority = KrunLaunchAuthority::Released;
+        }
         self.persist_effect_barrier(&next, "krun host attachment teardown progress")?;
         #[cfg(test)]
         if let Some(probe) = self.network_teardown_checkpoint_test_probe {
@@ -362,7 +410,7 @@ impl KrunSandboxBackend {
             || command.provider_registration_key() != KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY
             || &manifest.spec.tenant_id != command.tenant_id()
             || &manifest.handle.id != command.sandbox_id()
-            || !manifest.permits_provider_teardown()
+            || !manifest.permits_exact_network_teardown()
         {
             return Err(NetworkTeardownAdapterError::crossed(
                 "Krun host-managed attachment composition",
@@ -392,6 +440,72 @@ impl KrunSandboxBackend {
             .network_teardown
             .validate()
             .map_err(NetworkTeardownAdapterError::ambiguous_error)
+    }
+
+    fn reconcile_interrupted_attachment_adoption(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+    ) -> NetworkTeardownResult<InterruptedAdoptionDisposition> {
+        let KrunLaunchAuthority::Adopting {
+            reservation_claim,
+            association,
+        } = manifest.launch_authority.clone()
+        else {
+            return Ok(InterruptedAdoptionDisposition::Unchanged);
+        };
+        let network_config = manifest
+            .require_network_config()
+            .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
+        let observation = self
+            .segment_allocator
+            .inspect_attachment_reservation(
+                &manifest.spec.tenant_id,
+                &network_config.attachment_id,
+                &reservation_claim,
+            )
+            .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
+        if observation.state() != NetworkAttachmentReservationState::Absent {
+            let observed_association = observation.association().ok_or_else(|| {
+                NetworkTeardownAdapterError::ambiguous(format!(
+                    "Krun interrupted attachment adoption allocator state {:?} omitted its exact segment association",
+                    observation.state()
+                ))
+            })?;
+            if observed_association != &association {
+                return Err(NetworkTeardownAdapterError::crossed(
+                    "Krun interrupted attachment adoption segment association",
+                ));
+            }
+        }
+        match observation.state() {
+            NetworkAttachmentReservationState::Reserved => {
+                self.segment_allocator
+                    .adopt_reserved_attachment(
+                        &manifest.spec.tenant_id,
+                        &network_config.attachment_id,
+                        &reservation_claim,
+                    )
+                    .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
+                manifest.launch_authority = KrunLaunchAuthority::Adopted { reservation_claim };
+                self.persist_effect_barrier(
+                    manifest,
+                    "Krun interrupted attachment adoption recovery",
+                )
+                .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
+            }
+            NetworkAttachmentReservationState::Adopted
+            | NetworkAttachmentReservationState::ProviderCleanupPending => {
+                manifest.launch_authority = KrunLaunchAuthority::Adopted { reservation_claim };
+                self.persist_effect_barrier(
+                    manifest,
+                    "Krun interrupted attachment adoption recovery",
+                )
+                .map_err(NetworkTeardownAdapterError::ambiguous_error)?;
+            }
+            NetworkAttachmentReservationState::Absent
+            | NetworkAttachmentReservationState::ReservationCleanupPending => {}
+        }
+        Ok(InterruptedAdoptionDisposition::ConfirmedNoProviderEffect)
     }
 
     fn authenticate_network_teardown_snapshot(

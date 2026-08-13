@@ -1046,14 +1046,6 @@ impl SandboxBackend for EmptyInspectionBackend {
     fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<nimbus_sandbox::SandboxInspection>> {
         Box::pin(async move { Ok(None) })
     }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        Box::pin(async move {
-            Err(nimbus::SandboxError::OperationFailed {
-                message: "empty inspection fixture does not implement stop".to_owned(),
-            })
-        })
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1113,10 +1105,6 @@ impl SandboxBackend for RefreshingInspectBackend {
                 ),
             )))
         })
-    }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        Box::pin(async move { Ok(()) })
     }
 }
 

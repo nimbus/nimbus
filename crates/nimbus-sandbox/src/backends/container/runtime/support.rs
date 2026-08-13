@@ -3,7 +3,6 @@ pub(super) use super::*;
 use std::collections::BTreeMap;
 
 use nimbus_core::TenantId;
-
 pub(super) use std::path::PathBuf;
 
 pub(super) use crate::backend::SandboxBackendKind;
@@ -40,6 +39,9 @@ pub(super) fn sample_spec_for_tenant(tenant_id: &str, name: &str) -> SandboxSpec
     )
 }
 
+/// Drive the same four exact provider command streams used by compute for one
+/// immutable Container manifest. This is test composition, not a backend
+/// lifecycle capability.
 pub(super) fn sample_launch_defaults(rootfs_path: PathBuf) -> OciImageLaunchDefaults {
     OciImageLaunchDefaults {
         rootfs: SandboxRootfsSpec::new(rootfs_path),

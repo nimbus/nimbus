@@ -84,79 +84,6 @@ fn runner_exit_finalization_waits_for_lifecycle_owner_and_preserves_terminal_sta
 }
 
 #[test]
-fn explicit_stop_rejects_a_manifest_changed_while_waiting_for_lifecycle_authority() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let lock_probe =
-        super::super::runner::RunnerLifecycleLockTestProbe::new(Duration::from_secs(2));
-    let backend = sample_plan_only_backend(temp_dir.path())
-        .with_runner_lifecycle_lock_test_probe(lock_probe.clone());
-    let mut manifest = backend
-        .plan_start_with_id(
-            &sample_spec(),
-            &SandboxId::new("execute-stop-stale-snapshot-fence"),
-            None,
-            None,
-        )
-        .expect("runner fixture should plan")
-        .manifest;
-    mark_prepared_service_runner(&mut manifest);
-    backend
-        .write_manifest(&manifest)
-        .expect("prepared manifest should be durable");
-    let handoff = super::super::runner::persist_runner_execution_ownership(&backend, &mut manifest)
-        .expect("runner should claim execution");
-    super::super::runner::mark_runner_effects_started(&manifest, &handoff)
-        .expect("runner effect boundary should become durable");
-    publish_present_runner_lifecycle(&manifest, &handoff);
-    drop(handoff);
-
-    let lifecycle = super::super::runner::lock_execute_lifecycle(&manifest)
-        .expect("ordinary lifecycle owner should acquire the shared lock");
-    let contender = backend.clone();
-    let id = manifest.handle.id.clone();
-    let (result_tx, result_rx) = mpsc::channel();
-    let worker = std::thread::spawn(move || {
-        result_tx
-            .send(contender.stop_sync(&id))
-            .expect("stop result should send");
-    });
-    assert!(
-        lock_probe.wait_until_contended(),
-        "stop must reach the actual Execute lifecycle-lock boundary"
-    );
-
-    let mut changed = manifest.clone();
-    changed.spec.egress = nimbus_egress::EgressPolicy::new([nimbus_egress::EgressRule::new(
-        "concurrent-policy",
-        nimbus_egress::EgressProtocol::Https,
-        "example.com",
-        443,
-    )]);
-    backend
-        .write_manifest(&changed)
-        .expect("concurrent lifecycle owner should publish the newer manifest");
-    let before = std::fs::read(&changed.conmon_layout.manifest_path)
-        .expect("newer manifest bytes should read");
-    drop(lifecycle);
-
-    let error = result_rx
-        .recv_timeout(Duration::from_secs(2))
-        .expect("stop should resume after lifecycle release")
-        .expect_err("a stale stop snapshot must remain fenced");
-    worker.join().expect("stop worker should join");
-    assert!(
-        error.to_string().contains("changed durable manifest"),
-        "the rejection must identify the stale lifecycle snapshot: {error}"
-    );
-    assert_eq!(
-        std::fs::read(&changed.conmon_layout.manifest_path)
-            .expect("newer manifest bytes should reread"),
-        before,
-        "a stale stop must not overwrite or clean up a newer durable manifest"
-    );
-}
-
-#[test]
 fn runner_finalization_lock_contention_returns_with_fenced_timeout() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let backend = sample_plan_only_backend(temp_dir.path());
@@ -1082,17 +1009,29 @@ fn runner_effect_fence_permanent_failure_returns_and_explicit_stop_converges() {
     drop(handoff);
 
     let recovery = ContainerSandboxBackend::new(manifest.runner_config.to_backend_config());
-    recovery
-        .stop_sync(&manifest.handle.id)
-        .expect("explicit stop should acquire the released lock and compensate");
+    let (recovery_handoff, mut current) =
+        super::super::runner::lock_current_execute_lifecycle_for_backend(&recovery, &manifest)
+            .expect("recovery should acquire the exact Execute lifecycle");
+    super::super::runner::converge_initial_launch_cleanup(
+        &recovery,
+        &mut current,
+        SandboxStatus::Stopped,
+        super::super::direct_execution::InitialLaunchCleanupState::UnstartedPending,
+    )
+    .expect("confirmed no-effect recovery should compensate exact launch authority");
+    super::super::runner::publish_runner_lifecycle_ownership(&current, &recovery_handoff)
+        .expect("terminal compensation should publish lifecycle ownership");
+    drop(recovery_handoff);
     let stopped = recovery
         .read_manifest(&manifest.handle.id)
         .expect("terminal manifest should inspect")
         .expect("terminal manifest should remain");
     assert!(stopped.network_cleanup_complete && stopped.launch_reservation_claim.is_none());
-    recovery
-        .stop_sync(&manifest.handle.id)
-        .expect("terminal recovery should replay idempotently");
+    let inspected = recovery
+        .inspect_sync(&manifest.handle.id)
+        .expect("terminal recovery should replay as read-only inspection")
+        .expect("terminal workload should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopped);
     drop(backend);
 }
 
@@ -1169,9 +1108,15 @@ fn runner_effect_fence_acknowledgement_loss_remains_fenced() {
         Some(super::super::runner::RunnerHandoffPhase::EffectsStarted)
     );
     drop(handoff);
-    let stop_error = backend
-        .stop_sync(&manifest.handle.id)
-        .expect_err("external stop cannot release an EffectsStarted handoff");
+    let (recovery_handoff, mut current) =
+        super::super::runner::lock_current_execute_lifecycle_for_backend(&backend, &manifest)
+            .expect("recovery should acquire the exact EffectsStarted lifecycle");
+    let stop_error = super::super::runner::reconcile_runner_effects_started(
+        &backend,
+        &mut current,
+        &recovery_handoff,
+    )
+    .expect_err("exact reconciliation cannot release an ambiguous EffectsStarted handoff");
     assert!(
         stop_error.to_string().contains("runtime state command")
             && stop_error.to_string().contains("remain fenced"),
@@ -1263,9 +1208,22 @@ fn direct_effect_fence_persistence_exhaustion_stop_converges() {
     );
 
     let recovering_backend = ContainerSandboxBackend::new(config);
-    recovering_backend
-        .stop_sync(&planned.handle.id)
-        .expect("a reopened backend must stop the durable pre-effect claim");
+    let (recovery_handoff, mut current) =
+        super::super::runner::lock_current_execute_lifecycle_for_backend(
+            &recovering_backend,
+            &persisted,
+        )
+        .expect("reopened backend should acquire the exact pre-effect lifecycle");
+    super::super::runner::converge_initial_launch_cleanup(
+        &recovering_backend,
+        &mut current,
+        SandboxStatus::Stopped,
+        super::super::direct_execution::InitialLaunchCleanupState::UnstartedPending,
+    )
+    .expect("confirmed no-effect recovery should release exact launch authority");
+    super::super::runner::publish_runner_lifecycle_ownership(&current, &recovery_handoff)
+        .expect("terminal compensation should publish lifecycle ownership");
+    drop(recovery_handoff);
     let stopped = recovering_backend
         .read_manifest(&planned.handle.id)
         .expect("stopped manifest should inspect")
@@ -1311,9 +1269,11 @@ fn direct_effect_fence_persistence_exhaustion_stop_converges() {
             .is_empty(),
         "explicit stop must retire IPAM and the reserved attachment"
     );
-    recovering_backend
-        .stop_sync(&planned.handle.id)
-        .expect("terminal pre-effect stop replay must be idempotent");
+    let inspected = recovering_backend
+        .inspect_sync(&planned.handle.id)
+        .expect("terminal pre-effect replay should remain read-only")
+        .expect("terminal workload should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopped);
 }
 
 #[test]
@@ -1357,9 +1317,15 @@ fn direct_effect_fence_acknowledgement_loss_never_enters_provider() {
             && !persisted.network_layout.status_path.exists(),
         "provider effects must remain absent despite the durable ambiguity"
     );
-    let stop_error = backend
-        .stop_sync(&id)
-        .expect_err("ambiguous effect fence must reject external cleanup");
+    let (recovery_handoff, mut current) =
+        super::super::runner::lock_current_execute_lifecycle_for_backend(&backend, &persisted)
+            .expect("recovery should acquire the exact EffectsStarted lifecycle");
+    let stop_error = super::super::runner::reconcile_runner_effects_started(
+        &backend,
+        &mut current,
+        &recovery_handoff,
+    )
+    .expect_err("ambiguous effect fence must reject exact reconciliation");
     assert!(
         stop_error.to_string().contains("runtime state command")
             && stop_error.to_string().contains("remain fenced"),
@@ -1407,9 +1373,12 @@ fn terminal_pre_effect_cleanup_reopen_publishes_lifecycle_once() {
     );
 
     let recovery = ContainerSandboxBackend::new(config);
-    recovery
-        .stop_sync(&id)
-        .expect("reopened stop must publish the completed cleanup receipt");
+    let (recovery_handoff, current) =
+        super::super::runner::lock_current_execute_lifecycle_for_backend(&recovery, &terminal)
+            .expect("reopened recovery should acquire the exact Execute lifecycle");
+    super::super::runner::publish_runner_lifecycle_ownership(&current, &recovery_handoff)
+        .expect("reopened recovery should publish the completed cleanup receipt");
+    drop(recovery_handoff);
     let published = recovery
         .read_manifest(&id)
         .expect("published manifest should inspect")
@@ -1420,8 +1389,10 @@ fn terminal_pre_effect_cleanup_reopen_publishes_lifecycle_once() {
         None
     );
     assert_eq!(published, terminal);
-    recovery
-        .stop_sync(&id)
+    let (replay_handoff, replay_current) =
+        super::super::runner::lock_current_execute_lifecycle_for_backend(&recovery, &published)
+            .expect("terminal publication replay should reacquire exact lifecycle authority");
+    super::super::runner::publish_runner_lifecycle_ownership(&replay_current, &replay_handoff)
         .expect("terminal lifecycle publication replay must be idempotent");
 }
 

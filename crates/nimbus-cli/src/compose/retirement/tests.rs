@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use nimbus::{
-    Engine, SandboxBackend, SandboxBackendKind, SandboxHandle, SandboxId, SandboxOwnerSpec,
-    SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
+    Engine, SandboxBackendKind, SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding,
+    SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
 };
 use nimbus_compute::workload_saga::{
     ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadTeardownCommand,
@@ -41,7 +41,7 @@ use nimbus_network::{
     NetworkPortAssignmentMode, NetworkProviderId, NetworkSovereigntyCapabilities,
     NetworkSovereigntyRequirements, NetworkTlsBehavior, PortProtocol,
 };
-use nimbus_sandbox::{SandboxExecutionAttemptId, SandboxFuture, SandboxInspection};
+use nimbus_sandbox::{SandboxExecutionAttemptId, SandboxInspection};
 use nimbus_server::{EngineWorkloadSagaStore, ServerWorkloadComposition, ServerWorkloadProviders};
 use nimbus_services::{
     ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog, ServiceManager,
@@ -415,22 +415,6 @@ impl ServiceDefinitionCatalog for StaticCatalog {
     }
 }
 
-struct EffectForbiddenBackend(SandboxBackendKind);
-
-impl SandboxBackend for EffectForbiddenBackend {
-    fn kind(&self) -> SandboxBackendKind {
-        self.0
-    }
-
-    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
-        panic!("Compose retirement must not inspect through SandboxBackend")
-    }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        panic!("Compose retirement must not stop through SandboxBackend")
-    }
-}
-
 struct Fixture {
     root: PathBuf,
     compose_path: PathBuf,
@@ -468,7 +452,7 @@ impl Fixture {
             Arc::new(StaticCatalog {
                 definitions: Arc::new(definitions),
             }),
-            Arc::new(EffectForbiddenBackend(backend)),
+            backend,
         ));
         let engine =
             Arc::new(Engine::new(root.join("engine")).expect("fixture Engine should open"));
@@ -507,12 +491,35 @@ impl Fixture {
         self.composition_with_services_and_teardown(services, provider, true)
     }
 
-    fn composition_without_teardown(&self) -> ServerWorkloadComposition {
-        self.composition_with_services_and_teardown(
+    fn composition_without_teardown_error(&self) -> nimbus_server::ServerWorkloadCompositionError {
+        let attachment_provider = self.capability_selection.attachment_provider_id().clone();
+        let ingress_provider = self.capability_selection.ingress_provider_id().clone();
+        let execution_provider = sandbox_execution_provider_id(self.backend);
+        let result = ServerWorkloadComposition::new(
+            Arc::clone(&self.engine),
+            Arc::clone(&self.manager),
             Arc::clone(&self.services),
-            Arc::clone(&self.provider),
-            false,
-        )
+            nimbus_workloads::NodeIdentity::new("compose-retirement-node")
+                .expect("fixture node should validate"),
+            self.capability_selection.clone(),
+            NetworkSovereigntyRequirements::new(
+                NetworkControlPlaneLocality::LocalOnly,
+                BTreeSet::new(),
+                true,
+            ),
+            ServerWorkloadProviders::new(
+                attachment_provider,
+                Arc::clone(&self.provider),
+                execution_provider,
+                Arc::clone(&self.provider),
+                ingress_provider,
+                Arc::clone(&self.provider),
+            ),
+        );
+        match result {
+            Ok(_) => panic!("incomplete teardown composition must fail closed"),
+            Err(error) => error,
+        }
     }
 
     fn composition_with_services_and_teardown(
@@ -645,7 +652,7 @@ impl Fixture {
                     true,
                 )),
             }),
-            Arc::new(EffectForbiddenBackend(self.backend)),
+            self.backend,
         ))
     }
 }
@@ -789,22 +796,10 @@ fn compose_down_unresolved_submission_makes_zero_provider_calls() {
         let temp = TempDir::new().expect("fixture root");
         let fixture = Fixture::open(temp.path(), SandboxBackendKind::Krun, &["db"], &["db"]);
         fixture.provision(&["db"]).await;
-        let missing_capability = retire_compose_services(
-            &fixture.command(Some("db")),
-            &fixture.selection,
-            &fixture.control_data_dir,
-            PreparedComposeProvision::TestComposition(Box::new(
-                fixture.composition_without_teardown(),
-            )),
-            Arc::clone(&fixture.engine),
-        )
-        .await
-        .expect_err("missing exact teardown capability must fail closed")
-        .into_nimbus_error();
+        let missing_capability = fixture.composition_without_teardown_error();
         assert!(matches!(
             missing_capability,
-            Error::NotFound(message)
-                if message.contains("exact teardown composition")
+            nimbus_server::ServerWorkloadCompositionError::MissingExactTeardownCapabilityRealm
         ));
         assert!(fixture.provider.calls().is_empty());
 

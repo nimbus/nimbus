@@ -107,17 +107,6 @@ impl SandboxBackend for ForwardedMachineApiSandboxBackend {
             client.inspect_service_sandbox(&sandbox_id)
         })
     }
-
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        let sandbox_id = id.clone();
-        Box::pin(async move {
-            Err(SandboxError::OperationFailed {
-                message: format!(
-                    "coarse forwarded stop is unavailable for sandbox {sandbox_id}; use the exact compute teardown facade"
-                ),
-            })
-        })
-    }
 }
 
 fn spawn_machine_api_operation<T, F>(operation: &'static str, callback: F) -> SandboxFuture<T>

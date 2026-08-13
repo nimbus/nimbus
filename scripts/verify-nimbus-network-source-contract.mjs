@@ -727,11 +727,11 @@ function verifySideEffectFreeSandboxInspection() {
       );
     } else if (mutation === "cleanup-retained-eviction") {
       const retirement = requiredSource(
-        servicesSources,
-        "crates/nimbus-services/src/manager/retirement.rs",
+        computeSources,
+        "crates/nimbus-compute/src/resource_retirement.rs",
       );
       const retainedCleanup =
-        "inspection.cleanup != SandboxCleanupObservation::Finalized";
+        "WorkloadProvisionCompensationState::CleanupPending =>";
       if (!retirement.source.includes(retainedCleanup)) {
         errors.push(
           "inspection self-test mutation target missing: retained cleanup evidence",
@@ -973,9 +973,13 @@ function verifySideEffectFreeSandboxInspection() {
     servicesSources,
     "crates/nimbus-services/src/manager/registry.rs",
   ).source;
-  const serviceRetirement = requiredSource(
+  const serviceSourceRetirement = requiredSource(
     servicesSources,
-    "crates/nimbus-services/src/manager/retirement.rs",
+    "crates/nimbus-services/src/manager/source_retirement.rs",
+  ).source;
+  const computeRetirement = requiredSource(
+    computeSources,
+    "crates/nimbus-compute/src/resource_retirement.rs",
   ).source;
   const computeProjection = requiredSource(
     computeSources,
@@ -996,12 +1000,14 @@ function verifySideEffectFreeSandboxInspection() {
     /\b(?:start|activate|provision|inspect)_[A-Za-z0-9_]*\s*\(/.test(
       serviceRegistry,
     ) ||
-    !/\binspect_service_for_retirement\s*\(/.test(serviceRetirement) ||
-    !/Result\s*<\s*Option\s*<\s*SandboxInspection\s*>/.test(
-      serviceRetirement,
+    fs.existsSync("crates/nimbus-services/src/manager/retirement.rs") ||
+    !/\bproject_recorded_service_teardown\s*\(/.test(serviceSourceRetirement) ||
+    !/\bproject_recorded_sandbox_teardown\s*\(/.test(serviceSourceRetirement) ||
+    /\bSandboxInspection\b|\bSandboxBackend\b|\.\s*inspect\s*\(|\.\s*stop\s*\(/.test(
+      serviceSourceRetirement,
     ) ||
-    !/inspection\s*\.\s*cleanup\s*!=\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
-      serviceRetirement,
+    !/fn\s+retire_late_provision_result[\s\S]*?WorkloadProvisionCompensationState\s*::\s*CleanupPending\s*=>[\s\S]*?WorkloadTeardownRunDisposition\s*::\s*CleanupPending/.test(
+      computeRetirement,
     ) ||
     !/WorkloadProviderObservation\s*<\s*SandboxInspection\s*>/.test(
       computeProjection,
@@ -1017,7 +1023,7 @@ function verifySideEffectFreeSandboxInspection() {
     )
   ) {
     errors.push(
-      "services must remain desired/projection owners while compute validates complete inspection and retirement retains cleanup evidence",
+      "services must remain effect-free desired/projection owners while compute validates inspection and retains cleanup-pending authority",
     );
   }
 
@@ -1245,7 +1251,7 @@ function verifyComputeNetworkManagerInjection() {
     );
   }
   if (
-    !/let\s+provider_reports\s*=\s*network_manager\.capability_registry\(\)\.clone\(\);[\s\S]*?WorkloadProvisioner\s*::\s*new\s*\([\s\S]*?provider_reports\s*,/s.test(
+    !/let\s+provider_reports\s*=\s*network_manager\.capability_registry\(\)\.clone\(\);[\s\S]*?WorkloadProvisioner\s*::\s*new\s*\([\s\S]*?provider_reports(?:\.clone\(\))?\s*,/s.test(
       computeState,
     )
   ) {

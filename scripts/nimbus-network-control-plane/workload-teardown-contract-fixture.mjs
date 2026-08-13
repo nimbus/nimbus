@@ -40,11 +40,11 @@ export const BEHAVIOR_TESTS = [
   "definition_delete_fences_and_joins_inflight_provision_before_removing_source",
   "late_provision_result_after_force_delete_is_retired_before_definition_removal",
   ...COMPOSE_DOWN_TESTS,
-  "parent_publication_withdraws_before_guest_stop_and_releases_after_exact_absence",
-  "crossed_machine_teardown_fences_fail_before_effects",
+  "parent_publication_must_be_withdrawn_before_every_guest_phase",
+  "teardown_client_rejects_missing_or_crossed_authority_before_socket_io",
   ...PHYSICAL_MACHINE_STOP_TESTS,
-  "final_ingress_withdrawal_cancels_joins_closes_and_settles_exact_leases",
-  "ingress_settlement_failure_retains_cleanup_and_blocks_recorded",
+  "final_withdrawal_closes_routes_joins_workers_and_releases_exact_leases",
+  "final_withdrawal_settlement_failure_blocks_progress_and_preserves_fences",
   "tenant_delete_waits_for_every_durable_workload_teardown_before_storage_delete",
   "failed_service_start_enters_durable_compensation_without_caller_stop",
   "failed_sandbox_start_enters_durable_compensation_without_caller_stop",
@@ -76,6 +76,50 @@ export const NATIVE_SOURCE_RETIREMENT_TESTS = [
   "sandbox_stop_fences_start_before_its_first_saga_commit",
   "definition_delete_fences_start_before_its_first_saga_commit",
 ];
+
+export const FINAL_CONVERGENCE_TESTS = new Map([
+  [
+    "crates/nimbus-compute/src/resource_retirement/tests/tenant_retirement.rs",
+    [
+      "tenant_driver_paginates_and_drives_each_exact_key_once_per_pass",
+      "tenant_delete_waits_for_every_durable_workload_teardown_before_storage_delete",
+    ],
+  ],
+  [
+    "crates/nimbus-compute/src/resource_provision/tests.rs",
+    [
+      "failed_service_start_enters_durable_compensation_without_caller_stop",
+      "failed_sandbox_start_enters_durable_compensation_without_caller_stop",
+      "failed_provision_compensation_survives_waiter_cancellation",
+      "failed_provision_waiting_compensation_retains_owner_until_exact_inspection_completes",
+      "failed_provision_cleanup_pending_retains_key_and_blocks_reuse",
+      "failed_provision_compensation_error_retries_exact_run_without_provision_effects",
+    ],
+  ],
+  [
+    "crates/nimbus-sandbox/src/backends/krun/vm/teardown/tests/network_teardown/fresh_process.rs",
+    ["fresh_process_interrupted_adoption_converges_and_replays_without_writes"],
+  ],
+  [
+    "crates/nimbus-services/src/manager/tenant_retirement/tests.rs",
+    [
+      "sandbox_backed_service_and_standalone_sandbox_cannot_share_workload_id",
+      "standalone_reservation_rechecks_sandbox_service_name_collision",
+    ],
+  ],
+  [
+    "crates/nimbus-compute/src/resource_retirement/tests/restart_settlement.rs",
+    ["active_restart_settles_before_withdrawal_committed"],
+  ],
+  [
+    "crates/nimbus-server/src/workload_saga_store/tests/provision_driver_process.rs",
+    ["failed_provision_compensation_reopens_result_and_cause_cuts"],
+  ],
+  [
+    "crates/nimbus-server/src/workload_saga_store/tests/restart_settlement_process.rs",
+    ["restart_settlement_reopens_without_duplicate_execute"],
+  ],
+]);
 
 export const FORWARDED_MACHINE_TESTS = {
   registry: [
@@ -173,6 +217,12 @@ export function greenTeardownFixture() {
   }
   for (const [file, tests] of forwardedTestEntries) {
     testEntries.push({ file, source: tests.join("\n") });
+  }
+  for (const [file, names] of FINAL_CONVERGENCE_TESTS) {
+    testEntries.push({
+      file,
+      source: names.map(testSource).join("\n"),
+    });
   }
   return {
     workloads: withoutCfgTestItems(`
@@ -283,6 +333,261 @@ fn settle_issued_restart_before_teardown() {}
 fn retain_late_restart_result() {}
 fn enter_withdrawal_committed_after_restart_settlement() {}
 `),
+    tenantRetirement: withoutCfgTestItems(`
+async fn drive_tenant_teardown(&self, snapshot: &TenantSourceRetirementSnapshot) {
+    let initial = self.list_tenant_sagas(snapshot.claim().tenant_id()).await?;
+    for record in initial.values() {
+        self.resource_retirer
+            .submit_tenant_record_teardown(record.clone())
+            .await?;
+    }
+    let final_records = self.list_tenant_sagas(snapshot.claim().tenant_id()).await?;
+    require_all_recorded_before_finish_tenant_delete(&initial, &final_records)?;
+    let terminal = final_records.into_values().collect::<Vec<_>>();
+    self.services
+        .finalize_tenant_sources_after_recorded(snapshot.claim(), &terminal)?;
+    Ok(terminal)
+}
+async fn list_tenant_sagas(&self, tenant_id: &TenantId) {
+    let mut records = BTreeMap::new();
+    let mut cursor: Option<WorkloadSagaTenantCursor> = None;
+    loop {
+        let request = WorkloadSagaTenantPageRequest::new(cursor.clone(), self.page_size)?;
+        let page = self.coordinator.list_for_tenant(tenant_id, request).await?;
+        if page.tenant_id() != tenant_id { return Err(WorkloadSagaStoreError::Corrupt); }
+        let next = page.next_cursor().cloned();
+        let mut previous = cursor.as_ref().map(WorkloadSagaTenantCursor::key);
+        for record in page.records() {
+            if record.key().tenant_id() != tenant_id
+                || previous.is_some_and(|previous| record.key() <= previous)
+            { return Err(WorkloadSagaStoreError::Corrupt); }
+            previous = Some(record.key());
+        }
+        if let Some(next) = next.as_ref()
+            && (next.tenant_id() != tenant_id
+                || page.records().last().map(WorkloadSagaRecord::key) != Some(next.key())
+                || cursor.as_ref().is_some_and(|cursor| next.key() <= cursor.key()))
+        { return Err(WorkloadSagaStoreError::Corrupt); }
+        for record in page.into_records() {
+            if records.insert(record.key().clone(), record).is_some() {
+                return Err(WorkloadSagaStoreError::Corrupt);
+            }
+        }
+        match next {
+            Some(next) => cursor = Some(next),
+            None => return Ok(records),
+        }
+    }
+}
+fn require_all_recorded_before_finish_tenant_delete(initial, final_records) {
+    if initial.keys().ne(final_records.keys()) { return Err(InvalidInventory); }
+    if final_records.values().any(|record| {
+        record.phase() != WorkloadSagaPhase::Recorded
+            || record.active_intent().desired_state() != DesiredWorkloadState::Stopped
+            || record.successor_intent().is_some()
+    }) { return Err(InvalidInventory); }
+    Ok(())
+}
+`),
+    provisionCompensation: withoutCfgTestItems(`
+async fn compensate_definite_provision_failure(&self, failed: &WorkloadSagaRecord) {
+    let withdrawal = self.coordinator
+        .commit_failed_provision_compensation(failed)
+        .await?;
+    let cancellation = WorkloadTeardownCancellationToken::default();
+    self.teardown_runtime
+        .submit(withdrawal.key().clone(), &cancellation)
+        .await
+}
+`),
+    workloadSagaCoordinator: withoutCfgTestItems(`
+async fn commit_failed_provision_compensation(&self, failed: &WorkloadSagaRecord) {
+    let (claim, failure) = match failed.provision_disposition() {
+        Some(WorkloadProvisionDisposition::DefiniteFailure { claim, failure }) => {
+            (claim.clone(), failure.clone())
+        }
+        _ => return Err(InvalidTransition),
+    };
+    let cause = WorkloadTeardownCause::FailedProvision {
+        claim: Box::new(claim),
+        failure,
+    };
+    let withdrawal = failed.commit_teardown_cause(cause.clone())?;
+    match self.confirm_transition(Some(failed), withdrawal.clone()).await? {
+        WorkloadSagaConfirmation::AppliedByThisCall
+        | WorkloadSagaConfirmation::ConfirmedAfterAmbiguity
+        | WorkloadSagaConfirmation::ConfirmedReplay => Ok(withdrawal),
+        WorkloadSagaConfirmation::Conflict { .. }
+        | WorkloadSagaConfirmation::UnresolvedAmbiguity => {
+            let observed = self.load(failed.key()).await?.ok_or(Corrupt)?;
+            authenticate_failed_provision_compensation(failed, &withdrawal, &cause, &observed)?;
+            Ok(observed)
+        }
+    }
+}
+`),
+    workloadProvisioner: withoutCfgTestItems(`
+pub fn new(
+        local_node: NodeIdentity,
+        coordinator: Arc<WorkloadSagaCoordinator>,
+        teardown_runtime: Arc<WorkloadTeardownRuntime>,
+) {
+    let compensation = WorkloadProvisionCompensator::new(
+        Arc::clone(&coordinator),
+        teardown_runtime,
+    );
+}
+pub enum WorkloadProvisionError {
+    Compensation {
+        source: Arc<WorkloadProvisionCompensationError>,
+        failed_run: Box<WorkloadProvisionRun>,
+    },
+}
+enum RetainedCompensationWork {
+    ResumeTeardown(Box<WorkloadProvisionOutcome>),
+    RetryFailedProvisionHandoff(Box<WorkloadProvisionRun>),
+}
+async fn finalize_run(&self, run: WorkloadProvisionRun) {
+    let (durable_record, compensation) = match run.disposition() {
+        WorkloadProvisionRunDisposition::DefiniteFailure => {
+            let teardown = match self.compensation
+                .compensate_definite_provision_failure(run.record())
+                .await
+            {
+                Ok(teardown) => teardown,
+                Err(source) => {
+                    return Err(Arc::new(WorkloadProvisionError::Compensation {
+                        source: Arc::new(source),
+                        failed_run: Box::new(run),
+                    }));
+                }
+            };
+            let state = match teardown.disposition() {
+                WorkloadTeardownRunDisposition::Completed => WorkloadProvisionCompensationState::Completed,
+                WorkloadTeardownRunDisposition::Waiting => WorkloadProvisionCompensationState::Waiting,
+                WorkloadTeardownRunDisposition::CleanupPending => WorkloadProvisionCompensationState::CleanupPending,
+            };
+            (teardown.record().clone(), state)
+        }
+        WorkloadProvisionRunDisposition::Observed
+        | WorkloadProvisionRunDisposition::Waiting
+        | WorkloadProvisionRunDisposition::SuccessorSettlementReady => {
+            (run.record().clone(), WorkloadProvisionCompensationState::NotRequired)
+        }
+    };
+    let projection = self.projection.project(&run).await;
+    Ok(WorkloadProvisionOutcome { run, durable_record, compensation, projection, })
+}
+fn retain_after_result(result: &WorkloadProvisionResult) {
+    match result {
+        Ok(outcome) => matches!(
+            outcome.compensation(),
+            WorkloadProvisionCompensationState::Waiting
+                | WorkloadProvisionCompensationState::CleanupPending
+        ),
+        Err(error) => matches!(error.as_ref(), WorkloadProvisionError::Compensation { .. }),
+    }
+}
+fn retained_compensation_work(
+    result: &WorkloadProvisionResult,
+) -> Option<RetainedCompensationWork> {
+    match result {
+        Ok(outcome)
+            if outcome.compensation() == WorkloadProvisionCompensationState::Waiting =>
+        {
+            Some(RetainedCompensationWork::ResumeTeardown(Box::new(
+                outcome.clone(),
+            )))
+        }
+        Err(error) => match error.as_ref() {
+            WorkloadProvisionError::Compensation { failed_run, .. } => Some(
+                RetainedCompensationWork::RetryFailedProvisionHandoff(failed_run.clone()),
+            ),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+fn parked_retained_result(result: &WorkloadProvisionResult) {
+    Self::retain_after_result(result) && Self::retained_compensation_work(result).is_none()
+}
+fn publish_tracked_result(&self, key, sender, result) {
+    let retain = Self::retain_after_result(&result);
+    sender.send_replace(Some(result));
+    if retain {
+        entry._task = None;
+    } else {
+        supervisor.in_flight.remove(key);
+    }
+}
+fn track_submission(&self) {
+    if existing.completion.borrow().as_ref().is_some_and(Self::parked_retained_result) {
+        return Ok(existing.completion.clone());
+    }
+    if let Some(retry) = existing.completion.borrow().as_ref().and_then(Self::retained_compensation_work) {
+        self.spawn_retained_compensation_task(key, retry, sender);
+    }
+}
+fn track_resume(&self) {
+    if let Some(retry) = existing.completion.borrow().as_ref().and_then(Self::retained_compensation_work) {
+        self.spawn_retained_compensation_task(key, retry, sender);
+    }
+}
+fn spawn_submission_task(&self) {
+    let task = tokio::spawn(async move {
+        let result = match provisioner.driver.submit_and_drive(task_key.clone(), intent).await {
+            Ok(run) => provisioner.finalize_run(run).await,
+            Err(error) => Err(error),
+        };
+        provisioner.publish_tracked_result(&task_key, &sender, result);
+    });
+}
+fn spawn_retained_compensation_task(&self) {
+    let task = tokio::spawn(async move {
+        let result = match work {
+            RetainedCompensationWork::ResumeTeardown(prior) => {
+                provisioner.resume_compensation(*prior).await
+            }
+            RetainedCompensationWork::RetryFailedProvisionHandoff(run) => {
+                provisioner.finalize_run(*run).await
+            }
+        };
+        provisioner.publish_tracked_result(&task_key, &sender, result);
+    });
+}
+async fn wait_for_completion(mut receiver, cancellation) {
+    loop {
+        if let Some(result) = receiver.borrow().clone() { return result; }
+        if *cancellation_signal.borrow() {
+            return Err(WorkloadProvisionError::WaiterCancelled);
+        }
+        tokio::select! {
+            changed = cancellation_signal.changed() => {
+                if changed.is_err() || *cancellation_signal.borrow() {
+                    return Err(WorkloadProvisionError::WaiterCancelled);
+                }
+            }
+            changed = receiver.changed() => {}
+        }
+    }
+}
+`),
+    restartRuntime: withoutCfgTestItems(`
+async fn settle_restart_for_teardown_once(coordinator, driver, key, now_unix_millis) {
+    let run = driver.resume(key, now_unix_millis).await?;
+    if run.record().restart_state().active().is_none() {
+        return Ok(WorkloadRestartSettlement::Settled);
+    }
+    if matches!(run.record().restart_state().active().map(|active| active.disposition()),
+        Some(WorkloadRestartDisposition::SuccessorVetoed { .. }
+            | WorkloadRestartDisposition::DefiniteFailure { .. }))
+    {
+        coordinator.commit_restart_settlement_teardown(run.record()).await?;
+        return Ok(WorkloadRestartSettlement::Settled);
+    }
+    Ok(WorkloadRestartSettlement::Pending)
+}
+`),
     services: withoutCfgTestItems(`
 fn claim_service_definition_retirement() {}
 fn finalize_service_definition_after_recorded() {}
@@ -335,12 +640,15 @@ pub enum ComputeWorkloadComposition {
 }
 impl ComputeState {
     pub fn from_config() {
-        teardown_capabilities.map(|capabilities| {
+        let teardown_runtime = teardown_capabilities.map(|capabilities| {
             let capabilities = capabilities.into_registry_for(
                 &capability_selection,
                 &execution_provider_id,
             );
             WorkloadTeardownRuntime::new(capabilities)
+        });
+        let provisioner = teardown_runtime.as_ref().map(|runtime| {
+            WorkloadProvisioner::new(Arc::clone(runtime));
         });
     }
 }
@@ -358,7 +666,7 @@ impl ServerWorkloadProviders {
 }
 struct ServerWorkloadComposition {
     execution_provider_id: WorkloadExecutionProviderId,
-    teardown_capabilities: Option<ExactWorkloadTeardownCapabilityRealm>,
+    teardown_capabilities: ExactWorkloadTeardownCapabilityRealm,
 }
 impl ServerWorkloadComposition {
     fn new() {
@@ -370,7 +678,7 @@ impl ServerWorkloadComposition {
     fn into_managed_compute() {
         ComputeWorkloadComposition::Managed {
             execution_provider_id: self.execution_provider_id,
-            teardown_capabilities: self.teardown_capabilities.map(Box::new),
+            teardown_capabilities: Some(Box::new(self.teardown_capabilities)),
         };
     }
 }
@@ -407,6 +715,13 @@ fn compose_native_teardown_runtime() { WorkloadTeardownRuntime; }
 fn fence_and_join_inflight_provision() {}
 fn retire_late_provision_result() {}
 fn settle_issued_restart_before_native_teardown() {}
+async fn drive_recorded_teardown(&self, key, loaded, claim, joined_provision) {
+    let (record, successor_generation) = self.persist_stopped_successor(key, loaded).await?;
+    self.retire_late_provision_result(key, record.phase(), joined_provision).await?;
+    self.settle_issued_restart_before_native_teardown(key).await?;
+    let run = self.teardown_runtime.submit(key.clone(), &cancellation).await?;
+    Ok(run)
+}
 `),
     serviceDefinitions: withoutCfgTestItems(`
 fn claim_service_definition_retirement() {}

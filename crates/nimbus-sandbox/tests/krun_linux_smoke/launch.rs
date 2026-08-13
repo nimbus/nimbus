@@ -24,8 +24,9 @@ fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
         .expect("image-backed krun provision phases should succeed");
     assert!(!provisioned.ingress.is_empty());
     let handle = provisioned.handle;
+    let teardown = provisioned.teardown;
     let _ingress = provisioned.ingress;
-    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+    let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
     assert_eq!(
@@ -52,7 +53,7 @@ fn krun_backend_image_backed_smoke_pulls_and_boots_busybox() {
         .expect("image-backed sandbox should survive backend restart");
     assert_eq!(restarted_handle.handle.status, SandboxStatus::Ready);
 
-    block_on(restarted_backend.stop(&handle.id)).expect("stop should succeed");
+    retire_krun(&restarted_backend, &teardown).expect("exact teardown should succeed");
     let stopped_handle = block_on(restarted_backend.inspect(&handle.id))
         .expect("inspect after stop should succeed")
         .expect("stopped sandbox should still have a manifest");
@@ -93,8 +94,9 @@ fn krun_backend_m2_direct_rootfs_resource_limits_lowering() {
         .expect("rootfs-backed resource-limits provision phases should succeed");
     assert!(!provisioned.ingress.is_empty());
     let handle = provisioned.handle;
+    let teardown = provisioned.teardown;
     let _ingress = provisioned.ingress;
-    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+    let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
     assert_eq!(ready_handle.status, SandboxStatus::Ready);
@@ -136,7 +138,7 @@ fn krun_backend_m2_direct_rootfs_resource_limits_lowering() {
         "expected HTTP response from direct-rootfs resource-limits sandbox",
     );
 
-    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     cleanup_guard.disarm();
 }
 
@@ -168,8 +170,9 @@ fn krun_backend_m2_image_backed_resource_limits_lowering() {
         .expect("image-backed resource-limits provision phases should succeed");
     assert!(!provisioned.ingress.is_empty());
     let handle = provisioned.handle;
+    let teardown = provisioned.teardown;
     let _ingress = provisioned.ingress;
-    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+    let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
     assert_eq!(ready_handle.status, SandboxStatus::Ready);
@@ -207,6 +210,6 @@ fn krun_backend_m2_image_backed_resource_limits_lowering() {
         "expected HTTP response from image-backed resource-limits sandbox",
     );
 
-    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     cleanup_guard.disarm();
 }

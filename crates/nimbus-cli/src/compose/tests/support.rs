@@ -210,7 +210,6 @@ pub(super) fn sample_spec(tenant: &TenantId, service_name: &str) -> SandboxSpec 
 pub(super) struct StubBackend {
     pub(super) handles: Mutex<BTreeMap<String, SandboxHandle>>,
     pub(super) inspections: Mutex<BTreeMap<String, SandboxInspection>>,
-    pub(super) stopped_ids: Mutex<Vec<String>>,
 }
 
 impl StubBackend {
@@ -238,10 +237,6 @@ impl SandboxBackend for StubMachineApiSandboxBackend {
     fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         Box::pin(async move { Ok(None) })
     }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        Box::pin(async move { Ok(()) })
-    }
 }
 
 pub(super) struct StubMachineApiContainerBackend {
@@ -263,10 +258,6 @@ impl SandboxBackend for StubMachineApiContainerBackend {
 
     fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         self.inner.inspect(id)
-    }
-
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        self.inner.stop(id)
     }
 }
 
@@ -292,21 +283,5 @@ impl SandboxBackend for StubBackend {
             .get(id.as_str())
             .cloned();
         Box::pin(async move { Ok(handle.map(SandboxInspection::provider_reported)) })
-    }
-
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        self.stopped_ids
-            .lock()
-            .expect("stopped ids lock should hold")
-            .push(id.as_str().to_owned());
-        self.handles
-            .lock()
-            .expect("handles lock should hold")
-            .remove(id.as_str());
-        self.inspections
-            .lock()
-            .expect("inspections lock should hold")
-            .remove(id.as_str());
-        Box::pin(async move { Ok(()) })
     }
 }

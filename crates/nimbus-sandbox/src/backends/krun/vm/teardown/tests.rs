@@ -740,7 +740,6 @@ fn krun_execution_drain_fences_creator_activation_restart_and_launch_admission()
                 .attach_restart_retained_network(&fixture.id, &restart_fence)
                 .map(|_| ()),
         ),
-        ("coarse Krun stop", fixture.backend.stop_sync(&fixture.id)),
     ] {
         let error = result.expect_err("durable drain must fence the real provider entry point");
         assert!(error.to_string().contains(owner), "case={owner}: {error}");

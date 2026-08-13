@@ -171,6 +171,8 @@ pub enum ServerWorkloadCompositionError {
     CapabilityRegistry(#[from] WorkloadProvisionCapabilityRegistryError),
     #[error("workload restart capability registry rejected the complete provider set: {0}")]
     RestartCapabilityRegistry(#[from] WorkloadRestartCapabilityRegistryError),
+    #[error("managed workload composition requires one exact teardown capability realm")]
+    MissingExactTeardownCapabilityRealm,
     #[error("workload teardown capability registry rejected the complete provider set: {0}")]
     TeardownCapabilityRegistry(#[from] WorkloadTeardownCapabilityRegistryError),
 }
@@ -186,7 +188,7 @@ pub struct ServerWorkloadComposition {
     sovereignty: NetworkSovereigntyRequirements,
     provision_capabilities: WorkloadProvisionCapabilityRegistry,
     restart_capabilities: WorkloadRestartCapabilityRegistry,
-    teardown_capabilities: Option<ExactWorkloadTeardownCapabilityRealm>,
+    teardown_capabilities: ExactWorkloadTeardownCapabilityRealm,
     desire_admission_guard: Option<Arc<dyn WorkloadDesireAdmissionGuard>>,
 }
 
@@ -302,16 +304,13 @@ impl ServerWorkloadComposition {
         let execution_provider_id = providers.execution_provider_id.clone();
         let restart_capabilities =
             WorkloadRestartCapabilityRegistry::new(providers.restart_capabilities)?;
-        let teardown_capabilities = providers
-            .teardown_capabilities
-            .map(|registry| {
-                ExactWorkloadTeardownCapabilityRealm::new(
-                    registry,
-                    &capability_selection,
-                    &providers.execution_provider_id,
-                )
-            })
-            .transpose()?;
+        let teardown_capabilities = ExactWorkloadTeardownCapabilityRealm::new(
+            providers
+                .teardown_capabilities
+                .ok_or(ServerWorkloadCompositionError::MissingExactTeardownCapabilityRealm)?,
+            &capability_selection,
+            &providers.execution_provider_id,
+        )?;
         let provision_capabilities = WorkloadProvisionCapabilityRegistry::new(
             [NetworkAttachmentProvisionCapabilities::new(
                 providers.attachment_provider_id,
@@ -385,7 +384,7 @@ impl ServerWorkloadComposition {
                 source_authority,
                 provision_capabilities: Box::new(self.provision_capabilities),
                 restart_capabilities: Box::new(self.restart_capabilities),
-                teardown_capabilities: self.teardown_capabilities.map(Box::new),
+                teardown_capabilities: Some(Box::new(self.teardown_capabilities)),
                 desire_admission_guard: self.desire_admission_guard,
                 projection_sink,
             },

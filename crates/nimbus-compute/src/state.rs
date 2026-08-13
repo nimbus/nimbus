@@ -27,7 +27,7 @@ use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, HostCallCancellation, RuntimeAdaptiveControllerSettings,
     RuntimeHostResourceBudget, RuntimeScalingPlanSet,
 };
-use nimbus_services::{RuntimeServiceRegistry, ServiceManager, TenantServiceRetirement};
+use nimbus_services::{RuntimeServiceRegistry, ServiceManager};
 use nimbus_tenant::TenantIsolationMode;
 use nimbus_workloads::{NodeIdentity, WorkloadSagaStore};
 use tempfile::TempDir;
@@ -41,6 +41,7 @@ use crate::config::runtime::RuntimeGovernorConfig;
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::node_workloads::NodeWorkloadCoordinator;
 use crate::runtime_manager::RuntimeManager;
+use crate::tenant_retirement::TenantRetirementDriver;
 use crate::workload_projection::WorkloadProjectionSink;
 use crate::workload_provisioner::WorkloadProvisioner;
 use crate::workload_saga::WorkloadTeardownRuntime;
@@ -133,8 +134,8 @@ impl ComputeState {
                 projection_sink,
             } => {
                 assert!(
-                    node_services.tenant_service_retirement().is_some(),
-                    "managed workload composition requires an exact tenant-retirement owner"
+                    node_services.service_manager().is_some(),
+                    "managed workload composition requires an exact tenant-source owner"
                 );
                 let teardown_capabilities = teardown_capabilities.map(|capabilities| {
                         capabilities
@@ -151,21 +152,32 @@ impl ComputeState {
                 });
                 let provider_reports = network_manager.capability_registry().clone();
                 let provision_capabilities = Arc::new(*provision_capabilities);
-                let provisioner = Arc::new(
-                    WorkloadProvisioner::new(
-                        local_node,
-                        provider_reports.clone(),
-                        *capability_selection,
-                        sovereignty,
+                let teardown_runtime = teardown_capabilities.map(|capabilities| {
+                    Arc::new(WorkloadTeardownRuntime::new(
                         Arc::clone(&coordinator),
                         Arc::clone(&source_authority),
-                        (*provision_capabilities).clone(),
-                        projection_sink,
+                        provider_reports.clone(),
+                        Arc::new(capabilities),
+                    ))
+                });
+                let provisioner = teardown_runtime.as_ref().map(|runtime| {
+                    Arc::new(
+                        WorkloadProvisioner::new(
+                            local_node,
+                            provider_reports.clone(),
+                            *capability_selection,
+                            sovereignty,
+                            Arc::clone(&coordinator),
+                            Arc::clone(runtime),
+                            Arc::clone(&source_authority),
+                            (*provision_capabilities).clone(),
+                            projection_sink,
+                        )
+                        .expect(
+                            "managed workload composition requires an exact provider-report selection",
+                        ),
                     )
-                    .expect(
-                        "managed workload composition requires an exact provider-report selection",
-                    ),
-                );
+                });
                 let restart_runtime = Arc::new(
                     WorkloadRestartRuntime::start(
                         Arc::clone(&coordinator),
@@ -176,24 +188,16 @@ impl ComputeState {
                     )
                     .expect("managed workload composition requires a retained restart watch"),
                 );
-                let teardown_runtime = teardown_capabilities.map(|capabilities| {
-                    Arc::new(WorkloadTeardownRuntime::new(
-                        Arc::clone(&coordinator),
-                        source_authority,
-                        provider_reports,
-                        Arc::new(capabilities),
-                    ))
-                });
                 (
                     Some(network_manager),
                     Some(coordinator),
-                    Some(provisioner),
+                    provisioner,
                     Some(restart_runtime),
                     teardown_runtime,
                 )
             }
         };
-        let node_services = node_services.resolve(engine.clone());
+        let node_services = node_services.resolve();
         let runtime_manager = RuntimeManager::new(engine.clone(), runtime.clone());
         let DeploymentConfig {
             convex_registry,
@@ -286,7 +290,6 @@ impl ComputeState {
     fn require_protocol_only_node_services(node_services: &NodeServicesConfig) {
         assert!(
             node_services.service_manager().is_none()
-                && node_services.tenant_service_retirement().is_none()
                 && node_services.machine_lifecycle_manager().is_none()
                 && node_services.node_workload_coordinator().is_none(),
             "service and machine workload lifecycle requires managed workload composition"
@@ -295,10 +298,6 @@ impl ComputeState {
 
     pub fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
         self.node_services.runtime_service_registry()
-    }
-
-    pub fn tenant_service_retirement(&self) -> Option<Arc<dyn TenantServiceRetirement>> {
-        self.node_services.tenant_service_retirement()
     }
 
     pub fn runtime_manager(&self) -> Arc<RuntimeManager> {
@@ -391,14 +390,36 @@ impl ComputeState {
             .engine
             .begin_tenant_delete_async(tenant_id.clone())
             .await?;
+        let source_retirement = match self.service_manager() {
+            Some(services) => Some((
+                Arc::clone(&services),
+                services
+                    .claim_tenant_source_retirement(&tenant_id, deletion.tenant_incarnation())?,
+            )),
+            None => None,
+        };
         let (owner_id, _) = self
             .runtime_manager
             .retire_tenant_deletion(&deletion)
             .await?;
-        if let Some(retirement) = self.tenant_service_retirement() {
-            retirement.retire_tenant_async(&tenant_id).await?;
+        if let Some((services, snapshot)) = source_retirement.as_ref() {
+            let coordinator = self.workload_saga_coordinator().ok_or_else(|| {
+                ComputeError::not_found(
+                    "tenant workload retirement requires a durable saga coordinator",
+                )
+            })?;
+            let resource_retirer = self.resource_retirer()?;
+            TenantRetirementDriver::new(coordinator, Arc::clone(services), resource_retirer)
+                .drive_tenant_teardown(snapshot)
+                .await
+                .map_err(|error| {
+                    ComputeError::from(nimbus_core::Error::Internal(error.to_string()))
+                })?;
         }
         self.engine.finish_tenant_delete_async(deletion).await?;
+        if let Some((services, snapshot)) = source_retirement {
+            services.release_tenant_source_retirement(snapshot.claim())?;
+        }
         self.runtime_manager.forget_retired_owner(&owner_id);
         Ok(())
     }
@@ -602,7 +623,6 @@ mod tests {
         HostLifecycleStatus, NodeAgentAssignment, NodeAgentReconcileReport,
         NodeWorkloadReconcileCapability, NodeWorkloadReconcileOutcome,
     };
-    use nimbus_runtime::{InvocationServiceBinding, InvocationServices};
     use tempfile::tempdir;
 
     use super::*;
@@ -643,26 +663,6 @@ mod tests {
 
     #[derive(Default)]
     struct EffectForbiddenTeardownCapability;
-
-    #[derive(Default)]
-    struct EffectForbiddenSandboxBackend;
-
-    impl nimbus_sandbox::SandboxBackend for EffectForbiddenSandboxBackend {
-        fn kind(&self) -> nimbus_sandbox::SandboxBackendKind {
-            nimbus_sandbox::SandboxBackendKind::Krun
-        }
-
-        fn inspect(
-            &self,
-            _id: &nimbus_sandbox::SandboxId,
-        ) -> nimbus_sandbox::SandboxFuture<Option<nimbus_sandbox::SandboxInspection>> {
-            panic!("unmanaged definition deletion must not inspect a sandbox provider")
-        }
-
-        fn stop(&self, _id: &nimbus_sandbox::SandboxId) -> nimbus_sandbox::SandboxFuture<()> {
-            panic!("unmanaged definition deletion must not stop a sandbox provider")
-        }
-    }
 
     macro_rules! impl_effect_forbidden_teardown_capability {
         ($capability:ident) => {
@@ -1022,141 +1022,6 @@ mod tests {
         ))
     }
 
-    struct FailFirstTenantTeardown {
-        attempts: AtomicUsize,
-    }
-
-    impl RuntimeServiceRegistry for FailFirstTenantTeardown {
-        fn snapshot_for_tenant(&self, _tenant_id: &nimbus_core::TenantId) -> InvocationServices {
-            InvocationServices::new()
-        }
-
-        fn resolve_service_binding(
-            &self,
-            _tenant_id: &nimbus_core::TenantId,
-            _service_name: &str,
-        ) -> Result<Option<InvocationServiceBinding>, nimbus_core::Error> {
-            Ok(None)
-        }
-    }
-
-    impl TenantServiceRetirement for FailFirstTenantTeardown {
-        fn retire_tenant_async<'a>(
-            &'a self,
-            _tenant_id: &'a nimbus_core::TenantId,
-        ) -> nimbus_services::TenantServiceRetirementFuture<'a> {
-            Box::pin(async move {
-                if self.attempts.fetch_add(1, Ordering::AcqRel) == 0 {
-                    Err(nimbus_core::Error::Internal(
-                        "injected tenant service teardown failure".to_owned(),
-                    ))
-                } else {
-                    Ok(())
-                }
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn partial_tenant_delete_stays_fenced_and_retries_to_completion() {
-        let _network_manager_guard = managed_network_manager_test_lock().lock().await;
-        let temp = tempdir().expect("service tempdir should build");
-        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
-        let teardown = Arc::new(FailFirstTenantTeardown {
-            attempts: AtomicUsize::new(0),
-        });
-        let (provider_reports, capability_selection) = effect_free_provider_realm();
-        let state = ComputeState::from_config(ComputeStateConfig {
-            engine,
-            workload_composition: ComputeWorkloadComposition::Managed {
-                network_manager: LocalNetworkManager::open(
-                    temp.path().join("network"),
-                    provider_reports,
-                )
-                .expect("network manager should build"),
-                local_node: crate::embedded_local_node_identity(),
-                capability_selection: Box::new(capability_selection),
-                execution_provider_id: sandbox_execution_provider_id(
-                    nimbus_sandbox::SandboxBackendKind::Krun,
-                ),
-                sovereignty: nimbus_network::NetworkSovereigntyRequirements::new(
-                    nimbus_network::NetworkControlPlaneLocality::LocalOnly,
-                    [],
-                    true,
-                ),
-                saga_store: Arc::new(EffectForbiddenWorkloadSagaStore::default()),
-                source_authority: Arc::new(EffectForbiddenSourceAuthority::default()),
-                provision_capabilities: Box::new(
-                    WorkloadProvisionCapabilityRegistry::new([], [], [])
-                        .expect("empty provision registry should validate"),
-                ),
-                restart_capabilities: Box::new(
-                    WorkloadRestartCapabilityRegistry::new([])
-                        .expect("empty restart registry should validate"),
-                ),
-                teardown_capabilities: None,
-                desire_admission_guard: None,
-                projection_sink: Arc::new(EffectForbiddenProjectionSink::default()),
-            },
-            deployment: DeploymentConfig::default(),
-            control_plane: ControlPlaneConfig::router_options_default(),
-            node_services: NodeServicesConfig::from_runtime_service_registry_and_retirement(
-                teardown.clone(),
-                teardown.clone(),
-            ),
-            runtime: RuntimeGovernorConfig::default(),
-        });
-        let tenant_id =
-            nimbus_core::TenantId::new("retry-delete").expect("tenant id should be valid");
-        state
-            .create_tenant_async(tenant_id.clone())
-            .await
-            .expect("tenant should create");
-        let original = state
-            .runtime_manager()
-            .acquire_invocation_lease(tenant_id.clone(), 0)
-            .await
-            .expect("original invocation lease should build");
-        let original_owner = original.owner_lease().owner_id().clone();
-        drop(original);
-
-        let first_error = state
-            .delete_tenant(tenant_id.clone())
-            .await
-            .expect_err("first service teardown should fail");
-        assert!(
-            first_error
-                .to_string()
-                .contains("injected tenant service teardown failure")
-        );
-        assert_eq!(teardown.attempts.load(Ordering::Acquire), 1);
-        let rejected = state
-            .runtime_manager()
-            .acquire_invocation_lease(tenant_id.clone(), 0)
-            .await
-            .expect_err("partially deleted tenant must remain fail-closed");
-        assert!(matches!(
-            rejected,
-            nimbus_core::Error::TenantNotFound(ref rejected_id) if rejected_id == &tenant_id
-        ));
-
-        state
-            .delete_tenant(tenant_id.clone())
-            .await
-            .expect("retry should finish the fenced deletion");
-        assert_eq!(teardown.attempts.load(Ordering::Acquire), 2);
-        state
-            .create_tenant_async(tenant_id.clone())
-            .await
-            .expect("tenant should recreate after completed deletion");
-        let recreated = state
-            .runtime_manager()
-            .acquire_invocation_lease(tenant_id, 0)
-            .await
-            .expect("recreated invocation lease should build");
-        assert_ne!(recreated.owner_lease().owner_id(), &original_owner);
-    }
-
     #[test]
     fn compute_state_carries_runtime_host_resource_budget() {
         let temp = tempdir().expect("service tempdir should build");
@@ -1268,9 +1133,6 @@ mod tests {
         let source_authority = Arc::new(EffectForbiddenSourceAuthority::default());
         let projection_sink = Arc::new(EffectForbiddenProjectionSink::default());
         let teardown_capabilities = effect_forbidden_exact_teardown_realm(&capability_selection);
-        let retirement = Arc::new(FailFirstTenantTeardown {
-            attempts: AtomicUsize::new(0),
-        });
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
             workload_composition: ComputeWorkloadComposition::Managed {
@@ -1301,11 +1163,12 @@ mod tests {
             },
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
-            node_services: NodeServicesConfig::from_runtime_service_registry_and_retirement(
-                empty_node_services().runtime_service_registry(),
-                retirement,
-            )
-            .with_node_workload_coordinator(Arc::clone(&coordinator)),
+            node_services: NodeServicesConfig::default()
+                .with_service_manager(Arc::new(nimbus_services::ServiceManager::new(
+                    Arc::new(nimbus_services::EmptyServiceDefinitionCatalog),
+                    nimbus_sandbox::SandboxBackendKind::Krun,
+                )))
+                .with_node_workload_coordinator(Arc::clone(&coordinator)),
             runtime: RuntimeGovernorConfig::default(),
         });
 
@@ -1385,10 +1248,6 @@ mod tests {
         let source_authority = Arc::new(EffectForbiddenSourceAuthority::default());
         let projection_sink = Arc::new(EffectForbiddenProjectionSink::default());
         let teardown_capabilities = effect_forbidden_exact_teardown_realm(&capability_selection);
-        let retirement = Arc::new(FailFirstTenantTeardown {
-            attempts: AtomicUsize::new(0),
-        });
-
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             ComputeState::from_config(ComputeStateConfig {
                 engine,
@@ -1420,10 +1279,12 @@ mod tests {
                 },
                 deployment: DeploymentConfig::default(),
                 control_plane: ControlPlaneConfig::router_options_default(),
-                node_services: NodeServicesConfig::from_runtime_service_registry_and_retirement(
-                    empty_node_services().runtime_service_registry(),
-                    retirement,
-                ),
+                node_services: NodeServicesConfig::default().with_service_manager(Arc::new(
+                    nimbus_services::ServiceManager::new(
+                        Arc::new(nimbus_services::EmptyServiceDefinitionCatalog),
+                        nimbus_sandbox::SandboxBackendKind::Krun,
+                    ),
+                )),
                 runtime: RuntimeGovernorConfig::default(),
             })
         }));
@@ -1446,7 +1307,7 @@ mod tests {
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let services = Arc::new(nimbus_services::ServiceManager::new(
             Arc::new(nimbus_services::EmptyServiceDefinitionCatalog),
-            Arc::new(EffectForbiddenSandboxBackend),
+            nimbus_sandbox::SandboxBackendKind::Krun,
         ));
         let tenant_id =
             nimbus_core::TenantId::new("unmanaged-delete").expect("fixture tenant should validate");

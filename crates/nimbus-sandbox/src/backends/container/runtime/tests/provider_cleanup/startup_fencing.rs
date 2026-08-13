@@ -121,55 +121,7 @@ fn startup_reconciliation_failure_allows_exact_plan_only_status_cleanup() {
 }
 
 #[test]
-fn startup_reconciliation_failure_allows_exact_explicit_stop() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let mut backend =
-        ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
-    let manifest = backend
-        .plan_start_with_id(
-            &sample_spec().with_port_binding(SandboxPortBinding::tcp(
-                "http",
-                unused_loopback_port(),
-                8080,
-            )),
-            &SandboxId::new("stop-startup-fence"),
-            None,
-            None,
-        )
-        .expect("execute manifest should reserve exact launch authority")
-        .manifest;
-    backend
-        .write_manifest(&manifest)
-        .expect("baseline manifest should persist");
-    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
-        &backend.config.network_state_root,
-    );
-    let authority_before =
-        std::fs::read(&authority_path).expect("launch authority should be durable");
-    inject_startup_reconciliation_failure(&mut backend);
-
-    backend
-        .stop_sync(&manifest.handle.id)
-        .expect("an existing workload must retain exact stop authority");
-    assert_ne!(
-        std::fs::read(&authority_path).expect("launch authority should remain readable"),
-        authority_before,
-        "successful stop must durably release exact launch authority"
-    );
-    let persisted = backend
-        .read_manifest(&manifest.handle.id)
-        .expect("terminal manifest should inspect")
-        .expect("terminal manifest should remain durable");
-    assert_eq!(persisted.status, SandboxStatus::Stopped);
-    assert!(
-        persisted.has_terminal_network_finality(),
-        "explicit stop must durably publish exact cleanup finality"
-    );
-    assert!(persisted.launch_reservation_claim.is_none());
-}
-
-#[test]
-fn startup_reconciliation_failure_keeps_natural_exit_read_only_until_explicit_stop() {
+fn startup_reconciliation_failure_keeps_natural_exit_inspection_read_only() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec();
     let id = SandboxId::new("natural-exit-startup-fence");
@@ -259,32 +211,6 @@ fn startup_reconciliation_failure_keeps_natural_exit_read_only_until_explicit_st
         .expect("retained manifest should inspect")
         .expect("retained manifest should remain durable");
     assert_eq!(persisted, manifest);
-
-    backend
-        .stop_sync(&id)
-        .expect("explicit stop must retain cleanup authority despite startup failure");
-    assert_ne!(
-        std::fs::read(&authority_path).expect("released authority should remain readable"),
-        authority_before,
-        "explicit stop must durably release exact network authority"
-    );
-    assert!(
-        backend
-            .egress_proxies
-            .readiness(&manifest.spec.tenant_id, &manifest.handle.id)
-            .expect("post-stop readiness should inspect")
-            .is_none(),
-        "explicit stop must remove the exact PEP registration"
-    );
-    let persisted = backend
-        .read_manifest(&id)
-        .expect("terminal manifest should inspect")
-        .expect("terminal manifest should remain durable");
-    assert_eq!(persisted.status, SandboxStatus::Stopped);
-    assert!(
-        persisted.has_terminal_network_finality(),
-        "explicit stop must publish terminal status only after exact cleanup"
-    );
 }
 
 #[test]

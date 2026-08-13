@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) use super::provision_support::provision_krun;
+pub(super) use super::provision_support::{ExactTeardownFixture, provision_krun, retire_krun};
 
 pub(super) fn smoke_backend_config(
     bundle_root: PathBuf,
@@ -339,14 +339,14 @@ pub(super) fn env_u16(key: &str) -> Option<u16> {
 
 pub(super) struct CleanupGuard {
     backend: KrunSandboxBackend,
-    sandbox_id: Option<nimbus_sandbox::SandboxId>,
+    teardown: Option<ExactTeardownFixture>,
 }
 
 impl CleanupGuard {
-    pub(super) fn new(backend: KrunSandboxBackend, sandbox_id: nimbus_sandbox::SandboxId) -> Self {
+    pub(super) fn new(backend: KrunSandboxBackend, teardown: ExactTeardownFixture) -> Self {
         Self {
             backend,
-            sandbox_id: Some(sandbox_id),
+            teardown: Some(teardown),
         }
     }
 
@@ -357,8 +357,8 @@ impl CleanupGuard {
 
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
-        if let Some(sandbox_id) = self.sandbox_id.take() {
-            let _ = block_on(self.backend.stop(&sandbox_id));
+        if let Some(teardown) = self.teardown.take() {
+            let _ = retire_krun(&self.backend, &teardown);
         }
     }
 }

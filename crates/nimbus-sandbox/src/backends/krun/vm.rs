@@ -22,10 +22,11 @@ use crate::backends::conmon::lifecycle::detect_runtime_status as detect_conmon_r
 #[cfg(test)]
 use crate::backends::conmon::lifecycle::remove_if_exists;
 use crate::backends::conmon::lifecycle::{
-    RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout, ensure_linux_host,
-    read_exit_code, read_pid, run_status_best_effort, run_status_checked, runtime_state,
-    signal_process, wait_for_path,
+    RuntimeStatusProbe, ensure_linux_host, run_status_best_effort, run_status_checked,
+    runtime_state,
 };
+#[cfg(test)]
+use crate::backends::conmon::lifecycle::{configured_stop_signal, configured_stop_timeout};
 use crate::backends::conmon::spec_resolve::{
     merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,
 };
@@ -45,10 +46,9 @@ use crate::backends::oci::materializer::{
 #[cfg(test)]
 use crate::backends::oci::network::HostManagedAttachmentCheckpointTestProbe;
 use crate::backends::oci::network::{
-    AttachmentAttachAuthority, AttachmentAuxiliaryDisposition, AttachmentBackendKind,
-    AttachmentTeardownMode, ConfiguredSegmentAllocator, DEFAULT_AARDVARK_DNS_BINARY,
-    DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME,
-    DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, OciAttachmentAdapter,
+    AttachmentAttachAuthority, AttachmentBackendKind, ConfiguredSegmentAllocator,
+    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
+    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, OciAttachmentAdapter,
     OciAttachmentAuxiliaryListener, OciAttachmentInput, OciAttachmentLifecycle,
     OciAttachmentProviderPaths, OciAttachmentReadinessState, OciEgressPinProvider,
     OciHostManagedAttachmentBackend, OciIpamAuthority, OciNetworkConfig, OciNetworkLayout,
@@ -71,11 +71,12 @@ use crate::spec::{
     SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxRootfsSpec,
     SandboxSpec, resolve_process_without_image_defaults,
 };
-use nimbus_network::{NetworkAttachmentId, NetworkReservationClaim, PublishedEndpoint};
+use nimbus_network::{
+    NetworkAttachmentId, NetworkAttachmentSegmentAssociation, NetworkReservationClaim,
+    PublishedEndpoint,
+};
 
-mod attachment_recovery;
 mod attachment_teardown;
-mod coarse_stop;
 mod creator;
 mod inspection;
 mod lifecycle;
@@ -500,6 +501,38 @@ impl KrunSandboxBackend {
         )
     }
 
+    fn mark_attachment_adopting(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+    ) -> Result<NetworkReservationClaim> {
+        let claim = manifest.require_reserved_claim()?.clone();
+        let config = manifest.require_network_config()?;
+        let observation = self.segment_allocator.inspect_attachment_reservation(
+            &manifest.spec.tenant_id,
+            &config.attachment_id,
+            &claim,
+        )?;
+        if observation.state() != nimbus_network::NetworkAttachmentReservationState::Reserved {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} cannot persist adoption intent from allocator state {:?}",
+                    manifest.handle.id,
+                    observation.state()
+                ),
+            });
+        }
+        let association = observation
+            .association()
+            .cloned()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} cannot persist adoption intent without its exact segment association",
+                    manifest.handle.id
+                ),
+            })?;
+        manifest.mark_adopting(association)
+    }
+
     fn attachment_adapter<'a>(
         &'a self,
         manifest: &'a KrunSandboxManifest,
@@ -716,12 +749,6 @@ impl SandboxBackend for KrunSandboxBackend {
         Box::pin(async move { backend.inspect_sync(&sandbox_id) })
     }
 
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        let backend = self.clone();
-        let sandbox_id = id.clone();
-        Box::pin(async move { backend.stop_sync(&sandbox_id) })
-    }
-
     fn remove_tenant_artifacts(&self, tenant_id: nimbus_core::TenantId) -> SandboxFuture<()> {
         let backend = self.clone();
         Box::pin(async move { backend.remove_tenant_artifacts_sync(&tenant_id) })
@@ -799,6 +826,7 @@ enum KrunLaunchAuthority {
     },
     Adopting {
         reservation_claim: NetworkReservationClaim,
+        association: NetworkAttachmentSegmentAssociation,
     },
     Adopted {
         reservation_claim: NetworkReservationClaim,
@@ -926,7 +954,9 @@ impl KrunSandboxManifest {
     fn reservation_claim(&self) -> Option<&NetworkReservationClaim> {
         match &self.launch_authority {
             KrunLaunchAuthority::Reserved { reservation_claim }
-            | KrunLaunchAuthority::Adopting { reservation_claim }
+            | KrunLaunchAuthority::Adopting {
+                reservation_claim, ..
+            }
             | KrunLaunchAuthority::Adopted { reservation_claim } => Some(reservation_claim),
             KrunLaunchAuthority::PlanOnly
             | KrunLaunchAuthority::ProviderOwned
@@ -937,7 +967,9 @@ impl KrunSandboxManifest {
     fn require_reserved_claim(&self) -> Result<&NetworkReservationClaim> {
         match &self.launch_authority {
             KrunLaunchAuthority::Reserved { reservation_claim }
-            | KrunLaunchAuthority::Adopting { reservation_claim } => Ok(reservation_claim),
+            | KrunLaunchAuthority::Adopting {
+                reservation_claim, ..
+            } => Ok(reservation_claim),
             phase => Err(SandboxError::OperationFailed {
                 message: format!(
                     "krun workload {} requires reserved launch authority before provider adoption, \
@@ -945,6 +977,13 @@ impl KrunSandboxManifest {
                     self.handle.id
                 ),
             }),
+        }
+    }
+
+    fn adopting_association(&self) -> Option<&NetworkAttachmentSegmentAssociation> {
+        match &self.launch_authority {
+            KrunLaunchAuthority::Adopting { association, .. } => Some(association),
+            _ => None,
         }
     }
 
@@ -956,10 +995,25 @@ impl KrunSandboxManifest {
         Ok(claim)
     }
 
-    fn mark_adopting(&mut self) -> Result<NetworkReservationClaim> {
+    fn mark_adopting(
+        &mut self,
+        association: NetworkAttachmentSegmentAssociation,
+    ) -> Result<NetworkReservationClaim> {
         let claim = self.require_reserved_claim()?.clone();
+        let config = self.require_network_config()?;
+        if association.reservation_claim() != &claim
+            || association.segment_id().as_str() != config.segment_id
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} cannot persist crossed attachment adoption identity",
+                    self.handle.id
+                ),
+            });
+        }
         self.launch_authority = KrunLaunchAuthority::Adopting {
             reservation_claim: claim.clone(),
+            association,
         };
         Ok(claim)
     }
@@ -969,6 +1023,16 @@ impl KrunSandboxManifest {
             self.launch_authority,
             KrunLaunchAuthority::Adopted { .. } | KrunLaunchAuthority::ProviderOwned
         )
+    }
+
+    fn permits_exact_network_teardown(&self) -> bool {
+        self.permits_provider_teardown()
+            || matches!(
+                self.launch_authority,
+                KrunLaunchAuthority::Reserved { .. }
+                    | KrunLaunchAuthority::Adopting { .. }
+                    | KrunLaunchAuthority::Released
+            )
     }
 }
 

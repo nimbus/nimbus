@@ -24,7 +24,8 @@ use thiserror::Error;
 use crate::state::{ComputeError, ComputeState};
 use crate::workload_network_plan::WorkloadNetworkPlanCompiler;
 use crate::workload_provisioner::{
-    WorkloadProvisionError, WorkloadProvisionOutcome, WorkloadProvisioner,
+    WorkloadProvisionCompensationState, WorkloadProvisionError, WorkloadProvisionOutcome,
+    WorkloadProvisioner,
 };
 use crate::workload_saga::restart_runtime::{WorkloadRestartRuntime, WorkloadRestartSettlement};
 use crate::workload_saga::{
@@ -364,6 +365,69 @@ impl ComputeResourceRetirer {
         Ok(definition)
     }
 
+    pub(crate) async fn submit_tenant_record_teardown(
+        &self,
+        loaded: WorkloadSagaRecord,
+    ) -> Result<WorkloadSagaRecord, ComputeResourceRetirementError> {
+        let key = loaded.key().clone();
+        let joined_provision = self
+            .provisioner
+            .claim_tenant_retirement_and_join(&key)
+            .await
+            .map_err(ComputeResourceRetirementError::Provision)?;
+        let loaded = self
+            .coordinator
+            .load(&key)
+            .await?
+            .ok_or(ComputeResourceRetirementError::ProvisionWithoutSaga)?;
+        if loaded.phase() == WorkloadSagaPhase::Recorded
+            && loaded.active_intent().desired_state() == DesiredWorkloadState::Stopped
+            && loaded.successor_intent().is_none()
+        {
+            self.provisioner.release_retirement_fence(&key);
+            return Ok(loaded);
+        }
+        preflight_stopped_successor_generation(&loaded)?;
+        let (record, _) = self.persist_stopped_successor(&key, loaded).await?;
+        self.retire_late_provision_result(&key, record.phase(), joined_provision)
+            .await?;
+        self.settle_issued_restart_before_native_teardown(&key)
+            .await?;
+        let cancellation = WorkloadTeardownCancellationToken::default();
+        let run = self
+            .teardown_runtime
+            .submit(key.clone(), &cancellation)
+            .await?;
+        if run.disposition() != WorkloadTeardownRunDisposition::Completed
+            || run.record().phase() != WorkloadSagaPhase::Recorded
+        {
+            return Err(ComputeResourceRetirementError::TeardownPending(
+                run.disposition(),
+            ));
+        }
+        let recorded = self
+            .confirm_recorded_stopped_successor(run.record())
+            .await?;
+        self.provisioner.release_retirement_fence(&key);
+        Ok(recorded)
+    }
+
+    pub(crate) async fn fence_tenant_sources_and_join(
+        &self,
+        keys: &[WorkloadSagaKey],
+    ) -> Result<(), ComputeResourceRetirementError> {
+        self.provisioner
+            .claim_tenant_retirements_and_join(keys)
+            .await
+            .map_err(ComputeResourceRetirementError::Provision)
+    }
+
+    pub(crate) fn release_tenant_source_fences(&self, keys: &[WorkloadSagaKey]) {
+        for key in keys {
+            self.provisioner.release_retirement_fence(key);
+        }
+    }
+
     async fn drive_recorded_teardown(
         &self,
         key: &WorkloadSagaKey,
@@ -487,6 +551,20 @@ impl ComputeResourceRetirer {
             None => None,
         };
         if let Some(outcome) = outcome.as_ref() {
+            match outcome.compensation() {
+                WorkloadProvisionCompensationState::NotRequired
+                | WorkloadProvisionCompensationState::Completed => {}
+                WorkloadProvisionCompensationState::Waiting => {
+                    return Err(ComputeResourceRetirementError::TeardownPending(
+                        WorkloadTeardownRunDisposition::Waiting,
+                    ));
+                }
+                WorkloadProvisionCompensationState::CleanupPending => {
+                    return Err(ComputeResourceRetirementError::TeardownPending(
+                        WorkloadTeardownRunDisposition::CleanupPending,
+                    ));
+                }
+            }
             match outcome.disposition() {
                 WorkloadProvisionRunDisposition::Waiting => {
                     return Err(ComputeResourceRetirementError::ProvisionSettlementPending);

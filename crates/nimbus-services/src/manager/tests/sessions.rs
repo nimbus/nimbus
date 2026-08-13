@@ -44,7 +44,7 @@ async fn open_session_rejects_not_ready_sandbox_targets() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        backend,
+        backend.kind(),
     );
     let sandbox = reserve_standalone_source(
         &manager,
@@ -106,7 +106,7 @@ fn session_commit_revalidates_exact_sandbox_source_and_observation() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        backend.clone(),
+        backend.kind(),
     );
     let source = reserve_standalone_source(
         &manager,
@@ -176,7 +176,7 @@ fn session_binding_rejects_a_later_execution_with_the_same_source_generation() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        backend.clone(),
+        backend.kind(),
     );
     let source = reserve_standalone_source(
         &manager,
@@ -248,7 +248,7 @@ fn session_commit_revalidates_dynamic_service_resource_version() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        Arc::new(StubSandboxBackend::new(1)),
+        SandboxBackendKind::Krun,
     );
     let definition = manager
         .create_service_definition(
@@ -291,7 +291,7 @@ async fn session_lookup_and_close_are_tenant_scoped() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        Arc::new(StubSandboxBackend::new(1)),
+        SandboxBackendKind::Krun,
     );
     manager
         .create_service_definition(
@@ -343,7 +343,7 @@ async fn session_open_uses_workload_executor_channel() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        Arc::new(StubSandboxBackend::new(1)),
+        SandboxBackendKind::Krun,
     );
     manager
         .create_service_definition(
@@ -386,7 +386,7 @@ async fn session_open_returns_workload_channel_descriptor() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        Arc::new(StubSandboxBackend::new(1)),
+        SandboxBackendKind::Krun,
     );
     manager
         .create_service_definition(
@@ -424,7 +424,7 @@ async fn session_channel_target_generation_mismatch() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        Arc::new(StubSandboxBackend::new(1)),
+        SandboxBackendKind::Krun,
     );
     manager
         .create_service_definition(
@@ -471,7 +471,7 @@ async fn session_channel_half_close() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        Arc::new(StubSandboxBackend::new(1)),
+        SandboxBackendKind::Krun,
     );
     manager
         .create_service_definition(
@@ -525,7 +525,7 @@ async fn session_channel_backpressure() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        Arc::new(StubSandboxBackend::new(1)),
+        SandboxBackendKind::Krun,
     );
     manager
         .create_service_definition(
@@ -591,7 +591,7 @@ async fn session_channel_disconnect_audit() {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        Arc::new(StubSandboxBackend::new(1)),
+        SandboxBackendKind::Krun,
     );
     manager
         .create_service_definition(

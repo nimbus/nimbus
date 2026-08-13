@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nimbus_core::{TenantId, WorkloadId};
@@ -13,34 +13,45 @@ use nimbus_network::{
     NetworkSovereigntyRequirements, NetworkTlsBehavior, PortProtocol,
 };
 use nimbus_sandbox::{
-    SandboxBackend, SandboxBackendKind, SandboxFuture, SandboxHandle, SandboxId, SandboxInspection,
-    SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
+    SandboxBackendKind, SandboxHandle, SandboxId, SandboxInspection, SandboxOwnerSpec,
+    SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceBackend, ServiceManager};
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationPolicyInput, WorkloadAttributes, WorkloadLocation,
 };
 use nimbus_workloads::{
-    WorkloadActivationIntent, WorkloadExecutionReference, WorkloadNetworkForwardingBehavior,
+    WorkloadActivationIntent, WorkloadExecutionReference, WorkloadFailureEvidence,
+    WorkloadNetworkForwardingBehavior, WorkloadOwnerEvidenceDigest,
     WorkloadProvisionInspectionResult, WorkloadProvisionSourceGeneration,
     WorkloadProvisionSourceResourceVersion, WorkloadPublicationIntent, WorkloadSagaCommit,
     WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey, WorkloadSagaPage,
-    WorkloadSagaPageRequest, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
-    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore,
+    WorkloadSagaStoreError, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    WorkloadTeardownCause, WorkloadTeardownCommandMode, WorkloadTeardownStep,
 };
+use tokio::sync::Semaphore;
 
 use super::*;
 use crate::embedded_local_node_identity;
 use crate::workload_projection::ServiceManagerWorkloadProjectionSink;
 use crate::workload_provision_source::ServiceManagerWorkloadProvisionSourceAuthority;
+use crate::workload_provisioner::WorkloadProvisionCompensationState;
 use crate::workload_saga::{
-    ConfirmedWorkloadProvisionCommand, IngressProvisionCapabilities, IngressPublicationCapability,
-    IngressPublicationInspectionCapability, NetworkAttachmentCapability,
-    NetworkAttachmentProvisionCapabilities, NetworkReservationCapability,
-    WorkloadActivationCapability, WorkloadActivationPrerequisiteCapability,
-    WorkloadExecutionProvisionCapabilities, WorkloadPreparationCapability,
-    WorkloadProvisionCapabilityFuture, WorkloadProvisionCapabilityRegistry,
-    WorkloadProvisionSourceAuthority, WorkloadReadinessCapability, WorkloadSagaCoordinator,
+    ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadTeardownCommand,
+    FinalIngressWithdrawalCapability, IngressProvisionCapabilities, IngressPublicationCapability,
+    IngressPublicationInspectionCapability, IngressTeardownCapabilities,
+    NetworkAttachmentCapability, NetworkAttachmentProvisionCapabilities,
+    NetworkAttachmentTeardownCapabilities, NetworkDetachmentCapability, NetworkReleaseCapability,
+    NetworkReservationCapability, WorkloadActivationCapability,
+    WorkloadActivationPrerequisiteCapability, WorkloadExecutionDrainCapability,
+    WorkloadExecutionProvisionCapabilities, WorkloadExecutionStopCapability,
+    WorkloadPreparationCapability, WorkloadProvisionCapabilityFuture,
+    WorkloadProvisionCapabilityRegistry, WorkloadProvisionSourceAuthority,
+    WorkloadReadinessCapability, WorkloadSagaCoordinator, WorkloadTeardownCapabilityFuture,
+    WorkloadTeardownCapabilityRegistry, WorkloadTeardownExecuteOutcome,
+    WorkloadTeardownInspectOutcome, WorkloadTeardownProviderObservation,
+    WorkloadTeardownProviderOutcome, WorkloadTeardownRuntime,
 };
 
 fn tenant() -> TenantId {
@@ -83,12 +94,45 @@ fn source(spec: SandboxSpec) -> WorkloadProvisionSource {
     }
 }
 
-#[derive(Default)]
 struct NativeSagaStore {
     records: Mutex<BTreeMap<WorkloadSagaKey, WorkloadSagaRecord>>,
+    pause_after_first_submission: AtomicBool,
+    fail_failed_provision_once: AtomicBool,
+    first_submission_applied: Semaphore,
+    release_first_submission: Semaphore,
+    recorded_applied: Semaphore,
+    release_recorded: Semaphore,
+}
+
+impl Default for NativeSagaStore {
+    fn default() -> Self {
+        Self {
+            records: Mutex::new(BTreeMap::new()),
+            pause_after_first_submission: AtomicBool::new(false),
+            fail_failed_provision_once: AtomicBool::new(false),
+            first_submission_applied: Semaphore::new(0),
+            release_first_submission: Semaphore::new(0),
+            recorded_applied: Semaphore::new(0),
+            release_recorded: Semaphore::new(0),
+        }
+    }
 }
 
 impl NativeSagaStore {
+    fn pausing_after_first_submission() -> Arc<Self> {
+        Arc::new(Self {
+            pause_after_first_submission: AtomicBool::new(true),
+            ..Self::default()
+        })
+    }
+
+    fn failing_failed_provision_once() -> Arc<Self> {
+        Arc::new(Self {
+            fail_failed_provision_once: AtomicBool::new(true),
+            ..Self::default()
+        })
+    }
+
     fn record_count(&self) -> usize {
         self.records
             .lock()
@@ -127,29 +171,61 @@ impl WorkloadSagaStore for NativeSagaStore {
         next: WorkloadSagaRecord,
     ) -> WorkloadSagaFuture<'a, WorkloadSagaCommit> {
         Box::pin(async move {
+            if next.teardown_disposition().is_some_and(|disposition| {
+                matches!(
+                    disposition.cause(),
+                    WorkloadTeardownCause::FailedProvision { .. }
+                )
+            }) && self
+                .fail_failed_provision_once
+                .swap(false, Ordering::AcqRel)
+            {
+                return Err(WorkloadSagaStoreError::Unavailable);
+            }
             let key = next.key().clone();
-            let mut records = self
-                .records
-                .lock()
-                .expect("native saga store lock should remain healthy");
-            if records.get(&key) == Some(&next) {
-                return Ok(WorkloadSagaCommit::Unchanged);
-            }
-            let observed = records.get(&key);
-            let matches = match (expected, observed) {
-                (WorkloadSagaExpected::Missing, None) => true,
-                (WorkloadSagaExpected::Revision(expected), Some(record)) => {
-                    record.revision() == expected
+            let recorded = next.phase() == WorkloadSagaPhase::Recorded;
+            let first_submission = {
+                let mut records = self
+                    .records
+                    .lock()
+                    .expect("native saga store lock should remain healthy");
+                if records.get(&key) == Some(&next) {
+                    return Ok(WorkloadSagaCommit::Unchanged);
                 }
-                _ => false,
+                let observed = records.get(&key);
+                let matches = match (expected, observed) {
+                    (WorkloadSagaExpected::Missing, None) => true,
+                    (WorkloadSagaExpected::Revision(expected), Some(record)) => {
+                        record.revision() == expected
+                    }
+                    _ => false,
+                };
+                if !matches {
+                    return Err(WorkloadSagaStoreError::Conflict {
+                        expected,
+                        observed: observed.map(WorkloadSagaRecord::revision),
+                    });
+                }
+                let first_submission = records.is_empty();
+                records.insert(key, next);
+                first_submission
             };
-            if !matches {
-                return Err(WorkloadSagaStoreError::Conflict {
-                    expected,
-                    observed: observed.map(WorkloadSagaRecord::revision),
-                });
+            if first_submission && self.pause_after_first_submission.load(Ordering::Acquire) {
+                self.first_submission_applied.add_permits(1);
+                self.release_first_submission
+                    .acquire()
+                    .await
+                    .expect("native submission release semaphore should remain open")
+                    .forget();
             }
-            records.insert(key, next);
+            if recorded && self.pause_after_first_submission.load(Ordering::Acquire) {
+                self.recorded_applied.add_permits(1);
+                self.release_recorded
+                    .acquire()
+                    .await
+                    .expect("native recorded release semaphore should remain open")
+                    .forget();
+            }
             Ok(WorkloadSagaCommit::Applied)
         })
     }
@@ -180,10 +256,36 @@ impl WorkloadSagaStore for NativeSagaStore {
     }
 }
 
-#[derive(Default)]
 struct NativeProvisionProvider {
     calls: Mutex<Vec<(WorkloadSagaKey, nimbus_workloads::WorkloadProvisionStep)>>,
+    teardown_calls: Mutex<Vec<WorkloadTeardownStep>>,
+    teardown_modes: Mutex<Vec<WorkloadTeardownCommandMode>>,
+    failure_step: Option<nimbus_workloads::WorkloadProvisionStep>,
+    teardown_behavior: NativeTeardownBehavior,
+    teardown_one_shot_observed: AtomicBool,
     execution_observations: AtomicUsize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum NativeTeardownBehavior {
+    #[default]
+    Succeed,
+    InProgressOnceAt(WorkloadTeardownStep),
+    DefiniteFailureAt(WorkloadTeardownStep),
+}
+
+impl Default for NativeProvisionProvider {
+    fn default() -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            teardown_calls: Mutex::new(Vec::new()),
+            teardown_modes: Mutex::new(Vec::new()),
+            failure_step: None,
+            teardown_behavior: NativeTeardownBehavior::Succeed,
+            teardown_one_shot_observed: AtomicBool::new(false),
+            execution_observations: AtomicUsize::new(0),
+        }
+    }
 }
 
 impl NativeProvisionProvider {
@@ -195,6 +297,18 @@ impl NativeProvisionProvider {
             .lock()
             .expect("native provision provider lock should remain healthy")
             .push((command.claim().attempt().key().clone(), command.step()));
+        if self.failure_step == Some(command.step()) {
+            return WorkloadProvisionInspectionResult::DefiniteFailure {
+                attempt_id: command.attempt_id().clone(),
+                dispatch_epoch: command.dispatch_epoch(),
+                provider_target: command.provider_target().clone(),
+                failure: WorkloadFailureEvidence::new(
+                    "native_fixture_failure",
+                    WorkloadOwnerEvidenceDigest::sha256("native fixture failure"),
+                )
+                .expect("native fixture failure should validate"),
+            };
+        }
         WorkloadProvisionInspectionResult::Succeeded {
             attempt_id: command.attempt_id().clone(),
             dispatch_epoch: command.dispatch_epoch(),
@@ -210,6 +324,104 @@ impl NativeProvisionProvider {
             .iter()
             .filter(|(candidate, _)| candidate == key)
             .count()
+    }
+
+    fn failing_at(step: nimbus_workloads::WorkloadProvisionStep) -> Arc<Self> {
+        Arc::new(Self {
+            failure_step: Some(step),
+            ..Self::default()
+        })
+    }
+
+    fn failing_at_with_teardown(
+        step: nimbus_workloads::WorkloadProvisionStep,
+        teardown_behavior: NativeTeardownBehavior,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            failure_step: Some(step),
+            teardown_behavior,
+            ..Self::default()
+        })
+    }
+
+    fn teardown_calls(&self) -> Vec<WorkloadTeardownStep> {
+        self.teardown_calls
+            .lock()
+            .expect("native teardown provider lock should remain healthy")
+            .clone()
+    }
+
+    fn teardown_modes(&self) -> Vec<WorkloadTeardownCommandMode> {
+        self.teardown_modes
+            .lock()
+            .expect("native teardown provider lock should remain healthy")
+            .clone()
+    }
+
+    fn teardown_outcome(
+        &self,
+        command: &ConfirmedWorkloadTeardownCommand,
+    ) -> WorkloadTeardownProviderObservation {
+        self.teardown_calls
+            .lock()
+            .expect("native teardown provider lock should remain healthy")
+            .push(command.step());
+        self.teardown_modes
+            .lock()
+            .expect("native teardown provider lock should remain healthy")
+            .push(command.mode());
+        let success = || {
+            Box::new(crate::workload_saga::test_support::teardown_success_for(
+                command.step(),
+                command.subjects(),
+            ))
+        };
+        let outcome = match (self.teardown_behavior, command.mode()) {
+            (NativeTeardownBehavior::DefiniteFailureAt(step), mode) if step == command.step() => {
+                let failure = WorkloadFailureEvidence::new(
+                    "native_fixture_teardown_failure",
+                    WorkloadOwnerEvidenceDigest::sha256("native fixture teardown failure"),
+                )
+                .expect("native teardown failure should validate");
+                match mode {
+                    WorkloadTeardownCommandMode::Execute => {
+                        WorkloadTeardownProviderOutcome::Execute(
+                            WorkloadTeardownExecuteOutcome::DefiniteFailure(failure),
+                        )
+                    }
+                    WorkloadTeardownCommandMode::Inspect => {
+                        WorkloadTeardownProviderOutcome::Inspect(
+                            WorkloadTeardownInspectOutcome::DefiniteFailure(failure),
+                        )
+                    }
+                }
+            }
+            (
+                NativeTeardownBehavior::InProgressOnceAt(step),
+                WorkloadTeardownCommandMode::Execute,
+            ) if step == command.step() => {
+                WorkloadTeardownProviderOutcome::Execute(WorkloadTeardownExecuteOutcome::Ambiguous)
+            }
+            (
+                NativeTeardownBehavior::InProgressOnceAt(step),
+                WorkloadTeardownCommandMode::Inspect,
+            ) if step == command.step()
+                && !self.teardown_one_shot_observed.swap(true, Ordering::AcqRel) =>
+            {
+                WorkloadTeardownProviderOutcome::Inspect(
+                    WorkloadTeardownInspectOutcome::InProgress(
+                        WorkloadOwnerEvidenceDigest::sha256("native teardown still in progress"),
+                    ),
+                )
+            }
+            (_, WorkloadTeardownCommandMode::Execute) => WorkloadTeardownProviderOutcome::Execute(
+                WorkloadTeardownExecuteOutcome::Succeeded(success()),
+            ),
+            (_, WorkloadTeardownCommandMode::Inspect) => WorkloadTeardownProviderOutcome::Inspect(
+                WorkloadTeardownInspectOutcome::Satisfied(success()),
+            ),
+        };
+        WorkloadTeardownProviderObservation::for_command(command, outcome)
     }
 }
 
@@ -255,6 +467,32 @@ native_inspection_capability!(WorkloadReadinessCapability);
 native_effect_capability!(IngressPublicationCapability);
 native_inspection_capability!(IngressPublicationInspectionCapability);
 
+macro_rules! native_teardown_capability {
+    ($trait_name:ident) => {
+        impl $trait_name for NativeProvisionProvider {
+            fn execute<'a>(
+                &'a self,
+                command: &'a ConfirmedWorkloadTeardownCommand,
+            ) -> WorkloadTeardownCapabilityFuture<'a> {
+                Box::pin(async move { self.teardown_outcome(command) })
+            }
+
+            fn inspect<'a>(
+                &'a self,
+                command: &'a ConfirmedWorkloadTeardownCommand,
+            ) -> WorkloadTeardownCapabilityFuture<'a> {
+                Box::pin(async move { self.teardown_outcome(command) })
+            }
+        }
+    };
+}
+
+native_teardown_capability!(FinalIngressWithdrawalCapability);
+native_teardown_capability!(WorkloadExecutionDrainCapability);
+native_teardown_capability!(WorkloadExecutionStopCapability);
+native_teardown_capability!(NetworkDetachmentCapability);
+native_teardown_capability!(NetworkReleaseCapability);
+
 impl crate::workload_projection::WorkloadExecutionObservationCapability
     for NativeProvisionProvider
 {
@@ -293,23 +531,6 @@ impl crate::workload_projection::WorkloadIngressObservationCapability for Native
         _request: &'a crate::workload_projection::WorkloadIngressObservationRequest,
     ) -> crate::workload_projection::WorkloadIngressObservationFuture<'a> {
         Box::pin(async { crate::workload_projection::WorkloadProviderObservation::Ambiguous })
-    }
-}
-
-#[derive(Default)]
-struct EffectForbiddenSandboxBackend;
-
-impl SandboxBackend for EffectForbiddenSandboxBackend {
-    fn kind(&self) -> SandboxBackendKind {
-        SandboxBackendKind::Krun
-    }
-
-    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
-        panic!("native facade reads must not inspect through ServiceManager")
-    }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        panic!("native provision test must not retire through ServiceManager")
     }
 }
 
@@ -369,7 +590,7 @@ fn native_provisioner(
             .clone();
     let capabilities = WorkloadProvisionCapabilityRegistry::new(
         [NetworkAttachmentProvisionCapabilities::new(
-            attachment_provider,
+            attachment_provider.clone(),
             provider.clone(),
         )],
         [WorkloadExecutionProvisionCapabilities::new(
@@ -378,7 +599,7 @@ fn native_provisioner(
         )],
         [IngressProvisionCapabilities::new(
             selection.ingress_provider_id().clone(),
-            provider,
+            provider.clone(),
         )],
     )
     .expect("native fixture capabilities should validate");
@@ -386,6 +607,32 @@ fn native_provisioner(
     let source_authority: Arc<dyn WorkloadProvisionSourceAuthority> = Arc::new(
         ServiceManagerWorkloadProvisionSourceAuthority::new(manager.clone()),
     );
+    let coordinator = Arc::new(WorkloadSagaCoordinator::new(store));
+    let teardown_capabilities = WorkloadTeardownCapabilityRegistry::new(
+        [NetworkAttachmentTeardownCapabilities::new(
+            attachment_provider,
+            provider.clone(),
+            provider.clone(),
+        )],
+        [
+            crate::workload_saga::WorkloadExecutionTeardownCapabilities::new(
+                sandbox_execution_provider_id(SandboxBackendKind::Krun),
+                provider.clone(),
+                provider.clone(),
+            ),
+        ],
+        [IngressTeardownCapabilities::new(
+            selection.ingress_provider_id().clone(),
+            provider,
+        )],
+    )
+    .expect("native fixture teardown capabilities should validate");
+    let teardown_runtime = Arc::new(WorkloadTeardownRuntime::new(
+        Arc::clone(&coordinator),
+        Arc::clone(&source_authority),
+        provider_reports.clone(),
+        Arc::new(teardown_capabilities),
+    ));
     Arc::new(
         WorkloadProvisioner::new(
             embedded_local_node_identity(),
@@ -396,7 +643,8 @@ fn native_provisioner(
                 BTreeSet::new(),
                 true,
             ),
-            Arc::new(WorkloadSagaCoordinator::new(store)),
+            Arc::clone(&coordinator),
+            teardown_runtime,
             source_authority,
             capabilities,
             Arc::new(ServiceManagerWorkloadProjectionSink::new(manager)),
@@ -467,7 +715,7 @@ async fn native_service_and_sandbox_callers_use_compute_dispatch() {
     let tenant_id = tenant();
     let manager = Arc::new(ServiceManager::new(
         Arc::new(EmptyServiceDefinitionCatalog),
-        Arc::new(EffectForbiddenSandboxBackend),
+        SandboxBackendKind::Krun,
     ));
     let service_spec = SandboxSpec::new(
         tenant_id.clone(),
@@ -588,4 +836,474 @@ async fn native_service_and_sandbox_callers_use_compute_dispatch() {
         4,
         "exact replay may refresh read-only observed state but must not repeat provider effects"
     );
+}
+
+fn failed_native_facade(
+    failure_step: nimbus_workloads::WorkloadProvisionStep,
+) -> (
+    Arc<ServiceManager>,
+    Arc<NativeSagaStore>,
+    Arc<NativeProvisionProvider>,
+    ComputeResourceProvisioner,
+) {
+    let manager = Arc::new(ServiceManager::new(
+        Arc::new(EmptyServiceDefinitionCatalog),
+        SandboxBackendKind::Krun,
+    ));
+    let store = Arc::new(NativeSagaStore::default());
+    let provider = NativeProvisionProvider::failing_at(failure_step);
+    let facade = ComputeResourceProvisioner::new(
+        Arc::clone(&manager),
+        native_provisioner(
+            Arc::clone(&manager),
+            Arc::clone(&store),
+            Arc::clone(&provider),
+        ),
+    );
+    (manager, store, provider, facade)
+}
+
+fn assert_failed_start_was_compensated(
+    store: &NativeSagaStore,
+    provider: &NativeProvisionProvider,
+    stable_name: &str,
+) {
+    let record = store.record(&WorkloadSagaKey::new(
+        tenant(),
+        WorkloadId::new(stable_name).expect("fixture workload ID should validate"),
+    ));
+    assert_eq!(record.phase(), WorkloadSagaPhase::Recorded);
+    assert_eq!(
+        provider.teardown_calls(),
+        [
+            WorkloadTeardownStep::StopExecution,
+            WorkloadTeardownStep::DetachNetwork,
+            WorkloadTeardownStep::ReleaseNetwork,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn failed_service_start_enters_durable_compensation_without_caller_stop() {
+    let (manager, store, provider, facade) =
+        failed_native_facade(nimbus_workloads::WorkloadProvisionStep::ActivateWorkload);
+    manager
+        .create_service_definition(
+            &tenant(),
+            "failed-service",
+            ServiceBackend::sandbox(SandboxSpec::new(
+                tenant(),
+                SandboxOwnerSpec::service("failed-service"),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::rootfs("/fixture/failed-service"),
+                SandboxProcessSpec::new(["/bin/false"]),
+            )),
+            BTreeMap::new(),
+        )
+        .expect("failed service source should be declared");
+    let context = TenantIsolationContext::system(tenant(), "failed-service-compensation");
+
+    let result = facade
+        .provision_sandbox_service(
+            &context,
+            "failed-service",
+            &WorkloadProvisionCancellation::default(),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(ComputeResourceProvisionError::Rejected {
+            reason: "provision_definite_failure"
+        })
+    ));
+    assert_failed_start_was_compensated(&store, &provider, "failed-service");
+}
+
+#[tokio::test]
+async fn failed_sandbox_start_enters_durable_compensation_without_caller_stop() {
+    let (_manager, store, provider, facade) =
+        failed_native_facade(nimbus_workloads::WorkloadProvisionStep::ActivateWorkload);
+    let context = TenantIsolationContext::system(tenant(), "failed-sandbox-compensation");
+
+    let result = facade
+        .provision_standalone_sandbox(
+            &context,
+            "failed-sandbox",
+            "worker",
+            SandboxSpec::new(
+                tenant(),
+                SandboxOwnerSpec::standalone_named("failed-sandbox"),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::rootfs("/fixture/failed-sandbox"),
+                SandboxProcessSpec::new(["/bin/false"]),
+            ),
+            BTreeMap::new(),
+            &WorkloadProvisionCancellation::default(),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(ComputeResourceProvisionError::Rejected {
+            reason: "provision_definite_failure"
+        })
+    ));
+    assert_failed_start_was_compensated(&store, &provider, "failed-sandbox");
+}
+
+#[tokio::test]
+async fn concurrent_failed_provision_callers_share_one_cause_and_teardown_sequence() {
+    let (_manager, store, provider, facade) =
+        failed_native_facade(nimbus_workloads::WorkloadProvisionStep::ActivateWorkload);
+    let context = TenantIsolationContext::system(tenant(), "concurrent-failed-provision");
+    let left_cancellation = WorkloadProvisionCancellation::default();
+    let right_cancellation = WorkloadProvisionCancellation::default();
+    let left = facade.provision_standalone_sandbox(
+        &context,
+        "concurrent-failed-sandbox",
+        "worker",
+        SandboxSpec::new(
+            tenant(),
+            SandboxOwnerSpec::standalone_named("concurrent-failed-sandbox"),
+            SandboxBackendKind::Krun,
+            SandboxRootSpec::rootfs("/fixture/concurrent-failed-sandbox"),
+            SandboxProcessSpec::new(["/bin/false"]),
+        ),
+        BTreeMap::new(),
+        &left_cancellation,
+    );
+    let right = facade.provision_standalone_sandbox(
+        &context,
+        "concurrent-failed-sandbox",
+        "worker",
+        SandboxSpec::new(
+            tenant(),
+            SandboxOwnerSpec::standalone_named("concurrent-failed-sandbox"),
+            SandboxBackendKind::Krun,
+            SandboxRootSpec::rootfs("/fixture/concurrent-failed-sandbox"),
+            SandboxProcessSpec::new(["/bin/false"]),
+        ),
+        BTreeMap::new(),
+        &right_cancellation,
+    );
+
+    let (left, right) = tokio::join!(left, right);
+    for result in [left, right] {
+        assert!(matches!(
+            result,
+            Err(ComputeResourceProvisionError::Rejected {
+                reason: "provision_definite_failure"
+            })
+        ));
+    }
+    assert_failed_start_was_compensated(&store, &provider, "concurrent-failed-sandbox");
+    assert_eq!(
+        provider.calls_for(&WorkloadSagaKey::new(
+            tenant(),
+            WorkloadId::new("concurrent-failed-sandbox")
+                .expect("fixture workload ID should validate"),
+        )),
+        5,
+        "same-key contenders must share one provision attempt through its definite failure"
+    );
+}
+
+#[tokio::test]
+async fn failed_provision_compensation_survives_waiter_cancellation() {
+    let manager = Arc::new(ServiceManager::new(
+        Arc::new(EmptyServiceDefinitionCatalog),
+        SandboxBackendKind::Krun,
+    ));
+    let store = NativeSagaStore::pausing_after_first_submission();
+    let provider = NativeProvisionProvider::failing_at(
+        nimbus_workloads::WorkloadProvisionStep::ActivateWorkload,
+    );
+    let provisioner = native_provisioner(
+        Arc::clone(&manager),
+        Arc::clone(&store),
+        Arc::clone(&provider),
+    );
+    let facade = ComputeResourceProvisioner::new(manager, Arc::clone(&provisioner));
+    let cancellation = WorkloadProvisionCancellation::default();
+    let waiter_cancellation = cancellation.clone();
+    let waiter = tokio::spawn(async move {
+        facade
+            .provision_standalone_sandbox(
+                &TenantIsolationContext::system(tenant(), "cancelled-failed-provision"),
+                "cancelled-failed-provision",
+                "worker",
+                SandboxSpec::new(
+                    tenant(),
+                    SandboxOwnerSpec::standalone_named("cancelled-failed-provision"),
+                    SandboxBackendKind::Krun,
+                    SandboxRootSpec::rootfs("/fixture/cancelled-failed-provision"),
+                    SandboxProcessSpec::new(["/bin/false"]),
+                ),
+                BTreeMap::new(),
+                &waiter_cancellation,
+            )
+            .await
+    });
+
+    store
+        .first_submission_applied
+        .acquire()
+        .await
+        .expect("first submission signal should remain open")
+        .forget();
+    let key = WorkloadSagaKey::new(
+        tenant(),
+        WorkloadId::new("cancelled-failed-provision")
+            .expect("cancelled fixture workload ID should validate"),
+    );
+    assert!(provisioner.has_tracked_submission(&key));
+    cancellation.cancel();
+    let cancelled = waiter.await.expect("cancelled waiter task should join");
+    assert!(matches!(
+        cancelled,
+        Err(ComputeResourceProvisionError::Provision(error))
+            if matches!(error.as_ref(), WorkloadProvisionError::WaiterCancelled)
+    ));
+    assert!(provider.teardown_calls().is_empty());
+
+    store.release_first_submission.add_permits(1);
+    store
+        .recorded_applied
+        .acquire()
+        .await
+        .expect("recorded compensation signal should remain open")
+        .forget();
+    assert_eq!(store.record(&key).phase(), WorkloadSagaPhase::Recorded);
+    assert_eq!(
+        provider.teardown_calls(),
+        [
+            WorkloadTeardownStep::StopExecution,
+            WorkloadTeardownStep::DetachNetwork,
+            WorkloadTeardownStep::ReleaseNetwork,
+        ]
+    );
+    assert!(
+        provisioner.has_tracked_submission(&key),
+        "the retained task must not be removed before Recorded is durable"
+    );
+    store.release_recorded.add_permits(1);
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while provisioner.has_tracked_submission(&key) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the retained task should leave the keyed supervisor after completion");
+}
+
+#[tokio::test]
+async fn failed_provision_waiting_compensation_retains_owner_until_exact_inspection_completes() {
+    let manager = Arc::new(ServiceManager::new(
+        Arc::new(EmptyServiceDefinitionCatalog),
+        SandboxBackendKind::Krun,
+    ));
+    let store = Arc::new(NativeSagaStore::default());
+    let provider = NativeProvisionProvider::failing_at_with_teardown(
+        nimbus_workloads::WorkloadProvisionStep::ActivateWorkload,
+        NativeTeardownBehavior::InProgressOnceAt(WorkloadTeardownStep::StopExecution),
+    );
+    let provisioner = native_provisioner(
+        Arc::clone(&manager),
+        Arc::clone(&store),
+        Arc::clone(&provider),
+    );
+    let facade = ComputeResourceProvisioner::new(manager, Arc::clone(&provisioner));
+    let stable_name = "waiting-failed-provision";
+    let key = WorkloadSagaKey::new(
+        tenant(),
+        WorkloadId::new(stable_name).expect("waiting fixture workload ID should validate"),
+    );
+
+    let first = facade
+        .provision_standalone_sandbox(
+            &TenantIsolationContext::system(tenant(), "waiting-failed-provision"),
+            stable_name,
+            "worker",
+            SandboxSpec::new(
+                tenant(),
+                SandboxOwnerSpec::standalone_named(stable_name),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::rootfs("/fixture/waiting-failed-provision"),
+                SandboxProcessSpec::new(["/bin/false"]),
+            ),
+            BTreeMap::new(),
+            &WorkloadProvisionCancellation::default(),
+        )
+        .await;
+
+    assert!(matches!(
+        first,
+        Err(ComputeResourceProvisionError::Rejected {
+            reason: "provision_definite_failure"
+        })
+    ));
+    assert!(provisioner.has_tracked_submission(&key));
+    assert_eq!(
+        provider.teardown_modes(),
+        [
+            WorkloadTeardownCommandMode::Execute,
+            WorkloadTeardownCommandMode::Inspect,
+        ]
+    );
+
+    let completed = provisioner
+        .resume(key.clone(), &WorkloadProvisionCancellation::default())
+        .await
+        .expect("exact retained resume should inspect and converge");
+    assert_eq!(
+        completed.compensation(),
+        WorkloadProvisionCompensationState::Completed
+    );
+    assert_eq!(store.record(&key).phase(), WorkloadSagaPhase::Recorded);
+    assert_eq!(
+        provider.teardown_modes(),
+        [
+            WorkloadTeardownCommandMode::Execute,
+            WorkloadTeardownCommandMode::Inspect,
+            WorkloadTeardownCommandMode::Inspect,
+            WorkloadTeardownCommandMode::Execute,
+            WorkloadTeardownCommandMode::Execute,
+        ],
+        "the issued Stop claim is inspected to success; only later Detach and Release execute"
+    );
+    assert!(!provisioner.has_tracked_submission(&key));
+}
+
+#[tokio::test]
+async fn failed_provision_cleanup_pending_retains_key_and_blocks_reuse() {
+    let manager = Arc::new(ServiceManager::new(
+        Arc::new(EmptyServiceDefinitionCatalog),
+        SandboxBackendKind::Krun,
+    ));
+    let store = Arc::new(NativeSagaStore::default());
+    let provider = NativeProvisionProvider::failing_at_with_teardown(
+        nimbus_workloads::WorkloadProvisionStep::ActivateWorkload,
+        NativeTeardownBehavior::DefiniteFailureAt(WorkloadTeardownStep::StopExecution),
+    );
+    let provisioner = native_provisioner(
+        Arc::clone(&manager),
+        Arc::clone(&store),
+        Arc::clone(&provider),
+    );
+    let facade = ComputeResourceProvisioner::new(manager, Arc::clone(&provisioner));
+    let stable_name = "cleanup-pending-failed-provision";
+    let key = WorkloadSagaKey::new(
+        tenant(),
+        WorkloadId::new(stable_name).expect("cleanup fixture workload ID should validate"),
+    );
+
+    let first = facade
+        .provision_standalone_sandbox(
+            &TenantIsolationContext::system(tenant(), "cleanup-pending-failed-provision"),
+            stable_name,
+            "worker",
+            SandboxSpec::new(
+                tenant(),
+                SandboxOwnerSpec::standalone_named(stable_name),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::rootfs("/fixture/cleanup-pending-failed-provision"),
+                SandboxProcessSpec::new(["/bin/false"]),
+            ),
+            BTreeMap::new(),
+            &WorkloadProvisionCancellation::default(),
+        )
+        .await;
+    assert!(matches!(
+        first,
+        Err(ComputeResourceProvisionError::Rejected {
+            reason: "provision_definite_failure"
+        })
+    ));
+    assert!(provisioner.has_tracked_submission(&key));
+    let before_calls = provider.teardown_calls();
+    let before_record = store.record(&key);
+
+    let replay = provisioner
+        .resume(key.clone(), &WorkloadProvisionCancellation::default())
+        .await
+        .expect("cleanup-pending replay should return the retained fenced outcome");
+    assert_eq!(
+        replay.compensation(),
+        WorkloadProvisionCompensationState::CleanupPending
+    );
+    assert_eq!(store.record(&key), before_record);
+    assert_eq!(provider.teardown_calls(), before_calls);
+    assert!(provisioner.has_tracked_submission(&key));
+}
+
+#[tokio::test]
+async fn failed_provision_compensation_error_retries_exact_run_without_provision_effects() {
+    let manager = Arc::new(ServiceManager::new(
+        Arc::new(EmptyServiceDefinitionCatalog),
+        SandboxBackendKind::Krun,
+    ));
+    let store = NativeSagaStore::failing_failed_provision_once();
+    let provider = NativeProvisionProvider::failing_at_with_teardown(
+        nimbus_workloads::WorkloadProvisionStep::ActivateWorkload,
+        NativeTeardownBehavior::Succeed,
+    );
+    let provisioner = native_provisioner(
+        Arc::clone(&manager),
+        Arc::clone(&store),
+        Arc::clone(&provider),
+    );
+    let facade = ComputeResourceProvisioner::new(manager, Arc::clone(&provisioner));
+    let stable_name = "compensation-error-failed-provision";
+    let key = WorkloadSagaKey::new(
+        tenant(),
+        WorkloadId::new(stable_name).expect("compensation error fixture ID should validate"),
+    );
+
+    let first = facade
+        .provision_standalone_sandbox(
+            &TenantIsolationContext::system(tenant(), "compensation-error-failed-provision"),
+            stable_name,
+            "worker",
+            SandboxSpec::new(
+                tenant(),
+                SandboxOwnerSpec::standalone_named(stable_name),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::rootfs("/fixture/compensation-error-failed-provision"),
+                SandboxProcessSpec::new(["/bin/false"]),
+            ),
+            BTreeMap::new(),
+            &WorkloadProvisionCancellation::default(),
+        )
+        .await;
+
+    assert!(matches!(
+        first,
+        Err(ComputeResourceProvisionError::Provision(error))
+            if matches!(error.as_ref(), WorkloadProvisionError::Compensation { .. })
+    ));
+    assert!(provisioner.has_tracked_submission(&key));
+    assert!(provider.teardown_calls().is_empty());
+    let provision_calls = provider.calls_for(&key);
+
+    let completed = provisioner
+        .resume(key.clone(), &WorkloadProvisionCancellation::default())
+        .await
+        .expect("same-process retry should resume the exact failed run and compensate it");
+
+    assert_eq!(
+        completed.compensation(),
+        WorkloadProvisionCompensationState::Completed
+    );
+    assert_eq!(store.record(&key).phase(), WorkloadSagaPhase::Recorded);
+    assert_eq!(provider.calls_for(&key), provision_calls);
+    assert_eq!(
+        provider.teardown_calls(),
+        [
+            WorkloadTeardownStep::StopExecution,
+            WorkloadTeardownStep::DetachNetwork,
+            WorkloadTeardownStep::ReleaseNetwork,
+        ]
+    );
+    assert!(!provisioner.has_tracked_submission(&key));
 }

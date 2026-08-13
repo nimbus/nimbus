@@ -317,14 +317,15 @@ fn natural_exit_preserves_terminal_ipam_until_segment_cleanup_finalizes() {
         "natural-exit inspection must be byte-stable"
     );
 
+    let mut cleanup = manifest.clone();
     let error = backend
-        .stop_sync(&id)
-        .expect_err("segment finalization failure must abort explicit terminal publication");
+        .release_execution_artifacts(&mut cleanup)
+        .expect_err("segment finalization failure must abort owned terminal publication");
     assert!(
         error
             .to_string()
             .contains("injected segment finalization failure"),
-        "explicit stop must surface the cleanup failure: {error}"
+        "owned cleanup must surface the segment finalization failure: {error}"
     );
     let persisted = backend
         .read_manifest(&id)
@@ -352,16 +353,22 @@ fn natural_exit_preserves_terminal_ipam_until_segment_cleanup_finalizes() {
 
     recorder.clear_finalize_release_failure();
     backend
-        .stop_sync(&id)
-        .expect("explicit cleanup retry should converge");
+        .release_execution_artifacts(&mut cleanup)
+        .expect("owned cleanup retry should converge");
+    cleanup.shutdown_requested = true;
+    cleanup.last_exit_code = Some(17);
+    synchronize_handle_status(&mut cleanup, SandboxStatus::Failed);
+    backend
+        .write_manifest(&cleanup)
+        .expect("owned cleanup should publish exact terminal finality");
     let stopped = backend
         .inspect_sync(&id)
         .expect("terminal inspection should succeed")
         .expect("manifest should remain visible");
     assert_eq!(
         stopped.handle.status,
-        SandboxStatus::Stopped,
-        "explicit stop must publish terminal cleanup finality"
+        SandboxStatus::Failed,
+        "owned cleanup must publish terminal cleanup finality"
     );
     let terminal = backend
         .read_manifest(&id)
@@ -443,8 +450,8 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
     result.expect_err("terminal publication should report pending IPAM retirement");
 
     backend
-        .stop_sync(&id)
-        .expect("terminal stop replay should retire the exact pending IPAM receipt");
+        .reconcile_terminal_ipam_retirement(&manifest)
+        .expect("terminal replay should retire the exact pending IPAM receipt");
     assert!(
         !crate::backends::oci::network::retire_terminal_container_ipam_release(
             &backend.ipam_authority,

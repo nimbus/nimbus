@@ -1,13 +1,18 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use nimbus::{Engine, SandboxBackend, SandboxBackendKind, SandboxId};
+use nimbus::{Engine, SandboxBackendKind};
 use nimbus_compute::workload_saga::{
-    ConfirmedWorkloadProvisionCommand, IngressPublicationCapability,
-    IngressPublicationInspectionCapability, NetworkAttachmentCapability,
-    NetworkReservationCapability, WorkloadActivationCapability,
-    WorkloadActivationPrerequisiteCapability, WorkloadPreparationCapability,
+    ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadTeardownCommand,
+    FinalIngressWithdrawalCapability, IngressPublicationCapability,
+    IngressPublicationInspectionCapability, IngressTeardownCapabilities,
+    NetworkAttachmentCapability, NetworkAttachmentTeardownCapabilities,
+    NetworkDetachmentCapability, NetworkReleaseCapability, NetworkReservationCapability,
+    WorkloadActivationCapability, WorkloadActivationPrerequisiteCapability,
+    WorkloadExecutionDrainCapability, WorkloadExecutionStopCapability,
+    WorkloadExecutionTeardownCapabilities, WorkloadPreparationCapability,
     WorkloadProvisionCapabilityFuture, WorkloadReadinessCapability,
+    WorkloadTeardownCapabilityFuture, WorkloadTeardownCapabilityRegistry,
 };
 use nimbus_compute::{
     WorkloadExecutionObservationCapability, WorkloadIngressObservationCapability,
@@ -18,28 +23,11 @@ use nimbus_network::{
     NetworkControlPlaneLocality, NetworkLifecycleCapabilitySet, NetworkLifecycleFeature,
     NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
 };
-use nimbus_sandbox::{SandboxFuture, SandboxInspection};
 use nimbus_server::{
     ServerWorkloadComposition, ServerWorkloadProviders, nimbus_owned_workload_ingress_registration,
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceManager};
 use nimbus_workloads::{NodeIdentity, WorkloadExecutionProviderId};
-
-struct EffectForbiddenSandboxBackend;
-
-impl SandboxBackend for EffectForbiddenSandboxBackend {
-    fn kind(&self) -> SandboxBackendKind {
-        SandboxBackendKind::Krun
-    }
-
-    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
-        panic!("managed server fixture must not inspect a sandbox")
-    }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        panic!("managed server fixture must not stop a sandbox")
-    }
-}
 
 struct EffectForbiddenAttachmentProvider;
 
@@ -63,6 +51,26 @@ macro_rules! effect_forbidden_capability {
     };
 }
 
+macro_rules! effect_forbidden_teardown_capability {
+    ($provider:ty, $capability:ident) => {
+        impl $capability for $provider {
+            fn execute<'a>(
+                &'a self,
+                _command: &'a ConfirmedWorkloadTeardownCommand,
+            ) -> WorkloadTeardownCapabilityFuture<'a> {
+                panic!("managed server fixture must not execute teardown effects")
+            }
+
+            fn inspect<'a>(
+                &'a self,
+                _command: &'a ConfirmedWorkloadTeardownCommand,
+            ) -> WorkloadTeardownCapabilityFuture<'a> {
+                panic!("managed server fixture must not inspect teardown effects")
+            }
+        }
+    };
+}
+
 effect_forbidden_capability!(
     EffectForbiddenAttachmentProvider,
     NetworkReservationCapability
@@ -71,6 +79,11 @@ effect_forbidden_capability!(
     EffectForbiddenAttachmentProvider,
     NetworkAttachmentCapability
 );
+effect_forbidden_teardown_capability!(
+    EffectForbiddenAttachmentProvider,
+    NetworkDetachmentCapability
+);
+effect_forbidden_teardown_capability!(EffectForbiddenAttachmentProvider, NetworkReleaseCapability);
 
 struct EffectForbiddenExecutionProvider;
 
@@ -110,6 +123,15 @@ impl WorkloadExecutionObservationCapability for EffectForbiddenExecutionProvider
     }
 }
 
+effect_forbidden_teardown_capability!(
+    EffectForbiddenExecutionProvider,
+    WorkloadExecutionDrainCapability
+);
+effect_forbidden_teardown_capability!(
+    EffectForbiddenExecutionProvider,
+    WorkloadExecutionStopCapability
+);
+
 struct EffectForbiddenIngressProvider;
 
 effect_forbidden_capability!(EffectForbiddenIngressProvider, IngressPublicationCapability);
@@ -131,6 +153,11 @@ impl WorkloadIngressObservationCapability for EffectForbiddenIngressProvider {
         panic!("managed server fixture must not observe ingress publication")
     }
 }
+
+effect_forbidden_teardown_capability!(
+    EffectForbiddenIngressProvider,
+    FinalIngressWithdrawalCapability
+);
 
 /// Build a complete, effect-forbidden managed realm for transport-only tests.
 pub(crate) fn managed_server_composition(
@@ -164,8 +191,30 @@ pub(crate) fn managed_server_composition(
         .freeze(registry);
     let services = Arc::new(ServiceManager::new(
         Arc::new(EmptyServiceDefinitionCatalog),
-        Arc::new(EffectForbiddenSandboxBackend),
+        SandboxBackendKind::Krun,
     ));
+    let attachment_provider = Arc::new(EffectForbiddenAttachmentProvider);
+    let execution_provider = Arc::new(EffectForbiddenExecutionProvider);
+    let ingress_provider = Arc::new(EffectForbiddenIngressProvider);
+    let execution_provider_id =
+        WorkloadExecutionProviderId::for_registration_key("cli-managed-server-fixture");
+    let teardown_capabilities = WorkloadTeardownCapabilityRegistry::new(
+        [NetworkAttachmentTeardownCapabilities::new(
+            attachment_provider_id.clone(),
+            attachment_provider.clone(),
+            attachment_provider.clone(),
+        )],
+        [WorkloadExecutionTeardownCapabilities::new(
+            execution_provider_id.clone(),
+            execution_provider.clone(),
+            execution_provider.clone(),
+        )],
+        [IngressTeardownCapabilities::new(
+            ingress_provider_id.clone(),
+            ingress_provider.clone(),
+        )],
+    )
+    .expect("managed fixture teardown capabilities should validate");
     ServerWorkloadComposition::new(
         engine,
         manager,
@@ -175,12 +224,13 @@ pub(crate) fn managed_server_composition(
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
         ServerWorkloadProviders::new(
             attachment_provider_id,
-            Arc::new(EffectForbiddenAttachmentProvider),
-            WorkloadExecutionProviderId::for_registration_key("cli-managed-server-fixture"),
-            Arc::new(EffectForbiddenExecutionProvider),
+            attachment_provider,
+            execution_provider_id,
+            execution_provider,
             ingress_provider_id,
-            Arc::new(EffectForbiddenIngressProvider),
-        ),
+            ingress_provider,
+        )
+        .with_teardown_capabilities(teardown_capabilities),
     )
     .expect("complete effect-forbidden managed fixture should compose")
 }

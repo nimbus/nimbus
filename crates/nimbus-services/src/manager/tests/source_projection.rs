@@ -7,7 +7,7 @@ fn manager_with_backend() -> (ServiceManager, Arc<StubSandboxBackend>) {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        backend.clone(),
+        backend.kind(),
     );
     (manager, backend)
 }

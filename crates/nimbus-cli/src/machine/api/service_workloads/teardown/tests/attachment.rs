@@ -874,17 +874,6 @@ impl HostLifecycleBackend for NoopHostProvider {
         ))
     }
 
-    fn stop<'a>(
-        &'a self,
-        _execution_id: nimbus_workloads::WorkloadExecutionId,
-    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-        Box::pin(async {
-            Err(Error::PermissionDenied(
-                "attachment preflight must not call coarse stop".to_owned(),
-            ))
-        })
-    }
-
     fn inspect<'a>(
         &'a self,
         _execution_id: nimbus_workloads::WorkloadExecutionId,

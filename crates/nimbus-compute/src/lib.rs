@@ -22,9 +22,9 @@ pub mod runtime_manager;
 pub mod sandbox_spec;
 pub mod sandboxes;
 pub mod scheduling;
-pub mod service_manager;
 pub mod services;
 pub mod state;
+mod tenant_retirement;
 pub mod workload_executable;
 pub mod workload_network_plan;
 pub mod workload_projection;
@@ -56,8 +56,9 @@ pub use workload_provision_composition::{
 };
 pub use workload_provision_source::ServiceManagerWorkloadProvisionSourceAuthority;
 pub use workload_provisioner::{
-    WorkloadProvisionCancellation, WorkloadProvisionConfigurationError,
-    WorkloadProvisionEndpointSemantics, WorkloadProvisionError, WorkloadProvisionOutcome,
-    WorkloadProvisionRequest, WorkloadProvisionResult, WorkloadProvisionSource,
-    WorkloadProvisioner, embedded_local_node_identity,
+    WorkloadProvisionCancellation, WorkloadProvisionCompensationState,
+    WorkloadProvisionConfigurationError, WorkloadProvisionEndpointSemantics,
+    WorkloadProvisionError, WorkloadProvisionOutcome, WorkloadProvisionRequest,
+    WorkloadProvisionResult, WorkloadProvisionSource, WorkloadProvisioner,
+    embedded_local_node_identity,
 };

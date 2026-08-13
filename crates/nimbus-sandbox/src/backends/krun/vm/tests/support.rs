@@ -53,11 +53,13 @@ pub(super) use crate::spec::{
     SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
 };
 pub(super) use nimbus_network::EndpointProtocol;
-
 pub(super) fn sample_spec() -> SandboxSpec {
     sample_spec_with_rootfs(Path::new("/srv/rootfs"))
 }
 
+/// Drive the same four exact provider command streams used by compute for one
+/// immutable Krun manifest. This is test composition, not a backend lifecycle
+/// capability.
 /// Preserve plan-only lowering coverage after removal of the production
 /// coarse-start authority. This fixture deliberately exercises only the
 /// test-only planner and provider-local artifact materialization; it does not

@@ -500,7 +500,6 @@ fn teardown_action_label(decision: &WorkloadTeardownDecision) -> &'static str {
             ProposedWorkloadTeardownTransition::RecordTerminal,
         ) => "record-terminal-evidence",
         WorkloadTeardownDecision::CleanupPending { .. } => "inspect-cleanup",
-        WorkloadTeardownDecision::RestartSettlementPending(_) => "restart-settlement-pending",
         WorkloadTeardownDecision::Quiescent => "quiescent",
     }
 }

@@ -23,7 +23,7 @@ fn durably_cancelled_plan_only_workload_inspects_without_publication() {
         .write_manifest(&manifest)
         .expect("the prepared manifest should be the durable handoff barrier");
     backend
-        .stop_sync(&manifest.handle.id)
+        .mark_plan_only_service_workload_stopped(&manifest.handle.id)
         .expect("cancellation should durably converge");
 
     let canonical_manifest = std::fs::read(&manifest.conmon_layout.manifest_path)
@@ -66,7 +66,7 @@ fn durably_cancelled_plan_only_workload_inspects_without_publication() {
         "read-only inspection must leave the publication tripwire untouched"
     );
     backend
-        .stop_sync(&manifest.handle.id)
+        .mark_plan_only_service_workload_stopped(&manifest.handle.id)
         .expect("terminal cancellation replay should remain idempotent");
 }
 
@@ -162,7 +162,7 @@ fn nonterminal_cancel_decision_remains_fenced_from_inspection() {
         "fenced inspection must not release or rewrite prepared authority"
     );
     backend
-        .stop_sync(&manifest.handle.id)
+        .mark_plan_only_service_workload_stopped(&manifest.handle.id)
         .expect("the authorized stop path should converge the durable Cancel decision");
 }
 
@@ -184,7 +184,7 @@ fn terminal_cancel_inspection_rejects_substituted_identity() {
         .write_manifest(&manifest)
         .expect("the prepared manifest should be the durable handoff barrier");
     backend
-        .stop_sync(&manifest.handle.id)
+        .mark_plan_only_service_workload_stopped(&manifest.handle.id)
         .expect("cancellation should durably converge");
     let decision_path = manifest
         .conmon_layout

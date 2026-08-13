@@ -32,9 +32,11 @@ use crate::workload_provision_composition::{
     WorkloadProvisionSourceSnapshot, compose_workload_provision,
 };
 use crate::workload_saga::{
-    WorkloadProvisionCapabilityRegistry, WorkloadProvisionDispatcher, WorkloadProvisionDriver,
-    WorkloadProvisionRun, WorkloadProvisionRunError, WorkloadProvisionSourceAuthority,
-    WorkloadSagaCoordinator,
+    WorkloadProvisionCapabilityRegistry, WorkloadProvisionCompensationError,
+    WorkloadProvisionCompensator, WorkloadProvisionDispatcher, WorkloadProvisionDriver,
+    WorkloadProvisionRun, WorkloadProvisionRunDisposition, WorkloadProvisionRunError,
+    WorkloadProvisionSourceAuthority, WorkloadSagaCoordinator, WorkloadTeardownRunDisposition,
+    WorkloadTeardownRuntime,
 };
 
 const EMBEDDED_LOCAL_NODE_ID: &str = "embedded-local-node";
@@ -103,7 +105,7 @@ pub struct WorkloadProvisionEndpointSemantics {
 }
 
 impl WorkloadProvisionEndpointSemantics {
-    pub fn new(
+    pub(crate) fn new(
         listener_name: impl Into<String>,
         forwarding: WorkloadNetworkForwardingBehavior,
         tls: NetworkTlsBehavior,
@@ -196,6 +198,11 @@ pub enum WorkloadProvisionError {
     Composition(#[from] WorkloadProvisionCompositionError),
     #[error("workload provision drive failed: {0}")]
     Run(#[from] WorkloadProvisionRunError),
+    #[error("failed-provision compensation failed: {source}")]
+    Compensation {
+        source: Arc<WorkloadProvisionCompensationError>,
+        failed_run: Box<WorkloadProvisionRun>,
+    },
     #[error("tracked workload provision task ended without durable truth")]
     TrackedTaskEnded,
 }
@@ -204,7 +211,18 @@ pub enum WorkloadProvisionError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkloadProvisionOutcome {
     run: WorkloadProvisionRun,
+    durable_record: nimbus_workloads::WorkloadSagaRecord,
+    compensation: WorkloadProvisionCompensationState,
     projection: WorkloadProjectionState,
+}
+
+/// Durable cleanup state paired with a provision result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkloadProvisionCompensationState {
+    NotRequired,
+    Completed,
+    Waiting,
+    CleanupPending,
 }
 
 impl WorkloadProvisionOutcome {
@@ -213,7 +231,7 @@ impl WorkloadProvisionOutcome {
     }
 
     pub fn record(&self) -> &nimbus_workloads::WorkloadSagaRecord {
-        self.run.record()
+        &self.durable_record
     }
 
     pub const fn disposition(&self) -> crate::workload_saga::WorkloadProvisionRunDisposition {
@@ -223,6 +241,10 @@ impl WorkloadProvisionOutcome {
     pub const fn projection(&self) -> WorkloadProjectionState {
         self.projection
     }
+
+    pub const fn compensation(&self) -> WorkloadProvisionCompensationState {
+        self.compensation
+    }
 }
 
 pub type WorkloadProvisionResult = Result<WorkloadProvisionOutcome, Arc<WorkloadProvisionError>>;
@@ -231,6 +253,12 @@ struct InFlightProvision {
     intent: Option<WorkloadSagaIntent>,
     completion: watch::Receiver<Option<WorkloadProvisionResult>>,
     _task: Option<JoinHandle<()>>,
+}
+
+#[derive(Clone)]
+enum RetainedCompensationWork {
+    ResumeTeardown(Box<WorkloadProvisionOutcome>),
+    RetryFailedProvisionHandoff(Box<WorkloadProvisionRun>),
 }
 
 #[derive(Default)]
@@ -248,6 +276,7 @@ pub struct WorkloadProvisioner {
     coordinator: Arc<WorkloadSagaCoordinator>,
     driver: Arc<WorkloadProvisionDriver>,
     projection: Arc<WorkloadProjectionOrchestrator>,
+    compensation: Arc<WorkloadProvisionCompensator>,
     supervisor: Arc<Mutex<WorkloadProvisionSupervisor>>,
     #[cfg(test)]
     test_submission_boundary: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
@@ -268,6 +297,7 @@ impl WorkloadProvisioner {
         capability_selection: NetworkCapabilitySelection,
         sovereignty: NetworkSovereigntyRequirements,
         coordinator: Arc<WorkloadSagaCoordinator>,
+        teardown_runtime: Arc<WorkloadTeardownRuntime>,
         source_authority: Arc<dyn WorkloadProvisionSourceAuthority>,
         provision_capabilities: WorkloadProvisionCapabilityRegistry,
         projection_sink: Arc<dyn WorkloadProjectionSink>,
@@ -292,10 +322,17 @@ impl WorkloadProvisioner {
             capability_selection,
             sovereignty,
             coordinator: Arc::clone(&coordinator),
-            driver: Arc::new(WorkloadProvisionDriver::new(coordinator, dispatcher)),
+            driver: Arc::new(WorkloadProvisionDriver::new(
+                Arc::clone(&coordinator),
+                dispatcher,
+            )),
             projection: Arc::new(WorkloadProjectionOrchestrator::new(
                 provision_capabilities,
                 projection_sink,
+            )),
+            compensation: Arc::new(WorkloadProvisionCompensator::new(
+                Arc::clone(&coordinator),
+                teardown_runtime,
             )),
             supervisor: Arc::new(Mutex::new(WorkloadProvisionSupervisor::default())),
             #[cfg(test)]
@@ -305,6 +342,140 @@ impl WorkloadProvisioner {
             #[cfg(test)]
             test_retirement_claim_boundary: Mutex::new(None),
         })
+    }
+
+    async fn finalize_run(&self, run: WorkloadProvisionRun) -> WorkloadProvisionResult {
+        let (durable_record, compensation) = match run.disposition() {
+            WorkloadProvisionRunDisposition::DefiniteFailure => {
+                let teardown = match self
+                    .compensation
+                    .compensate_definite_provision_failure(run.record())
+                    .await
+                {
+                    Ok(teardown) => teardown,
+                    Err(source) => {
+                        return Err(Arc::new(WorkloadProvisionError::Compensation {
+                            source: Arc::new(source),
+                            failed_run: Box::new(run),
+                        }));
+                    }
+                };
+                let state = match teardown.disposition() {
+                    WorkloadTeardownRunDisposition::Completed => {
+                        WorkloadProvisionCompensationState::Completed
+                    }
+                    WorkloadTeardownRunDisposition::Waiting => {
+                        WorkloadProvisionCompensationState::Waiting
+                    }
+                    WorkloadTeardownRunDisposition::CleanupPending => {
+                        WorkloadProvisionCompensationState::CleanupPending
+                    }
+                };
+                (teardown.record().clone(), state)
+            }
+            WorkloadProvisionRunDisposition::Observed
+            | WorkloadProvisionRunDisposition::Waiting
+            | WorkloadProvisionRunDisposition::SuccessorSettlementReady => (
+                run.record().clone(),
+                WorkloadProvisionCompensationState::NotRequired,
+            ),
+        };
+        let projection = self.projection.project(&run).await;
+        Ok(WorkloadProvisionOutcome {
+            run,
+            durable_record,
+            compensation,
+            projection,
+        })
+    }
+
+    fn retain_after_result(result: &WorkloadProvisionResult) -> bool {
+        match result {
+            Ok(outcome) => matches!(
+                outcome.compensation(),
+                WorkloadProvisionCompensationState::Waiting
+                    | WorkloadProvisionCompensationState::CleanupPending
+            ),
+            Err(error) => matches!(error.as_ref(), WorkloadProvisionError::Compensation { .. }),
+        }
+    }
+
+    fn retained_compensation_work(
+        result: &WorkloadProvisionResult,
+    ) -> Option<RetainedCompensationWork> {
+        match result {
+            Ok(outcome)
+                if outcome.compensation() == WorkloadProvisionCompensationState::Waiting =>
+            {
+                Some(RetainedCompensationWork::ResumeTeardown(Box::new(
+                    outcome.clone(),
+                )))
+            }
+            Err(error) => match error.as_ref() {
+                WorkloadProvisionError::Compensation { failed_run, .. } => Some(
+                    RetainedCompensationWork::RetryFailedProvisionHandoff(failed_run.clone()),
+                ),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn parked_retained_result(result: &WorkloadProvisionResult) -> bool {
+        Self::retain_after_result(result) && Self::retained_compensation_work(result).is_none()
+    }
+
+    async fn resume_compensation(
+        &self,
+        prior: WorkloadProvisionOutcome,
+    ) -> WorkloadProvisionResult {
+        let failed_run = prior.run.clone();
+        let teardown = self
+            .compensation
+            .resume(prior.record().key().clone())
+            .await
+            .map_err(|source| {
+                Arc::new(WorkloadProvisionError::Compensation {
+                    source: Arc::new(source),
+                    failed_run: Box::new(failed_run),
+                })
+            })?;
+        let compensation = match teardown.disposition() {
+            WorkloadTeardownRunDisposition::Completed => {
+                WorkloadProvisionCompensationState::Completed
+            }
+            WorkloadTeardownRunDisposition::Waiting => WorkloadProvisionCompensationState::Waiting,
+            WorkloadTeardownRunDisposition::CleanupPending => {
+                WorkloadProvisionCompensationState::CleanupPending
+            }
+        };
+        Ok(WorkloadProvisionOutcome {
+            run: prior.run,
+            durable_record: teardown.record().clone(),
+            compensation,
+            projection: prior.projection,
+        })
+    }
+
+    fn publish_tracked_result(
+        &self,
+        key: &WorkloadSagaKey,
+        sender: &watch::Sender<Option<WorkloadProvisionResult>>,
+        result: WorkloadProvisionResult,
+    ) {
+        let retain = Self::retain_after_result(&result);
+        let mut supervisor = self
+            .supervisor
+            .lock()
+            .expect("workload provision supervisor lock should not be poisoned");
+        sender.send_replace(Some(result));
+        if retain {
+            if let Some(entry) = supervisor.in_flight.get_mut(key) {
+                entry._task = None;
+            }
+        } else {
+            supervisor.in_flight.remove(key);
+        }
     }
 
     pub fn local_node(&self) -> &NodeIdentity {
@@ -470,6 +641,69 @@ impl WorkloadProvisioner {
             .map(|outcome| (claimed, Some(outcome)))
     }
 
+    /// Fence one exact key under an already installed tenant-wide source
+    /// barrier and join retained provisioning without reopening services.
+    pub(crate) async fn claim_tenant_retirement_and_join(
+        self: &Arc<Self>,
+        key: &WorkloadSagaKey,
+    ) -> Result<Option<WorkloadProvisionOutcome>, Arc<WorkloadProvisionError>> {
+        let completion = {
+            let mut supervisor = self
+                .supervisor
+                .lock()
+                .expect("workload provision supervisor lock should not be poisoned");
+            supervisor.retiring.insert(key.clone());
+            supervisor
+                .in_flight
+                .get(key)
+                .map(|entry| entry.completion.clone())
+        };
+        let Some(completion) = completion else {
+            return Ok(None);
+        };
+        let cancellation = WorkloadProvisionCancellation::default();
+        wait_for_completion(completion, &cancellation)
+            .await
+            .map(Some)
+    }
+
+    /// Fence every source key captured by one tenant-retirement snapshot under
+    /// the submission lock, then join all retained provisions. The services
+    /// barrier rejects reservations after the snapshot; this batch fence
+    /// captures reservations that won immediately before it.
+    pub(crate) async fn claim_tenant_retirements_and_join(
+        self: &Arc<Self>,
+        keys: &[WorkloadSagaKey],
+    ) -> Result<(), Arc<WorkloadProvisionError>> {
+        let completions = {
+            let mut supervisor = self
+                .supervisor
+                .lock()
+                .expect("workload provision supervisor lock should not be poisoned");
+            let mut completions = Vec::new();
+            for key in keys {
+                supervisor.retiring.insert(key.clone());
+                if let Some(entry) = supervisor.in_flight.get(key) {
+                    completions.push(entry.completion.clone());
+                }
+            }
+            #[cfg(test)]
+            self.notify_test_retirement_claim_boundary();
+            completions
+        };
+
+        let cancellation = WorkloadProvisionCancellation::default();
+        let mut first_error = None;
+        for completion in completions {
+            if let Err(error) = wait_for_completion(completion, &cancellation).await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
     /// Resume durable provision truth only as part of an already-fenced
     /// retirement. Public resume and new submissions remain rejected.
     pub(crate) async fn resume_for_retirement(
@@ -518,11 +752,38 @@ impl WorkloadProvisioner {
         if supervisor.retiring.contains(&key) {
             return Err(Arc::new(WorkloadProvisionError::RetirementInProgress));
         }
+        if let Some(existing) = supervisor.in_flight.get(&key) {
+            if existing.intent.as_ref() != Some(&intent) {
+                return Err(Arc::new(WorkloadProvisionError::CrossedTrackedRequest));
+            }
+            if existing
+                .completion
+                .borrow()
+                .as_ref()
+                .is_some_and(Self::parked_retained_result)
+            {
+                return Ok(existing.completion.clone());
+            }
+        }
         reserve_source()
             .map_err(WorkloadProvisionError::SourceReservation)
             .map_err(Arc::new)?;
-        if let Some(existing) = supervisor.in_flight.get(&key) {
+        if let Some(existing) = supervisor.in_flight.get_mut(&key) {
             if existing.intent.as_ref() == Some(&intent) {
+                let retry = existing
+                    .completion
+                    .borrow()
+                    .as_ref()
+                    .and_then(Self::retained_compensation_work);
+                if let Some(retry) = retry {
+                    let (sender, receiver) = watch::channel(None);
+                    existing.completion = receiver.clone();
+                    existing._task = None;
+                    drop(supervisor);
+                    drop(cancellation_guard);
+                    self.spawn_retained_compensation_task(key, retry, sender);
+                    return Ok(receiver);
+                }
                 return Ok(existing.completion.clone());
             }
             return Err(Arc::new(WorkloadProvisionError::CrossedTrackedRequest));
@@ -539,37 +800,7 @@ impl WorkloadProvisioner {
         drop(supervisor);
         drop(cancellation_guard);
 
-        let provisioner = Arc::clone(self);
-        let task_key = key.clone();
-        let task = tokio::spawn(async move {
-            let result = match provisioner
-                .driver
-                .submit_and_drive(task_key.clone(), intent)
-                .await
-            {
-                Ok(run) => {
-                    let projection = provisioner.projection.project(&run).await;
-                    Ok(WorkloadProvisionOutcome { run, projection })
-                }
-                Err(error) => Err(Arc::new(WorkloadProvisionError::Run(error))),
-            };
-            sender.send_replace(Some(result));
-            provisioner
-                .supervisor
-                .lock()
-                .expect("workload provision supervisor lock should not be poisoned")
-                .in_flight
-                .remove(&task_key);
-        });
-        if let Some(entry) = self
-            .supervisor
-            .lock()
-            .expect("workload provision supervisor lock should not be poisoned")
-            .in_flight
-            .get_mut(&key)
-        {
-            entry._task = Some(task);
-        }
+        self.spawn_submission_task(key, intent, sender);
         Ok(receiver)
     }
 
@@ -590,7 +821,21 @@ impl WorkloadProvisioner {
         if supervisor.retiring.contains(&key) && !allow_retirement {
             return Err(Arc::new(WorkloadProvisionError::RetirementInProgress));
         }
-        if let Some(existing) = supervisor.in_flight.get(&key) {
+        if let Some(existing) = supervisor.in_flight.get_mut(&key) {
+            let retry = existing
+                .completion
+                .borrow()
+                .as_ref()
+                .and_then(Self::retained_compensation_work);
+            if let Some(retry) = retry {
+                let (sender, receiver) = watch::channel(None);
+                existing.completion = receiver.clone();
+                existing._task = None;
+                drop(supervisor);
+                drop(cancellation_guard);
+                self.spawn_retained_compensation_task(key, retry, sender);
+                return Ok(receiver);
+            }
             return Ok(existing.completion.clone());
         }
         let (sender, receiver) = watch::channel(None);
@@ -605,34 +850,81 @@ impl WorkloadProvisioner {
         drop(supervisor);
         drop(cancellation_guard);
 
+        self.spawn_resume_task(key, sender);
+        Ok(receiver)
+    }
+
+    fn spawn_submission_task(
+        self: &Arc<Self>,
+        key: WorkloadSagaKey,
+        intent: WorkloadSagaIntent,
+        sender: watch::Sender<Option<WorkloadProvisionResult>>,
+    ) {
+        let provisioner = Arc::clone(self);
+        let task_key = key.clone();
+        let task = tokio::spawn(async move {
+            let result = match provisioner
+                .driver
+                .submit_and_drive(task_key.clone(), intent)
+                .await
+            {
+                Ok(run) => provisioner.finalize_run(run).await,
+                Err(error) => Err(Arc::new(WorkloadProvisionError::Run(error))),
+            };
+            provisioner.publish_tracked_result(&task_key, &sender, result);
+        });
+        self.install_tracked_task(&key, task);
+    }
+
+    fn spawn_resume_task(
+        self: &Arc<Self>,
+        key: WorkloadSagaKey,
+        sender: watch::Sender<Option<WorkloadProvisionResult>>,
+    ) {
         let provisioner = Arc::clone(self);
         let task_key = key.clone();
         let task = tokio::spawn(async move {
             let result = match provisioner.driver.resume(&task_key).await {
-                Ok(run) => {
-                    let projection = provisioner.projection.project(&run).await;
-                    Ok(WorkloadProvisionOutcome { run, projection })
-                }
+                Ok(run) => provisioner.finalize_run(run).await,
                 Err(error) => Err(Arc::new(WorkloadProvisionError::Run(error))),
             };
-            sender.send_replace(Some(result));
-            provisioner
-                .supervisor
-                .lock()
-                .expect("workload provision supervisor lock should not be poisoned")
-                .in_flight
-                .remove(&task_key);
+            provisioner.publish_tracked_result(&task_key, &sender, result);
         });
+        self.install_tracked_task(&key, task);
+    }
+
+    fn spawn_retained_compensation_task(
+        self: &Arc<Self>,
+        key: WorkloadSagaKey,
+        work: RetainedCompensationWork,
+        sender: watch::Sender<Option<WorkloadProvisionResult>>,
+    ) {
+        let provisioner = Arc::clone(self);
+        let task_key = key.clone();
+        let task = tokio::spawn(async move {
+            let result = match work {
+                RetainedCompensationWork::ResumeTeardown(prior) => {
+                    provisioner.resume_compensation(*prior).await
+                }
+                RetainedCompensationWork::RetryFailedProvisionHandoff(run) => {
+                    provisioner.finalize_run(*run).await
+                }
+            };
+            provisioner.publish_tracked_result(&task_key, &sender, result);
+        });
+        self.install_tracked_task(&key, task);
+    }
+
+    fn install_tracked_task(&self, key: &WorkloadSagaKey, task: JoinHandle<()>) {
         if let Some(entry) = self
             .supervisor
             .lock()
             .expect("workload provision supervisor lock should not be poisoned")
             .in_flight
-            .get_mut(&key)
+            .get_mut(key)
         {
             entry._task = Some(task);
         }
-        Ok(receiver)
     }
 
     #[cfg(test)]
@@ -702,6 +994,15 @@ impl WorkloadProvisioner {
         {
             entered.add_permits(1);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_tracked_submission(&self, key: &WorkloadSagaKey) -> bool {
+        self.supervisor
+            .lock()
+            .expect("workload provision supervisor lock should not be poisoned")
+            .in_flight
+            .contains_key(key)
     }
 }
 

@@ -4,11 +4,16 @@ use crate::compose::lifecycle::{
     provision_compose_service,
 };
 use nimbus_compute::workload_saga::{
-    ConfirmedWorkloadProvisionCommand, IngressPublicationCapability,
-    IngressPublicationInspectionCapability, NetworkAttachmentCapability,
-    NetworkReservationCapability, WorkloadActivationCapability,
-    WorkloadActivationPrerequisiteCapability, WorkloadPreparationCapability,
+    ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadTeardownCommand,
+    FinalIngressWithdrawalCapability, IngressPublicationCapability,
+    IngressPublicationInspectionCapability, IngressTeardownCapabilities,
+    NetworkAttachmentCapability, NetworkAttachmentTeardownCapabilities,
+    NetworkDetachmentCapability, NetworkReleaseCapability, NetworkReservationCapability,
+    WorkloadActivationCapability, WorkloadActivationPrerequisiteCapability,
+    WorkloadExecutionDrainCapability, WorkloadExecutionStopCapability,
+    WorkloadExecutionTeardownCapabilities, WorkloadPreparationCapability,
     WorkloadProvisionCapabilityFuture, WorkloadReadinessCapability,
+    WorkloadTeardownCapabilityFuture, WorkloadTeardownCapabilityRegistry,
 };
 use nimbus_compute::{
     SandboxServiceProvisionSnapshot, WorkloadExecutionObservationCapability,
@@ -53,8 +58,30 @@ macro_rules! foreground_effect_capability {
     };
 }
 
+macro_rules! foreground_teardown_capability {
+    ($provider:ty, $capability:ident) => {
+        impl $capability for $provider {
+            fn execute<'a>(
+                &'a self,
+                _command: &'a ConfirmedWorkloadTeardownCommand,
+            ) -> WorkloadTeardownCapabilityFuture<'a> {
+                panic!("foreground ownership construction must not execute teardown effects")
+            }
+
+            fn inspect<'a>(
+                &'a self,
+                _command: &'a ConfirmedWorkloadTeardownCommand,
+            ) -> WorkloadTeardownCapabilityFuture<'a> {
+                panic!("foreground ownership construction must not inspect teardown effects")
+            }
+        }
+    };
+}
+
 foreground_effect_capability!(ForegroundAttachmentProvider, NetworkReservationCapability);
 foreground_effect_capability!(ForegroundAttachmentProvider, NetworkAttachmentCapability);
+foreground_teardown_capability!(ForegroundAttachmentProvider, NetworkDetachmentCapability);
+foreground_teardown_capability!(ForegroundAttachmentProvider, NetworkReleaseCapability);
 
 struct ForegroundExecutionProvider;
 
@@ -88,6 +115,12 @@ impl WorkloadExecutionObservationCapability for ForegroundExecutionProvider {
     }
 }
 
+foreground_teardown_capability!(
+    ForegroundExecutionProvider,
+    WorkloadExecutionDrainCapability
+);
+foreground_teardown_capability!(ForegroundExecutionProvider, WorkloadExecutionStopCapability);
+
 struct ForegroundIngressProvider {
     _listener: std::net::TcpListener,
 }
@@ -111,6 +144,8 @@ impl WorkloadIngressObservationCapability for ForegroundIngressProvider {
         panic!("foreground ownership construction must not observe ingress publication")
     }
 }
+
+foreground_teardown_capability!(ForegroundIngressProvider, FinalIngressWithdrawalCapability);
 
 struct RecordingComposeProvision {
     definition: ServiceDefinition,
@@ -337,7 +372,7 @@ async fn foreground_compose_owner_retains_listener_rejects_second_realm_and_sett
         .freeze(registry);
     let services = Arc::new(ServiceManager::new(
         Arc::new(EmptyServiceDefinitionCatalog),
-        Arc::new(StubBackend::default()),
+        nimbus::SandboxBackendKind::Krun,
     ));
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .expect("process-bound foreground listener should bind");
@@ -348,6 +383,27 @@ async fn foreground_compose_owner_retains_listener_rejects_second_realm_and_sett
         _listener: listener,
     });
     let ingress_lifetime = Arc::downgrade(&ingress);
+    let attachment = Arc::new(ForegroundAttachmentProvider);
+    let execution = Arc::new(ForegroundExecutionProvider);
+    let execution_provider_id =
+        WorkloadExecutionProviderId::for_registration_key("compose-foreground-execution");
+    let teardown_capabilities = WorkloadTeardownCapabilityRegistry::new(
+        [NetworkAttachmentTeardownCapabilities::new(
+            attachment_provider_id.clone(),
+            attachment.clone(),
+            attachment.clone(),
+        )],
+        [WorkloadExecutionTeardownCapabilities::new(
+            execution_provider_id.clone(),
+            execution.clone(),
+            execution.clone(),
+        )],
+        [IngressTeardownCapabilities::new(
+            ingress_provider_id.clone(),
+            ingress.clone(),
+        )],
+    )
+    .expect("foreground teardown capabilities should validate");
     let composition = ServerWorkloadComposition::new(
         Arc::clone(&engine),
         Arc::clone(&manager),
@@ -357,12 +413,13 @@ async fn foreground_compose_owner_retains_listener_rejects_second_realm_and_sett
         NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
         ServerWorkloadProviders::new(
             attachment_provider_id,
-            Arc::new(ForegroundAttachmentProvider),
-            WorkloadExecutionProviderId::for_registration_key("compose-foreground-execution"),
-            Arc::new(ForegroundExecutionProvider),
+            attachment,
+            execution_provider_id,
+            execution,
             ingress_provider_id,
             Arc::clone(&ingress),
-        ),
+        )
+        .with_teardown_capabilities(teardown_capabilities),
     )
     .expect("complete foreground composition should validate");
     let owner = ComposeForegroundOwner::open_composition_for_test(Arc::clone(&engine), composition);

@@ -664,15 +664,13 @@ fn systemd_backend_rejects_disallowed_properties_and_wrong_backend_plan() {
 }
 
 #[tokio::test]
-async fn backend_exact_activation_maps_stop_and_inspect_status() {
+async fn backend_exact_activation_maps_inspect_status() {
     let client = FakeSystemdDbusClient::available();
     let backend = SystemdTransientUnitBackend::new(client.clone());
     let binding = binding();
     let plan = backend
         .validate(&binding, request())
         .expect("systemd plan should validate");
-    let execution_id = plan.execution_id().clone();
-
     let (execution, claim) = activation_command_for_plan(&plan, 0x40);
     let activated = backend
         .activate_exact(execution.clone(), claim.clone(), request())
@@ -689,15 +687,6 @@ async fn backend_exact_activation_maps_stop_and_inspect_status() {
     assert_eq!(
         inspected.reason(),
         super::super::HostLifecycleStatusReason::Submitted
-    );
-
-    let stopped = backend
-        .stop(execution_id)
-        .await
-        .expect("stop should map fake D-Bus status");
-    assert_eq!(
-        stopped.reason(),
-        super::super::HostLifecycleStatusReason::Stopped
     );
 }
 

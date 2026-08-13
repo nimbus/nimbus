@@ -40,14 +40,6 @@ impl SandboxBackend for ForwardedMachineApiSandboxBackend {
             })
         })
     }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        Box::pin(async move {
-            Err(SandboxError::BackendUnavailable {
-                message: unsupported_machine_api_backend_message(),
-            })
-        })
-    }
 }
 
 fn unsupported_machine_api_backend_message() -> String {

@@ -3,13 +3,16 @@
 use std::sync::Arc;
 
 use nimbus_workloads::{
-    WorkloadRestartCandidatePage, WorkloadRestartCandidatePageRequest, WorkloadSagaCommit,
-    WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecord,
-    WorkloadSagaStore, WorkloadSagaStoreError,
+    WorkloadProvisionDisposition, WorkloadRestartCandidatePage,
+    WorkloadRestartCandidatePageRequest, WorkloadSagaCommit, WorkloadSagaError, WorkloadSagaKey,
+    WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
+    WorkloadSagaTenantPageRequest, WorkloadTeardownCause,
 };
 
 mod desire_admission;
 mod ingress;
+mod provision_compensation;
 mod provision_decision;
 mod provision_dispatch;
 mod provision_dispatcher;
@@ -48,6 +51,10 @@ pub use ingress::{
 pub use nimbus_workloads::{
     WorkloadProvisionCommandId, WorkloadProvisionCommandMode, WorkloadTeardownCommandMode,
 };
+pub use provision_compensation::WorkloadProvisionCompensationError;
+pub(crate) use provision_compensation::WorkloadProvisionCompensator;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use provision_compensation::compensate_definite_provision_failure_once_for_test;
 pub use provision_decision::{
     ProposedWorkloadProvisionTransition, WorkloadProvisionDecision, WorkloadProvisionSymbolicAction,
 };
@@ -97,6 +104,8 @@ pub use restart_provider::{
     WorkloadRestartCapabilityRegistryError, WorkloadRestartPreparationCapability,
     WorkloadRestartProviderObservation, WorkloadRestartReadinessCapability,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+pub use restart_runtime::settle_restart_for_teardown_once_for_test;
 pub use restart_sandbox::{ValidatedSandboxRestartCommand, validate_sandbox_restart_command};
 pub(crate) use restart_submission::{
     ExplicitWorkloadRestartDisposition, ExplicitWorkloadRestartError,
@@ -192,6 +201,48 @@ impl WorkloadSagaCoordinator {
         Ok(withdrawal)
     }
 
+    /// Commit the exact retained definite provision failure as the sole
+    /// durable compensation cause. A lost response or competing coordinator
+    /// is adopted only after an exact read authenticates the same lifecycle.
+    pub(crate) async fn commit_failed_provision_compensation(
+        &self,
+        failed: &WorkloadSagaRecord,
+    ) -> Result<WorkloadSagaRecord, WorkloadSagaStoreError> {
+        let (claim, failure) = match failed.provision_disposition() {
+            Some(WorkloadProvisionDisposition::DefiniteFailure { claim, failure }) => {
+                (claim.clone(), failure.clone())
+            }
+            _ => {
+                return Err(WorkloadSagaError::InvalidTransition(
+                    "failed-provision compensation requires exact durable definite failure",
+                )
+                .into());
+            }
+        };
+        let cause = WorkloadTeardownCause::FailedProvision {
+            claim: Box::new(claim),
+            failure,
+        };
+        let withdrawal = failed.commit_teardown_cause(cause.clone())?;
+        match self
+            .confirm_transition(Some(failed), withdrawal.clone())
+            .await?
+        {
+            WorkloadSagaConfirmation::AppliedByThisCall
+            | WorkloadSagaConfirmation::ConfirmedAfterAmbiguity
+            | WorkloadSagaConfirmation::ConfirmedReplay => Ok(withdrawal),
+            WorkloadSagaConfirmation::Conflict { .. }
+            | WorkloadSagaConfirmation::UnresolvedAmbiguity => {
+                let observed = self
+                    .load(failed.key())
+                    .await?
+                    .ok_or(WorkloadSagaStoreError::Corrupt)?;
+                authenticate_failed_provision_compensation(failed, &withdrawal, &cause, &observed)?;
+                Ok(observed)
+            }
+        }
+    }
+
     async fn commit_loaded(
         &self,
         loaded: Option<&WorkloadSagaRecord>,
@@ -215,11 +266,46 @@ impl WorkloadSagaCoordinator {
         self.store.list_recoverable(request).await
     }
 
+    pub(crate) async fn list_for_tenant(
+        &self,
+        tenant_id: &nimbus_core::TenantId,
+        request: WorkloadSagaTenantPageRequest,
+    ) -> Result<WorkloadSagaTenantPage, WorkloadSagaStoreError> {
+        self.store.list_for_tenant(tenant_id, request).await
+    }
+
     pub(super) async fn list_restart_candidates(
         &self,
         request: WorkloadRestartCandidatePageRequest,
     ) -> Result<WorkloadRestartCandidatePage, WorkloadSagaStoreError> {
         self.store.list_restart_candidates(request).await
+    }
+}
+
+fn authenticate_failed_provision_compensation(
+    failed: &WorkloadSagaRecord,
+    withdrawal: &WorkloadSagaRecord,
+    cause: &WorkloadTeardownCause,
+    observed: &WorkloadSagaRecord,
+) -> Result<(), WorkloadSagaStoreError> {
+    observed.validate()?;
+    let same_lifecycle = observed.key() == failed.key()
+        && observed.saga_id() == failed.saga_id()
+        && observed.active_intent() == failed.active_intent()
+        && observed.successor_intent() == failed.successor_intent()
+        && observed.revision() >= withdrawal.revision();
+    let exact_cause = observed
+        .teardown_disposition()
+        .is_some_and(|disposition| disposition.cause() == cause);
+    let terminal_same_generation =
+        observed.phase() == WorkloadSagaPhase::Recorded && observed.successor_intent().is_none();
+    if same_lifecycle && (observed == withdrawal || exact_cause || terminal_same_generation) {
+        Ok(())
+    } else {
+        Err(WorkloadSagaError::InvalidEvidence(
+            "failed-provision compensation readback is crossed with durable failure",
+        )
+        .into())
     }
 }
 

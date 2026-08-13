@@ -377,8 +377,12 @@ impl WorkloadSagaRecord {
                     "recorded phase requires recorded detail",
                 ));
             };
-            let expected =
-                WorkloadTerminalEvidenceDigest::for_observations(&current.terminal_observations)?;
+            let expected = WorkloadTerminalEvidenceDigest::for_teardown(
+                &current.terminal_observations,
+                self.teardown_disposition
+                    .as_deref()
+                    .and_then(|disposition| disposition.context().restart_settlement()),
+            )?;
             if recorded.terminal_evidence_digest != expected
                 || recorded.terminal_execution.as_ref() != current.terminal_execution_reference()
             {
@@ -1128,7 +1132,12 @@ impl WorkloadSagaRecord {
             match (&self.phase_detail, self.phase) {
                 (WorkloadPhaseDetail::Teardown(detail), WorkloadSagaPhase::WithdrawalCommitted)
                     if source_phase != WorkloadSagaPhase::WithdrawalCommitted
-                        && detail.origin != source_phase =>
+                        && detail.origin != source_phase
+                        && self
+                            .teardown_disposition
+                            .as_deref()
+                            .and_then(|disposition| disposition.context().restart_settlement())
+                            .is_none() =>
                 {
                     return Err(WorkloadSagaError::InvalidEvidence(
                         "withdrawal origin does not match the transition source phase",
@@ -1321,7 +1330,17 @@ fn validate_evidence_continuity(
         (previous, WorkloadPhaseDetail::Teardown(next))
             if candidate.phase == WorkloadSagaPhase::WithdrawalCommitted =>
         {
-            if next.origin != current.phase || next.retained_references != previous.references() {
+            let expected = candidate
+                .teardown_disposition
+                .as_deref()
+                .and_then(|disposition| disposition.context().restart_settlement())
+                .map(|settlement| {
+                    settlement
+                        .teardown_seed_from_source(&current.active_intent, &previous.references())
+                })
+                .transpose()?
+                .unwrap_or_else(|| (current.phase, previous.references()));
+            if (next.origin, &next.retained_references) != (expected.0, &expected.1) {
                 return Err(WorkloadSagaError::InvalidEvidence(
                     "withdrawal must retain the exact origin references",
                 ));
@@ -1357,8 +1376,13 @@ fn validate_evidence_continuity(
             }
         }
         (WorkloadPhaseDetail::Teardown(previous), WorkloadPhaseDetail::Recorded(recorded)) => {
-            let expected =
-                WorkloadTerminalEvidenceDigest::for_observations(&previous.terminal_observations)?;
+            let expected = WorkloadTerminalEvidenceDigest::for_teardown(
+                &previous.terminal_observations,
+                current
+                    .teardown_disposition
+                    .as_deref()
+                    .and_then(|disposition| disposition.context().restart_settlement()),
+            )?;
             if recorded.terminal_evidence_digest != expected
                 || recorded.terminal_execution.as_ref() != previous.terminal_execution_reference()
             {

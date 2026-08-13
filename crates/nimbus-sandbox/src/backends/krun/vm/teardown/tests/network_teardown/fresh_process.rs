@@ -272,6 +272,99 @@ fn fresh_process_krun_network_contenders_publish_one_result_per_operation() {
 }
 
 #[test]
+fn fresh_process_interrupted_adoption_converges_and_replays_without_writes() {
+    for (label, cut) in [
+        ("reserved", InterruptedAdoptionAllocatorCut::Reserved),
+        ("adopted", InterruptedAdoptionAllocatorCut::Adopted),
+        (
+            "reservation-cleanup-pending",
+            InterruptedAdoptionAllocatorCut::ReservationCleanupPending,
+        ),
+        ("absent", InterruptedAdoptionAllocatorCut::Absent),
+    ] {
+        let fixture = prepared_interrupted_adoption(label, cut);
+        let recovery = run_child(
+            fixture.root.path(),
+            &fixture.id,
+            fixture.pep_port,
+            "recover-adoption",
+            SandboxNetworkTeardownOperation::Detach,
+            None,
+            None,
+        );
+        assert_success(&recovery, label);
+        assert!(
+            String::from_utf8_lossy(&recovery.stdout)
+                .contains("NNC65G_KRUN_ADOPTION_RECOVERED:released"),
+            "{}",
+            String::from_utf8_lossy(&recovery.stdout)
+        );
+
+        let before_replay = snapshot_files(fixture.root.path());
+        let replay = run_child(
+            fixture.root.path(),
+            &fixture.id,
+            fixture.pep_port,
+            "replay-adoption",
+            SandboxNetworkTeardownOperation::Detach,
+            None,
+            None,
+        );
+        assert_success(&replay, label);
+        assert!(
+            String::from_utf8_lossy(&replay.stdout)
+                .contains("NNC65G_KRUN_ADOPTION_REPLAY:byte-stable"),
+            "{}",
+            String::from_utf8_lossy(&replay.stdout)
+        );
+        assert_ne!(child_pid(&recovery.stdout), child_pid(&replay.stdout));
+        assert_eq!(
+            snapshot_files(fixture.root.path()),
+            before_replay,
+            "terminal exact replay must not change a durable byte for allocator cut {cut:?}",
+        );
+
+        let backend = reopen_backend(fixture.root.path(), fixture.pep_port);
+        let terminal = backend
+            .read_manifest(&fixture.id)
+            .expect("recovered adopting manifest should read")
+            .expect("recovered adopting manifest should exist");
+        assert_eq!(terminal.launch_authority, KrunLaunchAuthority::Released);
+        assert_eq!(
+            terminal.network_teardown.release_phase(),
+            HostManagedAttachmentReleasePhase::Released
+        );
+        let config = terminal
+            .network_config
+            .as_ref()
+            .expect("terminal adopting manifest retains identity evidence");
+        assert_eq!(
+            backend
+                .segment_allocator
+                .inspect_attachment_reservation(
+                    &terminal.spec.tenant_id,
+                    &config.attachment_id,
+                    &config.reservation_claim,
+                )
+                .expect("terminal adopting allocator state should inspect")
+                .state(),
+            NetworkAttachmentReservationState::Absent
+        );
+        assert!(
+            backend
+                .port_lease_coordinator()
+                .port_lease_records_snapshot(
+                    &terminal.port_leases,
+                    "terminal interrupted-adoption listeners",
+                )
+                .expect("terminal interrupted-adoption listeners should inspect")
+                .iter()
+                .all(|record| record.phase() == PortLeasePhase::Released)
+        );
+    }
+}
+
+#[test]
 #[ignore = "subprocess entry point; NNC6.5d3 parent supplies exact durable roots"]
 fn nnc6_5d3_krun_network_child() {
     let root = PathBuf::from(required_env(ROOT_ENV));
@@ -290,6 +383,8 @@ fn nnc6_5d3_krun_network_child() {
             &required_env(PHASE_ENV),
         ),
         "recover" => recovery_child(&root, &sandbox_id, pep_port, operation),
+        "recover-adoption" => recover_interrupted_adoption_child(&root, &sandbox_id, pep_port),
+        "replay-adoption" => replay_interrupted_adoption_child(&root, &sandbox_id, pep_port),
         "contend" => contention_child(
             &root,
             &sandbox_id,
@@ -322,6 +417,30 @@ fn prepared_fixture(label: &str, operation: SandboxNetworkTeardownOperation) -> 
         .egress_proxy
         .as_ref()
         .expect("prepared Krun fixture should retain its PEP")
+        .port;
+    let NetworkTeardownFixture {
+        root,
+        backend,
+        runtime,
+        id,
+        ..
+    } = fixture;
+    drop(runtime);
+    drop(backend);
+    PreparedFixture { root, id, pep_port }
+}
+
+fn prepared_interrupted_adoption(
+    label: &str,
+    cut: InterruptedAdoptionAllocatorCut,
+) -> PreparedFixture {
+    let fixture =
+        NetworkTeardownFixture::interrupted_adoption(&format!("fresh-process-{label}"), cut);
+    let pep_port = fixture
+        .manifest()
+        .egress_proxy
+        .as_ref()
+        .expect("interrupted-adoption fixture should retain its PEP reservation")
         .port;
     let NetworkTeardownFixture {
         root,
@@ -402,6 +521,94 @@ fn recovery_child(
         .expect("recovered Krun execution should publish");
     assert_eq!(result.kind(), ProviderCommandObservationKind::Succeeded);
     println!("NNC65D3_KRUN_CONVERGED:succeeded");
+}
+
+fn recover_interrupted_adoption_child(root: &Path, sandbox_id: &SandboxId, pep_port: u16) {
+    let backend = reopen_backend(root, pep_port);
+    let journal = backend
+        .attempt_idempotency_journal()
+        .expect("interrupted-adoption recovery journal should open");
+    for operation in [
+        SandboxExecutionTeardownOperation::Drain,
+        SandboxExecutionTeardownOperation::Stop,
+    ] {
+        let command = execution_command_from_backend(&backend, sandbox_id, operation);
+        let execution = match journal
+            .claim_dispatch_epoch(command.provider_claim())
+            .expect("interrupted-adoption execution command should claim")
+        {
+            ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+            ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+                panic!("fresh interrupted-adoption execution command claimed twice")
+            }
+        };
+        let result = backend
+            .execute_execution_teardown_with_claim(&command, execution)
+            .expect("interrupted-adoption execution result should publish");
+        assert_eq!(result.kind(), ProviderCommandObservationKind::Succeeded);
+    }
+    for operation in [
+        SandboxNetworkTeardownOperation::Detach,
+        SandboxNetworkTeardownOperation::Release,
+    ] {
+        let command = network_command_from_backend(&backend, sandbox_id, operation);
+        let execution = match journal
+            .claim_dispatch_epoch(command.provider_claim())
+            .expect("interrupted-adoption network command should claim")
+        {
+            ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+            ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+                panic!("fresh interrupted-adoption network command claimed twice")
+            }
+        };
+        let result = backend
+            .execute_network_teardown_with_claim(&command, execution)
+            .expect("interrupted-adoption network result should publish");
+        assert_eq!(result.kind(), ProviderCommandObservationKind::Succeeded);
+    }
+    println!("NNC65G_KRUN_ADOPTION_RECOVERED:released");
+}
+
+fn replay_interrupted_adoption_child(root: &Path, sandbox_id: &SandboxId, pep_port: u16) {
+    let before = snapshot_files(root);
+    let backend = reopen_backend(root, pep_port);
+    let journal = backend
+        .attempt_idempotency_journal()
+        .expect("interrupted-adoption replay journal should open");
+    for operation in [
+        SandboxExecutionTeardownOperation::Drain,
+        SandboxExecutionTeardownOperation::Stop,
+    ] {
+        let command = execution_command_from_backend(&backend, sandbox_id, operation);
+        assert_eq!(
+            journal
+                .adopt_exact_attempt(command.provider_claim())
+                .expect("terminal execution result should read")
+                .expect("terminal execution result should exist")
+                .kind(),
+            ProviderCommandObservationKind::Succeeded
+        );
+    }
+    for operation in [
+        SandboxNetworkTeardownOperation::Detach,
+        SandboxNetworkTeardownOperation::Release,
+    ] {
+        let command = network_command_from_backend(&backend, sandbox_id, operation);
+        assert_eq!(
+            journal
+                .adopt_exact_attempt(command.provider_claim())
+                .expect("terminal network result should read")
+                .expect("terminal network result should exist")
+                .kind(),
+            ProviderCommandObservationKind::Succeeded
+        );
+    }
+    assert_eq!(
+        snapshot_files(root),
+        before,
+        "fresh-process terminal replay must be byte-stable"
+    );
+    println!("NNC65G_KRUN_ADOPTION_REPLAY:byte-stable");
 }
 
 fn contention_child(
@@ -485,6 +692,49 @@ fn network_command_from_backend(
         provider_claim: claim,
     })
     .expect("recovered Krun command should validate")
+}
+
+fn execution_command_from_backend(
+    backend: &KrunSandboxBackend,
+    sandbox_id: &SandboxId,
+    operation: SandboxExecutionTeardownOperation,
+) -> SandboxExecutionTeardownCommand {
+    let manifest = backend
+        .read_manifest(sandbox_id)
+        .expect("exact Krun manifest should read")
+        .expect("exact Krun manifest should exist");
+    let plan = manifest
+        .provision_network_plan
+        .as_ref()
+        .expect("Krun recovery requires the compiled plan");
+    let claim = ProviderCommandClaim::new(ProviderCommandClaimInput {
+        authority_id: "authority-krun-network-teardown".to_owned(),
+        effect_subject: format!("{{\"sandbox\":\"{sandbox_id}\"}}"),
+        source_attempt_id: None,
+        attempt_id: sandbox_id
+            .as_str()
+            .strip_prefix("krun-network-adopting-fresh-process-")
+            .unwrap_or_else(|| sandbox_id.as_str())
+            .to_owned(),
+        dispatch_epoch: 1,
+        workload_generation: plan.generation().as_u64(),
+        restart_ordinal: 0,
+        desired_digest: "1".repeat(64),
+        source_digest: "2".repeat(64),
+        network_plan_digest: plan.network_plan().digest().to_string(),
+        provider_target_digest: "3".repeat(64),
+        operation: operation.provider_operation(),
+    })
+    .expect("recovered Krun execution claim should validate");
+    SandboxExecutionTeardownCommand::new(
+        manifest.spec.tenant_id,
+        manifest.handle.id,
+        manifest.execution_attempt_id,
+        "nimbus-sandbox.krun-execution",
+        operation,
+        claim,
+    )
+    .expect("recovered Krun execution command should validate")
 }
 
 fn reopen_backend(root: &Path, pep_port: u16) -> KrunSandboxBackend {

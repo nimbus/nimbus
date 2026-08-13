@@ -642,8 +642,8 @@ fn krun_attach_recovers_dead_compiler_planned_pep_owner() {
         .require_reserved_claim()
         .expect("prepared manifest should retain its reservation claim")
         .clone();
-    manifest
-        .mark_adopting()
+    backend
+        .mark_attachment_adopting(&mut manifest)
         .expect("fixture should enter adoption intent");
     backend
         .persist_effect_barrier(&manifest, "test planned PEP adoption intent")

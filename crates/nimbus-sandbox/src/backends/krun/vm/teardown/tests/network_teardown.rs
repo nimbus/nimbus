@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 use nimbus_network::{
     NetworkAttachmentReservationState, NetworkCapabilitySourceDigest, NetworkResourcePhase,
-    PortLeasePhase,
+    NetworkSegmentReleaseOutcome, PortLeasePhase,
 };
 
 use super::*;
@@ -27,6 +27,14 @@ use crate::{
 enum NetworkContenderRole {
     Execute,
     Adopt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InterruptedAdoptionAllocatorCut {
+    Reserved,
+    Adopted,
+    ReservationCleanupPending,
+    Absent,
 }
 
 #[path = "network_teardown/fresh_process.rs"]
@@ -97,8 +105,8 @@ impl NetworkTeardownFixture {
             .require_reserved_claim()
             .expect("prepared manifest should retain its reservation claim")
             .clone();
-        manifest
-            .mark_adopting()
+        backend
+            .mark_attachment_adopting(&mut manifest)
             .expect("fixture should enter attachment adoption intent");
         backend
             .persist_effect_barrier(&manifest, "test Krun network adoption intent")
@@ -162,6 +170,111 @@ impl NetworkTeardownFixture {
         assert!(attached.network_layout.status_path.is_file());
         assert!(!attached.port_leases.is_empty());
         assert!(attached.egress_proxy.is_some());
+
+        Self {
+            root,
+            config,
+            backend,
+            runtime,
+            id,
+            execution_attempt_id,
+        }
+    }
+
+    fn interrupted_adoption(label: &str, cut: InterruptedAdoptionAllocatorCut) -> Self {
+        let root = tempfile::tempdir().expect("temporary root should exist");
+        let published_reservation =
+            TcpListener::bind("127.0.0.1:0").expect("published-port probe should bind");
+        let published_port = published_reservation
+            .local_addr()
+            .expect("published-port probe should report its address")
+            .port();
+        let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP-port probe should bind");
+        let pep_port = pep_reservation
+            .local_addr()
+            .expect("PEP-port probe should report its address")
+            .port();
+        let mut config = KrunSandboxBackendConfig::under_root(root.path());
+        config.node_network_supernet = "127.0.0.0/24".to_owned();
+        config.published_port_range = pep_port..=pep_port;
+        config.netavark_path = PathBuf::from("/usr/bin/true");
+        let base = KrunSandboxBackend::new(config.clone())
+            .with_egress_pin_provider(Arc::new(FixedOciEgressPinProvider::ready()));
+        let runtime = Arc::new(ScriptedRuntime::live(base.clone(), 100));
+        let backend = base.with_teardown_runtime_provider(runtime.clone());
+        let id = SandboxId::new(format!("krun-network-adopting-{label}"));
+        let tenant_id = TenantId::new(format!("krun-network-adopting-{label}"))
+            .expect("fixture tenant should validate");
+        let spec = SandboxSpec::new(
+            tenant_id,
+            SandboxOwnerSpec::service(format!("workload-{label}")),
+            SandboxBackendKind::Krun,
+            SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
+            SandboxProcessSpec::new(["/usr/bin/service"]),
+        )
+        .with_port_binding(SandboxPortBinding::tcp("api", published_port, 8_080));
+        let execution_attempt_id = SandboxExecutionAttemptId::new(format!("wea-adopting-{label}"))
+            .expect("fixture execution attempt should validate");
+        let plan = crate::provision::test_support::sandbox_provision_network_plan_fixture(
+            &spec, &id, label,
+        );
+        drop(published_reservation);
+        drop(pep_reservation);
+
+        backend
+            .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), plan)
+            .expect("adopting fixture should reserve its exact plan");
+        backend
+            .prepare_provision_workload(&id, &execution_attempt_id)
+            .expect("adopting fixture should prepare its workload");
+        let mut manifest = backend
+            .read_manifest(&id)
+            .expect("adopting manifest should read")
+            .expect("adopting manifest should exist");
+        let reservation_claim = backend
+            .mark_attachment_adopting(&mut manifest)
+            .expect("fixture should enter attachment adoption intent");
+        backend
+            .persist_effect_barrier(&manifest, "test interrupted Krun adoption intent")
+            .expect("interrupted adoption intent should persist");
+        let network_config = manifest
+            .require_network_config()
+            .expect("adopting fixture should retain network config");
+        match cut {
+            InterruptedAdoptionAllocatorCut::Reserved => {}
+            InterruptedAdoptionAllocatorCut::Adopted => {
+                backend
+                    .segment_allocator
+                    .adopt_reserved_attachment(
+                        &manifest.spec.tenant_id,
+                        &network_config.attachment_id,
+                        &reservation_claim,
+                    )
+                    .expect("fixture allocator adoption should persist");
+            }
+            InterruptedAdoptionAllocatorCut::ReservationCleanupPending => {
+                backend
+                    .port_lease_coordinator()
+                    .release_never_bound_launch_claim(&reservation_claim)
+                    .expect("fixture port cleanup should precede segment cleanup intent");
+                assert!(matches!(
+                    backend
+                        .segment_allocator
+                        .release_reserved_attachment_without_effect(
+                            &manifest.spec.tenant_id,
+                            &network_config.attachment_id,
+                            &reservation_claim,
+                        )
+                        .expect("fixture reserved cleanup intent should persist"),
+                    NetworkSegmentReleaseOutcome::AttachmentCleanupPending
+                ));
+            }
+            InterruptedAdoptionAllocatorCut::Absent => {
+                backend
+                    .release_reserved_launch(&manifest)
+                    .expect("fixture reserved cleanup should reach terminal absence");
+            }
+        }
 
         Self {
             root,
@@ -301,6 +414,57 @@ impl NetworkTeardownFixture {
             &manifest.launch_authority,
         ))
         .expect("retained network authority should encode")
+    }
+}
+
+#[test]
+fn interrupted_adopting_attachment_converges_through_exact_teardown() {
+    for (label, cut) in [
+        ("reserved", InterruptedAdoptionAllocatorCut::Reserved),
+        ("adopted", InterruptedAdoptionAllocatorCut::Adopted),
+        (
+            "reservation-cleanup-pending",
+            InterruptedAdoptionAllocatorCut::ReservationCleanupPending,
+        ),
+        ("absent", InterruptedAdoptionAllocatorCut::Absent),
+    ] {
+        let fixture = NetworkTeardownFixture::interrupted_adoption(label, cut);
+        let stop = fixture.stop_execution(label);
+        let detach = fixture.network_command(&stop, SandboxNetworkTeardownOperation::Detach, 1);
+        let detached = execute_network(&fixture.backend, &detach);
+        assert_eq!(
+            detached.kind(),
+            ProviderCommandObservationKind::Succeeded,
+            "allocator cut {cut:?}; observation={detached:?}",
+        );
+        let release = fixture.network_command(&stop, SandboxNetworkTeardownOperation::Release, 1);
+        assert_eq!(
+            execute_network(&fixture.backend, &release).kind(),
+            ProviderCommandObservationKind::Succeeded
+        );
+        let terminal = fixture.manifest();
+        assert_eq!(terminal.launch_authority, KrunLaunchAuthority::Released);
+        assert_eq!(
+            terminal.network_teardown.release_phase(),
+            HostManagedAttachmentReleasePhase::Released
+        );
+        let config = terminal
+            .network_config
+            .as_ref()
+            .expect("terminal manifest retains identity evidence");
+        assert_eq!(
+            fixture
+                .backend
+                .segment_allocator
+                .inspect_attachment_reservation(
+                    &terminal.spec.tenant_id,
+                    &config.attachment_id,
+                    &config.reservation_claim,
+                )
+                .expect("terminal allocator state should inspect")
+                .state(),
+            NetworkAttachmentReservationState::Absent
+        );
     }
 }
 

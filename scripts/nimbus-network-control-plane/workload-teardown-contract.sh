@@ -173,8 +173,30 @@ run_self_test() {
     'finish-tenant-delete-early|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
     'missing-failed-provision-cause|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
     'missing-failed-provision-compensation|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
-    'ambiguous-provision-stops|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'compensation-drops-failed-run|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
     'missing-restart-handoff|teardown-contract/order: durable teardown does not enforce withdrawal then drain then stop then detach then release then record'
+    'compensation-projection-uses-terminal-record|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'compensation-outcome-uses-failed-record|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'tenant-pagination-drops-cursor|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-pagination-does-not-advance|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-drives-first-key-only|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-driver-disconnects-loop-record|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-skips-second-inventory|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'tenant-finalizes-before-recorded-proof|teardown-contract/tenant: tenant deletion bypasses durable child-saga teardown'
+    'compensation-submits-failed-key|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'compensation-cause-drops-result-claim|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'compensation-ambiguity-skips-readback|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'compensation-admits-waiting-result|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'optional-compensation-runtime|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'managed-provisioner-without-runtime|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'compensation-removes-nonterminal-owner|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'waiting-compensation-replays-provision|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'compensation-removes-before-result|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'compensation-waiter-cancels-tracked|teardown-contract/compensation: provision or restart handoff lacks exact durable settlement and ambiguity handling'
+    'restart-settles-before-cause-cas|teardown-contract/order: durable teardown does not enforce withdrawal then drain then stop then detach then release then record'
+    'teardown-submits-before-restart-settlement|teardown-contract/order: durable teardown does not enforce withdrawal then drain then stop then detach then release then record'
+    'missing-tenant-convergence-test-attribution|teardown-contract/behavior: required teardown behavior proofs are incomplete or non-assertive'
+    'missing-recovery-convergence-test-attribution|teardown-contract/behavior: required teardown behavior proofs are incomplete or non-assertive'
     'missing-attributed-tests|teardown-contract/behavior: required teardown behavior proofs are incomplete or non-assertive'
     'empty-test-body|teardown-contract/behavior: required teardown behavior proofs are incomplete or non-assertive'
     'helper-only-test-body|teardown-contract/behavior: required teardown behavior proofs are incomplete or non-assertive'
@@ -283,12 +305,12 @@ run_self_test() {
       "${passed}" "${failures}"
     return 1
   fi
-  if [ "${passed}" -ne 150 ]; then
-    printf 'NNC6.5 teardown contract self-test: expected 150 mutations, observed %d\n' \
+  if [ "${passed}" -ne 172 ]; then
+    printf 'NNC6.5 teardown contract self-test: expected 172 mutations, observed %d\n' \
       "${passed}"
     return 1
   fi
-  printf 'NNC6.5 teardown contract self-test: 150 passed, 0 failed\n'
+  printf 'NNC6.5 teardown contract self-test: 172 passed, 0 failed\n'
 }
 
 case "${1:-}" in

@@ -1359,8 +1359,16 @@ fn vm_config_materialization_failure_compensates_unstarted_launch_batch() {
         error.to_string().contains("failed to write krun vm config"),
         "the materialization failure must remain primary: {error}"
     );
-    block_on(backend.stop(&sandbox_id))
-        .expect("the coordinator's rollback stop should release the reserved launch batch");
+    let mut retained = backend
+        .read_manifest(&sandbox_id)
+        .expect("failed launch manifest should inspect")
+        .expect("failed launch manifest should remain durable");
+    let _ = backend.persist_unstarted_launch_failure(
+        &mut retained,
+        SandboxError::OperationFailed {
+            message: "test coordinator requested exact pre-effect compensation".to_owned(),
+        },
+    );
 
     let records = nimbus_network::LocalPortLeaseAuthority::open(&state_root)
         .expect("port authority should reopen")
@@ -1458,12 +1466,24 @@ fn attachment_adoption_observes_a_durable_adopting_manifest() {
                     &fs::read(&manifest_path).expect("adoption intent should be readable"),
                 )
                 .expect("adoption intent should deserialize");
+                let KrunLaunchAuthority::Adopting {
+                    reservation_claim,
+                    association,
+                } = &persisted.launch_authority
+                else {
+                    panic!(
+                        "allocator adoption must observe its exact durable intermediate authority"
+                    );
+                };
+                assert_eq!(reservation_claim, claim);
+                assert_eq!(association.reservation_claim(), claim);
                 assert_eq!(
-                    persisted.launch_authority,
-                    KrunLaunchAuthority::Adopting {
-                        reservation_claim: claim.clone(),
-                    },
-                    "allocator adoption must observe its exact durable intermediate authority"
+                    association.segment_id().as_str(),
+                    persisted
+                        .network_config
+                        .as_ref()
+                        .expect("adoption intent should retain network config")
+                        .segment_id
                 );
                 assert_eq!(persisted.status, SandboxStatus::Starting);
                 assert!(

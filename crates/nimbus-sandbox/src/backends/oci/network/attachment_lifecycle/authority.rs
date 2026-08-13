@@ -488,6 +488,16 @@ pub(super) fn authenticate_detach_association(
     context: &OciAttachmentContext<'_>,
     mode: AttachmentTeardownMode,
 ) -> Result<NetworkAttachmentSegmentAssociation> {
+    authenticate_detach_association_with_fallback(attachments, allocator, context, mode, None)
+}
+
+pub(super) fn authenticate_detach_association_with_fallback(
+    attachments: Option<&LocalNetworkAttachmentAuthority>,
+    allocator: &OciSegmentAllocator,
+    context: &OciAttachmentContext<'_>,
+    mode: AttachmentTeardownMode,
+    absent_association: Option<&NetworkAttachmentSegmentAssociation>,
+) -> Result<NetworkAttachmentSegmentAssociation> {
     let observation = inspect_allocator(allocator, context)?;
     match observation.state() {
         NetworkAttachmentReservationState::Reserved
@@ -495,65 +505,80 @@ pub(super) fn authenticate_detach_association(
         | NetworkAttachmentReservationState::ProviderCleanupPending => {
             require_exact_config_association(context, &observation)
         }
+        NetworkAttachmentReservationState::ReservationCleanupPending => {
+            if observation.association().is_some() {
+                require_exact_config_association(context, &observation)
+            } else {
+                authenticate_durable_detach_association(
+                    attachments,
+                    context,
+                    mode,
+                    absent_association,
+                )
+            }
+        }
         NetworkAttachmentReservationState::Absent => {
-            let attachments = attachments.ok_or_else(|| SandboxError::OperationFailed {
-                message: format!(
-                    "{} attachment {} has no valid manager-derived durable attachment authority",
-                    context.provider_label, context.sandbox_id
-                ),
-            })?;
-            let attachment_id = context.config.attachment_id.clone();
-            let record = attachments
+            authenticate_durable_detach_association(attachments, context, mode, absent_association)
+        }
+    }
+}
+
+fn authenticate_durable_detach_association(
+    attachments: Option<&LocalNetworkAttachmentAuthority>,
+    context: &OciAttachmentContext<'_>,
+    mode: AttachmentTeardownMode,
+    absent_association: Option<&NetworkAttachmentSegmentAssociation>,
+) -> Result<NetworkAttachmentSegmentAssociation> {
+    let attachment_id = context.config.attachment_id.clone();
+    let record = match attachments {
+        Some(attachments) => {
+            attachments
                 .get(context.tenant_id, &attachment_id)
                 .map_err(|error| SandboxError::OperationFailed {
                     message: format!(
                         "durable attachment authority rejected cleanup inspection for \
-                         {attachment_id}: {error}"
+                     {attachment_id}: {error}"
                     ),
                 })?
-                .ok_or_else(|| SandboxError::OperationFailed {
-                    message: format!(
-                        "{} attachment {} has neither allocator association nor durable terminal \
-                         authority",
-                        context.provider_label, context.sandbox_id
-                    ),
-                })?;
-            match record.resource().phase() {
-                phase if phase.is_terminal() => {}
-                NetworkResourcePhase::Reserved
-                | NetworkResourcePhase::Deleting
-                | NetworkResourcePhase::CleanupPending
-                    if mode == AttachmentTeardownMode::Final =>
-                {
-                    // Final detach releases allocator capacity immediately
-                    // before publishing the portable terminal phase. Exact
-                    // attachment and IPAM tombstones must reopen that bounded
-                    // cross-authority crash interval, including a retry after
-                    // a fallible workload/provider callback retained the
-                    // portable CleanupPending fence, without recreating or
-                    // replaying provider effects. Restart may never use this
-                    // interval because it must retain allocation authority.
-                }
-                phase => {
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "{} attachment {} lost allocator association while durable phase \
-                             {phase:?} cannot complete {mode:?} detach",
-                            context.provider_label, context.sandbox_id
-                        ),
-                    });
-                }
-            }
-            authenticate_config_values(context, record.association())?;
-            Ok(record.association().clone())
         }
-        state => Err(SandboxError::OperationFailed {
+        None => None,
+    };
+    let Some(record) = record else {
+        if mode == AttachmentTeardownMode::Final
+            && let Some(association) = absent_association
+        {
+            authenticate_config_values(context, association)?;
+            return Ok(association.clone());
+        }
+        return Err(SandboxError::OperationFailed {
             message: format!(
-                "{} attachment {} cannot detach from allocator reservation state {state:?}",
+                "{} attachment {} has neither allocator association nor durable terminal authority",
                 context.provider_label, context.sandbox_id
             ),
-        }),
+        });
+    };
+    match record.resource().phase() {
+        phase if phase.is_terminal() => {}
+        NetworkResourcePhase::Reserved
+        | NetworkResourcePhase::Deleting
+        | NetworkResourcePhase::CleanupPending
+            if mode == AttachmentTeardownMode::Final =>
+        {
+            // Final detach may reopen the bounded interval after exact
+            // reservation cleanup has removed allocator association but
+            // before portable authority reaches its terminal phase.
+        }
+        phase => {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "{} attachment {} lost allocator association while durable phase {phase:?} cannot complete {mode:?} detach",
+                    context.provider_label, context.sandbox_id
+                ),
+            });
+        }
     }
+    authenticate_config_values(context, record.association())?;
+    Ok(record.association().clone())
 }
 
 fn inspect_allocator(

@@ -9,6 +9,7 @@ import path from "node:path";
 import { maskNonCode, walkRust } from "./source-contract-scanner.mjs";
 import {
   BEHAVIOR_TESTS,
+  FINAL_CONVERGENCE_TESTS,
   FORWARDED_MACHINE_TESTS,
   NATIVE_SOURCE_RETIREMENT_TESTS,
   PHYSICAL_MACHINE_STOP_TESTS,
@@ -393,6 +394,31 @@ function productionSources(root) {
       "crates/nimbus-compute/src/resource_retirement.rs",
       { lexical: true },
     ),
+    tenantRetirement: readText(
+      root,
+      "crates/nimbus-compute/src/tenant_retirement.rs",
+      { lexical: true },
+    ),
+    provisionCompensation: readText(
+      root,
+      "crates/nimbus-compute/src/workload_saga/provision_compensation.rs",
+      { lexical: true },
+    ),
+    workloadSagaCoordinator: readText(
+      root,
+      "crates/nimbus-compute/src/workload_saga.rs",
+      { lexical: true },
+    ),
+    workloadProvisioner: readText(
+      root,
+      "crates/nimbus-compute/src/workload_provisioner.rs",
+      { lexical: true },
+    ),
+    restartRuntime: readText(
+      root,
+      "crates/nimbus-compute/src/workload_saga/restart_runtime.rs",
+      { lexical: true },
+    ),
     serviceDefinitions: [
       "crates/nimbus-services/src/manager/definitions.rs",
       "crates/nimbus-services/src/manager/source_retirement.rs",
@@ -444,6 +470,10 @@ function countOccurrences(source, token) {
   return source.split(token).length - 1;
 }
 
+function compactSource(source) {
+  return source.replace(/\s+/gu, "");
+}
+
 function itemBody(item) {
   const open = item.indexOf("{");
   return open >= 0 && item.endsWith("}") ? item.slice(open + 1, -1).trim() : "";
@@ -484,12 +514,293 @@ function enumVariants(source, name) {
 function behaviorTestsPass(sources) {
   return (
     nativeSourceRetirementTestsPass(sources) &&
+    finalConvergenceTestsPass(sources) &&
     [...new Set([...BEHAVIOR_TESTS, ...NATIVE_SOURCE_RETIREMENT_TESTS])].every(
       (name) =>
         sources.testEntries.some((entry) =>
           hasTestsAt(sources, entry.file, [name]),
         ),
     )
+  );
+}
+
+function tenantConvergencePass(sources) {
+  const driver = extractItem(
+    sources.tenantRetirement,
+    "async fn drive_tenant_teardown",
+  );
+  const list = extractItem(
+    sources.tenantRetirement,
+    "async fn list_tenant_sagas",
+  );
+  const allRecorded = extractItem(
+    sources.tenantRetirement,
+    "fn require_all_recorded_before_finish_tenant_delete",
+  );
+  const perKey = extractItem(driver, "for record in initial.values()");
+  const compactDriver = compactSource(driver);
+  const compactList = compactSource(list);
+  return (
+    countOccurrences(driver, "self.list_tenant_sagas(") === 2 &&
+    compactSource(perKey).startsWith("forrecordininitial.values(){") &&
+    hasAll(perKey, [
+      "submit_tenant_record_teardown(record.clone())",
+      ".await?",
+    ]) &&
+    appearsInOrder(compactDriver, [
+      "letinitial=self.list_tenant_sagas(snapshot.claim().tenant_id()).await?;",
+      "forrecordininitial.values(){",
+      "submit_tenant_record_teardown(record.clone()).await?;",
+      "letfinal_records=self.list_tenant_sagas(snapshot.claim().tenant_id()).await?;",
+      "require_all_recorded_before_finish_tenant_delete(&initial,&final_records)?;",
+      "letterminal=final_records.into_values().collect::<Vec<_>>();",
+      "finalize_tenant_sources_after_recorded(snapshot.claim(),&terminal)?;",
+      "Ok(terminal)",
+    ]) &&
+    hasAll(compactList, [
+      "WorkloadSagaTenantPageRequest::new(cursor.clone(),self.page_size)?",
+      "list_for_tenant(tenant_id,request).await?",
+      "page.tenant_id()!=tenant_id",
+      "letnext=page.next_cursor().cloned()",
+      "record.key().tenant_id()!=tenant_id",
+      "record.key()<=previous",
+      "next.tenant_id()!=tenant_id",
+      "next.key()<=cursor.key()",
+      "records.insert(record.key().clone(),record).is_some()",
+      "Some(next)=>cursor=Some(next)",
+      "None=>returnOk(records)",
+    ]) &&
+    hasAll(compactSource(allRecorded), [
+      "initial.keys().ne(final_records.keys())",
+      "record.phase()!=WorkloadSagaPhase::Recorded",
+      "record.active_intent().desired_state()!=DesiredWorkloadState::Stopped",
+      "record.successor_intent().is_some()",
+    ]) &&
+    !/\bTenantServiceRetirement\b/u.test(sources.services)
+  );
+}
+
+function compensationConvergencePass(sources) {
+  const constructor = extractItem(
+    sources.workloadProvisioner,
+    "pub fn new(\n        local_node: NodeIdentity",
+  );
+  const provisionError = extractItem(
+    sources.workloadProvisioner,
+    "pub enum WorkloadProvisionError",
+  );
+  const retainedWork = extractItem(
+    sources.workloadProvisioner,
+    "enum RetainedCompensationWork",
+  );
+  const finalize = extractItem(sources.workloadProvisioner, "async fn finalize_run");
+  const compensator = extractItem(
+    sources.provisionCompensation,
+    "async fn compensate_definite_provision_failure",
+  );
+  const causeCommit = extractItem(
+    sources.workloadSagaCoordinator,
+    "async fn commit_failed_provision_compensation",
+  );
+  const retain = extractItem(sources.workloadProvisioner, "fn retain_after_result");
+  const retainedCompensationWork = extractItem(
+    sources.workloadProvisioner,
+    "fn retained_compensation_work",
+  );
+  const parked = extractItem(
+    sources.workloadProvisioner,
+    "fn parked_retained_result",
+  );
+  const publish = extractItem(
+    sources.workloadProvisioner,
+    "fn publish_tracked_result",
+  );
+  const trackSubmission = extractItem(
+    sources.workloadProvisioner,
+    "fn track_submission",
+  );
+  const trackResume = extractItem(sources.workloadProvisioner, "fn track_resume");
+  const submissionTask = extractItem(
+    sources.workloadProvisioner,
+    "fn spawn_submission_task",
+  );
+  const retainedCompensationTask = extractItem(
+    sources.workloadProvisioner,
+    "fn spawn_retained_compensation_task",
+  );
+  const computeFromConfig = extractItem(sources.computeState, "pub fn from_config");
+  const waiter = extractItem(
+    sources.workloadProvisioner,
+    "async fn wait_for_completion",
+  );
+  const compactProvisionError = compactSource(provisionError);
+  const compactRetainedWork = compactSource(retainedWork);
+  const compactFinalize = compactSource(finalize);
+  const compactCompensator = compactSource(compensator);
+  const compactCause = compactSource(causeCommit);
+  const compactConstructor = compactSource(constructor);
+  const compactRetain = compactSource(retain);
+  const compactRetainedCompensationWork = compactSource(
+    retainedCompensationWork,
+  );
+  const compactParked = compactSource(parked);
+  const compactPublish = compactSource(publish);
+  const compactTrackSubmission = compactSource(trackSubmission);
+  const compactTrackResume = compactSource(trackResume);
+  const compactSubmissionTask = compactSource(submissionTask);
+  const compactRetainedCompensationTask = compactSource(
+    retainedCompensationTask,
+  );
+  const compactComputeFromConfig = compactSource(computeFromConfig);
+  const causeTokens = [
+    "failed.provision_disposition()",
+    "WorkloadProvisionDisposition::DefiniteFailure{claim,failure}",
+    "WorkloadTeardownCause::FailedProvision{claim:Box::new(claim),failure,}",
+    "failed.commit_teardown_cause(cause.clone())?",
+    "confirm_transition(Some(failed),withdrawal.clone()).await?",
+    "WorkloadSagaConfirmation::Conflict{..}|WorkloadSagaConfirmation::UnresolvedAmbiguity",
+    "self.load(failed.key()).await?",
+    "authenticate_failed_provision_compensation(failed,&withdrawal,&cause,&observed)?",
+    "Ok(observed)",
+  ];
+  const checks = [
+    hasAll(compactConstructor, [
+      "teardown_runtime:Arc<WorkloadTeardownRuntime>",
+      "WorkloadProvisionCompensator::new(",
+      "Arc::clone(&coordinator)",
+      "teardown_runtime",
+    ]) &&
+      !/teardown_runtime:Option</u.test(compactConstructor) &&
+      !/\b(?:with_teardown_runtime|MissingCompensationRuntime)\b/u.test(
+        sources.workloadProvisioner,
+      ),
+    hasAll(compactComputeFromConfig, [
+      "letteardown_runtime=teardown_capabilities.map(",
+      "letprovisioner=teardown_runtime.as_ref().map(|runtime|",
+      "WorkloadProvisioner::new(",
+      "Arc::clone(runtime)",
+    ]),
+    hasAll(compactProvisionError, [
+      "Compensation{source:Arc<WorkloadProvisionCompensationError>,failed_run:Box<WorkloadProvisionRun>,}",
+    ]),
+    hasAll(compactRetainedWork, [
+      "ResumeTeardown(Box<WorkloadProvisionOutcome>)",
+      "RetryFailedProvisionHandoff(Box<WorkloadProvisionRun>)",
+    ]),
+    hasAll(compactFinalize, [
+      "matchrun.disposition()",
+      "WorkloadProvisionRunDisposition::DefiniteFailure=>",
+      "compensate_definite_provision_failure(run.record()).await",
+      "Err(source)=>",
+      "WorkloadProvisionError::Compensation{source:Arc::new(source),failed_run:Box::new(run),}",
+      "WorkloadTeardownRunDisposition::Completed",
+      "WorkloadProvisionCompensationState::Completed",
+      "WorkloadTeardownRunDisposition::Waiting",
+      "WorkloadProvisionCompensationState::Waiting",
+      "WorkloadTeardownRunDisposition::CleanupPending",
+      "WorkloadProvisionCompensationState::CleanupPending",
+      "(teardown.record().clone(),state)",
+      "WorkloadProvisionRunDisposition::Observed|WorkloadProvisionRunDisposition::Waiting|WorkloadProvisionRunDisposition::SuccessorSettlementReady",
+      "self.projection.project(&run).await",
+      "WorkloadProvisionOutcome{run,durable_record,compensation,projection,}",
+    ]),
+    appearsInOrder(compactCompensator, [
+      "commit_failed_provision_compensation(failed).await?",
+      "WorkloadTeardownCancellationToken::default()",
+      "submit(withdrawal.key().clone(),&cancellation).await",
+    ]),
+    hasAll(compactCause, causeTokens),
+    hasAll(compactRetain, [
+      "Ok(outcome)=>matches!(outcome.compensation(),WorkloadProvisionCompensationState::Waiting|WorkloadProvisionCompensationState::CleanupPending)",
+      "Err(error)=>matches!(error.as_ref(),WorkloadProvisionError::Compensation{..})",
+    ]),
+    hasAll(compactRetainedCompensationWork, [
+      "outcome.compensation()==WorkloadProvisionCompensationState::Waiting",
+      "RetainedCompensationWork::ResumeTeardown(Box::new(outcome.clone(),))",
+      "WorkloadProvisionError::Compensation{failed_run,..}",
+      "RetainedCompensationWork::RetryFailedProvisionHandoff(failed_run.clone())",
+    ]) &&
+      !compactRetainedCompensationWork.includes(
+        "WorkloadProvisionCompensationState::CleanupPending=>",
+      ),
+    hasAll(compactParked, [
+      "Self::retain_after_result(result)&&Self::retained_compensation_work(result).is_none()",
+    ]),
+    hasAll(compactPublish, [
+      "letretain=Self::retain_after_result(&result)",
+      "sender.send_replace(Some(result))",
+      "ifretain",
+      "entry._task=None",
+      "supervisor.in_flight.remove(key)",
+    ]) &&
+      compactPublish.indexOf("sender.send_replace(Some(result))") <
+        compactPublish.indexOf("supervisor.in_flight.remove(key)"),
+    hasAll(compactTrackSubmission, [
+      "Self::parked_retained_result",
+      "and_then(Self::retained_compensation_work)",
+      "spawn_retained_compensation_task",
+    ]),
+    hasAll(compactTrackResume, [
+      "and_then(Self::retained_compensation_work)",
+      "spawn_retained_compensation_task",
+    ]),
+    appearsInOrder(compactSubmissionTask, [
+      "submit_and_drive",
+      "finalize_run",
+      "publish_tracked_result",
+    ]),
+    hasAll(compactRetainedCompensationTask, [
+      "RetainedCompensationWork::ResumeTeardown(prior)=>",
+      "provisioner.resume_compensation(*prior).await",
+      "RetainedCompensationWork::RetryFailedProvisionHandoff(run)=>",
+      "provisioner.finalize_run(*run).await",
+      "publish_tracked_result",
+    ]) &&
+      !/\.driver\.|submit_and_drive/u.test(compactRetainedCompensationTask),
+    hasAll(waiter, ["receiver.borrow()", "WaiterCancelled", "receiver.changed()"]) &&
+    !/\bin_flight\b|\.remove\s*\(|\.abort\s*\(|abort_tracked_task/u.test(
+      waiter,
+    ),
+  ];
+  return checks.every(Boolean);
+}
+
+function restartSettlementPass(sources) {
+  const settlement = extractItem(
+    sources.restartRuntime,
+    "async fn settle_restart_for_teardown_once",
+  );
+  const retirement = extractItem(
+    sources.resourceRetirement,
+    "async fn drive_recorded_teardown",
+  );
+  const compactSettlement = compactSource(settlement);
+  const checks = [
+    hasAll(compactSettlement, [
+      "driver.resume(key,now_unix_millis).await",
+      "restart_state().active().is_none()",
+      "WorkloadRestartDisposition::SuccessorVetoed{..}",
+      "WorkloadRestartDisposition::DefiniteFailure{..}",
+      "Ok(WorkloadRestartSettlement::Pending)",
+    ]),
+    appearsInOrder(compactSettlement, [
+      "WorkloadRestartDisposition::SuccessorVetoed",
+      "commit_restart_settlement_teardown(run.record()).await",
+      "returnOk(WorkloadRestartSettlement::Settled)",
+    ]),
+    appearsInOrder(retirement, [
+      "persist_stopped_successor",
+      "settle_issued_restart_before_native_teardown",
+      "teardown_runtime",
+      ".submit(",
+    ]),
+  ];
+  return checks.every(Boolean);
+}
+
+function finalConvergenceTestsPass(sources) {
+  return [...FINAL_CONVERGENCE_TESTS].every(([file, names]) =>
+    names.every((name) => hasTestsAt(sources, file, [name])),
   );
 }
 
@@ -571,6 +882,18 @@ function replaceOnceInNamedTest(sources, name, before, after) {
     );
   }
   entry.source = entry.source.replace(before, after);
+  remaskTeardownTestSources(sources);
+}
+
+function replaceOnceInOwnedTest(sources, file, name, replacementName) {
+  const entry = sources.testEntries.find(
+    (candidate) =>
+      candidate.file === file && candidate.source.includes(`fn ${name}`),
+  );
+  if (!entry) {
+    throw new Error(`teardown owned test mutation target missing: ${file}:${name}`);
+  }
+  entry.source = entry.source.replace(`fn ${name}`, `fn ${replacementName}`);
   remaskTeardownTestSources(sources);
 }
 
@@ -741,13 +1064,13 @@ function applyFixtureMutation(sources, mutation) {
     ],
     "managed-teardown-raw-registry-field": [
       "serverComposition",
-      "teardown_capabilities: Option<ExactWorkloadTeardownCapabilityRealm>",
-      "teardown_capabilities: Option<WorkloadTeardownCapabilityRegistry>",
+      "teardown_capabilities: ExactWorkloadTeardownCapabilityRealm",
+      "teardown_capabilities: WorkloadTeardownCapabilityRegistry",
     ],
     "managed-teardown-unused-exact-realm": [
       "serverComposition",
-      "teardown_capabilities: self.teardown_capabilities.map(Box::new)",
-      "teardown_capabilities: raw_teardown_capabilities.map(Box::new)",
+      "teardown_capabilities: Some(Box::new(self.teardown_capabilities))",
+      "teardown_capabilities: Some(Box::new(raw_teardown_capabilities))",
     ],
     "source-claim-helper-hidden-yield-poll": [
       "provisionSettlementSupport",
@@ -1084,12 +1407,20 @@ function applyFixtureMutation(sources, mutation) {
       "fn propagate_listener_settlement_failure() {}",
       "",
     ],
-    "missing-tenant-enumeration": ["compute", "fn list_tenant_sagas() {}", ""],
-    "missing-tenant-driver": ["compute", "fn drive_tenant_teardown() {}", ""],
+    "missing-tenant-enumeration": [
+      "tenantRetirement",
+      "async fn list_tenant_sagas",
+      "async fn omit_tenant_sagas",
+    ],
+    "missing-tenant-driver": [
+      "tenantRetirement",
+      "async fn drive_tenant_teardown",
+      "async fn omit_tenant_teardown",
+    ],
     "finish-tenant-delete-early": [
-      "compute",
-      "fn require_all_recorded_before_finish_tenant_delete() {}",
-      "",
+      "tenantRetirement",
+      "fn require_all_recorded_before_finish_tenant_delete",
+      "fn omit_all_recorded_gate",
     ],
     "missing-failed-provision-cause": [
       "workloads",
@@ -1097,19 +1428,119 @@ function applyFixtureMutation(sources, mutation) {
       "OmittedProvisionCause",
     ],
     "missing-failed-provision-compensation": [
-      "compute",
-      "fn compensate_definite_provision_failure()",
-      "fn omit_definite_provision_failure()",
+      "provisionCompensation",
+      "async fn compensate_definite_provision_failure",
+      "async fn omit_definite_provision_failure",
     ],
-    "ambiguous-provision-stops": [
-      "compute",
-      "fn inspect_ambiguous_provision_before_compensation() {}",
+    "compensation-drops-failed-run": [
+      "workloadProvisioner",
+      "        failed_run: Box<WorkloadProvisionRun>,\n",
       "",
     ],
     "missing-restart-handoff": [
-      "workloads",
-      "    WorkloadTeardownDecision::RestartSettlementPending;\n",
+      "restartRuntime",
+      "        coordinator.commit_restart_settlement_teardown(run.record()).await?;\n",
       "",
+    ],
+    "compensation-projection-uses-terminal-record": [
+      "workloadProvisioner",
+      "    let projection = self.projection.project(&run).await;",
+      "    let projection = self.projection.project_record(&durable_record, run.disposition()).await;",
+    ],
+    "compensation-outcome-uses-failed-record": [
+      "workloadProvisioner",
+      "            (teardown.record().clone(), state)",
+      "            (run.record().clone(), state)",
+    ],
+    "tenant-pagination-drops-cursor": [
+      "tenantRetirement",
+      "WorkloadSagaTenantPageRequest::new(cursor.clone(), self.page_size)",
+      "WorkloadSagaTenantPageRequest::new(None, self.page_size)",
+    ],
+    "tenant-pagination-does-not-advance": [
+      "tenantRetirement",
+      "            Some(next) => cursor = Some(next),",
+      "            Some(_) => continue,",
+    ],
+    "tenant-drives-first-key-only": [
+      "tenantRetirement",
+      "    for record in initial.values() {",
+      "    for record in initial.values().take(1) {",
+    ],
+    "tenant-driver-disconnects-loop-record": [
+      "tenantRetirement",
+      "            .submit_tenant_record_teardown(record.clone())",
+      "            .submit_tenant_record_teardown(initial.values().next().unwrap().clone())",
+    ],
+    "tenant-skips-second-inventory": [
+      "tenantRetirement",
+      "    let final_records = self.list_tenant_sagas(snapshot.claim().tenant_id()).await?;",
+      "    let final_records = initial.clone();",
+    ],
+    "tenant-finalizes-before-recorded-proof": [
+      "tenantRetirement",
+      "    require_all_recorded_before_finish_tenant_delete(&initial, &final_records)?;\n    let terminal = final_records.into_values().collect::<Vec<_>>();\n    self.services\n        .finalize_tenant_sources_after_recorded(snapshot.claim(), &terminal)?;",
+      "    let terminal = final_records.into_values().collect::<Vec<_>>();\n    self.services\n        .finalize_tenant_sources_after_recorded(snapshot.claim(), &terminal)?;\n    require_all_recorded_before_finish_tenant_delete(&initial, &BTreeMap::new())?;",
+    ],
+    "compensation-submits-failed-key": [
+      "provisionCompensation",
+      "        .submit(withdrawal.key().clone(), &cancellation)",
+      "        .submit(failed.key().clone(), &cancellation)",
+    ],
+    "compensation-cause-drops-result-claim": [
+      "workloadSagaCoordinator",
+      "        claim: Box::new(claim),",
+      "        claim: Box::new(unrelated_claim),",
+    ],
+    "compensation-ambiguity-skips-readback": [
+      "workloadSagaCoordinator",
+      "            let observed = self.load(failed.key()).await?.ok_or(Corrupt)?;",
+      "            let observed = withdrawal.clone();",
+    ],
+    "compensation-admits-waiting-result": [
+      "workloadProvisioner",
+      "        WorkloadProvisionRunDisposition::DefiniteFailure => {",
+      "        WorkloadProvisionRunDisposition::DefiniteFailure\n        | WorkloadProvisionRunDisposition::Waiting => {",
+    ],
+    "optional-compensation-runtime": [
+      "workloadProvisioner",
+      "        teardown_runtime: Arc<WorkloadTeardownRuntime>,",
+      "        teardown_runtime: Option<Arc<WorkloadTeardownRuntime>>,",
+    ],
+    "managed-provisioner-without-runtime": [
+      "computeState",
+      "        let provisioner = teardown_runtime.as_ref().map(|runtime| {\n            WorkloadProvisioner::new(Arc::clone(runtime));\n        });",
+      "        let provisioner = Some(WorkloadProvisioner::new_without_teardown());",
+    ],
+    "compensation-removes-nonterminal-owner": [
+      "workloadProvisioner",
+      "    if retain {",
+      "    if false {",
+    ],
+    "waiting-compensation-replays-provision": [
+      "workloadProvisioner",
+      "                provisioner.resume_compensation(*prior).await",
+      "                provisioner.driver.resume(&task_key).await",
+    ],
+    "compensation-removes-before-result": [
+      "workloadProvisioner",
+      "    sender.send_replace(Some(result));\n    if retain {",
+      "    supervisor.in_flight.remove(key);\n    sender.send_replace(Some(result));\n    if retain {",
+    ],
+    "compensation-waiter-cancels-tracked": [
+      "workloadProvisioner",
+      "        if *cancellation_signal.borrow() {\n            return Err(WorkloadProvisionError::WaiterCancelled);",
+      "        if *cancellation_signal.borrow() {\n            receiver.abort_tracked_task();\n            return Err(WorkloadProvisionError::WaiterCancelled);",
+    ],
+    "restart-settles-before-cause-cas": [
+      "restartRuntime",
+      "        coordinator.commit_restart_settlement_teardown(run.record()).await?;\n        return Ok(WorkloadRestartSettlement::Settled);",
+      "        return Ok(WorkloadRestartSettlement::Settled);\n        coordinator.commit_restart_settlement_teardown(run.record()).await?;",
+    ],
+    "teardown-submits-before-restart-settlement": [
+      "resourceRetirement",
+      "    self.settle_issued_restart_before_native_teardown(key).await?;\n    let run = self.teardown_runtime.submit(key.clone(), &cancellation).await?;",
+      "    let run = self.teardown_runtime.submit(key.clone(), &cancellation).await?;\n    self.settle_issued_restart_before_native_teardown(key).await?;",
     ],
     "network-effect": [
       "network",
@@ -1224,6 +1655,20 @@ function applyFixtureMutation(sources, mutation) {
   } else if (mutation === "machine-barrier-persistence-moved-to-backend") {
     sources.physicalProviderAdmissions +=
       "\nstruct DurableMachineStopBarrier;\n";
+  } else if (mutation === "missing-tenant-convergence-test-attribution") {
+    replaceOnceInOwnedTest(
+      sources,
+      "crates/nimbus-compute/src/resource_retirement/tests/tenant_retirement.rs",
+      "tenant_driver_paginates_and_drives_each_exact_key_once_per_pass",
+      "misattributed_tenant_pagination_test",
+    );
+  } else if (mutation === "missing-recovery-convergence-test-attribution") {
+    replaceOnceInOwnedTest(
+      sources,
+      "crates/nimbus-server/src/workload_saga_store/tests/provision_driver_process.rs",
+      "failed_provision_compensation_reopens_result_and_cause_cuts",
+      "misattributed_failed_provision_recovery_test",
+    );
   } else if (mutation === "missing-attributed-tests") {
     replaceOnceInNamedTest(
       sources,
@@ -1319,6 +1764,15 @@ function applyFixtureMutation(sources, mutation) {
       "resourceRetirement",
       "fn retire_late_provision_result() {}",
       "",
+    );
+    sources.resourceRetirement = sources.resourceRetirement.replaceAll(
+      "retire_late_provision_result",
+      "omit_late_provision_result",
+    );
+  } else if (mutation === "missing-native-restart-settlement") {
+    sources.resourceRetirement = sources.resourceRetirement.replaceAll(
+      "settle_issued_restart_before_native_teardown",
+      "omit_issued_restart_settlement",
     );
   } else if (mutation === "missing-native-execution-reference") {
     sources.serviceProjections = sources.serviceProjections.replaceAll(
@@ -1474,10 +1928,10 @@ export function verifyWorkloadTeardownContract() {
   requireContract(
     appearsInOrder(order, REQUIRED_ORDER) &&
       hasAll(portableReducer, [
-        "WorkloadTeardownDecision::RestartSettlementPending",
         "WorkloadSagaPhase::NetworkReleased",
         "ProposedWorkloadTeardownTransition::RecordTerminal",
       ]) &&
+      restartSettlementPass(sources) &&
       hasTestsAt(
         sources,
         "crates/nimbus-compute/src/workload_saga/teardown_driver/tests.rs",
@@ -1604,7 +2058,7 @@ export function verifyWorkloadTeardownContract() {
       /teardown_capabilities\s*:\s*Option\s*<\s*Box\s*<\s*ExactWorkloadTeardownCapabilityRealm\s*>\s*>/u.test(
         computeComposition,
       ) &&
-      /teardown_capabilities\s*:\s*Option\s*<\s*ExactWorkloadTeardownCapabilityRealm\s*>/u.test(
+      /teardown_capabilities\s*:\s*ExactWorkloadTeardownCapabilityRealm/u.test(
         serverWorkloadComposition,
       ) &&
       sources.serverComposition.includes(
@@ -1618,7 +2072,7 @@ export function verifyWorkloadTeardownContract() {
         "&execution_provider_id",
       ]) &&
       intoManagedCompute.includes(
-        "teardown_capabilities: self.teardown_capabilities.map(Box::new)",
+        "teardown_capabilities: Some(Box::new(self.teardown_capabilities))",
       ) &&
       intoManagedCompute.includes(
         "execution_provider_id: self.execution_provider_id",
@@ -2333,25 +2787,13 @@ export function verifyWorkloadTeardownContract() {
   );
 
   requireContract(
-    hasAll(sources.compute, [
-      "list_tenant_sagas",
-      "drive_tenant_teardown",
-      "require_all_recorded_before_finish_tenant_delete",
-    ]) && !/\bTenantServiceRetirement\b/u.test(sources.services),
+    tenantConvergencePass(sources),
     workloadTeardownDiagnostics.tenant,
   );
 
   requireContract(
     hasAll(sources.workloads, ["WorkloadTeardownCause", "FailedProvision"]) &&
-      hasAll(sources.compute, [
-        "compensate_definite_provision_failure",
-        "WorkloadTeardownCause::FailedProvision",
-        "inspect_ambiguous_provision_before_compensation",
-        "retain_cancellation_after_submission",
-        "settle_issued_restart_before_teardown",
-        "retain_late_restart_result",
-        "enter_withdrawal_committed_after_restart_settlement",
-      ]),
+      compensationConvergencePass(sources),
     workloadTeardownDiagnostics.compensation,
   );
 

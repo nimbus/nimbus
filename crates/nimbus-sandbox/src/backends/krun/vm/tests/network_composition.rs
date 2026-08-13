@@ -110,36 +110,6 @@ fn startup_network_reconciliation_failure_blocks_new_krun_planning() {
 }
 
 #[test]
-fn plan_only_stop_does_not_invent_attachment_cleanup_authority() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let spec = sample_spec_for_tenant("krun-stop-order", "api");
-    let recorder = Arc::new(RecordingSegmentAllocator::new(
-        spec.tenant_id.clone(),
-        "10.75.0.0/24",
-        75,
-    ));
-    let injected: Arc<OciSegmentAllocator> = recorder.clone();
-    let backend = KrunSandboxBackend::with_segment_allocator(
-        KrunSandboxBackendConfig::plan_only(
-            temp_dir.path().join("bundles"),
-            temp_dir.path().join("state"),
-        ),
-        injected,
-    );
-
-    let handle = materialize_plan_only_fixture(&backend, spec.clone())
-        .expect("plan-only krun lowering should succeed");
-    let before_stop = recorder.operations();
-    block_on(backend.stop(&handle.id)).expect("plan-only krun stop should clean local artifacts");
-
-    assert_eq!(
-        recorder.operations(),
-        before_stop,
-        "an authority-free plan-only preview must not fabricate an attachment hold in order to clean it"
-    );
-}
-
-#[test]
 fn restart_network_teardown_retains_exact_segment_hold() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec_for_tenant("krun-restart-hold", "api");

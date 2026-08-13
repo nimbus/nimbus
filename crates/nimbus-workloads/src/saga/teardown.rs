@@ -250,6 +250,172 @@ impl WorkloadRestartTeardownSettlement {
         }
         Ok(())
     }
+
+    pub(crate) fn teardown_seed_from_source(
+        &self,
+        intent: &WorkloadSagaIntent,
+        source_references: &WorkloadEffectReferences,
+    ) -> Result<(WorkloadSagaPhase, WorkloadEffectReferences), WorkloadSagaError> {
+        source_references.validate_for(intent)?;
+        if source_references.execution() != Some(&self.source_execution) {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart teardown source references cross the settled source execution",
+            ));
+        }
+        let Some(target_origin) = self.target_teardown_origin() else {
+            self.validate_teardown_seed(intent, WorkloadSagaPhase::Observed, source_references)?;
+            return Ok((WorkloadSagaPhase::Observed, source_references.clone()));
+        };
+
+        let publication =
+            if target_origin.recovery_order() >= WorkloadSagaPhase::Ready.recovery_order() {
+                let source_publication =
+                    source_references
+                        .publication()
+                        .ok_or(WorkloadSagaError::InvalidEvidence(
+                            "restart target teardown requires retained endpoint authority",
+                        ))?;
+                Some(WorkloadPublicationReference::for_execution(
+                    source_publication.endpoints().iter().cloned(),
+                    intent,
+                    self.target_execution.clone(),
+                )?)
+            } else {
+                None
+            };
+        let references = WorkloadEffectReferences::new(
+            Some(WorkloadNetworkReference::for_intent(intent)),
+            Some(self.target_execution.clone()),
+            publication,
+        );
+        self.validate_teardown_seed(intent, target_origin, &references)?;
+        Ok((target_origin, references))
+    }
+
+    pub(crate) fn validate_teardown_seed(
+        &self,
+        intent: &WorkloadSagaIntent,
+        origin: WorkloadSagaPhase,
+        references: &WorkloadEffectReferences,
+    ) -> Result<(), WorkloadSagaError> {
+        self.validate()?;
+        self.source_execution.validate_for(intent)?;
+        self.target_execution.validate_for(intent)?;
+        references.validate_for(intent)?;
+        if self.target_execution.restart_epoch() != self.claim.restart_epoch()
+            || self.target_execution.attempt_id() != self.claim.attempt_id()
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart teardown target execution crosses its command claim",
+            ));
+        }
+
+        let target_origin = self.target_teardown_origin();
+        let expected_origin = target_origin.unwrap_or(WorkloadSagaPhase::Observed);
+        let expected_execution = target_origin
+            .as_ref()
+            .map(|_| &self.target_execution)
+            .unwrap_or(&self.source_execution);
+        if origin != expected_origin
+            || references.network() != Some(&WorkloadNetworkReference::for_intent(intent))
+            || references.execution() != Some(expected_execution)
+            || references
+                .publication()
+                .is_some_and(|publication| publication.execution() != expected_execution)
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart teardown origin or retained references cross the settled effects",
+            ));
+        }
+
+        let expected_kinds = restart_owner_kinds_before_step(self.claim.step());
+        if self.owner_observations.len() != expected_kinds.len()
+            || self
+                .owner_observations
+                .iter()
+                .zip(expected_kinds)
+                .any(|(observation, expected)| {
+                    observation.kind() != *expected || !observation.matches(references)
+                })
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "restart teardown owner observations are crossed, incomplete, or out of order",
+            ));
+        }
+        Ok(())
+    }
+
+    fn target_teardown_origin(&self) -> Option<WorkloadSagaPhase> {
+        let succeeded = self.result.is_succeeded();
+        match (self.claim.step(), succeeded, &self.result) {
+            (WorkloadRestartStep::WithdrawPublication, _, _)
+            | (WorkloadRestartStep::QuiesceExecution, _, _)
+            | (WorkloadRestartStep::PrepareExecution, false, _) => None,
+            (WorkloadRestartStep::PrepareExecution, true, _) => {
+                Some(WorkloadSagaPhase::WorkloadPrepared)
+            }
+            (WorkloadRestartStep::AttachNetwork, false, _) => {
+                Some(WorkloadSagaPhase::WorkloadPrepared)
+            }
+            (WorkloadRestartStep::AttachNetwork, true, _)
+            | (WorkloadRestartStep::InspectActivationPrerequisites, _, _)
+            | (WorkloadRestartStep::ActivateExecution, false, _) => {
+                Some(WorkloadSagaPhase::NetworkAttached)
+            }
+            (WorkloadRestartStep::ActivateExecution, true, _)
+            | (WorkloadRestartStep::InspectReadiness, false, _) => {
+                Some(WorkloadSagaPhase::WorkloadActivated)
+            }
+            (WorkloadRestartStep::InspectReadiness, true, _)
+            | (WorkloadRestartStep::Publish, false, _)
+            | (
+                WorkloadRestartStep::ObservePublication,
+                false,
+                WorkloadRestartEffectResult::AuthenticatedAbsent { .. },
+            ) => Some(WorkloadSagaPhase::Ready),
+            (WorkloadRestartStep::Publish, true, _)
+            | (WorkloadRestartStep::ObservePublication, false, _) => {
+                Some(WorkloadSagaPhase::Published)
+            }
+            (WorkloadRestartStep::ObservePublication, true, _) => Some(WorkloadSagaPhase::Observed),
+        }
+    }
+}
+
+fn restart_owner_kinds_before_step(step: WorkloadRestartStep) -> &'static [OwnerObservationKind] {
+    use OwnerObservationKind::{
+        ExecutionActivated, ExecutionPrepared, NetworkAttached, PublicationPresent, Ready,
+    };
+    const NONE: &[OwnerObservationKind] = &[];
+    const PREPARED: &[OwnerObservationKind] = &[ExecutionPrepared];
+    const ATTACHED: &[OwnerObservationKind] = &[ExecutionPrepared, NetworkAttached];
+    const ACTIVATED: &[OwnerObservationKind] =
+        &[ExecutionPrepared, NetworkAttached, ExecutionActivated];
+    const READY: &[OwnerObservationKind] = &[
+        ExecutionPrepared,
+        NetworkAttached,
+        ExecutionActivated,
+        Ready,
+    ];
+    const PUBLISHED: &[OwnerObservationKind] = &[
+        ExecutionPrepared,
+        NetworkAttached,
+        ExecutionActivated,
+        Ready,
+        PublicationPresent,
+    ];
+
+    match step {
+        WorkloadRestartStep::WithdrawPublication
+        | WorkloadRestartStep::QuiesceExecution
+        | WorkloadRestartStep::PrepareExecution => NONE,
+        WorkloadRestartStep::AttachNetwork => PREPARED,
+        WorkloadRestartStep::InspectActivationPrerequisites
+        | WorkloadRestartStep::ActivateExecution => ATTACHED,
+        WorkloadRestartStep::InspectReadiness => ACTIVATED,
+        WorkloadRestartStep::Publish => READY,
+        WorkloadRestartStep::ObservePublication => PUBLISHED,
+    }
 }
 
 /// Closed teardown operation selected by the pure workloads reducer.
@@ -1268,7 +1434,6 @@ pub enum WorkloadTeardownDecision {
     Quiescent,
     PersistCandidate(ProposedWorkloadTeardownTransition),
     InspectExact(WorkloadTeardownClaim),
-    RestartSettlementPending(Box<WorkloadRestartTeardownSettlement>),
     CleanupPending {
         claim: WorkloadTeardownClaim,
         failure: WorkloadFailureEvidence,

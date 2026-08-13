@@ -8,15 +8,24 @@ use nimbus_compute::workload_saga::provision_provider::{
     ProviderProvisionEffectObservation, ProviderProvisionPhaseAdapter,
 };
 use nimbus_compute::workload_saga::{
-    ConfirmedWorkloadProvisionCommand, IngressProvisionCapabilities, IngressPublicationCapability,
-    IngressPublicationInspectionCapability, NetworkAttachmentCapability,
-    NetworkAttachmentProvisionCapabilities, NetworkReservationCapability,
-    WorkloadActivationCapability, WorkloadActivationPrerequisiteCapability,
-    WorkloadExecutionProvisionCapabilities, WorkloadPreparationCapability,
+    ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadTeardownCommand,
+    FinalIngressWithdrawalCapability, IngressProvisionCapabilities, IngressPublicationCapability,
+    IngressPublicationInspectionCapability, IngressTeardownCapabilities,
+    NetworkAttachmentCapability, NetworkAttachmentProvisionCapabilities,
+    NetworkAttachmentTeardownCapabilities, NetworkDetachmentCapability, NetworkReleaseCapability,
+    NetworkReservationCapability, WorkloadActivationCapability,
+    WorkloadActivationPrerequisiteCapability, WorkloadExecutionDrainCapability,
+    WorkloadExecutionProvisionCapabilities, WorkloadExecutionStopCapability,
+    WorkloadExecutionTeardownCapabilities, WorkloadPreparationCapability,
     WorkloadProvisionCapabilityFuture, WorkloadProvisionCapabilityRegistry,
     WorkloadProvisionDriver, WorkloadProvisionRunDisposition, WorkloadProvisionSourceAuthority,
     WorkloadProvisionSourceAuthorityError, WorkloadProvisionSourceFuture,
-    WorkloadReadinessCapability, WorkloadSagaCoordinator,
+    WorkloadReadinessCapability, WorkloadSagaCoordinator, WorkloadTeardownCancellationToken,
+    WorkloadTeardownCapabilityFuture, WorkloadTeardownCapabilityRegistry,
+    WorkloadTeardownExecuteOutcome, WorkloadTeardownInspectOutcome,
+    WorkloadTeardownProviderObservation, WorkloadTeardownProviderOutcome,
+    WorkloadTeardownRunDisposition, WorkloadTeardownRuntime,
+    compensate_definite_provision_failure_once_for_test,
 };
 use nimbus_compute::{
     WorkloadExecutionObservationCapability, WorkloadExecutionObservationFuture,
@@ -25,6 +34,7 @@ use nimbus_compute::{
     WorkloadProviderObservation,
 };
 use nimbus_core::{TenantId, WorkloadId};
+use nimbus_engine::Engine;
 use nimbus_network::{
     NetworkAddressFamily, NetworkAttachmentCapabilitySet, NetworkAttachmentProviderRegistration,
     NetworkBindRealmKind, NetworkCapabilityBundle, NetworkCapabilityRegistry,
@@ -40,13 +50,15 @@ use nimbus_testing::{
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WorkloadActivationIntent,
     WorkloadAdmissionEvidence, WorkloadExecutableEncoding, WorkloadExecutableIntent,
-    WorkloadGeneration, WorkloadProvisionCommandMode, WorkloadProvisionInspectionResult,
+    WorkloadGeneration, WorkloadOwnerEvidenceDigest, WorkloadProvisionCommandMode,
+    WorkloadProvisionDisposition, WorkloadProvisionInspectionResult,
     WorkloadProvisionSourceEvidence, WorkloadProvisionSourceGeneration,
     WorkloadProvisionSourceIdentity, WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep,
     WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
     WorkloadSagaIntent, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
     WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaTenantPage,
-    WorkloadSagaTenantPageRequest,
+    WorkloadSagaTenantPageRequest, WorkloadTeardownCause, WorkloadTeardownCommandMode,
+    WorkloadTeardownStep, WorkloadTeardownSubjects, WorkloadTeardownSuccessEvidence,
 };
 
 use super::super::EngineWorkloadSagaStore;
@@ -63,6 +75,10 @@ const PROCESS_PID_PREFIX: &str = "NIMBUS_NNC64_PROCESS_PID";
 const PROCESS_TIMEOUT: Duration = Duration::from_secs(20);
 const CUT_MARKER_TIMEOUT: Duration = Duration::from_secs(10);
 const PROVIDER_JOURNAL_NAMESPACE: &str = "nnc64-process-provider";
+const COMPENSATION_CHILD_TEST: &str = "workload_saga_store::tests::provision_driver_process::workload_provision_compensation_process_child";
+const COMPENSATION_MODE_ENV: &str = "NIMBUS_NNC65G_COMPENSATION_MODE";
+const COMPENSATION_CUT_ENV: &str = "NIMBUS_NNC65G_COMPENSATION_CUT";
+const COMPENSATION_OBSERVATION_PREFIX: &str = "failed-provision-compensation-recorded";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CrashCut {
@@ -97,6 +113,34 @@ impl CrashCut {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompensationCut {
+    ResultBeforeCause,
+    CauseResponseLoss,
+}
+
+impl CompensationCut {
+    const ALL: [Self; 2] = [Self::ResultBeforeCause, Self::CauseResponseLoss];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::ResultBeforeCause => "result-before-cause",
+            Self::CauseResponseLoss => "cause-response-loss",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.name() == value)
+            .ok_or_else(|| format!("unknown NNC6.5g compensation cut {value:?}"))
+    }
+
+    fn observation(self) -> String {
+        format!("{COMPENSATION_OBSERVATION_PREFIX}:{}", self.name())
+    }
+}
+
 #[test]
 fn fresh_process_reopens_engine_without_snapshot_handoff() {
     for cut in CrashCut::ALL {
@@ -118,6 +162,45 @@ fn fresh_process_reopens_engine_without_snapshot_handoff() {
             "killed-at-boundary-and-reaped"
         );
         assert_eq!(result.crash_diagnostic().successful(), Some(false));
+        assert_eq!(result.recovery_diagnostic().successful(), Some(true));
+        assert_ne!(
+            process_pid(result.crash_diagnostic().stderr(), "writer"),
+            process_pid(result.recovery_diagnostic().stderr(), "recovery"),
+            "{} must reopen in a genuinely distinct process",
+            cut.name()
+        );
+    }
+}
+
+#[test]
+fn failed_provision_compensation_reopens_result_and_cause_cuts() {
+    for cut in CompensationCut::ALL {
+        let root = tempfile::tempdir().expect("compensation process root should build");
+        let result = SubprocessCrashCutHarness::new(PROCESS_TIMEOUT)
+            .run(
+                root.path(),
+                cut.name(),
+                &cut.observation(),
+                compensation_child_role(&format!("{}-writer", cut.name()), CHILD_MODE_CRASH, cut),
+                compensation_child_role(
+                    &format!("{}-recovery", cut.name()),
+                    CHILD_MODE_RECOVER,
+                    cut,
+                ),
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{} compensation process recovery failed: {error}",
+                    cut.name()
+                )
+            });
+
+        assert_eq!(result.boundary(), cut.name());
+        assert_eq!(result.observation(), cut.observation());
+        assert_eq!(
+            result.crash_diagnostic().cleanup(),
+            "killed-at-boundary-and-reaped"
+        );
         assert_eq!(result.recovery_diagnostic().successful(), Some(true));
         assert_ne!(
             process_pid(result.crash_diagnostic().stderr(), "writer"),
@@ -164,6 +247,39 @@ fn workload_provision_driver_process_child() {
     }
 }
 
+#[test]
+#[ignore = "spawned only by the NNC6.5g compensation fresh-process proof parent"]
+fn workload_provision_compensation_process_child() {
+    let mode = std::env::var(COMPENSATION_MODE_ENV)
+        .expect("compensation child process mode should be supplied");
+    let cut = CompensationCut::parse(
+        &std::env::var(COMPENSATION_CUT_ENV)
+            .expect("compensation child process cut should be supplied"),
+    )
+    .expect("compensation child process cut should be valid");
+    match mode.as_str() {
+        CHILD_MODE_CRASH => run_crash_cut_child(|context| {
+            eprintln!("{PROCESS_PID_PREFIX}:writer:{}", std::process::id());
+            let marker = context.state_root().join("compensation-cut-reached");
+            std::thread::scope(|scope| -> Result<(), String> {
+                scope.spawn(|| watch_compensation_cut(context, &marker, cut));
+                process_runtime()?.block_on(write_compensation_cut(
+                    context.state_root(),
+                    &marker,
+                    cut,
+                ))
+            })
+        })
+        .unwrap_or_else(|error| panic!("NNC6.5g compensation crash child failed: {error}")),
+        CHILD_MODE_RECOVER => run_crash_recovery_child(|context| {
+            eprintln!("{PROCESS_PID_PREFIX}:recovery:{}", std::process::id());
+            process_runtime()?.block_on(recover_compensation_cut(context.state_root(), cut))
+        })
+        .unwrap_or_else(|error| panic!("NNC6.5g compensation recovery child failed: {error}")),
+        unknown => panic!("unknown NNC6.5g compensation process mode {unknown:?}"),
+    }
+}
+
 fn child_role(role: &str, mode: &str, cut: CrashCut) -> ProcessRoleSpec {
     ProcessRoleSpec::new(
         role,
@@ -175,6 +291,19 @@ fn child_role(role: &str, mode: &str, cut: CrashCut) -> ProcessRoleSpec {
     .arg("--nocapture")
     .env(CHILD_MODE_ENV, mode)
     .env(CHILD_CUT_ENV, cut.name())
+}
+
+fn compensation_child_role(role: &str, mode: &str, cut: CompensationCut) -> ProcessRoleSpec {
+    ProcessRoleSpec::new(
+        role,
+        std::env::current_exe().expect("current test executable should resolve"),
+    )
+    .arg("--exact")
+    .arg(COMPENSATION_CHILD_TEST)
+    .arg("--ignored")
+    .arg("--nocapture")
+    .env(COMPENSATION_MODE_ENV, mode)
+    .env(COMPENSATION_CUT_ENV, cut.name())
 }
 
 fn process_pid(stderr: &str, role: &str) -> u32 {
@@ -191,6 +320,25 @@ fn watch_cut_marker(
     context: &nimbus_testing::CrashCutChildContext,
     marker: &Path,
     cut: CrashCut,
+) -> Result<(), String> {
+    let deadline = Instant::now() + CUT_MARKER_TIMEOUT;
+    while !marker.is_file() {
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "writer did not reach {} before {:?}",
+                cut.name(),
+                CUT_MARKER_TIMEOUT
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    context.reach_boundary(cut.name())
+}
+
+fn watch_compensation_cut(
+    context: &nimbus_testing::CrashCutChildContext,
+    marker: &Path,
+    cut: CompensationCut,
 ) -> Result<(), String> {
     let deadline = Instant::now() + CUT_MARKER_TIMEOUT;
     while !marker.is_file() {
@@ -242,10 +390,200 @@ async fn recover_process(root: &Path) -> Result<String, String> {
     Ok(RECOVERY_OBSERVATION.to_owned())
 }
 
+async fn write_compensation_cut(
+    root: &Path,
+    marker: &Path,
+    cut: CompensationCut,
+) -> Result<(), String> {
+    let (driver, record) = process_driver_with_failure(
+        root,
+        None,
+        &root.join("unused-provision-cut"),
+        Some(WorkloadProvisionStep::PrepareWorkload),
+    )?;
+    let run = driver
+        .submit_and_drive(record.key().clone(), record.active_intent().clone())
+        .await
+        .map_err(|error| format!("failed provision writer failed: {error}"))?;
+    if run.disposition() != WorkloadProvisionRunDisposition::DefiniteFailure
+        || !matches!(
+            run.record().provision_disposition(),
+            Some(WorkloadProvisionDisposition::DefiniteFailure { claim, .. })
+                if claim.attempt().step() == WorkloadProvisionStep::PrepareWorkload
+        )
+    {
+        return Err(format!(
+            "failed provision writer did not persist exact result: disposition={:?} phase={:?}",
+            run.disposition(),
+            run.record().phase()
+        ));
+    }
+    let failed = run.record().clone();
+    drop(driver);
+
+    match cut {
+        CompensationCut::ResultBeforeCause => durable_stall(marker),
+        CompensationCut::CauseResponseLoss => {
+            let engine = Arc::new(
+                Engine::new(root.join("engine"))
+                    .map_err(|error| format!("cause writer Engine reopen failed: {error}"))?,
+            );
+            let store: Arc<dyn WorkloadSagaStore> = Arc::new(CrashAfterCauseStore {
+                inner: EngineWorkloadSagaStore::new(engine),
+                marker: marker.to_owned(),
+            });
+            let coordinator = Arc::new(WorkloadSagaCoordinator::new(store));
+            let teardown = compensation_teardown_runtime(root, Arc::clone(&coordinator), &failed)?;
+            let result =
+                compensate_definite_provision_failure_once_for_test(coordinator, teardown, &failed)
+                    .await;
+            Err(format!(
+                "cause-response writer returned before its cut: {result:?}"
+            ))
+        }
+    }
+}
+
+async fn recover_compensation_cut(root: &Path, cut: CompensationCut) -> Result<String, String> {
+    let engine = Arc::new(
+        Engine::new(root.join("engine"))
+            .map_err(|error| format!("compensation recovery Engine failed: {error}"))?,
+    );
+    let store: Arc<dyn WorkloadSagaStore> = Arc::new(EngineWorkloadSagaStore::new(engine));
+    let coordinator = Arc::new(WorkloadSagaCoordinator::new(store));
+    let key = process_record().key().clone();
+    let current = coordinator
+        .load(&key)
+        .await
+        .map_err(|error| format!("compensation recovery load failed: {error}"))?
+        .ok_or_else(|| "compensation recovery record is missing".to_owned())?;
+    let teardown = compensation_teardown_runtime(root, Arc::clone(&coordinator), &current)?;
+    let run = match cut {
+        CompensationCut::ResultBeforeCause => {
+            if !matches!(
+                current.provision_disposition(),
+                Some(WorkloadProvisionDisposition::DefiniteFailure { claim, .. })
+                    if claim.attempt().step() == WorkloadProvisionStep::PrepareWorkload
+            ) || current.teardown_disposition().is_some()
+            {
+                return Err("result-before-cause recovery crossed durable failure".to_owned());
+            }
+            compensate_definite_provision_failure_once_for_test(
+                Arc::clone(&coordinator),
+                Arc::clone(&teardown),
+                &current,
+            )
+            .await
+            .map_err(|error| format!("result-before-cause compensation failed: {error}"))?
+        }
+        CompensationCut::CauseResponseLoss => {
+            if current.phase() != WorkloadSagaPhase::WithdrawalCommitted
+                || !matches!(
+                    current
+                        .teardown_disposition()
+                        .map(|disposition| disposition.cause()),
+                    Some(WorkloadTeardownCause::FailedProvision { claim, .. })
+                        if claim.attempt().step() == WorkloadProvisionStep::PrepareWorkload
+                )
+            {
+                return Err("cause-response recovery crossed durable cause".to_owned());
+            }
+            teardown
+                .submit(key.clone(), &WorkloadTeardownCancellationToken::new())
+                .await
+                .map_err(|error| format!("cause-response teardown recovery failed: {error}"))?
+        }
+    };
+    if run.disposition() != WorkloadTeardownRunDisposition::Completed
+        || run.record().phase() != WorkloadSagaPhase::Recorded
+    {
+        return Err(format!(
+            "compensation recovery did not record: disposition={:?} phase={:?}",
+            run.disposition(),
+            run.record().phase()
+        ));
+    }
+    require_effect_count(&root.join("effects"), 1, "provision")?;
+    require_effect_count(&root.join("teardown-effects"), 1, "teardown")?;
+    Ok(cut.observation())
+}
+
+fn compensation_teardown_runtime(
+    root: &Path,
+    coordinator: Arc<WorkloadSagaCoordinator>,
+    record: &WorkloadSagaRecord,
+) -> Result<Arc<WorkloadTeardownRuntime>, String> {
+    let source = Arc::new(ExactProcessSource {
+        key: record.key().clone(),
+        identity: record.active_intent().source().source_identity().clone(),
+        evidence: record.active_intent().source().clone(),
+    });
+    let provider = Arc::new(CompensationTeardownProvider {
+        effects: root.join("teardown-effects"),
+    });
+    fs::create_dir_all(&provider.effects)
+        .map_err(|error| format!("teardown effect directory failed: {error}"))?;
+    let selection = record
+        .active_intent()
+        .network()
+        .compiled_plan()
+        .content()
+        .capability_selection()
+        .cloned()
+        .ok_or_else(|| "compensation record omitted network selection".to_owned())?;
+    let capabilities = WorkloadTeardownCapabilityRegistry::new(
+        [NetworkAttachmentTeardownCapabilities::new(
+            selection.attachment_provider_id().clone(),
+            provider.clone(),
+            provider.clone(),
+        )],
+        [WorkloadExecutionTeardownCapabilities::new(
+            execution_provider_id(),
+            provider.clone(),
+            provider.clone(),
+        )],
+        [IngressTeardownCapabilities::new(
+            selection.ingress_provider_id().clone(),
+            provider,
+        )],
+    )
+    .map_err(|error| format!("compensation teardown registry failed: {error}"))?;
+    Ok(Arc::new(WorkloadTeardownRuntime::new(
+        coordinator,
+        source,
+        provider_reports(),
+        Arc::new(capabilities),
+    )))
+}
+
+fn require_effect_count(root: &Path, expected: usize, label: &str) -> Result<(), String> {
+    let count = fs::read_dir(root)
+        .map_err(|error| format!("{label} effect directory could not be read: {error}"))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .count();
+    if count == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "expected {expected} exact {label} effects, observed {count}"
+        ))
+    }
+}
+
 fn process_driver(
     root: &Path,
     crash_cut: Option<CrashCut>,
     cut_marker: &Path,
+) -> Result<(WorkloadProvisionDriver, WorkloadSagaRecord), String> {
+    process_driver_with_failure(root, crash_cut, cut_marker, None)
+}
+
+fn process_driver_with_failure(
+    root: &Path,
+    crash_cut: Option<CrashCut>,
+    cut_marker: &Path,
+    fail_step: Option<WorkloadProvisionStep>,
 ) -> Result<(WorkloadProvisionDriver, WorkloadSagaRecord), String> {
     fs::create_dir_all(root.join("effects"))
         .map_err(|error| format!("effect directory could not be created: {error}"))?;
@@ -272,6 +610,7 @@ fn process_driver(
         effects: root.join("effects"),
         crash_cut: crash_cut.filter(|cut| *cut != CrashCut::ResultCas),
         cut_marker: cut_marker.to_owned(),
+        fail_step,
     });
     let capabilities = WorkloadProvisionCapabilityRegistry::new(
         [NetworkAttachmentProvisionCapabilities::new(
@@ -309,6 +648,63 @@ fn process_driver(
 struct CrashAfterResultStore {
     inner: EngineWorkloadSagaStore,
     marker: PathBuf,
+}
+
+struct CrashAfterCauseStore {
+    inner: EngineWorkloadSagaStore,
+    marker: PathBuf,
+}
+
+impl WorkloadSagaStore for CrashAfterCauseStore {
+    fn load<'a>(
+        &'a self,
+        key: &'a WorkloadSagaKey,
+    ) -> WorkloadSagaFuture<'a, Option<WorkloadSagaRecord>> {
+        self.inner.load(key)
+    }
+
+    fn compare_and_swap<'a>(
+        &'a self,
+        expected: WorkloadSagaExpected,
+        next: WorkloadSagaRecord,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaCommit> {
+        Box::pin(async move {
+            let crash_after_commit = next.phase() == WorkloadSagaPhase::WithdrawalCommitted
+                && matches!(
+                    next.teardown_disposition()
+                        .map(|disposition| disposition.cause()),
+                    Some(WorkloadTeardownCause::FailedProvision { .. })
+                );
+            let result = self.inner.compare_and_swap(expected, next).await?;
+            if crash_after_commit && result == WorkloadSagaCommit::Applied {
+                durable_stall(&self.marker);
+            }
+            Ok(result)
+        })
+    }
+
+    fn list_recoverable<'a>(
+        &'a self,
+        request: WorkloadSagaPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaPage> {
+        self.inner.list_recoverable(request)
+    }
+
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
+    ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadRestartCandidatePage>
+    {
+        self.inner.list_restart_candidates(request)
+    }
+
+    fn list_for_tenant<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+        request: WorkloadSagaTenantPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
+        self.inner.list_for_tenant(tenant_id, request)
+    }
 }
 
 impl WorkloadSagaStore for CrashAfterResultStore {
@@ -379,11 +775,142 @@ impl WorkloadProvisionSourceAuthority for ExactProcessSource {
     }
 }
 
+struct CompensationTeardownProvider {
+    effects: PathBuf,
+}
+
+impl CompensationTeardownProvider {
+    fn observe(
+        &self,
+        command: &ConfirmedWorkloadTeardownCommand,
+    ) -> WorkloadTeardownProviderObservation {
+        let evidence = WorkloadOwnerEvidenceDigest::sha256(format!(
+            "nnc65g-compensation:{:?}:{}",
+            command.step(),
+            command.attempt_id().as_str()
+        ));
+        let success = teardown_success(command, evidence);
+        match command.mode() {
+            WorkloadTeardownCommandMode::Execute => {
+                let path = self.effects.join(format!(
+                    "{}-{}",
+                    teardown_step_name(command.step()),
+                    command.attempt_id().as_str()
+                ));
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "duplicate or failed teardown effect {}: {error}",
+                            path.display()
+                        )
+                    });
+                file.write_all(format!("{:?}", command.step()).as_bytes())
+                    .and_then(|()| file.sync_all())
+                    .expect("teardown effect marker should become durable");
+                WorkloadTeardownProviderObservation::for_command(
+                    command,
+                    WorkloadTeardownProviderOutcome::Execute(
+                        WorkloadTeardownExecuteOutcome::Succeeded(Box::new(success)),
+                    ),
+                )
+            }
+            WorkloadTeardownCommandMode::Inspect => {
+                WorkloadTeardownProviderObservation::for_command(
+                    command,
+                    WorkloadTeardownProviderOutcome::Inspect(
+                        WorkloadTeardownInspectOutcome::Satisfied(Box::new(success)),
+                    ),
+                )
+            }
+        }
+    }
+}
+
+macro_rules! compensation_teardown_capability {
+    ($trait_name:ident) => {
+        impl $trait_name for CompensationTeardownProvider {
+            fn execute<'a>(
+                &'a self,
+                command: &'a ConfirmedWorkloadTeardownCommand,
+            ) -> WorkloadTeardownCapabilityFuture<'a> {
+                Box::pin(std::future::ready(self.observe(command)))
+            }
+
+            fn inspect<'a>(
+                &'a self,
+                command: &'a ConfirmedWorkloadTeardownCommand,
+            ) -> WorkloadTeardownCapabilityFuture<'a> {
+                Box::pin(std::future::ready(self.observe(command)))
+            }
+        }
+    };
+}
+
+compensation_teardown_capability!(FinalIngressWithdrawalCapability);
+compensation_teardown_capability!(WorkloadExecutionDrainCapability);
+compensation_teardown_capability!(WorkloadExecutionStopCapability);
+compensation_teardown_capability!(NetworkDetachmentCapability);
+compensation_teardown_capability!(NetworkReleaseCapability);
+
+fn teardown_success(
+    command: &ConfirmedWorkloadTeardownCommand,
+    evidence: WorkloadOwnerEvidenceDigest,
+) -> WorkloadTeardownSuccessEvidence {
+    match (command.step(), command.subjects()) {
+        (
+            WorkloadTeardownStep::WithdrawPublication,
+            WorkloadTeardownSubjects::Publication(reference),
+        ) => WorkloadTeardownSuccessEvidence::PublicationAbsent {
+            reference: reference.clone(),
+            evidence,
+        },
+        (WorkloadTeardownStep::DrainExecution, WorkloadTeardownSubjects::Execution(reference)) => {
+            WorkloadTeardownSuccessEvidence::ExecutionDrained {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        (WorkloadTeardownStep::StopExecution, WorkloadTeardownSubjects::Execution(reference)) => {
+            WorkloadTeardownSuccessEvidence::ExecutionStopped {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        (WorkloadTeardownStep::DetachNetwork, WorkloadTeardownSubjects::Network(reference)) => {
+            WorkloadTeardownSuccessEvidence::NetworkDetached {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        (WorkloadTeardownStep::ReleaseNetwork, WorkloadTeardownSubjects::Network(reference)) => {
+            WorkloadTeardownSuccessEvidence::NetworkReleased {
+                reference: reference.clone(),
+                evidence,
+            }
+        }
+        _ => panic!("compensation teardown step and subjects should match"),
+    }
+}
+
+const fn teardown_step_name(step: WorkloadTeardownStep) -> &'static str {
+    match step {
+        WorkloadTeardownStep::WithdrawPublication => "withdraw",
+        WorkloadTeardownStep::DrainExecution => "drain",
+        WorkloadTeardownStep::StopExecution => "stop",
+        WorkloadTeardownStep::DetachNetwork => "detach",
+        WorkloadTeardownStep::ReleaseNetwork => "release",
+    }
+}
+
 struct ProcessProofProvider {
     phases: ProviderProvisionPhaseAdapter,
     effects: PathBuf,
     crash_cut: Option<CrashCut>,
     cut_marker: PathBuf,
+    fail_step: Option<WorkloadProvisionStep>,
 }
 
 impl WorkloadExecutionObservationCapability for ProcessProofProvider {
@@ -462,6 +989,12 @@ impl ProcessProofProvider {
         &self,
         command: &ConfirmedWorkloadProvisionCommand,
     ) -> ProviderProvisionEffectObservation {
+        if self.fail_step == Some(command.step()) {
+            return ProviderProvisionEffectObservation::DefiniteFailure {
+                code: "process_definite_failure".to_owned(),
+                evidence: format!("{}-definite-failure", step_name(command.step())).into_bytes(),
+            };
+        }
         let path = self.effect_path(command);
         let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => file,

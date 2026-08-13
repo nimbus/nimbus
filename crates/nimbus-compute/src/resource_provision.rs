@@ -312,6 +312,11 @@ fn projection_rejection_reason(
 impl ComputeState {
     /// Resolve the complete managed native resource facade.
     pub fn resource_provisioner(&self) -> Result<ComputeResourceProvisioner, ComputeError> {
+        if self.workload_teardown_runtime().is_none() {
+            return Err(ComputeError::not_found(
+                "native workload provisioning requires exact teardown composition",
+            ));
+        }
         let services = self.service_manager().ok_or_else(|| {
             ComputeError::not_found("native workload provisioning requires a services source owner")
         })?;

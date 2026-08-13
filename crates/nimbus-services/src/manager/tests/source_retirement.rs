@@ -8,7 +8,7 @@ fn dynamic_service() -> (ServiceManager, TenantId, ServiceDefinition) {
         Arc::new(StubServiceDefinitionCatalog {
             launches: BTreeMap::new(),
         }),
-        Arc::new(StubSandboxBackend::new(1)),
+        SandboxBackendKind::Krun,
     );
     let definition = manager
         .create_service_definition(

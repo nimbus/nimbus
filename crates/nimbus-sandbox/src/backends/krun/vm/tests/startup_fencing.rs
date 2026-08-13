@@ -120,7 +120,7 @@ fn nnc5_2d_krun_startup_durably_fences_unmatched_no_hold_evidence() {
 }
 
 #[test]
-fn startup_reconciliation_failure_allows_exact_explicit_stop() {
+fn startup_reconciliation_failure_allows_exact_unstarted_launch_compensation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec_for_tenant("krun-startup-stop-fence", "api");
     let recorder = Arc::new(RecordingSegmentAllocator::new(
@@ -133,7 +133,7 @@ fn startup_reconciliation_failure_allows_exact_explicit_stop() {
         KrunSandboxBackendConfig::under_root(temp_dir.path()),
         injected,
     );
-    let manifest = backend
+    let mut manifest = backend
         .plan_start_with_id(
             &spec,
             &SandboxId::new("krun-startup-stop-fence"),
@@ -152,9 +152,13 @@ fn startup_reconciliation_failure_allows_exact_explicit_stop() {
         fs::read(&authority_path).expect("launch authority should remain durable");
     inject_startup_reconciliation_failure(&mut backend);
 
-    backend
-        .stop_sync(&manifest.handle.id)
-        .expect("an existing workload must retain exact stop authority");
+    let error = backend.persist_unstarted_launch_failure(
+        &mut manifest,
+        crate::error::SandboxError::OperationFailed {
+            message: "injected fenced launch cancellation".to_owned(),
+        },
+    );
+    assert!(error.to_string().contains("fenced launch cancellation"));
     assert_ne!(
         fs::read(&authority_path).expect("launch authority should remain readable"),
         authority_before,
@@ -164,7 +168,7 @@ fn startup_reconciliation_failure_allows_exact_explicit_stop() {
         .read_manifest(&manifest.handle.id)
         .expect("terminal manifest should inspect")
         .expect("terminal manifest should remain durable");
-    assert_eq!(persisted.status, SandboxStatus::Stopped);
+    assert_eq!(persisted.status, SandboxStatus::Failed);
     assert_eq!(persisted.launch_authority, KrunLaunchAuthority::Released);
     assert!(
         recorder.operations().len() > 1,
@@ -173,7 +177,7 @@ fn startup_reconciliation_failure_allows_exact_explicit_stop() {
 }
 
 #[test]
-fn startup_reconciliation_failure_keeps_natural_exit_read_only_until_explicit_stop() {
+fn startup_reconciliation_failure_keeps_natural_exit_read_only_until_owned_compensation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec_for_tenant("krun-startup-exit-fence", "api");
     let recorder = Arc::new(RecordingSegmentAllocator::new(
@@ -249,9 +253,17 @@ fn startup_reconciliation_failure_keeps_natural_exit_read_only_until_explicit_st
         "inspection must not invoke allocator cleanup"
     );
 
-    backend
-        .stop_sync(&manifest.handle.id)
-        .expect("explicit stop must retain cleanup authority despite startup failure");
+    let error = backend.persist_provider_launch_failure(
+        &mut manifest,
+        crate::error::SandboxError::OperationFailed {
+            message: "injected provider cleanup after startup fence".to_owned(),
+        },
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("provider cleanup after startup fence")
+    );
     assert_ne!(
         fs::read(&authority_path).expect("released authority should remain readable"),
         authority_before,
@@ -261,7 +273,7 @@ fn startup_reconciliation_failure_keeps_natural_exit_read_only_until_explicit_st
         .read_manifest(&manifest.handle.id)
         .expect("terminal manifest should inspect")
         .expect("terminal manifest should remain durable");
-    assert_eq!(persisted.status, SandboxStatus::Stopped);
+    assert_eq!(persisted.status, SandboxStatus::Failed);
     assert_eq!(persisted.launch_authority, KrunLaunchAuthority::Released);
     assert!(
         recorder.operations().len() > operations_before.len(),

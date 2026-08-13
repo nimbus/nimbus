@@ -51,7 +51,7 @@ fn raw_teardown_actions_are_absent_from_recovery_surface() {
 }
 
 #[test]
-fn teardown_cleanup_and_restart_settlement_are_typed_waits() {
+fn teardown_cleanup_waits_and_restart_settlement_records() {
     let cleanup = cleanup_pending_record("teardown-decision-cleanup-wait");
     let cleanup_decision = WorkloadSagaDecision::for_record(&cleanup)
         .expect("cleanup state should remain a typed portable decision");
@@ -65,7 +65,9 @@ fn teardown_cleanup_and_restart_settlement_are_typed_waits() {
         .expect("restart settlement should remain a typed portable decision");
     assert!(matches!(
         settlement_decision.action(),
-        WorkloadSagaAction::Teardown(WorkloadTeardownDecision::RestartSettlementPending(_))
+        WorkloadSagaAction::Teardown(WorkloadTeardownDecision::PersistCandidate(
+            ProposedWorkloadTeardownTransition::RecordTerminal
+        ))
     ));
 }
 

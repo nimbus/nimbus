@@ -706,6 +706,24 @@ fn history_for(case: RecoveryCase) -> Vec<WorkloadSagaRecord> {
     history
 }
 
+pub(super) fn publication_withdrawal_history(label: &str) -> Vec<WorkloadSagaRecord> {
+    let mut history = provision_history(
+        label,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let observed = history
+        .last()
+        .expect("published fixture must reach Observed")
+        .clone();
+    history.push(admit(
+        &observed,
+        explicit_input(&observed, label, RESTART_NOT_BEFORE),
+    ));
+    push_no_effect_advance(&mut history);
+    history
+}
+
 fn push_no_effect_advance(history: &mut Vec<WorkloadSagaRecord>) {
     let current = history.last().expect("active restart exists");
     let request_id = active_request_id(current);

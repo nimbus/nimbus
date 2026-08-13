@@ -128,9 +128,9 @@ fn teardown_target_phase(
             ProposedWorkloadTeardownTransition::RecordTerminal,
         ) => WorkloadSagaPhase::Recorded,
         WorkloadTeardownDecision::InspectExact(claim) => claim.attempt().target_phase(),
-        WorkloadTeardownDecision::Quiescent
-        | WorkloadTeardownDecision::RestartSettlementPending(_)
-        | WorkloadTeardownDecision::CleanupPending { .. } => record.phase(),
+        WorkloadTeardownDecision::Quiescent | WorkloadTeardownDecision::CleanupPending { .. } => {
+            record.phase()
+        }
     }
 }
 

@@ -24,8 +24,6 @@ pub trait SandboxBackend: Send + Sync + 'static {
 
     fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>>;
 
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()>;
-
     fn reload_egress_policy(&self, id: &SandboxId, _egress: EgressPolicy) -> SandboxFuture<()> {
         let backend = self.kind();
         let sandbox_id = id.clone();

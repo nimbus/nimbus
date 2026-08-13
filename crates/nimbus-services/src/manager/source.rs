@@ -13,6 +13,7 @@ use super::ServiceManager;
 use super::clock::now_millis;
 use super::sandboxes::{same_sandbox_resource_desire, validate_sandbox_resource_spec};
 use super::types::{TenantSandboxResourceKey, TenantServiceKey, WorkloadSourceRetirementKey};
+use super::workload_namespace::require_standalone_name_available;
 
 /// Exact desired standalone source plus the policy input that must admit it.
 ///
@@ -82,11 +83,25 @@ impl ServiceManager {
         let profile = profile.into();
         WorkloadId::new(stable_resource_id.clone())?;
         validate_sandbox_resource_spec(tenant_id, &spec)?;
+        let catalog_definition = self
+            .service_definitions
+            .service_definition_for_tenant(tenant_id, &stable_resource_id);
         let source = {
             let state = self
                 .state
                 .lock()
                 .expect("manager lock should not be poisoned");
+            Self::ensure_tenant_source_admission_open(
+                &state,
+                tenant_id,
+                "standalone sandbox source preparation",
+            )?;
+            require_standalone_name_available(
+                &state,
+                tenant_id,
+                &stable_resource_id,
+                catalog_definition.as_ref(),
+            )?;
             let key = TenantSandboxResourceKey::new(tenant_id, &stable_resource_id);
             match state.sandbox_resource_sources.get(&key) {
                 Some(existing) => {
@@ -141,12 +156,26 @@ impl ServiceManager {
     ) -> Result<SandboxResourceSource, Error> {
         self.validate_standalone_sandbox_provision_decision(decision, &prepared)?;
         let source = prepared.source;
+        let catalog_definition = self
+            .service_definitions
+            .service_definition_for_tenant(&source.tenant_id, &source.id);
 
         let key = TenantSandboxResourceKey::new(&source.tenant_id, &source.id);
         let mut state = self
             .state
             .lock()
             .expect("manager lock should not be poisoned");
+        Self::ensure_tenant_source_admission_open(
+            &state,
+            &source.tenant_id,
+            "standalone sandbox source reservation",
+        )?;
+        require_standalone_name_available(
+            &state,
+            &source.tenant_id,
+            &source.id,
+            catalog_definition.as_ref(),
+        )?;
         if Self::source_retirement_claim_exists(
             &state,
             &WorkloadSourceRetirementKey::Sandbox(key.clone()),
@@ -180,7 +209,7 @@ impl ServiceManager {
         prepared: &StandaloneSandboxProvisionSource,
     ) -> Result<(), Error> {
         let source = prepared.source();
-        validate_standalone_decision(decision, source, self.sandbox_backend.kind())?;
+        validate_standalone_decision(decision, source, self.sandbox_backend_kind)?;
         self.admit_sandbox_root(decision, &source.spec)
     }
 
@@ -191,13 +220,30 @@ impl ServiceManager {
         tenant_id: &TenantId,
         service_name: &str,
     ) -> Result<SandboxServiceProvisionSource, Error> {
-        let definition = self
-            .service_definition_for_tenant(tenant_id, service_name)
-            .ok_or_else(|| {
-                Error::NotFound(format!(
-                    "service `{service_name}` for tenant `{tenant_id}` was not found"
-                ))
-            })?;
+        let catalog_definition = self
+            .service_definitions
+            .service_definition_for_tenant(tenant_id, service_name);
+        let definition = {
+            let state = self
+                .state
+                .lock()
+                .expect("manager lock should not be poisoned");
+            Self::ensure_tenant_source_admission_open(
+                &state,
+                tenant_id,
+                "sandbox-backed service source preparation",
+            )?;
+            state
+                .definitions
+                .get(&TenantServiceKey::new(tenant_id, service_name))
+                .cloned()
+                .or(catalog_definition)
+        }
+        .ok_or_else(|| {
+            Error::NotFound(format!(
+                "service `{service_name}` for tenant `{tenant_id}` was not found"
+            ))
+        })?;
         if definition.tenant_id != *tenant_id || definition.name != service_name {
             return Err(Error::InvalidInput(format!(
                 "service source for `{service_name}` in tenant `{tenant_id}` returned crossed identity"
@@ -249,7 +295,7 @@ impl ServiceManager {
         )?;
         decision
             .service_access(&definition.name, "sandbox-backed service provision")?
-            .ensure_sandbox_spec_matches(spec, self.sandbox_backend.kind())?;
+            .ensure_sandbox_spec_matches(spec, self.sandbox_backend_kind)?;
         decision
             .network()
             .ensure_sandbox_egress_matches(spec, "sandbox-backed service provision")?;
@@ -277,6 +323,11 @@ impl ServiceManager {
             .state
             .lock()
             .expect("manager lock should not be poisoned");
+        Self::ensure_tenant_source_admission_open(
+            &state,
+            &definition.tenant_id,
+            "sandbox-backed service source reservation",
+        )?;
         if Self::source_retirement_claim_exists(
             &state,
             &WorkloadSourceRetirementKey::Service(key.clone()),

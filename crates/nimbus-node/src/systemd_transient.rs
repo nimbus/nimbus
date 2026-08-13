@@ -344,20 +344,6 @@ where
         Ok(plan)
     }
 
-    fn stop<'a>(
-        &'a self,
-        execution_id: WorkloadExecutionId,
-    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-        Box::pin(async move {
-            self.ensure_capable()?;
-            let response = self
-                .client
-                .stop_unit(SystemdStopUnitRequest::for_execution(execution_id)?)
-                .await?;
-            response.status().to_host_lifecycle_status()
-        })
-    }
-
     fn inspect<'a>(
         &'a self,
         execution_id: WorkloadExecutionId,

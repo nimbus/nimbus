@@ -29,9 +29,8 @@ use nimbus_network::{
     NetworkTlsBehavior,
 };
 use nimbus_sandbox::{
-    SandboxBackend, SandboxBackendKind, SandboxFuture, SandboxId, SandboxInspection,
-    SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
-    sandbox_network_plan_requirements,
+    SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
+    SandboxSpec, sandbox_network_plan_requirements,
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceManager};
 use nimbus_tenant::{
@@ -46,22 +45,6 @@ use crate::network_capabilities::{
     nimbus_owned_local_ingress_provider_id, nimbus_owned_workload_ingress_registration,
 };
 use crate::state::{AppState, AppStateConfig};
-
-struct EffectForbiddenSandboxBackend;
-
-impl SandboxBackend for EffectForbiddenSandboxBackend {
-    fn kind(&self) -> SandboxBackendKind {
-        SandboxBackendKind::Krun
-    }
-
-    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
-        panic!("composition must not inspect a sandbox")
-    }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        panic!("composition must not stop a sandbox")
-    }
-}
 
 struct EffectForbiddenAttachmentProvider;
 
@@ -383,7 +366,7 @@ fn fixture_with_attachment_sovereignty(
     let manager = bootstrap.freeze(registry);
     let service_manager = Arc::new(ServiceManager::new(
         Arc::new(EmptyServiceDefinitionCatalog),
-        Arc::new(EffectForbiddenSandboxBackend),
+        SandboxBackendKind::Krun,
     ));
     Fixture {
         engine,
@@ -475,7 +458,7 @@ fn valid_composition(fixture: &Fixture) -> ServerWorkloadComposition {
         NodeIdentity::new("server-composition-node").expect("fixture node should validate"),
         fixture.selection.clone(),
         sovereignty(),
-        providers(
+        providers_with_teardown(
             fixture.attachment_provider_id.clone(),
             fixture.ingress_provider_id.clone(),
             fixture.execution_provider_id.clone(),
@@ -485,20 +468,7 @@ fn valid_composition(fixture: &Fixture) -> ServerWorkloadComposition {
 }
 
 fn valid_teardown_composition(fixture: &Fixture) -> ServerWorkloadComposition {
-    ServerWorkloadComposition::new(
-        Arc::clone(&fixture.engine),
-        Arc::clone(&fixture.manager),
-        Arc::clone(&fixture.service_manager),
-        NodeIdentity::new("server-composition-node").expect("fixture node should validate"),
-        fixture.selection.clone(),
-        sovereignty(),
-        providers_with_teardown(
-            fixture.attachment_provider_id.clone(),
-            fixture.ingress_provider_id.clone(),
-            fixture.execution_provider_id.clone(),
-        ),
-    )
-    .expect("complete exact teardown fixture should compose")
+    valid_composition(fixture)
 }
 
 fn snapshot_regular_files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
@@ -714,25 +684,31 @@ async fn foreground_runtime_retains_exact_injected_authority_without_eager_effec
 }
 
 #[test]
-fn foreground_retirement_facade_fails_closed_without_exact_teardown_composition() {
+fn managed_composition_without_exact_teardown_realm_rejects_before_authority_or_effects() {
     let fixture = fixture();
     let before_engine = snapshot_regular_files(fixture.engine_root.path());
     let before_network = snapshot_regular_files(fixture.network_root.path());
-    let injected_store = Arc::new(InjectedSagaStore::default());
-    let runtime = valid_composition(&fixture).into_foreground_runtime(injected_store.clone());
-
-    let error = match runtime.resource_retirer() {
-        Ok(_) => panic!("a provision-only foreground realm must not expose retirement authority"),
+    let error = match ServerWorkloadComposition::new(
+        Arc::clone(&fixture.engine),
+        Arc::clone(&fixture.manager),
+        Arc::clone(&fixture.service_manager),
+        NodeIdentity::new("missing-teardown-node").expect("fixture node should validate"),
+        fixture.selection.clone(),
+        sovereignty(),
+        providers(
+            fixture.attachment_provider_id.clone(),
+            fixture.ingress_provider_id.clone(),
+            fixture.execution_provider_id.clone(),
+        ),
+    ) {
+        Ok(_) => panic!("a provision-only managed realm must fail before construction"),
         Err(error) => error,
     };
 
-    assert!(
-        error
-            .to_string()
-            .contains("native workload retirement requires exact teardown composition"),
-        "missing exact teardown must retain the compute-owned error: {error}"
-    );
-    assert_eq!(injected_store.loads.load(Ordering::Acquire), 0);
+    assert!(matches!(
+        error,
+        ServerWorkloadCompositionError::MissingExactTeardownCapabilityRealm
+    ));
     assert_eq!(
         snapshot_regular_files(fixture.engine_root.path()),
         before_engine
@@ -847,7 +823,12 @@ fn foreground_runtime_owns_exact_manager_services_and_provider_arc_lifetimes() {
             fixture.ingress_provider_id.clone(),
             ingress,
         )
-        .with_restart_capabilities(),
+        .with_restart_capabilities()
+        .with_teardown_capabilities(teardown_capabilities(
+            fixture.attachment_provider_id.clone(),
+            fixture.ingress_provider_id.clone(),
+            fixture.execution_provider_id.clone(),
+        )),
     )
     .expect("complete tracked fixture should compose");
 
@@ -1023,7 +1004,7 @@ fn app_state_rejects_crossed_service_manager_before_authority_or_provider_effect
     let fixture = fixture();
     let crossed_service_manager = Arc::new(ServiceManager::new(
         Arc::new(EmptyServiceDefinitionCatalog),
-        Arc::new(EffectForbiddenSandboxBackend),
+        SandboxBackendKind::Krun,
     ));
     let before_engine = snapshot_regular_files(fixture.engine_root.path());
     let before_network = snapshot_regular_files(fixture.network_root.path());

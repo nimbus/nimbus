@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -7,10 +7,9 @@ use nimbus_core::{Error, TenantId};
 use nimbus_egress::EgressPolicy;
 use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 use nimbus_sandbox::{
-    SandboxBackend, SandboxBackendKind, SandboxCleanupObservation, SandboxError,
-    SandboxExecutionObservation, SandboxFuture, SandboxHandle, SandboxId, SandboxInspection,
-    SandboxMountSpec, SandboxOwnerSpec, SandboxProcessSpec, SandboxRestartAssessment,
-    SandboxRestartBlocker, SandboxRootSpec, SandboxSpec, SandboxStatus,
+    SandboxBackend, SandboxBackendKind, SandboxFuture, SandboxHandle, SandboxId, SandboxInspection,
+    SandboxMountSpec, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
+    SandboxStatus,
 };
 use nimbus_workloads::{
     NodeIdentity, WorkloadDesiredDigest, WorkloadExecutionAttemptId, WorkloadExecutionId,
@@ -31,9 +30,8 @@ mod sandbox_resources;
 mod sessions;
 mod source_projection;
 mod source_retirement;
-mod tenant_teardown;
 
-fn execution_reference_for_handle(
+pub(super) fn execution_reference_for_handle(
     handle: &mut SandboxHandle,
     generation: u64,
     restart_epoch: u64,
@@ -63,8 +61,8 @@ fn execution_reference_for_handle(
     .expect("fixture execution reference should validate")
 }
 
-struct StubServiceDefinitionCatalog {
-    launches: BTreeMap<String, ServiceBackend>,
+pub(super) struct StubServiceDefinitionCatalog {
+    pub(super) launches: BTreeMap<String, ServiceBackend>,
 }
 
 impl ServiceDefinitionCatalog for StubServiceDefinitionCatalog {
@@ -79,53 +77,40 @@ impl ServiceDefinitionCatalog for StubServiceDefinitionCatalog {
     }
 }
 
-struct StubSandboxBackend {
+pub(super) struct StubSandboxBackend {
     image_starts: AtomicUsize,
     stop_calls: AtomicUsize,
     artifact_cleanup_calls: AtomicUsize,
     inspect_calls: AtomicUsize,
     egress_reloads: Mutex<Vec<(String, EgressPolicy)>>,
-    fail_stop_ids: Mutex<BTreeSet<String>>,
     ready_after_inspects: usize,
     handles: Mutex<BTreeMap<String, SandboxHandle>>,
     inspection_overrides: Mutex<BTreeMap<String, SandboxInspection>>,
 }
 
 impl StubSandboxBackend {
-    fn new(ready_after_inspects: usize) -> Self {
+    pub(super) fn new(ready_after_inspects: usize) -> Self {
         Self {
             image_starts: AtomicUsize::new(0),
             stop_calls: AtomicUsize::new(0),
             artifact_cleanup_calls: AtomicUsize::new(0),
             inspect_calls: AtomicUsize::new(0),
             egress_reloads: Mutex::new(Vec::new()),
-            fail_stop_ids: Mutex::new(BTreeSet::new()),
             ready_after_inspects,
             handles: Mutex::new(BTreeMap::new()),
             inspection_overrides: Mutex::new(BTreeMap::new()),
         }
     }
 
-    fn fail_stop_for(&self, id: &str) {
-        self.fail_stop_ids
-            .lock()
-            .expect("failed stop id set should not be poisoned")
-            .insert(id.to_owned());
+    pub(super) fn retirement_effect_counts(&self) -> (usize, usize, usize) {
+        (
+            self.inspect_calls.load(Ordering::SeqCst),
+            self.stop_calls.load(Ordering::SeqCst),
+            self.artifact_cleanup_calls.load(Ordering::SeqCst),
+        )
     }
 
-    fn report_inspection(&self, inspection: SandboxInspection) {
-        let id = inspection.handle.id.clone();
-        self.report_inspection_for(&id, inspection);
-    }
-
-    fn report_inspection_for(&self, id: &SandboxId, inspection: SandboxInspection) {
-        self.inspection_overrides
-            .lock()
-            .expect("inspection override map should not be poisoned")
-            .insert(id.as_str().to_owned(), inspection);
-    }
-
-    fn sandbox_handle(
+    pub(super) fn sandbox_handle(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
@@ -184,28 +169,6 @@ impl SandboxBackend for StubSandboxBackend {
         Box::pin(async move { Ok(handle.map(SandboxInspection::provider_reported)) })
     }
 
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        self.stop_calls.fetch_add(1, Ordering::SeqCst);
-        if self
-            .fail_stop_ids
-            .lock()
-            .expect("failed stop id set should not be poisoned")
-            .contains(id.as_str())
-        {
-            let message = format!("stub backend refused to stop sandbox {id}");
-            return Box::pin(async move { Err(SandboxError::OperationFailed { message }) });
-        }
-        self.handles
-            .lock()
-            .expect("backend lock should not be poisoned")
-            .remove(id.as_str());
-        self.inspection_overrides
-            .lock()
-            .expect("inspection override map should not be poisoned")
-            .remove(id.as_str());
-        Box::pin(async move { Ok(()) })
-    }
-
     fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> SandboxFuture<()> {
         self.egress_reloads
             .lock()
@@ -234,7 +197,7 @@ fn sparse_image_spec_with_reference(name: &str, image_reference: impl Into<Strin
     )
 }
 
-fn standalone_resource_spec(tenant_id: &TenantId, display_name: &str) -> SandboxSpec {
+pub(super) fn standalone_resource_spec(tenant_id: &TenantId, display_name: &str) -> SandboxSpec {
     SandboxSpec::new(
         tenant_id.clone(),
         SandboxOwnerSpec::standalone_named(display_name),
@@ -244,7 +207,7 @@ fn standalone_resource_spec(tenant_id: &TenantId, display_name: &str) -> Sandbox
     )
 }
 
-fn reserve_standalone_source(
+pub(super) fn reserve_standalone_source(
     manager: &ServiceManager,
     tenant_id: &TenantId,
     stable_resource_id: &str,
@@ -271,20 +234,9 @@ fn reserve_standalone_source(
         .expect("standalone desired source should reserve")
 }
 
-fn retained_stopping_inspection(mut handle: SandboxHandle) -> SandboxInspection {
-    handle.status = SandboxStatus::Stopping;
-    handle.published_endpoints.clear();
-    SandboxInspection::provider_reported(handle.clone()).with_provider_projection(
-        handle,
-        SandboxExecutionObservation::Exited { exit_code: 42 },
-        SandboxRestartAssessment::Candidate {
-            exit_code: 42,
-            blocker: Some(SandboxRestartBlocker::StartupReconciliationUnavailable),
-        },
-        SandboxCleanupObservation::Retained,
-    )
-}
-
-fn image_service_backend(name: &str, image_reference: impl Into<String>) -> ServiceBackend {
+pub(super) fn image_service_backend(
+    name: &str,
+    image_reference: impl Into<String>,
+) -> ServiceBackend {
     ServiceBackend::sandbox(sparse_image_spec_with_reference(name, image_reference))
 }

@@ -64,8 +64,9 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
         .expect("image-backed non-root-user provision phases should succeed");
     assert!(!provisioned.ingress.is_empty());
     let handle = provisioned.handle;
+    let teardown = provisioned.teardown;
     let _ingress = provisioned.ingress;
-    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+    let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
     assert_eq!(ready_handle.status, SandboxStatus::Ready);
@@ -129,7 +130,7 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
     );
 
     let stop_start = Instant::now();
-    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     let stop_elapsed = stop_start.elapsed();
     eprintln!("stop elapsed: {stop_elapsed:?}");
 

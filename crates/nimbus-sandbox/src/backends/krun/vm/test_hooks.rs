@@ -58,7 +58,7 @@ pub(crate) fn prepare_network_teardown_fixture(
             sandbox_id: detached.sandbox_id().as_str().to_owned(),
         })?;
     let reservation_claim = manifest.require_reserved_claim()?.clone();
-    manifest.mark_adopting()?;
+    backend.mark_attachment_adopting(&mut manifest)?;
     backend.persist_effect_barrier(&manifest, "compute fixture Krun adoption intent")?;
     let network_config = manifest.require_network_config()?.clone();
     backend.segment_allocator.adopt_reserved_attachment(

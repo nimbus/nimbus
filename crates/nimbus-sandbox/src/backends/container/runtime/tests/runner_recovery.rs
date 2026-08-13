@@ -539,8 +539,9 @@ fn exact_absence_compensates_and_replays_with_terminal_bytes() {
     drop(handoff);
 
     backend
-        .stop_sync(&manifest.handle.id)
-        .expect("terminal recovery replay should be idempotent");
+        .inspect_sync(&manifest.handle.id)
+        .expect("terminal recovery inspection should succeed")
+        .expect("terminal recovery manifest should remain durable");
     assert_eq!(
         std::fs::read(&manifest.conmon_layout.manifest_path)
             .expect("terminal manifest should reread"),

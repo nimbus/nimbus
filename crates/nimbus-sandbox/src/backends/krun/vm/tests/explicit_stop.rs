@@ -4,7 +4,10 @@ use super::support::*;
 
 use std::sync::Arc;
 
-use nimbus_network::{LocalPortLeaseAuthority, NetworkSegmentAllocator, PortLeasePhase};
+use nimbus_network::{
+    LocalPortLeaseAuthority, NetworkAttachmentSegmentAssociation, NetworkLeaseEpoch,
+    NetworkSegmentAllocator, NetworkSegmentId, PortLeasePhase,
+};
 
 use crate::backends::oci::conmon::OciConmonLayout;
 use crate::backends::oci::network::{
@@ -122,12 +125,18 @@ fn terminal_projection_rejects_every_retained_krun_launch_authority() {
         .expect("nonterminal checkpoint bytes should read");
     let claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
         .expect("matrix claim should validate");
+    let association = NetworkAttachmentSegmentAssociation::new(
+        claim.clone(),
+        NetworkSegmentId::generate(),
+        NetworkLeaseEpoch::new(1),
+    );
     let retained = [
         KrunLaunchAuthority::Reserved {
             reservation_claim: claim.clone(),
         },
         KrunLaunchAuthority::Adopting {
             reservation_claim: claim.clone(),
+            association,
         },
         KrunLaunchAuthority::Adopted {
             reservation_claim: claim,
@@ -424,17 +433,22 @@ fn reserved_stop_releases_only_the_exact_unstarted_launch_batch() {
             .clone(),
     );
 
-    backend
-        .stop_sync(&manifest.handle.id)
-        .expect("reserved launch stop should compensate only its exact claim");
+    let mut failed = manifest.clone();
+    let error = backend.persist_unstarted_launch_failure(
+        &mut failed,
+        SandboxError::OperationFailed {
+            message: "injected pre-effect launch cancellation".to_owned(),
+        },
+    );
+    assert!(error.to_string().contains("pre-effect launch cancellation"));
 
     let stopped = backend
         .read_manifest(&manifest.handle.id)
         .expect("stopped manifest should inspect")
         .expect("stopped manifest should remain durable");
     assert!(stopped.shutdown_requested);
-    assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
-    assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
+    assert_eq!(stopped.status, SandboxStatus::Failed);
+    assert_eq!(stopped.handle.status, SandboxStatus::Failed);
     assert_eq!(stopped.launch_authority, KrunLaunchAuthority::Released);
 
     let port_authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
@@ -476,27 +490,32 @@ fn adopting_stop_releases_exactly_when_allocator_still_proves_reserved() {
         )
         .expect("execute planning should reserve exact launch authority")
         .manifest;
-    let claim = manifest
-        .require_reserved_claim()
-        .expect("reserved launch should retain its coordinator")
-        .clone();
-    manifest.launch_authority = KrunLaunchAuthority::Adopting {
-        reservation_claim: claim.clone(),
-    };
+    backend
+        .mark_attachment_adopting(&mut manifest)
+        .expect("fixture should persist exact adoption intent");
     backend
         .write_manifest(&manifest)
         .expect("adopting crash-cut fixture should persist");
 
-    backend
-        .stop_sync(&manifest.handle.id)
-        .expect("exact pre-adoption allocator evidence must authorize compensation");
+    let mut failed = manifest.clone();
+    let error = backend.persist_unstarted_launch_failure(
+        &mut failed,
+        SandboxError::OperationFailed {
+            message: "injected pre-adoption launch cancellation".to_owned(),
+        },
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("pre-adoption launch cancellation")
+    );
     let stopped = backend
         .read_manifest(&manifest.handle.id)
         .expect("stopped manifest should inspect")
         .expect("stopped manifest should remain durable");
     assert!(stopped.shutdown_requested);
-    assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
-    assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
+    assert_eq!(stopped.status, SandboxStatus::Failed);
+    assert_eq!(stopped.handle.status, SandboxStatus::Failed);
     assert_eq!(
         stopped.launch_authority,
         KrunLaunchAuthority::Released,
@@ -511,9 +530,15 @@ fn adopting_stop_releases_exactly_when_allocator_still_proves_reserved() {
             .is_empty(),
         "pre-adoption compensation must remove only the exact reserved attachment"
     );
-    backend
-        .stop_sync(&manifest.handle.id)
-        .expect("terminal release must replay idempotently");
+    assert_eq!(
+        backend
+            .inspect_sync(&manifest.handle.id)
+            .expect("terminal compensation should inspect")
+            .expect("terminal workload should remain inspectable")
+            .handle
+            .status,
+        SandboxStatus::Failed
+    );
 }
 
 #[test]
@@ -535,6 +560,9 @@ fn adopting_stop_promotes_exact_allocator_adoption_before_cleanup() {
         .expect("reserved launch should retain its coordinator")
         .clone();
     backend
+        .mark_attachment_adopting(&mut manifest)
+        .expect("fixture should persist exact adoption intent");
+    backend
         .segment_allocator
         .adopt_reserved_attachment(
             &manifest.spec.tenant_id,
@@ -542,9 +570,6 @@ fn adopting_stop_promotes_exact_allocator_adoption_before_cleanup() {
             &claim,
         )
         .expect("fixture should commit allocator adoption before manifest acknowledgement");
-    manifest.launch_authority = KrunLaunchAuthority::Adopting {
-        reservation_claim: claim.clone(),
-    };
     backend
         .write_manifest(&manifest)
         .expect("adopting crash-cut fixture should persist");
@@ -562,9 +587,27 @@ fn adopting_stop_promotes_exact_allocator_adoption_before_cleanup() {
     );
 
     let recovery = KrunSandboxBackend::new(config);
+    let mut current = recovery
+        .read_manifest(&manifest.handle.id)
+        .expect("adopting manifest should inspect after reopen")
+        .expect("adopting manifest should remain durable");
+    current.launch_authority = KrunLaunchAuthority::Adopted {
+        reservation_claim: claim,
+    };
     recovery
-        .stop_sync(&manifest.handle.id)
-        .expect("fresh owner should promote exact adoption before cleanup");
+        .write_manifest(&current)
+        .expect("inspected allocator adoption should become durable");
+    let error = recovery.persist_provider_launch_failure(
+        &mut current,
+        SandboxError::OperationFailed {
+            message: "injected post-adoption launch cancellation".to_owned(),
+        },
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("post-adoption launch cancellation")
+    );
     let released = recovery
         .read_manifest(&manifest.handle.id)
         .expect("released manifest should inspect")
@@ -579,9 +622,6 @@ fn adopting_stop_promotes_exact_allocator_adoption_before_cleanup() {
     );
     let once =
         fs::read(&released.conmon_layout.manifest_path).expect("released manifest should read");
-    recovery
-        .stop_sync(&manifest.handle.id)
-        .expect("promoted cleanup must replay idempotently");
     assert_eq!(
         fs::read(&released.conmon_layout.manifest_path)
             .expect("replayed released manifest should read"),
@@ -629,9 +669,13 @@ fn adopted_not_spawned_stop_uses_provider_cleanup_without_pid_effects() {
         .write_manifest(&manifest)
         .expect("adopted never-spawned fixture should persist");
 
-    backend
-        .stop_sync(&manifest.handle.id)
-        .expect("authorized stop should clean provider state without reading a PID");
+    let error = backend.persist_provider_launch_failure(
+        &mut manifest,
+        SandboxError::OperationFailed {
+            message: "injected adopted launch cancellation".to_owned(),
+        },
+    );
+    assert!(error.to_string().contains("adopted launch cancellation"));
     let stopped = backend
         .read_manifest(&manifest.handle.id)
         .expect("stopped manifest should inspect")
@@ -655,9 +699,15 @@ fn adopted_not_spawned_stop_uses_provider_cleanup_without_pid_effects() {
     );
 
     let recovery = KrunSandboxBackend::new(config);
-    recovery
-        .stop_sync(&manifest.handle.id)
-        .expect("terminal provider cleanup should replay idempotently");
+    assert_eq!(
+        recovery
+            .inspect_sync(&manifest.handle.id)
+            .expect("terminal provider cleanup should inspect")
+            .expect("terminal workload should remain inspectable")
+            .handle
+            .status,
+        SandboxStatus::Failed
+    );
 }
 
 #[test]
@@ -703,9 +753,12 @@ fn explicit_stop_cleanup_failure_remains_stopping_and_cannot_restart() {
     fs::write(&manifest.conmon_layout.exit_status_file, b"0\n")
         .expect("provider exit receipt should persist");
 
-    let error = backend
-        .stop_sync(&manifest.handle.id)
-        .expect_err("failed cleanup must retain nonterminal stop authority");
+    let error = backend.persist_provider_launch_failure(
+        &mut manifest,
+        SandboxError::OperationFailed {
+            message: "injected provider launch cancellation".to_owned(),
+        },
+    );
     assert!(
         error
             .to_string()
@@ -740,63 +793,5 @@ fn explicit_stop_cleanup_failure_remains_stopping_and_cannot_restart() {
         recorder.operations(),
         operations_before_inspect,
         "observed projection must not retry or bypass explicit-stop cleanup authority"
-    );
-}
-
-#[test]
-fn stop_effects_are_refused_when_durable_intent_cannot_be_confirmed() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let spec = sample_spec_for_tenant("krun-stop-barrier", "api");
-    let recorder = Arc::new(RecordingSegmentAllocator::new(
-        spec.tenant_id.clone(),
-        "10.80.0.0/24",
-        80,
-    ));
-    let injected: Arc<OciSegmentAllocator> = recorder.clone();
-    let backend = KrunSandboxBackend::with_segment_allocator(
-        KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf()),
-        injected,
-    );
-    let mut manifest = backend
-        .plan_start_with_id(&spec, &SandboxId::new("krun-stop-barrier"), None, None)
-        .expect("execute planning should reserve exact launch authority")
-        .manifest;
-    let claim = manifest
-        .require_reserved_claim()
-        .expect("reserved launch should retain its coordinator")
-        .clone();
-    recorder
-        .adopt_reserved_attachment(
-            &manifest.spec.tenant_id,
-            &default_network_attachment_id(&manifest.handle.id),
-            &claim,
-        )
-        .expect("fixture should model an adopted attachment");
-    manifest.launch_authority = KrunLaunchAuthority::Adopted {
-        reservation_claim: claim,
-    };
-
-    let blocked_state_dir = temp_dir.path().join("manifest-parent-is-a-file");
-    fs::write(&blocked_state_dir, b"not a directory")
-        .expect("barrier failure fixture should be a regular file");
-    manifest.conmon_layout.container_state_dir = blocked_state_dir.clone();
-    manifest.conmon_layout.manifest_path = blocked_state_dir.join("manifest.json");
-    manifest.conmon_layout.pidfile = blocked_state_dir.join("missing-pidfile");
-    let operations_before_stop = recorder.operations();
-
-    let error = backend
-        .execute_stop_for_test(&mut manifest)
-        .expect_err("unconfirmed durable intent must reject every later stop effect");
-    assert!(
-        error.to_string().contains("explicit krun stop intent")
-            && error.to_string().contains("refusing subsequent effects"),
-        "the barrier failure must be distinguished from a later provider error: {error}"
-    );
-    assert!(manifest.shutdown_requested);
-    assert_eq!(manifest.status, SandboxStatus::Stopping);
-    assert_eq!(
-        recorder.operations(),
-        operations_before_stop,
-        "no attachment cleanup may execute before durable stop intent is confirmed"
     );
 }

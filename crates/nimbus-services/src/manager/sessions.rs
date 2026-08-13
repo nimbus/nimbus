@@ -437,6 +437,7 @@ pub(super) fn validate_session_commit_gate(
     tenant_id: &TenantId,
     gate: &SessionCommitGate,
 ) -> Result<(), Error> {
+    ServiceManager::ensure_tenant_source_admission_open(state, tenant_id, "session admission")?;
     match gate {
         SessionCommitGate::Service {
             name,
@@ -446,11 +447,6 @@ pub(super) fn validate_session_commit_gate(
             expected_observation,
         } => {
             let key = TenantServiceKey::new(tenant_id, name);
-            if state.definition_mutations_in_progress.contains(&key) {
-                return Err(Error::conflict(format!(
-                    "service `{name}` for tenant `{tenant_id}` has a definition mutation in progress; retry session open after it reaches a stable state"
-                )));
-            }
             if ServiceManager::source_retirement_claim_exists(
                 state,
                 &WorkloadSourceRetirementKey::Service(key.clone()),

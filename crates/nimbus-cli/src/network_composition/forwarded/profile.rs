@@ -85,9 +85,8 @@ pub(crate) fn prepare_forwarded_workload_profile(
         WorkloadTeardownCapabilityRegistry::new([attachment], [execution], [ingress])
             .map_err(ServerWorkloadCompositionError::from)
             .map_err(LocalNetworkCompositionError::ServerWorkload)?;
-    let read_retirement_backend: Arc<dyn SandboxBackend> = backend;
     let service_manager = Arc::new(
-        ServiceManager::new(prepared.catalog, read_retirement_backend)
+        ServiceManager::new(prepared.catalog, backend.kind())
             .with_local_build_admission(prepared.local_build_admission),
     );
     let providers = ServerWorkloadProviders::new(

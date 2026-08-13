@@ -132,15 +132,6 @@ impl SandboxBackend for ReadySandboxBackend {
         Box::pin(async move { Ok(inspection) })
     }
 
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        self.stop_calls.fetch_add(1, Ordering::SeqCst);
-        self.handles
-            .lock()
-            .expect("ready sandbox handles lock should remain healthy")
-            .remove(id.as_str());
-        Box::pin(async { Ok(()) })
-    }
-
     fn remove_tenant_artifacts(&self, _tenant_id: TenantId) -> SandboxFuture<()> {
         Box::pin(async { Ok(()) })
     }
@@ -193,7 +184,11 @@ impl TestSandboxActivation for ReadySandboxBackend {
             .expect("ready sandbox teardown log should remain healthy")
             .push(step);
         if step == WorkloadTeardownStep::StopExecution {
-            return self.stop(execution_id);
+            self.stop_calls.fetch_add(1, Ordering::SeqCst);
+            self.handles
+                .lock()
+                .expect("ready sandbox handles lock should remain healthy")
+                .remove(execution_id.as_str());
         }
         Box::pin(async { Ok(()) })
     }
@@ -377,7 +372,7 @@ fn service_manager_with_catalog(
             image_launches: BTreeMap::from([("db".to_owned(), "postgres:16".to_owned())]),
             custom_backends,
         }),
-        backend,
+        backend.kind(),
     ))
 }
 

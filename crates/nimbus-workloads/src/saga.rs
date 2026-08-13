@@ -1316,6 +1316,33 @@ impl WorkloadTerminalEvidenceDigest {
         })?;
         Ok(Self::sha256(bytes))
     }
+
+    pub(crate) fn for_teardown(
+        observations: &[WorkloadTerminalObservation],
+        restart_settlement: Option<&WorkloadRestartTeardownSettlement>,
+    ) -> Result<Self, WorkloadSagaError> {
+        let Some(restart_settlement) = restart_settlement else {
+            return Self::for_observations(observations);
+        };
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct RestartSettlementTerminalEvidence<'a> {
+            domain: &'static str,
+            observations: &'a [WorkloadTerminalObservation],
+            restart_settlement: &'a WorkloadRestartTeardownSettlement,
+        }
+        let bytes = serde_json::to_vec(&RestartSettlementTerminalEvidence {
+            domain: "nimbus.workloads.restart-settlement-terminal.v1",
+            observations,
+            restart_settlement,
+        })
+        .map_err(|_| {
+            WorkloadSagaError::InvalidEvidence(
+                "restart settlement terminal evidence cannot be encoded",
+            )
+        })?;
+        Ok(Self::sha256(bytes))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

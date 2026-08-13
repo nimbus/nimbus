@@ -297,29 +297,80 @@ impl WorkloadRestartRuntime {
         &self,
         key: &nimbus_workloads::WorkloadSagaKey,
     ) -> Result<WorkloadRestartSettlement, String> {
-        let run = self
-            .driver
-            .resume(key, self.clock.now_unix_millis())
+        settle_restart_for_teardown_once(
+            &self.coordinator,
+            &self.driver,
+            key,
+            self.clock.now_unix_millis(),
+        )
+        .await
+    }
+}
+
+async fn settle_restart_for_teardown_once(
+    coordinator: &WorkloadSagaCoordinator,
+    driver: &WorkloadRestartDriver,
+    key: &nimbus_workloads::WorkloadSagaKey,
+    now_unix_millis: WorkloadRestartNotBeforeUnixMillis,
+) -> Result<WorkloadRestartSettlement, String> {
+    let current = coordinator
+        .load(key)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "workload restart recovery record does not exist".to_owned())?;
+    if current.restart_state().active().is_none() {
+        return Ok(WorkloadRestartSettlement::Settled);
+    }
+    let run = driver
+        .resume(key, now_unix_millis)
+        .await
+        .map_err(|error| error.to_string())?;
+    if run.record().restart_state().active().is_none() {
+        return Ok(WorkloadRestartSettlement::Settled);
+    }
+    if matches!(
+        run.record()
+            .restart_state()
+            .active()
+            .map(|active| active.disposition()),
+        Some(
+            nimbus_workloads::WorkloadRestartDisposition::SuccessorVetoed { .. }
+                | nimbus_workloads::WorkloadRestartDisposition::DefiniteFailure { .. }
+        )
+    ) {
+        coordinator
+            .commit_restart_settlement_teardown(run.record())
             .await
             .map_err(|error| error.to_string())?;
-        if run.record().restart_state().active().is_none() {
-            return Ok(WorkloadRestartSettlement::Settled);
-        }
-        if matches!(
-            run.record()
-                .restart_state()
-                .active()
-                .map(|active| active.disposition()),
-            Some(nimbus_workloads::WorkloadRestartDisposition::SuccessorVetoed { .. })
-        ) {
-            self.coordinator
-                .commit_restart_settlement_teardown(run.record())
-                .await
-                .map_err(|error| error.to_string())?;
-            return Ok(WorkloadRestartSettlement::Settled);
-        }
-        Ok(WorkloadRestartSettlement::Pending)
+        return Ok(WorkloadRestartSettlement::Settled);
     }
+    Ok(WorkloadRestartSettlement::Pending)
+}
+
+/// Drive one exact restart settlement without starting the retained watch.
+///
+/// This test-only seam lets a different test process reopen the real saga
+/// store and provider journal at a precise crash boundary. Production uses
+/// the private production settlement loop with the same reducer.
+#[cfg(any(test, feature = "test-hooks"))]
+pub async fn settle_restart_for_teardown_once_for_test(
+    coordinator: Arc<WorkloadSagaCoordinator>,
+    source_authority: Arc<dyn WorkloadProvisionSourceAuthority>,
+    provider_reports: NetworkCapabilityRegistry,
+    restart_capabilities: Arc<WorkloadRestartCapabilityRegistry>,
+    key: &nimbus_workloads::WorkloadSagaKey,
+    now_unix_millis: WorkloadRestartNotBeforeUnixMillis,
+) -> Result<bool, String> {
+    let dispatcher = Arc::new(WorkloadRestartDispatcher::new(
+        source_authority,
+        provider_reports,
+        restart_capabilities,
+    ));
+    let driver = WorkloadRestartDriver::new(Arc::clone(&coordinator), dispatcher);
+    Ok(matches!(
+        settle_restart_for_teardown_once(&coordinator, &driver, key, now_unix_millis).await?,
+        WorkloadRestartSettlement::Settled
+    ))
 }
 
 fn build_restart_runtime() -> Result<tokio::runtime::Runtime, String> {

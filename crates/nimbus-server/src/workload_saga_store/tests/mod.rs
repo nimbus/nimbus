@@ -39,6 +39,7 @@ mod recovery;
 mod restart;
 mod restart_candidates;
 mod restart_process;
+mod restart_settlement_process;
 mod store;
 mod teardown_driver_process;
 mod tenant_enumeration;

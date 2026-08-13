@@ -75,7 +75,7 @@
       "kind": "manager-derived-krun-backend-construction",
       "symbol": "prepare_local_service_manager_for_selection_with_isolation_mode",
       "ordinal": 1,
-      "line": 109,
+      "line": 111,
       "classification": "manager-derived-handle",
       "os_node_realm": "local-node",
       "evidence": "nnc4.6d"
@@ -795,7 +795,7 @@
       "kind": "direct-krun-backend-constructor-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 323,
+      "line": 324,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -805,7 +805,7 @@
       "kind": "segment-direct-reconstruction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 325,
+      "line": 326,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -815,7 +815,7 @@
       "kind": "ipam-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 350,
+      "line": 351,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -825,7 +825,7 @@
       "kind": "port-coordinator-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 355,
+      "line": 356,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"

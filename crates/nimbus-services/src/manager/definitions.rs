@@ -4,15 +4,12 @@ use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::SandboxStatus;
 use url::Url;
 
-use crate::{
-    HealthCheckPolicy, ServiceBackend, ServiceDefinition, ServiceDefinitionSource,
-    SessionLifecycleState, SessionTarget,
-};
+use crate::{HealthCheckPolicy, ServiceBackend, ServiceDefinition};
 
 use super::ServiceManager;
 use super::clock::{next_version, now_millis};
-use super::session_channels::close_session_channels;
-use super::types::{ServiceManagerState, TenantServiceKey, WorkloadSourceRetirementKey};
+use super::types::{TenantServiceKey, WorkloadSourceRetirementKey};
+use super::workload_namespace::require_sandbox_service_name_available;
 
 const SUPPORTED_BUILT_IN_PROVIDERS: &[&str] = &[
     "loadBalancer",
@@ -86,6 +83,14 @@ impl ServiceManager {
             .state
             .lock()
             .expect("manager lock should not be poisoned");
+        Self::ensure_tenant_source_admission_open(
+            &state,
+            tenant_id,
+            "service definition creation",
+        )?;
+        if matches!(&backend, ServiceBackend::Sandbox(_)) {
+            require_sandbox_service_name_available(&state, tenant_id, service_name)?;
+        }
         if state.definitions.contains_key(&key) {
             return Err(Error::AlreadyExists(format!(
                 "service `{service_name}` for tenant `{tenant_id}` already exists"
@@ -131,11 +136,15 @@ impl ServiceManager {
             .state
             .lock()
             .expect("manager lock should not be poisoned");
+        Self::ensure_tenant_source_admission_open(&state, tenant_id, "service definition update")?;
         let Some(current) = state.definitions.get(&key).cloned() else {
             return Err(Error::NotFound(format!(
                 "service `{service_name}` for tenant `{tenant_id}` was not found"
             )));
         };
+        if matches!(&backend, ServiceBackend::Sandbox(_)) {
+            require_sandbox_service_name_available(&state, tenant_id, service_name)?;
+        }
         if current.generation != expected_generation {
             return Err(Error::PreconditionFailed(format!(
                 "service `{service_name}` for tenant `{tenant_id}` has generation {}, but update expected generation {expected_generation}",
@@ -146,12 +155,10 @@ impl ServiceManager {
             .service_definition_observations
             .get(&key)
             .is_some_and(|observation| observation.handle.status != SandboxStatus::Stopped);
-        if state.definition_mutations_in_progress.contains(&key)
-            || Self::source_retirement_claim_exists(
-                &state,
-                &WorkloadSourceRetirementKey::Service(key.clone()),
-            )
-            || has_live_observation
+        if Self::source_retirement_claim_exists(
+            &state,
+            &WorkloadSourceRetirementKey::Service(key.clone()),
+        ) || has_live_observation
         {
             return Err(Error::conflict(format!(
                 "service `{service_name}` for tenant `{tenant_id}` has an active backend; stop the service before updating its definition"
@@ -167,193 +174,6 @@ impl ServiceManager {
         state.service_definition_observations.remove(&key);
         state.definitions.insert(key, updated.clone());
         Ok(updated)
-    }
-
-    pub async fn delete_service_definition_async(
-        &self,
-        tenant_id: &TenantId,
-        service_name: &str,
-        expected_generation: u64,
-        force: bool,
-    ) -> Result<ServiceDefinition, Error> {
-        validate_service_name(service_name)?;
-        let key = TenantServiceKey::new(tenant_id, service_name);
-        if self
-            .service_definitions
-            .service_definition_for_tenant(tenant_id, service_name)
-            .is_some()
-        {
-            return Err(Error::conflict(format!(
-                "service `{service_name}` for tenant `{tenant_id}` is static and cannot be deleted through dynamic service definition routes"
-            )));
-        }
-
-        let current = {
-            let state = self
-                .state
-                .lock()
-                .expect("manager lock should not be poisoned");
-            state.definitions.get(&key).cloned()
-        }
-        .ok_or_else(|| {
-            Error::NotFound(format!(
-                "service `{service_name}` for tenant `{tenant_id}` was not found"
-            ))
-        })?;
-
-        if current.generation != expected_generation {
-            return Err(Error::PreconditionFailed(format!(
-                "service `{service_name}` for tenant `{tenant_id}` has generation {}, but delete expected generation {expected_generation}",
-                current.generation
-            )));
-        }
-
-        let _claim = self.claim_definition_mutation_guard(&key, force).await?;
-        self.delete_service_definition_claimed_async(
-            tenant_id,
-            service_name,
-            expected_generation,
-            force,
-            &key,
-        )
-        .await
-    }
-
-    async fn delete_service_definition_claimed_async(
-        &self,
-        tenant_id: &TenantId,
-        service_name: &str,
-        expected_generation: u64,
-        force: bool,
-        key: &TenantServiceKey,
-    ) -> Result<ServiceDefinition, Error> {
-        let post_claim_precondition = {
-            let state = self
-                .state
-                .lock()
-                .expect("manager lock should not be poisoned");
-            if let Some(current) = state.definitions.get(key) {
-                if current.source != ServiceDefinitionSource::Dynamic {
-                    Err(Error::conflict(format!(
-                        "service `{service_name}` for tenant `{tenant_id}` is static and cannot be deleted through dynamic service definition routes"
-                    )))
-                } else if current.generation != expected_generation {
-                    Err(Error::PreconditionFailed(format!(
-                        "service `{service_name}` for tenant `{tenant_id}` has generation {}, but delete expected generation {expected_generation}",
-                        current.generation
-                    )))
-                } else {
-                    Ok(())
-                }
-            } else {
-                Err(Error::NotFound(format!(
-                    "service `{service_name}` for tenant `{tenant_id}` was not found"
-                )))
-            }
-        };
-        post_claim_precondition?;
-
-        if !force {
-            let live_session_count = {
-                let state = self
-                    .state
-                    .lock()
-                    .expect("manager lock should not be poisoned");
-                open_service_session_ids(&state, tenant_id, service_name).len()
-            };
-            if live_session_count > 0 {
-                return Err(Error::conflict(format!(
-                    "service `{service_name}` for tenant `{tenant_id}` has {live_session_count} open session(s); close sessions first or pass an authorized force delete policy",
-                )));
-            }
-        }
-
-        self.retire_service_for_definition_delete(key, force)
-            .await?;
-
-        let mut state = self
-            .state
-            .lock()
-            .expect("manager lock should not be poisoned");
-        let Some(current) = state.definitions.get(key).cloned() else {
-            return Err(Error::NotFound(format!(
-                "service `{service_name}` for tenant `{tenant_id}` was not found"
-            )));
-        };
-        if current.source != ServiceDefinitionSource::Dynamic {
-            return Err(Error::conflict(format!(
-                "service `{service_name}` for tenant `{tenant_id}` is static and cannot be deleted through dynamic service definition routes"
-            )));
-        }
-        if current.generation != expected_generation {
-            return Err(Error::PreconditionFailed(format!(
-                "service `{service_name}` for tenant `{tenant_id}` has generation {}, but delete expected generation {expected_generation}",
-                current.generation
-            )));
-        }
-        let live_session_ids = open_service_session_ids(&state, tenant_id, service_name);
-        if !live_session_ids.is_empty() && !force {
-            return Err(Error::conflict(format!(
-                "service `{service_name}` for tenant `{tenant_id}` has {} open session(s); close sessions first or pass an authorized force delete policy",
-                live_session_ids.len()
-            )));
-        }
-        state.service_definition_observations.remove(key);
-        let removed = state.definitions.remove(key).ok_or_else(|| {
-            Error::NotFound(format!(
-                "service `{service_name}` for tenant `{tenant_id}` was not found"
-            ))
-        })?;
-        if force {
-            close_open_service_sessions(&mut state, &live_session_ids, "service_force_deleted");
-        }
-        Ok(removed)
-    }
-}
-
-fn open_service_session_ids(
-    state: &ServiceManagerState,
-    tenant_id: &TenantId,
-    service_name: &str,
-) -> Vec<String> {
-    let now = now_millis();
-    state
-        .sessions
-        .values()
-        .filter(|session| {
-            &session.tenant_id == tenant_id
-                && session.lifecycle_state == SessionLifecycleState::Open
-                && now < session.expires_at_millis
-                && matches!(&session.target, SessionTarget::Service { name } if name == service_name)
-        })
-        .map(|session| session.id.clone())
-        .collect()
-}
-
-fn close_open_service_sessions(
-    state: &mut ServiceManagerState,
-    session_ids: &[String],
-    reason: &str,
-) {
-    let now = now_millis();
-    for session_id in session_ids {
-        let should_close = state
-            .sessions
-            .get(session_id)
-            .is_some_and(|session| session.lifecycle_state == SessionLifecycleState::Open);
-        if !should_close {
-            continue;
-        }
-        let next_resource_version = next_version(&mut state.next_session_version, "session");
-        if let Some(session) = state.sessions.get_mut(session_id) {
-            session.lifecycle_state = SessionLifecycleState::Closed;
-            session.generation = session.generation.saturating_add(1);
-            session.resource_version = next_resource_version;
-            session.updated_at_millis = now;
-            session.closed_at_millis = Some(now);
-            session.close_reason = Some(reason.to_owned());
-        }
-        close_session_channels(state, session_id, reason);
     }
 }
 

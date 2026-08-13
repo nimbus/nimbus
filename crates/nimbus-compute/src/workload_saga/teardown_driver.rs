@@ -27,7 +27,6 @@ type WorkloadTeardownRunFuture<'a> = Pin<
 pub enum WorkloadTeardownRunDisposition {
     Completed,
     Waiting,
-    RestartSettlementPending,
     CleanupPending,
 }
 
@@ -150,12 +149,6 @@ impl WorkloadTeardownDriver {
                         return Ok(WorkloadTeardownRun {
                             record,
                             disposition: WorkloadTeardownRunDisposition::Completed,
-                        });
-                    }
-                    WorkloadTeardownDecision::RestartSettlementPending(_) => {
-                        return Ok(WorkloadTeardownRun {
-                            record,
-                            disposition: WorkloadTeardownRunDisposition::RestartSettlementPending,
                         });
                     }
                     WorkloadTeardownDecision::CleanupPending { .. } => {

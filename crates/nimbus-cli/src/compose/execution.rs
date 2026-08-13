@@ -1,9 +1,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
+#[cfg(test)]
+use nimbus::SandboxBackend;
 use nimbus::{
-    Error, LocalBuildAdmission, SandboxBackend, SandboxBackendKind, ServiceDefinitionCatalog,
-    ServiceManager, TenantId,
+    Error, LocalBuildAdmission, SandboxBackendKind, ServiceDefinitionCatalog, ServiceManager,
+    TenantId,
 };
 use nimbus_network::NetworkAttachmentProviderRegistration;
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
@@ -83,13 +85,13 @@ pub(crate) fn prepare_local_service_manager_for_selection_with_isolation_mode(
         nimbus_tenant::TenantIsolationMode::Production => file::ComposeAdmissionMode::Production,
     };
     let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
-    let backend = required_effective_project_backend(
+    let backend_kind = required_effective_project_backend(
         &context,
         None,
         "prepare a compose-backed local network composition",
         host_platform,
     )?;
-    if backend != SandboxBackendKind::Krun {
+    if backend_kind != SandboxBackendKind::Krun {
         return Ok(None);
     }
 
@@ -112,13 +114,12 @@ pub(crate) fn prepare_local_service_manager_for_selection_with_isolation_mode(
     let attachment = backend
         .host_managed_attachment_registration()
         .map_err(|error| Error::InvalidInput(error.to_string()))?;
-    let sandbox_backend: Arc<dyn SandboxBackend> = backend.clone();
     let local_build_admission = match admission_mode {
         file::ComposeAdmissionMode::LocalDevelopment => LocalBuildAdmission::Allowed,
         file::ComposeAdmissionMode::Production => LocalBuildAdmission::Denied,
     };
     Ok(Some(PreparedLocalServiceManager {
-        manager: ServiceManager::new(catalog, sandbox_backend)
+        manager: ServiceManager::new(catalog, backend_kind)
             .with_local_build_admission(local_build_admission),
         attachment,
         backend,
@@ -171,7 +172,8 @@ pub(super) fn load_host_backed_service_manager_for_platform_selection_with_admis
         file::ComposeAdmissionMode::LocalDevelopment => LocalBuildAdmission::Allowed,
         file::ComposeAdmissionMode::Production => LocalBuildAdmission::Denied,
     };
-    Ok(ServiceManager::new(catalog, backend).with_local_build_admission(local_build_admission))
+    Ok(ServiceManager::new(catalog, backend.kind())
+        .with_local_build_admission(local_build_admission))
 }
 
 #[cfg(test)]

@@ -122,17 +122,6 @@ impl HostLifecycleBackend for ScriptedHostProvider {
         ))
     }
 
-    fn stop<'a>(
-        &'a self,
-        _execution_id: nimbus_workloads::WorkloadExecutionId,
-    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-        Box::pin(async {
-            Err(Error::PermissionDenied(
-                "teardown acceptance provider uses exact stop".to_owned(),
-            ))
-        })
-    }
-
     fn inspect<'a>(
         &'a self,
         _execution_id: nimbus_workloads::WorkloadExecutionId,

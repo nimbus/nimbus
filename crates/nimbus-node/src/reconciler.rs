@@ -67,7 +67,6 @@ impl NodeWorkloadDesiredState {
 pub enum NodeWorkloadReconcileAction {
     ObservedRunning,
     ObservedStopped,
-    Stopped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -525,18 +524,12 @@ where
             }
             Err(error) => return Err(error),
         };
-        if is_stopped(&inspected) {
-            return Ok((
-                NodeWorkloadReconcileAction::ObservedStopped,
-                inspected.to_workload_status(plan)?,
-            ));
-        }
-        self.backend.stop(execution_id.clone()).await?;
-        let observed = self.backend.inspect(execution_id).await?;
-        Ok((
-            NodeWorkloadReconcileAction::Stopped,
-            observed.to_workload_status(plan)?,
-        ))
+        let action = if is_stopped(&inspected) {
+            NodeWorkloadReconcileAction::ObservedStopped
+        } else {
+            NodeWorkloadReconcileAction::ObservedRunning
+        };
+        Ok((action, inspected.to_workload_status(plan)?))
     }
 }
 
@@ -616,14 +609,6 @@ mod tests {
         ) -> Result<HostLifecyclePlan> {
             self.record("validate");
             self.inner.validate(binding, request)
-        }
-
-        fn stop<'a>(
-            &'a self,
-            execution_id: WorkloadExecutionId,
-        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-            self.record("stop");
-            self.inner.stop(execution_id)
         }
 
         fn inspect<'a>(
@@ -925,7 +910,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_process_reconciler_observes_stops_and_writes_status() {
+    async fn direct_process_reconciler_projects_live_state_without_stopping() {
         let backend = CountingBackend::new(DirectProcessBackend::new());
         let writer = RecordingStatusEvidenceWriter::default();
         let reconciler = NodeWorkloadReconciler::new(backend.clone(), writer.clone());
@@ -976,18 +961,25 @@ mod tests {
                 )
                 .expect("finalizer should parse")]),
         );
-        let stopped = reconciler
+        let observed_while_deleting = reconciler
             .reconcile_binding(&deleting, direct_request())
             .await
-            .expect("direct-process reconciler should stop deleting workload");
-        assert_eq!(stopped.desired_state(), NodeWorkloadDesiredState::Stopped);
-        assert_eq!(stopped.action(), NodeWorkloadReconcileAction::Stopped);
-        assert_eq!(stopped.status().phase(), TenantWorkloadPhase::Deleting);
+            .expect("direct-process reconciler should project the live deleting workload");
+        assert_eq!(
+            observed_while_deleting.desired_state(),
+            NodeWorkloadDesiredState::Stopped
+        );
+        assert_eq!(
+            observed_while_deleting.action(),
+            NodeWorkloadReconcileAction::ObservedRunning
+        );
+        assert_eq!(
+            observed_while_deleting.status().phase(),
+            TenantWorkloadPhase::Running
+        );
         assert_eq!(
             backend.calls(),
-            vec![
-                "validate", "inspect", "validate", "inspect", "stop", "inspect",
-            ]
+            vec!["validate", "inspect", "validate", "inspect"]
         );
         assert_eq!(writer.writes().len(), 2);
         assert_eq!(
@@ -1364,8 +1356,8 @@ mod tests {
         );
     }
 
-    /// Backend that validates and stops via an inner DirectProcess backend but
-    /// always fails `inspect` with `InvalidInput`, modelling a live
+    /// Backend that validates via an inner DirectProcess backend but always
+    /// fails `inspect` with `InvalidInput`, modelling a live
     /// systemd `.Failed` inspect fault (NoSuchUnit → NotFound, but a failed-state
     /// inspect maps to InvalidInput).
     #[derive(Clone)]
@@ -1380,13 +1372,6 @@ mod tests {
             request: HostLifecycleRequest,
         ) -> Result<HostLifecyclePlan> {
             self.inner.validate(binding, request)
-        }
-
-        fn stop<'a>(
-            &'a self,
-            execution_id: WorkloadExecutionId,
-        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-            self.inner.stop(execution_id)
         }
 
         fn inspect<'a>(
@@ -1503,14 +1488,20 @@ mod tests {
                     "systemd-stop",
                 )
                 .expect("finalizer should parse")]);
-        let stopped = reconciler
+        let observed_while_deleting = reconciler
             .reconcile_spec(deleting, systemd_request())
             .await
-            .expect("systemd reconciler should stop deleting workload");
-        assert_eq!(stopped.action(), NodeWorkloadReconcileAction::Stopped);
-        assert_eq!(stopped.status().phase(), TenantWorkloadPhase::Deleting);
+            .expect("systemd reconciler should project the live deleting workload");
+        assert_eq!(
+            observed_while_deleting.action(),
+            NodeWorkloadReconcileAction::ObservedRunning
+        );
+        assert_eq!(
+            observed_while_deleting.status().phase(),
+            TenantWorkloadPhase::Running
+        );
         assert!(
-            stopped
+            observed_while_deleting
                 .status()
                 .lifecycle_evidence()
                 .expect("systemd status should carry lifecycle evidence")

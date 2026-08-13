@@ -99,10 +99,6 @@ impl SandboxBackend for EffectForbiddenSandboxBackend {
     fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         panic!("transport-only managed fixture must not inspect a sandbox")
     }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        panic!("transport-only managed fixture must not stop a sandbox")
-    }
 }
 
 impl TestSandboxActivation for EffectForbiddenSandboxBackend {
@@ -753,7 +749,7 @@ pub(super) fn effect_forbidden_managed_router_config(engine: Arc<Engine>) -> Rou
     let backend = Arc::new(EffectForbiddenSandboxBackend);
     let services = Arc::new(ServiceManager::new(
         Arc::new(EmptyServiceDefinitionCatalog),
-        backend.clone(),
+        backend.kind(),
     ));
     managed_router_config(engine, services, backend)
 }

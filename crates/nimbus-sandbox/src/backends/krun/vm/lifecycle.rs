@@ -7,8 +7,12 @@ use super::readiness::synchronize_handle_status;
 use super::start::ensure_guest_user_helper_available;
 use super::start::hostname_for;
 use super::*;
-use crate::backends::conmon::lifecycle::RuntimeStateObservation;
 
+use crate::backends::conmon::lifecycle::RuntimeStateObservation;
+#[cfg(test)]
+use crate::backends::oci::network::{AttachmentAuxiliaryDisposition, AttachmentTeardownMode};
+
+#[cfg(test)]
 pub(super) type NetworkArtifactTeardownMode = AttachmentTeardownMode;
 
 pub(super) const KRUN_LIFECYCLE_LOCK_FILE: &str = ".nimbus-krun-lifecycle.lock";
@@ -451,7 +455,7 @@ impl KrunSandboxBackend {
                 manifest.launch_authority,
                 KrunLaunchAuthority::Reserved { .. }
             ) {
-                manifest.mark_adopting()?;
+                self.mark_attachment_adopting(manifest)?;
                 if let Err(error) =
                     self.persist_effect_barrier(manifest, "krun attachment-adoption intent")
                 {
@@ -563,6 +567,7 @@ impl KrunSandboxBackend {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn resume_provider_failure_cleanup(
         &self,
         manifest: &mut KrunSandboxManifest,
@@ -649,6 +654,7 @@ impl KrunSandboxBackend {
         }
     }
 
+    #[cfg(test)]
     fn provider_failure_runtime_absence_proof(
         &self,
         manifest: &KrunSandboxManifest,
@@ -690,6 +696,7 @@ impl KrunSandboxBackend {
         }
     }
 
+    #[cfg(test)]
     fn validate_provider_failure_runtime_absence_proof(
         &self,
         manifest: &KrunSandboxManifest,
@@ -1039,6 +1046,7 @@ impl KrunSandboxBackend {
     /// reusing the container backend's shared teardown free-functions plus the
     /// shared `EgressProxyRegistry::stop_with_assignment`. Errors are collected
     /// so a single failing step never short-circuits the rest of the cleanup.
+    #[cfg(test)]
     pub(super) fn release_network_artifacts(
         &self,
         manifest: &KrunSandboxManifest,

@@ -389,8 +389,8 @@ fn fresh_backend_execute_repairs_process_local_retained_network_state() {
         .require_reserved_claim()
         .expect("prepared manifest should retain its reservation")
         .clone();
-    manifest
-        .mark_adopting()
+    backend
+        .mark_attachment_adopting(&mut manifest)
         .expect("fixture should persist attachment-adoption intent");
     backend
         .persist_effect_barrier(&manifest, "test restart attachment-adoption intent")

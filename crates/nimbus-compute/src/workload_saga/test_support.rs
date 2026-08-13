@@ -9,17 +9,18 @@ use nimbus_network::{
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadInspectionVersion,
-    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
-    WorkloadOwnerEvidenceDigest, WorkloadProvisionAttempt, WorkloadProvisionDisposition,
-    WorkloadProvisionEffectResult, WorkloadProvisionSourceEvidence,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadFailureEvidence,
+    WorkloadInspectionVersion, WorkloadNetworkIntent, WorkloadNetworkPlanContent,
+    WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest, WorkloadProvisionAttempt,
+    WorkloadProvisionDisposition, WorkloadProvisionEffectResult, WorkloadProvisionSourceEvidence,
     WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
     WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep, WorkloadProvisionSubjects,
     WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadRestartAdmissionInput,
     WorkloadRestartAdmissionUpdate, WorkloadRestartEffectResult,
     WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy, WorkloadRestartRequestId,
     WorkloadRestartTrigger, WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaKey,
-    WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadTeardownStep, WorkloadTeardownSubjects,
+    WorkloadTeardownSuccessEvidence,
 };
 
 use super::WorkloadProvisionDecision;
@@ -86,6 +87,13 @@ pub(crate) fn success_for(attempt: &WorkloadProvisionAttempt) -> WorkloadProvisi
     }
 }
 
+pub(crate) fn teardown_success_for(
+    step: WorkloadTeardownStep,
+    subjects: &WorkloadTeardownSubjects,
+) -> WorkloadTeardownSuccessEvidence {
+    super::recovery::tests::teardown_success_evidence(step, subjects)
+}
+
 pub(crate) fn provision_candidates(record: &WorkloadSagaRecord) -> Vec<WorkloadSagaRecord> {
     let WorkloadProvisionDecision::Proposed(proposed) =
         WorkloadProvisionDecision::plan(record).expect("fixture phase should be reducible")
@@ -120,11 +128,94 @@ pub(crate) fn confirmed_provision(record: &WorkloadSagaRecord) -> WorkloadSagaRe
         .expect("fixture provision decision should produce a candidate")
 }
 
+pub(crate) fn observed_fixture_record(label: &str) -> WorkloadSagaRecord {
+    super::recovery::tests::provision_record(
+        label,
+        WorkloadSagaPhase::Observed,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    )
+}
+
+pub(crate) fn teardown_fixture_record(
+    label: &str,
+    target: WorkloadSagaPhase,
+) -> WorkloadSagaRecord {
+    super::recovery::tests::teardown_record(label, target)
+}
+
+pub(crate) fn cleanup_pending_fixture_record(label: &str) -> WorkloadSagaRecord {
+    super::recovery::tests::cleanup_pending_record(label)
+}
+
 pub(crate) fn first_proposed_candidate(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
     provision_candidates(record)
         .into_iter()
         .next()
         .expect("fixture provision decision should produce a first candidate")
+}
+
+pub(crate) fn failed_provision_record(
+    label: &str,
+    failed_step: WorkloadProvisionStep,
+) -> WorkloadSagaRecord {
+    let mut record = crate::workload_saga::recovery::tests::provision_record(
+        label,
+        WorkloadSagaPhase::IntentCommitted,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    for _ in 0..32 {
+        let decision = WorkloadProvisionDecision::plan(&record)
+            .expect("failed-provision fixture state should reduce");
+        let claim = match decision {
+            WorkloadProvisionDecision::Proposed(proposed) => {
+                record = proposed.into_candidate();
+                record
+                    .provision_disposition()
+                    .and_then(WorkloadProvisionDisposition::claim)
+                    .cloned()
+            }
+            WorkloadProvisionDecision::InspectExact(claim) => Some(*claim),
+            WorkloadProvisionDecision::DefiniteFailure => return record,
+            WorkloadProvisionDecision::Wait => {
+                panic!("failed-provision fixture reached quiescence before its target step")
+            }
+        };
+        let Some(claim) = claim else {
+            continue;
+        };
+        let result = if claim.attempt().step() == failed_step {
+            WorkloadProvisionEffectResult::DefiniteFailure {
+                attempt_id: claim.attempt().attempt_id().clone(),
+                failure: WorkloadFailureEvidence::new(
+                    "fixture_provision_failure",
+                    WorkloadOwnerEvidenceDigest::sha256(format!("failure-{failed_step:?}")),
+                )
+                .expect("fixture provision failure is valid"),
+            }
+        } else {
+            WorkloadProvisionEffectResult::Succeeded {
+                attempt_id: claim.attempt().attempt_id().clone(),
+                evidence: success_for(claim.attempt()),
+            }
+        };
+        let WorkloadProvisionDecision::Proposed(proposed) =
+            WorkloadProvisionDecision::reduce(&record, result)
+                .expect("failed-provision fixture result should reduce")
+        else {
+            panic!("failed-provision fixture result should produce durable truth");
+        };
+        record = proposed.into_candidate();
+        if claim.attempt().step() == failed_step {
+            assert!(matches!(
+                record.provision_disposition(),
+                Some(WorkloadProvisionDisposition::DefiniteFailure { .. })
+            ));
+            return record;
+        }
+    }
+    panic!("failed-provision fixture exceeded its decision bound")
 }
 
 fn restart_compiled_plan(

@@ -46,10 +46,7 @@ use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
 use crate::backends::conmon::lifecycle::{
     RuntimeStatusProbe, detect_runtime_status as detect_conmon_runtime_status,
 };
-use crate::backends::conmon::lifecycle::{
-    configured_stop_signal, configured_stop_timeout, ensure_linux_host, read_exit_code, read_pid,
-    run_status_checked, signal_process, wait_for_path,
-};
+use crate::backends::conmon::lifecycle::{ensure_linux_host, run_status_checked};
 use crate::backends::oci::buildah::OciImageLaunchDefaults;
 use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{OciConmonConfig, OciConmonLayout, build_launch_plan};
@@ -688,98 +685,6 @@ impl ContainerSandboxBackend {
             })
     }
 
-    fn stop_sync(&self, id: &SandboxId) -> Result<()> {
-        let Some(mut manifest) = self.read_manifest(id)? else {
-            return Err(SandboxError::NotFound {
-                sandbox_id: id.as_str().to_owned(),
-            });
-        };
-        let execute_handoff = if manifest.start_mode == ContainerStartMode::Execute {
-            let (handoff, current) =
-                runner::lock_current_execute_lifecycle_for_backend(self, &manifest)?;
-            manifest = current;
-            Some(handoff)
-        } else {
-            None
-        };
-        if manifest.start_mode == ContainerStartMode::Execute {
-            if let Some(phase) = runner::execute_handoff_phase(&manifest)? {
-                if phase == runner::RunnerHandoffPhase::ClaimedBeforeEffects {
-                    self.reconcile_pending_creator_before_cleanup(&mut manifest)?;
-                    let cleanup_complete = manifest.status == SandboxStatus::Stopped
-                        && manifest.has_terminal_network_finality();
-                    if !cleanup_complete {
-                        self.release_unstarted_launch_artifacts(&mut manifest)?;
-                        manifest.shutdown_requested = true;
-                        manifest.last_exit_code = Some(0);
-                        synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
-                        self.write_existing_workload_manifest(&manifest)?;
-                    }
-                    runner::publish_runner_lifecycle_ownership(
-                        &manifest,
-                        execute_handoff
-                            .as_ref()
-                            .expect("execute manifest must own its lifecycle lock"),
-                    )?;
-                    return Ok(());
-                }
-                if phase == runner::RunnerHandoffPhase::EffectsStarted {
-                    let outcome = runner::reconcile_runner_effects_started(
-                        self,
-                        &mut manifest,
-                        execute_handoff
-                            .as_ref()
-                            .expect("execute manifest must own its lifecycle lock"),
-                    )?;
-                    if outcome == runner::RunnerEffectOutcome::Absent {
-                        return Ok(());
-                    }
-                } else {
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "container workload {id} is owned by runner handoff phase {phase:?}; \
-                             external teardown remains fenced"
-                        ),
-                    });
-                }
-            }
-            self.reconcile_pending_creator_before_cleanup(&mut manifest)?;
-            if manifest.has_terminal_network_finality() {
-                self.reconcile_terminal_ipam_retirement(&manifest)?;
-                return Ok(());
-            }
-            if manifest.launch_reservation_claim.is_some() {
-                self.release_unstarted_launch_artifacts(&mut manifest)?;
-                manifest.shutdown_requested = true;
-                manifest.last_exit_code = Some(0);
-                synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
-                return self.write_existing_workload_manifest(&manifest);
-            }
-        } else if manifest.has_terminal_network_finality() {
-            self.reconcile_terminal_ipam_retirement(&manifest)?;
-            return Ok(());
-        }
-
-        match manifest.start_mode {
-            ContainerStartMode::PlanOnly => {
-                if manifest.has_terminal_network_finality() {
-                    self.reconcile_terminal_ipam_retirement(&manifest)?;
-                    return Ok(());
-                }
-                let _handoff = (manifest.lifecycle_coordinator
-                    == ContainerLifecycleCoordinator::PreparedServiceRunner)
-                    .then(|| runner::lock_plan_only_status_update(&manifest, true))
-                    .transpose()?;
-                manifest.shutdown_requested = true;
-                manifest.last_exit_code = Some(0);
-                synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
-                self.release_plan_only_execution_artifacts(&mut manifest)?;
-                self.write_existing_workload_manifest(&manifest)
-            }
-            ContainerStartMode::Execute => self.execute_stop(&mut manifest),
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn plan_start(&self, spec: &SandboxSpec) -> Result<ContainerStartPlan> {
         let sandbox_id = next_sandbox_id(spec.display_name());
@@ -1287,39 +1192,6 @@ impl ContainerSandboxBackend {
         self.write_manifest(manifest)
     }
 
-    fn execute_stop(&self, manifest: &mut ContainerSandboxManifest) -> Result<()> {
-        if manifest.conmon_layout.exit_status_file.exists() {
-            manifest.shutdown_requested = true;
-            manifest.last_exit_code =
-                Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
-            synchronize_handle_status(manifest, SandboxStatus::Stopped);
-            self.release_execution_artifacts(manifest)?;
-            return self.write_existing_workload_manifest(manifest);
-        }
-
-        manifest.shutdown_requested = true;
-        let pid = read_pid(&manifest.conmon_layout.pidfile)?;
-        let stop_signal = configured_stop_signal(manifest.image_metadata.stop_signal.as_deref());
-        signal_process(&stop_signal, pid)?;
-        let stop_timeout = configured_stop_timeout(&manifest.spec, self.config.stop_timeout);
-        if !wait_for_path(&manifest.conmon_layout.exit_status_file, stop_timeout) {
-            signal_process("KILL", pid)?;
-            if !wait_for_path(&manifest.conmon_layout.exit_status_file, stop_timeout) {
-                return Err(SandboxError::OperationFailed {
-                    message: format!(
-                        "sandbox {} did not write an exit file after TERM/KILL",
-                        manifest.handle.id
-                    ),
-                });
-            }
-        }
-
-        manifest.last_exit_code = Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
-        synchronize_handle_status(manifest, SandboxStatus::Stopped);
-        self.release_execution_artifacts(manifest)?;
-        self.write_existing_workload_manifest(manifest)
-    }
-
     #[cfg(test)]
     fn detect_runtime_status(&self, manifest: &ContainerSandboxManifest) -> Result<SandboxStatus> {
         detect_conmon_runtime_status(
@@ -1596,12 +1468,6 @@ impl SandboxBackend for ContainerSandboxBackend {
         let backend = self.clone();
         let sandbox_id = id.clone();
         Box::pin(async move { backend.inspect_sync(&sandbox_id) })
-    }
-
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        let backend = self.clone();
-        let sandbox_id = id.clone();
-        Box::pin(async move { backend.stop_sync(&sandbox_id) })
     }
 
     fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> SandboxFuture<()> {

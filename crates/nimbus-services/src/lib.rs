@@ -22,10 +22,10 @@ pub use catalog::{
     SessionTarget, SessionTargetSnapshot,
 };
 pub use manager::{
-    LocalBuildAdmission, NoopServiceEvidenceWriter, SandboxServiceProvisionSource,
-    ServiceEvidenceFuture, ServiceEvidenceWriter, ServiceManager, StandaloneSandboxProvisionSource,
-    TenantServiceRetirement, TenantServiceRetirementFuture, WorkloadSourceRetirementClaim,
-    WorkloadSourceRetirementIdentity, WorkloadSourceRetirementOperation,
+    LocalBuildAdmission, SandboxServiceProvisionSource, ServiceManager,
+    StandaloneSandboxProvisionSource, TenantSourceRetirementClaim, TenantSourceRetirementSnapshot,
+    TenantWorkloadSourceSnapshot, WorkloadSourceRetirementClaim, WorkloadSourceRetirementIdentity,
+    WorkloadSourceRetirementOperation,
 };
 pub use registry::{
     RuntimeServiceRegistry, ServiceInstanceBindingRegistry, service_binding_from_handle,

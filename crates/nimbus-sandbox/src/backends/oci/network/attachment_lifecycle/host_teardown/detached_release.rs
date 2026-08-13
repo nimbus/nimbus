@@ -7,11 +7,15 @@ use nimbus_network::{
 use super::super::*;
 use super::progress::{
     HostManagedAttachmentDetachedEvidence, HostManagedAttachmentDetachedProof,
-    HostManagedAttachmentReleasePhase, RetainedAttachmentPublicationEvidence,
+    HostManagedAttachmentEffectDisposition, HostManagedAttachmentReleasePhase,
+    NeverEffectedIpamAuthority, NeverEffectedPortAuthority, NeverEffectedSegmentAuthority,
+    RetainedAttachmentPublicationEvidence,
 };
 use super::retained_detach::{
-    authenticate_exact_command_context, complete_port_plan_members, evidence_digest,
-    require_retained_records, retained_attachment_authority_digest,
+    authenticate_exact_command_context, classify_never_effected_port_records,
+    complete_port_plan_members, evidence_digest, never_effected_attachment_authority_digest,
+    never_effected_stable_handle_digest, require_retained_records,
+    retained_attachment_authority_digest,
 };
 use crate::SandboxNetworkTeardownCommand;
 use crate::backends::oci::network::ipam::{
@@ -165,11 +169,12 @@ impl OciAttachmentLifecycle<'_> {
         let machine_forwarded = composition.is_machine_forwarded();
         authenticate_exact_command_context(context, command, machine_forwarded)?;
         proof.validate_release_command(command)?;
-        let association = authority::authenticate_detach_association(
+        let association = authority::authenticate_detach_association_with_fallback(
             self.attachments,
             self.allocator,
             context,
             AttachmentTeardownMode::Final,
+            Some(proof.association()),
         )?;
         if &association != proof.association() || association.lease_epoch() != proof.lease_epoch() {
             return Err(SandboxError::OperationFailed {
@@ -198,14 +203,25 @@ impl OciAttachmentLifecycle<'_> {
             proof.require_publication_evidence(publication_evidence)?;
         }
         if current_phase == HostManagedAttachmentReleasePhase::NotStarted {
-            self.require_exact_detached_evidence(
-                context,
-                proof,
-                &durable,
-                publication_evidence
-                    .as_ref()
-                    .expect("initial release always authenticates publication evidence"),
-            )?;
+            let publication_evidence = publication_evidence
+                .as_ref()
+                .expect("initial release always authenticates publication evidence");
+            match proof.effect_disposition() {
+                HostManagedAttachmentEffectDisposition::ProviderEffectMayHaveExisted => self
+                    .require_exact_detached_evidence(
+                        context,
+                        proof,
+                        &durable,
+                        publication_evidence,
+                    )?,
+                HostManagedAttachmentEffectDisposition::ConfirmedNoProviderEffect => self
+                    .require_exact_never_effected_evidence(
+                        context,
+                        proof,
+                        &durable,
+                        publication_evidence,
+                    )?,
+            }
         }
         record_phase(HostManagedAttachmentReleasePhase::ReleaseAuthenticated)?;
 
@@ -221,7 +237,12 @@ impl OciAttachmentLifecycle<'_> {
                 "detached PEP listener",
             )?;
             if current_phase < HostManagedAttachmentReleasePhase::PepReleaseMayExist {
-                require_retained_records(&pep, context.launch_claim, "PEP listener")?;
+                require_releaseable_port_records(
+                    &pep,
+                    context.launch_claim,
+                    proof,
+                    "PEP listener",
+                )?;
                 record_phase(HostManagedAttachmentReleasePhase::PepReleaseMayExist)?;
             }
             release_auxiliary()?;
@@ -235,7 +256,12 @@ impl OciAttachmentLifecycle<'_> {
                 "detached published listener",
             )?;
             if current_phase < HostManagedAttachmentReleasePhase::ListenerReleaseMayExist {
-                require_retained_records(&listeners, context.launch_claim, "published listener")?;
+                require_releaseable_port_records(
+                    &listeners,
+                    context.launch_claim,
+                    proof,
+                    "published listener",
+                )?;
                 record_phase(HostManagedAttachmentReleasePhase::ListenerReleaseMayExist)?;
             }
             composition.release_listener_authority(
@@ -253,9 +279,14 @@ impl OciAttachmentLifecycle<'_> {
                 context.sandbox_id,
             )?;
             if current_phase < HostManagedAttachmentReleasePhase::IpamReleaseMayExist {
-                if ipam != ContainerIpamAuthorityState::Live {
+                let expected = proof.never_effected_authority().map(|state| state.ipam());
+                let authenticated = match expected {
+                    Some(expected) => never_effected_ipam_authority(ipam) == expected,
+                    None => ipam == ContainerIpamAuthorityState::Live,
+                };
+                if !authenticated {
                     return Err(SandboxError::OperationFailed {
-                        message: "ReleaseNetwork requires live exact IPAM authority before release"
+                        message: "ReleaseNetwork crossed its exact IPAM authority before release"
                             .to_owned(),
                     });
                 }
@@ -273,7 +304,14 @@ impl OciAttachmentLifecycle<'_> {
                     )?;
                 }
                 ContainerIpamAuthorityState::Released
-                    if current_phase >= HostManagedAttachmentReleasePhase::IpamReleaseMayExist => {}
+                    if current_phase >= HostManagedAttachmentReleasePhase::IpamReleaseMayExist
+                        || proof.never_effected_authority().is_some_and(|state| {
+                            state.ipam() == NeverEffectedIpamAuthority::Released
+                        }) => {}
+                ContainerIpamAuthorityState::Absent
+                    if proof.never_effected_authority().is_some_and(|state| {
+                        state.ipam() == NeverEffectedIpamAuthority::Absent
+                    }) => {}
                 ContainerIpamAuthorityState::Released | ContainerIpamAuthorityState::Absent => {
                     return Err(SandboxError::OperationFailed {
                         message: "ReleaseNetwork found unauthenticated IPAM absence".to_owned(),
@@ -290,33 +328,81 @@ impl OciAttachmentLifecycle<'_> {
                 &context.config.reservation_claim,
             )?;
             if current_phase < HostManagedAttachmentReleasePhase::SegmentReleaseMayExist {
-                if segment.state() != NetworkAttachmentReservationState::ProviderCleanupPending
-                    || segment.association() != Some(proof.association())
-                {
+                let exact_association = match segment.state() {
+                    NetworkAttachmentReservationState::ProviderCleanupPending
+                    | NetworkAttachmentReservationState::ReservationCleanupPending => {
+                        segment.association() == Some(proof.association())
+                    }
+                    NetworkAttachmentReservationState::Absent => segment.association().is_none(),
+                    _ => false,
+                };
+                let expected = proof
+                    .never_effected_authority()
+                    .map(|state| state.segment());
+                let authenticated = match expected {
+                    Some(expected) => {
+                        never_effected_segment_authority(segment.state()) == Some(expected)
+                            && exact_association
+                    }
+                    None => {
+                        segment.state() == NetworkAttachmentReservationState::ProviderCleanupPending
+                            && exact_association
+                    }
+                };
+                if !authenticated {
                     return Err(SandboxError::OperationFailed {
-                        message: "ReleaseNetwork requires the exact quarantined segment hold"
-                            .to_owned(),
+                        message:
+                            "ReleaseNetwork crossed its exact segment authority before release"
+                                .to_owned(),
                     });
                 }
                 record_phase(HostManagedAttachmentReleasePhase::SegmentReleaseMayExist)?;
             }
-            let errors =
-                if segment.state() == NetworkAttachmentReservationState::ProviderCleanupPending {
+            let errors = match segment.state() {
+                NetworkAttachmentReservationState::ProviderCleanupPending => {
                     release_network_segment_hold(
                         self.allocator,
                         context.tenant_id,
                         &context.config.attachment_id,
                         &context.config.reservation_claim,
                     )
-                } else if segment.state() == NetworkAttachmentReservationState::Absent
-                    && current_phase >= HostManagedAttachmentReleasePhase::SegmentReleaseMayExist
+                }
+                NetworkAttachmentReservationState::ReservationCleanupPending => {
+                    release_reserved_network_launch_after_ports(
+                        ReservedNetworkLaunchAuthority::new(
+                            self.allocator,
+                            self.ipam,
+                            ReservedNetworkLaunchIdentity::new(
+                                context.layout,
+                                context.tenant_id,
+                                context.sandbox_id,
+                                &context.config.attachment_id,
+                                &context.config.reservation_claim,
+                            ),
+                            context.config.provider_kind(),
+                        ),
+                        Ok(()),
+                    )
+                    .err()
+                    .into_iter()
+                    .collect()
+                }
+                NetworkAttachmentReservationState::Absent
+                    if current_phase
+                        >= HostManagedAttachmentReleasePhase::SegmentReleaseMayExist
+                        || proof.never_effected_authority().is_some_and(|state| {
+                            state.segment() == NeverEffectedSegmentAuthority::Absent
+                        }) =>
                 {
                     Vec::new()
-                } else {
+                }
+                _ => {
                     return Err(SandboxError::OperationFailed {
-                        message: "ReleaseNetwork found unauthenticated segment absence".to_owned(),
+                        message: "ReleaseNetwork found unauthenticated segment authority"
+                            .to_owned(),
                     });
-                };
+                }
+            };
             if !errors.is_empty() {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
@@ -333,21 +419,40 @@ impl OciAttachmentLifecycle<'_> {
         }
 
         record_phase(HostManagedAttachmentReleasePhase::AttachmentReleaseMayExist)?;
-        let attachment = durable
-            .inspect()?
-            .ok_or_else(|| SandboxError::OperationFailed {
-                message: "ReleaseNetwork lost portable attachment authority".to_owned(),
-            })?;
-        match attachment.resource().phase() {
-            NetworkResourcePhase::Deleting | NetworkResourcePhase::CleanupPending => {
+        let attachment = durable.inspect()?;
+        match (
+            attachment
+                .as_ref()
+                .map(|attachment| attachment.resource().phase()),
+            proof.effect_disposition(),
+        ) {
+            (
+                Some(NetworkResourcePhase::Deleting | NetworkResourcePhase::CleanupPending),
+                HostManagedAttachmentEffectDisposition::ProviderEffectMayHaveExisted,
+            ) => {
                 durable.transition(
-                    &attachment,
+                    attachment
+                        .as_ref()
+                        .expect("effectful release phase requires attachment authority"),
                     NetworkResourcePhase::Released,
                     NetworkTransitionEvidence::DeletionConfirmed,
                 )?;
             }
-            NetworkResourcePhase::Released => {}
-            phase => {
+            (
+                Some(NetworkResourcePhase::Reserved),
+                HostManagedAttachmentEffectDisposition::ConfirmedNoProviderEffect,
+            ) => {
+                durable.transition(
+                    attachment
+                        .as_ref()
+                        .expect("reserved no-effect release requires attachment authority"),
+                    NetworkResourcePhase::Released,
+                    NetworkTransitionEvidence::ConfirmedNoEffect,
+                )?;
+            }
+            (None, HostManagedAttachmentEffectDisposition::ConfirmedNoProviderEffect)
+            | (Some(NetworkResourcePhase::Released), _) => {}
+            (phase, _) => {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "ReleaseNetwork cannot publish terminal attachment from phase {phase:?}"
@@ -493,6 +598,65 @@ impl OciAttachmentLifecycle<'_> {
         })
     }
 
+    fn require_exact_never_effected_evidence(
+        &self,
+        context: &OciAttachmentContext<'_>,
+        proof: &HostManagedAttachmentDetachedProof,
+        durable: &state::OciAttachmentDurableState<'_>,
+        publication_evidence: &RetainedAttachmentPublicationEvidence,
+    ) -> Result<()> {
+        let attachment = durable.inspect()?;
+        if attachment.as_ref().is_some_and(|attachment| {
+            attachment.resource().phase() != NetworkResourcePhase::Reserved
+                || attachment.resource().provider_handle().is_some()
+                || attachment.association() != proof.association()
+                || attachment.selected_provider_id() != proof.selected_provider_id()
+        }) {
+            return Err(SandboxError::OperationFailed {
+                message: "ReleaseNetwork crossed retained no-effect attachment authority"
+                    .to_owned(),
+            });
+        }
+        let expected =
+            proof
+                .never_effected_authority()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: "ReleaseNetwork no-effect proof omitted semantic authority state"
+                        .to_owned(),
+                })?;
+        let snapshot = self.inspect_never_effected_authority(context, proof.association())?;
+        if snapshot.authority != expected {
+            return Err(SandboxError::OperationFailed {
+                message: "ReleaseNetwork no-effect authority changed after retained detach"
+                    .to_owned(),
+            });
+        }
+        proof.require_current_evidence(HostManagedAttachmentDetachedEvidence {
+            stable_handle_sha256: &never_effected_stable_handle_digest(
+                context,
+                attachment.as_ref(),
+            )?,
+            provider_delete_evidence_sha256: &snapshot.provider_delete_evidence_sha256,
+            namespace_absence_evidence_sha256: &evidence_digest(
+                "namespace_absence",
+                &(
+                    "explicitly_absent",
+                    &context.layout.netns_root,
+                    &context.layout.netns_path,
+                ),
+            )?,
+            pep_retained_evidence_sha256: &snapshot.pep_evidence_sha256,
+            listener_retained_evidence_sha256: &snapshot.listener_evidence_sha256,
+            ipam_retained_evidence_sha256: &snapshot.ipam_evidence_sha256,
+            segment_quarantine_evidence_sha256: &snapshot.segment_evidence_sha256,
+            attachment_retained_evidence_sha256: &never_effected_attachment_authority_digest(
+                context,
+                attachment.as_ref(),
+            )?,
+            publication_evidence,
+        })
+    }
+
     fn require_exact_detached_absence(&self, context: &OciAttachmentContext<'_>) -> Result<()> {
         if recovery::inspect_provider(self.ipam, context)
             != recovery::AttachmentProviderObservation::Absent
@@ -510,6 +674,54 @@ impl OciAttachmentLifecycle<'_> {
             });
         }
         Ok(())
+    }
+}
+
+fn require_releaseable_port_records(
+    records: &[nimbus_network::PortLeaseRecord],
+    launch_claim: Option<&nimbus_network::NetworkReservationClaim>,
+    proof: &HostManagedAttachmentDetachedProof,
+    label: &str,
+) -> Result<()> {
+    let Some(authority) = proof.never_effected_authority() else {
+        return require_retained_records(records, launch_claim, label);
+    };
+    let observed = classify_never_effected_port_records(records, &[], launch_claim, label)?;
+    if observed == NeverEffectedPortAuthority::NoMembers || observed == authority.ports() {
+        Ok(())
+    } else {
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "{label} authority {observed:?} crossed detached no-effect state {:?}",
+                authority.ports()
+            ),
+        })
+    }
+}
+
+const fn never_effected_ipam_authority(
+    state: ContainerIpamAuthorityState,
+) -> NeverEffectedIpamAuthority {
+    match state {
+        ContainerIpamAuthorityState::Live => NeverEffectedIpamAuthority::Live,
+        ContainerIpamAuthorityState::Released => NeverEffectedIpamAuthority::Released,
+        ContainerIpamAuthorityState::Absent => NeverEffectedIpamAuthority::Absent,
+    }
+}
+
+const fn never_effected_segment_authority(
+    state: NetworkAttachmentReservationState,
+) -> Option<NeverEffectedSegmentAuthority> {
+    match state {
+        NetworkAttachmentReservationState::ProviderCleanupPending => {
+            Some(NeverEffectedSegmentAuthority::ProviderCleanupPending)
+        }
+        NetworkAttachmentReservationState::ReservationCleanupPending => {
+            Some(NeverEffectedSegmentAuthority::ReservationCleanupPending)
+        }
+        NetworkAttachmentReservationState::Absent => Some(NeverEffectedSegmentAuthority::Absent),
+        NetworkAttachmentReservationState::Reserved
+        | NetworkAttachmentReservationState::Adopted => None,
     }
 }
 

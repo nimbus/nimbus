@@ -234,24 +234,6 @@ impl ServiceManager {
             .insert(key, observation.clone());
         Ok(observation)
     }
-
-    pub(super) fn tenant_service_observations(
-        &self,
-        tenant_id: &TenantId,
-    ) -> Vec<(TenantServiceKey, SandboxHandle)> {
-        self.state
-            .lock()
-            .expect("manager lock should not be poisoned")
-            .service_definition_observations
-            .iter()
-            .filter(|(key, observation)| {
-                &key.tenant_id == tenant_id
-                    && observation.tenant_id == *tenant_id
-                    && observation.name == key.service_name
-            })
-            .map(|(key, observation)| (key.clone(), observation.handle.clone()))
-            .collect()
-    }
 }
 
 fn validate_attempt_progression(

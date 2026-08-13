@@ -544,9 +544,8 @@ impl RouterBuildConfig {
             runtime,
         } = self;
         let engine = workload.engine();
-        let system_state_engine = engine.clone();
         nimbus_system::install_table_projection_observer(&engine);
-        let node_services = node_services.resolve(system_state_engine);
+        let node_services = node_services.resolve();
         let DeploymentConfig {
             convex_registry,
             system_convex_registry,
@@ -970,28 +969,10 @@ pub(crate) fn build_firebase_router(state: Arc<AppState>) -> Router<Arc<AppState
 mod network_manager_tests {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
-    use nimbus_sandbox::{
-        SandboxBackend, SandboxBackendKind, SandboxFuture, SandboxId, SandboxInspection,
-    };
+    use nimbus_sandbox::SandboxBackendKind;
     use nimbus_services::EmptyServiceDefinitionCatalog;
 
     use super::*;
-
-    struct EffectForbiddenSandboxBackend;
-
-    impl SandboxBackend for EffectForbiddenSandboxBackend {
-        fn kind(&self) -> SandboxBackendKind {
-            SandboxBackendKind::Krun
-        }
-
-        fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
-            panic!("protocol-only refusal must happen before sandbox effects")
-        }
-
-        fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-            panic!("protocol-only refusal must happen before sandbox effects")
-        }
-    }
 
     struct EffectForbiddenMachineLifecycleManager;
 
@@ -1047,7 +1028,7 @@ mod network_manager_tests {
 
         let service_manager = Arc::new(ServiceManager::new(
             Arc::new(EmptyServiceDefinitionCatalog),
-            Arc::new(EffectForbiddenSandboxBackend),
+            SandboxBackendKind::Krun,
         ));
         let service_state_refusal = catch_unwind(AssertUnwindSafe(|| {
             AppState::from_config(AppStateConfig {

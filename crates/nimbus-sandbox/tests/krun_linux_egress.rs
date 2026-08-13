@@ -42,7 +42,9 @@ use nimbus_sandbox::{
 
 #[path = "support/provision.rs"]
 mod provision_support;
-use provision_support::{provision_container, provision_krun};
+use provision_support::{
+    ExactTeardownFixture, provision_container, provision_krun, retire_container, retire_krun,
+};
 
 const RESULT_VOLUME: &str = "krun-egress-proof";
 const RESULT_PATH_IN_GUEST: &str = "/nimbus-egress/result";
@@ -83,12 +85,13 @@ fn krun_execute_mode_denies_direct_external_egress() {
         .expect("krun phases should activate once execute mode is enabled (KME4)");
     assert!(provisioned.ingress.is_empty());
     let handle = provisioned.handle;
+    let teardown_fixture = provisioned.teardown;
 
     // The guard force-tears-down on scope exit AND on panic: it never blocks on
     // guest exit, killing the VMM and releasing the netns under hard timeouts.
     let _teardown = ForceTeardownGuard::new(
         backend.clone(),
-        handle.id.clone(),
+        teardown_fixture,
         sandbox_netns_path(&workdir, &tenant_id, &handle.id),
     );
 
@@ -176,9 +179,10 @@ fn run_krun_parity_probe(policy: &EgressPolicy, allowed_port: u16, unlisted_port
         .expect("krun phases should activate once execute mode is enabled (KME4)");
     assert!(provisioned.ingress.is_empty());
     let handle = provisioned.handle;
+    let teardown_fixture = provisioned.teardown;
     let teardown = ForceTeardownGuard::new(
         backend.clone(),
-        handle.id.clone(),
+        teardown_fixture,
         sandbox_netns_path(&workdir, &tenant_id, &handle.id),
     );
 
@@ -221,14 +225,14 @@ fn run_container_parity_probe(
     let provisioned = provision_container(&backend, &workdir.join("state"), spec, false)
         .expect("container phases should activate the parity workload");
     assert!(provisioned.ingress.is_empty());
-    let handle = provisioned.handle;
+    let teardown = provisioned.teardown;
     let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
     let result = wait_for_result(
         &result_path,
         Duration::from_secs(40),
         "container parity probe result",
     );
-    let _ = block_on(backend.stop(&handle.id));
+    let _ = retire_container(&backend, &teardown);
     let _ = block_on(backend.remove_tenant_artifacts(tenant_id));
     normalize_result(&result)
 }
@@ -452,14 +456,21 @@ fn wait_for_result(path: &Path, timeout: Duration, label: &str) -> String {
 /// timeouts. Runs on both the happy path (scope exit) and the panic path.
 struct ForceTeardownGuard {
     backend: KrunSandboxBackend,
+    teardown: ExactTeardownFixture,
     sandbox_id: SandboxId,
     netns_path: PathBuf,
 }
 
 impl ForceTeardownGuard {
-    fn new(backend: KrunSandboxBackend, sandbox_id: SandboxId, netns_path: PathBuf) -> Self {
+    fn new(
+        backend: KrunSandboxBackend,
+        teardown: ExactTeardownFixture,
+        netns_path: PathBuf,
+    ) -> Self {
+        let sandbox_id = teardown.sandbox_id().clone();
         Self {
             backend,
+            teardown,
             sandbox_id,
             netns_path,
         }
@@ -470,9 +481,9 @@ impl Drop for ForceTeardownGuard {
     fn drop(&mut self) {
         let stop_handle = {
             let backend = self.backend.clone();
-            let sandbox_id = self.sandbox_id.clone();
+            let teardown = self.teardown.clone();
             thread::spawn(move || {
-                let _ = block_on(backend.stop(&sandbox_id));
+                let _ = retire_krun(&backend, &teardown);
             })
         };
 
@@ -586,9 +597,10 @@ fn krun_execute_mode_denies_all_known_bypass_vectors() {
         .expect("krun phases should activate the bypass-vectors guest");
     assert!(provisioned.ingress.is_empty());
     let handle = provisioned.handle;
+    let teardown_fixture = provisioned.teardown;
     let _teardown = ForceTeardownGuard::new(
         backend.clone(),
-        handle.id.clone(),
+        teardown_fixture,
         sandbox_netns_path(&workdir, &tenant_id, &handle.id),
     );
 
@@ -694,9 +706,10 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
         .expect("sibling B provision phases should activate");
     assert!(b_provisioned.ingress.is_empty());
     let b_handle = b_provisioned.handle;
+    let b_teardown_fixture = b_provisioned.teardown;
     let _b_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        b_handle.id.clone(),
+        b_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant, &b_handle.id),
     );
 
@@ -730,9 +743,10 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
         .expect("sandbox A provision phases should activate");
     assert!(a_provisioned.ingress.is_empty());
     let a_handle = a_provisioned.handle;
+    let a_teardown_fixture = a_provisioned.teardown;
     let _a_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        a_handle.id.clone(),
+        a_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant, &a_handle.id),
     );
 
@@ -803,9 +817,10 @@ fn krun_two_tenants_cannot_reach_each_others_sandbox() {
         .expect("tenant A provision phases should activate");
     assert!(a_provisioned.ingress.is_empty());
     let a_handle = a_provisioned.handle;
+    let a_teardown_fixture = a_provisioned.teardown;
     let _a_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        a_handle.id.clone(),
+        a_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant_a, &a_handle.id),
     );
 
@@ -833,9 +848,10 @@ fn krun_two_tenants_cannot_reach_each_others_sandbox() {
         .expect("tenant B provision phases should activate");
     assert!(b_provisioned.ingress.is_empty());
     let b_handle = b_provisioned.handle;
+    let b_teardown_fixture = b_provisioned.teardown;
     let _b_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        b_handle.id.clone(),
+        b_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant_b, &b_handle.id),
     );
 
@@ -901,9 +917,10 @@ fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
         .expect("sandbox 1 provision phases should activate");
     assert!(s1_provisioned.ingress.is_empty());
     let s1_handle = s1_provisioned.handle;
+    let s1_teardown_fixture = s1_provisioned.teardown;
     let _s1_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        s1_handle.id.clone(),
+        s1_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant, &s1_handle.id),
     );
 
@@ -931,9 +948,10 @@ fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
         .expect("sandbox 2 provision phases should grow a block and activate");
     assert!(s2_provisioned.ingress.is_empty());
     let s2_handle = s2_provisioned.handle;
+    let s2_teardown_fixture = s2_provisioned.teardown;
     let _s2_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        s2_handle.id.clone(),
+        s2_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant, &s2_handle.id),
     );
 

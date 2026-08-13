@@ -81,6 +81,11 @@ fn native_stop_without_teardown_composition_fails_before_source_or_effect() {
             runtime: RuntimeGovernorConfig::default(),
         });
 
+        assert!(
+            state.workload_provisioner().is_none(),
+            "partial managed composition must expose no provision authority"
+        );
+        assert!(state.resource_provisioner().is_err());
         let error = match state.resource_retirer() {
             Ok(_) => panic!("missing exact teardown composition must fail closed"),
             Err(error) => error,

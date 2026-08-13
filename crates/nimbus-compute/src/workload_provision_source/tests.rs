@@ -29,10 +29,6 @@ impl SandboxBackend for RecordingSandboxBackend {
         self.inspects.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok(None) })
     }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        Box::pin(async { Ok(()) })
-    }
 }
 
 fn tenant(value: &str) -> TenantId {
@@ -89,7 +85,7 @@ async fn service_source_is_tenant_qualified_fresh_and_effect_free() {
     let backend = Arc::new(RecordingSandboxBackend::default());
     let manager = Arc::new(ServiceManager::new(
         Arc::new(EmptyServiceDefinitionCatalog),
-        backend.clone(),
+        backend.kind(),
     ));
     let created_a = manager
         .create_service_definition(
@@ -188,7 +184,7 @@ async fn source_authority_rejects_crossed_missing_and_non_sandbox_sources() {
     let backend = Arc::new(RecordingSandboxBackend::default());
     let manager = Arc::new(ServiceManager::new(
         Arc::new(EmptyServiceDefinitionCatalog),
-        backend.clone(),
+        backend.kind(),
     ));
     manager
         .create_service_definition(
@@ -231,7 +227,7 @@ async fn source_authority_derives_provider_identity_from_each_service_backend() 
     let backend = Arc::new(RecordingSandboxBackend::default());
     let manager = Arc::new(ServiceManager::new(
         Arc::new(EmptyServiceDefinitionCatalog),
-        backend.clone(),
+        backend.kind(),
     ));
     for (name, kind) in [
         ("container-worker", SandboxBackendKind::Container),
@@ -283,7 +279,7 @@ async fn standalone_source_authenticates_profile_without_provider_inspection() {
     let backend = Arc::new(RecordingSandboxBackend::default());
     let manager = Arc::new(ServiceManager::new(
         Arc::new(EmptyServiceDefinitionCatalog),
-        backend.clone(),
+        backend.kind(),
     ));
     let prepared = manager
         .prepare_standalone_sandbox_provision_source(

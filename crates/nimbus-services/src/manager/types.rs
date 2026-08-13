@@ -1,7 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use nimbus_core::{Error, TenantId};
-use nimbus_sandbox::SandboxError;
+use nimbus_core::TenantId;
 
 use crate::{
     SandboxResourceObservation, SandboxResourceSource, ServiceDefinition,
@@ -9,6 +8,7 @@ use crate::{
 };
 
 use super::session_channels::{SessionChannelKey, SessionChannelState};
+use super::tenant_retirement::TenantSourceRetirementBarrier;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct TenantServiceKey {
@@ -61,23 +61,9 @@ pub(super) struct ServiceManagerState {
     /// provision insertion, session admission, and terminal projection.
     pub(super) source_retirement_claims:
         BTreeMap<WorkloadSourceRetirementKey, WorkloadSourceRetirementClaim>,
-    /// Dynamic-definition mutations currently spanning an async retirement.
-    ///
-    /// This gate cannot authorize provision or provider start. It only keeps
-    /// update/delete/session snapshots from crossing an in-flight definition
-    /// deletion while that deletion retires an already-observed sandbox.
-    pub(super) definition_mutations_in_progress: BTreeSet<TenantServiceKey>,
+    /// Process-local tenant source fence paired with the immutable source
+    /// snapshot captured when the Engine incarnation entered retirement.
+    pub(super) tenant_source_retirements: BTreeMap<TenantId, TenantSourceRetirementBarrier>,
     pub(super) next_definition_version: u64,
     pub(super) next_session_version: u64,
-}
-
-pub(super) fn sandbox_backend_error(
-    key: &TenantServiceKey,
-    operation: &str,
-    error: &SandboxError,
-) -> Error {
-    Error::Internal(format!(
-        "failed to {operation} sandbox-backed service {} for tenant {}: {error}",
-        key.service_name, key.tenant_id
-    ))
 }

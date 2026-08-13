@@ -506,17 +506,6 @@ impl HostLifecycleBackend for ProcessGuestHost {
         ))
     }
 
-    fn stop<'a>(
-        &'a self,
-        _execution_id: nimbus_workloads::WorkloadExecutionId,
-    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-        Box::pin(async {
-            Err(nimbus_core::Error::PermissionDenied(
-                "two-realm guest uses exact stop only".to_owned(),
-            ))
-        })
-    }
-
     fn inspect<'a>(
         &'a self,
         _execution_id: nimbus_workloads::WorkloadExecutionId,

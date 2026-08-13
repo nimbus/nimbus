@@ -14,9 +14,8 @@ use nimbus_network::{
     NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, PortProtocol,
 };
 use nimbus_sandbox::{
-    ProviderCommandAttemptJournal, SandboxBackend, SandboxBackendKind, SandboxFuture,
-    SandboxHandle, SandboxId, SandboxInspection, SandboxOwnerSpec, SandboxProcessSpec,
-    SandboxRootSpec, SandboxSpec,
+    ProviderCommandAttemptJournal, SandboxBackendKind, SandboxHandle, SandboxId, SandboxInspection,
+    SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
 };
 use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceBackend, ServiceManager};
 use nimbus_tenant::{TenantIsolationContext, WorkloadLocation};
@@ -170,13 +169,23 @@ pub(super) enum NextCasFault {
     AmbiguousBeforeApply,
 }
 
+#[derive(Debug, Clone)]
+pub(super) enum TenantPageFault {
+    Error(WorkloadSagaStoreError),
+    Insert(Box<WorkloadSagaRecord>),
+    Page(WorkloadSagaTenantPage),
+}
+
 #[derive(Default)]
 pub(super) struct RetirementSagaStore {
     records: Mutex<BTreeMap<WorkloadSagaKey, WorkloadSagaRecord>>,
     next_fault: Mutex<Option<NextCasFault>>,
+    next_load_failure_for: Mutex<Option<WorkloadSagaKey>>,
+    tenant_page_fault: Mutex<Option<(usize, TenantPageFault)>>,
     first_missing_cas_gate: Mutex<Option<(Arc<Semaphore>, Arc<Semaphore>)>>,
     loads: AtomicUsize,
     compare_and_swaps: AtomicUsize,
+    tenant_page_calls: AtomicUsize,
     log: Arc<EventLog>,
 }
 
@@ -218,6 +227,25 @@ impl RetirementSagaStore {
             .expect("CAS fault lock should remain healthy") = Some(fault);
     }
 
+    pub(super) fn fail_next_load_for(&self, key: WorkloadSagaKey) {
+        *self
+            .next_load_failure_for
+            .lock()
+            .expect("load-failure lock should remain healthy") = Some(key);
+    }
+
+    pub(super) fn fault_tenant_page(&self, call: usize, fault: TenantPageFault) {
+        assert!(call > 0, "tenant page call index is one-based");
+        *self
+            .tenant_page_fault
+            .lock()
+            .expect("tenant-page fault lock should remain healthy") = Some((call, fault));
+    }
+
+    pub(super) fn tenant_page_call_count(&self) -> usize {
+        self.tenant_page_calls.load(Ordering::Acquire)
+    }
+
     pub(super) fn install_first_missing_cas_gate(&self) -> (Arc<Semaphore>, Arc<Semaphore>) {
         let entered = Arc::new(Semaphore::new(0));
         let release = Arc::new(Semaphore::new(0));
@@ -244,6 +272,21 @@ impl WorkloadSagaStore for RetirementSagaStore {
     ) -> WorkloadSagaFuture<'a, Option<WorkloadSagaRecord>> {
         Box::pin(async move {
             self.loads.fetch_add(1, Ordering::AcqRel);
+            let fail = {
+                let mut next = self
+                    .next_load_failure_for
+                    .lock()
+                    .expect("load-failure lock should remain healthy");
+                if next.as_ref() == Some(key) {
+                    next.take();
+                    true
+                } else {
+                    false
+                }
+            };
+            if fail {
+                return Err(WorkloadSagaStoreError::Unavailable);
+            }
             Ok(self
                 .records
                 .lock()
@@ -340,7 +383,49 @@ impl WorkloadSagaStore for RetirementSagaStore {
         tenant_id: &'a TenantId,
         request: WorkloadSagaTenantPageRequest,
     ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
-        Box::pin(async move { WorkloadSagaTenantPage::new(tenant_id, &request, Vec::new(), false) })
+        Box::pin(async move {
+            request.validate_for_tenant(tenant_id)?;
+            let call = self.tenant_page_calls.fetch_add(1, Ordering::AcqRel) + 1;
+            let fault = {
+                let mut fault = self
+                    .tenant_page_fault
+                    .lock()
+                    .expect("tenant-page fault lock should remain healthy");
+                if fault.as_ref().is_some_and(|(target, _)| *target == call) {
+                    fault.take().map(|(_, fault)| fault)
+                } else {
+                    None
+                }
+            };
+            match fault {
+                Some(TenantPageFault::Error(error)) => return Err(error),
+                Some(TenantPageFault::Insert(record)) => {
+                    self.records
+                        .lock()
+                        .expect("saga store should remain healthy")
+                        .insert(record.key().clone(), *record);
+                }
+                Some(TenantPageFault::Page(page)) => return Ok(page),
+                None => {}
+            }
+            let mut records = self
+                .records
+                .lock()
+                .expect("saga store should remain healthy")
+                .values()
+                .filter(|record| record.key().tenant_id() == tenant_id)
+                .filter(|record| {
+                    request
+                        .after()
+                        .is_none_or(|cursor| record.key() > cursor.key())
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            records.sort_by(|left, right| left.key().cmp(right.key()));
+            let has_more = records.len() > usize::from(request.limit());
+            records.truncate(usize::from(request.limit()));
+            WorkloadSagaTenantPage::new(tenant_id, &request, records, has_more)
+        })
     }
 }
 
@@ -726,23 +811,6 @@ fn teardown_success(
     }
 }
 
-#[derive(Default)]
-pub(super) struct EffectForbiddenSandboxBackend;
-
-impl SandboxBackend for EffectForbiddenSandboxBackend {
-    fn kind(&self) -> SandboxBackendKind {
-        SandboxBackendKind::Krun
-    }
-
-    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
-        panic!("native retirement must not inspect through SandboxBackend")
-    }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
-        panic!("native retirement must not stop through SandboxBackend")
-    }
-}
-
 pub(super) fn provider_realm() -> (NetworkCapabilityRegistry, NetworkCapabilitySelection) {
     let requirements = nimbus_sandbox::sandbox_network_plan_requirements(SandboxBackendKind::Krun);
     let ingress_provider = NetworkProviderId::for_registration_key("retirement-fixture-ingress");
@@ -867,7 +935,7 @@ impl RetirementHarness {
         let log = Arc::new(EventLog::default());
         let manager = Arc::new(ServiceManager::new(
             Arc::new(EmptyServiceDefinitionCatalog),
-            Arc::new(EffectForbiddenSandboxBackend),
+            SandboxBackendKind::Krun,
         ));
         let store = RetirementSagaStore::new(log.clone());
         let provision_provider = RecordingProvisionProvider::new(log.clone());
@@ -882,6 +950,22 @@ impl RetirementHarness {
             provision_provider.clone(),
             &selection,
         ));
+        let restart_runtime = Arc::new(
+            WorkloadRestartRuntime::start(
+                coordinator.clone(),
+                source_authority.clone(),
+                provider_reports.clone(),
+                provision_capabilities.clone(),
+                Arc::new(restart_capabilities(restart_provider.clone(), &selection)),
+            )
+            .expect("fixture restart runtime should start"),
+        );
+        let teardown_runtime = Arc::new(WorkloadTeardownRuntime::new(
+            coordinator.clone(),
+            source_authority.clone(),
+            provider_reports.clone(),
+            Arc::new(teardown_capabilities(teardown_provider.clone(), &selection)),
+        ));
         let provisioner = Arc::new(
             WorkloadProvisioner::new(
                 embedded_local_node_identity(),
@@ -893,28 +977,13 @@ impl RetirementHarness {
                     true,
                 ),
                 coordinator.clone(),
+                teardown_runtime.clone(),
                 source_authority.clone(),
                 (*provision_capabilities).clone(),
                 Arc::new(ServiceManagerWorkloadProjectionSink::new(manager.clone())),
             )
             .expect("fixture provisioner should compose"),
         );
-        let restart_runtime = Arc::new(
-            WorkloadRestartRuntime::start(
-                coordinator.clone(),
-                source_authority.clone(),
-                provider_reports.clone(),
-                provision_capabilities,
-                Arc::new(restart_capabilities(restart_provider.clone(), &selection)),
-            )
-            .expect("fixture restart runtime should start"),
-        );
-        let teardown_runtime = Arc::new(WorkloadTeardownRuntime::new(
-            coordinator.clone(),
-            source_authority,
-            provider_reports,
-            Arc::new(teardown_capabilities(teardown_provider.clone(), &selection)),
-        ));
         let provision = ComputeResourceProvisioner::new(manager.clone(), provisioner.clone());
         let retire = ComputeResourceRetirer::new(
             manager.clone(),

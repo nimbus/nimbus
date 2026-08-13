@@ -4,8 +4,7 @@ use super::support::{
     LifecycleEvent, RetirementHarness, SERVICE_NAME, active_restart_record,
     assert_teardown_effect_order, issued_restart_record, key, run_async_test,
 };
-use crate::resource_retirement::ComputeResourceRetirementError;
-use crate::workload_saga::{WorkloadRestartCommandMode, WorkloadTeardownRunDisposition};
+use crate::workload_saga::WorkloadRestartCommandMode;
 
 #[test]
 fn active_restart_settles_before_withdrawal_committed() {
@@ -48,17 +47,15 @@ fn active_restart_settles_before_withdrawal_committed() {
             .expect("running service observation should remain present");
         harness.reset_retirement_evidence();
 
-        let error = harness
+        let outcome = harness
             .retire
             .submit_service_teardown(&harness.context, SERVICE_NAME)
             .await
-            .expect_err("later owner must consume the retained restart settlement");
-        assert!(matches!(
-            error,
-            ComputeResourceRetirementError::TeardownPending(
-                WorkloadTeardownRunDisposition::RestartSettlementPending
-            )
-        ));
+            .expect("exact restart settlement should converge through terminal teardown");
+        assert_eq!(
+            outcome.disposition(),
+            crate::WorkloadTeardownDisposition::Recorded
+        );
 
         let events = harness.log.entries();
         let restart_inspections = events
@@ -106,44 +103,45 @@ fn active_restart_settles_before_withdrawal_committed() {
             event,
             LifecycleEvent::Restart(_, _, WorkloadRestartCommandMode::Execute)
         )));
-        let released = harness.store.record(&key(SERVICE_NAME));
-        assert_eq!(released.phase(), WorkloadSagaPhase::NetworkReleased);
-        assert!(released.restart_state().active().is_none());
-        assert!(
-            released
-                .teardown_disposition()
-                .and_then(|disposition| disposition.context().restart_settlement())
-                .is_some(),
-            "NetworkReleased must retain exact restart settlement for NNC6.5g"
+        let recorded = harness.store.record(&key(SERVICE_NAME));
+        assert_eq!(recorded.phase(), WorkloadSagaPhase::Recorded);
+        assert!(recorded.restart_state().active().is_none());
+        assert!(recorded.teardown_disposition().is_none());
+        assert_eq!(
+            recorded.active_intent().desired_state(),
+            nimbus_workloads::DesiredWorkloadState::Stopped
         );
-        assert!(
-            released
-                .successor_intent()
-                .is_some_and(|successor| successor.desired_state()
-                    == nimbus_workloads::DesiredWorkloadState::Stopped)
-        );
+        assert!(recorded.successor_intent().is_none());
         assert_teardown_effect_order(&events, &key(SERVICE_NAME));
-        assert!(events.iter().all(|event| !matches!(
-            event,
-            LifecycleEvent::Store {
-                phase: WorkloadSagaPhase::Recorded,
-                ..
-            }
-        )));
+        let recorded_index = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    LifecycleEvent::Store {
+                        phase: WorkloadSagaPhase::Recorded,
+                        ..
+                    }
+                )
+            })
+            .expect("restart settlement teardown must persist Recorded");
+        assert!(withdrawal_index < recorded_index);
         assert_eq!(
             harness
                 .manager
                 .service_definition_for_tenant(harness.context.tenant_id(), SERVICE_NAME),
             Some(definition_before),
-            "pending restart settlement must not finalize the desired source"
+            "service stop must retain its desired definition"
         );
+        let observation_after = harness
+            .manager
+            .service_definition_observation_for_tenant(harness.context.tenant_id(), SERVICE_NAME)
+            .expect("recorded restart settlement must publish terminal projection");
+        assert_ne!(observation_after, observation_before);
         assert_eq!(
-            harness.manager.service_definition_observation_for_tenant(
-                harness.context.tenant_id(),
-                SERVICE_NAME,
-            ),
-            Some(observation_before),
-            "pending restart settlement must not publish a terminal projection"
+            observation_after.handle.status,
+            nimbus_sandbox::SandboxStatus::Stopped
         );
+        assert!(observation_after.handle.published_endpoints.is_empty());
     });
 }

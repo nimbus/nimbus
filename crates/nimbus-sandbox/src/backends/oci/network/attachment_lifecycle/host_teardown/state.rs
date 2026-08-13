@@ -17,7 +17,7 @@ use crate::{
 
 use crate::error::{Result, SandboxError};
 
-const DETACHED_PROOF_SCHEMA_VERSION: u32 = 2;
+const DETACHED_PROOF_SCHEMA_VERSION: u32 = 4;
 const FORWARDED_PROVIDER_ABSENCE_DOMAIN: &[u8] =
     b"nimbus.sandbox.forwarded-release.provider-absence.v1\0";
 
@@ -27,6 +27,119 @@ const FORWARDED_PROVIDER_ABSENCE_DOMAIN: &[u8] =
 pub(crate) enum RetainedAttachmentPublicationEvidence {
     HostManaged,
     MachineForwarded { absence_sha256: String },
+}
+
+/// Whether the retained detach removed provider effects or authenticated that
+/// this exact attachment generation never reached its first provider effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HostManagedAttachmentEffectDisposition {
+    ProviderEffectMayHaveExisted,
+    ConfirmedNoProviderEffect,
+}
+
+/// Exact port authority observed when a no-effect detach proof is published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum NeverEffectedPortAuthority {
+    NoMembers,
+    Retained,
+    Released,
+}
+
+/// Exact IPAM authority observed when a no-effect detach proof is published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum NeverEffectedIpamAuthority {
+    Live,
+    Released,
+    Absent,
+}
+
+/// Exact segment authority observed when a no-effect detach proof is published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum NeverEffectedSegmentAuthority {
+    ProviderCleanupPending,
+    ReservationCleanupPending,
+    Absent,
+}
+
+/// Semantic state behind the no-effect evidence digests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub(super) struct NeverEffectedAttachmentAuthority {
+    ports: NeverEffectedPortAuthority,
+    ipam: NeverEffectedIpamAuthority,
+    segment: NeverEffectedSegmentAuthority,
+}
+
+impl NeverEffectedAttachmentAuthority {
+    pub(super) fn new(
+        ports: NeverEffectedPortAuthority,
+        ipam: NeverEffectedIpamAuthority,
+        segment: NeverEffectedSegmentAuthority,
+    ) -> Result<Self> {
+        let state = Self {
+            ports,
+            ipam,
+            segment,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+
+    pub(super) const fn ports(self) -> NeverEffectedPortAuthority {
+        self.ports
+    }
+
+    pub(super) const fn ipam(self) -> NeverEffectedIpamAuthority {
+        self.ipam
+    }
+
+    pub(super) const fn segment(self) -> NeverEffectedSegmentAuthority {
+        self.segment
+    }
+
+    fn validate(self) -> Result<()> {
+        let valid = match self.segment {
+            NeverEffectedSegmentAuthority::ProviderCleanupPending => {
+                self.ipam == NeverEffectedIpamAuthority::Live
+                    && matches!(
+                        self.ports,
+                        NeverEffectedPortAuthority::NoMembers
+                            | NeverEffectedPortAuthority::Retained
+                    )
+            }
+            NeverEffectedSegmentAuthority::ReservationCleanupPending => {
+                matches!(
+                    self.ports,
+                    NeverEffectedPortAuthority::NoMembers | NeverEffectedPortAuthority::Released
+                ) && matches!(
+                    self.ipam,
+                    NeverEffectedIpamAuthority::Live
+                        | NeverEffectedIpamAuthority::Released
+                        | NeverEffectedIpamAuthority::Absent
+                )
+            }
+            NeverEffectedSegmentAuthority::Absent => {
+                matches!(
+                    self.ipam,
+                    NeverEffectedIpamAuthority::Released | NeverEffectedIpamAuthority::Absent
+                ) && matches!(
+                    self.ports,
+                    NeverEffectedPortAuthority::NoMembers | NeverEffectedPortAuthority::Released
+                )
+            }
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(state_error(
+                "no-effect detach proof carries an impossible port, IPAM, and segment state",
+            ))
+        }
+    }
 }
 
 impl RetainedAttachmentPublicationEvidence {
@@ -178,6 +291,8 @@ pub(crate) struct HostManagedAttachmentDetachedProof {
     association: NetworkAttachmentSegmentAssociation,
     selected_provider_id: NetworkProviderId,
     provider_source_digest: NetworkCapabilitySourceDigest,
+    effect_disposition: HostManagedAttachmentEffectDisposition,
+    never_effected_authority: Option<NeverEffectedAttachmentAuthority>,
     stable_handle_sha256: String,
     provider_delete_evidence_sha256: String,
     namespace_absence_evidence_sha256: String,
@@ -194,6 +309,8 @@ pub(super) struct HostManagedAttachmentDetachedProofInput {
     pub(super) command: SandboxNetworkTeardownCommand,
     pub(super) association: NetworkAttachmentSegmentAssociation,
     pub(super) selected_provider_id: NetworkProviderId,
+    pub(super) effect_disposition: HostManagedAttachmentEffectDisposition,
+    pub(super) never_effected_authority: Option<NeverEffectedAttachmentAuthority>,
     pub(super) stable_handle_sha256: String,
     pub(super) provider_delete_evidence_sha256: String,
     pub(super) namespace_absence_evidence_sha256: String,
@@ -254,6 +371,18 @@ impl HostManagedAttachmentDetachedProof {
                 "compound detached proof crossed its selected provider",
             ));
         }
+        match (input.effect_disposition, input.never_effected_authority) {
+            (HostManagedAttachmentEffectDisposition::ProviderEffectMayHaveExisted, None) => {}
+            (
+                HostManagedAttachmentEffectDisposition::ConfirmedNoProviderEffect,
+                Some(authority),
+            ) => authority.validate()?,
+            _ => {
+                return Err(state_error(
+                    "compound detached proof crossed its no-effect authority state",
+                ));
+            }
+        }
         let plan = input.command.network_plan();
         Ok(Self {
             schema_version: DETACHED_PROOF_SCHEMA_VERSION,
@@ -268,6 +397,8 @@ impl HostManagedAttachmentDetachedProof {
             association: input.association,
             selected_provider_id: input.selected_provider_id,
             provider_source_digest: input.command.provider_source_digest(),
+            effect_disposition: input.effect_disposition,
+            never_effected_authority: input.never_effected_authority,
             stable_handle_sha256: input.stable_handle_sha256,
             provider_delete_evidence_sha256: input.provider_delete_evidence_sha256,
             namespace_absence_evidence_sha256: input.namespace_absence_evidence_sha256,
@@ -291,6 +422,23 @@ impl HostManagedAttachmentDetachedProof {
 
     pub(crate) fn selected_provider_id(&self) -> &NetworkProviderId {
         &self.selected_provider_id
+    }
+
+    pub(crate) const fn effect_disposition(&self) -> HostManagedAttachmentEffectDisposition {
+        self.effect_disposition
+    }
+
+    pub(crate) const fn confirmed_no_provider_effect(&self) -> bool {
+        matches!(
+            self.effect_disposition,
+            HostManagedAttachmentEffectDisposition::ConfirmedNoProviderEffect
+        )
+    }
+
+    pub(super) const fn never_effected_authority(
+        &self,
+    ) -> Option<NeverEffectedAttachmentAuthority> {
+        self.never_effected_authority
     }
 
     pub(crate) fn lease_epoch(&self) -> NetworkLeaseEpoch {
@@ -400,6 +548,18 @@ impl HostManagedAttachmentDetachedProof {
             return Err(state_error(
                 "compound detached proof has corrupt schema, association, or claim state",
             ));
+        }
+        match (self.effect_disposition, self.never_effected_authority) {
+            (HostManagedAttachmentEffectDisposition::ProviderEffectMayHaveExisted, None) => {}
+            (
+                HostManagedAttachmentEffectDisposition::ConfirmedNoProviderEffect,
+                Some(authority),
+            ) => authority.validate()?,
+            _ => {
+                return Err(state_error(
+                    "compound detached proof has inconsistent no-effect authority state",
+                ));
+            }
         }
         for (label, digest) in [
             ("stable provider handle", &self.stable_handle_sha256),
@@ -526,11 +686,21 @@ impl HostManagedAttachmentTeardownState {
     ) -> Result<bool> {
         proof.validate_detach_command(command)?;
         require_same_or_unset_claim(&self.detach_claim, command.provider_claim(), "detach")?;
-        let changed = advance_phase(
-            self.detach_phase.ordinal(),
-            HostManagedAttachmentDetachPhase::Detached.ordinal(),
-            "detach",
-        )?;
+        let direct_confirmed_no_effect = self.detach_phase
+            == HostManagedAttachmentDetachPhase::NotStarted
+            && self.detach_claim.is_none()
+            && self.detached_proof.is_none()
+            && proof.effect_disposition()
+                == HostManagedAttachmentEffectDisposition::ConfirmedNoProviderEffect;
+        let changed = if direct_confirmed_no_effect {
+            true
+        } else {
+            advance_phase(
+                self.detach_phase.ordinal(),
+                HostManagedAttachmentDetachPhase::Detached.ordinal(),
+                "detach",
+            )?
+        };
         if changed {
             self.detach_claim = Some(command.provider_claim().clone());
             self.detach_phase = HostManagedAttachmentDetachPhase::Detached;

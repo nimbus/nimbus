@@ -62,8 +62,9 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
         .expect("sandbox A should provision through every lifecycle phase");
     assert!(!provisioned_a.ingress.is_empty());
     let handle_a = provisioned_a.handle;
+    let teardown_a = provisioned_a.teardown;
     let ingress_a = provisioned_a.ingress;
-    let cleanup_a = CleanupGuard::new(backend.clone(), handle_a.id.clone());
+    let cleanup_a = CleanupGuard::new(backend.clone(), teardown_a.clone());
 
     let ready_a = wait_for_ready(&backend, &handle_a.id, Duration::from_secs(30));
     assert_eq!(ready_a.status, SandboxStatus::Ready);
@@ -91,8 +92,9 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
         .expect("sandbox B should provision through every lifecycle phase");
     assert!(!provisioned_b.ingress.is_empty());
     let handle_b = provisioned_b.handle;
+    let teardown_b = provisioned_b.teardown;
     let _ingress_b = provisioned_b.ingress;
-    let cleanup_b = CleanupGuard::new(backend.clone(), handle_b.id.clone());
+    let cleanup_b = CleanupGuard::new(backend.clone(), teardown_b.clone());
 
     let ready_b = wait_for_ready(&backend, &handle_b.id, Duration::from_secs(30));
     assert_eq!(ready_b.status, SandboxStatus::Ready);
@@ -112,7 +114,7 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     eprintln!("sandbox B HTTP connectivity on port {port_b}: OK");
 
     // --- Stop A, verify port release ---
-    block_on(backend.stop(&handle_a.id)).expect("stop A should succeed");
+    retire_krun(&backend, &teardown_a).expect("exact teardown A should succeed");
     cleanup_a.disarm();
     drop(ingress_a);
     eprintln!("sandbox A stopped, port {port_a} should be released");
@@ -122,8 +124,9 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
         .expect("sandbox C should provision through every lifecycle phase");
     assert!(!provisioned_c.ingress.is_empty());
     let handle_c = provisioned_c.handle;
+    let teardown_c = provisioned_c.teardown;
     let _ingress_c = provisioned_c.ingress;
-    let cleanup_c = CleanupGuard::new(backend.clone(), handle_c.id.clone());
+    let cleanup_c = CleanupGuard::new(backend.clone(), teardown_c.clone());
 
     let ready_c = wait_for_ready(&backend, &handle_c.id, Duration::from_secs(30));
     assert_eq!(ready_c.status, SandboxStatus::Ready);
@@ -142,9 +145,9 @@ fn krun_backend_m2_auto_port_assignment_and_reuse() {
     );
     eprintln!("sandbox C HTTP connectivity on reused port {port_c}: OK");
 
-    block_on(backend.stop(&handle_b.id)).expect("stop B should succeed");
+    retire_krun(&backend, &teardown_b).expect("exact teardown B should succeed");
     cleanup_b.disarm();
-    block_on(backend.stop(&handle_c.id)).expect("stop C should succeed");
+    retire_krun(&backend, &teardown_c).expect("exact teardown C should succeed");
     cleanup_c.disarm();
 
     eprintln!("auto-port-assignment: all 3 sandboxes verified, port reuse confirmed");
@@ -178,8 +181,9 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
         .expect("readiness-gated sandbox should provision through every lifecycle phase");
     assert!(!provisioned.ingress.is_empty());
     let handle = provisioned.handle;
+    let teardown = provisioned.teardown;
     let _ingress = provisioned.ingress;
-    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+    let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
 
     assert_eq!(handle.status, SandboxStatus::Starting);
     assert!(
@@ -226,7 +230,7 @@ fn krun_backend_m3_readiness_probe_gates_ready_and_published_endpoints() {
         "expected HTTP response from readiness-gated sandbox",
     );
 
-    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     cleanup_guard.disarm();
 }
 
@@ -266,8 +270,9 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
         .expect("liveness-gated sandbox should provision through every lifecycle phase");
     assert!(!provisioned.ingress.is_empty());
     let handle = provisioned.handle;
+    let teardown = provisioned.teardown;
     let _ingress = provisioned.ingress;
-    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+    let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(15));
     assert_eq!(ready_handle.status, SandboxStatus::Ready);
@@ -309,6 +314,6 @@ fn krun_backend_m3_liveness_probe_degrades_and_recovers_without_vm_restart() {
         "expected HTTP response after liveness recovery",
     );
 
-    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     cleanup_guard.disarm();
 }
