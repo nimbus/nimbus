@@ -35,8 +35,9 @@ mod terminal_settlement;
 #[cfg(test)]
 pub(crate) use terminal_settlement::recover_dead_process_bound_server_listeners_for_final_withdrawal;
 pub(crate) use terminal_settlement::{
-    ActiveServerListenerLease, TerminalStoppingServerListener, settle_exact_listener_leases,
-    stop_server_listeners_for_final_withdrawal, withdraw_server_listeners_for_final_withdrawal,
+    ActiveServerListenerEvidence, ActiveServerListenerLease, TerminalStoppingServerListener,
+    settle_exact_listener_leases, stop_server_listeners_for_final_withdrawal,
+    withdraw_server_listeners_for_final_withdrawal,
 };
 
 const INITIAL_RESOURCE_GENERATION: NetworkResourceGeneration = NetworkResourceGeneration::new(1);

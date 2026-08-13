@@ -11,13 +11,13 @@ use std::net::Ipv4Addr;
 use std::num::NonZeroU16;
 
 use nimbus::Error;
+use nimbus_machine::MachineSshPortLeaseIdentity;
 use nimbus_network::{
-    ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderHandle,
-    NetworkProviderId, NetworkResourceGeneration, PortBindClaim, PortBindRealm, PortBindTarget,
-    PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure, PortLeaseAccounting,
-    PortLeaseBinding, PortLeaseEffectScope, PortLeaseFence, PortLeaseId, PortLeaseLifetimeGuard,
-    PortLeasePhase, PortLeaseRecoveryAttempt, PortLeaseRecoveryGuard, PortLeaseRequest,
-    PortProtocol, PortPublicationIntent, PortRequestMode,
+    ListenerId, LocalPortLeaseAuthority, NetworkProviderHandle, PortBindClaim, PortBindRealm,
+    PortBindTarget, PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure,
+    PortLeaseAccounting, PortLeaseBinding, PortLeaseEffectScope, PortLeaseFence, PortLeaseId,
+    PortLeaseLifetimeGuard, PortLeasePhase, PortLeaseRecoveryAttempt, PortLeaseRecoveryGuard,
+    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
 #[cfg(test)]
 use nimbus_network::{PortBindAttempt, PortBindFailure, PortBindFailureKind};
@@ -26,10 +26,7 @@ use ulid::Ulid;
 use super::{MACHINE_PORT_MAX, MACHINE_PORT_MIN, MachineRuntimeState};
 use crate::machine::MachineStateRecord;
 
-const MACHINE_SSH_PROVIDER_KEY: &str = "nimbus-cli.machine-gvproxy-ssh";
 const MACHINE_SSH_LISTENER_NAME: &str = "ssh-forward";
-const INITIAL_RESOURCE_GENERATION: NetworkResourceGeneration = NetworkResourceGeneration::new(1);
-const INITIAL_LEASE_EPOCH: NetworkLeaseEpoch = NetworkLeaseEpoch::new(1);
 
 /// One exact gvproxy bind claim prepared before the provider process starts.
 ///
@@ -57,8 +54,9 @@ impl PreparedMachineSshPortLease {
         let listener_id = reusable_listener_id(&authority, state)?
             .unwrap_or_else(|| fresh_listener_id(machine_name));
         let request = machine_ssh_request(&listener_id)?;
+        let identity = MachineSshPortLeaseIdentity::for_listener(&listener_id);
         let provider_attempt = NetworkProviderHandle::new(
-            NetworkProviderId::for_registration_key(MACHINE_SSH_PROVIDER_KEY),
+            identity.provider_id().clone(),
             format!("bind-attempt:{}", Ulid::new()),
         )
         .map_err(|error| network_error("failed to create the gvproxy SSH bind claim", error))?;
@@ -415,6 +413,7 @@ fn fresh_listener_id(machine_name: &str) -> ListenerId {
 }
 
 fn machine_ssh_request(listener_id: &ListenerId) -> Result<PortLeaseRequest, Error> {
+    let identity = MachineSshPortLeaseIdentity::for_listener(listener_id);
     let start = NonZeroU16::new(MACHINE_PORT_MIN)
         .ok_or_else(|| Error::Internal("machine SSH port range starts at zero".to_owned()))?;
     let end = NonZeroU16::new(MACHINE_PORT_MAX)
@@ -422,10 +421,10 @@ fn machine_ssh_request(listener_id: &ListenerId) -> Result<PortLeaseRequest, Err
     let mode = PortRequestMode::range(start, end)
         .map_err(|error| network_error("invalid managed SSH port range", error))?;
     Ok(PortLeaseRequest::new(
-        PortLeaseId::for_listener(listener_id),
+        identity.port_lease_id().clone(),
         listener_id.clone().into(),
         None,
-        PortLeaseFence::new(INITIAL_RESOURCE_GENERATION, INITIAL_LEASE_EPOCH),
+        PortLeaseFence::new(identity.generation(), identity.lease_epoch()),
         PortLeaseAccounting::HostInternal,
         PortPublicationIntent::Unpublished,
         PortBindingSpec::new(

@@ -3,7 +3,10 @@
 use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 
-use nimbus_network::{ListenerId, NetworkProviderHandle, NetworkResourceGeneration};
+use nimbus_network::{
+    ListenerId, NetworkLeaseEpoch, NetworkProviderHandle, NetworkProviderId,
+    NetworkResourceGeneration, PortLeaseId,
+};
 use serde::{Deserialize, Serialize};
 
 // The machine state schema (`status.json`) is at its first version. The
@@ -22,6 +25,56 @@ use serde::{Deserialize, Serialize};
 // starts at 1.
 pub const CURRENT_MACHINE_STATE_VERSION: u32 = 1;
 pub const CURRENT_MACHINE_BOOT_AUTHORITY_VERSION: u32 = 1;
+const MACHINE_SSH_PROVIDER_KEY: &str = "nimbus-cli.machine-gvproxy-ssh";
+const MACHINE_SSH_RESOURCE_GENERATION: NetworkResourceGeneration =
+    NetworkResourceGeneration::new(1);
+const MACHINE_SSH_LEASE_EPOCH: NetworkLeaseEpoch = NetworkLeaseEpoch::new(1);
+
+/// Pure stable identity and fence for one managed machine's SSH listener.
+///
+/// The CLI remains the gvproxy effect owner. This value only prevents the
+/// request builder and observed system projection from duplicating identity,
+/// generation, epoch, or provider-registration constants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MachineSshPortLeaseIdentity {
+    listener_id: ListenerId,
+    port_lease_id: PortLeaseId,
+    generation: NetworkResourceGeneration,
+    lease_epoch: NetworkLeaseEpoch,
+    provider_id: NetworkProviderId,
+}
+
+impl MachineSshPortLeaseIdentity {
+    pub fn for_listener(listener_id: &ListenerId) -> Self {
+        Self {
+            listener_id: listener_id.clone(),
+            port_lease_id: PortLeaseId::for_listener(listener_id),
+            generation: MACHINE_SSH_RESOURCE_GENERATION,
+            lease_epoch: MACHINE_SSH_LEASE_EPOCH,
+            provider_id: NetworkProviderId::for_registration_key(MACHINE_SSH_PROVIDER_KEY),
+        }
+    }
+
+    pub fn listener_id(&self) -> &ListenerId {
+        &self.listener_id
+    }
+
+    pub fn port_lease_id(&self) -> &PortLeaseId {
+        &self.port_lease_id
+    }
+
+    pub const fn generation(&self) -> NetworkResourceGeneration {
+        self.generation
+    }
+
+    pub const fn lease_epoch(&self) -> NetworkLeaseEpoch {
+        self.lease_epoch
+    }
+
+    pub fn provider_id(&self) -> &NetworkProviderId {
+        &self.provider_id
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MachineStateRecord {

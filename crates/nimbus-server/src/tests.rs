@@ -465,7 +465,7 @@ async fn serve_loads_embedded_system_convex_registry_by_default() {
 }
 
 #[tokio::test]
-async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
+async fn router_prepare_system_tenant_does_not_fabricate_physical_adapter_listeners() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let listen_addr = "127.0.0.1:45678".parse().expect("listen addr should parse");
     RouterBuildConfig::core(fixture.engine())
@@ -485,18 +485,10 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
         )
         .await
         .expect("listeners should list");
-    let has_listener = |adapter: &str, protocol: &str| {
-        listeners.iter().any(|listener| {
-            listener.fields.get("adapter") == Some(&json!(adapter))
-                && listener.fields.get("protocol") == Some(&json!(protocol))
-                && listener.fields.get("state") == Some(&json!("listening"))
-                && listener.fields.get("address") == Some(&json!(listen_addr.to_string()))
-        })
-    };
-    assert!(has_listener("native", "http"));
-    assert!(has_listener("convex", "websocket"));
-    assert!(has_listener("firebase", "http+websocket"));
-    assert!(has_listener("cloudflare", "http"));
+    assert!(
+        listeners.is_empty(),
+        "logical protocol registration must not fabricate physical listener authority"
+    );
 }
 
 fn header_csv_values(response: &reqwest::Response, header_name: &str) -> BTreeSet<String> {

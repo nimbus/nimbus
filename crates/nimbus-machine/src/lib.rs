@@ -32,5 +32,5 @@ pub use state::{
     CURRENT_MACHINE_BOOT_AUTHORITY_VERSION, CURRENT_MACHINE_STATE_VERSION,
     MachineBootAuthorityEvidence, MachineBootAuthorityEvidenceError, MachineForwarderAuthority,
     MachineForwarderAuthorityMismatch, MachineHelperBinaryPaths, MachineLifecycle,
-    MachineManagerState, MachineRuntimeState, MachineStateRecord,
+    MachineManagerState, MachineRuntimeState, MachineSshPortLeaseIdentity, MachineStateRecord,
 };

@@ -203,7 +203,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     assert_eq!(start_body["runtime"]["sshPort"], json!(10022));
 
     assert_eq!(manager.calls(), vec!["start:demo"]);
-    assert_system_machine_state(&engine, "running", "listening", "running").await;
+    assert_system_machine_state(&engine, "running", true).await;
     wait_for_system_machine_state(
         &mut system_rx,
         "running machine subscription update",
@@ -227,7 +227,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     assert_eq!(stop_body["manager"], json!("helpers-resolved"));
 
     assert_eq!(manager.calls(), vec!["start:demo", "stop:demo"]);
-    assert_system_machine_state(&engine, "stopped", "stopped", "stopped").await;
+    assert_system_machine_state(&engine, "stopped", false).await;
     wait_for_system_machine_state(
         &mut system_rx,
         "stopped machine subscription update",
@@ -438,8 +438,7 @@ fn snapshot_for_resources(
 async fn assert_system_machine_state(
     engine: &Arc<Engine>,
     machine_state: &str,
-    listener_state: &str,
-    port_state: &str,
+    connectivity_present: bool,
 ) {
     let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
     let machines = engine
@@ -460,12 +459,12 @@ async fn assert_system_machine_state(
         )
         .await
         .expect("listeners should list");
-    assert_eq!(listeners.len(), 1);
-    assert_eq!(listeners[0].fields.get("adapter"), Some(&json!("machine")));
-    assert_eq!(
-        listeners[0].fields.get("state"),
-        Some(&json!(listener_state))
-    );
+    assert_eq!(listeners.len(), if connectivity_present { 2 } else { 0 });
+    assert!(listeners.iter().all(|listener| {
+        listener.fields.get("adapter") == Some(&json!("machine"))
+            && listener.fields.get("observedPhase") == Some(&json!("ready"))
+            && listener.fields.get("cleanupState") == Some(&json!("clear"))
+    }));
 
     let ports = engine
         .list_documents_async(
@@ -474,10 +473,13 @@ async fn assert_system_machine_state(
         )
         .await
         .expect("ports should list");
-    assert_eq!(ports.len(), 1);
-    assert_eq!(ports[0].fields.get("machineId"), Some(&json!("demo")));
-    assert_eq!(ports[0].fields.get("hostPort"), Some(&json!(10022)));
-    assert_eq!(ports[0].fields.get("state"), Some(&json!(port_state)));
+    assert_eq!(ports.len(), usize::from(connectivity_present));
+    if let Some(port) = ports.first() {
+        assert_eq!(port.fields.get("machineId"), Some(&json!("demo")));
+        assert_eq!(port.fields.get("hostPort"), Some(&json!(10022)));
+        assert_eq!(port.fields.get("observedPhase"), Some(&json!("ready")));
+        assert_eq!(port.fields.get("cleanupState"), Some(&json!("clear")));
+    }
 }
 
 async fn assert_system_machine_document(
@@ -505,10 +507,23 @@ async fn assert_system_machine_document(
 
 async fn assert_system_machine_deleted(engine: &Arc<Engine>, name: &str) {
     let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let machine_api_listener = nimbus_network::ListenerId::for_workload_listener(
+        &format!("managed-machine:{name}"),
+        "machine-api",
+    );
+    let ssh_listener = nimbus_network::ListenerId::for_workload_listener(
+        &format!("server-machine-fixture:{name}"),
+        "ssh-forward",
+    );
+    let ssh_port = nimbus_network::PortLeaseId::for_listener(&ssh_listener);
     for (table, document_id) in [
         ("machines", system_machine_document_id(name)),
-        ("listeners", system_machine_listener_document_id(name)),
-        ("ports", system_machine_port_document_id(name, "ssh")),
+        (
+            "listeners",
+            format!("listener:{}", machine_api_listener.as_str()),
+        ),
+        ("listeners", format!("listener:{}", ssh_listener.as_str())),
+        ("ports", format!("port:{}", ssh_port.as_str())),
     ] {
         let missing = engine
             .get_document_async(
@@ -527,18 +542,6 @@ async fn assert_system_machine_deleted(engine: &Arc<Engine>, name: &str) {
 
 fn system_machine_document_id(name: &str) -> String {
     format!("machine:{}", system_key_segment(name))
-}
-
-fn system_machine_listener_document_id(name: &str) -> String {
-    format!("listener:machine-api:{}", system_key_segment(name))
-}
-
-fn system_machine_port_document_id(name: &str, port: &str) -> String {
-    format!(
-        "port:machine:{}:{}",
-        system_key_segment(name),
-        system_key_segment(port)
-    )
 }
 
 fn system_key_segment(value: &str) -> String {

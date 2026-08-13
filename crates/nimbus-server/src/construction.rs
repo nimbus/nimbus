@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use nimbus_engine::Engine;
-use nimbus_network::LocalNetworkAuthority;
+use nimbus_network::{
+    LocalNetworkAuthority, NetworkCondition, NetworkConditionKind, NetworkConditionState,
+    NetworkResourceId, NetworkResourcePhase,
+};
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget,
     RuntimeLimits, RuntimeScalingPlanSet,
@@ -18,9 +21,10 @@ use crate::adapters::wire::WireProtocolAdapter;
 use crate::license::LicenseState;
 use crate::listener_group::{WireListenerGroup, append_cleanup_error};
 use crate::listener_lease::{
-    ExternalServerListenerContext, LeasedServerListener, PreboundServerListener,
-    PreboundServerListeners, PreparedServerListener, RecordedListenerBindFailure,
-    ServerListenerLeaseAuthority, abandon_prepared_after_guard_failure,
+    ActiveServerListenerEvidence, ExternalServerListenerContext, LeasedServerListener,
+    PreboundServerListener, PreboundServerListeners, PreparedServerListener,
+    RecordedListenerBindFailure, ServerListenerLeaseAuthority,
+    abandon_prepared_after_guard_failure,
 };
 use crate::local_server::LocalServerSecurityState;
 use crate::machine_lifecycle::MachineLifecycleManager;
@@ -433,6 +437,21 @@ pub async fn serve_leased(
 
     let mut result = async {
         let engine = router_options.engine();
+        let main_evidence = main_lease.observation_evidence().ok_or_else(|| {
+            std::io::Error::other("main listener carries crossed active lease evidence")
+        })?;
+        let main_protocol = if tls_config.is_some() {
+            "https+websocket"
+        } else {
+            "http+websocket"
+        };
+        record_physical_listener_observation(
+            &engine,
+            "nimbus-server",
+            main_protocol,
+            &main_evidence,
+        )
+        .await?;
         if !router_options.has_system_convex_registry() {
             router_options =
                 router_options.with_system_convex_registry(load_default_system_convex_registry()?);
@@ -539,20 +558,17 @@ pub async fn serve_leased(
                 }
                 prepared.adopt(adapter_listener)?
             };
-            let adapter_addr = match leased_listener.local_addr() {
-                Ok(addr) => addr,
-                Err(error) => {
-                    return match leased_listener.close_and_settle() {
-                        Ok(()) => Err(error),
-                        Err(cleanup_error) => append_cleanup_error(
-                            Err(error),
-                            "failed to settle the sibling lease after its adopted address could \
+            if let Err(error) = leased_listener.local_addr() {
+                return match leased_listener.close_and_settle() {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => append_cleanup_error(
+                        Err(error),
+                        "failed to settle the sibling lease after its adopted address could \
                              not be observed",
-                            cleanup_error,
-                        ),
-                    };
-                }
-            };
+                        cleanup_error,
+                    ),
+                };
+            }
             debug_assert!(
                 listener_leases.owns(
                     leased_listener.owner_incarnation(),
@@ -561,19 +577,34 @@ pub async fn serve_leased(
                 "sibling listener must belong to the serving incarnation"
             );
             let (adapter_listener, adapter_lease, _) = leased_listener.into_parts();
-            if let Err(error) = crate::system_tenant::record_listener_state_async(
+            let adapter_evidence = match adapter_lease.observation_evidence() {
+                Some(evidence) => evidence,
+                None => {
+                    drop(adapter_listener);
+                    let mut result = Err(std::io::Error::other(format!(
+                        "{} listener carries crossed active lease evidence",
+                        adapter.name()
+                    )));
+                    if let Err(cleanup_error) = adapter_lease.settle_after_confirmed_local_close() {
+                        result = append_cleanup_error(
+                            result,
+                            "failed to settle the sibling lease after its evidence was crossed",
+                            cleanup_error,
+                        );
+                    }
+                    return result;
+                }
+            };
+            if let Err(error) = record_physical_listener_observation(
                 &engine,
                 adapter.name(),
                 adapter.protocol(),
-                &adapter_addr.to_string(),
-                "listening",
-                Some(env!("CARGO_PKG_VERSION")),
-                None,
+                &adapter_evidence,
             )
             .await
             {
                 drop(adapter_listener);
-                let mut result = Err(std::io::Error::other(error.to_string()));
+                let mut result = Err(error);
                 if let Err(cleanup_error) = adapter_lease.settle_after_confirmed_local_close() {
                     result = append_cleanup_error(
                         result,
@@ -639,6 +670,44 @@ pub async fn serve_leased(
     result
 }
 
+async fn record_physical_listener_observation(
+    engine: &Arc<Engine>,
+    adapter: &str,
+    application_protocol: &str,
+    evidence: &ActiveServerListenerEvidence,
+) -> std::io::Result<()> {
+    let NetworkResourceId::Listener(listener_id) = evidence.request().owner_id() else {
+        return Err(std::io::Error::other(format!(
+            "{adapter} physical listener lease is owned by a non-listener resource"
+        )));
+    };
+    let observation = nimbus_system::SystemPortListenerObservation::new(
+        adapter,
+        application_protocol,
+        listener_id.clone(),
+        evidence.request().clone(),
+        evidence.bound_endpoint().clone(),
+        evidence.provider_id().clone(),
+        NetworkResourcePhase::Ready,
+        [
+            NetworkCondition::new(NetworkConditionKind::Ready, NetworkConditionState::True),
+            NetworkCondition::new(
+                NetworkConditionKind::Published,
+                NetworkConditionState::False,
+            ),
+            NetworkCondition::new(
+                NetworkConditionKind::CleanupPending,
+                NetworkConditionState::False,
+            ),
+        ],
+    )
+    .map_err(|error| std::io::Error::other(error.to_string()))?
+    .with_version(env!("CARGO_PKG_VERSION"));
+    nimbus_system::record_port_listener_observation_async(engine, &observation)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))
+}
+
 fn bind_failure_error(
     result: Result<RecordedListenerBindFailure, std::io::Error>,
 ) -> std::io::Error {
@@ -700,7 +769,7 @@ fn close_prebound_bundle_after_error(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::net::SocketAddr;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -880,10 +949,6 @@ mod tests {
         }
 
         fn guard(&self, addr: SocketAddr) -> std::io::Result<()> {
-            *self
-                .bound_addr
-                .lock()
-                .expect("probe address lock should remain healthy") = Some(addr);
             let claim_observed = LocalPortLeaseAuthority::open(&self.state_root)
                 .and_then(|authority| authority.list())
                 .is_ok_and(|records| {
@@ -893,6 +958,10 @@ mod tests {
                 });
             self.claim_observed.store(claim_observed, Ordering::Release);
             if claim_observed {
+                *self
+                    .bound_addr
+                    .lock()
+                    .expect("probe address lock should remain healthy") = Some(addr);
                 Ok(())
             } else {
                 Err(std::io::Error::other(
@@ -1106,6 +1175,9 @@ mod tests {
         let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("main listener should bind");
+        let main_addr = main_listener
+            .local_addr()
+            .expect("main listener address should resolve");
         let bound_addr = Arc::new(Mutex::new(None));
         let claim_observed = Arc::new(AtomicBool::new(false));
         let mut options = direct_options(fixture.engine());
@@ -1144,8 +1216,6 @@ mod tests {
             None
         };
 
-        task.abort();
-        let _ = task.await;
         assert!(
             claimed_before_guard,
             "NNC3.5: the sibling kernel bind reached its guard without an exact durable claim"
@@ -1155,6 +1225,123 @@ mod tests {
             Some(b"lease-owned".as_slice()),
             "the lease migration must preserve sibling protocol bytes"
         );
+
+        let system_tenant = nimbus_system::system_tenant_id().expect("system tenant should parse");
+        let listeners_table =
+            nimbus_core::TableName::new("listeners").expect("listeners table should parse");
+        let ports_table = nimbus_core::TableName::new("ports").expect("ports table should parse");
+        let (listeners, ports) = tokio::time::timeout(TEST_LISTENER_LIVENESS_TIMEOUT, async {
+            loop {
+                let listeners = fixture
+                    .engine()
+                    .list_documents_async(system_tenant.clone(), listeners_table.clone())
+                    .await
+                    .expect("physical listener projections should list");
+                let ports = fixture
+                    .engine()
+                    .list_documents_async(system_tenant.clone(), ports_table.clone())
+                    .await
+                    .expect("physical port projections should list");
+                if listeners.len() >= 2 && ports.len() >= 2 {
+                    break (listeners, ports);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("main system preparation should retain both physical listener projections");
+        assert_eq!(
+            listeners.len(),
+            2,
+            "one main and one sibling socket must produce exactly two physical listener rows"
+        );
+        assert_eq!(ports.len(), 2);
+        let adapters = listeners
+            .iter()
+            .filter_map(|document| {
+                document
+                    .fields
+                    .get("adapter")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            adapters,
+            BTreeSet::from(["nimbus-server", "nnc3-5-lease-aware"])
+        );
+        assert!(
+            listeners.iter().all(|document| {
+                !matches!(
+                    document
+                        .fields
+                        .get("adapter")
+                        .and_then(serde_json::Value::as_str),
+                    Some("convex" | "firebase" | "cloud-functions" | "cloudflare")
+                )
+            }),
+            "logical protocol registrations must not create listener authority"
+        );
+
+        for listener in &listeners {
+            let listener_id = listener
+                .fields
+                .get("listenerId")
+                .and_then(serde_json::Value::as_str)
+                .expect("physical listener projection should retain its stable identity")
+                .parse::<nimbus_network::ListenerId>()
+                .expect("listener projection identity should be canonical");
+            let expected_lease_id = nimbus_network::PortLeaseId::for_listener(&listener_id);
+            let expected_address = listener
+                .fields
+                .get("actualAddress")
+                .and_then(serde_json::Value::as_str)
+                .expect("listener projection should retain its observed address");
+            assert!(
+                expected_address == main_addr.to_string()
+                    || expected_address == sibling_addr.to_string()
+            );
+            let port = ports
+                .iter()
+                .find(|document| {
+                    document
+                        .fields
+                        .get("portLeaseId")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(expected_lease_id.as_str())
+                })
+                .expect("stable port projection should derive from its listener identity");
+            assert_eq!(
+                listener
+                    .fields
+                    .get("portLeaseId")
+                    .and_then(serde_json::Value::as_str),
+                Some(expected_lease_id.as_str())
+            );
+            for field in [
+                "generation",
+                "leaseEpoch",
+                "providerId",
+                "actualAddress",
+                "observedPhase",
+                "cleanupState",
+            ] {
+                assert_eq!(
+                    listener.fields.get(field),
+                    port.fields.get(field),
+                    "listener and port observations must share exact {field} evidence"
+                );
+            }
+            listener
+                .fields
+                .get("providerId")
+                .and_then(serde_json::Value::as_str)
+                .expect("listener provider identity should be present")
+                .parse::<nimbus_network::NetworkProviderId>()
+                .expect("listener provider identity should be canonical");
+        }
+
+        task.abort();
+        let _ = task.await;
     }
 
     #[tokio::test]

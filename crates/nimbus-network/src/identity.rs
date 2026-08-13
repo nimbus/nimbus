@@ -328,6 +328,19 @@ impl IngressRouteId {
             &[workload_incarnation_key, service_name, route_name],
         ))
     }
+
+    /// Derive the stable observed ingress route for one published endpoint.
+    ///
+    /// The endpoint identity is already tenant/workload scoped. The route ID
+    /// deliberately excludes the provider address and numeric port so an
+    /// address move updates one observed route instead of inventing another.
+    pub fn for_published_endpoint(endpoint_id: &PublishedEndpointId) -> Self {
+        Self(derive_stable_id(
+            Self::PREFIX,
+            b"nimbus.network.published-endpoint-route.v1",
+            &[endpoint_id.as_str()],
+        ))
+    }
 }
 
 define_stable_resource_id!(

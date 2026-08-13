@@ -10,19 +10,20 @@ use nimbus_node::{
     HostLifecycleFuture, StatusEvidenceWrite, StatusEvidenceWriter, TenantWorkloadStatus,
     ensure_status_matches_projection,
 };
-use nimbus_sandbox::{SandboxBackendKind, SandboxHandle, SandboxStatus};
+use nimbus_sandbox::{SandboxBackendKind, SandboxStatus};
 use nimbus_tenant::TenantIsolationContext;
 use nimbus_workloads::TenantSystemEvidenceProjection;
 use serde_json::{Map, Value, json};
 
 use crate::identity::system_tenant_id;
 use crate::inventory::{adapter_capability_inventory, route_inventory};
-use crate::keys::{service_document_id, service_port_document_id, workload_status_document_id};
+use crate::keys::workload_status_document_id;
 use crate::projection::publication::{
     ProjectionPublication, ProjectionPublicationOutcome, publish_table_projection_async,
 };
 use crate::schema::{SystemTable, projection_fence_table_schema, system_table_schemas};
 
+mod connectivity;
 mod deployment;
 mod machine;
 mod run;
@@ -30,6 +31,12 @@ mod scheduler;
 mod source;
 mod subscription;
 
+pub use connectivity::{
+    SystemConnectivityObservationError, SystemPortListenerObservation,
+    SystemPublishedEndpointObservation, SystemServiceConnectivityObservation,
+    SystemUnixListenerObservation, record_port_listener_observation_async,
+    record_service_connectivity_observation_async, record_unix_listener_observation_async,
+};
 pub use deployment::{
     SystemDeploymentFunctionRecordInput, SystemDeploymentHttpRouteRecordInput,
     SystemDeploymentRecordInput, record_deployment_state_async,
@@ -48,9 +55,8 @@ pub use source::{
     read_source_package_modules_async, record_source_package_state_async,
 };
 pub use subscription::{
-    delete_subscription_state_async, record_listener_state_async,
-    record_subscription_delivery_async, record_subscription_error_async,
-    record_subscription_state_async,
+    delete_subscription_state_async, record_subscription_delivery_async,
+    record_subscription_error_async, record_subscription_state_async,
 };
 
 pub async fn ensure_system_tenant_async(engine: &Arc<Engine>) -> Result<()> {
@@ -75,7 +81,7 @@ pub async fn prepare_system_tenant_async(
 ) -> Result<()> {
     ensure_system_tenant_async(engine).await?;
     record_system_status_async(engine, listen_addr).await?;
-    seed_system_documents_async(engine, listen_addr).await?;
+    seed_system_documents_async(engine).await?;
     scheduler::sync_all_scheduler_state_async(engine).await
 }
 
@@ -103,71 +109,6 @@ pub(crate) async fn record_system_status_async(
         })),
     )
     .await
-}
-
-pub async fn record_service_handle_async(
-    engine: &Arc<Engine>,
-    tenant_id: &TenantId,
-    handle: &SandboxHandle,
-) -> Result<()> {
-    ensure_system_tenant_async(engine).await?;
-    let service_id = service_document_id(tenant_id, &handle.name);
-    delete_service_port_documents_async(engine, &service_id).await?;
-    let endpoints = handle
-        .published_endpoints
-        .iter()
-        .map(|endpoint| {
-            json!({
-                "name": endpoint.name.as_str(),
-                "protocol": endpoint_protocol(endpoint.protocol),
-                "host": endpoint.address.ip().to_string(),
-                "port": endpoint.address.port(),
-            })
-        })
-        .collect::<Vec<_>>();
-
-    upsert_system_document_async(
-        engine,
-        SystemTable::Services,
-        &service_id,
-        object_fields(json!({
-            "name": handle.name.as_str(),
-            "tenantId": tenant_id.as_str(),
-            "kind": "sandbox",
-            "state": sandbox_status(handle.status),
-            "endpoints": endpoints,
-            "health": {
-                "sandboxId": handle.id.as_str(),
-                "backend": sandbox_backend(handle.backend),
-                "status": sandbox_status(handle.status),
-            },
-        })),
-    )
-    .await?;
-
-    for endpoint in &handle.published_endpoints {
-        let mut fields = object_fields(json!({
-            "serviceId": service_id.as_str(),
-            "tenantId": tenant_id.as_str(),
-            "serviceName": handle.name.as_str(),
-            "endpointName": endpoint.name.as_str(),
-            "hostPort": endpoint.address.port(),
-            "protocol": endpoint_protocol(endpoint.protocol),
-            "state": sandbox_status(handle.status),
-        }));
-        if let Some(guest_port) = endpoint.guest_port {
-            fields.insert("guestPort".to_owned(), json!(guest_port));
-        }
-        upsert_system_document_async(
-            engine,
-            SystemTable::Ports,
-            &service_port_document_id(tenant_id, &handle.name, &endpoint.name),
-            fields,
-        )
-        .await?;
-    }
-
-    Ok(())
 }
 
 pub async fn record_system_event_async(
@@ -362,23 +303,6 @@ async fn delete_system_document_if_exists_async(
     }
 }
 
-async fn delete_service_port_documents_async(engine: &Arc<Engine>, service_id: &str) -> Result<()> {
-    let tenant_id = system_tenant_id()?;
-    let table = SystemTable::Ports.table_name()?;
-    let documents = query_system_documents_by_eq_async(
-        engine,
-        SystemTable::Ports,
-        [("serviceId", json!(service_id))],
-    )
-    .await?;
-    for document in documents {
-        engine
-            .delete_document_async(tenant_id.clone(), table.clone(), document.id)
-            .await?;
-    }
-    Ok(())
-}
-
 async fn existing_system_started_at_async(engine: &Arc<Engine>) -> Result<u64> {
     let system_tenant = system_tenant_id()?;
     let table = SystemTable::SystemStatus.table_name()?;
@@ -428,10 +352,7 @@ async fn query_system_documents_by_eq_async(
         .await
 }
 
-async fn seed_system_documents_async(
-    engine: &Arc<Engine>,
-    listen_addr: Option<SocketAddr>,
-) -> Result<()> {
+async fn seed_system_documents_async(engine: &Arc<Engine>) -> Result<()> {
     for route in route_inventory() {
         upsert_system_document_async(
             engine,
@@ -459,22 +380,6 @@ async fn seed_system_documents_async(
                 "status": capability.status,
                 "caveat": capability.caveat,
                 "evidence": capability.evidence,
-            })),
-        )
-        .await?;
-    }
-
-    if let Some(listen_addr) = listen_addr {
-        upsert_system_document_async(
-            engine,
-            SystemTable::Listeners,
-            "listener:http",
-            object_fields(json!({
-                "adapter": "native",
-                "protocol": "http",
-                "address": listen_addr.to_string(),
-                "state": "listening",
-                "version": env!("CARGO_PKG_VERSION"),
             })),
         )
         .await?;

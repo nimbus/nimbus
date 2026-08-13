@@ -575,7 +575,7 @@
       "kind": "machine-forwarder-authority-mint-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 113,
+      "line": 166,
       "classification": "manager-derived-handle",
       "os_node_realm": "portable",
       "evidence": "source-contract"
@@ -1035,7 +1035,7 @@
       "kind": "manager-derived-server-listener-authority",
       "symbol": "managed",
       "ordinal": 1,
-      "line": 46,
+      "line": 50,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc6.4"
@@ -1045,7 +1045,7 @@
       "kind": "manager-derived-server-listener-authority",
       "symbol": "protocol_only_with_authority",
       "ordinal": 1,
-      "line": 73,
+      "line": 77,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc6.4"
@@ -1055,7 +1055,7 @@
       "kind": "direct-serve-options-reconstruction-declaration",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 83,
+      "line": 87,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1065,7 +1065,7 @@
       "kind": "direct-serve-options-reconstruction-declaration",
       "symbol": "reconstruct_direct_at",
       "ordinal": 1,
-      "line": 93,
+      "line": 97,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1075,7 +1075,7 @@
       "kind": "server-internal-direct-reconstruction",
       "symbol": "reconstruct_direct_at",
       "ordinal": 1,
-      "line": 98,
+      "line": 102,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1085,7 +1085,7 @@
       "kind": "manager-derived-prebound-listeners-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 579,
+      "line": 580,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1095,7 +1095,7 @@
       "kind": "manager-derived-server-listener-authority",
       "symbol": "new",
       "ordinal": 1,
-      "line": 581,
+      "line": 582,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1105,7 +1105,7 @@
       "kind": "direct-prebound-listener-reconstruction-declaration",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 591,
+      "line": 592,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1115,7 +1115,7 @@
       "kind": "server-internal-direct-reconstruction",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 593,
+      "line": 594,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1125,7 +1125,7 @@
       "kind": "manager-derived-server-listener-authority-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 688,
+      "line": 689,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1135,7 +1135,7 @@
       "kind": "manager-derived-server-primitive-handle",
       "symbol": "new",
       "ordinal": 1,
-      "line": 689,
+      "line": 690,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -1145,7 +1145,7 @@
       "kind": "server-internal-direct-reconstruction-declaration",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 694,
+      "line": 695,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -1155,7 +1155,7 @@
       "kind": "server-primitive-direct-reconstruction",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 696,
+      "line": 697,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"

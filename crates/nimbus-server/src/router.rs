@@ -477,60 +477,6 @@ impl RouterBuildConfig {
                 nimbus_compute::deploy::convex_system_deployment_record_input(&summary, "startup");
             nimbus_system::record_deployment_state_async(&engine, &input).await?;
         }
-        let Some(listen_addr) = self.transport.listen_addr() else {
-            return Ok(());
-        };
-        let version = env!("CARGO_PKG_VERSION");
-        if self.deployment.convex_registry.is_some()
-            || self.deployment.system_convex_registry.is_some()
-        {
-            nimbus_system::record_listener_state_async(
-                &engine,
-                "convex",
-                "websocket",
-                &listen_addr.to_string(),
-                "listening",
-                Some(version),
-                None,
-            )
-            .await?;
-        }
-        if self.deployment.firebase_config.is_some() {
-            nimbus_system::record_listener_state_async(
-                &engine,
-                "firebase",
-                "http+websocket",
-                &listen_addr.to_string(),
-                "listening",
-                Some(version),
-                None,
-            )
-            .await?;
-        }
-        if self.deployment.cloud_functions_registry.is_some() {
-            nimbus_system::record_listener_state_async(
-                &engine,
-                "cloud-functions",
-                "http",
-                &listen_addr.to_string(),
-                "listening",
-                Some(version),
-                None,
-            )
-            .await?;
-        }
-        if self.deployment.cloudflare_config.is_some() {
-            nimbus_system::record_listener_state_async(
-                &engine,
-                "cloudflare",
-                "http",
-                &listen_addr.to_string(),
-                "listening",
-                Some(version),
-                None,
-            )
-            .await?;
-        }
         Ok(())
     }
 

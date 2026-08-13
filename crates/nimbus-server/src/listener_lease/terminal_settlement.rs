@@ -12,8 +12,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 #[cfg(test)]
 use nimbus_network::LocalNetworkAuthority;
 use nimbus_network::{
-    PortBindingProvenance, PortBoundEndpoint, PortLeaseBinding, PortLeaseId, PortLeaseLifetime,
-    PortLeaseLifetimeGuard, PortLeaseRecord, PortLeaseRequest,
+    NetworkProviderId, PortBindingProvenance, PortBoundEndpoint, PortLeaseBinding, PortLeaseId,
+    PortLeaseLifetime, PortLeaseLifetimeGuard, PortLeaseRecord, PortLeaseRequest,
 };
 
 use crate::network_composition::RetainedServerNetworkAuthority;
@@ -37,6 +37,7 @@ pub(crate) struct ActiveServerListenerEvidence {
     request: PortLeaseRequest,
     lifetime: PortLeaseLifetime,
     bound_endpoint: PortBoundEndpoint,
+    provider_id: NetworkProviderId,
     provenance: PortBindingProvenance,
 }
 
@@ -51,6 +52,10 @@ impl ActiveServerListenerEvidence {
 
     pub(crate) fn bound_endpoint(&self) -> &PortBoundEndpoint {
         &self.bound_endpoint
+    }
+
+    pub(crate) fn provider_id(&self) -> &NetworkProviderId {
+        &self.provider_id
     }
 
     pub(crate) const fn provenance(&self) -> PortBindingProvenance {
@@ -69,6 +74,7 @@ impl ActiveServerListenerLease {
             request: self.request.clone(),
             lifetime: self.lifetime.lifetime(),
             bound_endpoint: self.binding.endpoint().clone(),
+            provider_id: self.binding.provider_handle().provider_id().clone(),
             provenance: self.provenance,
         })
     }

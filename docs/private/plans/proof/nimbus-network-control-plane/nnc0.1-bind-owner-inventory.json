@@ -142,7 +142,7 @@
       "verification": "symbol-presence",
       "category": "allocation-consumer",
       "path": "crates/nimbus-cli/src/machine/manager/ports.rs",
-      "line": 52,
+      "line": 49,
       "symbol": "PreparedMachineSshPortLease::prepare",
       "declaration_name": "prepare",
       "current_owner": "nimbus-cli machine adapter consuming nimbus-network authority",
@@ -995,7 +995,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_external_main_listener",
       "ordinal": 1,
-      "line": 165
+      "line": 169
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1003,7 +1003,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve_with_router_config",
       "ordinal": 1,
-      "line": 336
+      "line": 340
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1011,7 +1011,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve",
       "ordinal": 1,
-      "line": 390
+      "line": 394
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -1019,7 +1019,7 @@
       "kind": "tcp-bind",
       "symbol": "serve_leased",
       "ordinal": 1,
-      "line": 500
+      "line": 519
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -1043,7 +1043,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt",
       "ordinal": 1,
-      "line": 207
+      "line": 208
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1051,7 +1051,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_std",
       "ordinal": 1,
-      "line": 234
+      "line": 235
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1059,7 +1059,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_after_failed_adoption",
       "ordinal": 1,
-      "line": 324
+      "line": 325
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1067,7 +1067,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_std_after_failed_adoption",
       "ordinal": 1,
-      "line": 342
+      "line": 343
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1075,7 +1075,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 1,
-      "line": 401
+      "line": 402
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1083,7 +1083,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 2,
-      "line": 413
+      "line": 414
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1091,7 +1091,7 @@
       "kind": "tcp-from-std",
       "symbol": "into_leased",
       "ordinal": 1,
-      "line": 468
+      "line": 469
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1099,7 +1099,7 @@
       "kind": "listener-return-handoff",
       "symbol": "into_parts",
       "ordinal": 1,
-      "line": 525
+      "line": 526
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1107,7 +1107,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_external_main",
       "ordinal": 1,
-      "line": 767
+      "line": 768
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1115,7 +1115,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "abandon_prepared_after_guard_failure",
       "ordinal": 1,
-      "line": 1490
+      "line": 1491
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1139,7 +1139,7 @@
       "kind": "listener-return-handoff",
       "symbol": "into_std_parts",
       "ordinal": 1,
-      "line": 492
+      "line": 493
     },
     {
       "site_id": "server-workload-ingress-listener",

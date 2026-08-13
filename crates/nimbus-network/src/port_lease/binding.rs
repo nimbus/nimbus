@@ -2,11 +2,15 @@
 
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::num::NonZeroU16;
 
 use serde::{Deserialize, Serialize};
 
-use super::{PortBindRealm, PortBindTarget, PortBindingSpec, PortProtocol, PortRequestMode};
+use super::{
+    PortAddressFamily, PortBindRealm, PortBindTarget, PortBindingSpec, PortProtocol,
+    PortRequestMode,
+};
 use crate::NetworkProviderHandle;
 
 /// Concrete bound endpoint reported by an effect-owning adapter.
@@ -62,6 +66,31 @@ impl PortBoundEndpoint {
     /// Actual non-zero bound port.
     pub const fn port(&self) -> NonZeroU16 {
         self.port
+    }
+
+    /// Concrete socket address suitable for an observed projection.
+    ///
+    /// A bound endpoint cannot contain an unknown target. Wildcard bindings
+    /// use the corresponding unspecified address and remain observations,
+    /// never identity.
+    pub fn socket_addr(&self) -> SocketAddr {
+        let address = self.target.specific_address().unwrap_or_else(|| {
+            match self
+                .target
+                .family()
+                .expect("a validated bound endpoint has a known address family")
+            {
+                PortAddressFamily::Ipv4 => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                PortAddressFamily::Ipv6 => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            }
+        });
+        SocketAddr::new(address, self.port.get())
+    }
+
+    /// Whether this concrete provider observation satisfies one portable
+    /// binding request.
+    pub fn satisfies(&self, request: &PortBindingSpec) -> bool {
+        self.mismatch(request).is_none()
     }
 
     fn mismatch(&self, request: &PortBindingSpec) -> Option<PortBindingMismatch> {
