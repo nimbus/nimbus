@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use nimbus_core::TenantId;
 use nimbus_network::{
@@ -35,6 +36,10 @@ use crate::workload_saga::restart_provider::{
     WorkloadRestartCapabilityFuture, WorkloadRestartCapabilityRegistry,
     WorkloadRestartPreparationCapability, WorkloadRestartProviderObservation,
     WorkloadRestartProviderObservationInput, WorkloadRestartReadinessCapability,
+};
+use crate::workload_saga::restart_resolution::WorkloadRestartResolutionFuture;
+use crate::workload_saga::restart_resolution::{
+    NoopWorkloadRestartResolutionFence, WorkloadRestartResolutionFence,
 };
 use crate::workload_saga::{
     ConfirmedWorkloadRestartCommand, WorkloadProvisionSourceAuthority,
@@ -169,6 +174,95 @@ struct ScriptedProvider {
     outcomes: Mutex<VecDeque<ScriptedOutcome>>,
     calls: Mutex<Vec<ProviderCall>>,
     successor_race: Mutex<Option<Arc<DurableStore>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolutionFenceCall {
+    provider_call_count: usize,
+    source_attempt_id: WorkloadExecutionAttemptId,
+    target_attempt_id: WorkloadExecutionAttemptId,
+}
+
+struct RecordingResolutionFence {
+    provider: Arc<ScriptedProvider>,
+    withdrawals: Mutex<Vec<ResolutionFenceCall>>,
+    restorations: Mutex<Vec<ResolutionFenceCall>>,
+    fail_next_restoration: AtomicBool,
+}
+
+impl RecordingResolutionFence {
+    fn new(provider: Arc<ScriptedProvider>) -> Arc<Self> {
+        Arc::new(Self {
+            provider,
+            withdrawals: Mutex::new(Vec::new()),
+            restorations: Mutex::new(Vec::new()),
+            fail_next_restoration: AtomicBool::new(false),
+        })
+    }
+
+    fn with_restore_failure(provider: Arc<ScriptedProvider>) -> Arc<Self> {
+        let fence = Self::new(provider);
+        fence.fail_next_restoration.store(true, Ordering::Release);
+        fence
+    }
+
+    fn withdrawals(&self) -> Vec<ResolutionFenceCall> {
+        self.withdrawals
+            .lock()
+            .expect("resolution withdrawal log should be healthy")
+            .clone()
+    }
+
+    fn restorations(&self) -> Vec<ResolutionFenceCall> {
+        self.restorations
+            .lock()
+            .expect("resolution restoration log should be healthy")
+            .clone()
+    }
+}
+
+impl WorkloadRestartResolutionFence for RecordingResolutionFence {
+    fn withdraw(&self, record: &WorkloadSagaRecord) -> Result<(), nimbus_core::Error> {
+        let active = record
+            .restart_state()
+            .active()
+            .expect("withdrawal should retain an active restart");
+        self.withdrawals
+            .lock()
+            .expect("resolution withdrawal log should be healthy")
+            .push(ResolutionFenceCall {
+                provider_call_count: self.provider.calls().len(),
+                source_attempt_id: active.admission().source_attempt_id().clone(),
+                target_attempt_id: active.admission().attempt_id().clone(),
+            });
+        Ok(())
+    }
+
+    fn restore<'a>(
+        &'a self,
+        record: &'a WorkloadSagaRecord,
+    ) -> WorkloadRestartResolutionFuture<'a> {
+        Box::pin(async move {
+            let completed = record
+                .restart_state()
+                .last_completed()
+                .expect("restoration should retain completed restart evidence");
+            self.restorations
+                .lock()
+                .expect("resolution restoration log should be healthy")
+                .push(ResolutionFenceCall {
+                    provider_call_count: self.provider.calls().len(),
+                    source_attempt_id: completed.admission().source_attempt_id().clone(),
+                    target_attempt_id: completed.admission().attempt_id().clone(),
+                });
+            if self.fail_next_restoration.swap(false, Ordering::AcqRel) {
+                return Err(nimbus_core::Error::Internal(
+                    "scripted resolution restoration failure".to_owned(),
+                ));
+            }
+            Ok(())
+        })
+    }
 }
 
 impl ScriptedProvider {
@@ -430,7 +524,11 @@ fn stopped_successor(record: &WorkloadSagaRecord) -> WorkloadSagaIntent {
     .expect("stopped successor should validate")
 }
 
-fn driver(store: Arc<DurableStore>, provider: Arc<ScriptedProvider>) -> WorkloadRestartDriver {
+fn driver_with_fence(
+    store: Arc<DurableStore>,
+    provider: Arc<ScriptedProvider>,
+    resolution_fence: Arc<dyn WorkloadRestartResolutionFence>,
+) -> WorkloadRestartDriver {
     let record = store.record();
     let selected = record
         .active_intent()
@@ -464,7 +562,15 @@ fn driver(store: Arc<DurableStore>, provider: Arc<ScriptedProvider>) -> Workload
         },
         Arc::new(registry),
     ));
-    WorkloadRestartDriver::new(coordinator, dispatcher)
+    WorkloadRestartDriver::new(coordinator, dispatcher, resolution_fence)
+}
+
+fn driver(store: Arc<DurableStore>, provider: Arc<ScriptedProvider>) -> WorkloadRestartDriver {
+    driver_with_fence(
+        store,
+        provider,
+        Arc::new(NoopWorkloadRestartResolutionFence),
+    )
 }
 
 #[tokio::test]
@@ -677,6 +783,112 @@ async fn publication_withdrawal_precedes_execution_quiescence() {
                 WorkloadRestartCommandMode::Execute,
             ),
         ]
+    );
+}
+
+#[tokio::test]
+async fn resolution_fence_spans_withdrawal_through_publication_observation() {
+    let admitted = published_admitted_record("restart-resolution-fence-order");
+    let source_attempt_id = admitted
+        .restart_state()
+        .active()
+        .expect("restart should be active")
+        .admission()
+        .source_attempt_id()
+        .clone();
+    let target_attempt_id = admitted
+        .restart_state()
+        .active()
+        .expect("restart should be active")
+        .admission()
+        .attempt_id()
+        .clone();
+    let store = DurableStore::new(admitted.clone());
+    let provider = ScriptedProvider::new([ScriptedOutcome::Succeeded; 9]);
+    let fence = RecordingResolutionFence::new(provider.clone());
+
+    let run = driver_with_fence(store, provider, fence.clone())
+        .drive_admitted(admitted, WorkloadRestartNotBeforeUnixMillis::new(0))
+        .await
+        .expect("published restart should converge with resolution fencing");
+
+    assert_eq!(run.disposition(), WorkloadRestartRunDisposition::Completed);
+    assert_eq!(
+        fence.withdrawals(),
+        vec![ResolutionFenceCall {
+            provider_call_count: 0,
+            source_attempt_id: source_attempt_id.clone(),
+            target_attempt_id: target_attempt_id.clone(),
+        }],
+        "resolution must be fenced before the first provider withdrawal call"
+    );
+    assert_eq!(
+        fence.restorations(),
+        vec![ResolutionFenceCall {
+            provider_call_count: COMPLETE_RESTART_STEPS.len(),
+            source_attempt_id,
+            target_attempt_id,
+        }],
+        "resolution must reopen only after durable publication observation"
+    );
+}
+
+#[tokio::test]
+async fn completed_restart_retries_resolution_restoration_without_provider_replay() {
+    let admitted = published_admitted_record("restart-resolution-restore-retry");
+    let key = admitted.key().clone();
+    let store = DurableStore::new(admitted.clone());
+    let provider = ScriptedProvider::new([ScriptedOutcome::Succeeded; 9]);
+    let fence = RecordingResolutionFence::with_restore_failure(provider.clone());
+
+    let first = driver_with_fence(store.clone(), provider.clone(), fence.clone())
+        .drive_admitted(admitted, WorkloadRestartNotBeforeUnixMillis::new(0))
+        .await;
+    assert!(matches!(first, Err(WorkloadRestartRunError::Resolution(_))));
+    assert!(store.record().restart_state().active().is_none());
+    assert_eq!(provider.calls().len(), COMPLETE_RESTART_STEPS.len());
+
+    let resumed = driver_with_fence(store, provider.clone(), fence.clone())
+        .resume(&key, WorkloadRestartNotBeforeUnixMillis::new(0))
+        .await
+        .expect("completed restart should retry the exact resolution release");
+
+    assert_eq!(
+        resumed.disposition(),
+        WorkloadRestartRunDisposition::Waiting
+    );
+    assert_eq!(provider.calls().len(), COMPLETE_RESTART_STEPS.len());
+    assert_eq!(fence.restorations().len(), 2);
+    assert!(
+        fence
+            .restorations()
+            .iter()
+            .all(|call| call.provider_call_count == COMPLETE_RESTART_STEPS.len()),
+        "release retry must not repeat any provider effect"
+    );
+}
+
+#[tokio::test]
+async fn failed_publication_withdrawal_keeps_resolution_fenced() {
+    let admitted = published_admitted_record("restart-resolution-withdrawal-failure");
+    let store = DurableStore::new(admitted.clone());
+    let provider = ScriptedProvider::new([ScriptedOutcome::DefiniteFailure]);
+    let fence = RecordingResolutionFence::new(provider.clone());
+
+    let run = driver_with_fence(store, provider.clone(), fence.clone())
+        .drive_admitted(admitted, WorkloadRestartNotBeforeUnixMillis::new(0))
+        .await
+        .expect("definite withdrawal failure should return durable truth");
+
+    assert_eq!(
+        run.disposition(),
+        WorkloadRestartRunDisposition::DefiniteFailure
+    );
+    assert_eq!(provider.calls().len(), 1);
+    assert_eq!(fence.withdrawals().len(), 1);
+    assert!(
+        fence.restorations().is_empty(),
+        "failed withdrawal must not reopen logical service resolution"
     );
 }
 

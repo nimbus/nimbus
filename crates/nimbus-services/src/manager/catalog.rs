@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use nimbus_core::TenantId;
-use nimbus_sandbox::{SandboxHandle, SandboxStatus};
+use nimbus_sandbox::SandboxHandle;
 
 use crate::ServiceInstanceCatalog;
 
@@ -19,21 +19,6 @@ impl ServiceInstanceCatalog for ServiceManager {
         &self,
         tenant_id: &TenantId,
     ) -> BTreeMap<String, SandboxHandle> {
-        self.state
-            .lock()
-            .expect("manager lock should not be poisoned")
-            .service_definition_observations
-            .iter()
-            .filter(|(key, observation)| {
-                &key.tenant_id == tenant_id
-                    && observation.tenant_id == *tenant_id
-                    && observation.name == key.service_name
-                    && !matches!(
-                        observation.handle.status,
-                        SandboxStatus::Stopped | SandboxStatus::Failed
-                    )
-            })
-            .map(|(key, observation)| (key.service_name.clone(), observation.handle.clone()))
-            .collect()
+        self.service_instances_for_resolution(tenant_id)
     }
 }

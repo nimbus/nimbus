@@ -1,14 +1,43 @@
+use nimbus_network::{EndpointProtocol, PublishedEndpoint};
+use nimbus_services::RuntimeServiceRegistry;
 use nimbus_workloads::{
-    DesiredWorkloadState, WorkloadActivationIntent, WorkloadPublicationIntent, WorkloadSagaPhase,
-    WorkloadSagaRecord,
+    DesiredWorkloadState, WorkloadActivationIntent, WorkloadProvisionSourceGeneration,
+    WorkloadProvisionSourceIdentity, WorkloadPublicationIntent, WorkloadRestartStep,
+    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadTeardownStep,
 };
 
 use crate::WorkloadTeardownDisposition;
+use crate::workload_saga::{ExplicitWorkloadRestartRequest, WorkloadRestartCancellationToken};
 
 use super::support::{
     RetirementHarness, SANDBOX_ID, SERVICE_NAME, assert_complete_teardown_order, key,
     run_async_test,
 };
+
+fn make_service_routable(harness: &RetirementHarness) {
+    let observation = harness
+        .manager
+        .service_definition_observation_for_tenant(harness.context.tenant_id(), SERVICE_NAME)
+        .expect("started service should have an observed projection");
+    let mut routable = observation.handle;
+    routable.published_endpoints.push(PublishedEndpoint::new(
+        "http",
+        EndpointProtocol::Http,
+        "127.0.0.1:18080"
+            .parse()
+            .expect("fixture endpoint should parse"),
+    ));
+    harness
+        .manager
+        .project_service_definition_observation(
+            harness.context.tenant_id(),
+            SERVICE_NAME,
+            observation.source_generation,
+            observation.execution.attempt_id(),
+            routable,
+        )
+        .expect("fixture service should become routable");
+}
 
 #[test]
 fn service_stop_persists_then_observes_complete_teardown_order() {
@@ -56,6 +85,187 @@ fn service_stop_persists_then_observes_complete_teardown_order() {
         );
         assert_terminal_network_successor(&running, &record);
         assert_complete_teardown_order(&harness.log.entries(), &key(SERVICE_NAME));
+    });
+}
+
+#[test]
+fn service_resolution_is_fenced_before_awaited_publication_withdrawal() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.declare_service();
+        harness.start_service().await;
+        make_service_routable(&harness);
+        assert!(
+            harness
+                .manager
+                .resolve_service_binding(harness.context.tenant_id(), SERVICE_NAME)
+                .expect("ready service resolution should succeed")
+                .is_some(),
+            "precondition: the ready service should resolve before retirement"
+        );
+        let (entered, release) = harness
+            .teardown_provider
+            .install_gate(WorkloadTeardownStep::WithdrawPublication);
+        let retire = harness.retire.clone();
+        let context = harness.context.clone();
+        let retirement =
+            tokio::spawn(
+                async move { retire.submit_service_teardown(&context, SERVICE_NAME).await },
+            );
+        harness
+            .wait_for_signal(
+                &entered,
+                "service retirement did not start publication withdrawal",
+            )
+            .await;
+
+        let binding_during_withdrawal = harness
+            .manager
+            .resolve_service_binding(harness.context.tenant_id(), SERVICE_NAME)
+            .expect("fenced service resolution should not error");
+        let snapshot_during_withdrawal = harness
+            .manager
+            .snapshot_for_tenant(harness.context.tenant_id());
+        let observation_during_withdrawal = harness
+            .manager
+            .service_definition_observation_for_tenant(harness.context.tenant_id(), SERVICE_NAME);
+
+        release.add_permits(1);
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), retirement)
+            .await
+            .expect("service retirement should complete after withdrawal release")
+            .expect("service retirement task should join")
+            .expect("service retirement should converge");
+
+        assert!(
+            binding_during_withdrawal.is_none(),
+            "service resolution returned a new routable binding after withdrawal started"
+        );
+        assert!(
+            !snapshot_during_withdrawal.contains_key(SERVICE_NAME),
+            "runtime snapshot retained a routable service after withdrawal started"
+        );
+        assert_eq!(
+            observation_during_withdrawal
+                .expect("withdrawal fence must preserve observed recovery evidence")
+                .handle
+                .status,
+            nimbus_sandbox::SandboxStatus::Ready,
+            "resolver fencing must not rewrite observed provider status"
+        );
+        assert!(outcome.retired_handle.is_some());
+    });
+}
+
+#[test]
+fn service_resolution_stays_fenced_until_restart_publication_is_observed() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.declare_published_service();
+        harness.start_service().await;
+        make_service_routable(&harness);
+        assert!(
+            harness
+                .manager
+                .resolve_service_binding(harness.context.tenant_id(), SERVICE_NAME)
+                .expect("ready service resolution should succeed")
+                .is_some(),
+            "precondition: the ready service should resolve before restart"
+        );
+        let (entered, release) = harness
+            .restart_provider
+            .install_gate(WorkloadRestartStep::WithdrawPublication);
+        let request = ExplicitWorkloadRestartRequest::new(
+            key(SERVICE_NAME),
+            WorkloadProvisionSourceIdentity::sandbox_backed_service(SERVICE_NAME)
+                .expect("fixture service identity should validate"),
+            WorkloadProvisionSourceGeneration::new(1),
+            "service-resolution-restart",
+        );
+        harness
+            .restart_runtime
+            .submit_explicit(&request, &WorkloadRestartCancellationToken::new())
+            .await
+            .expect("service restart should submit");
+        harness
+            .wait_for_signal(
+                &entered,
+                "service restart did not start publication withdrawal",
+            )
+            .await;
+
+        let binding_during_withdrawal = harness
+            .manager
+            .resolve_service_binding(harness.context.tenant_id(), SERVICE_NAME)
+            .expect("fenced service resolution should not error");
+        let snapshot_during_withdrawal = harness
+            .manager
+            .snapshot_for_tenant(harness.context.tenant_id());
+        let observation_during_withdrawal = harness
+            .manager
+            .service_definition_observation_for_tenant(harness.context.tenant_id(), SERVICE_NAME);
+
+        assert!(
+            binding_during_withdrawal.is_none(),
+            "service resolution returned a routable binding during restart withdrawal"
+        );
+        assert!(
+            !snapshot_during_withdrawal.contains_key(SERVICE_NAME),
+            "runtime snapshot retained a routable service during restart withdrawal"
+        );
+        assert_eq!(
+            observation_during_withdrawal
+                .expect("restart fence must preserve observed recovery evidence")
+                .handle
+                .status,
+            nimbus_sandbox::SandboxStatus::Ready,
+            "restart fencing must not rewrite observed provider status"
+        );
+
+        release.add_permits(1);
+        let saga_key = key(SERVICE_NAME);
+        harness
+            .wait_for_service_restart_resolution(
+                &saga_key,
+                SERVICE_NAME,
+                "service restart should complete after withdrawal release",
+            )
+            .await;
+
+        assert_eq!(
+            harness.restart_provider.execute_call_count()
+                + harness.restart_provider.inspect_call_count(),
+            9,
+            "the fixture should complete the exact published restart sequence"
+        );
+        assert!(
+            harness
+                .manager
+                .resolve_service_binding(harness.context.tenant_id(), SERVICE_NAME)
+                .expect("completed restart resolution should not error")
+                .is_some(),
+            "service resolution should reopen only after publication observation"
+        );
+        let completed = harness.store.record(&saga_key);
+        let target_attempt = completed
+            .restart_state()
+            .last_completed()
+            .expect("completed restart should retain its target attempt")
+            .admission()
+            .attempt_id();
+        let observation = harness
+            .manager
+            .service_definition_observation_for_tenant(harness.context.tenant_id(), SERVICE_NAME)
+            .expect("resolution release should retain a truthful target observation");
+        assert_eq!(
+            observation.execution.attempt_id(),
+            target_attempt,
+            "resolution must reopen only over the exact target execution attempt"
+        );
+        assert!(
+            !observation.handle.published_endpoints.is_empty(),
+            "resolution must reopen only after exact target ingress observation"
+        );
     });
 }
 

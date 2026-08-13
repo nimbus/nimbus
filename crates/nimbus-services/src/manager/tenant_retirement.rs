@@ -223,6 +223,9 @@ impl ServiceManager {
         state
             .source_retirement_claims
             .retain(|key, _| source_retirement_tenant(key) != tenant_id);
+        state
+            .service_resolution_withdrawals
+            .retain(|key, _| &key.tenant_id != tenant_id);
         state.tenant_source_retirements.insert(
             tenant_id.clone(),
             TenantSourceRetirementBarrier::Finalized(retained),

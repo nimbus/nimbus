@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
+use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroU16;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -8,16 +10,20 @@ use nimbus_network::{
     NetworkAddressFamily, NetworkAttachmentProviderRegistration, NetworkBindRealmKind,
     NetworkCapabilityBundle, NetworkCapabilityRegistry, NetworkCapabilitySelection,
     NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkExposure,
-    NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
+    NetworkForwardingCapabilitySet, NetworkForwardingFeature, NetworkIngressCapabilitySet,
     NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet, NetworkLifecycleFeature,
     NetworkPortAssignmentMode, NetworkProviderId, NetworkResourceGeneration,
-    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, PortProtocol,
+    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements, NetworkTlsBehavior,
+    PortBindRealm, PortBindTarget, PortBindingProvenance, PortBoundEndpoint, PortLeaseLifetime,
+    PortProtocol,
 };
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, SandboxBackendKind, SandboxHandle, SandboxId, SandboxInspection,
-    SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
+    SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
 };
-use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceBackend, ServiceManager};
+use nimbus_services::{
+    EmptyServiceDefinitionCatalog, RuntimeServiceRegistry, ServiceBackend, ServiceManager,
+};
 use nimbus_tenant::{TenantIsolationContext, WorkloadLocation};
 use nimbus_workloads::{
     DesiredWorkloadState, WorkloadGeneration, WorkloadOwnerEvidenceDigest,
@@ -33,12 +39,16 @@ use tokio::sync::Semaphore;
 use super::super::ComputeResourceRetirer;
 use crate::embedded_local_node_identity;
 use crate::resource_provision::ComputeResourceProvisioner;
-use crate::workload_projection::ServiceManagerWorkloadProjectionSink;
+use crate::workload_projection::{
+    ServiceManagerWorkloadProjectionSink, WorkloadIngressBindingWitness,
+    WorkloadObservedIngressEndpoint, WorkloadProjectionOrchestrator,
+};
 use crate::workload_provision_source::ServiceManagerWorkloadProvisionSourceAuthority;
 use crate::workload_provisioner::{WorkloadProvisionCancellation, WorkloadProvisioner};
 use crate::workload_saga::restart_provider_command::{
     ProviderRestartEffectObservation, ProviderRestartPhaseAdapter,
 };
+use crate::workload_saga::restart_resolution::ServiceManagerWorkloadRestartResolutionFence;
 use crate::workload_saga::restart_runtime::WorkloadRestartRuntime;
 use crate::workload_saga::{
     ConfirmedWorkloadProvisionCommand, ConfirmedWorkloadRestartCommand,
@@ -587,10 +597,65 @@ impl crate::workload_projection::WorkloadIngressObservationCapability
 {
     fn observe<'a>(
         &'a self,
-        _request: &'a crate::workload_projection::WorkloadIngressObservationRequest,
+        request: &'a crate::workload_projection::WorkloadIngressObservationRequest,
     ) -> crate::workload_projection::WorkloadIngressObservationFuture<'a> {
-        Box::pin(async { crate::workload_projection::WorkloadProviderObservation::Ambiguous })
+        Box::pin(async move {
+            let plan = request.compiled_plan();
+            let endpoints = plan
+                .content()
+                .listeners()
+                .iter()
+                .map(|listener| {
+                    let (port, provenance) = match listener.port_request() {
+                        nimbus_workloads::WorkloadNetworkPortRequestMode::Exact { port } => {
+                            (port, PortBindingProvenance::NimbusOwned)
+                        }
+                        nimbus_workloads::WorkloadNetworkPortRequestMode::ProviderAssigned => (
+                            NonZeroU16::new(49_152).expect("fixture port should be nonzero"),
+                            PortBindingProvenance::ProviderAssigned,
+                        ),
+                    };
+                    let IpAddr::V4(address) = listener.desired_host_address() else {
+                        panic!("retirement fixture supports only IPv4 ingress")
+                    };
+                    let lifetime: PortLeaseLifetime = serde_json::from_value(serde_json::json!({
+                        "generation": plan.content().identity().generation().as_u64(),
+                        "effect_scope": "process_bound"
+                    }))
+                    .expect("fixture port lifetime should validate");
+                    WorkloadObservedIngressEndpoint::new(
+                        listener.endpoint_id().clone(),
+                        SocketAddr::new(IpAddr::V4(address), port.get()),
+                        WorkloadIngressBindingWitness::new(
+                            plan.plan().plan_id().clone(),
+                            plan.plan().digest(),
+                            plan.content().identity().generation(),
+                            listener.listener_id().clone(),
+                            listener.port_lease_id().clone(),
+                            lifetime,
+                            lifetime,
+                            PortBoundEndpoint::new(
+                                PortProtocol::Tcp,
+                                PortBindRealm::Host,
+                                PortBindTarget::ipv4_specific(address),
+                                port,
+                            )
+                            .expect("fixture bound endpoint should validate"),
+                            provenance,
+                        ),
+                    )
+                })
+                .collect();
+            crate::workload_projection::WorkloadProviderObservation::Present(endpoints)
+        })
     }
+}
+
+#[derive(Clone)]
+struct RestartGate {
+    step: WorkloadRestartStep,
+    entered: Arc<Semaphore>,
+    release: Arc<Semaphore>,
 }
 
 pub(super) struct RecordingRestartProvider {
@@ -599,6 +664,8 @@ pub(super) struct RecordingRestartProvider {
     _state_root: tempfile::TempDir,
     execute_calls: AtomicUsize,
     inspect_calls: AtomicUsize,
+    gate: Mutex<Option<RestartGate>>,
+    gate_entered: AtomicBool,
 }
 
 impl RecordingRestartProvider {
@@ -613,7 +680,27 @@ impl RecordingRestartProvider {
             _state_root: state_root,
             execute_calls: AtomicUsize::new(0),
             inspect_calls: AtomicUsize::new(0),
+            gate: Mutex::new(None),
+            gate_entered: AtomicBool::new(false),
         })
+    }
+
+    pub(super) fn install_gate(
+        &self,
+        step: WorkloadRestartStep,
+    ) -> (Arc<Semaphore>, Arc<Semaphore>) {
+        let entered = Arc::new(Semaphore::new(0));
+        let release = Arc::new(Semaphore::new(0));
+        *self
+            .gate
+            .lock()
+            .expect("restart gate lock should remain healthy") = Some(RestartGate {
+            step,
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+        self.gate_entered.store(false, Ordering::Release);
+        (entered, release)
     }
 
     pub(super) fn execute_call_count(&self) -> usize {
@@ -624,7 +711,7 @@ impl RecordingRestartProvider {
         self.inspect_calls.load(Ordering::Acquire)
     }
 
-    fn observe(
+    async fn observe(
         &self,
         command: &ConfirmedWorkloadRestartCommand,
         mode: WorkloadRestartCommandMode,
@@ -634,6 +721,22 @@ impl RecordingRestartProvider {
             command.step(),
             mode,
         ));
+        let gate = self
+            .gate
+            .lock()
+            .expect("restart gate lock should remain healthy")
+            .clone();
+        if let Some(gate) = gate
+            && gate.step == command.step()
+            && !self.gate_entered.swap(true, Ordering::AcqRel)
+        {
+            gate.entered.add_permits(1);
+            gate.release
+                .acquire()
+                .await
+                .expect("restart gate should remain open")
+                .forget();
+        }
         let evidence = || ProviderRestartEffectObservation::Succeeded {
             evidence: format!(
                 "resource-retirement-restart-{:?}-{:?}",
@@ -662,18 +765,22 @@ macro_rules! restart_effect_capability {
                 &self,
                 command: &ConfirmedWorkloadRestartCommand,
             ) -> WorkloadRestartCapabilityFuture<'_> {
-                Box::pin(std::future::ready(
-                    self.observe(command, WorkloadRestartCommandMode::Execute),
-                ))
+                let command = command.clone();
+                Box::pin(async move {
+                    self.observe(&command, WorkloadRestartCommandMode::Execute)
+                        .await
+                })
             }
 
             fn inspect(
                 &self,
                 command: &ConfirmedWorkloadRestartCommand,
             ) -> WorkloadRestartCapabilityFuture<'_> {
-                Box::pin(std::future::ready(
-                    self.observe(command, WorkloadRestartCommandMode::Inspect),
-                ))
+                let command = command.clone();
+                Box::pin(async move {
+                    self.observe(&command, WorkloadRestartCommandMode::Inspect)
+                        .await
+                })
             }
         }
     };
@@ -686,9 +793,11 @@ macro_rules! restart_inspection_capability {
                 &self,
                 command: &ConfirmedWorkloadRestartCommand,
             ) -> WorkloadRestartCapabilityFuture<'_> {
-                Box::pin(std::future::ready(
-                    self.observe(command, WorkloadRestartCommandMode::Inspect),
-                ))
+                let command = command.clone();
+                Box::pin(async move {
+                    self.observe(&command, WorkloadRestartCommandMode::Inspect)
+                        .await
+                })
             }
         }
     };
@@ -704,9 +813,18 @@ restart_inspection_capability!(WorkloadRestartReadinessCapability);
 restart_effect_capability!(RestartPublicationCapability);
 restart_inspection_capability!(RestartPublicationObservationCapability);
 
+#[derive(Clone)]
+struct TeardownGate {
+    step: WorkloadTeardownStep,
+    entered: Arc<Semaphore>,
+    release: Arc<Semaphore>,
+}
+
 pub(super) struct RecordingTeardownProvider {
     log: Arc<EventLog>,
     calls: AtomicUsize,
+    gate: Mutex<Option<TeardownGate>>,
+    gate_entered: AtomicBool,
 }
 
 impl RecordingTeardownProvider {
@@ -714,14 +832,34 @@ impl RecordingTeardownProvider {
         Arc::new(Self {
             log,
             calls: AtomicUsize::new(0),
+            gate: Mutex::new(None),
+            gate_entered: AtomicBool::new(false),
         })
+    }
+
+    pub(super) fn install_gate(
+        &self,
+        step: WorkloadTeardownStep,
+    ) -> (Arc<Semaphore>, Arc<Semaphore>) {
+        let entered = Arc::new(Semaphore::new(0));
+        let release = Arc::new(Semaphore::new(0));
+        *self
+            .gate
+            .lock()
+            .expect("teardown gate lock should remain healthy") = Some(TeardownGate {
+            step,
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+        self.gate_entered.store(false, Ordering::Release);
+        (entered, release)
     }
 
     pub(super) fn call_count(&self) -> usize {
         self.calls.load(Ordering::Acquire)
     }
 
-    fn outcome(
+    async fn outcome(
         &self,
         command: &ConfirmedWorkloadTeardownCommand,
     ) -> WorkloadTeardownProviderObservation {
@@ -731,6 +869,22 @@ impl RecordingTeardownProvider {
             command.step(),
             command.mode(),
         ));
+        let gate = self
+            .gate
+            .lock()
+            .expect("teardown gate lock should remain healthy")
+            .clone();
+        if let Some(gate) = gate
+            && gate.step == command.step()
+            && !self.gate_entered.swap(true, Ordering::AcqRel)
+        {
+            gate.entered.add_permits(1);
+            gate.release
+                .acquire()
+                .await
+                .expect("teardown gate should remain open")
+                .forget();
+        }
         let success = teardown_success(command.step(), command.subjects());
         let outcome = match command.mode() {
             WorkloadTeardownCommandMode::Execute => WorkloadTeardownProviderOutcome::Execute(
@@ -751,14 +905,14 @@ macro_rules! teardown_capability {
                 &'a self,
                 command: &'a ConfirmedWorkloadTeardownCommand,
             ) -> WorkloadTeardownCapabilityFuture<'a> {
-                Box::pin(async move { self.outcome(command) })
+                Box::pin(async move { self.outcome(command).await })
             }
 
             fn inspect<'a>(
                 &'a self,
                 command: &'a ConfirmedWorkloadTeardownCommand,
             ) -> WorkloadTeardownCapabilityFuture<'a> {
-                Box::pin(async move { self.outcome(command) })
+                Box::pin(async move { self.outcome(command).await })
             }
         }
     };
@@ -838,8 +992,8 @@ pub(super) fn provider_realm() -> (NetworkCapabilityRegistry, NetworkCapabilityS
                 NetworkPortAssignmentMode::ProviderAssigned,
             ],
         ),
-        NetworkIngressCapabilitySet::new([]),
-        NetworkForwardingCapabilitySet::new([]),
+        NetworkIngressCapabilitySet::new([]).with_tls_behaviors([NetworkTlsBehavior::Disabled]),
+        NetworkForwardingCapabilitySet::new([NetworkForwardingFeature::PortForwarding]),
         lifecycle,
         NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     );
@@ -927,7 +1081,7 @@ pub(super) struct RetirementHarness {
     pub(super) provisioner: Arc<WorkloadProvisioner>,
     pub(super) retire: ComputeResourceRetirer,
     pub(super) log: Arc<EventLog>,
-    _restart_runtime: Arc<WorkloadRestartRuntime>,
+    pub(super) restart_runtime: Arc<WorkloadRestartRuntime>,
 }
 
 impl RetirementHarness {
@@ -950,6 +1104,11 @@ impl RetirementHarness {
             provision_provider.clone(),
             &selection,
         ));
+        let projection_sink = Arc::new(ServiceManagerWorkloadProjectionSink::new(manager.clone()));
+        let restart_projector = Arc::new(WorkloadProjectionOrchestrator::new(
+            provision_capabilities.clone(),
+            projection_sink.clone(),
+        ));
         let restart_runtime = Arc::new(
             WorkloadRestartRuntime::start(
                 coordinator.clone(),
@@ -957,6 +1116,10 @@ impl RetirementHarness {
                 provider_reports.clone(),
                 provision_capabilities.clone(),
                 Arc::new(restart_capabilities(restart_provider.clone(), &selection)),
+                Arc::new(ServiceManagerWorkloadRestartResolutionFence::new(
+                    manager.clone(),
+                    restart_projector,
+                )),
             )
             .expect("fixture restart runtime should start"),
         );
@@ -980,7 +1143,7 @@ impl RetirementHarness {
                 teardown_runtime.clone(),
                 source_authority.clone(),
                 (*provision_capabilities).clone(),
-                Arc::new(ServiceManagerWorkloadProjectionSink::new(manager.clone())),
+                projection_sink,
             )
             .expect("fixture provisioner should compose"),
         );
@@ -1003,7 +1166,7 @@ impl RetirementHarness {
             provisioner,
             retire,
             log,
-            _restart_runtime: restart_runtime,
+            restart_runtime,
         }
     }
 
@@ -1016,6 +1179,19 @@ impl RetirementHarness {
                 BTreeMap::new(),
             )
             .expect("fixture service source should be declared");
+    }
+
+    pub(super) fn declare_published_service(&self) {
+        self.manager
+            .create_service_definition(
+                &tenant(),
+                SERVICE_NAME,
+                ServiceBackend::sandbox(
+                    service_spec().with_port_binding(SandboxPortBinding::tcp("http", 18080, 8080)),
+                ),
+                BTreeMap::new(),
+            )
+            .expect("published fixture service source should be declared");
     }
 
     pub(super) async fn start_service(&self) {
@@ -1068,6 +1244,65 @@ impl RetirementHarness {
             .unwrap_or_else(|_| panic!("{diagnostic}"))
             .expect("source-claim signal should remain open")
             .forget();
+    }
+
+    pub(super) async fn wait_for_service_restart_resolution(
+        &self,
+        key: &WorkloadSagaKey,
+        service_name: &str,
+        diagnostic: &str,
+    ) {
+        let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let record = self.store.record(key);
+                let target_attempt = record
+                    .restart_state()
+                    .last_completed()
+                    .map(|completed| completed.admission().attempt_id());
+                let observation = self.manager.service_definition_observation_for_tenant(
+                    self.context.tenant_id(),
+                    service_name,
+                );
+                let target_is_observed = target_attempt.is_some_and(|target| {
+                    observation
+                        .as_ref()
+                        .is_some_and(|observed| observed.execution.attempt_id() == target)
+                });
+                let resolution_is_routable = RuntimeServiceRegistry::resolve_service_binding(
+                    self.manager.as_ref(),
+                    self.context.tenant_id(),
+                    service_name,
+                )
+                .is_ok_and(|binding| binding.is_some());
+                if record.restart_state().active().is_none()
+                    && target_is_observed
+                    && resolution_is_routable
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        if completed.is_err() {
+            let record = self.store.record(key);
+            let observation = self
+                .manager
+                .service_definition_observation_for_tenant(self.context.tenant_id(), service_name);
+            let resolution = RuntimeServiceRegistry::resolve_service_binding(
+                self.manager.as_ref(),
+                self.context.tenant_id(),
+                service_name,
+            );
+            panic!(
+                "{diagnostic}; restart_state={:?}; observed_attempt={:?}; resolution={:?}; provider_execute_calls={}; provider_inspect_calls={}",
+                record.restart_state(),
+                observation.map(|observed| observed.execution.attempt_id().clone()),
+                resolution,
+                self.restart_provider.execute_call_count(),
+                self.restart_provider.inspect_call_count(),
+            );
+        }
     }
 
     pub(super) fn service_source_is_fenced(&self) -> bool {

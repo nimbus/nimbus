@@ -1,10 +1,17 @@
+use std::collections::BTreeMap;
+
 use nimbus_core::{Error, TenantId};
 use nimbus_runtime::{InvocationServiceBinding, InvocationServices};
+use nimbus_sandbox::{SandboxHandle, SandboxStatus};
+use nimbus_workloads::WorkloadExecutionAttemptId;
 
-use crate::ServiceInstanceCatalog;
+use crate::ServiceBackend;
 use crate::registry::{RuntimeServiceRegistry, service_binding_from_handle};
 
 use super::ServiceManager;
+use super::types::{
+    ServiceManagerState, ServiceResolutionWithdrawal, TenantServiceKey, WorkloadSourceRetirementKey,
+};
 
 /// Read-only runtime naming projection over services-owned observations.
 ///
@@ -14,7 +21,7 @@ use super::ServiceManager;
 /// provider inspection.
 impl RuntimeServiceRegistry for ServiceManager {
     fn snapshot_for_tenant(&self, tenant_id: &TenantId) -> InvocationServices {
-        self.service_instances_for_tenant(tenant_id)
+        self.service_instances_for_resolution(tenant_id)
             .into_iter()
             .filter_map(|(service_name, handle)| {
                 service_binding_from_handle(&handle).map(|binding| (service_name, binding))
@@ -27,9 +34,191 @@ impl RuntimeServiceRegistry for ServiceManager {
         tenant_id: &TenantId,
         service_name: &str,
     ) -> Result<Option<InvocationServiceBinding>, Error> {
-        let Some(observation) =
-            self.service_definition_observation_for_tenant(tenant_id, service_name)
-        else {
+        let Some(handle) = self.service_instance_for_resolution(tenant_id, service_name)? else {
+            return Ok(None);
+        };
+        Ok(service_binding_from_handle(&handle))
+    }
+}
+
+impl ServiceManager {
+    /// Fence logical resolution before compute awaits restart publication
+    /// withdrawal. This operation owns no provider effect or durable saga
+    /// transition.
+    pub fn claim_service_resolution_withdrawal(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+        source_generation: u64,
+        resource_version: &str,
+        source_attempt_id: &WorkloadExecutionAttemptId,
+        target_attempt_id: &WorkloadExecutionAttemptId,
+    ) -> Result<(), Error> {
+        if source_attempt_id == target_attempt_id {
+            return Err(Error::InvalidInput(
+                "service resolution withdrawal requires distinct source and target attempts"
+                    .to_owned(),
+            ));
+        }
+        let catalog_definition = self
+            .service_definitions
+            .service_definition_for_tenant(tenant_id, service_name);
+        let key = TenantServiceKey::new(tenant_id, service_name);
+        let mut state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        let definition = state
+            .definitions
+            .get(&key)
+            .or(catalog_definition.as_ref())
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "service `{service_name}` for tenant `{tenant_id}` was not found"
+                ))
+            })?;
+        if !matches!(definition.backend, ServiceBackend::Sandbox(_)) {
+            return Err(Error::InvalidInput(format!(
+                "service `{service_name}` for tenant `{tenant_id}` is not sandbox-backed"
+            )));
+        }
+        if definition.generation != source_generation
+            || definition.resource_version != resource_version
+        {
+            return Err(Error::PreconditionFailed(format!(
+                "service `{service_name}` changed before resolution withdrawal"
+            )));
+        }
+        let withdrawal = ServiceResolutionWithdrawal {
+            source_generation,
+            resource_version: resource_version.to_owned(),
+            source_attempt_id: source_attempt_id.clone(),
+            target_attempt_id: target_attempt_id.clone(),
+            active: true,
+        };
+        match state.service_resolution_withdrawals.get(&key) {
+            Some(current) if current == &withdrawal => Ok(()),
+            Some(current)
+                if current.source_generation == source_generation
+                    && current.resource_version == resource_version
+                    && &current.target_attempt_id == source_attempt_id =>
+            {
+                state.service_resolution_withdrawals.insert(key, withdrawal);
+                Ok(())
+            }
+            Some(current) if current.active => Err(Error::conflict(format!(
+                "service `{service_name}` has a crossed active resolution withdrawal"
+            ))),
+            Some(_) => Err(Error::PreconditionFailed(format!(
+                "service `{service_name}` rejected a stale or crossed resolution withdrawal"
+            ))),
+            None => {
+                let observation =
+                    state
+                        .service_definition_observations
+                        .get(&key)
+                        .ok_or_else(|| {
+                            Error::PreconditionFailed(format!(
+                                "service `{service_name}` has no observed execution to withdraw"
+                            ))
+                        })?;
+                if observation.execution.attempt_id() != source_attempt_id {
+                    return Err(Error::PreconditionFailed(format!(
+                        "service `{service_name}` changed execution before resolution withdrawal"
+                    )));
+                }
+                state.service_resolution_withdrawals.insert(key, withdrawal);
+                Ok(())
+            }
+        }
+    }
+
+    /// Release only the exact restart fence after durable publication
+    /// observation completes. Replays after release are idempotent.
+    pub fn release_service_resolution_withdrawal(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+        source_generation: u64,
+        resource_version: &str,
+        target_attempt_id: &WorkloadExecutionAttemptId,
+    ) -> Result<(), Error> {
+        let key = TenantServiceKey::new(tenant_id, service_name);
+        let mut state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        let Some(current) = state.service_resolution_withdrawals.get(&key) else {
+            return Ok(());
+        };
+        if current.source_generation != source_generation
+            || current.resource_version != resource_version
+            || &current.target_attempt_id != target_attempt_id
+        {
+            return Err(Error::PreconditionFailed(format!(
+                "service `{service_name}` rejected a stale or crossed resolution release"
+            )));
+        }
+        if current.active {
+            let observation = state
+                .service_definition_observations
+                .get(&key)
+                .ok_or_else(|| {
+                    Error::PreconditionFailed(format!(
+                        "service `{service_name}` has no target execution observation to release"
+                    ))
+                })?;
+            if observation.execution.attempt_id() != target_attempt_id {
+                return Err(Error::PreconditionFailed(format!(
+                    "service `{service_name}` has not observed the restart target attempt"
+                )));
+            }
+            let mut released = current.clone();
+            released.active = false;
+            state.service_resolution_withdrawals.insert(key, released);
+        }
+        Ok(())
+    }
+
+    pub(super) fn service_instances_for_resolution(
+        &self,
+        tenant_id: &TenantId,
+    ) -> BTreeMap<String, SandboxHandle> {
+        let state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        state
+            .service_definition_observations
+            .iter()
+            .filter(|(key, observation)| {
+                &key.tenant_id == tenant_id
+                    && observation.tenant_id == *tenant_id
+                    && observation.name == key.service_name
+                    && !service_resolution_is_fenced(&state, key)
+                    && !matches!(
+                        observation.handle.status,
+                        SandboxStatus::Stopped | SandboxStatus::Failed
+                    )
+            })
+            .map(|(key, observation)| (key.service_name.clone(), observation.handle.clone()))
+            .collect()
+    }
+
+    fn service_instance_for_resolution(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+    ) -> Result<Option<SandboxHandle>, Error> {
+        let state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        let key = TenantServiceKey::new(tenant_id, service_name);
+        if service_resolution_is_fenced(&state, &key) {
+            return Ok(None);
+        }
+        let Some(observation) = state.service_definition_observations.get(&key) else {
             return Ok(None);
         };
         if observation.tenant_id != *tenant_id || observation.name != service_name {
@@ -37,6 +226,18 @@ impl RuntimeServiceRegistry for ServiceManager {
                 "service observation for `{service_name}` is crossed with tenant `{tenant_id}`"
             )));
         }
-        Ok(service_binding_from_handle(&observation.handle))
+        Ok(Some(observation.handle.clone()))
     }
+}
+
+fn service_resolution_is_fenced(state: &ServiceManagerState, key: &TenantServiceKey) -> bool {
+    state.tenant_source_retirements.contains_key(&key.tenant_id)
+        || state
+            .service_resolution_withdrawals
+            .get(key)
+            .is_some_and(|withdrawal| withdrawal.active)
+        || ServiceManager::source_retirement_claim_exists(
+            state,
+            &WorkloadSourceRetirementKey::Service(key.clone()),
+        )
 }

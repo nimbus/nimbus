@@ -12,6 +12,41 @@ fn manager_with_backend() -> (ServiceManager, Arc<StubSandboxBackend>) {
     (manager, backend)
 }
 
+fn declare_ready_service(
+    manager: &ServiceManager,
+    backend: &StubSandboxBackend,
+    tenant_id: &TenantId,
+    service_name: &str,
+) -> crate::ServiceDefinition {
+    let definition = manager
+        .create_service_definition(
+            tenant_id,
+            service_name,
+            ServiceBackend::sandbox(SandboxSpec::new(
+                tenant_id.clone(),
+                SandboxOwnerSpec::service(service_name),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::oci_image_reference("registry.example.com/service:1"),
+                SandboxProcessSpec::new(["/bin/service"]),
+            )),
+            BTreeMap::new(),
+        )
+        .expect("fixture service definition should create");
+    let mut handle = backend.sandbox_handle(tenant_id, service_name, SandboxStatus::Ready);
+    let execution = execution_reference_for_handle(&mut handle, definition.generation, 0);
+    manager
+        .project_service_definition_execution_observation(
+            tenant_id,
+            service_name,
+            definition.generation,
+            &definition.resource_version,
+            &execution,
+            handle,
+        )
+        .expect("fixture service observation should project");
+    definition
+}
+
 #[test]
 fn desired_source_exists_before_first_provider_callback() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
@@ -294,6 +329,337 @@ fn exact_service_projection_is_immediately_visible_to_every_read_model_without_p
     assert_eq!(backend.image_starts.load(Ordering::SeqCst), 0);
     assert_eq!(backend.inspect_calls.load(Ordering::SeqCst), 0);
     assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn service_retirement_claim_fences_only_the_exact_service_resolution_key() {
+    let tenant_a = TenantId::new("tenant-a").expect("tenant ID should validate");
+    let tenant_b = TenantId::new("tenant-b").expect("tenant ID should validate");
+    let (manager, backend) = manager_with_backend();
+    let retiring = declare_ready_service(&manager, &backend, &tenant_a, "api");
+    declare_ready_service(&manager, &backend, &tenant_a, "peer");
+    declare_ready_service(&manager, &backend, &tenant_b, "api");
+
+    let claim = manager
+        .claim_service_definition_retirement(
+            &tenant_a,
+            "api",
+            retiring.generation,
+            &retiring.resource_version,
+            WorkloadSourceRetirementOperation::Stop,
+            WorkloadGeneration::new(0),
+            nimbus_workloads::WorkloadSagaRevision::new(0),
+        )
+        .expect("exact service retirement should claim");
+
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_a, "api")
+            .expect("fenced lookup should not error")
+            .is_none()
+    );
+    assert!(!RuntimeServiceRegistry::snapshot_for_tenant(&manager, &tenant_a).contains_key("api"));
+    assert!(
+        ServiceInstanceCatalog::service_instance_for_name(&manager, &tenant_a, "api").is_none()
+    );
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_a, "peer")
+            .expect("unrelated service lookup should succeed")
+            .is_some()
+    );
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_b, "api")
+            .expect("other-tenant lookup should succeed")
+            .is_some()
+    );
+    assert_eq!(
+        manager
+            .service_definition_observation_for_tenant(&tenant_a, "api")
+            .expect("fencing must retain the observed projection")
+            .handle
+            .status,
+        SandboxStatus::Ready
+    );
+
+    manager
+        .release_unadvanced_source_retirement_claim(&claim)
+        .expect("pre-effect claim release should succeed");
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_a, "api")
+            .expect("released service lookup should succeed")
+            .is_some()
+    );
+}
+
+#[test]
+fn tenant_retirement_barrier_fences_only_the_exact_tenant_service_set() {
+    let tenant_a = TenantId::new("tenant-a").expect("tenant ID should validate");
+    let tenant_b = TenantId::new("tenant-b").expect("tenant ID should validate");
+    let (manager, backend) = manager_with_backend();
+    declare_ready_service(&manager, &backend, &tenant_a, "api");
+    declare_ready_service(&manager, &backend, &tenant_a, "peer");
+    declare_ready_service(&manager, &backend, &tenant_b, "api");
+
+    manager
+        .claim_tenant_source_retirement(
+            &tenant_a,
+            std::num::NonZeroU64::new(1).expect("tenant incarnation should be nonzero"),
+        )
+        .expect("tenant source retirement should claim");
+
+    assert!(RuntimeServiceRegistry::snapshot_for_tenant(&manager, &tenant_a).is_empty());
+    assert!(ServiceInstanceCatalog::service_instances_for_tenant(&manager, &tenant_a).is_empty());
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_b, "api")
+            .expect("other-tenant lookup should succeed")
+            .is_some()
+    );
+    assert_eq!(
+        manager
+            .service_definition_observation_for_tenant(&tenant_a, "api")
+            .expect("tenant fencing must retain the observed projection")
+            .handle
+            .status,
+        SandboxStatus::Ready
+    );
+}
+
+#[test]
+fn restart_resolution_withdrawal_is_attempt_fenced_and_replay_safe() {
+    let tenant_id = TenantId::new("tenant").expect("tenant ID should validate");
+    let (manager, backend) = manager_with_backend();
+    let definition = declare_ready_service(&manager, &backend, &tenant_id, "api");
+    let observation = manager
+        .service_definition_observation_for_tenant(&tenant_id, "api")
+        .expect("ready service should have an observation");
+    let source_attempt = observation.execution.attempt_id().clone();
+    let target_attempt = WorkloadExecutionAttemptId::for_execution(
+        observation.execution.execution_id(),
+        WorkloadRestartEpoch::new(1),
+    );
+
+    for _ in 0..2 {
+        manager
+            .claim_service_resolution_withdrawal(
+                &tenant_id,
+                "api",
+                definition.generation,
+                &definition.resource_version,
+                &source_attempt,
+                &target_attempt,
+            )
+            .expect("exact resolution withdrawal should claim or replay");
+    }
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, "api")
+            .expect("fenced lookup should not error")
+            .is_none()
+    );
+    assert_eq!(
+        manager
+            .service_definition_observation_for_tenant(&tenant_id, "api")
+            .expect("restart fence must retain the observation"),
+        observation
+    );
+
+    let crossed_target = WorkloadExecutionAttemptId::for_execution(
+        observation.execution.execution_id(),
+        WorkloadRestartEpoch::new(2),
+    );
+    assert!(matches!(
+        manager.release_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &crossed_target,
+        ),
+        Err(Error::PreconditionFailed(_))
+    ));
+    assert!(matches!(
+        manager.release_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &target_attempt,
+        ),
+        Err(Error::PreconditionFailed(_))
+    ));
+    let mut target_handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let target_execution =
+        execution_reference_for_handle(&mut target_handle, definition.generation, 1);
+    assert_eq!(target_execution.attempt_id(), &target_attempt);
+    manager
+        .project_service_definition_execution_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &target_execution,
+            target_handle,
+        )
+        .expect("restart target observation should project before release");
+    manager
+        .release_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &target_attempt,
+        )
+        .expect("exact resolution release should succeed");
+    manager
+        .release_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &target_attempt,
+        )
+        .expect("exact resolution release should replay");
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, "api")
+            .expect("released lookup should succeed")
+            .is_some()
+    );
+
+    assert!(matches!(
+        manager.claim_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &source_attempt,
+            &target_attempt,
+        ),
+        Err(Error::PreconditionFailed(_))
+    ));
+    manager
+        .claim_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &target_attempt,
+            &crossed_target,
+        )
+        .expect("the next exact restart attempt should extend the completed chain");
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, "api")
+            .expect("second fenced lookup should not error")
+            .is_none()
+    );
+    let mut crossed_handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let crossed_execution =
+        execution_reference_for_handle(&mut crossed_handle, definition.generation, 2);
+    assert_eq!(crossed_execution.attempt_id(), &crossed_target);
+    manager
+        .project_service_definition_execution_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &crossed_execution,
+            crossed_handle,
+        )
+        .expect("second restart target observation should project before release");
+    manager
+        .release_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &crossed_target,
+        )
+        .expect("the next exact restart release should succeed");
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, "api")
+            .expect("second released lookup should succeed")
+            .is_some()
+    );
+}
+
+#[test]
+fn active_restart_resolution_withdrawal_hands_off_without_reopening() {
+    let tenant_id = TenantId::new("tenant").expect("tenant ID should validate");
+    let (manager, backend) = manager_with_backend();
+    let definition = declare_ready_service(&manager, &backend, &tenant_id, "api");
+    let observation = manager
+        .service_definition_observation_for_tenant(&tenant_id, "api")
+        .expect("ready service should have an observation");
+    let source_attempt = observation.execution.attempt_id().clone();
+    let first_target = WorkloadExecutionAttemptId::for_execution(
+        observation.execution.execution_id(),
+        WorkloadRestartEpoch::new(1),
+    );
+    let second_target = WorkloadExecutionAttemptId::for_execution(
+        observation.execution.execution_id(),
+        WorkloadRestartEpoch::new(2),
+    );
+
+    manager
+        .claim_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &source_attempt,
+            &first_target,
+        )
+        .expect("first restart should fence resolution");
+    manager
+        .claim_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &first_target,
+            &second_target,
+        )
+        .expect("successor restart should atomically extend the active fence");
+    assert!(matches!(
+        manager.release_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &first_target,
+        ),
+        Err(Error::PreconditionFailed(_))
+    ));
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, "api")
+            .expect("successor-fenced lookup should not error")
+            .is_none()
+    );
+
+    let mut target_handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let target_execution =
+        execution_reference_for_handle(&mut target_handle, definition.generation, 2);
+    manager
+        .project_service_definition_execution_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &target_execution,
+            target_handle,
+        )
+        .expect("successor target observation should project");
+    manager
+        .release_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &second_target,
+        )
+        .expect("successor target should release the exact active fence");
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, "api")
+            .expect("successor release lookup should not error")
+            .is_some()
+    );
 }
 
 #[test]

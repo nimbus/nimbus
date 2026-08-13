@@ -559,6 +559,7 @@ impl ServiceManager {
                 observation.observed_at_millis = now_millis();
                 observation.handle.clone()
             });
+        state.service_resolution_withdrawals.remove(&key);
         state.source_retirement_claims.remove(&retirement_key);
         Ok(handle)
     }
@@ -656,6 +657,7 @@ impl ServiceManager {
             ));
         }
         state.service_definition_observations.remove(&key);
+        state.service_resolution_withdrawals.remove(&key);
         let removed = state.definitions.remove(&key).ok_or_else(|| {
             Error::NotFound(format!(
                 "service `{name}` for tenant `{}` was not found",

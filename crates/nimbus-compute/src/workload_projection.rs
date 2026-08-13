@@ -468,6 +468,16 @@ impl WorkloadProjectionOrchestrator {
             }
             WorkloadProvisionRunDisposition::Observed => {}
         }
+        self.project_observed_record(record).await
+    }
+
+    /// Re-observe and project one record whose portable saga state is already
+    /// `Observed`. Restart recovery uses this same exact provider-evidence
+    /// path before services can reopen logical resolution.
+    pub(crate) async fn project_observed_record(
+        &self,
+        record: &WorkloadSagaRecord,
+    ) -> WorkloadProjectionState {
         if record.phase() != WorkloadSagaPhase::Observed {
             return WorkloadProjectionState::Rejected(
                 WorkloadProjectionRejectedReason::DurableRecordNotObserved,

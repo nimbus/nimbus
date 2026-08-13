@@ -871,6 +871,7 @@ fn manager_state_fingerprint(manager: &ServiceManager) -> String {
             &state.session_channels,
             &state.source_retirement_claims,
             &state.tenant_source_retirements,
+            &state.service_resolution_withdrawals,
             state.next_definition_version,
             state.next_session_version,
         )

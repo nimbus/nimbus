@@ -15,6 +15,7 @@ use nimbus_workloads::{
 use thiserror::Error;
 
 use super::restart_dispatcher::{WorkloadRestartDispatchError, WorkloadRestartDispatcher};
+use super::restart_resolution::WorkloadRestartResolutionFence;
 use super::{
     ConfirmedWorkloadRestartTransition, WorkloadRestartCommandMode, WorkloadRestartDecision,
     WorkloadSagaConfirmation, WorkloadSagaCoordinator, apply_restart_result,
@@ -65,6 +66,8 @@ pub(super) enum WorkloadRestartRunError {
     Missing,
     #[error("workload restart transition lost its exact durable confirmation")]
     UnconfirmedTransition,
+    #[error("workload restart resolution fence failed: {0}")]
+    Resolution(#[from] nimbus_core::Error),
     #[error("workload restart exceeded {MAX_RESTART_DECISIONS_PER_RUN} bounded decisions")]
     ProgressLimit,
 }
@@ -73,16 +76,19 @@ pub(super) enum WorkloadRestartRunError {
 pub(super) struct WorkloadRestartDriver {
     coordinator: Arc<WorkloadSagaCoordinator>,
     dispatcher: Arc<WorkloadRestartDispatcher>,
+    resolution_fence: Arc<dyn WorkloadRestartResolutionFence>,
 }
 
 impl WorkloadRestartDriver {
     pub(super) fn new(
         coordinator: Arc<WorkloadSagaCoordinator>,
         dispatcher: Arc<WorkloadRestartDispatcher>,
+        resolution_fence: Arc<dyn WorkloadRestartResolutionFence>,
     ) -> Self {
         Self {
             coordinator,
             dispatcher,
+            resolution_fence,
         }
     }
 
@@ -143,6 +149,11 @@ impl WorkloadRestartDriver {
                     saw_active_restart |= durable.restart_state().active().is_some();
                     if let Some(command) = transition.command().cloned() {
                         require_decision_budget(&mut decisions)?;
+                        if command.step()
+                            == nimbus_workloads::WorkloadRestartStep::WithdrawPublication
+                        {
+                            self.resolution_fence.withdraw(&durable)?;
+                        }
                         let result = self
                             .dispatcher
                             .dispatch_confirmed(&transition)
@@ -192,6 +203,16 @@ impl WorkloadRestartDriver {
                     .map_err(WorkloadSagaStoreError::InvalidTransition)?;
                 match decision {
                     WorkloadRestartDecision::Wait => {
+                        if record.restart_state().active().is_none()
+                            && record.restart_state().last_completed().is_some()
+                        {
+                            // The durable completion can win a crash or a
+                            // transient services-state failure before the
+                            // process-local resolution fence reopens. Exact
+                            // release is replay-safe, so every completed
+                            // resume reconciles it before returning.
+                            self.resolution_fence.restore(&record).await?;
+                        }
                         let disposition =
                             if saw_active_restart && record.restart_state().active().is_none() {
                                 WorkloadRestartRunDisposition::Completed

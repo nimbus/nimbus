@@ -994,7 +994,7 @@ function verifySideEffectFreeSandboxInspection() {
     !/\bproject_sandbox_resource_execution_observation\s*\(/.test(
       serviceSandboxes,
     ) ||
-    !/impl\s+RuntimeServiceRegistry\s+for\s+ServiceManager[\s\S]*?service_definition_observation_for_tenant\s*\(/.test(
+    !/impl\s+RuntimeServiceRegistry\s+for\s+ServiceManager[\s\S]*?snapshot_for_tenant[\s\S]*?service_instances_for_resolution\s*\([\s\S]*?resolve_service_binding[\s\S]*?service_instance_for_resolution\s*\(/.test(
       serviceRegistry,
     ) ||
     /\b(?:start|activate|provision|inspect)_[A-Za-z0-9_]*\s*\(/.test(

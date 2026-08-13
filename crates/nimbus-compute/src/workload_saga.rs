@@ -26,6 +26,7 @@ mod restart_dispatcher;
 mod restart_driver;
 mod restart_provider;
 pub mod restart_provider_command;
+pub(crate) mod restart_resolution;
 pub(super) mod restart_runtime;
 pub mod restart_sandbox;
 mod restart_submission;

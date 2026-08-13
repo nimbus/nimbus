@@ -42,9 +42,10 @@ use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::node_workloads::NodeWorkloadCoordinator;
 use crate::runtime_manager::RuntimeManager;
 use crate::tenant_retirement::TenantRetirementDriver;
-use crate::workload_projection::WorkloadProjectionSink;
+use crate::workload_projection::{WorkloadProjectionOrchestrator, WorkloadProjectionSink};
 use crate::workload_provisioner::WorkloadProvisioner;
 use crate::workload_saga::WorkloadTeardownRuntime;
+use crate::workload_saga::restart_resolution::ServiceManagerWorkloadRestartResolutionFence;
 use crate::workload_saga::restart_runtime::WorkloadRestartRuntime;
 use crate::workload_saga::{
     ExactWorkloadTeardownCapabilityRealm, WorkloadDesireAdmissionGuard,
@@ -133,10 +134,9 @@ impl ComputeState {
                 desire_admission_guard,
                 projection_sink,
             } => {
-                assert!(
-                    node_services.service_manager().is_some(),
-                    "managed workload composition requires an exact tenant-source owner"
-                );
+                let service_manager = node_services
+                    .service_manager()
+                    .expect("managed workload composition requires an exact tenant-source owner");
                 let teardown_capabilities = teardown_capabilities.map(|capabilities| {
                         capabilities
                             .into_registry_for(&capability_selection, &execution_provider_id)
@@ -152,6 +152,10 @@ impl ComputeState {
                 });
                 let provider_reports = network_manager.capability_registry().clone();
                 let provision_capabilities = Arc::new(*provision_capabilities);
+                let restart_projector = Arc::new(WorkloadProjectionOrchestrator::new(
+                    Arc::clone(&provision_capabilities),
+                    Arc::clone(&projection_sink),
+                ));
                 let teardown_runtime = teardown_capabilities.map(|capabilities| {
                     Arc::new(WorkloadTeardownRuntime::new(
                         Arc::clone(&coordinator),
@@ -171,7 +175,7 @@ impl ComputeState {
                             Arc::clone(runtime),
                             Arc::clone(&source_authority),
                             (*provision_capabilities).clone(),
-                            projection_sink,
+                            Arc::clone(&projection_sink),
                         )
                         .expect(
                             "managed workload composition requires an exact provider-report selection",
@@ -185,6 +189,10 @@ impl ComputeState {
                         provider_reports.clone(),
                         provision_capabilities,
                         Arc::new(*restart_capabilities),
+                        Arc::new(ServiceManagerWorkloadRestartResolutionFence::new(
+                            service_manager,
+                            restart_projector,
+                        )),
                     )
                     .expect("managed workload composition requires a retained restart watch"),
                 );

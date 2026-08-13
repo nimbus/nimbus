@@ -22,6 +22,9 @@ use nimbus_workloads::{
 use super::restart_dispatcher::WorkloadRestartDispatcher;
 use super::restart_driver::WorkloadRestartDriver;
 use super::restart_provider::WorkloadRestartCapabilityRegistry;
+#[cfg(any(test, feature = "test-hooks"))]
+use super::restart_resolution::NoopWorkloadRestartResolutionFence;
+use super::restart_resolution::WorkloadRestartResolutionFence;
 use super::restart_submission::{
     ExplicitWorkloadRestartError, ExplicitWorkloadRestartRequest,
     ExplicitWorkloadRestartSubmission, ExplicitWorkloadRestartSubmitter,
@@ -218,6 +221,7 @@ impl WorkloadRestartRuntime {
         provider_reports: NetworkCapabilityRegistry,
         provision_capabilities: Arc<WorkloadProvisionCapabilityRegistry>,
         restart_capabilities: Arc<WorkloadRestartCapabilityRegistry>,
+        resolution_fence: Arc<dyn WorkloadRestartResolutionFence>,
     ) -> Result<Self, String> {
         let dispatcher = Arc::new(WorkloadRestartDispatcher::new(
             source_authority,
@@ -227,6 +231,7 @@ impl WorkloadRestartRuntime {
         let driver = Arc::new(WorkloadRestartDriver::new(
             Arc::clone(&coordinator),
             dispatcher,
+            resolution_fence,
         ));
         let clock: Arc<dyn RestartClock> = Arc::new(SystemRestartClock);
         let candidate_coordinator = Arc::new(AutomaticRestartCoordinator {
@@ -366,7 +371,11 @@ pub async fn settle_restart_for_teardown_once_for_test(
         provider_reports,
         restart_capabilities,
     ));
-    let driver = WorkloadRestartDriver::new(Arc::clone(&coordinator), dispatcher);
+    let driver = WorkloadRestartDriver::new(
+        Arc::clone(&coordinator),
+        dispatcher,
+        Arc::new(NoopWorkloadRestartResolutionFence),
+    );
     Ok(matches!(
         settle_restart_for_teardown_once(&coordinator, &driver, key, now_unix_millis).await?,
         WorkloadRestartSettlement::Settled

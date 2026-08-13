@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use nimbus_core::TenantId;
+use nimbus_workloads::WorkloadExecutionAttemptId;
 
 use crate::{
     SandboxResourceObservation, SandboxResourceSource, ServiceDefinition,
@@ -46,6 +47,15 @@ pub(super) enum WorkloadSourceRetirementKey {
     Sandbox(TenantSandboxResourceKey),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ServiceResolutionWithdrawal {
+    pub(super) source_generation: u64,
+    pub(super) resource_version: String,
+    pub(super) source_attempt_id: WorkloadExecutionAttemptId,
+    pub(super) target_attempt_id: WorkloadExecutionAttemptId,
+    pub(super) active: bool,
+}
+
 #[derive(Default)]
 pub(super) struct ServiceManagerState {
     pub(super) service_definition_observations:
@@ -64,6 +74,10 @@ pub(super) struct ServiceManagerState {
     /// Process-local tenant source fence paired with the immutable source
     /// snapshot captured when the Engine incarnation entered retirement.
     pub(super) tenant_source_retirements: BTreeMap<TenantId, TenantSourceRetirementBarrier>,
+    /// Process-local logical-resolution fence for an exact durable restart.
+    /// Provider publication remains owned by the selected ingress adapter.
+    pub(super) service_resolution_withdrawals:
+        BTreeMap<TenantServiceKey, ServiceResolutionWithdrawal>,
     pub(super) next_definition_version: u64,
     pub(super) next_session_version: u64,
 }
