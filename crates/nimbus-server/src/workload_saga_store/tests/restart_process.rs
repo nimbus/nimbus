@@ -8,7 +8,7 @@ use nimbus_compute::workload_saga::{
 };
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_engine::Engine;
-use nimbus_testing::{
+use nimbus_process_harness::{
     ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
 };
 use nimbus_workloads::{

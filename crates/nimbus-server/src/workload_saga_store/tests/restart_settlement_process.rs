@@ -36,10 +36,10 @@ use nimbus_network::{
     NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet, NetworkManagementMode,
     NetworkPortAssignmentMode, NetworkProviderId, NetworkSovereigntyCapabilities, PortProtocol,
 };
-use nimbus_sandbox::ProviderCommandAttemptJournal;
-use nimbus_testing::{
+use nimbus_process_harness::{
     ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
 };
+use nimbus_sandbox::ProviderCommandAttemptJournal;
 use nimbus_workloads::{
     WorkloadOwnerEvidenceDigest, WorkloadPhaseDetail, WorkloadProvisionSourceEvidence,
     WorkloadProvisionSourceIdentity, WorkloadRestartDisposition, WorkloadRestartEffectResult,

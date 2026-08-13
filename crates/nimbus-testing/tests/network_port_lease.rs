@@ -10,7 +10,7 @@ use nimbus_network::{
     PortExposure, PortLeaseBinding, PortLeaseEffectScope, PortLeaseError, PortLeaseId,
     PortLeasePhase, PortLeaseRecoveryAttempt, PortLeaseRequest, PortProtocol, PortRequestMode,
 };
-use nimbus_testing::{
+use nimbus_process_harness::{
     ContentionOutcome, ProcessRoleSpec, SubprocessCrashCutHarness, TwoProcessContentionHarness,
     run_contention_child, run_crash_cut_child, run_crash_recovery_child,
 };

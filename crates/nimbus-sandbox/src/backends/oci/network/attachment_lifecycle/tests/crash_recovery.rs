@@ -1,14 +1,17 @@
 //! NNC5.4 real-process crash cuts for the shared OCI attachment lifecycle.
 
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use nimbus_network::{
     DurableNetworkAttachmentState, NetworkAttachmentSegmentAssociation, NetworkResourcePhase,
     NetworkResourceVersion, PortLeasePhase, PortLeaseRequest,
+};
+use nimbus_process_harness::{
+    CrashCutChildContext, ProcessRoleSpec, SubprocessCrashCutHarness, SubprocessCrashCutResult,
+    run_crash_cut_child, run_crash_recovery_child,
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,17 +42,23 @@ const DELETE_REPLAY_CHILD: &str = concat!(
     "backends::oci::network::attachment_lifecycle::tests::crash_recovery::",
     "attachment_delete_replay_child"
 );
+const REPLAY_GATE_CHILD: &str = concat!(
+    "backends::oci::network::attachment_lifecycle::tests::crash_recovery::",
+    "attachment_replay_gate_child"
+);
 
-const ROOT_ENV: &str = "NIMBUS_NNC54_ATTACHMENT_ROOT";
 const BACKEND_ENV: &str = "NIMBUS_NNC54_ATTACHMENT_BACKEND";
 const CUT_ENV: &str = "NIMBUS_NNC54_ATTACHMENT_CUT";
-const CREATE_MARKER: &str = "attachment.create.listeners_active.durable";
-const CREATE_RECOVERED_MARKER: &str = "attachment.create.recovered.durable";
-const DELETE_MARKER: &str = "attachment.delete.provider_detached.durable";
-const DELETE_RECOVERED_MARKER: &str = "attachment.delete.recovered.durable";
+const CREATE_RECOVERY_WITNESS: &str = "attachment.create.recovered.durable";
+const DELETE_RECOVERY_WITNESS: &str = "attachment.delete.recovered.durable";
 const PRE_CRASH_WITNESS: &str = "attachment.pre-crash-witness.json";
 const CHILD_TIMEOUT: Duration = Duration::from_secs(15);
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
+const REPLAY_BOUNDARY: &str = "attachment.replay.fresh-process";
+const CREATE_ACTIVE_OBSERVATION: &str = "attachment.create.recovered-active";
+const CREATE_CLEANUP_OBSERVATION: &str = "attachment.create.recovered-cleanup-pending";
+const CREATE_REPLAY_OBSERVATION: &str = "attachment.create.replay-stable";
+const DELETE_RECOVERY_OBSERVATION: &str = "attachment.delete.recovered-released";
+const DELETE_REPLAY_OBSERVATION: &str = "attachment.delete.replay-stable";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CreateRecoveryOutcome {
@@ -631,7 +640,7 @@ impl PersistentFixture {
 
 struct CreateCrashObserver<'a> {
     fixture: &'a PersistentFixture,
-    marker: PathBuf,
+    context: &'a CrashCutChildContext,
     cut: &'static CreateCut,
 }
 
@@ -644,23 +653,25 @@ impl AttachmentPhaseObserver for CreateCrashObserver<'_> {
                 self.cut.requires_stable_handle(),
             );
             persist_json(&self.fixture.root.join(PRE_CRASH_WITNESS), &witness);
-            persist_bytes(&self.marker, format!("{}\n", self.cut.label).as_bytes());
-            park_forever();
+            self.context
+                .reach_boundary(self.cut.label)
+                .unwrap_or_else(|error| panic!("failed to report {}: {error}", self.cut.label));
         }
         Ok(())
     }
 }
 
-struct DeleteCrashObserver {
-    marker: PathBuf,
+struct DeleteCrashObserver<'a> {
+    context: &'a CrashCutChildContext,
     cut: &'static DeleteCut,
 }
 
-impl AttachmentDetachPhaseObserver for DeleteCrashObserver {
+impl AttachmentDetachPhaseObserver for DeleteCrashObserver<'_> {
     fn checkpoint(&mut self, phase: AttachmentDetachPhase) {
         if phase == self.cut.phase {
-            persist_bytes(&self.marker, format!("{}\n", self.cut.label).as_bytes());
-            park_forever();
+            self.context
+                .reach_boundary(self.cut.label)
+                .unwrap_or_else(|error| panic!("failed to report {}: {error}", self.cut.label));
         }
     }
 }
@@ -668,6 +679,7 @@ impl AttachmentDetachPhaseObserver for DeleteCrashObserver {
 #[test]
 fn fresh_process_shared_attachment_crash_cuts_converge_without_duplicate_effects() {
     let parent_root = TempDir::new().expect("NNC5.4 parent root should create");
+    let harness = SubprocessCrashCutHarness::new(CHILD_TIMEOUT);
     for backend in [ContractBackend::Container, ContractBackend::Krun] {
         for cut in &CREATE_CUTS {
             let create_root = parent_root.path().join(format!(
@@ -675,25 +687,63 @@ fn fresh_process_shared_attachment_crash_cuts_converge_without_duplicate_effects
                 backend.label(),
                 cut.label.replace('.', "-")
             ));
-            kill_after_marker(
-                spawn_child(CREATE_CRASH_CHILD, &create_root, backend, cut.label),
-                &create_root.join(CREATE_MARKER),
-                cut.label,
-            );
             let expected = match cut.outcome {
-                CreateRecoveryOutcome::Active => "attachment.create.recovered=active",
-                CreateRecoveryOutcome::CleanupPending => {
-                    "attachment.create.recovered=cleanup_pending"
-                }
+                CreateRecoveryOutcome::Active => CREATE_ACTIVE_OBSERVATION,
+                CreateRecoveryOutcome::CleanupPending => CREATE_CLEANUP_OBSERVATION,
             };
-            assert_child_success(
-                run_child(CREATE_RECOVERY_CHILD, &create_root, backend, cut.label),
-                expected,
-            );
-            assert_child_success(
-                run_child(CREATE_RECOVERY_CHILD, &create_root, backend, cut.label),
-                expected,
-            );
+            let recovered = harness
+                .run(
+                    &create_root,
+                    cut.label,
+                    expected,
+                    child_spec(
+                        "attachment-create-owner",
+                        CREATE_CRASH_CHILD,
+                        backend,
+                        cut.label,
+                    ),
+                    child_spec(
+                        "attachment-create-recovery",
+                        CREATE_RECOVERY_CHILD,
+                        backend,
+                        cut.label,
+                    ),
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} {} create recovery failed: {error}",
+                        backend.label(),
+                        cut.label
+                    )
+                });
+            assert_crash_result(&recovered, cut.label, expected);
+
+            let replayed = harness
+                .run(
+                    &create_root,
+                    REPLAY_BOUNDARY,
+                    CREATE_REPLAY_OBSERVATION,
+                    child_spec(
+                        "attachment-create-replay-gate",
+                        REPLAY_GATE_CHILD,
+                        backend,
+                        cut.label,
+                    ),
+                    child_spec(
+                        "attachment-create-replay",
+                        CREATE_RECOVERY_CHILD,
+                        backend,
+                        cut.label,
+                    ),
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} {} create replay failed: {error}",
+                        backend.label(),
+                        cut.label
+                    )
+                });
+            assert_crash_result(&replayed, REPLAY_BOUNDARY, CREATE_REPLAY_OBSERVATION);
         }
 
         for cut in &DELETE_CUTS {
@@ -702,19 +752,59 @@ fn fresh_process_shared_attachment_crash_cuts_converge_without_duplicate_effects
                 backend.label(),
                 cut.label.replace('.', "-")
             ));
-            kill_after_marker(
-                spawn_child(DELETE_CRASH_CHILD, &delete_root, backend, cut.label),
-                &delete_root.join(DELETE_MARKER),
-                cut.label,
-            );
-            assert_child_success(
-                run_child(DELETE_RECOVERY_CHILD, &delete_root, backend, cut.label),
-                "attachment.delete.recovered=released",
-            );
-            assert_child_success(
-                run_child(DELETE_REPLAY_CHILD, &delete_root, backend, cut.label),
-                "attachment.delete.replay=stable",
-            );
+            let recovered = harness
+                .run(
+                    &delete_root,
+                    cut.label,
+                    DELETE_RECOVERY_OBSERVATION,
+                    child_spec(
+                        "attachment-delete-owner",
+                        DELETE_CRASH_CHILD,
+                        backend,
+                        cut.label,
+                    ),
+                    child_spec(
+                        "attachment-delete-recovery",
+                        DELETE_RECOVERY_CHILD,
+                        backend,
+                        cut.label,
+                    ),
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} {} delete recovery failed: {error}",
+                        backend.label(),
+                        cut.label
+                    )
+                });
+            assert_crash_result(&recovered, cut.label, DELETE_RECOVERY_OBSERVATION);
+
+            let replayed = harness
+                .run(
+                    &delete_root,
+                    REPLAY_BOUNDARY,
+                    DELETE_REPLAY_OBSERVATION,
+                    child_spec(
+                        "attachment-delete-replay-gate",
+                        REPLAY_GATE_CHILD,
+                        backend,
+                        cut.label,
+                    ),
+                    child_spec(
+                        "attachment-delete-replay",
+                        DELETE_REPLAY_CHILD,
+                        backend,
+                        cut.label,
+                    ),
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} {} delete replay failed: {error}",
+                        backend.label(),
+                        cut.label
+                    )
+                });
+            assert_crash_result(&replayed, REPLAY_BOUNDARY, DELETE_REPLAY_OBSERVATION);
         }
     }
 }
@@ -722,224 +812,263 @@ fn fresh_process_shared_attachment_crash_cuts_converge_without_duplicate_effects
 #[test]
 #[ignore = "spawned only by the NNC5.4 real-process crash-cut parent"]
 fn attachment_create_crash_child() {
-    let root = child_root();
-    let backend = child_backend();
-    let fixture = PersistentFixture::initialize(&root, backend);
-    let cut = child_create_cut();
-    let mut observer = CreateCrashObserver {
-        fixture: &fixture,
-        marker: root.join(CREATE_MARKER),
-        cut,
-    };
-    fixture
-        .adapter()
-        .attach_with(
-            &fixture.lifecycle(),
-            AttachmentAttachAuthority::FreshLaunch(&fixture.case.config.reservation_claim),
-            &ContractHostEffects::default(),
-            &mut observer,
-            |_| Ok(()),
-        )
-        .expect("NNC5.4 create crash child should reach its cut");
-    panic!("NNC5.4 create crash child returned without reaching its named cut");
+    run_crash_cut_child(|context| {
+        let backend = child_backend();
+        let fixture = PersistentFixture::initialize(context.state_root(), backend);
+        let cut = child_create_cut();
+        let mut observer = CreateCrashObserver {
+            fixture: &fixture,
+            context,
+            cut,
+        };
+        fixture
+            .adapter()
+            .attach_with(
+                &fixture.lifecycle(),
+                AttachmentAttachAuthority::FreshLaunch(&fixture.case.config.reservation_claim),
+                &ContractHostEffects::default(),
+                &mut observer,
+                |_| Ok(()),
+            )
+            .map_err(|error| format!("create crash child failed before {}: {error}", cut.label))?;
+        Err(format!(
+            "create crash child returned without reaching {}",
+            cut.label
+        ))
+    })
+    .unwrap_or_else(|error| panic!("NNC5.4 create crash child failed: {error}"));
 }
 
 #[test]
 #[ignore = "spawned only by the NNC5.4 real-process crash-cut parent"]
 fn attachment_create_recovery_child() {
-    let root = child_root();
-    let fixture = PersistentFixture::reopen(&root, child_backend());
-    let host = ContractHostEffects::default();
-    let mut observer = ContractPhaseObserver::recording();
-    let first_recovery = !root.join(CREATE_RECOVERED_MARKER).is_file();
-    let pre_crash: PreCrashWitness = read_json(&root.join(PRE_CRASH_WITNESS), "pre-crash witness");
-    let before_attachment = fixture.attachment("pre-create-recovery");
-    fixture.assert_attachment_coordinates(
-        &before_attachment,
-        child_create_cut().requires_stable_handle(),
-    );
-    assert_attachment_identity_preserved(&pre_crash.attachment, &before_attachment);
-    if first_recovery {
-        assert_eq!(
-            before_attachment, pre_crash.attachment,
-            "the first successor must observe the exact attachment record persisted before kill"
+    run_crash_recovery_child(|context| {
+        let root = context.state_root();
+        let fixture = PersistentFixture::reopen(root, child_backend());
+        let host = ContractHostEffects::default();
+        let mut observer = ContractPhaseObserver::recording();
+        let first_recovery = !root.join(CREATE_RECOVERY_WITNESS).is_file();
+        let pre_crash: PreCrashWitness =
+            read_json(&root.join(PRE_CRASH_WITNESS), "pre-crash witness");
+        let before_attachment = fixture.attachment("pre-create-recovery");
+        fixture.assert_attachment_coordinates(
+            &before_attachment,
+            child_create_cut().requires_stable_handle(),
         );
-    }
-    fixture.assert_allocator_state(NetworkAttachmentReservationState::Adopted);
-    let before_ips = fixture.assert_live_ipam();
-    assert_eq!(
-        before_ips, pre_crash.assigned_ips,
-        "the first successor and every replay must retain the exact pre-crash addresses"
-    );
-    let result = fixture.adapter().attach_with(
-        &fixture.lifecycle(),
-        AttachmentAttachAuthority::FreshLaunch(&fixture.case.config.reservation_claim),
-        &host,
-        &mut observer,
-        |_| Ok(()),
-    );
-    let setup_count = host
-        .operations()
-        .iter()
-        .filter(|operation| operation == &&ContractHostOperation::ProviderSetup)
-        .count();
-    let expected_setup_count = usize::from(
-        first_recovery && child_create_cut().label == "attachment.create.provider_attempt_prepared",
-    );
-    assert_eq!(
-        setup_count, expected_setup_count,
-        "fresh recovery may execute the exact prepared setup once, but must never duplicate it"
-    );
-    match child_create_cut().outcome {
-        CreateRecoveryOutcome::Active => {
-            result.expect("fresh process should recover the exact desired attachment");
-            fixture.assert_active();
-            println!("attachment.create.recovered=active");
+        assert_attachment_identity_preserved(&pre_crash.attachment, &before_attachment);
+        if first_recovery {
+            assert_eq!(
+                before_attachment, pre_crash.attachment,
+                "the first successor must observe the exact attachment record persisted before kill"
+            );
         }
-        CreateRecoveryOutcome::CleanupPending => {
-            result.expect_err("incomplete provider evidence must remain fenced");
-            fixture.assert_cleanup_pending(child_create_cut().requires_stable_handle());
-            println!("attachment.create.recovered=cleanup_pending");
-        }
-    }
-    let after_attachment = fixture.attachment("post-create-recovery");
-    assert_attachment_identity_preserved(&before_attachment, &after_attachment);
-    let after_ips = fixture.assert_live_ipam();
-    assert_eq!(
-        after_ips, pre_crash.assigned_ips,
-        "create recovery must retain the exact pre-crash IPAM generation and assigned addresses"
-    );
-    let witness = CreateRecoveryWitness {
-        attachment: after_attachment,
-        assigned_ips: after_ips,
-    };
-    if first_recovery {
-        persist_json(&root.join(CREATE_RECOVERED_MARKER), &witness);
-    } else {
-        let expected: CreateRecoveryWitness = serde_json::from_slice(
-            &std::fs::read(root.join(CREATE_RECOVERED_MARKER))
-                .expect("first create recovery witness should read"),
-        )
-        .expect("first create recovery witness should decode");
+        fixture.assert_allocator_state(NetworkAttachmentReservationState::Adopted);
+        let before_ips = fixture.assert_live_ipam();
         assert_eq!(
-            witness, expected,
-            "fresh replay must retain exact version, phase, association, stable handle, and IPAM \
-             addresses"
+            before_ips, pre_crash.assigned_ips,
+            "the first successor and every replay must retain the exact pre-crash addresses"
         );
-    }
+        let result = fixture.adapter().attach_with(
+            &fixture.lifecycle(),
+            AttachmentAttachAuthority::FreshLaunch(&fixture.case.config.reservation_claim),
+            &host,
+            &mut observer,
+            |_| Ok(()),
+        );
+        let setup_count = host
+            .operations()
+            .iter()
+            .filter(|operation| operation == &&ContractHostOperation::ProviderSetup)
+            .count();
+        let expected_setup_count = usize::from(
+            first_recovery
+                && child_create_cut().label == "attachment.create.provider_attempt_prepared",
+        );
+        assert_eq!(
+            setup_count, expected_setup_count,
+            "fresh recovery may execute the exact prepared setup once, but must never duplicate it"
+        );
+        let observation = match child_create_cut().outcome {
+            CreateRecoveryOutcome::Active => {
+                result.expect("fresh process should recover the exact desired attachment");
+                fixture.assert_active();
+                CREATE_ACTIVE_OBSERVATION
+            }
+            CreateRecoveryOutcome::CleanupPending => {
+                result.expect_err("incomplete provider evidence must remain fenced");
+                fixture.assert_cleanup_pending(child_create_cut().requires_stable_handle());
+                CREATE_CLEANUP_OBSERVATION
+            }
+        };
+        let after_attachment = fixture.attachment("post-create-recovery");
+        assert_attachment_identity_preserved(&before_attachment, &after_attachment);
+        let after_ips = fixture.assert_live_ipam();
+        assert_eq!(
+            after_ips, pre_crash.assigned_ips,
+            "create recovery must retain the exact pre-crash IPAM generation and assigned addresses"
+        );
+        let witness = CreateRecoveryWitness {
+            attachment: after_attachment,
+            assigned_ips: after_ips,
+        };
+        if first_recovery {
+            persist_json(&root.join(CREATE_RECOVERY_WITNESS), &witness);
+            Ok(observation.to_owned())
+        } else {
+            let expected: CreateRecoveryWitness = serde_json::from_slice(
+                &std::fs::read(root.join(CREATE_RECOVERY_WITNESS))
+                    .expect("first create recovery witness should read"),
+            )
+            .expect("first create recovery witness should decode");
+            assert_eq!(
+                witness, expected,
+                "fresh replay must retain exact version, phase, association, stable handle, and IPAM \
+                 addresses"
+            );
+            Ok(CREATE_REPLAY_OBSERVATION.to_owned())
+        }
+    })
+    .unwrap_or_else(|error| panic!("NNC5.4 create recovery child failed: {error}"));
 }
 
 #[test]
 #[ignore = "spawned only by the NNC5.4 real-process crash-cut parent"]
 fn attachment_delete_crash_child() {
-    let root = child_root();
-    let backend = child_backend();
-    let fixture = PersistentFixture::initialize(&root, backend);
-    let mut observer = ContractPhaseObserver::recording();
-    fixture
-        .adapter()
-        .attach_with(
-            &fixture.lifecycle(),
-            AttachmentAttachAuthority::FreshLaunch(&fixture.case.config.reservation_claim),
-            &ContractHostEffects::default(),
-            &mut observer,
-            |_| Ok(()),
-        )
-        .expect("NNC5.4 delete crash fixture should attach");
-    let pre_crash = fixture.pre_crash_witness();
-    fixture.assert_attachment_coordinates(&pre_crash.attachment, true);
-    persist_json(&root.join(PRE_CRASH_WITNESS), &pre_crash);
-    fixture
-        .adapter()
-        .detach_host_managed_observed_with(
-            &fixture.lifecycle(),
-            AttachmentTeardownMode::Final,
-            &ContractHostEffects::default(),
-            &mut DeleteCrashObserver {
-                marker: root.join(DELETE_MARKER),
-                cut: child_delete_cut(),
-            },
-            |_| Ok(()),
-        )
-        .expect("NNC5.4 delete crash child should reach its cut");
-    panic!("NNC5.4 delete crash child returned without reaching its named cut");
+    run_crash_cut_child(|context| {
+        let root = context.state_root();
+        let backend = child_backend();
+        let fixture = PersistentFixture::initialize(root, backend);
+        let mut observer = ContractPhaseObserver::recording();
+        fixture
+            .adapter()
+            .attach_with(
+                &fixture.lifecycle(),
+                AttachmentAttachAuthority::FreshLaunch(&fixture.case.config.reservation_claim),
+                &ContractHostEffects::default(),
+                &mut observer,
+                |_| Ok(()),
+            )
+            .map_err(|error| format!("delete crash fixture failed to attach: {error}"))?;
+        let pre_crash = fixture.pre_crash_witness();
+        fixture.assert_attachment_coordinates(&pre_crash.attachment, true);
+        persist_json(&root.join(PRE_CRASH_WITNESS), &pre_crash);
+        fixture
+            .adapter()
+            .detach_host_managed_observed_with(
+                &fixture.lifecycle(),
+                AttachmentTeardownMode::Final,
+                &ContractHostEffects::default(),
+                &mut DeleteCrashObserver {
+                    context,
+                    cut: child_delete_cut(),
+                },
+                |_| Ok(()),
+            )
+            .map_err(|failure| format!("delete crash child failed: {}", failure.error))?;
+        Err(format!(
+            "delete crash child returned without reaching {}",
+            child_delete_cut().label
+        ))
+    })
+    .unwrap_or_else(|error| panic!("NNC5.4 delete crash child failed: {error}"));
 }
 
 #[test]
 #[ignore = "spawned only by the NNC5.4 real-process crash-cut parent"]
 fn attachment_delete_recovery_child() {
-    let root = child_root();
-    let fixture = PersistentFixture::reopen(&root, child_backend());
-    let host = ContractHostEffects::default();
-    let first_recovery = !root.join(DELETE_RECOVERED_MARKER).is_file();
-    let pre_crash: PreCrashWitness = read_json(&root.join(PRE_CRASH_WITNESS), "pre-crash witness");
-    let before_attachment = fixture.attachment("pre-delete-recovery");
-    fixture.assert_attachment_coordinates(&before_attachment, true);
-    assert_attachment_identity_preserved(&pre_crash.attachment, &before_attachment);
-    fixture.assert_delete_cut_retention(child_delete_cut(), &pre_crash.assigned_ips);
-    fixture
-        .adapter()
-        .detach_host_managed_with(
-            &fixture.lifecycle(),
-            AttachmentTeardownMode::Final,
-            &host,
-            |_| Ok(()),
-        )
-        .expect("fresh process should finish the exact provider-detached cleanup");
-    let teardown_count = host
-        .operations()
-        .iter()
-        .filter(|operation| operation == &&ContractHostOperation::ProviderTeardown)
-        .count();
-    let provider_was_already_detached = matches!(
-        child_delete_cut().phase,
-        AttachmentDetachPhase::ProviderDetached
-            | AttachmentDetachPhase::NamespaceRemoved
-            | AttachmentDetachPhase::ListenersSettled
-            | AttachmentDetachPhase::IpamReleased
-            | AttachmentDetachPhase::SegmentReleased
-            | AttachmentDetachPhase::AttachmentTerminal
-    );
-    let expected_teardown_count = usize::from(first_recovery && !provider_was_already_detached);
-    assert_eq!(
-        teardown_count, expected_teardown_count,
-        "fresh delete recovery may execute one not-yet-started teardown, but must never duplicate \
-         an acknowledged provider detach"
-    );
-    fixture.assert_released(&pre_crash.assigned_ips);
-    let after_attachment = fixture.attachment("post-delete-recovery");
-    assert_attachment_identity_preserved(&before_attachment, &after_attachment);
-    persist_bytes(
-        &root.join(DELETE_RECOVERED_MARKER),
-        b"attachment.delete.recovered\n",
-    );
-    println!("attachment.delete.recovered=released");
+    run_crash_recovery_child(|context| {
+        let root = context.state_root();
+        let fixture = PersistentFixture::reopen(root, child_backend());
+        let host = ContractHostEffects::default();
+        let first_recovery = !root.join(DELETE_RECOVERY_WITNESS).is_file();
+        let pre_crash: PreCrashWitness =
+            read_json(&root.join(PRE_CRASH_WITNESS), "pre-crash witness");
+        let before_attachment = fixture.attachment("pre-delete-recovery");
+        fixture.assert_attachment_coordinates(&before_attachment, true);
+        assert_attachment_identity_preserved(&pre_crash.attachment, &before_attachment);
+        fixture.assert_delete_cut_retention(child_delete_cut(), &pre_crash.assigned_ips);
+        fixture
+            .adapter()
+            .detach_host_managed_with(
+                &fixture.lifecycle(),
+                AttachmentTeardownMode::Final,
+                &host,
+                |_| Ok(()),
+            )
+            .map_err(|failure| {
+                format!(
+                    "fresh process failed exact provider-detached cleanup: {}",
+                    failure.error
+                )
+            })?;
+        let teardown_count = host
+            .operations()
+            .iter()
+            .filter(|operation| operation == &&ContractHostOperation::ProviderTeardown)
+            .count();
+        let provider_was_already_detached = matches!(
+            child_delete_cut().phase,
+            AttachmentDetachPhase::ProviderDetached
+                | AttachmentDetachPhase::NamespaceRemoved
+                | AttachmentDetachPhase::ListenersSettled
+                | AttachmentDetachPhase::IpamReleased
+                | AttachmentDetachPhase::SegmentReleased
+                | AttachmentDetachPhase::AttachmentTerminal
+        );
+        let expected_teardown_count = usize::from(first_recovery && !provider_was_already_detached);
+        assert_eq!(
+            teardown_count, expected_teardown_count,
+            "fresh delete recovery may execute one not-yet-started teardown, but must never duplicate \
+             an acknowledged provider detach"
+        );
+        fixture.assert_released(&pre_crash.assigned_ips);
+        let after_attachment = fixture.attachment("post-delete-recovery");
+        assert_attachment_identity_preserved(&before_attachment, &after_attachment);
+        persist_bytes(
+            &root.join(DELETE_RECOVERY_WITNESS),
+            b"attachment.delete.recovered\n",
+        );
+        Ok(DELETE_RECOVERY_OBSERVATION.to_owned())
+    })
+    .unwrap_or_else(|error| panic!("NNC5.4 delete recovery child failed: {error}"));
 }
 
 #[test]
 #[ignore = "spawned only by the NNC5.4 real-process crash-cut parent"]
 fn attachment_delete_replay_child() {
-    let root = child_root();
-    let fixture = PersistentFixture::reopen(&root, child_backend());
-    let pre_crash: PreCrashWitness = read_json(&root.join(PRE_CRASH_WITNESS), "pre-crash witness");
-    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(&root);
-    let before = std::fs::read(&authority_path).expect("terminal authority bytes should read");
-    fixture
-        .adapter()
-        .detach_host_managed_with(
-            &fixture.lifecycle(),
-            AttachmentTeardownMode::Final,
-            &ContractHostEffects::default(),
-            |_| panic!("terminal replay must not execute backend withdrawal"),
-        )
-        .expect("terminal detach replay should remain idempotent");
-    assert_eq!(
-        std::fs::read(&authority_path).expect("replayed authority bytes should read"),
-        before,
-        "terminal detach replay must be byte-stable"
-    );
-    fixture.assert_released(&pre_crash.assigned_ips);
-    println!("attachment.delete.replay=stable");
+    run_crash_recovery_child(|context| {
+        let root = context.state_root();
+        let fixture = PersistentFixture::reopen(root, child_backend());
+        let pre_crash: PreCrashWitness =
+            read_json(&root.join(PRE_CRASH_WITNESS), "pre-crash witness");
+        let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(root);
+        let before = std::fs::read(&authority_path)
+            .map_err(|error| format!("terminal authority bytes should read: {error}"))?;
+        fixture
+            .adapter()
+            .detach_host_managed_with(
+                &fixture.lifecycle(),
+                AttachmentTeardownMode::Final,
+                &ContractHostEffects::default(),
+                |_| panic!("terminal replay must not execute backend withdrawal"),
+            )
+            .map_err(|failure| format!("terminal replay failed: {}", failure.error))?;
+        assert_eq!(
+            std::fs::read(&authority_path).expect("replayed authority bytes should read"),
+            before,
+            "terminal detach replay must be byte-stable"
+        );
+        fixture.assert_released(&pre_crash.assigned_ips);
+        Ok(DELETE_REPLAY_OBSERVATION.to_owned())
+    })
+    .unwrap_or_else(|error| panic!("NNC5.4 delete replay child failed: {error}"));
+}
+
+#[test]
+#[ignore = "spawned only by the NNC8.1 exact-boundary replay parent"]
+fn attachment_replay_gate_child() {
+    run_crash_cut_child(|context| context.reach_boundary(REPLAY_BOUNDARY))
+        .unwrap_or_else(|error| panic!("NNC8.1 replay gate failed: {error}"));
 }
 
 fn tenant_id(backend: ContractBackend) -> TenantId {
@@ -955,8 +1084,17 @@ fn case_path(root: &Path) -> PathBuf {
     root.join("attachment-crash-case.json")
 }
 
-fn child_root() -> PathBuf {
-    PathBuf::from(std::env::var_os(ROOT_ENV).expect("NNC5.4 child root should be set"))
+fn child_spec(role: &str, test_name: &str, backend: ContractBackend, cut: &str) -> ProcessRoleSpec {
+    ProcessRoleSpec::new(
+        role,
+        std::env::current_exe().expect("NNC8.1 test executable should resolve"),
+    )
+    .arg("--exact")
+    .arg(test_name)
+    .arg("--ignored")
+    .arg("--nocapture")
+    .env(BACKEND_ENV, backend.label())
+    .env(CUT_ENV, cut)
 }
 
 fn child_backend() -> ContractBackend {
@@ -1055,133 +1193,13 @@ fn assert_attachment_identity_preserved(
     }
 }
 
-fn park_forever() -> ! {
-    loop {
-        std::thread::park();
-    }
-}
-
-struct ChildOutput {
-    status: ExitStatus,
-    stdout: String,
-    stderr: String,
-}
-
-fn spawn_child(test_name: &str, root: &Path, backend: ContractBackend, cut: &str) -> Child {
-    Command::new(std::env::current_exe().expect("NNC5.4 test executable should resolve"))
-        .arg("--exact")
-        .arg(test_name)
-        .arg("--ignored")
-        .arg("--nocapture")
-        .env(ROOT_ENV, root)
-        .env(BACKEND_ENV, backend.label())
-        .env(CUT_ENV, cut)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|error| panic!("failed to spawn NNC5.4 child {test_name}: {error}"))
-}
-
-fn run_child(test_name: &str, root: &Path, backend: ContractBackend, cut: &str) -> ChildOutput {
-    let mut child = spawn_child(test_name, root, backend, cut);
-    let deadline = Instant::now() + CHILD_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return collect_child(child),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(POLL_INTERVAL),
-            Ok(None) => {
-                terminate_child(&mut child);
-                let output = collect_child(child);
-                panic!(
-                    "NNC5.4 child {test_name} exceeded {CHILD_TIMEOUT:?}\nstdout:\n{}\nstderr:\n{}",
-                    output.stdout, output.stderr
-                );
-            }
-            Err(error) => {
-                terminate_child(&mut child);
-                let output = collect_child(child);
-                panic!(
-                    "failed waiting for NNC5.4 child {test_name}: {error}\nstdout:\n{}\nstderr:\n{}",
-                    output.stdout, output.stderr
-                );
-            }
-        }
-    }
-}
-
-fn kill_after_marker(mut child: Child, marker: &Path, cut: &str) {
-    let deadline = Instant::now() + CHILD_TIMEOUT;
-    while Instant::now() < deadline && !marker.is_file() {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let output = collect_child(child);
-                panic!(
-                    "NNC5.4 child exited before {cut}: {status}\nstdout:\n{}\nstderr:\n{}",
-                    output.stdout, output.stderr
-                );
-            }
-            Ok(None) => std::thread::sleep(POLL_INTERVAL),
-            Err(error) => {
-                terminate_child(&mut child);
-                let output = collect_child(child);
-                panic!(
-                    "failed polling NNC5.4 cut {cut}: {error}\nstdout:\n{}\nstderr:\n{}",
-                    output.stdout, output.stderr
-                );
-            }
-        }
-    }
-    if !marker.is_file() {
-        terminate_child(&mut child);
-        let output = collect_child(child);
-        panic!(
-            "NNC5.4 child did not reach {cut} within {CHILD_TIMEOUT:?}\nstdout:\n{}\nstderr:\n{}",
-            output.stdout, output.stderr
-        );
-    }
-    terminate_child(&mut child);
-    let output = collect_child(child);
-    assert!(
-        !output.status.success(),
-        "NNC5.4 child must be killed at {cut}\nstdout:\n{}\nstderr:\n{}",
-        output.stdout,
-        output.stderr
+fn assert_crash_result(result: &SubprocessCrashCutResult, boundary: &str, observation: &str) {
+    assert_eq!(result.boundary(), boundary);
+    assert_eq!(result.observation(), observation);
+    assert_eq!(
+        result.crash_diagnostic().cleanup(),
+        "killed-at-boundary-and-reaped"
     );
-}
-
-fn terminate_child(child: &mut Child) {
-    let _ = child.kill();
-}
-
-fn collect_child(mut child: Child) -> ChildOutput {
-    let status = child.wait().expect("NNC5.4 child should reap");
-    let mut stdout = String::new();
-    child
-        .stdout
-        .take()
-        .expect("NNC5.4 child stdout should be piped")
-        .read_to_string(&mut stdout)
-        .expect("NNC5.4 child stdout should read");
-    let mut stderr = String::new();
-    child
-        .stderr
-        .take()
-        .expect("NNC5.4 child stderr should be piped")
-        .read_to_string(&mut stderr)
-        .expect("NNC5.4 child stderr should read");
-    ChildOutput {
-        status,
-        stdout,
-        stderr,
-    }
-}
-
-fn assert_child_success(output: ChildOutput, expected: &str) {
-    assert!(
-        output.status.success() && output.stdout.contains(expected),
-        "NNC5.4 child did not report {expected:?}\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        output.stdout,
-        output.stderr
-    );
+    assert_eq!(result.crash_diagnostic().successful(), Some(false));
+    assert_eq!(result.recovery_diagnostic().successful(), Some(true));
 }

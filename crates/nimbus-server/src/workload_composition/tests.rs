@@ -31,6 +31,9 @@ use nimbus_network::{
     NetworkLifecycleFeature, NetworkLifecycleRequirements, NetworkManagementMode,
     NetworkResourceGeneration, NetworkSovereigntyCapabilities, NetworkTlsBehavior,
 };
+use nimbus_process_harness::{
+    ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
+};
 use nimbus_sandbox::{
     SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
     SandboxSpec, sandbox_network_plan_requirements,
@@ -39,9 +42,6 @@ use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceManager};
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationPolicyInput, TenantNetworkPolicyDecision,
     TenantServiceGrantPolicyDecision, WorkloadAttributes, WorkloadLocation,
-};
-use nimbus_testing::{
-    ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,

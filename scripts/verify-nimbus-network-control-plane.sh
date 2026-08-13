@@ -966,6 +966,83 @@ NODE
   return "${nnc61e_fail}"
 }
 
+run_nnc81_process_harness_self_tests() {
+  script="$1"
+  temporary="$2"
+  baseline="${temporary}/nnc81-metadata.json"
+  nnc81_fail=0
+
+  if ! cargo metadata --no-deps --format-version 1 >"${baseline}" 2>/dev/null; then
+    printf 'SELFTEST FAIL NNCV036 baseline metadata could not be generated\n'
+    return 1
+  fi
+
+  for mutation in extra-dev-dependency build-nimbus-dependency normal-runtime-dependency; do
+    fixture="${temporary}/nnc81-${mutation}.json"
+    if ! node - "${mutation}" "${baseline}" "${fixture}" <<'NODE'
+const fs = require("fs");
+const [mutation, baselinePath, fixturePath] = process.argv.slice(2);
+const metadata = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
+const owner = metadata.packages.find(pkg => pkg.name === "nimbus-process-harness");
+if (!owner) throw new Error("missing nimbus-process-harness metadata owner");
+
+const edge = {
+  name: "serde",
+  source: "registry+self-test",
+  req: "*",
+  kind: "dev",
+  rename: null,
+  optional: false,
+  uses_default_features: true,
+  features: [],
+  target: null,
+  registry: null,
+  path: null,
+};
+if (mutation === "build-nimbus-dependency") {
+  edge.name = "nimbus-core";
+  edge.source = null;
+  edge.kind = "build";
+} else if (mutation === "normal-runtime-dependency") {
+  edge.name = "nimbus-runtime";
+  edge.source = null;
+  edge.kind = null;
+} else if (mutation !== "extra-dev-dependency") {
+  throw new Error(`unknown NNC8.1 mutation ${mutation}`);
+}
+owner.dependencies.push(edge);
+fs.writeFileSync(fixturePath, JSON.stringify(metadata));
+NODE
+    then
+      printf 'SELFTEST FAIL NNCV036 mutation fixture %s could not be built\n' "${mutation}"
+      nnc81_fail=$((nnc81_fail + 1))
+      continue
+    fi
+
+    output="${temporary}/nnc81-${mutation}.out"
+    if NIMBUS_NETWORK_NNC63B_AGGREGATE_SELF_TEST_BASELINE=1 \
+      NIMBUS_NETWORK_NNC64_AGGREGATE_SELF_TEST_BASELINE=1 \
+      NIMBUS_NETWORK_NNC64A_AGGREGATE_SELF_TEST_BASELINE=1 \
+      NIMBUS_NETWORK_NNC65_AGGREGATE_SELF_TEST_BASELINE=1 \
+      NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+      NIMBUS_NETWORK_VERIFY_NNC81_METADATA="${fixture}" \
+      "${script}" >"${output}" 2>&1; then
+      printf 'SELFTEST FAIL NNCV036 mutation %s unexpectedly exited zero\n' "${mutation}"
+      nnc81_fail=$((nnc81_fail + 1))
+    elif ! grep -q '^FAIL NNCV036 shared-process-harness-owner' "${output}" ||
+      grep -q '^PASS NNCV036 shared-process-harness-owner' "${output}" ||
+      [ "$(grep -c '^FAIL NNCV' "${output}")" -ne 1 ] ||
+      ! grep -q '^Summary: 36 passed, 1 failed$' "${output}"; then
+      printf 'SELFTEST FAIL NNCV036 mutation %s did not fail exclusively\n' "${mutation}"
+      nnc81_fail=$((nnc81_fail + 1))
+    else
+      printf 'SELFTEST PASS NNCV036 mutation %s fails closed exclusively\n' "${mutation}"
+    fi
+  done
+
+  return "${nnc81_fail}"
+}
+
 run_self_test() {
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-network-verifier-self-test.XXXXXX")" || {
     printf 'SELFTEST FAIL unable to create temporary directory\n'
@@ -1087,7 +1164,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 35 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 36 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1895,7 +1972,7 @@ NODE
     grep -q '^PASS NNCV035 fenced-workload-teardown' \
       "${temporary}/nnc65-aggregate-mutation.out" ||
     [ "$(grep -c '^FAIL NNCV' "${temporary}/nnc65-aggregate-mutation.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 35 passed, 1 failed$' \
+    ! grep -q '^Summary: 36 passed, 1 failed$' \
       "${temporary}/nnc65-aggregate-mutation.out"; then
     printf 'SELFTEST FAIL NNCV035 aggregate mutation did not fail exclusively\n'
     self_fail=$((self_fail + 1))
@@ -1903,11 +1980,53 @@ NODE
     printf 'SELFTEST PASS NNCV035 aggregate mutation fails closed exclusively\n'
   fi
 
+  run_nnc81_process_harness_self_tests "${script}" "${temporary}"
+  self_fail=$((self_fail + $?))
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 564 passed, 0 failed\n'
+  printf 'self-test: 567 passed, 0 failed\n'
+}
+
+run_nnc81_affected_self_test() {
+  temporary="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-network-nnc81-self-test.XXXXXX")" || {
+    printf 'NNC8.1 affected self-test: unable to create temporary directory\n'
+    exit 1
+  }
+  trap 'rm -rf "${temporary}"' EXIT
+  script="${REPO_ROOT}/scripts/verify-nimbus-network-control-plane.sh"
+  affected_fail=0
+
+  run_nnc81_process_harness_self_tests "${script}" "${temporary}"
+  affected_fail=$((affected_fail + $?))
+
+  if NIMBUS_NETWORK_NNC65_AGGREGATE_SELF_TEST_BASELINE=0 \
+    NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE=1 \
+    NIMBUS_NETWORK_VERIFY_TEARDOWN_MUTATION=missing-phase \
+    NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    "${script}" >"${temporary}/nnc65-aggregate-mutation.out" 2>&1; then
+    printf 'SELFTEST FAIL NNCV035 affected aggregate mutation unexpectedly exited zero\n'
+    affected_fail=$((affected_fail + 1))
+  elif ! grep -q '^FAIL NNCV035 fenced-workload-teardown' \
+    "${temporary}/nnc65-aggregate-mutation.out" ||
+    grep -q '^PASS NNCV035 fenced-workload-teardown' \
+      "${temporary}/nnc65-aggregate-mutation.out" ||
+    [ "$(grep -c '^FAIL NNCV' "${temporary}/nnc65-aggregate-mutation.out")" -ne 1 ] ||
+    ! grep -q '^Summary: 36 passed, 1 failed$' \
+      "${temporary}/nnc65-aggregate-mutation.out"; then
+    printf 'SELFTEST FAIL NNCV035 affected aggregate mutation did not fail exclusively\n'
+    affected_fail=$((affected_fail + 1))
+  else
+    printf 'SELFTEST PASS NNCV035 affected aggregate mutation fails closed exclusively\n'
+  fi
+
+  if [ "${affected_fail}" -ne 0 ]; then
+    printf 'NNC8.1 affected self-test: %d failed\n' "${affected_fail}"
+    exit 1
+  fi
+  printf 'NNC8.1 affected self-test: 4 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -1925,6 +2044,10 @@ if [ "${1:-}" = "--self-test" ]; then
   export NIMBUS_NETWORK_NNC64A_AGGREGATE_SELF_TEST_BASELINE
   export NIMBUS_NETWORK_NNC65_AGGREGATE_SELF_TEST_BASELINE
   run_self_test
+  exit 0
+fi
+if [ "${1:-}" = "--self-test-nnc81" ]; then
+  run_nnc81_affected_self_test
   exit 0
 fi
 if [ "${1:-}" = "--self-test-nnc61e" ]; then
@@ -2134,6 +2257,108 @@ verify_nnc65_workload_teardown() {
   fi
 }
 
+verify_nnc81_process_harness_owner() {
+  if [ -n "${NIMBUS_NETWORK_VERIFY_NNC81_METADATA:-}" ]; then
+    metadata="$(cat "${NIMBUS_NETWORK_VERIFY_NNC81_METADATA}" 2>/dev/null)"
+  else
+    metadata="$(cargo metadata --no-deps --format-version 1 2>/dev/null)"
+  fi
+  metadata_status=$?
+  if [ "${metadata_status}" -ne 0 ] || [ -z "${metadata}" ]; then
+    fail "NNCV036" "shared-process-harness-owner" "cargo metadata failed or was empty"
+    return
+  fi
+  error="$(
+    printf '%s' "${metadata}" |
+      node -e '
+        const fs = require("fs");
+        let input = "";
+        process.stdin.on("data", chunk => input += chunk);
+        process.stdin.on("end", () => {
+          const errors = [];
+          let metadata;
+          try {
+            metadata = JSON.parse(input);
+          } catch (error) {
+            process.stdout.write("cargo metadata is invalid: " + error.message);
+            process.exit(1);
+          }
+
+          const owner = metadata.packages.find(pkg => pkg.name === "nimbus-process-harness");
+          if (!owner || !metadata.workspace_members.includes(owner.id)) {
+            errors.push("nimbus-process-harness is not a workspace member");
+          } else {
+            const dependencies = owner.dependencies;
+            const permitted = dependencies.length === 1
+              && dependencies[0].name === "tempfile"
+              && dependencies[0].kind === "dev"
+              && dependencies[0].target === null
+              && !dependencies[0].optional;
+            if (!permitted) {
+              const rendered = dependencies.map(dep =>
+                dep.name + ":" + (dep.kind ?? "normal") + ":" + (dep.target ?? "all")
+              );
+              errors.push(
+                "process harness dependencies must be exactly one unconditional tempfile dev edge: "
+                  + (rendered.join(",") || "<none>"),
+              );
+            }
+          }
+
+          const expected = ["nimbus-cli", "nimbus-kv", "nimbus-sandbox", "nimbus-server", "nimbus-testing"];
+          const consumers = metadata.packages.filter(pkg =>
+            pkg.dependencies.some(dep => dep.name === "nimbus-process-harness"),
+          );
+          const actual = consumers.map(pkg => pkg.name).sort();
+          if (JSON.stringify(actual) !== JSON.stringify([...expected].sort())) {
+            errors.push("direct consumers differ: " + (actual.join(",") || "<none>"));
+          }
+          for (const consumer of consumers) {
+            const edges = consumer.dependencies.filter(dep => dep.name === "nimbus-process-harness");
+            if (edges.length !== 1 || edges[0].kind !== "dev" || edges[0].target !== null || edges[0].optional) {
+              errors.push(consumer.name + " process-harness edge is not one unconditional development dependency");
+            }
+          }
+
+          const oldPaths = [
+            "crates/nimbus-testing/src/process_harness.rs",
+            "crates/nimbus-testing/src/process_harness/crash.rs",
+          ];
+          for (const path of oldPaths) {
+            if (fs.existsSync(path)) errors.push("old process-harness owner remains: " + path);
+          }
+          const testingRoot = "crates/nimbus-testing/src/lib.rs";
+          const attachment = "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/tests/crash_recovery.rs";
+          if (!fs.existsSync(testingRoot)) errors.push("missing " + testingRoot);
+          if (!fs.existsSync(attachment)) errors.push("missing " + attachment);
+          if (fs.existsSync(testingRoot)) {
+            const source = fs.readFileSync(testingRoot, "utf8");
+            if (/\b(?:mod|pub use)\s+process_harness\b|\bnimbus_process_harness\b/.test(source)) {
+              errors.push("nimbus-testing retains a process-harness module or compatibility re-export");
+            }
+          }
+          if (fs.existsSync(attachment)) {
+            const source = fs.readFileSync(attachment, "utf8");
+            for (const symbol of ["SubprocessCrashCutHarness", "run_crash_cut_child", "run_crash_recovery_child"]) {
+              if (!source.includes(symbol)) errors.push("attachment proof lacks " + symbol);
+            }
+            const legacy = source.match(/\b(?:POLL_INTERVAL|kill_after_marker|park_forever|wait_for_marker)\b|std::thread::sleep|std::process::\{?Child/g) || [];
+            if (legacy.length) errors.push("attachment proof retains private process transport: " + [...new Set(legacy)].join(","));
+          }
+
+          process.stdout.write(errors.join("; "));
+          process.exit(errors.length === 0 ? 0 : 1);
+        });
+      '
+  )"
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    pass "NNCV036" "shared-process-harness-owner"
+  else
+    fail "NNCV036" "shared-process-harness-owner" "${error:-cargo metadata failed}"
+  fi
+}
+
 printf 'Nimbus network control-plane static verifier\n'
 printf 'Repo: %s\n\n' "${REPO_ROOT}"
 
@@ -2173,6 +2398,7 @@ verify_nnc63b_workload_provision_decision
 verify_nnc64_workload_provision_dispatch
 verify_nnc64a_workload_restart
 verify_nnc65_workload_teardown
+verify_nnc81_process_harness_owner
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

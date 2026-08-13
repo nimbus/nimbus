@@ -10,6 +10,8 @@ const recoveryPath =
   "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/recovery.rs";
 const crashTestPath =
   "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/tests/crash_recovery.rs";
+const processHarnessPath = "crates/nimbus-process-harness/src/lib.rs";
+const processCrashHarnessPath = "crates/nimbus-process-harness/src/crash.rs";
 const modularityProofPath =
   "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4-atomic-provision-caller-cutover.md";
 
@@ -17,6 +19,8 @@ let lifecycle = fs.readFileSync(lifecyclePath, "utf8");
 let active = fs.readFileSync(activePath, "utf8");
 let recovery = fs.readFileSync(recoveryPath, "utf8");
 let crashTest = fs.readFileSync(crashTestPath, "utf8");
+const processHarness = fs.readFileSync(processHarnessPath, "utf8");
+const processCrashHarness = fs.readFileSync(processCrashHarnessPath, "utf8");
 const modularityProof = fs.readFileSync(modularityProofPath, "utf8");
 
 switch (process.env.NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_CRASH_MUTATION) {
@@ -224,13 +228,18 @@ requireText(
 );
 requireText(
   crashTest,
-  "Command::new(std::env::current_exe()",
-  "crash matrix does not spawn the actual test process",
+  "ProcessRoleSpec::new(",
+  "crash matrix does not provide actual test-process roles to the common harness",
 );
 requireText(
-  crashTest,
+  processHarness,
+  "Command::new(&spec.program)",
+  "common process harness does not spawn the supplied test executable",
+);
+requireText(
+  processCrashHarness,
   "child.kill()",
-  "crash matrix does not kill the effect-owning child",
+  "common crash harness does not kill the effect-owning child",
 );
 requireText(
   crashTest,
@@ -259,12 +268,12 @@ requireText(
 );
 requireText(
   crashTest,
-  "run_child(CREATE_RECOVERY_CHILD",
+  "fn attachment_create_recovery_child() {\n    run_crash_recovery_child",
   "create recovery does not reopen in a fresh child",
 );
 requireText(
   crashTest,
-  "run_child(DELETE_REPLAY_CHILD",
+  "fn attachment_delete_replay_child() {\n    run_crash_recovery_child",
   "terminal delete replay does not reopen in a fresh child",
 );
 

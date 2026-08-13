@@ -8,13 +8,13 @@ use nimbus_core::{
     SequenceNumber, TenantId, WorkloadId, WriteKey, WritePrecondition, WriteSetMode,
 };
 use nimbus_engine::Engine;
+use nimbus_process_harness::{
+    ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
+};
 use nimbus_sandbox::{
     SandboxBackendKind, SandboxLifecycleSpec, SandboxMountSpec, SandboxOwnerSpec,
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxRestartPolicy,
     SandboxRootSpec, SandboxSpec,
-};
-use nimbus_testing::{
-    ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
 };
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, MAX_WORKLOAD_EXECUTABLE_CONTENT_BYTES, NodeIdentity,

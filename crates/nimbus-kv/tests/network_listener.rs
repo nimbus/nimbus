@@ -12,7 +12,7 @@ use nimbus_network::{
     NetworkCapabilityRegistry, NetworkResourceId, PortBindFailureKind, PortBindingProvenance,
     PortLeasePhase,
 };
-use nimbus_testing::{
+use nimbus_process_harness::{
     ContentionOutcome, ProcessRoleSpec, SubprocessCrashCutHarness, TwoProcessContentionHarness,
     run_contention_child, run_crash_cut_child, run_crash_recovery_child,
 };

@@ -23,11 +23,11 @@ use nimbus_network::{
     NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkProviderHandle, NetworkProviderId,
     NetworkResourceGeneration, NetworkSovereigntyRequirements,
 };
-use nimbus_server::EngineWorkloadSagaStore;
-use nimbus_testing::{
+use nimbus_process_harness::{
     ContentionOutcome, ProcessRoleSpec, SubprocessCrashCutHarness, TwoProcessContentionHarness,
     run_contention_child, run_crash_cut_child, run_crash_recovery_child,
 };
+use nimbus_server::EngineWorkloadSagaStore;
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,

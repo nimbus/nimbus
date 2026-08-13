@@ -125,6 +125,7 @@ nimbus-engine = { path = "../nimbus-engine", default-features = false, features 
     "test-hooks",
 ] }
 nimbus-network = { path = "../nimbus-network" }
+nimbus-process-harness = { path = "../nimbus-process-harness" }
 nimbus-testing = { path = "../nimbus-testing", default-features = false }
 serde_yaml.workspace = true
 tempfile.workspace = true

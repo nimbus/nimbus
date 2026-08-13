@@ -43,10 +43,10 @@ use nimbus_network::{
     NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet, NetworkManagementMode,
     NetworkPortAssignmentMode, NetworkProviderId, NetworkSovereigntyCapabilities, PortProtocol,
 };
-use nimbus_sandbox::ProviderCommandAttemptJournal;
-use nimbus_testing::{
+use nimbus_process_harness::{
     ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
 };
+use nimbus_sandbox::ProviderCommandAttemptJournal;
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WorkloadActivationIntent,
     WorkloadAdmissionEvidence, WorkloadExecutableEncoding, WorkloadExecutableIntent,
@@ -317,7 +317,7 @@ fn process_pid(stderr: &str, role: &str) -> u32 {
 }
 
 fn watch_cut_marker(
-    context: &nimbus_testing::CrashCutChildContext,
+    context: &nimbus_process_harness::CrashCutChildContext,
     marker: &Path,
     cut: CrashCut,
 ) -> Result<(), String> {
@@ -336,7 +336,7 @@ fn watch_cut_marker(
 }
 
 fn watch_compensation_cut(
-    context: &nimbus_testing::CrashCutChildContext,
+    context: &nimbus_process_harness::CrashCutChildContext,
     marker: &Path,
     cut: CompensationCut,
 ) -> Result<(), String> {

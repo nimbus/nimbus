@@ -43,6 +43,7 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 futures.workspace = true
+nimbus-process-harness = { path = "../nimbus-process-harness" }
 proptest = "1"
 
 [target.'cfg(windows)'.dependencies]

@@ -362,7 +362,7 @@ mod tests {
     use std::io::Write;
     use std::time::Duration;
 
-    const CHILD_TEST: &str = "process_harness::crash::tests::crash_cut_protocol_child";
+    const CHILD_TEST: &str = "crash::tests::crash_cut_protocol_child";
     const MODE_ENV: &str = "NIMBUS_PROCESS_CRASH_HARNESS_TEST_MODE";
     const EXPECTED_BOUNDARY: &str = "network.store.after-state-and-effect-sync";
     const EXPECTED_RECOVERY: &str = "state-committed:effect-created";

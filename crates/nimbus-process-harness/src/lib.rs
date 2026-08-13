@@ -1,3 +1,9 @@
+//! Dependency-neutral process coordination for deterministic test harnesses.
+//!
+//! The protocol owns bounded semantic checkpoints, child diagnostics, exact
+//! crash cuts, and deterministic two-process contention. Product crates use it
+//! only as a development dependency.
+
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
@@ -950,7 +956,7 @@ mod tests {
     use std::io::{self, Read, Write};
     use std::time::Duration;
 
-    const CHILD_TEST: &str = "process_harness::tests::contention_protocol_child";
+    const CHILD_TEST: &str = "tests::contention_protocol_child";
     const MODE_ENV: &str = "NIMBUS_PROCESS_HARNESS_TEST_MODE";
 
     #[test]

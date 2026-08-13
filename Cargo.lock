@@ -6627,6 +6627,7 @@ dependencies = [
  "nimbus-network",
  "nimbus-node",
  "nimbus-operator",
+ "nimbus-process-harness",
  "nimbus-sandbox",
  "nimbus-server",
  "nimbus-services",
@@ -6918,6 +6919,7 @@ dependencies = [
  "hex",
  "nimbus-core",
  "nimbus-network",
+ "nimbus-process-harness",
  "nimbus-storage",
  "nimbus-testing",
  "rand 0.8.5",
@@ -7050,6 +7052,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-process-harness"
+version = "0.1.45"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "nimbus-provenance"
 version = "0.1.45"
 dependencies = [
@@ -7173,6 +7182,7 @@ dependencies = [
  "nimbus-core",
  "nimbus-egress",
  "nimbus-network",
+ "nimbus-process-harness",
  "nimbus-proxy",
  "oci-client",
  "proptest",
@@ -7235,6 +7245,7 @@ dependencies = [
  "nimbus-node",
  "nimbus-object-storage",
  "nimbus-operator",
+ "nimbus-process-harness",
  "nimbus-provenance",
  "nimbus-runtime",
  "nimbus-s3",
@@ -7387,6 +7398,7 @@ dependencies = [
  "http 1.4.2",
  "nimbus-core",
  "nimbus-network",
+ "nimbus-process-harness",
  "nimbus-runtime",
  "nimbus-storage",
  "nimbus-tenant",

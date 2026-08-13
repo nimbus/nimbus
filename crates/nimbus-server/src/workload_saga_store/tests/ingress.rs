@@ -10,7 +10,7 @@ use nimbus_compute::workload_saga::{
 };
 use nimbus_core::TenantId;
 use nimbus_engine::Engine;
-use nimbus_testing::{
+use nimbus_process_harness::{
     ContentionOutcome, ProcessRoleSpec, SubprocessCrashCutHarness, TwoProcessContentionHarness,
     run_contention_child, run_crash_cut_child, run_crash_recovery_child,
 };
@@ -202,7 +202,9 @@ fn workload_saga_ingress_child() {
     }
 }
 
-fn run_pre_durability_crash(context: &nimbus_testing::CrashCutChildContext) -> Result<(), String> {
+fn run_pre_durability_crash(
+    context: &nimbus_process_harness::CrashCutChildContext,
+) -> Result<(), String> {
     let runtime = runtime()?;
     let engine = Arc::new(
         Engine::new(context.state_root())

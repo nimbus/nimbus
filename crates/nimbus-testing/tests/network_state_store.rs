@@ -6,7 +6,7 @@ use nimbus_network::test_support::{
     NetworkStateDurabilityEvent, transaction_with_durability_observer,
 };
 use nimbus_network::{LocalNetworkStateStore, NetworkStatePartition, NetworkStateTransactionError};
-use nimbus_testing::{
+use nimbus_process_harness::{
     ContentionOutcome, ProcessRoleSpec, SubprocessCrashCutHarness, TwoProcessContentionHarness,
     run_contention_child, run_crash_cut_child, run_crash_recovery_child,
 };

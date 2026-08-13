@@ -88,6 +88,7 @@ serde_json.workspace = true
 nimbus-engine = { path = "../nimbus-engine", default-features = false, features = [
     "test-hooks",
 ] }
+nimbus-process-harness = { path = "../nimbus-process-harness" }
 nimbus-testing = { path = "../nimbus-testing", default-features = false }
 serial_test.workspace = true
 tempfile.workspace = true
