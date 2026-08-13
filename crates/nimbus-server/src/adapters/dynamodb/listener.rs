@@ -78,19 +78,19 @@ pub(crate) fn guard_lookup_is_loopback_only(
     Ok(())
 }
 
-/// Serve the DynamoDB HTTP listener until the spawned task is aborted.
+/// Serve the DynamoDB HTTP listener until its listener-group task is cancelled.
 pub async fn run_listener(
     listener: TcpListener,
     engine: Arc<Engine>,
     access_keys: AccessKeyRegistry,
-) {
+) -> std::io::Result<()> {
     info!(
         "DynamoDB listener started on {:?}",
         listener.local_addr().ok()
     );
-    if let Err(error) = axum::serve(listener, router(engine, access_keys)).await {
-        error!("DynamoDB listener error: {error}");
-    }
+    axum::serve(listener, router(engine, access_keys))
+        .await
+        .inspect_err(|error| error!("DynamoDB listener error: {error}"))
 }
 
 /// `POST /` — authenticate by access key and dispatch by `X-Amz-Target`.

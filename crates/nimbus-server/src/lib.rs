@@ -8,6 +8,7 @@ mod error_envelope;
 mod http;
 mod latency;
 mod license;
+mod listener_group;
 mod listener_lease;
 mod local_server;
 mod network_capabilities;

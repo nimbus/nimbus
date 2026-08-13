@@ -16,11 +16,11 @@ use crate::adapters::mongodb::MongoDbConfig;
 use crate::adapters::s3::S3Config;
 use crate::adapters::wire::WireProtocolAdapter;
 use crate::license::LicenseState;
+use crate::listener_group::{WireListenerGroup, append_cleanup_error};
 use crate::listener_lease::{
-    ActiveServerListenerLease, ExternalServerListenerContext, LeasedServerListener,
-    PreboundServerListener, PreboundServerListeners, PreparedServerListener,
-    RecordedListenerBindFailure, ServerListenerLeaseAuthority,
-    abandon_prepared_after_guard_failure,
+    ExternalServerListenerContext, LeasedServerListener, PreboundServerListener,
+    PreboundServerListeners, PreparedServerListener, RecordedListenerBindFailure,
+    ServerListenerLeaseAuthority, abandon_prepared_after_guard_failure,
 };
 use crate::local_server::LocalServerSecurityState;
 use crate::machine_lifecycle::MachineLifecycleManager;
@@ -169,6 +169,12 @@ impl ServeOptions {
 
     fn with_router_options(mut self, update: impl FnOnce(RouterOptions) -> RouterOptions) -> Self {
         self.router_options = update(self.router_options);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_wire_adapter(mut self, adapter: Box<dyn WireProtocolAdapter>) -> Self {
+        self.wire_adapters.push(adapter);
         self
     }
 
@@ -423,8 +429,7 @@ pub async fn serve_leased(
         mut prebound_wire_listeners,
     } = options;
     let mut main_listener = Some(listener);
-    let mut adapter_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
-    let mut adapter_leases: Vec<ActiveServerListenerLease> = Vec::new();
+    let mut listener_group = WireListenerGroup::new();
 
     let mut result = async {
         let engine = router_options.engine();
@@ -434,9 +439,9 @@ pub async fn serve_leased(
         }
         let config = router_options.into_build_config();
 
-        // Sibling adapter listeners share the same `Arc<Engine>`. Keep every
-        // task and lease outside this fallible setup block so all synchronous
-        // returns converge through one confirmed-close cleanup path.
+        // Sibling adapter listeners share the same `Arc<Engine>`. The group
+        // retains every prepared or spawned task and active lease across this
+        // fallible setup block so every return uses one cleanup path.
         for (ordinal, adapter) in wire_adapters.into_iter().enumerate() {
             let requested_addr = adapter.bind_addr();
             let leased_listener = if let Some(prebound) = prebound_wire_listeners
@@ -578,8 +583,12 @@ pub async fn serve_leased(
                 }
                 return result;
             }
-            adapter_handles.extend(adapter.spawn(adapter_listener, Arc::clone(&engine)));
-            adapter_leases.push(adapter_lease);
+            listener_group.prepare(
+                adapter,
+                adapter_listener,
+                adapter_lease,
+                Arc::clone(&engine),
+            )?;
         }
 
         if let Some(unused_name) = prebound_wire_listeners
@@ -599,10 +608,15 @@ pub async fn serve_leased(
             );
         }
 
+        listener_group.activate();
         let listener = main_listener
             .take()
             .expect("the main listener must be consumed exactly once");
-        serve_with_router_config(listener, config, tls_config).await
+        listener_group
+            .supervise(Box::pin(serve_with_router_config(
+                listener, config, tls_config,
+            )))
+            .await
     }
     .await;
 
@@ -611,39 +625,10 @@ pub async fn serve_leased(
         &mut prebound_wire_listeners,
         "sibling-listener setup failure",
     );
-    let main_was_served = main_listener.is_none();
     // A synchronous setup error leaves the main socket here. Dropping it
     // proves local closure before the lease is settled below.
     drop(main_listener.take());
-
-    if main_was_served {
-        // Abort every sibling before awaiting any one cancellation. A
-        // cancellation-resistant first task must not delay closure of later
-        // listeners.
-        for handle in &adapter_handles {
-            handle.abort();
-        }
-        for handle in adapter_handles {
-            let _ = handle.await;
-        }
-        for lease in adapter_leases {
-            if let Err(error) = lease.settle_after_confirmed_local_close() {
-                result = append_cleanup_error(
-                    result,
-                    "failed to settle a sibling listener lease after confirmed task closure",
-                    error,
-                );
-            }
-        }
-    } else {
-        // NNC7.1a owns atomic preparation/unwind of siblings that started
-        // before a later synchronous setup failure. Dropping these handles
-        // deliberately preserves the pre-existing detached-task behavior and
-        // their Active durable fences; NNC3.5 must not manufacture provider
-        // absence or release those leases.
-        drop(adapter_handles);
-        drop(adapter_leases);
-    }
+    result = listener_group.shutdown(result).await;
     if let Err(error) = main_lease.settle_after_confirmed_local_close() {
         result = append_cleanup_error(
             result,
@@ -713,23 +698,6 @@ fn close_prebound_bundle_after_error(
     }
 }
 
-fn append_cleanup_error(
-    result: std::io::Result<()>,
-    context: &str,
-    cleanup_error: std::io::Error,
-) -> std::io::Result<()> {
-    match result {
-        Ok(()) => Err(std::io::Error::new(
-            cleanup_error.kind(),
-            format!("{context}: {cleanup_error}"),
-        )),
-        Err(primary) => Err(std::io::Error::new(
-            primary.kind(),
-            format!("{primary}; {context}: {cleanup_error}"),
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -744,9 +712,9 @@ mod tests {
     };
     use nimbus_testing::EngineFixture;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::task::AbortHandle;
 
     use super::*;
+    use crate::adapters::wire::WireProtocolTasks;
 
     const TEST_LISTENER_LIVENESS_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -825,7 +793,6 @@ mod tests {
 
     struct ProbeAdapter {
         bound_addr: Arc<Mutex<Option<SocketAddr>>>,
-        abort_handle: Arc<Mutex<Option<AbortHandle>>>,
     }
 
     impl WireProtocolAdapter for ProbeAdapter {
@@ -849,21 +816,18 @@ mod tests {
             Ok(())
         }
 
-        fn spawn(
+        fn build_tasks(
             self: Box<Self>,
-            listener: tokio::net::TcpListener,
             _engine: Arc<Engine>,
-        ) -> Vec<tokio::task::JoinHandle<()>> {
-            let task = tokio::spawn(async move {
-                if let Ok((mut stream, _)) = listener.accept().await {
-                    let _ = stream.write_all(b"still-live").await;
-                }
-            });
-            *self
-                .abort_handle
-                .lock()
-                .expect("abort handle lock should remain healthy") = Some(task.abort_handle());
-            vec![task]
+        ) -> std::io::Result<WireProtocolTasks> {
+            Ok(WireProtocolTasks::new("listener", move |listener| {
+                Box::pin(async move {
+                    if let Ok((mut stream, _)) = listener.accept().await {
+                        let _ = stream.write_all(b"still-live").await;
+                    }
+                    Ok(())
+                })
+            }))
         }
     }
 
@@ -888,12 +852,11 @@ mod tests {
             unreachable!("the occupied address must fail before guard")
         }
 
-        fn spawn(
+        fn build_tasks(
             self: Box<Self>,
-            _listener: tokio::net::TcpListener,
             _engine: Arc<Engine>,
-        ) -> Vec<tokio::task::JoinHandle<()>> {
-            unreachable!("the occupied address must fail before spawn")
+        ) -> std::io::Result<WireProtocolTasks> {
+            unreachable!("the occupied address must fail before task construction")
         }
     }
 
@@ -938,16 +901,18 @@ mod tests {
             }
         }
 
-        fn spawn(
+        fn build_tasks(
             self: Box<Self>,
-            listener: tokio::net::TcpListener,
             _engine: Arc<Engine>,
-        ) -> Vec<tokio::task::JoinHandle<()>> {
-            vec![tokio::spawn(async move {
-                if let Ok((mut stream, _)) = listener.accept().await {
-                    let _ = stream.write_all(b"lease-owned").await;
-                }
-            })]
+        ) -> std::io::Result<WireProtocolTasks> {
+            Ok(WireProtocolTasks::new("listener", move |listener| {
+                Box::pin(async move {
+                    if let Ok((mut stream, _)) = listener.accept().await {
+                        let _ = stream.write_all(b"lease-owned").await;
+                    }
+                    Ok(())
+                })
+            }))
         }
     }
 
@@ -982,16 +947,18 @@ mod tests {
             }
         }
 
-        fn spawn(
+        fn build_tasks(
             self: Box<Self>,
-            listener: tokio::net::TcpListener,
             _engine: Arc<Engine>,
-        ) -> Vec<tokio::task::JoinHandle<()>> {
-            vec![tokio::spawn(async move {
-                if let Ok((mut stream, _)) = listener.accept().await {
-                    let _ = stream.write_all(b"prebound-owned").await;
-                }
-            })]
+        ) -> std::io::Result<WireProtocolTasks> {
+            Ok(WireProtocolTasks::new("listener", move |listener| {
+                Box::pin(async move {
+                    if let Ok((mut stream, _)) = listener.accept().await {
+                        let _ = stream.write_all(b"prebound-owned").await;
+                    }
+                    Ok(())
+                })
+            }))
         }
     }
 
@@ -1410,11 +1377,8 @@ mod tests {
     }
 
     #[tokio::test]
-    // This is the NNC0.7 fail-before executable baseline for NNCF17. A later
-    // adapter bind fails after the first adapter owns a live socket/task.
-    // NNC7.1a must turn it green with structured group preparation/unwind and
-    // remove the ignore marker.
-    #[ignore = "NNC0.7 expected red until partial sibling-listener startup unwinds and joins every earlier task"]
+    // NNC0.7 captured this as the NNCF17 fail-before. The structured listener
+    // group now makes it an ordinary regression test.
     async fn nnc0_7_kth_adapter_failure_must_not_leave_prior_listener_live() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -1427,11 +1391,9 @@ mod tests {
             .local_addr()
             .expect("external owner address should resolve");
         let bound_addr = Arc::new(Mutex::new(None));
-        let abort_handle = Arc::new(Mutex::new(None));
         let mut options = direct_options(fixture.engine());
         options.wire_adapters.push(Box::new(ProbeAdapter {
             bound_addr: Arc::clone(&bound_addr),
-            abort_handle: Arc::clone(&abort_handle),
         }));
         options.wire_adapters.push(Box::new(OccupiedAdapter {
             addr: occupied_addr,
@@ -1457,14 +1419,6 @@ mod tests {
         })
         .await;
         let prior_listener_served = matches!(survivor, Ok(Ok(bytes)) if &bytes == b"still-live");
-
-        if let Some(handle) = abort_handle
-            .lock()
-            .expect("abort handle lock should remain healthy")
-            .take()
-        {
-            handle.abort();
-        }
 
         assert!(
             !prior_listener_served,
