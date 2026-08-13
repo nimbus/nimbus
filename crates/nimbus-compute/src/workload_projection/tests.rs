@@ -1,9 +1,11 @@
+use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 use std::num::NonZeroU16;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use nimbus_core::TenantId;
+use nimbus_engine::Engine;
 use nimbus_network::{
     NetworkAddressFamily, NetworkAttachmentHandle, NetworkAttachmentId,
     NetworkAttachmentProviderRegistration, NetworkBindRealmKind, NetworkCapabilityBundle,
@@ -18,6 +20,7 @@ use nimbus_sandbox::{
     SandboxBackendKind, SandboxExecutionAttemptId, SandboxOwnerSpec, SandboxPortBinding,
     SandboxProcessSpec, SandboxRootSpec, SandboxSpec, sandbox_network_plan_requirements,
 };
+use nimbus_services::{EmptyServiceDefinitionCatalog, ServiceBackend, ServiceManager};
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision,
     WorkloadAttributes, WorkloadLocation,
@@ -246,10 +249,45 @@ fn fixture_with_endpoints(
     publication: WorkloadPublicationIntent,
     endpoints: &[(&str, u16)],
 ) -> Fixture {
+    fixture_with_source(publication, endpoints, false)
+}
+
+fn service_fixture_with_endpoints(
+    publication: WorkloadPublicationIntent,
+    endpoints: &[(&str, u16)],
+) -> Fixture {
+    fixture_with_source(publication, endpoints, true)
+}
+
+fn fixture_with_source(
+    publication: WorkloadPublicationIntent,
+    endpoints: &[(&str, u16)],
+    service_source: bool,
+) -> Fixture {
+    fixture_with_source_identity(
+        publication,
+        endpoints,
+        service_source,
+        5,
+        "projection-source-v1",
+    )
+}
+
+fn fixture_with_source_identity(
+    publication: WorkloadPublicationIntent,
+    endpoints: &[(&str, u16)],
+    service_source: bool,
+    source_generation: u64,
+    source_resource_version: &str,
+) -> Fixture {
     let tenant = TenantId::new(TENANT).expect("fixture tenant should validate");
     let mut spec = SandboxSpec::new(
         tenant.clone(),
-        SandboxOwnerSpec::standalone_named(PROFILE),
+        if service_source {
+            SandboxOwnerSpec::service(PROFILE)
+        } else {
+            SandboxOwnerSpec::standalone_named(PROFILE)
+        },
         SandboxBackendKind::Krun,
         SandboxRootSpec::rootfs("/fixture/rootfs"),
         SandboxProcessSpec::new(["/bin/true"]),
@@ -262,11 +300,13 @@ fn fixture_with_endpoints(
         .with_workload_location(WorkloadLocation::new().with_node_id("node-projection"));
     let decision = context
         .admit_decision(
-            TenantIsolationPolicyInput::new(
+            TenantIsolationPolicyInput::new(if service_source {
+                WorkloadAttributes::service(PROFILE).with_sandbox_backend(SandboxBackendKind::Krun)
+            } else {
                 WorkloadAttributes::sandbox(PROFILE)
                     .with_sandbox_id(WORKLOAD)
-                    .with_sandbox_backend(SandboxBackendKind::Krun),
-            )
+                    .with_sandbox_backend(SandboxBackendKind::Krun)
+            })
             .with_services(TenantServiceGrantPolicyDecision::new(std::iter::empty::<
                 String,
             >())),
@@ -312,7 +352,7 @@ fn fixture_with_endpoints(
     );
     let execution_provider =
         WorkloadExecutionProviderId::for_registration_key("projection-execution");
-    let source_version = WorkloadProvisionSourceResourceVersion::new("projection-source-v1")
+    let source_version = WorkloadProvisionSourceResourceVersion::new(source_resource_version)
         .expect("source version should validate");
     let endpoint_semantics = endpoints
         .iter()
@@ -324,16 +364,26 @@ fn fixture_with_endpoints(
             )
         })
         .collect::<Vec<_>>();
+    let source = if service_source {
+        WorkloadProvisionSourceSnapshot::SandboxBackedService {
+            service_name: PROFILE,
+            source_generation: WorkloadProvisionSourceGeneration::new(source_generation),
+            resource_version: &source_version,
+            sandbox_spec: &spec,
+        }
+    } else {
+        WorkloadProvisionSourceSnapshot::StandaloneSandbox {
+            stable_resource_id: WORKLOAD,
+            profile: PROFILE,
+            source_generation: WorkloadProvisionSourceGeneration::new(source_generation),
+            resource_version: &source_version,
+            sandbox_spec: &spec,
+        }
+    };
     let composed = compose_workload_provision(WorkloadProvisionCompositionInput {
         decision: &decision,
         local_node: &NodeIdentity::new("node-projection").expect("node should validate"),
-        source: WorkloadProvisionSourceSnapshot::StandaloneSandbox {
-            stable_resource_id: WORKLOAD,
-            profile: PROFILE,
-            source_generation: WorkloadProvisionSourceGeneration::new(5),
-            resource_version: &source_version,
-            sandbox_spec: &spec,
-        },
+        source,
         execution_provider_id: &execution_provider,
         capability_selection: &selection,
         capability_registry: &registry,
@@ -894,7 +944,10 @@ async fn sink_unavailability_is_pending_while_semantic_rejection_is_terminal() {
 
 #[tokio::test]
 async fn publish_when_ready_requires_exact_provider_assigned_endpoint_evidence() {
-    let fixture = fixture(WorkloadPublicationIntent::PublishWhenReady);
+    let fixture = service_fixture_with_endpoints(
+        WorkloadPublicationIntent::PublishWhenReady,
+        &[("api", 8_080)],
+    );
     let provider = RecordingProvider::new(
         WorkloadProviderObservation::Present(exact_inspection(&fixture.observed)),
         WorkloadProviderObservation::Present(vec![exact_ingress(&fixture.observed)]),
@@ -943,6 +996,123 @@ async fn publish_when_ready_requires_exact_provider_assigned_endpoint_evidence()
         endpoint_handle.endpoint(),
         &projections[0].handle().published_endpoints[0]
     );
+    let system = projections[0]
+        .system_connectivity()
+        .expect("sandbox-backed service should carry exact system connectivity");
+    assert_eq!(system.tenant_id(), fixture.observed.key().tenant_id());
+    assert_eq!(
+        system.service_name(),
+        fixture
+            .observed
+            .active_intent()
+            .source()
+            .source_identity()
+            .stable_name()
+    );
+    assert_eq!(
+        system.source_generation(),
+        fixture
+            .observed
+            .active_intent()
+            .source()
+            .source_generation()
+            .as_u64()
+    );
+    assert_eq!(system.endpoints().len(), 1);
+    assert_eq!(
+        system.endpoints()[0].endpoint(),
+        &projections[0].published_endpoint_handles()[0]
+    );
+    assert_eq!(
+        system.endpoints()[0].listener().listener_id(),
+        fixture
+            .observed
+            .active_intent()
+            .network()
+            .compiled_plan()
+            .content()
+            .listeners()[0]
+            .listener_id()
+    );
+}
+
+#[tokio::test]
+async fn system_projection_unavailability_cannot_change_services_observation() {
+    let tenant_id = TenantId::new(TENANT).expect("fixture tenant should validate");
+    let service_spec = SandboxSpec::new(
+        tenant_id.clone(),
+        SandboxOwnerSpec::service(PROFILE),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::rootfs("/fixture/rootfs"),
+        SandboxProcessSpec::new(["/bin/true"]),
+    )
+    .with_port_binding(SandboxPortBinding::tcp("api", 0, 8_080));
+    let manager = Arc::new(ServiceManager::new(
+        Arc::new(EmptyServiceDefinitionCatalog),
+        SandboxBackendKind::Krun,
+    ));
+    let definition = manager
+        .create_service_definition(
+            &tenant_id,
+            PROFILE,
+            ServiceBackend::sandbox(service_spec),
+            BTreeMap::new(),
+        )
+        .expect("service definition should create");
+    let fixture = fixture_with_source_identity(
+        WorkloadPublicationIntent::PublishWhenReady,
+        &[("api", 8_080)],
+        true,
+        definition.generation,
+        &definition.resource_version,
+    );
+    let provider = RecordingProvider::new(
+        WorkloadProviderObservation::Present(exact_inspection(&fixture.observed)),
+        WorkloadProviderObservation::Present(vec![exact_ingress(&fixture.observed)]),
+    );
+    let recording_sink = Arc::new(RecordingSink::default());
+    assert_eq!(
+        orchestrator(&fixture, provider.clone(), recording_sink.clone())
+            .project_record(&fixture.observed, WorkloadProvisionRunDisposition::Observed)
+            .await,
+        WorkloadProjectionState::Projected
+    );
+    let projection = recording_sink
+        .projections()
+        .into_iter()
+        .next()
+        .expect("authenticated projection should exist");
+
+    let engine_root = tempfile::tempdir().expect("engine root should create");
+    let engine = Arc::new(Engine::new(engine_root.path()).expect("engine should create"));
+    let system_projection = nimbus_system::SystemConnectivityProjectionRuntime::new(&engine);
+    drop(engine);
+    let sink = ServiceManagerWorkloadProjectionSink::with_system_connectivity_projection(
+        manager.clone(),
+        system_projection,
+    );
+    sink.project(&projection)
+        .await
+        .expect("services projection must succeed when system projection is unavailable");
+
+    let observed = manager
+        .service_definition_observation_for_tenant(&tenant_id, PROFILE)
+        .expect("services-owned observation should remain authoritative");
+    assert_eq!(observed.handle, projection.handle().clone());
+    assert_eq!(
+        observed.published_endpoints,
+        projection.published_endpoint_handles()
+    );
+    assert_eq!(
+        manager
+            .service_definition_for_tenant(&tenant_id, PROFILE)
+            .expect("service definition should remain")
+            .resource_version,
+        definition.resource_version
+    );
+    assert_eq!(provider.execution_calls.load(Ordering::Acquire), 1);
+    assert_eq!(provider.ingress_calls.load(Ordering::Acquire), 1);
+    assert_eq!(provider.effect_calls.load(Ordering::Acquire), 0);
 }
 
 #[tokio::test]

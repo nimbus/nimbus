@@ -437,6 +437,8 @@ pub async fn serve_leased(
 
     let mut result = async {
         let engine = router_options.engine();
+        let system_connectivity_projection =
+            nimbus_system::SystemConnectivityProjectionRuntime::new(&engine);
         let main_evidence = main_lease.observation_evidence().ok_or_else(|| {
             std::io::Error::other("main listener carries crossed active lease evidence")
         })?;
@@ -445,13 +447,9 @@ pub async fn serve_leased(
         } else {
             "http+websocket"
         };
-        record_physical_listener_observation(
-            &engine,
-            "nimbus-server",
-            main_protocol,
-            &main_evidence,
-        )
-        .await?;
+        let main_observation =
+            physical_listener_observation("nimbus-server", main_protocol, &main_evidence)?;
+        system_connectivity_projection.project_port_listener(main_observation);
         if !router_options.has_system_convex_registry() {
             router_options =
                 router_options.with_system_convex_registry(load_default_system_convex_registry()?);
@@ -595,25 +593,26 @@ pub async fn serve_leased(
                     return result;
                 }
             };
-            if let Err(error) = record_physical_listener_observation(
-                &engine,
+            let adapter_observation = match physical_listener_observation(
                 adapter.name(),
                 adapter.protocol(),
                 &adapter_evidence,
-            )
-            .await
-            {
-                drop(adapter_listener);
-                let mut result = Err(error);
-                if let Err(cleanup_error) = adapter_lease.settle_after_confirmed_local_close() {
-                    result = append_cleanup_error(
-                        result,
-                        "failed to settle the sibling lease after its projection failed",
-                        cleanup_error,
-                    );
+            ) {
+                Ok(observation) => observation,
+                Err(error) => {
+                    drop(adapter_listener);
+                    let mut result = Err(error);
+                    if let Err(cleanup_error) = adapter_lease.settle_after_confirmed_local_close() {
+                        result = append_cleanup_error(
+                            result,
+                            "failed to settle the sibling lease after invalid evidence",
+                            cleanup_error,
+                        );
+                    }
+                    return result;
                 }
-                return result;
-            }
+            };
+            system_connectivity_projection.project_port_listener(adapter_observation);
             listener_group.prepare(
                 adapter,
                 adapter_listener,
@@ -670,18 +669,17 @@ pub async fn serve_leased(
     result
 }
 
-async fn record_physical_listener_observation(
-    engine: &Arc<Engine>,
+fn physical_listener_observation(
     adapter: &str,
     application_protocol: &str,
     evidence: &ActiveServerListenerEvidence,
-) -> std::io::Result<()> {
+) -> std::io::Result<nimbus_system::SystemPortListenerObservation> {
     let NetworkResourceId::Listener(listener_id) = evidence.request().owner_id() else {
         return Err(std::io::Error::other(format!(
             "{adapter} physical listener lease is owned by a non-listener resource"
         )));
     };
-    let observation = nimbus_system::SystemPortListenerObservation::new(
+    nimbus_system::SystemPortListenerObservation::new(
         adapter,
         application_protocol,
         listener_id.clone(),
@@ -701,11 +699,8 @@ async fn record_physical_listener_observation(
             ),
         ],
     )
-    .map_err(|error| std::io::Error::other(error.to_string()))?
-    .with_version(env!("CARGO_PKG_VERSION"));
-    nimbus_system::record_port_listener_observation_async(engine, &observation)
-        .await
-        .map_err(|error| std::io::Error::other(error.to_string()))
+    .map(|observation| observation.with_version(env!("CARGO_PKG_VERSION")))
+    .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
 fn bind_failure_error(

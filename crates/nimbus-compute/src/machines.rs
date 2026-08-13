@@ -115,8 +115,8 @@ pub async fn create_machine(
             volumes: request.volumes.unwrap_or_default(),
         })
         .await?;
-    record_machine_snapshot(compute, &snapshot.config, &snapshot.state).await?;
-    record_machine_event(compute, "create", &snapshot.config, &snapshot.state).await?;
+    record_machine_snapshot(compute, &snapshot.config, &snapshot.state);
+    record_machine_event(compute, "create", &snapshot.config, &snapshot.state);
     Ok(MachineLifecycleResponse::from_snapshot(
         &snapshot.config,
         &snapshot.state,
@@ -129,8 +129,8 @@ pub async fn start_machine(
 ) -> Result<MachineLifecycleResponse, ComputeError> {
     let manager = machine_lifecycle_manager(compute)?;
     let snapshot = manager.start_machine(name).await?;
-    record_machine_snapshot(compute, &snapshot.config, &snapshot.state).await?;
-    record_machine_event(compute, "start", &snapshot.config, &snapshot.state).await?;
+    record_machine_snapshot(compute, &snapshot.config, &snapshot.state);
+    record_machine_event(compute, "start", &snapshot.config, &snapshot.state);
     Ok(MachineLifecycleResponse::from_snapshot(
         &snapshot.config,
         &snapshot.state,
@@ -143,8 +143,8 @@ pub async fn stop_machine(
 ) -> Result<MachineLifecycleResponse, ComputeError> {
     let manager = machine_lifecycle_manager(compute)?;
     let snapshot = manager.stop_machine(name).await?;
-    record_machine_snapshot(compute, &snapshot.config, &snapshot.state).await?;
-    record_machine_event(compute, "stop", &snapshot.config, &snapshot.state).await?;
+    record_machine_snapshot(compute, &snapshot.config, &snapshot.state);
+    record_machine_event(compute, "stop", &snapshot.config, &snapshot.state);
     Ok(MachineLifecycleResponse::from_snapshot(
         &snapshot.config,
         &snapshot.state,
@@ -157,8 +157,8 @@ pub async fn restart_machine(
 ) -> Result<MachineLifecycleResponse, ComputeError> {
     let manager = machine_lifecycle_manager(compute)?;
     let snapshot = manager.restart_machine(name).await?;
-    record_machine_snapshot(compute, &snapshot.config, &snapshot.state).await?;
-    record_machine_event(compute, "restart", &snapshot.config, &snapshot.state).await?;
+    record_machine_snapshot(compute, &snapshot.config, &snapshot.state);
+    record_machine_event(compute, "restart", &snapshot.config, &snapshot.state);
     Ok(MachineLifecycleResponse::from_snapshot(
         &snapshot.config,
         &snapshot.state,
@@ -179,8 +179,8 @@ pub async fn update_machine(
             disk_gib: request.disk_gib,
         })
         .await?;
-    record_machine_snapshot(compute, &snapshot.config, &snapshot.state).await?;
-    record_machine_event(compute, "update", &snapshot.config, &snapshot.state).await?;
+    record_machine_snapshot(compute, &snapshot.config, &snapshot.state);
+    record_machine_event(compute, "update", &snapshot.config, &snapshot.state);
     Ok(MachineLifecycleResponse::from_snapshot(
         &snapshot.config,
         &snapshot.state,
@@ -193,10 +193,10 @@ pub async fn delete_machine(
 ) -> Result<MachineDeleteResponse, ComputeError> {
     let manager = machine_lifecycle_manager(compute)?;
     let snapshot = manager.delete_machine(name).await?;
-    nimbus_system::delete_machine_state_async(&compute.engine, &snapshot.config.name)
-        .await
-        .map_err(ComputeError::from)?;
-    record_machine_delete_event(compute, &snapshot.config, &snapshot.state).await?;
+    compute
+        .system_connectivity_projection()
+        .project_machine_deletion(snapshot.config.name.clone());
+    record_machine_delete_event(compute, &snapshot.config, &snapshot.state);
     Ok(MachineDeleteResponse {
         name: snapshot.config.name,
         state: "deleted".to_owned(),
@@ -238,22 +238,22 @@ impl From<&MachineRuntimeState> for MachineRuntimeResponse {
     }
 }
 
-async fn record_machine_snapshot(
+fn record_machine_snapshot(
     compute: &ComputeState,
     config: &MachineConfigRecord,
     snapshot: &MachineStateRecord,
-) -> Result<(), ComputeError> {
-    nimbus_system::record_machine_state_async(&compute.engine, config, snapshot)
-        .await
-        .map_err(ComputeError::from)
+) {
+    compute
+        .system_connectivity_projection()
+        .project_machine_state(config.clone(), snapshot.clone());
 }
 
-async fn record_machine_event(
+fn record_machine_event(
     compute: &ComputeState,
     action: &str,
     config: &MachineConfigRecord,
     snapshot: &MachineStateRecord,
-) -> Result<(), ComputeError> {
+) {
     let message = format!(
         "machine `{}` {} completed with state {}",
         config.name,
@@ -261,12 +261,11 @@ async fn record_machine_event(
         snapshot.lifecycle.as_str()
     );
     let correlation_id = format!("machine:{}:{action}", config.name);
-    nimbus_system::record_system_event_async(
-        &compute.engine,
-        "machine",
-        "info",
-        "machine.lifecycle",
-        &message,
+    schedule_machine_event(
+        compute,
+        config.name.clone(),
+        action.to_owned(),
+        message,
         serde_json::json!({
             "action": action,
             "machineId": config.name.as_str(),
@@ -274,29 +273,26 @@ async fn record_machine_event(
             "manager": snapshot.manager.as_str(),
             "provider": config.provider.as_str(),
         }),
-        Some(&correlation_id),
-    )
-    .await
-    .map_err(ComputeError::from)
+        correlation_id,
+    );
 }
 
-async fn record_machine_delete_event(
+fn record_machine_delete_event(
     compute: &ComputeState,
     config: &MachineConfigRecord,
     snapshot: &MachineStateRecord,
-) -> Result<(), ComputeError> {
+) {
     let message = format!(
         "machine `{}` delete completed from state {}",
         config.name,
         snapshot.lifecycle.as_str()
     );
     let correlation_id = format!("machine:{}:delete", config.name);
-    nimbus_system::record_system_event_async(
-        &compute.engine,
-        "machine",
-        "info",
-        "machine.lifecycle",
-        &message,
+    schedule_machine_event(
+        compute,
+        config.name.clone(),
+        "delete".to_owned(),
+        message,
         serde_json::json!({
             "action": "delete",
             "machineId": config.name.as_str(),
@@ -305,10 +301,49 @@ async fn record_machine_delete_event(
             "manager": snapshot.manager.as_str(),
             "provider": config.provider.as_str(),
         }),
-        Some(&correlation_id),
-    )
-    .await
-    .map_err(ComputeError::from)
+        correlation_id,
+    );
+}
+
+fn schedule_machine_event(
+    compute: &ComputeState,
+    machine_name: String,
+    action: String,
+    message: String,
+    data: serde_json::Value,
+    correlation_id: String,
+) {
+    let engine = Arc::clone(&compute.engine);
+    let projection_machine = machine_name.clone();
+    let projection_action = action.clone();
+    let work = async move {
+        if let Err(error) = nimbus_system::record_system_event_async(
+            &engine,
+            "machine",
+            "info",
+            "machine.lifecycle",
+            &message,
+            data,
+            Some(&correlation_id),
+        )
+        .await
+        {
+            tracing::warn!(
+                %error,
+                machine = %projection_machine,
+                action = %projection_action,
+                "machine event projection failed"
+            );
+        }
+    };
+    if let Err(error) = compute.engine.try_spawn_observer_work(work) {
+        tracing::warn!(
+            %error,
+            machine = %machine_name,
+            action = %action,
+            "could not schedule machine event projection"
+        );
+    }
 }
 
 fn machine_lifecycle_manager(

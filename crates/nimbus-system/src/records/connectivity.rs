@@ -4,13 +4,16 @@
 //! mutate network authority, bind an address, publish a route, or decide
 //! desired state.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
-use nimbus_core::{Result, TenantId};
+use nimbus_core::{
+    AtomicWrite, AtomicWriteBatch, Document, DocumentId, DocumentLocator, Error, Filter, FilterOp,
+    PrincipalContext, Query, Result, TenantId, WriteKey, WritePrecondition, WriteSetMode,
+};
 use nimbus_engine::Engine;
 use nimbus_machine::MachineSshPortLeaseIdentity;
 use nimbus_network::{
@@ -28,10 +31,7 @@ use crate::keys::{
 };
 use crate::schema::SystemTable;
 
-use super::{
-    ensure_system_tenant_async, object_fields, query_system_documents_by_eq_async,
-    upsert_system_document_async,
-};
+use super::{ensure_system_tenant_async, object_fields, upsert_system_document_async};
 
 /// Rejected crossed or incomplete observed connectivity evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -561,8 +561,7 @@ pub async fn record_port_listener_observation_async(
     input: &SystemPortListenerObservation,
 ) -> Result<()> {
     ensure_system_tenant_async(engine).await?;
-    record_port_listener_documents_async(engine, input, None, input.machine_id.as_deref(), None)
-        .await
+    publish_port_listener_fenced_async(engine, input.clone()).await
 }
 
 /// Write one observed Unix listener without fabricating a host-port lease.
@@ -604,56 +603,237 @@ pub async fn record_service_connectivity_observation_async(
     input: &SystemServiceConnectivityObservation,
 ) -> Result<()> {
     ensure_system_tenant_async(engine).await?;
-    let service_id = service_document_id(&input.tenant_id, &input.service_name);
-    delete_service_connectivity_children_async(engine, &service_id).await?;
+    publish_service_connectivity_fenced_async(engine, input.clone()).await
+}
 
-    let endpoints = input
-        .endpoints
-        .iter()
-        .map(endpoint_fields)
-        .collect::<Vec<_>>();
-    upsert_system_document_async(
-        engine,
-        SystemTable::Services,
-        &service_id,
-        object_fields(json!({
-            "tenantId": input.tenant_id.as_str(),
-            "name": input.service_name,
-            "kind": "sandbox",
-            "sourceGeneration": input.source_generation.to_string(),
-            "attachmentId": input.attachment.attachment_id().as_str(),
-            "generation": input.attachment.generation().as_u64().to_string(),
-            "attachmentProviderId": input.attachment_provider_id.as_str(),
-            "observedPhase": phase_label(input.observed_phase),
-            "endpoints": endpoints,
-            "conditions": condition_fields(&input.conditions),
-            "cleanupState": cleanup_state(input.observed_phase, &input.conditions),
-        })),
-    )
-    .await?;
+const MAX_CONNECTIVITY_CONFLICT_ATTEMPTS: usize = 8;
 
-    for endpoint in &input.endpoints {
-        let guest_port = endpoint.endpoint.endpoint().guest_port;
-        record_port_listener_documents_async(
-            engine,
-            &endpoint.listener,
-            Some(&service_id),
-            None,
-            guest_port,
-        )
-        .await?;
-        record_connectivity_route_async(engine, &service_id, &input.tenant_id, endpoint).await?;
+async fn publish_port_listener_fenced_async(
+    engine: &Arc<Engine>,
+    input: SystemPortListenerObservation,
+) -> Result<()> {
+    for attempt in 1..=MAX_CONNECTIVITY_CONFLICT_ATTEMPTS {
+        let engine = Arc::clone(engine);
+        let input = input.clone();
+        let result =
+            tokio::task::spawn_blocking(move || publish_port_listener_once(&engine, &input))
+                .await
+                .map_err(|error| {
+                    Error::Internal(format!("listener projection task failed: {error}"))
+                })?;
+        match result {
+            Err(error @ Error::Conflict { .. }) if attempt < MAX_CONNECTIVITY_CONFLICT_ATTEMPTS => {
+                drop(error);
+            }
+            Err(error @ Error::Conflict { .. }) => {
+                return Err(error.with_conflict_attempts(attempt));
+            }
+            other => return other,
+        }
     }
+    unreachable!("the bounded listener projection conflict loop always returns")
+}
+
+fn publish_port_listener_once(
+    engine: &Arc<Engine>,
+    input: &SystemPortListenerObservation,
+) -> Result<()> {
+    let unit =
+        engine.begin_mutation_execution_unit(system_tenant_id()?, PrincipalContext::system())?;
+    let listener_table = SystemTable::Listeners.table_name()?;
+    let port_table = SystemTable::Ports.table_name()?;
+    let listener_id = DocumentId::from_key(listener_document_id(&input.listener_id))?;
+    let port_id = DocumentId::from_key(port_document_id(&input.port_lease_id))?;
+    let incoming = (input.generation.as_u64(), input.lease_epoch.as_u64());
+    if [
+        unit.get_document(&listener_table, listener_id.clone())?,
+        unit.get_document(&port_table, port_id.clone())?,
+    ]
+    .into_iter()
+    .flatten()
+    .map(|document| projection_fence(&document))
+    .collect::<Result<Vec<_>>>()?
+    .into_iter()
+    .any(|current| current > incoming)
+    {
+        return Ok(());
+    }
+    let (listener, port) = port_listener_documents(input, None, input.machine_id.as_deref(), None);
+    unit.execute_atomic_write_batch(AtomicWriteBatch::new(vec![
+        overwrite(listener_table, listener_id, listener),
+        overwrite(port_table, port_id, port),
+    ])?)?;
     Ok(())
 }
 
-async fn record_port_listener_documents_async(
+async fn publish_service_connectivity_fenced_async(
     engine: &Arc<Engine>,
+    input: SystemServiceConnectivityObservation,
+) -> Result<()> {
+    for attempt in 1..=MAX_CONNECTIVITY_CONFLICT_ATTEMPTS {
+        let engine = Arc::clone(engine);
+        let input = input.clone();
+        let result =
+            tokio::task::spawn_blocking(move || publish_service_connectivity_once(&engine, &input))
+                .await
+                .map_err(|error| {
+                    Error::Internal(format!("service projection task failed: {error}"))
+                })?;
+        match result {
+            Err(error @ Error::Conflict { .. }) if attempt < MAX_CONNECTIVITY_CONFLICT_ATTEMPTS => {
+                drop(error);
+            }
+            Err(error @ Error::Conflict { .. }) => {
+                return Err(error.with_conflict_attempts(attempt));
+            }
+            other => return other,
+        }
+    }
+    unreachable!("the bounded service projection conflict loop always returns")
+}
+
+fn publish_service_connectivity_once(
+    engine: &Arc<Engine>,
+    input: &SystemServiceConnectivityObservation,
+) -> Result<()> {
+    let service_id = service_document_id(&input.tenant_id, &input.service_name);
+    let unit =
+        engine.begin_mutation_execution_unit(system_tenant_id()?, PrincipalContext::system())?;
+    let service_table = SystemTable::Services.table_name()?;
+    let service_document_id = DocumentId::from_key(service_id.clone())?;
+    let current = unit.get_document(&service_table, service_document_id.clone())?;
+    let incoming_fence = (
+        input.source_generation,
+        input.attachment.generation().as_u64(),
+    );
+    let service_fields = service_document(input);
+    if let Some(current) = current.as_ref() {
+        let current_fence = (
+            required_string_u64(current, "sourceGeneration")?,
+            required_string_u64(current, "generation")?,
+        );
+        if current_fence > incoming_fence {
+            return Ok(());
+        }
+        if current_fence == incoming_fence {
+            let current_endpoints = current.fields.get("endpoints");
+            let incoming_endpoints = service_fields.get("endpoints");
+            if endpoint_membership(current_endpoints)? != endpoint_membership(incoming_endpoints)? {
+                return Ok(());
+            }
+            let incoming_listener_fences = endpoint_listener_fences(incoming_endpoints)?;
+            if endpoint_listener_fences(current_endpoints)?.iter().any(
+                |(listener_id, current_fence)| {
+                    incoming_listener_fences
+                        .get(listener_id)
+                        .is_none_or(|incoming_fence| current_fence > incoming_fence)
+                },
+            ) {
+                return Ok(());
+            }
+        }
+    }
+
+    let child_tables = [
+        SystemTable::Listeners,
+        SystemTable::Ports,
+        SystemTable::ConnectivityRoutes,
+    ];
+    let mut existing_children = Vec::new();
+    for table in child_tables {
+        let table_name = table.table_name()?;
+        let documents = unit.query_documents_cancellable(
+            &Query {
+                table: table_name.clone(),
+                filters: vec![Filter {
+                    field: "serviceId".to_owned(),
+                    op: FilterOp::Eq,
+                    value: json!(service_id),
+                }],
+                order: None,
+                limit: None,
+            },
+            &mut || Ok(()),
+        )?;
+        existing_children.extend(
+            documents
+                .into_iter()
+                .map(|document| (table_name.clone(), document)),
+        );
+    }
+    let incoming_listener_fences = input
+        .endpoints
+        .iter()
+        .map(|endpoint| {
+            (
+                endpoint.listener.listener_id.as_str(),
+                (
+                    endpoint.listener.generation.as_u64(),
+                    endpoint.listener.lease_epoch.as_u64(),
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    if current.is_some() {
+        for (_, child) in &existing_children {
+            let Some(listener_id) = child.fields.get("listenerId").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(incoming) = incoming_listener_fences.get(listener_id) else {
+                continue;
+            };
+            if projection_fence(child)? > *incoming {
+                return Ok(());
+            }
+        }
+    }
+
+    let mut writes = Vec::with_capacity(1 + existing_children.len() + input.endpoints.len() * 3);
+    writes.push(overwrite(
+        service_table,
+        service_document_id,
+        service_fields,
+    ));
+    for (table, document) in existing_children {
+        writes.push(AtomicWrite::Delete {
+            key: write_key(table, document.id),
+            precondition: WritePrecondition::default(),
+            missing_ok: true,
+        });
+    }
+    for endpoint in &input.endpoints {
+        let (listener, port) = port_listener_documents(
+            &endpoint.listener,
+            Some(&service_id),
+            None,
+            endpoint.endpoint.endpoint().guest_port,
+        );
+        writes.push(overwrite(
+            SystemTable::Listeners.table_name()?,
+            DocumentId::from_key(listener_document_id(&endpoint.listener.listener_id))?,
+            listener,
+        ));
+        writes.push(overwrite(
+            SystemTable::Ports.table_name()?,
+            DocumentId::from_key(port_document_id(&endpoint.listener.port_lease_id))?,
+            port,
+        ));
+        writes.push(overwrite(
+            SystemTable::ConnectivityRoutes.table_name()?,
+            DocumentId::from_key(connectivity_route_document_id(&endpoint.route_id))?,
+            connectivity_route_document(&service_id, &input.tenant_id, endpoint),
+        ));
+    }
+    unit.execute_atomic_write_batch(AtomicWriteBatch::new(writes)?)?;
+    Ok(())
+}
+
+fn port_listener_documents(
     input: &SystemPortListenerObservation,
     service_id: Option<&str>,
     machine_id: Option<&str>,
     guest_port: Option<u16>,
-) -> Result<()> {
+) -> (Map<String, Value>, Map<String, Value>) {
     let actual_address = input.bound_endpoint.socket_addr();
     let mut listener = object_fields(json!({
         "listenerId": input.listener_id.as_str(),
@@ -677,14 +857,6 @@ async fn record_port_listener_documents_async(
     );
     insert_optional(&mut listener, "version", input.version.as_deref());
     insert_optional(&mut listener, "error", input.error.as_deref());
-    upsert_system_document_async(
-        engine,
-        SystemTable::Listeners,
-        &listener_document_id(&input.listener_id),
-        listener,
-    )
-    .await?;
-
     let mut port = object_fields(json!({
         "portLeaseId": input.port_lease_id.as_str(),
         "listenerId": input.listener_id.as_str(),
@@ -708,68 +880,159 @@ async fn record_port_listener_documents_async(
     if let Some(guest_port) = guest_port {
         port.insert("guestPort".to_owned(), json!(guest_port));
     }
-    upsert_system_document_async(
-        engine,
-        SystemTable::Ports,
-        &port_document_id(&input.port_lease_id),
-        port,
-    )
-    .await
+    (listener, port)
 }
 
-async fn record_connectivity_route_async(
-    engine: &Arc<Engine>,
+fn connectivity_route_document(
     service_id: &str,
     tenant_id: &TenantId,
     input: &SystemPublishedEndpointObservation,
-) -> Result<()> {
+) -> Map<String, Value> {
     let endpoint = input.endpoint.endpoint();
     let listener = &input.listener;
-    upsert_system_document_async(
-        engine,
-        SystemTable::ConnectivityRoutes,
-        &connectivity_route_document_id(&input.route_id),
-        object_fields(json!({
-            "routeId": input.route_id.as_str(),
-            "serviceId": service_id,
-            "tenantId": tenant_id.as_str(),
-            "endpointId": input.endpoint.endpoint_id().as_str(),
-            "listenerId": listener.listener_id.as_str(),
-            "portLeaseId": listener.port_lease_id.as_str(),
-            "generation": listener.generation.as_u64().to_string(),
-            "leaseEpoch": listener.lease_epoch.as_u64().to_string(),
-            "providerId": listener.provider_id.as_str(),
-            "protocol": endpoint_protocol_label(endpoint.protocol),
-            "actualAddress": endpoint.address.to_string(),
-            "observedPhase": phase_label(listener.observed_phase),
-            "conditions": condition_fields(&listener.conditions),
-            "cleanupState": cleanup_state(listener.observed_phase, &listener.conditions),
-        })),
-    )
-    .await
+    object_fields(json!({
+        "routeId": input.route_id.as_str(),
+        "serviceId": service_id,
+        "tenantId": tenant_id.as_str(),
+        "endpointId": input.endpoint.endpoint_id().as_str(),
+        "listenerId": listener.listener_id.as_str(),
+        "portLeaseId": listener.port_lease_id.as_str(),
+        "generation": listener.generation.as_u64().to_string(),
+        "leaseEpoch": listener.lease_epoch.as_u64().to_string(),
+        "providerId": listener.provider_id.as_str(),
+        "protocol": endpoint_protocol_label(endpoint.protocol),
+        "actualAddress": endpoint.address.to_string(),
+        "observedPhase": phase_label(listener.observed_phase),
+        "conditions": condition_fields(&listener.conditions),
+        "cleanupState": cleanup_state(listener.observed_phase, &listener.conditions),
+    }))
 }
 
-async fn delete_service_connectivity_children_async(
-    engine: &Arc<Engine>,
-    service_id: &str,
-) -> Result<()> {
-    let tenant_id = system_tenant_id()?;
-    for table in [
-        SystemTable::Listeners,
-        SystemTable::Ports,
-        SystemTable::ConnectivityRoutes,
-    ] {
-        let table_name = table.table_name()?;
-        let documents =
-            query_system_documents_by_eq_async(engine, table, [("serviceId", json!(service_id))])
-                .await?;
-        for document in documents {
-            engine
-                .delete_document_async(tenant_id.clone(), table_name.clone(), document.id)
-                .await?;
-        }
+fn service_document(input: &SystemServiceConnectivityObservation) -> Map<String, Value> {
+    let endpoints = input
+        .endpoints
+        .iter()
+        .map(endpoint_fields)
+        .collect::<Vec<_>>();
+    object_fields(json!({
+        "tenantId": input.tenant_id.as_str(),
+        "name": input.service_name,
+        "kind": "sandbox",
+        "sourceGeneration": input.source_generation.to_string(),
+        "attachmentId": input.attachment.attachment_id().as_str(),
+        "generation": input.attachment.generation().as_u64().to_string(),
+        "attachmentProviderId": input.attachment_provider_id.as_str(),
+        "observedPhase": phase_label(input.observed_phase),
+        "endpoints": endpoints,
+        "conditions": condition_fields(&input.conditions),
+        "cleanupState": cleanup_state(input.observed_phase, &input.conditions),
+    }))
+}
+
+fn projection_fence(document: &Document) -> Result<(u64, u64)> {
+    Ok((
+        required_string_u64(document, "generation")?,
+        required_string_u64(document, "leaseEpoch")?,
+    ))
+}
+
+fn required_string_u64(document: &Document, field: &str) -> Result<u64> {
+    document
+        .fields
+        .get(field)
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| {
+            Error::Serialization(format!(
+                "connectivity projection {} is missing string-u64 field {field}",
+                document.id
+            ))
+        })
+}
+
+fn endpoint_membership(
+    endpoints: Option<&Value>,
+) -> Result<BTreeSet<(String, String, String, String)>> {
+    endpoints
+        .and_then(Value::as_array)
+        .ok_or_else(|| Error::Serialization("service projection is missing endpoints".to_owned()))?
+        .iter()
+        .map(|endpoint| {
+            let object = endpoint.as_object().ok_or_else(|| {
+                Error::Serialization("service endpoint projection is not an object".to_owned())
+            })?;
+            let field = |name: &str| {
+                object
+                    .get(name)
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        Error::Serialization(format!(
+                            "service endpoint projection is missing {name}"
+                        ))
+                    })
+            };
+            Ok((
+                field("routeId")?,
+                field("endpointId")?,
+                field("listenerId")?,
+                field("portLeaseId")?,
+            ))
+        })
+        .collect()
+}
+
+fn endpoint_listener_fences(endpoints: Option<&Value>) -> Result<BTreeMap<String, (u64, u64)>> {
+    endpoints
+        .and_then(Value::as_array)
+        .ok_or_else(|| Error::Serialization("service projection is missing endpoints".to_owned()))?
+        .iter()
+        .map(|endpoint| {
+            let object = endpoint.as_object().ok_or_else(|| {
+                Error::Serialization("service endpoint projection is not an object".to_owned())
+            })?;
+            let string_field = |name: &str| {
+                object.get(name).and_then(Value::as_str).ok_or_else(|| {
+                    Error::Serialization(format!("service endpoint projection is missing {name}"))
+                })
+            };
+            let u64_field = |name: &str| {
+                string_field(name)?.parse::<u64>().map_err(|_| {
+                    Error::Serialization(format!("service endpoint projection has invalid {name}"))
+                })
+            };
+            Ok((
+                string_field("listenerId")?.to_owned(),
+                (
+                    u64_field("listenerGeneration")?,
+                    u64_field("listenerLeaseEpoch")?,
+                ),
+            ))
+        })
+        .collect()
+}
+
+fn overwrite(
+    table: nimbus_core::TableName,
+    document_id: DocumentId,
+    document: Map<String, Value>,
+) -> AtomicWrite {
+    AtomicWrite::Set {
+        key: write_key(table, document_id),
+        document,
+        typed_fields: Default::default(),
+        mode: WriteSetMode::Overwrite,
+        precondition: WritePrecondition::default(),
+        transforms: Vec::new(),
     }
-    Ok(())
+}
+
+fn write_key(table: nimbus_core::TableName, document_id: DocumentId) -> WriteKey {
+    DocumentLocator {
+        table,
+        id: document_id,
+    }
+    .into()
 }
 
 fn endpoint_fields(input: &SystemPublishedEndpointObservation) -> Value {
@@ -781,6 +1044,8 @@ fn endpoint_fields(input: &SystemPublishedEndpointObservation) -> Value {
         "listenerId": listener.listener_id.as_str(),
         "portLeaseId": listener.port_lease_id.as_str(),
         "generation": input.endpoint.generation().as_u64().to_string(),
+        "listenerGeneration": listener.generation.as_u64().to_string(),
+        "listenerLeaseEpoch": listener.lease_epoch.as_u64().to_string(),
         "providerId": listener.provider_id.as_str(),
         "name": endpoint.name,
         "protocol": endpoint_protocol_label(endpoint.protocol),

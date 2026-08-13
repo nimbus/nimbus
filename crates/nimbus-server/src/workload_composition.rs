@@ -376,7 +376,10 @@ impl ServerWorkloadComposition {
             Arc::clone(&self.service_manager),
         ));
         let projection_sink: Arc<dyn WorkloadProjectionSink> = Arc::new(
-            ServiceManagerWorkloadProjectionSink::new(Arc::clone(&self.service_manager)),
+            ServiceManagerWorkloadProjectionSink::with_system_connectivity_projection(
+                Arc::clone(&self.service_manager),
+                nimbus_system::SystemConnectivityProjectionRuntime::new(&self.engine),
+            ),
         );
         ManagedComputeComposition {
             engine: self.engine,

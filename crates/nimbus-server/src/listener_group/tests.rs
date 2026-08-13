@@ -115,17 +115,35 @@ impl WireProtocolAdapter for OccupiedAdapter {
 #[derive(Default)]
 struct ProjectionFault {
     armed: AtomicBool,
+    failed: AtomicBool,
+    failure_observed: tokio::sync::Notify,
 }
 
 impl FaultInjector for ProjectionFault {
     fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
         if self.armed.swap(false, Ordering::AcqRel) {
+            self.failed.store(true, Ordering::Release);
+            self.failure_observed.notify_waiters();
             return Err(nimbus_core::Error::Internal(format!(
                 "injected listener projection failure at {}",
                 point.as_str()
             )));
         }
         Ok(())
+    }
+}
+
+impl ProjectionFault {
+    async fn wait_for_failure(&self) {
+        loop {
+            let observed = self.failure_observed.notified();
+            tokio::pin!(observed);
+            observed.as_mut().enable();
+            if self.failed.load(Ordering::Acquire) {
+                return;
+            }
+            observed.await;
+        }
     }
 }
 
@@ -295,7 +313,7 @@ async fn kth_guard_failure_unwinds_every_prior_listener() {
 }
 
 #[tokio::test]
-async fn kth_projection_failure_unwinds_every_prior_listener() {
+async fn listener_projection_failure_keeps_every_listener_active_and_retries() {
     let projection_fault = Arc::new(ProjectionFault::default());
     let engine_fault: Arc<dyn FaultInjector> = projection_fault.clone();
     let fixture = EngineFixture::new(move |path| {
@@ -321,27 +339,54 @@ async fn kth_projection_failure_unwinds_every_prior_listener() {
         .await
         .expect("main listener should bind");
 
-    let error = timeout(Duration::from_secs(5), serve(main, options))
+    let server = tokio::spawn(serve(main, options));
+    timeout(Duration::from_secs(5), projection_fault.wait_for_failure())
         .await
-        .expect("the injected projection fault must stop startup")
-        .expect_err("the kth projection must fail server startup");
-
+        .expect("the injected projection fault must be observed");
     assert!(
-        error
-            .to_string()
-            .contains("injected listener projection failure"),
-        "{error}"
+        !server.is_finished(),
+        "a projection failure must not terminate the listener group"
+    );
+    let system_tenant = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let listeners = fixture
+                .engine()
+                .list_documents_async(
+                    system_tenant.clone(),
+                    nimbus_core::TableName::new("listeners").expect("table should parse"),
+                )
+                .await
+                .unwrap_or_default();
+            if listeners.len() == 3 {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("projection retry must restore the main and both sibling rows");
+    assert!(
+        !server.is_finished(),
+        "projection recovery must not terminate the listener group"
     );
     for address in [
         observed_address(&first_addr),
         observed_address(&rejected_addr),
     ] {
-        assert_address_rebinds(address).await;
+        tokio::net::TcpStream::connect(address)
+            .await
+            .unwrap_or_else(|error| panic!("listener {address} must remain active: {error}"));
         assert_eq!(
             phase_for_address(fixture.data_dir(), address),
-            PortLeasePhase::Released
+            PortLeasePhase::Active
         );
     }
+    server.abort();
+    let error = server
+        .await
+        .expect_err("aborted server task should report cancellation");
+    assert!(error.is_cancelled());
 }
 
 #[tokio::test]

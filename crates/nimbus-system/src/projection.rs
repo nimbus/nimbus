@@ -5,9 +5,11 @@
 //! contract for visible rows and private deletion tombstones.
 
 mod config;
+mod connectivity;
 pub(crate) mod publication;
 mod work;
 
+pub use connectivity::SystemConnectivityProjectionRuntime;
 pub use work::install_table_projection_observer;
 
 #[cfg(test)]

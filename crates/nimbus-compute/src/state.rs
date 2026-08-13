@@ -117,6 +117,7 @@ pub struct ComputeStateConfig {
 pub struct ComputeState {
     pub engine: Arc<Engine>,
     pub active_deployment: Arc<ActiveDeployment>,
+    system_connectivity_projection: nimbus_system::SystemConnectivityProjectionRuntime,
     network_manager: Option<Arc<LocalNetworkManager>>,
     workload_saga_coordinator: Option<Arc<WorkloadSagaCoordinator>>,
     tenant_retirement_store: Option<Arc<dyn TenantRetirementStore>>,
@@ -141,6 +142,8 @@ impl ComputeState {
             node_services,
             runtime,
         } = config;
+        let system_connectivity_projection =
+            nimbus_system::SystemConnectivityProjectionRuntime::new(&engine);
         let (
             network_manager,
             workload_saga_coordinator,
@@ -279,6 +282,7 @@ impl ComputeState {
         Self {
             engine,
             active_deployment: Arc::new(ActiveDeployment::new(active_deployment)),
+            system_connectivity_projection,
             network_manager,
             workload_saga_coordinator,
             tenant_retirement_store,
@@ -296,6 +300,13 @@ impl ComputeState {
 
     pub fn current_deployment(&self) -> Arc<DeploymentState> {
         self.active_deployment.current()
+    }
+
+    /// Rebuildable observed-system publication. It never owns provider effects.
+    pub fn system_connectivity_projection(
+        &self,
+    ) -> &nimbus_system::SystemConnectivityProjectionRuntime {
+        &self.system_connectivity_projection
     }
 
     /// The one process-owned local network composition, when this compute

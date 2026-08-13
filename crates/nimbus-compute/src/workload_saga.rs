@@ -19,6 +19,7 @@ mod provision_dispatcher;
 mod provision_driver;
 pub mod provision_provider;
 mod provision_sandbox;
+pub(crate) use provision_sandbox::sandbox_network_plan_for;
 mod recovery;
 mod restart_decision;
 mod restart_dispatch;

@@ -1,26 +1,30 @@
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::NonZeroU16;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use nimbus_core::{DocumentId, TableName, TenantId};
 use nimbus_engine::Engine;
 use nimbus_network::{
-    EndpointProtocol, IngressRouteId, ListenerId, NetworkAttachmentHandle, NetworkAttachmentId,
-    NetworkCondition, NetworkConditionKind, NetworkConditionState, NetworkLeaseEpoch, NetworkPlan,
-    NetworkPlanContentDigest, NetworkPlanId, NetworkProviderId, NetworkResourceGeneration,
-    NetworkResourceId, NetworkResourcePhase, PortBindRealm, PortBindTarget, PortBindingSpec,
-    PortBoundEndpoint, PortExposure, PortLeaseAccounting, PortLeaseFence, PortLeaseId,
-    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode, PublishedEndpoint,
-    PublishedEndpointHandle, PublishedEndpointId,
+    EndpointProtocol, IngressRouteId, ListenerId, LocalPortLeaseAuthority, NetworkAttachmentHandle,
+    NetworkAttachmentId, NetworkCondition, NetworkConditionKind, NetworkConditionState,
+    NetworkLeaseEpoch, NetworkPlan, NetworkPlanContentDigest, NetworkPlanId, NetworkProviderId,
+    NetworkResourceGeneration, NetworkResourceId, NetworkResourcePhase, PortBindRealm,
+    PortBindTarget, PortBindingSpec, PortBoundEndpoint, PortExposure, PortLeaseAccounting,
+    PortLeaseFence, PortLeaseId, PortLeaseRequest, PortProtocol, PortPublicationIntent,
+    PortRequestMode, PublishedEndpoint, PublishedEndpointHandle, PublishedEndpointId,
 };
 use nimbus_sandbox::{
     SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
     SandboxProvisionEndpointIdentity, SandboxProvisionListener, SandboxProvisionNetworkPlan,
     SandboxRootSpec, SandboxSpec,
 };
+use nimbus_storage::{FaultInjector, FaultPoint};
 use nimbus_testing::EngineFixture;
 use serde_json::json;
 
+use crate::SystemConnectivityProjectionRuntime;
 use crate::keys::{
     connectivity_route_document_id, listener_document_id, port_document_id, service_document_id,
 };
@@ -49,6 +53,25 @@ fn conditions() -> Vec<NetworkCondition> {
             NetworkConditionState::False,
         ),
     ]
+}
+
+#[derive(Default)]
+struct PermanentProjectionFault {
+    active: AtomicBool,
+    failures: AtomicUsize,
+}
+
+impl FaultInjector for PermanentProjectionFault {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if self.active.load(Ordering::Acquire) {
+            self.failures.fetch_add(1, Ordering::AcqRel);
+            return Err(nimbus_core::Error::Internal(format!(
+                "injected permanent projection failure at {}",
+                point.as_str()
+            )));
+        }
+        Ok(())
+    }
 }
 
 fn request(
@@ -139,6 +162,32 @@ fn service_fixture(
     generation: NetworkResourceGeneration,
     guest_port: u16,
 ) -> ServiceProjectionFixture {
+    service_fixture_with_lease_epoch(
+        tenant_id,
+        service_name,
+        workload_incarnation,
+        endpoint_name,
+        protocol,
+        generation,
+        NetworkLeaseEpoch::new(9),
+        guest_port,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fixture varies each service correlation and listener fence dimension"
+)]
+fn service_fixture_with_lease_epoch(
+    tenant_id: &TenantId,
+    service_name: &str,
+    workload_incarnation: &str,
+    endpoint_name: &str,
+    protocol: EndpointProtocol,
+    generation: NetworkResourceGeneration,
+    lease_epoch: NetworkLeaseEpoch,
+    guest_port: u16,
+) -> ServiceProjectionFixture {
     let binding = SandboxPortBinding::new(endpoint_name, protocol, 0, guest_port);
     let spec = SandboxSpec::new(
         tenant_id.clone(),
@@ -164,7 +213,7 @@ fn service_fixture(
         PortLeaseId::for_listener(&listener_id),
         NetworkResourceId::from(listener_id.clone()),
         Some(tenant_id.clone()),
-        PortLeaseFence::new(generation, NetworkLeaseEpoch::new(9)),
+        PortLeaseFence::new(generation, lease_epoch),
         PortLeaseAccounting::TenantPublished,
         PortPublicationIntent::host(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         PortBindingSpec::new(
@@ -352,6 +401,42 @@ async fn listener_address_movement_preserves_stable_listener_and_port_documents(
     );
     assert_eq!(listener_document.fields["cleanupState"], json!("clear"));
     assert_eq!(port_document.fields["hostPort"], json!(28_080));
+}
+
+#[tokio::test]
+async fn stale_listener_projection_cannot_replace_a_newer_fence() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let listener_id = ListenerId::for_workload_listener("projection-independence", "http");
+    let newer = listener(
+        None,
+        listener_id.clone(),
+        NetworkResourceGeneration::new(8),
+        28_080,
+    );
+    let stale = listener(
+        None,
+        listener_id.clone(),
+        NetworkResourceGeneration::new(7),
+        18_080,
+    );
+    record_port_listener_observation_async(&engine, &newer)
+        .await
+        .expect("newer listener should project");
+    record_port_listener_observation_async(&engine, &stale)
+        .await
+        .expect("stale listener should be an idempotent no-op");
+
+    let document = engine
+        .get_document_async(
+            system_tenant_id().expect("system tenant should parse"),
+            table_name(SystemTable::Listeners),
+            DocumentId::from_key(listener_document_id(&listener_id)).expect("id should parse"),
+        )
+        .await
+        .expect("listener should exist");
+    assert_eq!(document.fields["generation"], json!("8"));
+    assert_eq!(document.fields["actualAddress"], json!("127.0.0.1:28080"));
 }
 
 #[tokio::test]
@@ -735,6 +820,18 @@ async fn service_projection_writes_stable_child_identity_and_removes_only_its_st
     let system_tenant = system_tenant_id().expect("system tenant should parse");
     let search_service_id = service_document_id(&tenant_id, "search");
     let search_lease_id = PortLeaseId::for_listener(&search_listener_id);
+    engine
+        .delete_document_async(
+            system_tenant.clone(),
+            table_name(SystemTable::Ports),
+            DocumentId::from_key(port_document_id(&search_lease_id))
+                .expect("port document id should parse"),
+        )
+        .await
+        .expect("one projected child should delete");
+    record_service_connectivity_observation_async(&engine, &moved_search)
+        .await
+        .expect("equal-fence replay should repair a missing child");
     let search_documents = [
         (
             SystemTable::Listeners,
@@ -850,6 +947,363 @@ async fn service_projection_writes_stable_child_identity_and_removes_only_its_st
             table.name()
         );
     }
+}
+
+#[tokio::test]
+async fn stale_service_projection_cannot_delete_newer_children() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("projection-independence").expect("tenant should parse");
+    let fixture = service_fixture_with_lease_epoch(
+        &tenant_id,
+        "search",
+        "search-incarnation",
+        "http",
+        EndpointProtocol::Http,
+        NetworkResourceGeneration::new(8),
+        NetworkLeaseEpoch::new(10),
+        8_080,
+    );
+    let current = SystemServiceConnectivityObservation::new(
+        &fixture.spec,
+        &fixture.plan,
+        8,
+        fixture.attachment.clone(),
+        provider_id("system-attachment-test"),
+        NetworkResourcePhase::Ready,
+        conditions(),
+        [planned_endpoint(&fixture, 28_080)],
+    )
+    .expect("current service observation should validate");
+    let runtime = SystemConnectivityProjectionRuntime::new(&engine);
+    runtime.project_service_connectivity(current.clone());
+    let current_listener = fixture.plan.listeners()[0].listener_id();
+    let current_listener_document = DocumentId::from_key(listener_document_id(current_listener))
+        .expect("listener id should parse");
+    wait_for_listener_address(&engine, &current_listener_document, "127.0.0.1:28080").await;
+
+    let stale = SystemServiceConnectivityObservation::new(
+        &fixture.spec,
+        &fixture.plan,
+        7,
+        fixture.attachment.clone(),
+        provider_id("system-attachment-test"),
+        NetworkResourcePhase::Ready,
+        conditions(),
+        [],
+    )
+    .expect("stale service observation should validate");
+    record_service_connectivity_observation_async(&engine, &stale)
+        .await
+        .expect("stale service should be an idempotent no-op");
+
+    let stale_attachment_fixture = service_fixture(
+        &tenant_id,
+        "search",
+        "search-incarnation",
+        "http",
+        EndpointProtocol::Http,
+        NetworkResourceGeneration::new(7),
+        8_080,
+    );
+    let stale_attachment = SystemServiceConnectivityObservation::new(
+        &stale_attachment_fixture.spec,
+        &stale_attachment_fixture.plan,
+        8,
+        stale_attachment_fixture.attachment.clone(),
+        provider_id("system-attachment-test"),
+        NetworkResourcePhase::Ready,
+        conditions(),
+        [planned_endpoint(&stale_attachment_fixture, 18_080)],
+    )
+    .expect("stale attachment observation should validate");
+    record_service_connectivity_observation_async(&engine, &stale_attachment)
+        .await
+        .expect("stale attachment should be an idempotent no-op");
+
+    let stale_listener_fixture = service_fixture(
+        &tenant_id,
+        "search",
+        "search-incarnation",
+        "http",
+        EndpointProtocol::Http,
+        NetworkResourceGeneration::new(8),
+        8_080,
+    );
+    let stale_listener = SystemServiceConnectivityObservation::new(
+        &stale_listener_fixture.spec,
+        &stale_listener_fixture.plan,
+        8,
+        stale_listener_fixture.attachment.clone(),
+        provider_id("system-attachment-test"),
+        NetworkResourcePhase::Ready,
+        conditions(),
+        [planned_endpoint(&stale_listener_fixture, 18_080)],
+    )
+    .expect("stale listener observation should validate");
+    runtime.project_service_connectivity(stale_listener.clone());
+    assert_eq!(runtime.retained_entry_count_for_testing(), 1);
+
+    let system_tenant = system_tenant_id().expect("system tenant should parse");
+    for table in [
+        SystemTable::Listeners,
+        SystemTable::Ports,
+        SystemTable::ConnectivityRoutes,
+    ] {
+        let table_name = table_name(table);
+        for document in engine
+            .list_documents_async(system_tenant.clone(), table_name.clone())
+            .await
+            .expect("current children should list before deletion")
+        {
+            engine
+                .delete_document_async(system_tenant.clone(), table_name.clone(), document.id)
+                .await
+                .expect("projection child should delete");
+        }
+    }
+    record_service_connectivity_observation_async(&engine, &stale_listener)
+        .await
+        .expect("stale listener should remain a no-op after child loss");
+    for table in [
+        SystemTable::Listeners,
+        SystemTable::Ports,
+        SystemTable::ConnectivityRoutes,
+    ] {
+        assert!(
+            engine
+                .list_documents_async(system_tenant.clone(), table_name(table))
+                .await
+                .expect("deleted projection children should list")
+                .is_empty(),
+            "a stale listener fence must not recreate deleted {} rows",
+            table.name()
+        );
+    }
+    let service_document = engine
+        .get_document_async(
+            system_tenant.clone(),
+            table_name(SystemTable::Services),
+            DocumentId::from_key(service_document_id(&tenant_id, "search"))
+                .expect("id should parse"),
+        )
+        .await
+        .expect("current service parent should retain its listener fences");
+    assert_eq!(
+        service_document.fields["endpoints"][0]["listenerGeneration"],
+        json!("8")
+    );
+    assert_eq!(
+        service_document.fields["endpoints"][0]["listenerLeaseEpoch"],
+        json!("10")
+    );
+    record_service_connectivity_observation_async(&engine, &current)
+        .await
+        .expect("equal current replay should repair deleted children");
+    wait_for_listener_address(&engine, &current_listener_document, "127.0.0.1:28080").await;
+
+    let service = engine
+        .get_document_async(
+            system_tenant.clone(),
+            table_name(SystemTable::Services),
+            DocumentId::from_key(service_document_id(&tenant_id, "search"))
+                .expect("id should parse"),
+        )
+        .await
+        .expect("current service row should remain");
+    assert_eq!(service.fields["sourceGeneration"], json!("8"));
+    for table in [
+        SystemTable::Listeners,
+        SystemTable::Ports,
+        SystemTable::ConnectivityRoutes,
+    ] {
+        let rows = engine
+            .list_documents_async(system_tenant.clone(), table_name(table))
+            .await
+            .expect("current child rows should list");
+        assert_eq!(rows.len(), 1, "stale service must retain {}", table.name());
+        assert_eq!(rows[0].fields["actualAddress"], json!("127.0.0.1:28080"));
+        if table != SystemTable::ConnectivityRoutes {
+            assert_eq!(rows[0].fields["leaseEpoch"], json!("10"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn projection_rebuild_restores_deleted_rows_without_touching_authority() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let runtime = SystemConnectivityProjectionRuntime::new(&engine);
+    let source_tenant = TenantId::new("projection-authority").expect("tenant should parse");
+    let listener_id = ListenerId::for_workload_listener("projection-rebuild", "http");
+    let generation = NetworkResourceGeneration::new(11);
+    let authority = LocalPortLeaseAuthority::open(fixture.data_dir().join("network-authority"))
+        .expect("network authority should open");
+    authority
+        .reserve(request(
+            Some(source_tenant.clone()),
+            &listener_id,
+            generation,
+        ))
+        .expect("source lease should reserve");
+    let authority_before =
+        std::fs::read(authority.authority_path()).expect("authority bytes should read");
+
+    runtime.project_port_listener(listener(
+        Some(source_tenant.clone()),
+        listener_id.clone(),
+        generation,
+        18_080,
+    ));
+    runtime.project_port_listener(listener(
+        Some(source_tenant.clone()),
+        listener_id.clone(),
+        generation,
+        28_080,
+    ));
+    runtime.project_port_listener(listener(
+        Some(source_tenant),
+        listener_id.clone(),
+        NetworkResourceGeneration::new(10),
+        18_081,
+    ));
+    assert_eq!(runtime.retained_entry_count_for_testing(), 1);
+
+    let tenant_id = system_tenant_id().expect("system tenant should parse");
+    let listener_document =
+        DocumentId::from_key(listener_document_id(&listener_id)).expect("listener id should parse");
+    let lease_id = PortLeaseId::for_listener(&listener_id);
+    let port_document =
+        DocumentId::from_key(port_document_id(&lease_id)).expect("port id should parse");
+    wait_for_listener_address(&engine, &listener_document, "127.0.0.1:28080").await;
+
+    engine
+        .delete_document_async(
+            tenant_id.clone(),
+            table_name(SystemTable::Listeners),
+            listener_document.clone(),
+        )
+        .await
+        .expect("listener projection should delete");
+    engine
+        .delete_document_async(tenant_id, table_name(SystemTable::Ports), port_document)
+        .await
+        .expect("port projection should delete");
+
+    runtime.rebuild();
+    wait_for_listener_address(&engine, &listener_document, "127.0.0.1:28080").await;
+    assert_eq!(runtime.retained_entry_count_for_testing(), 1);
+    assert_eq!(
+        std::fs::read(authority.authority_path()).expect("authority bytes should reread"),
+        authority_before,
+        "projection rebuild must not mutate source network authority"
+    );
+}
+
+#[tokio::test]
+async fn retained_projection_automatically_repairs_deleted_rows() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let runtime = SystemConnectivityProjectionRuntime::new_with_rebuild_interval_for_testing(
+        &engine,
+        std::time::Duration::from_millis(50),
+    );
+    let listener_id = ListenerId::for_workload_listener("projection-auto-rebuild", "http");
+    let listener_document =
+        DocumentId::from_key(listener_document_id(&listener_id)).expect("listener id should parse");
+    runtime.project_port_listener(listener(
+        None,
+        listener_id,
+        NetworkResourceGeneration::new(12),
+        28_081,
+    ));
+    wait_for_listener_address(&engine, &listener_document, "127.0.0.1:28081").await;
+
+    engine
+        .delete_document_async(
+            system_tenant_id().expect("system tenant should parse"),
+            table_name(SystemTable::Listeners),
+            listener_document.clone(),
+        )
+        .await
+        .expect("listener projection should delete");
+
+    wait_for_listener_address(&engine, &listener_document, "127.0.0.1:28081").await;
+    assert_eq!(runtime.retained_entry_count_for_testing(), 1);
+}
+
+#[tokio::test]
+async fn projection_retry_coalesces_backs_off_and_cancels_with_engine() {
+    let fault = Arc::new(PermanentProjectionFault::default());
+    let engine_fault: Arc<dyn FaultInjector> = fault.clone();
+    let fixture = EngineFixture::new(move |path| {
+        Engine::new_with_simulation(path, Arc::new(nimbus_core::SystemWallClock), engine_fault)
+    });
+    let engine = fixture.engine();
+    let runtime = SystemConnectivityProjectionRuntime::new(&engine);
+    let listener_id = ListenerId::for_workload_listener("projection-backoff", "http");
+    fault.active.store(true, Ordering::Release);
+    for port in 18_080..18_100 {
+        runtime.project_port_listener(listener(
+            None,
+            listener_id.clone(),
+            NetworkResourceGeneration::new(11),
+            port,
+        ));
+    }
+    assert_eq!(runtime.retained_entry_count_for_testing(), 1);
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while fault.failures.load(Ordering::Acquire) < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("permanent failure should reach bounded retries");
+    let after_three = fault.failures.load(Ordering::Acquire);
+    tokio::time::sleep(std::time::Duration::from_millis(175)).await;
+    let after_backoff = fault.failures.load(Ordering::Acquire);
+    assert!(
+        after_backoff.saturating_sub(after_three) <= 2,
+        "bounded backoff must prevent a permanent-failure busy loop"
+    );
+    assert!(runtime.driver_running_for_testing());
+
+    drop(engine);
+    drop(fixture);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while runtime.driver_running_for_testing() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("engine shutdown must cancel and drop the projection driver");
+}
+
+async fn wait_for_listener_address(
+    engine: &std::sync::Arc<Engine>,
+    document_id: &DocumentId,
+    expected: &str,
+) {
+    let tenant_id = system_tenant_id().expect("system tenant should parse");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if engine
+                .get_document_async(
+                    tenant_id.clone(),
+                    table_name(SystemTable::Listeners),
+                    document_id.clone(),
+                )
+                .await
+                .is_ok_and(|document| document.fields["actualAddress"] == json!(expected))
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("retained projection should converge");
 }
 
 #[tokio::test]

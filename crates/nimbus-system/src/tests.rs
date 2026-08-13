@@ -1,5 +1,6 @@
 use nimbus_core::{DocumentId, Error, FieldType, Mutation, TableName, TenantId};
 use nimbus_engine::Engine;
+use nimbus_storage::{FaultInjector, FaultPoint};
 use nimbus_testing::{AdmittedDecisionScenario, EngineFixture};
 use serde_json::{Value, json};
 
@@ -12,6 +13,26 @@ use nimbus_node::{
 use nimbus_tenant::TenantIsolationContext;
 
 use super::*;
+
+#[derive(Default)]
+struct OneShotProjectionFault {
+    armed: std::sync::atomic::AtomicBool,
+    failures: std::sync::atomic::AtomicUsize,
+}
+
+impl FaultInjector for OneShotProjectionFault {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if self.armed.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            self.failures
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            return Err(nimbus_core::Error::Internal(format!(
+                "injected machine deletion projection failure at {}",
+                point.as_str()
+            )));
+        }
+        Ok(())
+    }
+}
 
 fn table_name(table: SystemTable) -> TableName {
     table.table_name().expect("system table name should parse")
@@ -576,8 +597,16 @@ async fn sync_scheduler_state_deletes_only_matching_tenant_pending_projection() 
 }
 
 #[tokio::test]
-async fn record_machine_state_projects_machine_listener_and_port_documents() {
-    let fixture = EngineFixture::new(|path| Engine::new(path));
+async fn machine_projection_records_and_retries_deletion_without_recreating_connectivity() {
+    let fault = std::sync::Arc::new(OneShotProjectionFault::default());
+    let engine_fault: std::sync::Arc<dyn FaultInjector> = fault.clone();
+    let fixture = EngineFixture::new(move |path| {
+        Engine::new_with_simulation(
+            path,
+            std::sync::Arc::new(nimbus_core::SystemWallClock),
+            engine_fault,
+        )
+    });
     let engine = fixture.engine();
     let roots = nimbus_machine::MachineRootLayout::new(
         fixture.data_dir().join("config"),
@@ -766,6 +795,53 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
         moved_ssh_port.fields.get("listenerId"),
         Some(&json!(ssh_listener_id.as_str()))
     );
+
+    let runtime = SystemConnectivityProjectionRuntime::new(&engine);
+    fault
+        .armed
+        .store(true, std::sync::atomic::Ordering::Release);
+    runtime.project_machine_deletion("default");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let machine_rows = engine
+                .list_documents_async(
+                    system_tenant_id().expect("system tenant should parse"),
+                    table_name(SystemTable::Machines),
+                )
+                .await
+                .unwrap_or_default();
+            let listener_rows = engine
+                .list_documents_async(
+                    system_tenant_id().expect("system tenant should parse"),
+                    table_name(SystemTable::Listeners),
+                )
+                .await
+                .unwrap_or_default();
+            let port_rows = engine
+                .list_documents_async(
+                    system_tenant_id().expect("system tenant should parse"),
+                    table_name(SystemTable::Ports),
+                )
+                .await
+                .unwrap_or_default();
+            if machine_rows.is_empty()
+                && listener_rows.is_empty()
+                && port_rows.is_empty()
+                && runtime.retained_entry_count_for_testing() == 0
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("machine deletion projection should retry to completion");
+    assert_eq!(
+        fault.failures.load(std::sync::atomic::Ordering::Acquire),
+        1,
+        "the injected projection failure should occur exactly once"
+    );
+    assert_eq!(runtime.retained_entry_count_for_testing(), 0);
 }
 
 #[tokio::test]

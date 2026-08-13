@@ -13,12 +13,14 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use nimbus_network::{
-    ListenerId, NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, PortAddressFamily,
-    PortBindRealm, PortBindingProvenance, PortBoundEndpoint, PortLeaseId, PortLeaseLifetime,
-    PortProtocol, PublishedEndpoint, PublishedEndpointHandle, PublishedEndpointId,
+    IngressRouteId, ListenerId, NetworkCondition, NetworkConditionKind, NetworkConditionState,
+    NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, NetworkResourcePhase,
+    PortAddressFamily, PortBindRealm, PortBindingProvenance, PortBoundEndpoint, PortLeaseId,
+    PortLeaseLifetime, PortProtocol, PublishedEndpoint, PublishedEndpointHandle,
+    PublishedEndpointId,
 };
 use nimbus_sandbox::{
-    SandboxHandle, SandboxId, SandboxInspection, SandboxNetworkStatus, SandboxStatus,
+    SandboxHandle, SandboxId, SandboxInspection, SandboxNetworkStatus, SandboxSpec, SandboxStatus,
 };
 use nimbus_services::{ServiceInstanceObservation, ServiceManager};
 use nimbus_workloads::{
@@ -32,6 +34,7 @@ use nimbus_workloads::{
 use crate::workload_executable::decode_sandbox_spec;
 use crate::workload_saga::{
     WorkloadProvisionCapabilityRegistry, WorkloadProvisionRun, WorkloadProvisionRunDisposition,
+    sandbox_network_plan_for,
 };
 
 /// Closed result of one read-only provider observation.
@@ -282,6 +285,7 @@ pub struct WorkloadObservedProjection {
     execution: WorkloadExecutionReference,
     handle: SandboxHandle,
     published_endpoint_handles: Vec<PublishedEndpointHandle>,
+    system_connectivity: Option<nimbus_system::SystemServiceConnectivityObservation>,
 }
 
 impl WorkloadObservedProjection {
@@ -311,6 +315,10 @@ impl WorkloadObservedProjection {
 
     pub fn published_endpoint_handles(&self) -> &[PublishedEndpointHandle] {
         &self.published_endpoint_handles
+    }
+
+    fn system_connectivity(&self) -> Option<&nimbus_system::SystemServiceConnectivityObservation> {
+        self.system_connectivity.as_ref()
     }
 }
 
@@ -357,11 +365,25 @@ pub trait WorkloadProjectionSink: Send + Sync {
 /// Compute-to-services projection adapter with no reverse dependency.
 pub struct ServiceManagerWorkloadProjectionSink {
     manager: Arc<ServiceManager>,
+    system_connectivity: Option<nimbus_system::SystemConnectivityProjectionRuntime>,
 }
 
 impl ServiceManagerWorkloadProjectionSink {
     pub fn new(manager: Arc<ServiceManager>) -> Self {
-        Self { manager }
+        Self {
+            manager,
+            system_connectivity: None,
+        }
+    }
+
+    pub fn with_system_connectivity_projection(
+        manager: Arc<ServiceManager>,
+        system_connectivity: nimbus_system::SystemConnectivityProjectionRuntime,
+    ) -> Self {
+        Self {
+            manager,
+            system_connectivity: Some(system_connectivity),
+        }
     }
 }
 
@@ -414,7 +436,13 @@ impl WorkloadProjectionSink for ServiceManagerWorkloadProjectionSink {
                     WorkloadProjectionSinkError::unavailable(error.to_string())
                 }
                 _ => WorkloadProjectionSinkError::rejected(error.to_string()),
-            })
+            })?;
+            if let (Some(runtime), Some(observation)) =
+                (&self.system_connectivity, projection.system_connectivity())
+            {
+                runtime.project_service_connectivity(observation.clone());
+            }
+            Ok(())
         })
     }
 }
@@ -538,11 +566,12 @@ impl WorkloadProjectionOrchestrator {
             }
         };
 
-        let (mut handle, sandbox_network_status) =
+        let (spec, mut handle, sandbox_network_status) =
             match validate_execution_observation(record, inspection) {
                 Ok(validated) => validated,
                 Err(reason) => return WorkloadProjectionState::Rejected(reason),
             };
+        let mut ingress_observations = Vec::new();
         let published_endpoint_handles = match intent.publication() {
             WorkloadPublicationIntent::Withheld => {
                 if !handle.published_endpoints.is_empty() {
@@ -609,6 +638,7 @@ impl WorkloadProjectionOrchestrator {
                         );
                     }
                 };
+                ingress_observations = endpoints.clone();
                 let endpoint_handles = match validate_ingress_observation(&request, endpoints) {
                     Ok(endpoint_handles) => endpoint_handles,
                     Err(reason) => return WorkloadProjectionState::Rejected(reason),
@@ -629,6 +659,16 @@ impl WorkloadProjectionOrchestrator {
             }
         };
 
+        let system_connectivity = match system_service_connectivity_observation(
+            record,
+            &spec,
+            sandbox_network_status.as_ref(),
+            &ingress_observations,
+            &published_endpoint_handles,
+        ) {
+            Ok(observation) => observation,
+            Err(reason) => return WorkloadProjectionState::Rejected(reason),
+        };
         let projection = WorkloadObservedProjection {
             key: record.key().clone(),
             source_identity: intent.source().source_identity().clone(),
@@ -637,6 +677,7 @@ impl WorkloadProjectionOrchestrator {
             execution: record.current_execution_reference(),
             handle,
             published_endpoint_handles,
+            system_connectivity,
         };
         match self.sink.project(&projection).await {
             Ok(()) => WorkloadProjectionState::Projected,
@@ -652,10 +693,103 @@ impl WorkloadProjectionOrchestrator {
     }
 }
 
+fn system_service_connectivity_observation(
+    record: &WorkloadSagaRecord,
+    spec: &SandboxSpec,
+    status: Option<&SandboxNetworkStatus>,
+    ingress: &[WorkloadObservedIngressEndpoint],
+    endpoint_handles: &[PublishedEndpointHandle],
+) -> Result<
+    Option<nimbus_system::SystemServiceConnectivityObservation>,
+    WorkloadProjectionRejectedReason,
+> {
+    if record.active_intent().source().source_identity().kind()
+        != WorkloadProvisionSourceKind::SandboxBackedService
+    {
+        return Ok(None);
+    }
+    let intent = record.active_intent();
+    let plan =
+        sandbox_network_plan_for(intent.generation(), intent.network().compiled_plan(), spec)
+            .map_err(|_| WorkloadProjectionRejectedReason::InvalidNetworkStatus)?;
+    let status = status.ok_or(WorkloadProjectionRejectedReason::InvalidNetworkStatus)?;
+    let attachment = status
+        .attachment()
+        .cloned()
+        .ok_or(WorkloadProjectionRejectedReason::InvalidNetworkStatus)?;
+    let selection = intent
+        .network()
+        .compiled_plan()
+        .content()
+        .capability_selection()
+        .ok_or(WorkloadProjectionRejectedReason::InvalidNetworkStatus)?;
+    let conditions = [
+        NetworkCondition::new(NetworkConditionKind::Ready, NetworkConditionState::True),
+        NetworkCondition::new(
+            NetworkConditionKind::Published,
+            if endpoint_handles.is_empty() {
+                NetworkConditionState::False
+            } else {
+                NetworkConditionState::True
+            },
+        ),
+        NetworkCondition::new(
+            NetworkConditionKind::CleanupPending,
+            NetworkConditionState::False,
+        ),
+    ];
+    let mut endpoints = Vec::with_capacity(ingress.len());
+    for observed in ingress {
+        let endpoint = endpoint_handles
+            .iter()
+            .find(|candidate| candidate.endpoint_id() == observed.endpoint_id())
+            .ok_or(WorkloadProjectionRejectedReason::InvalidIngressEvidence)?;
+        let planned = plan
+            .listeners()
+            .iter()
+            .find(|candidate| candidate.listener_id() == observed.binding().listener_id())
+            .ok_or(WorkloadProjectionRejectedReason::InvalidIngressEvidence)?;
+        let listener = nimbus_system::SystemPortListenerObservation::new(
+            "workload-ingress",
+            nimbus_system::endpoint_protocol(endpoint.endpoint().protocol),
+            planned.listener_id().clone(),
+            planned.port_lease().clone(),
+            observed.binding().bound_endpoint().clone(),
+            selection.ingress_provider_id().clone(),
+            NetworkResourcePhase::Ready,
+            conditions,
+        )
+        .map_err(|_| WorkloadProjectionRejectedReason::InvalidIngressEvidence)?;
+        endpoints.push(
+            nimbus_system::SystemPublishedEndpointObservation::new(
+                IngressRouteId::for_published_endpoint(endpoint.endpoint_id()),
+                endpoint.clone(),
+                listener,
+            )
+            .map_err(|_| WorkloadProjectionRejectedReason::InvalidIngressEvidence)?,
+        );
+    }
+    nimbus_system::SystemServiceConnectivityObservation::new(
+        spec,
+        &plan,
+        intent.source().source_generation().as_u64(),
+        attachment,
+        selection.attachment_provider_id().clone(),
+        NetworkResourcePhase::Ready,
+        conditions,
+        endpoints,
+    )
+    .map(Some)
+    .map_err(|_| WorkloadProjectionRejectedReason::InvalidNetworkStatus)
+}
+
 fn validate_execution_observation(
     record: &WorkloadSagaRecord,
     inspection: SandboxInspection,
-) -> Result<(SandboxHandle, Option<SandboxNetworkStatus>), WorkloadProjectionRejectedReason> {
+) -> Result<
+    (SandboxSpec, SandboxHandle, Option<SandboxNetworkStatus>),
+    WorkloadProjectionRejectedReason,
+> {
     let intent = record.active_intent();
     let execution = record.current_execution_reference();
     let expected_attempt =
@@ -681,7 +815,7 @@ fn validate_execution_observation(
         return Err(WorkloadProjectionRejectedReason::InvalidExecutionEvidence);
     }
     validate_sandbox_network_status(record, inspection.network_status.as_ref())?;
-    Ok((handle, inspection.network_status))
+    Ok((spec, handle, inspection.network_status))
 }
 
 fn validate_sandbox_network_status(

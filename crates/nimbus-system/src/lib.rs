@@ -22,7 +22,7 @@ use keys::{
     listener_document_id, machine_document_id, port_document_id, subscription_document_id,
     workload_status_document_id,
 };
-pub use projection::install_table_projection_observer;
+pub use projection::{SystemConnectivityProjectionRuntime, install_table_projection_observer};
 pub use records::SystemTenantStatusEvidenceWriter;
 pub use records::ensure_system_tenant_async;
 pub(crate) use records::record_table_state_for_generation_async;

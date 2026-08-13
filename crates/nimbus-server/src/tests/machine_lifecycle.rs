@@ -6,11 +6,13 @@ use crate::machine_lifecycle::{
 use super::managed_workload::effect_forbidden_managed_router_config;
 use super::*;
 use nimbus_core::DocumentId;
+use nimbus_storage::{FaultInjector, FaultPoint};
 
 #[derive(Clone)]
 struct StubMachineLifecycleManager {
     roots: nimbus_machine::MachineRootLayout,
     calls: Arc<Mutex<Vec<String>>>,
+    projection_fault: Option<Arc<MachineProjectionFault>>,
 }
 
 impl StubMachineLifecycleManager {
@@ -18,7 +20,13 @@ impl StubMachineLifecycleManager {
         Self {
             roots,
             calls: Arc::new(Mutex::new(Vec::new())),
+            projection_fault: None,
         }
+    }
+
+    fn with_projection_fault(mut self, fault: Arc<MachineProjectionFault>) -> Self {
+        self.projection_fault = Some(fault);
+        self
     }
 
     fn calls(&self) -> Vec<String> {
@@ -53,11 +61,17 @@ impl MachineLifecycleManager for StubMachineLifecycleManager {
         let roots = self.roots.clone();
         let calls = self.calls.clone();
         let name = name.to_owned();
+        let projection_fault = self.projection_fault.clone();
         Box::pin(async move {
             calls
                 .lock()
                 .expect("calls lock should not poison")
                 .push(format!("start:{name}"));
+            if let Some(fault) = projection_fault {
+                fault
+                    .armed
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
             Ok(snapshot_for(
                 &name,
                 roots,
@@ -135,6 +149,86 @@ impl MachineLifecycleManager for StubMachineLifecycleManager {
             ))
         })
     }
+}
+
+#[derive(Default)]
+struct MachineProjectionFault {
+    armed: std::sync::atomic::AtomicBool,
+    snapshot_failures: std::sync::atomic::AtomicUsize,
+}
+
+impl FaultInjector for MachineProjectionFault {
+    fn check(&self, _point: FaultPoint) -> nimbus_core::Result<()> {
+        Ok(())
+    }
+
+    fn check_for_tenant(
+        &self,
+        point: FaultPoint,
+        _tenant_id: &nimbus_core::TenantId,
+        records: &[nimbus_core::TenantEventRecord],
+    ) -> nimbus_core::Result<()> {
+        let writes_machine_snapshot = records
+            .iter()
+            .flat_map(|record| &record.writes)
+            .any(|write| write.table.as_str() == "machines");
+        if point == FaultPoint::StorageCommitBeforeVisibility
+            && writes_machine_snapshot
+            && self.armed.swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            self.snapshot_failures
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            return Err(nimbus_core::Error::Internal(format!(
+                "injected machine projection failure at {}",
+                point.as_str()
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn machine_lifecycle_succeeds_while_projection_retries() {
+    let temp = tempdir().expect("tempdir should build");
+    let fault = Arc::new(MachineProjectionFault::default());
+    let engine_fault: Arc<dyn FaultInjector> = fault.clone();
+    let engine = Arc::new(
+        Engine::new_with_simulation(
+            temp.path(),
+            Arc::new(nimbus_core::SystemWallClock),
+            engine_fault,
+        )
+        .expect("engine should create"),
+    );
+    let roots = nimbus_machine::MachineRootLayout::test_sibling_roots(
+        temp.path().join("machine-config"),
+        temp.path().join("machine-state"),
+        temp.path().join("run"),
+    );
+    let manager = StubMachineLifecycleManager::new(roots).with_projection_fault(Arc::clone(&fault));
+    let server = ServerFixture::start(
+        effect_forbidden_managed_router_config(engine.clone())
+            .with_machine_lifecycle_manager(Arc::new(manager.clone()))
+            .build(),
+    )
+    .await;
+
+    let response = server
+        .client()
+        .post(server.http_url("/api/machines/demo/start"))
+        .send()
+        .await
+        .expect("machine start request should send");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(manager.calls(), vec!["start:demo"]);
+    assert_system_machine_state(&engine, "running", true).await;
+    assert_eq!(
+        fault
+            .snapshot_failures
+            .load(std::sync::atomic::Ordering::Acquire),
+        1,
+        "the machine snapshot projection must consume the injected failure"
+    );
 }
 
 #[tokio::test]
@@ -441,6 +535,41 @@ async fn assert_system_machine_state(
     connectivity_present: bool,
 ) {
     let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let machines = engine
+                .list_documents_async(
+                    tenant_id.clone(),
+                    TableName::new("machines").expect("table should parse"),
+                )
+                .await
+                .unwrap_or_default();
+            let listeners = engine
+                .list_documents_async(
+                    tenant_id.clone(),
+                    TableName::new("listeners").expect("table should parse"),
+                )
+                .await
+                .unwrap_or_default();
+            let ports = engine
+                .list_documents_async(
+                    tenant_id.clone(),
+                    TableName::new("ports").expect("table should parse"),
+                )
+                .await
+                .unwrap_or_default();
+            if machines.len() == 1
+                && machines[0].fields.get("state") == Some(&json!(machine_state))
+                && listeners.len() == if connectivity_present { 2 } else { 0 }
+                && ports.len() == usize::from(connectivity_present)
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("machine projection should converge");
     let machines = engine
         .list_documents_async(
             tenant_id.clone(),
@@ -490,14 +619,27 @@ async fn assert_system_machine_document(
     memory_mib: u32,
     disk_gib: u32,
 ) {
-    let machine = engine
-        .get_document_async(
-            crate::system_tenant::system_tenant_id().expect("system id should parse"),
-            TableName::new("machines").expect("table should parse"),
-            DocumentId::from_key(system_machine_document_id(name)).expect("id should parse"),
-        )
-        .await
-        .expect("machine document should exist");
+    let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let table = TableName::new("machines").expect("table should parse");
+    let document_id =
+        DocumentId::from_key(system_machine_document_id(name)).expect("id should parse");
+    let machine = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(machine) = engine
+                .get_document_async(tenant_id.clone(), table.clone(), document_id.clone())
+                .await
+                && machine.fields.get("state") == Some(&json!(state))
+                && machine.fields["resources"]["cpus"] == json!(cpus)
+                && machine.fields["resources"]["memoryMiB"] == json!(memory_mib)
+                && machine.fields["resources"]["diskGiB"] == json!(disk_gib)
+            {
+                return machine;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("machine projection should converge");
     assert_eq!(machine.fields.get("name"), Some(&json!(name)));
     assert_eq!(machine.fields.get("state"), Some(&json!(state)));
     assert_eq!(machine.fields["resources"]["cpus"], json!(cpus));
@@ -516,7 +658,7 @@ async fn assert_system_machine_deleted(engine: &Arc<Engine>, name: &str) {
         "ssh-forward",
     );
     let ssh_port = nimbus_network::PortLeaseId::for_listener(&ssh_listener);
-    for (table, document_id) in [
+    let documents = [
         ("machines", system_machine_document_id(name)),
         (
             "listeners",
@@ -524,7 +666,33 @@ async fn assert_system_machine_deleted(engine: &Arc<Engine>, name: &str) {
         ),
         ("listeners", format!("listener:{}", ssh_listener.as_str())),
         ("ports", format!("port:{}", ssh_port.as_str())),
-    ] {
+    ];
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let mut all_missing = true;
+            for (table, document_id) in &documents {
+                match engine
+                    .get_document_async(
+                        tenant_id.clone(),
+                        TableName::new(*table).expect("table should parse"),
+                        DocumentId::from_key(document_id.clone()).expect("id should parse"),
+                    )
+                    .await
+                {
+                    Err(nimbus_core::Error::DocumentNotFound(_)) => {}
+                    _ => all_missing = false,
+                }
+            }
+            if all_missing {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("machine deletion projection should converge");
+
+    for (table, document_id) in documents {
         let missing = engine
             .get_document_async(
                 tenant_id.clone(),
@@ -569,13 +737,22 @@ async fn assert_system_events_for_machine(
     machine_name: &str,
     expected: &[(&str, &str, &str)],
 ) {
-    let events = engine
-        .list_documents_async(
-            crate::system_tenant::system_tenant_id().expect("system id should parse"),
-            TableName::new("events").expect("table should parse"),
-        )
-        .await
-        .expect("events should list");
+    let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let table = TableName::new("events").expect("table should parse");
+    let events = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(events) = engine
+                .list_documents_async(tenant_id.clone(), table.clone())
+                .await
+                && events.len() == expected.len()
+            {
+                return events;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("machine event projection should converge");
     assert_eq!(events.len(), expected.len());
     let mut actual = Vec::new();
     for event in &events {

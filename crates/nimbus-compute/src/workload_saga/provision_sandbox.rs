@@ -126,7 +126,7 @@ fn sandbox_network_plan(
     sandbox_network_plan_for(command.generation(), command.compiled_network_plan(), spec)
 }
 
-pub(super) fn sandbox_network_plan_for(
+pub(crate) fn sandbox_network_plan_for(
     generation: WorkloadGeneration,
     compiled_network_plan: &CompiledWorkloadNetworkPlan,
     spec: &SandboxSpec,
