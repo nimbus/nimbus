@@ -4,11 +4,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use nimbus_core::TenantId;
 use nimbus_workloads::{
-    WorkloadExecutionAttemptId, WorkloadExecutionProviderId, WorkloadProvisionSourceEvidence,
+    WorkloadExecutionProviderId, WorkloadGeneration, WorkloadProvisionSourceEvidence,
     WorkloadProvisionSourceIdentity, WorkloadRestartCandidatePage,
-    WorkloadRestartCandidatePageRequest, WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy,
-    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey,
-    WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaStore, WorkloadSagaTenantPage,
+    WorkloadRestartCandidatePageRequest, WorkloadRestartDispatchEpoch, WorkloadRestartEpoch,
+    WorkloadRestartNotBeforeUnixMillis, WorkloadRestartPolicy, WorkloadSagaCommit,
+    WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey, WorkloadSagaPage,
+    WorkloadSagaPageRequest, WorkloadSagaStore, WorkloadSagaTenantPage,
     WorkloadSagaTenantPageRequest,
 };
 
@@ -124,13 +125,13 @@ impl WorkloadProvisionSourceAuthority for SourceAuthority {
 struct CountingProvider {
     execute: AtomicUsize,
     inspect: AtomicUsize,
-    observed_attempt: Mutex<Option<WorkloadExecutionAttemptId>>,
+    observation: Mutex<Option<WorkloadRestartProviderObservation>>,
 }
 
 impl CountingProvider {
-    fn observing_attempt(attempt_id: WorkloadExecutionAttemptId) -> Arc<Self> {
+    fn observing(observation: WorkloadRestartProviderObservation) -> Arc<Self> {
         Arc::new(Self {
-            observed_attempt: Mutex::new(Some(attempt_id)),
+            observation: Mutex::new(Some(observation)),
             ..Self::default()
         })
     }
@@ -145,32 +146,40 @@ impl CountingProvider {
         } else {
             self.inspect.fetch_add(1, Ordering::SeqCst);
         }
-        let attempt_id = self
-            .observed_attempt
+        let observation = self
+            .observation
             .lock()
-            .expect("observed attempt lock should be healthy")
+            .expect("provider observation lock should be healthy")
             .clone()
-            .unwrap_or_else(|| command.attempt_id().clone());
-        let observation =
-            WorkloadRestartProviderObservation::new(WorkloadRestartProviderObservationInput {
-                command_id: command.command_id().clone(),
-                transition_id: command.transition_id().clone(),
-                generation: command.generation(),
-                desired_digest: command.desired_digest(),
-                request_id: command.request_id().clone(),
-                source_attempt_id: command.source_attempt_id().clone(),
-                attempt_id,
-                restart_epoch: command.restart_epoch(),
-                dispatch_epoch: command.dispatch_epoch(),
-                provider_selection: command.provider_selection().clone(),
-                outcome: WorkloadRestartCommandOutcome::Succeeded {
-                    evidence: nimbus_workloads::WorkloadRestartEvidenceDigest::sha256(
-                        "counting-provider",
-                    ),
-                },
-            });
+            .unwrap_or_else(|| successful_observation(command));
         Box::pin(async move { observation })
     }
+}
+
+fn successful_observation_input(
+    command: &ConfirmedWorkloadRestartCommand,
+) -> WorkloadRestartProviderObservationInput {
+    WorkloadRestartProviderObservationInput {
+        command_id: command.command_id().clone(),
+        transition_id: command.transition_id().clone(),
+        generation: command.generation(),
+        desired_digest: command.desired_digest(),
+        request_id: command.request_id().clone(),
+        source_attempt_id: command.source_attempt_id().clone(),
+        attempt_id: command.attempt_id().clone(),
+        restart_epoch: command.restart_epoch(),
+        dispatch_epoch: command.dispatch_epoch(),
+        provider_selection: command.provider_selection().clone(),
+        outcome: WorkloadRestartCommandOutcome::Succeeded {
+            evidence: nimbus_workloads::WorkloadRestartEvidenceDigest::sha256("counting-provider"),
+        },
+    }
+}
+
+fn successful_observation(
+    command: &ConfirmedWorkloadRestartCommand,
+) -> WorkloadRestartProviderObservation {
+    WorkloadRestartProviderObservation::new(successful_observation_input(command))
 }
 
 macro_rules! effect_capability {
@@ -357,7 +366,10 @@ async fn old_attempt_provider_observation_is_rejected_before_result() {
         .current_execution_attempt_id()
         .clone();
     assert_ne!(old_attempt, *confirmed.command().unwrap().attempt_id());
-    let provider = CountingProvider::observing_attempt(old_attempt);
+    let mut observation = successful_observation_input(confirmed.command().unwrap());
+    observation.attempt_id = old_attempt;
+    let provider =
+        CountingProvider::observing(WorkloadRestartProviderObservation::new(observation));
     let source = SourceAuthority::matching(loaded.active_intent().source().clone());
     let dispatcher = WorkloadRestartDispatcher::new(
         source,
@@ -374,4 +386,94 @@ async fn old_attempt_provider_observation_is_rejected_before_result() {
     ));
     assert_eq!(provider.execute.load(Ordering::SeqCst), 1);
     assert_eq!(provider.inspect.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn every_restart_provider_callback_fence_is_checked_before_result() {
+    let (confirmation, loaded) = confirmed("dispatcher-callback-fences", false).await;
+    let command = confirmation
+        .command()
+        .expect("restart command should exist");
+    let (crossed_confirmation, _) = confirmed("dispatcher-callback-fences-crossed", false).await;
+    let crossed = crossed_confirmation
+        .command()
+        .expect("crossed restart command should exist");
+
+    let mut cases = Vec::new();
+
+    let mut input = successful_observation_input(command);
+    input.command_id = crossed.command_id().clone();
+    cases.push(("command ID", input));
+
+    let mut input = successful_observation_input(command);
+    input.transition_id = crossed.transition_id().clone();
+    cases.push(("transition ID", input));
+
+    let mut input = successful_observation_input(command);
+    input.generation = WorkloadGeneration::new(command.generation().as_u64() + 1);
+    cases.push(("desired generation", input));
+
+    let mut input = successful_observation_input(command);
+    input.desired_digest = crossed.desired_digest();
+    cases.push(("desired digest", input));
+
+    let mut input = successful_observation_input(command);
+    input.request_id = crossed.request_id().clone();
+    cases.push(("request ID", input));
+
+    let mut input = successful_observation_input(command);
+    input.source_attempt_id = crossed.source_attempt_id().clone();
+    cases.push(("source attempt", input));
+
+    let mut input = successful_observation_input(command);
+    input.attempt_id = crossed.attempt_id().clone();
+    cases.push(("target attempt", input));
+
+    let mut input = successful_observation_input(command);
+    input.restart_epoch = WorkloadRestartEpoch::new(command.restart_epoch().as_u64() + 1);
+    cases.push(("restart epoch", input));
+
+    let mut input = successful_observation_input(command);
+    input.dispatch_epoch = WorkloadRestartDispatchEpoch::new(command.dispatch_epoch().as_u64() + 1);
+    cases.push(("dispatch epoch", input));
+
+    let mut input = successful_observation_input(command);
+    input.provider_selection =
+        WorkloadExecutionProviderId::for_registration_key("crossed-restart-provider");
+    cases.push(("provider selection", input));
+
+    for (label, input) in cases {
+        let provider = CountingProvider::observing(WorkloadRestartProviderObservation::new(input));
+        let source = SourceAuthority::matching(loaded.active_intent().source().clone());
+        let dispatcher = WorkloadRestartDispatcher::new(
+            source,
+            empty_reports(),
+            registry(command.provider_selection().clone(), provider.clone()),
+        );
+
+        assert!(
+            matches!(
+                dispatcher.dispatch_confirmed(&confirmation).await,
+                Err(WorkloadRestartDispatchError::CrossedProviderObservation)
+            ),
+            "a crossed {label} callback must fail before its result reaches the saga reducer"
+        );
+        assert_eq!(provider.execute.load(Ordering::SeqCst), 1, "{label}");
+        assert_eq!(provider.inspect.load(Ordering::SeqCst), 0, "{label}");
+    }
+
+    let provider = CountingProvider::observing(successful_observation(command));
+    let source = SourceAuthority::matching(loaded.active_intent().source().clone());
+    let dispatcher = WorkloadRestartDispatcher::new(
+        source,
+        empty_reports(),
+        registry(command.provider_selection().clone(), provider),
+    );
+    assert!(
+        dispatcher
+            .dispatch_confirmed(&confirmation)
+            .await
+            .expect("an exact callback should authenticate")
+            .is_some()
+    );
 }
