@@ -22,6 +22,8 @@ use super::{WorkloadRestartCancellationToken, WorkloadSagaCoordinator};
 
 /// Hard work bound before the watch yields to its injected clock.
 const MAX_RESTART_PAGES_PER_SWEEP: usize = 64;
+/// Cap durable-store outage backoff at 64 times the configured rescan period.
+const MAX_RESTART_STORE_BACKOFF_SHIFT: u32 = 6;
 
 /// Result of one injected-clock wait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,6 +241,7 @@ impl DurableRestartWatch {
 
     /// Run complete bounded sweeps until cooperative watch cancellation.
     pub(super) async fn bounded_restart_watch(&self) -> Result<RestartWait, RestartWatchError> {
+        let mut consecutive_store_failures = 0_u32;
         loop {
             if self.cancellation.is_cancelled() {
                 return Ok(RestartWait::Cancelled);
@@ -249,15 +252,49 @@ impl DurableRestartWatch {
                     .checked_add(self.rescan_interval_millis.get())
                     .ok_or(RestartWatchError::DeadlineOverflow)?,
             );
-            let deadline = match self.dispatch_each_due_epoch_once().await {
-                Ok(sweep) => sweep
-                    .earliest_deadline
-                    .map_or(periodic, |candidate| candidate.min(periodic)),
-                Err(RestartWatchError::Store(_)) => periodic,
+            let (deadline, hints_may_wake) = match self.dispatch_each_due_epoch_once().await {
+                Ok(sweep) => {
+                    consecutive_store_failures = 0;
+                    (
+                        sweep
+                            .earliest_deadline
+                            .map_or(periodic, |candidate| candidate.min(periodic)),
+                        true,
+                    )
+                }
+                Err(RestartWatchError::Store(error)) => {
+                    consecutive_store_failures = consecutive_store_failures.saturating_add(1);
+                    let retry_backoff_millis = restart_store_backoff_millis(
+                        self.rescan_interval_millis,
+                        consecutive_store_failures,
+                    );
+                    let deadline = WorkloadRestartNotBeforeUnixMillis::new(
+                        now.as_u64()
+                            .checked_add(retry_backoff_millis)
+                            .ok_or(RestartWatchError::DeadlineOverflow)?,
+                    );
+                    tracing::warn!(
+                        error = %error,
+                        consecutive_failures = consecutive_store_failures,
+                        retry_backoff_millis,
+                        "durable restart discovery failed; retained work will retry after bounded backoff"
+                    );
+                    // Exit hints carry no durable evidence. During a store
+                    // outage they must not bypass the failure backoff and turn
+                    // an advisory signal stream into a hot durable-store loop.
+                    (deadline, false)
+                }
                 Err(error) => return Err(error),
             };
 
             let wait = self.clock.wait_until(deadline, &self.cancellation);
+            if !hints_may_wake {
+                let result = wait.await;
+                if result == RestartWait::Cancelled {
+                    return Ok(result);
+                }
+                continue;
+            }
             tokio::select! {
                 result = wait => {
                     if result == RestartWait::Cancelled {
@@ -268,6 +305,13 @@ impl DurableRestartWatch {
             }
         }
     }
+}
+
+fn restart_store_backoff_millis(base: NonZeroU64, consecutive_failures: u32) -> u64 {
+    let shift = consecutive_failures
+        .saturating_sub(1)
+        .min(MAX_RESTART_STORE_BACKOFF_SHIFT);
+    base.get().saturating_mul(1_u64 << shift)
 }
 
 #[cfg(test)]

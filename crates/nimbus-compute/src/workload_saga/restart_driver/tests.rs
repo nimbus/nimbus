@@ -51,12 +51,21 @@ use crate::workload_saga::{
 
 struct DurableStore {
     record: Mutex<WorkloadSagaRecord>,
+    repeating_conflict: bool,
 }
 
 impl DurableStore {
     fn new(record: WorkloadSagaRecord) -> Arc<Self> {
         Arc::new(Self {
             record: Mutex::new(record),
+            repeating_conflict: false,
+        })
+    }
+
+    fn with_repeating_conflict(record: WorkloadSagaRecord) -> Arc<Self> {
+        Arc::new(Self {
+            record: Mutex::new(record),
+            repeating_conflict: true,
         })
     }
 
@@ -95,6 +104,12 @@ impl WorkloadSagaStore for DurableStore {
                 .record
                 .lock()
                 .expect("durable store lock should be healthy");
+            if self.repeating_conflict {
+                return Err(WorkloadSagaStoreError::Conflict {
+                    expected,
+                    observed: Some(current.revision()),
+                });
+            }
             if *current == next {
                 return Ok(WorkloadSagaCommit::Unchanged);
             }
@@ -626,6 +641,23 @@ async fn definite_failure_stops_later_commands() {
         WorkloadRestartRunDisposition::DefiniteFailure
     );
     assert_eq!(provider.calls().len(), 1);
+}
+
+#[tokio::test]
+async fn repeating_store_conflict_returns_progress_limit_without_provider_effect() {
+    let admitted = admitted_record("driver-repeating-conflict");
+    let key = admitted.key().clone();
+    let store = DurableStore::with_repeating_conflict(admitted.clone());
+    let provider = ScriptedProvider::new([]);
+
+    assert!(matches!(
+        driver(store.clone(), provider.clone())
+            .resume(&key, WorkloadRestartNotBeforeUnixMillis::new(0))
+            .await,
+        Err(WorkloadRestartRunError::ProgressLimit)
+    ));
+    assert!(provider.calls().is_empty());
+    assert_eq!(store.record(), admitted);
 }
 
 #[tokio::test]

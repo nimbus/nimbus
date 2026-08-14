@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::time::Duration;
 
 use nimbus_core::TenantId;
 use nimbus_workloads::{
@@ -109,6 +110,7 @@ struct PageSpec {
 struct WatchStore {
     pages: Mutex<VecDeque<Result<PageSpec, WorkloadSagaStoreError>>>,
     page_calls: AtomicUsize,
+    page_called: Notify,
     load_calls: AtomicUsize,
     cas_calls: AtomicUsize,
     limits: Mutex<Vec<u16>>,
@@ -121,9 +123,16 @@ impl WatchStore {
     }
 
     fn from_pages(pages: impl IntoIterator<Item = PageSpec>) -> Arc<Self> {
+        Self::from_results(pages.into_iter().map(Ok))
+    }
+
+    fn from_results(
+        pages: impl IntoIterator<Item = Result<PageSpec, WorkloadSagaStoreError>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            pages: Mutex::new(pages.into_iter().map(Ok).collect()),
+            pages: Mutex::new(pages.into_iter().collect()),
             page_calls: AtomicUsize::new(0),
+            page_called: Notify::new(),
             load_calls: AtomicUsize::new(0),
             cas_calls: AtomicUsize::new(0),
             limits: Mutex::new(Vec::new()),
@@ -143,6 +152,18 @@ impl WatchStore {
                 .front()
                 .expect("watch page queue is non-empty")
                 .clone()
+        }
+    }
+
+    async fn wait_for_page_calls(&self, expected: usize) {
+        loop {
+            let called = self.page_called.notified();
+            tokio::pin!(called);
+            called.as_mut().enable();
+            if self.page_calls.load(Ordering::Acquire) >= expected {
+                return;
+            }
+            called.await;
         }
     }
 }
@@ -182,6 +203,7 @@ impl WorkloadSagaStore for WatchStore {
     ) -> WorkloadSagaFuture<'a, WorkloadRestartCandidatePage> {
         Box::pin(async move {
             self.page_calls.fetch_add(1, Ordering::AcqRel);
+            self.page_called.notify_waiters();
             self.limits
                 .lock()
                 .expect("watch limit log should be healthy")
@@ -384,6 +406,116 @@ async fn automatic_watch_does_not_busy_spin_before_deadline() {
         RestartWait::Cancelled,
         "cancellation should wake the clock wait"
     );
+}
+
+#[tokio::test]
+async fn permanent_store_failure_backoff_rejects_hint_bypass_and_cancels() {
+    let store = WatchStore::from_results([Err(WorkloadSagaStoreError::Unavailable)]);
+    let supervisor = Arc::new(KeyedSupervisor::default());
+    let clock = FakeClock::new(0);
+    let cancellation = WorkloadRestartCancellationToken::new();
+    let watch = watch(
+        store.clone(),
+        supervisor.clone(),
+        clock.clone(),
+        cancellation.clone(),
+        8,
+    );
+    let hints = watch.hint_handle();
+    let task = tokio::spawn({
+        let watch = watch.clone();
+        async move { watch.bounded_restart_watch().await }
+    });
+
+    clock.wait_until_registered().await;
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 1);
+    assert_eq!(clock.waits(), vec![1_000]);
+
+    hints.notify(read_only_exit_hint());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), store.wait_for_page_calls(2))
+            .await
+            .is_err(),
+        "advisory hint bypassed durable-store failure backoff; observed {} page calls",
+        store.page_calls.load(Ordering::Acquire),
+    );
+
+    clock.advance_to(1_000);
+    clock.wait_until_registered().await;
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 2);
+    assert_eq!(clock.waits(), vec![1_000, 3_000]);
+
+    hints.notify(read_only_exit_hint());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), store.wait_for_page_calls(3))
+            .await
+            .is_err(),
+        "advisory hint bypassed the second store backoff; observed {} page calls",
+        store.page_calls.load(Ordering::Acquire),
+    );
+
+    clock.advance_to(3_000);
+    clock.wait_until_registered().await;
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 3);
+    assert_eq!(clock.waits(), vec![1_000, 3_000, 7_000]);
+
+    cancellation.cancel();
+    assert_eq!(task.await.unwrap().unwrap(), RestartWait::Cancelled);
+    assert_eq!(store.load_calls.load(Ordering::Acquire), 0);
+    assert_eq!(store.cas_calls.load(Ordering::Acquire), 0);
+    assert_eq!(supervisor.calls.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn store_failure_backoff_caps_at_sixty_four_rescan_periods() {
+    let base = NonZeroU64::new(1_000).unwrap();
+    assert_eq!(restart_store_backoff_millis(base, 0), 1_000);
+    assert_eq!(restart_store_backoff_millis(base, 1), 1_000);
+    assert_eq!(restart_store_backoff_millis(base, 2), 2_000);
+    assert_eq!(restart_store_backoff_millis(base, 7), 64_000);
+    assert_eq!(restart_store_backoff_millis(base, u32::MAX), 64_000);
+}
+
+#[tokio::test]
+async fn successful_store_sweep_resets_failure_backoff() {
+    let store = WatchStore::from_results([
+        Err(WorkloadSagaStoreError::Unavailable),
+        Ok(PageSpec {
+            records: Vec::new(),
+            has_more: false,
+        }),
+        Err(WorkloadSagaStoreError::Unavailable),
+    ]);
+    let supervisor = Arc::new(KeyedSupervisor::default());
+    let clock = FakeClock::new(0);
+    let cancellation = WorkloadRestartCancellationToken::new();
+    let watch = watch(
+        store.clone(),
+        supervisor,
+        clock.clone(),
+        cancellation.clone(),
+        8,
+    );
+    let task = tokio::spawn({
+        let watch = watch.clone();
+        async move { watch.bounded_restart_watch().await }
+    });
+
+    clock.wait_until_registered().await;
+    clock.advance_to(1_000);
+    clock.wait_until_registered().await;
+    clock.advance_to(2_000);
+    clock.wait_until_registered().await;
+
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 3);
+    assert_eq!(
+        clock.waits(),
+        vec![1_000, 2_000, 3_000],
+        "one successful sweep must reset the next store failure to base backoff"
+    );
+
+    cancellation.cancel();
+    assert_eq!(task.await.unwrap().unwrap(), RestartWait::Cancelled);
 }
 
 #[tokio::test]
