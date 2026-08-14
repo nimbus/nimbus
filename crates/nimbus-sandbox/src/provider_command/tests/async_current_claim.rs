@@ -150,6 +150,114 @@ async fn inspected_absence_invalidates_a_delayed_started_token_before_io() {
     assert_eq!(retry_execution.observation().retry_lineage.len(), 1);
 }
 
+#[tokio::test]
+async fn claimed_restart_inspection_fences_a_delayed_async_token_before_io() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let claim = restart_claim(ProviderCommandOperation::ActivateRestartedWorkload, 1, 0);
+    let execution = match journal
+        .claim_dispatch_epoch(&claim)
+        .expect("the restart epoch should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => unreachable!(),
+    };
+    let delayed = journal
+        .resume_current_claim(execution.observation())
+        .expect("the delayed restart owner should retain its exact token");
+
+    let (_, absent) = journal
+        .inspect_claimed_current_async_and_publish(execution, |_| {
+            Box::pin(async move {
+                (
+                    (),
+                    ProviderCommandObservationKind::Absent,
+                    None,
+                    b"guest restart inspection proves exact absence".to_vec(),
+                )
+            })
+        })
+        .await
+        .expect("the claimed restart inspection should publish");
+    assert_eq!(absent.kind(), ProviderCommandObservationKind::Absent);
+
+    let retry = restart_claim(ProviderCommandOperation::ActivateRestartedWorkload, 1, 1);
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(&retry)
+            .expect("exact absence should authorize the adjacent restart epoch"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let delayed_calls = Arc::clone(&calls);
+    assert!(matches!(
+        journal
+            .execute_current_claim_async(delayed, move |_| {
+                Box::pin(async move {
+                    delayed_calls.fetch_add(1, Ordering::SeqCst);
+                    (
+                        (),
+                        ProviderCommandObservationKind::Succeeded,
+                        None,
+                        b"delayed restart effect must not publish".to_vec(),
+                    )
+                })
+            })
+            .await,
+        Err(ProviderCommandJournalError::StaleDispatchEpoch {
+            current: 1,
+            candidate: 0,
+        })
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn adopted_claimed_async_inspection_recovers_and_fences_delayed_execution() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let claim = restart_claim(ProviderCommandOperation::ActivateRestartedWorkload, 1, 0);
+    let execution = execution(&journal, &claim);
+    let claimed = execution.observation().clone();
+
+    let (_, absent) = journal
+        .inspect_current_claim_async_and_publish(&claimed, |current| {
+            Box::pin(async move {
+                assert_eq!(current.kind(), ProviderCommandObservationKind::Claimed);
+                (
+                    (),
+                    ProviderCommandObservationKind::Absent,
+                    None,
+                    b"reopened provider proves the claimed effect absent".to_vec(),
+                )
+            })
+        })
+        .await
+        .expect("an orphaned claimed interval should be inspected and published");
+    assert_eq!(absent.kind(), ProviderCommandObservationKind::Absent);
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let delayed_calls = Arc::clone(&calls);
+    assert!(
+        journal
+            .execute_current_claim_async(execution, move |_| {
+                Box::pin(async move {
+                    delayed_calls.fetch_add(1, Ordering::SeqCst);
+                    (
+                        (),
+                        ProviderCommandObservationKind::Succeeded,
+                        None,
+                        b"delayed effect must not publish".to_vec(),
+                    )
+                })
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_remote_inspect_contenders_publish_one_result_winner() {
     let root = tempfile::tempdir().expect("temporary root should exist");

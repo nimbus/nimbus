@@ -227,6 +227,48 @@ async fn inspection_without_owner_claim_observes_and_durably_adopts_absence() {
 }
 
 #[tokio::test]
+async fn adopted_claimed_provision_inspects_and_publishes_exact_absence() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let adapter = adapter(root.path());
+    let command = command("provider-claimed", WorkloadSagaPhase::NetworkAttached).await;
+    let claim = claim_for_command(&command).expect("confirmed command should produce one claim");
+    let execution = match adapter
+        .attempt_idempotency_journal
+        .claim_dispatch_epoch(&claim)
+        .expect("initial claim should succeed")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("first claim should grant exact execution authority")
+        }
+    };
+
+    let observed = adapter.inspect(&command, || ProviderProvisionEffectObservation::Absent {
+        evidence: b"recovery proves the claimed provision effect absent".to_vec(),
+    });
+    assert!(matches!(
+        observed,
+        WorkloadProvisionInspectionResult::Absent { .. }
+    ));
+    let mut effects = 0_u64;
+    assert!(
+        adapter
+            .attempt_idempotency_journal
+            .execute_current_claim(execution, |_| {
+                effects += 1;
+                (
+                    (),
+                    ProviderCommandObservationKind::Succeeded,
+                    None,
+                    b"delayed provision effect must not run".to_vec(),
+                )
+            })
+            .is_err()
+    );
+    assert_eq!(effects, 0);
+}
+
+#[tokio::test]
 async fn definite_failure_is_durable_and_invalid_provider_code_is_redacted() {
     let root = tempfile::tempdir().expect("temporary root should exist");
     let adapter = adapter(root.path());
@@ -289,6 +331,19 @@ async fn ambiguous_and_in_progress_inspection_never_gains_execute_authority() {
         ambiguous,
         WorkloadProvisionInspectionResult::Ambiguous { .. }
     ));
+    let inspected = ambiguous_adapter.inspect(&ambiguous_command, || {
+        ProviderProvisionEffectObservation::Absent {
+            evidence: b"exact adopted ambiguity inspection proves absence".to_vec(),
+        }
+    });
+    assert!(matches!(
+        inspected,
+        WorkloadProvisionInspectionResult::Absent { .. }
+    ));
+    let replay = ambiguous_adapter.inspect(&ambiguous_command, || {
+        panic!("terminal inspected absence must replay without another provider read")
+    });
+    assert_eq!(replay, inspected);
 
     let second_root = tempfile::tempdir().expect("second temporary root should exist");
     let in_progress_adapter = adapter(second_root.path());

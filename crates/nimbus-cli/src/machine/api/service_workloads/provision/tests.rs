@@ -28,6 +28,50 @@ use nimbus_workloads::{
 
 use crate::machine::api::tests::test_forwarder_authority;
 
+#[test]
+fn every_provision_step_maps_to_one_exact_provider_journal_operation() {
+    use nimbus_sandbox::ProviderCommandOperation;
+
+    let cases = [
+        (
+            WorkloadProvisionStep::ReserveNetwork,
+            ProviderCommandOperation::ReserveNetwork,
+        ),
+        (
+            WorkloadProvisionStep::PrepareWorkload,
+            ProviderCommandOperation::PrepareWorkload,
+        ),
+        (
+            WorkloadProvisionStep::AttachNetwork,
+            ProviderCommandOperation::AttachNetwork,
+        ),
+        (
+            WorkloadProvisionStep::InspectActivationPrerequisites,
+            ProviderCommandOperation::InspectActivationPrerequisites,
+        ),
+        (
+            WorkloadProvisionStep::ActivateWorkload,
+            ProviderCommandOperation::ActivateWorkload,
+        ),
+        (
+            WorkloadProvisionStep::InspectWorkloadReadiness,
+            ProviderCommandOperation::InspectWorkloadReadiness,
+        ),
+        (
+            WorkloadProvisionStep::Publish,
+            ProviderCommandOperation::PublishIngress,
+        ),
+        (
+            WorkloadProvisionStep::ObservePublication,
+            ProviderCommandOperation::ObserveIngress,
+        ),
+    ];
+
+    for (step, expected) in cases {
+        assert_eq!(super::operation(step), expected, "{step:?}");
+    }
+}
+
 pub(crate) fn request_fixture(
     suffix: char,
     step: WorkloadProvisionStep,
@@ -286,19 +330,21 @@ fn readiness_running_is_in_progress_until_ready() {
 }
 
 #[test]
-fn observe_publication_rechecks_cached_absence() {
-    assert!(!super::terminal_without_live_reconciliation(
-        WorkloadProvisionStep::Publish,
-        nimbus_sandbox::ProviderCommandObservationKind::Absent,
+fn only_process_bound_provision_effects_reconcile_live_absence() {
+    assert!(super::live_reconciliation(WorkloadProvisionStep::Publish));
+    assert!(super::live_reconciliation(
+        WorkloadProvisionStep::ObservePublication
     ));
-    assert!(!super::terminal_without_live_reconciliation(
-        WorkloadProvisionStep::ObservePublication,
-        nimbus_sandbox::ProviderCommandObservationKind::Absent,
-    ));
-    assert!(super::terminal_without_live_reconciliation(
+    for step in [
+        WorkloadProvisionStep::ReserveNetwork,
         WorkloadProvisionStep::PrepareWorkload,
-        nimbus_sandbox::ProviderCommandObservationKind::Absent,
-    ));
+        WorkloadProvisionStep::AttachNetwork,
+        WorkloadProvisionStep::InspectActivationPrerequisites,
+        WorkloadProvisionStep::ActivateWorkload,
+        WorkloadProvisionStep::InspectWorkloadReadiness,
+    ] {
+        assert!(!super::live_reconciliation(step), "{step:?}");
+    }
 }
 
 fn phases(step: WorkloadProvisionStep) -> (WorkloadSagaPhase, WorkloadSagaPhase) {

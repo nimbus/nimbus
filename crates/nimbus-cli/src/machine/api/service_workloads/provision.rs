@@ -25,8 +25,9 @@ use nimbus_network::{
 use nimbus_node::{HostLifecycleRequest, HostLifecycleStatus, TenantWorkloadPhase};
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
-    ProviderCommandClaimInput, ProviderCommandObservation, ProviderCommandObservationKind,
-    ProviderCommandOperation, SandboxExecutionAttemptId, SandboxProvisionDependencyListener,
+    ProviderCommandClaimInput, ProviderCommandExecutionClaim, ProviderCommandJournalError,
+    ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
+    SandboxExecutionAttemptId, SandboxProvisionDependencyListener,
     SandboxProvisionEndpointIdentity, SandboxProvisionListener, SandboxProvisionNetworkPlan,
     SandboxProvisionPhaseObservation,
 };
@@ -37,6 +38,7 @@ use nimbus_workloads::{
 
 use super::{GuestNodeWorkloadService, MachineApiHttpError};
 
+#[derive(Clone)]
 pub(super) struct ValidatedGuestProvisionCommand {
     spec: SandboxSpec,
     sandbox_id: SandboxId,
@@ -178,37 +180,136 @@ pub(super) async fn dispatch(
         Err(error) => return Ok(ambiguous(error.to_string())),
     };
 
-    match command.mode() {
-        WorkloadProvisionCommandMode::Execute => match decision {
-            ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
-                Ok(journal_observation(&observation))
-            }
-            ProviderCommandClaimDecision::ExecuteClaimed(_) => {
-                let effect = execute_phase(service, command, &validated, forwarder_authority).await;
-                Ok(record_effect(&journal, &claim, effect, false))
-            }
-        },
-        WorkloadProvisionCommandMode::Inspect => {
-            if let ProviderCommandClaimDecision::AdoptExactAttempt(observation) = &decision
-                && terminal_without_live_reconciliation(
-                    command.claim().attempt().step(),
-                    observation.kind(),
-                )
-            {
-                return Ok(journal_observation(observation));
-            }
-            let effect = inspect_phase(service, command, &validated, forwarder_authority).await;
-            Ok(record_effect(
-                &journal,
-                &claim,
-                effect,
-                matches!(
-                    command.claim().attempt().step(),
-                    WorkloadProvisionStep::Publish | WorkloadProvisionStep::ObservePublication
-                ),
-            ))
+    match (command.mode(), decision) {
+        (
+            WorkloadProvisionCommandMode::Execute,
+            ProviderCommandClaimDecision::ExecuteClaimed(execution),
+        ) => {
+            execute_claimed(
+                journal,
+                execution,
+                service.clone(),
+                command.clone(),
+                validated,
+                forwarder_authority.clone(),
+            )
+            .await
         }
+        (
+            WorkloadProvisionCommandMode::Execute,
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation),
+        ) => Ok(journal_observation(&observation)),
+        (
+            WorkloadProvisionCommandMode::Inspect,
+            ProviderCommandClaimDecision::ExecuteClaimed(execution),
+        ) => {
+            inspect_claimed(
+                journal,
+                execution,
+                service.clone(),
+                command.clone(),
+                validated,
+                forwarder_authority.clone(),
+            )
+            .await
+        }
+        (
+            WorkloadProvisionCommandMode::Inspect,
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation),
+        ) if matches!(
+            observation.kind(),
+            ProviderCommandObservationKind::Claimed
+                | ProviderCommandObservationKind::InProgress
+                | ProviderCommandObservationKind::Ambiguous
+        ) =>
+        {
+            inspect_adopted(
+                journal,
+                observation,
+                service.clone(),
+                command.clone(),
+                validated,
+                forwarder_authority.clone(),
+            )
+            .await
+        }
+        (
+            WorkloadProvisionCommandMode::Inspect,
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation),
+        ) if live_reconciliation(command.claim().attempt().step())
+            && observation.kind() == ProviderCommandObservationKind::Succeeded =>
+        {
+            let effect = inspect_phase(service, command, &validated, forwarder_authority).await;
+            Ok(record_live_reconciliation(&journal, &claim, effect))
+        }
+        (
+            WorkloadProvisionCommandMode::Inspect,
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation),
+        ) => Ok(journal_observation(&observation)),
     }
+}
+
+async fn execute_claimed(
+    journal: ProviderCommandAttemptJournal,
+    execution: ProviderCommandExecutionClaim,
+    service: GuestNodeWorkloadService,
+    command: MachineApiWorkloadProvisionCommandEnvelope,
+    validated: ValidatedGuestProvisionCommand,
+    forwarder_authority: MachineForwarderAuthority,
+) -> Result<MachineApiWorkloadProvisionObservation, MachineApiHttpError> {
+    let result = journal
+        .execute_current_claim_async(execution, move |_| {
+            Box::pin(async move {
+                let effect =
+                    execute_phase(&service, &command, &validated, &forwarder_authority).await;
+                let (kind, evidence) = durable_observation_fields(effect);
+                ((), kind, None, evidence)
+            })
+        })
+        .await;
+    Ok(published_result(result))
+}
+
+async fn inspect_claimed(
+    journal: ProviderCommandAttemptJournal,
+    execution: ProviderCommandExecutionClaim,
+    service: GuestNodeWorkloadService,
+    command: MachineApiWorkloadProvisionCommandEnvelope,
+    validated: ValidatedGuestProvisionCommand,
+    forwarder_authority: MachineForwarderAuthority,
+) -> Result<MachineApiWorkloadProvisionObservation, MachineApiHttpError> {
+    let result = journal
+        .inspect_claimed_current_async_and_publish(execution, move |_| {
+            Box::pin(async move {
+                let effect =
+                    inspect_phase(&service, &command, &validated, &forwarder_authority).await;
+                let (kind, evidence) = durable_observation_fields(effect);
+                ((), kind, None, evidence)
+            })
+        })
+        .await;
+    Ok(published_result(result))
+}
+
+async fn inspect_adopted(
+    journal: ProviderCommandAttemptJournal,
+    observation: ProviderCommandObservation,
+    service: GuestNodeWorkloadService,
+    command: MachineApiWorkloadProvisionCommandEnvelope,
+    validated: ValidatedGuestProvisionCommand,
+    forwarder_authority: MachineForwarderAuthority,
+) -> Result<MachineApiWorkloadProvisionObservation, MachineApiHttpError> {
+    let result = journal
+        .inspect_current_claim_async_and_publish(&observation, move |_| {
+            Box::pin(async move {
+                let effect =
+                    inspect_phase(&service, &command, &validated, &forwarder_authority).await;
+                let (kind, evidence) = durable_observation_fields(effect);
+                ((), kind, None, evidence)
+            })
+        })
+        .await;
+    Ok(published_result(result))
 }
 
 fn validate_command(
@@ -441,13 +542,10 @@ const fn operation(step: WorkloadProvisionStep) -> ProviderCommandOperation {
     }
 }
 
-fn record_effect(
-    journal: &ProviderCommandAttemptJournal,
-    claim: &ProviderCommandClaim,
+fn durable_observation_fields(
     effect: MachineApiWorkloadProvisionObservation,
-    reconcile_live_absence: bool,
-) -> MachineApiWorkloadProvisionObservation {
-    let kind = match &effect {
+) -> (ProviderCommandObservationKind, Vec<u8>) {
+    let kind = match effect {
         MachineApiWorkloadProvisionObservation::Succeeded { .. } => {
             ProviderCommandObservationKind::Succeeded
         }
@@ -464,10 +562,29 @@ fn record_effect(
             ProviderCommandObservationKind::Ambiguous
         }
     };
-    let result = if reconcile_live_absence && kind == ProviderCommandObservationKind::Absent {
-        journal.record_reconciled_absence(claim, effect.evidence())
+    (kind, effect.evidence().to_vec())
+}
+
+fn published_result(
+    result: Result<((), ProviderCommandObservation), ProviderCommandJournalError>,
+) -> MachineApiWorkloadProvisionObservation {
+    match result {
+        Ok(((), observation)) => journal_observation(&observation),
+        Err(error) => ambiguous(error.to_string()),
+    }
+}
+
+fn record_live_reconciliation(
+    journal: &ProviderCommandAttemptJournal,
+    claim: &ProviderCommandClaim,
+    effect: MachineApiWorkloadProvisionObservation,
+) -> MachineApiWorkloadProvisionObservation {
+    let evidence = effect.evidence().to_vec();
+    let (kind, _) = durable_observation_fields(effect);
+    let result = if kind == ProviderCommandObservationKind::Absent {
+        journal.record_reconciled_absence(claim, &evidence)
     } else {
-        journal.record_observation(claim, kind, effect.evidence())
+        journal.record_observation(claim, kind, &evidence)
     };
     match result {
         Ok(observation) => journal_observation(&observation),
@@ -475,18 +592,10 @@ fn record_effect(
     }
 }
 
-fn terminal_without_live_reconciliation(
-    step: WorkloadProvisionStep,
-    kind: ProviderCommandObservationKind,
-) -> bool {
-    !matches!(
+fn live_reconciliation(step: WorkloadProvisionStep) -> bool {
+    matches!(
         step,
         WorkloadProvisionStep::Publish | WorkloadProvisionStep::ObservePublication
-    ) && matches!(
-        kind,
-        ProviderCommandObservationKind::Succeeded
-            | ProviderCommandObservationKind::DefiniteFailure
-            | ProviderCommandObservationKind::Absent
     )
 }
 

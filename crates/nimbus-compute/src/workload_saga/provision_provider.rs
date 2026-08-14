@@ -7,8 +7,8 @@
 
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
-    ProviderCommandClaimInput, ProviderCommandJournalError, ProviderCommandObservation,
-    ProviderCommandObservationKind, ProviderCommandOperation,
+    ProviderCommandClaimInput, ProviderCommandExecutionClaim, ProviderCommandJournalError,
+    ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
 };
 use nimbus_workloads::{
     WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest, WorkloadProvisionInspectionResult,
@@ -52,8 +52,8 @@ impl ProviderProvisionPhaseAdapter {
             .attempt_idempotency_journal
             .claim_dispatch_epoch(&claim)
         {
-            Ok(ProviderCommandClaimDecision::ExecuteClaimed(_)) => {
-                self.record_effect(command, &claim, effect())
+            Ok(ProviderCommandClaimDecision::ExecuteClaimed(execution)) => {
+                self.execute_claimed(command, execution, effect)
             }
             Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation)) => {
                 observation_result(command, &observation)
@@ -72,11 +72,15 @@ impl ProviderProvisionPhaseAdapter {
             Ok(claim) => claim,
             Err(error) => return journal_error_result(command, &error),
         };
-        match self
+        let decision = match self
             .attempt_idempotency_journal
             .claim_dispatch_epoch(&claim)
         {
-            Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation))
+            Ok(decision) => decision,
+            Err(error) => return journal_error_result(command, &error),
+        };
+        match decision {
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation)
                 if matches!(
                     observation.kind(),
                     ProviderCommandObservationKind::Succeeded
@@ -86,11 +90,22 @@ impl ProviderProvisionPhaseAdapter {
             {
                 observation_result(command, &observation)
             }
-            Ok(
-                ProviderCommandClaimDecision::ExecuteClaimed(_)
-                | ProviderCommandClaimDecision::AdoptExactAttempt(_),
-            ) => self.record_effect(command, &claim, inspect()),
-            Err(error) => journal_error_result(command, &error),
+            ProviderCommandClaimDecision::ExecuteClaimed(execution) => {
+                self.inspect_claimed(command, execution, inspect)
+            }
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation)
+                if matches!(
+                    observation.kind(),
+                    ProviderCommandObservationKind::Claimed
+                        | ProviderCommandObservationKind::InProgress
+                        | ProviderCommandObservationKind::Ambiguous
+                ) =>
+            {
+                self.inspect_adopted(command, &observation, inspect)
+            }
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
+                observation_result(command, &observation)
+            }
         }
     }
 
@@ -108,60 +123,141 @@ impl ProviderProvisionPhaseAdapter {
             Ok(claim) => claim,
             Err(error) => return journal_error_result(command, &error),
         };
-        if let Err(error) = self
+        let decision = match self
             .attempt_idempotency_journal
             .claim_dispatch_epoch(&claim)
         {
-            return journal_error_result(command, &error);
-        }
-        let effect = inspect();
-        if let ProviderProvisionEffectObservation::Absent { evidence } = &effect {
-            return match self
-                .attempt_idempotency_journal
-                .record_reconciled_absence(&claim, evidence)
+            Ok(decision) => decision,
+            Err(error) => return journal_error_result(command, &error),
+        };
+        match decision {
+            ProviderCommandClaimDecision::ExecuteClaimed(execution) => {
+                self.inspect_claimed(command, execution, inspect)
+            }
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation)
+                if matches!(
+                    observation.kind(),
+                    ProviderCommandObservationKind::Claimed
+                        | ProviderCommandObservationKind::InProgress
+                        | ProviderCommandObservationKind::Ambiguous
+                ) =>
             {
-                Ok(observation) => observation_result(command, &observation),
-                Err(error) => journal_error_result(command, &error),
-            };
+                self.inspect_adopted(command, &observation, inspect)
+            }
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation)
+                if observation.kind() == ProviderCommandObservationKind::Succeeded =>
+            {
+                self.reconcile_live(command, &claim, inspect())
+            }
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
+                observation_result(command, &observation)
+            }
         }
-        self.record_effect(command, &claim, effect)
     }
 
-    fn record_effect(
+    fn execute_claimed(
+        &self,
+        command: &ConfirmedWorkloadProvisionCommand,
+        execution: ProviderCommandExecutionClaim,
+        effect: impl FnOnce() -> ProviderProvisionEffectObservation,
+    ) -> WorkloadProvisionInspectionResult {
+        let result = self
+            .attempt_idempotency_journal
+            .execute_current_claim(execution, |_| {
+                let (kind, evidence) = effect_fields(effect());
+                ((), kind, None, evidence)
+            });
+        published_result(command, result)
+    }
+
+    fn inspect_claimed(
+        &self,
+        command: &ConfirmedWorkloadProvisionCommand,
+        execution: ProviderCommandExecutionClaim,
+        inspect: impl FnOnce() -> ProviderProvisionEffectObservation,
+    ) -> WorkloadProvisionInspectionResult {
+        let result = self
+            .attempt_idempotency_journal
+            .inspect_claimed_current_and_publish(execution, |_| {
+                let (kind, evidence) = effect_fields(inspect());
+                ((), kind, None, evidence)
+            });
+        published_result(command, result)
+    }
+
+    fn inspect_adopted(
+        &self,
+        command: &ConfirmedWorkloadProvisionCommand,
+        observation: &ProviderCommandObservation,
+        inspect: impl FnOnce() -> ProviderProvisionEffectObservation,
+    ) -> WorkloadProvisionInspectionResult {
+        let result = self
+            .attempt_idempotency_journal
+            .inspect_current_claim_and_publish(observation, |_| {
+                let (kind, evidence) = effect_fields(inspect());
+                ((), kind, None, evidence)
+            });
+        published_result(command, result)
+    }
+
+    fn reconcile_live(
         &self,
         command: &ConfirmedWorkloadProvisionCommand,
         claim: &ProviderCommandClaim,
         effect: ProviderProvisionEffectObservation,
     ) -> WorkloadProvisionInspectionResult {
-        let (kind, evidence) = match &effect {
-            ProviderProvisionEffectObservation::Succeeded { evidence } => (
-                ProviderCommandObservationKind::Succeeded,
-                evidence.as_slice(),
-            ),
-            ProviderProvisionEffectObservation::DefiniteFailure { evidence, .. } => (
-                ProviderCommandObservationKind::DefiniteFailure,
-                evidence.as_slice(),
-            ),
+        let (kind, evidence) = match effect {
             ProviderProvisionEffectObservation::Absent { evidence } => {
-                (ProviderCommandObservationKind::Absent, evidence.as_slice())
+                return match self
+                    .attempt_idempotency_journal
+                    .record_reconciled_absence(claim, &evidence)
+                {
+                    Ok(observation) => observation_result(command, &observation),
+                    Err(error) => journal_error_result(command, &error),
+                };
             }
-            ProviderProvisionEffectObservation::InProgress { evidence } => (
-                ProviderCommandObservationKind::InProgress,
-                evidence.as_slice(),
-            ),
-            ProviderProvisionEffectObservation::Ambiguous { evidence } => (
-                ProviderCommandObservationKind::Ambiguous,
-                evidence.as_slice(),
-            ),
+            other => effect_fields(other),
         };
         let observation = match self
             .attempt_idempotency_journal
-            .record_observation(claim, kind, evidence)
+            .record_observation(claim, kind, &evidence)
         {
             Ok(observation) => observation,
             Err(_) => return ambiguous_result(command),
         };
         observation_result(command, &observation)
+    }
+}
+
+fn effect_fields(
+    effect: ProviderProvisionEffectObservation,
+) -> (ProviderCommandObservationKind, Vec<u8>) {
+    match effect {
+        ProviderProvisionEffectObservation::Succeeded { evidence } => {
+            (ProviderCommandObservationKind::Succeeded, evidence)
+        }
+        ProviderProvisionEffectObservation::DefiniteFailure { evidence, .. } => {
+            (ProviderCommandObservationKind::DefiniteFailure, evidence)
+        }
+        ProviderProvisionEffectObservation::Absent { evidence } => {
+            (ProviderCommandObservationKind::Absent, evidence)
+        }
+        ProviderProvisionEffectObservation::InProgress { evidence } => {
+            (ProviderCommandObservationKind::InProgress, evidence)
+        }
+        ProviderProvisionEffectObservation::Ambiguous { evidence } => {
+            (ProviderCommandObservationKind::Ambiguous, evidence)
+        }
+    }
+}
+
+fn published_result(
+    command: &ConfirmedWorkloadProvisionCommand,
+    result: Result<((), ProviderCommandObservation), ProviderCommandJournalError>,
+) -> WorkloadProvisionInspectionResult {
+    match result {
+        Ok(((), observation)) => observation_result(command, &observation),
+        Err(error) => journal_error_result(command, &error),
     }
 }
 

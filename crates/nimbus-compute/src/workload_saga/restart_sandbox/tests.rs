@@ -910,19 +910,19 @@ async fn concurrent_restart_dispatch_produces_one_provider_effect() {
             .collect::<Vec<_>>()
     });
 
+    let succeeded = outcomes
+        .iter()
+        .filter(|outcome| matches!(outcome, WorkloadRestartCommandOutcome::Succeeded { .. }))
+        .count();
+    let in_progress = outcomes
+        .iter()
+        .filter(|outcome| matches!(outcome, WorkloadRestartCommandOutcome::InProgress { .. }))
+        .count();
+    assert!(succeeded >= 1, "the provider winner must publish success");
     assert_eq!(
-        outcomes
-            .iter()
-            .filter(|outcome| matches!(outcome, WorkloadRestartCommandOutcome::Succeeded { .. }))
-            .count(),
-        1
-    );
-    assert_eq!(
-        outcomes
-            .iter()
-            .filter(|outcome| matches!(outcome, WorkloadRestartCommandOutcome::InProgress { .. }))
-            .count(),
-        1
+        succeeded + in_progress,
+        2,
+        "a contender may only adopt durable success or report that the exact claim can still start"
     );
     assert_eq!(delete_count(&fixture.delete_log), 1);
     assert!(!fixture.runtime_marker.exists());

@@ -133,6 +133,7 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct GuestNodeWorkloadService {
     node_id: NodeIdentity,
     lifecycle_backend: Arc<dyn HostLifecycleBackend>,

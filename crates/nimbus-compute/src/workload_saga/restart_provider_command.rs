@@ -8,8 +8,8 @@
 
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
-    ProviderCommandClaimInput, ProviderCommandJournalError, ProviderCommandObservation,
-    ProviderCommandObservationKind, ProviderCommandOperation,
+    ProviderCommandClaimInput, ProviderCommandExecutionClaim, ProviderCommandJournalError,
+    ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
 };
 use nimbus_workloads::{
     WorkloadOwnerEvidenceDigest, WorkloadRestartEvidenceDigest, WorkloadRestartStep,
@@ -80,8 +80,8 @@ impl ProviderRestartPhaseAdapter {
             .attempt_idempotency_journal
             .claim_dispatch_epoch(&claim)
         {
-            Ok(ProviderCommandClaimDecision::ExecuteClaimed(_)) => {
-                self.record_effect(command, &claim, effect())
+            Ok(ProviderCommandClaimDecision::ExecuteClaimed(execution)) => {
+                self.execute_claimed(command, execution, effect)
             }
             Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation)) => {
                 provider_observation(command, observation_outcome(&observation))
@@ -100,11 +100,15 @@ impl ProviderRestartPhaseAdapter {
             Ok(claim) => claim,
             Err(error) => return journal_error_observation(command, &error),
         };
-        match self
+        let decision = match self
             .attempt_idempotency_journal
             .claim_dispatch_epoch(&claim)
         {
-            Ok(ProviderCommandClaimDecision::AdoptExactAttempt(observation))
+            Ok(decision) => decision,
+            Err(error) => return journal_error_observation(command, &error),
+        };
+        match decision {
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation)
                 if matches!(
                     observation.kind(),
                     ProviderCommandObservationKind::Succeeded
@@ -114,11 +118,22 @@ impl ProviderRestartPhaseAdapter {
             {
                 provider_observation(command, observation_outcome(&observation))
             }
-            Ok(
-                ProviderCommandClaimDecision::ExecuteClaimed(_)
-                | ProviderCommandClaimDecision::AdoptExactAttempt(_),
-            ) => self.record_effect(command, &claim, inspect()),
-            Err(error) => journal_error_observation(command, &error),
+            ProviderCommandClaimDecision::ExecuteClaimed(execution) => {
+                self.inspect_claimed(command, execution, inspect)
+            }
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation)
+                if matches!(
+                    observation.kind(),
+                    ProviderCommandObservationKind::Claimed
+                        | ProviderCommandObservationKind::InProgress
+                        | ProviderCommandObservationKind::Ambiguous
+                ) =>
+            {
+                self.inspect_adopted(command, &observation, inspect)
+            }
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
+                provider_observation(command, observation_outcome(&observation))
+            }
         }
     }
 
@@ -135,40 +150,138 @@ impl ProviderRestartPhaseAdapter {
             Ok(claim) => claim,
             Err(error) => return journal_error_observation(command, &error),
         };
-        if let Err(error) = self
+        let decision = match self
             .attempt_idempotency_journal
             .claim_dispatch_epoch(&claim)
         {
-            return journal_error_observation(command, &error);
-        }
-        let effect = inspect();
-        if let ProviderRestartEffectObservation::Absent { evidence } = &effect {
-            return match self
-                .attempt_idempotency_journal
-                .record_reconciled_absence(&claim, evidence)
+            Ok(decision) => decision,
+            Err(error) => return journal_error_observation(command, &error),
+        };
+        match decision {
+            ProviderCommandClaimDecision::ExecuteClaimed(execution) => {
+                self.inspect_claimed(command, execution, inspect)
+            }
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation)
+                if matches!(
+                    observation.kind(),
+                    ProviderCommandObservationKind::Claimed
+                        | ProviderCommandObservationKind::InProgress
+                        | ProviderCommandObservationKind::Ambiguous
+                ) =>
             {
-                Ok(observation) => provider_observation(command, observation_outcome(&observation)),
-                Err(error) => journal_error_observation(command, &error),
-            };
+                self.inspect_adopted(command, &observation, inspect)
+            }
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation)
+                if observation.kind() == ProviderCommandObservationKind::Succeeded =>
+            {
+                self.reconcile_live(command, &claim, inspect())
+            }
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
+                provider_observation(command, observation_outcome(&observation))
+            }
         }
-        self.record_effect(command, &claim, effect)
     }
 
-    fn record_effect(
+    fn execute_claimed(
+        &self,
+        command: &ConfirmedWorkloadRestartCommand,
+        execution: ProviderCommandExecutionClaim,
+        effect: impl FnOnce() -> ProviderRestartEffectObservation,
+    ) -> WorkloadRestartProviderObservation {
+        let mode = command.mode();
+        let result = self
+            .attempt_idempotency_journal
+            .execute_current_claim(execution, |_| {
+                let (kind, evidence) = effect_fields(mode, effect());
+                ((), kind, None, evidence)
+            });
+        published_result(command, result)
+    }
+
+    fn inspect_claimed(
+        &self,
+        command: &ConfirmedWorkloadRestartCommand,
+        execution: ProviderCommandExecutionClaim,
+        inspect: impl FnOnce() -> ProviderRestartEffectObservation,
+    ) -> WorkloadRestartProviderObservation {
+        let mode = command.mode();
+        let result = self
+            .attempt_idempotency_journal
+            .inspect_claimed_current_and_publish(execution, |_| {
+                let (kind, evidence) = effect_fields(mode, inspect());
+                ((), kind, None, evidence)
+            });
+        published_result(command, result)
+    }
+
+    fn inspect_adopted(
+        &self,
+        command: &ConfirmedWorkloadRestartCommand,
+        observation: &ProviderCommandObservation,
+        inspect: impl FnOnce() -> ProviderRestartEffectObservation,
+    ) -> WorkloadRestartProviderObservation {
+        let mode = command.mode();
+        let result = self
+            .attempt_idempotency_journal
+            .inspect_current_claim_and_publish(observation, |_| {
+                let (kind, evidence) = effect_fields(mode, inspect());
+                ((), kind, None, evidence)
+            });
+        published_result(command, result)
+    }
+
+    fn reconcile_live(
         &self,
         command: &ConfirmedWorkloadRestartCommand,
         claim: &ProviderCommandClaim,
         effect: ProviderRestartEffectObservation,
     ) -> WorkloadRestartProviderObservation {
-        let kind = observation_kind(command.mode(), &effect);
-        let evidence = effect_evidence(&effect);
+        let (kind, evidence) = match effect {
+            ProviderRestartEffectObservation::Absent { evidence } => {
+                return match self
+                    .attempt_idempotency_journal
+                    .record_reconciled_absence(claim, &evidence)
+                {
+                    Ok(observation) => {
+                        provider_observation(command, observation_outcome(&observation))
+                    }
+                    Err(error) => journal_error_observation(command, &error),
+                };
+            }
+            other => effect_fields(command.mode(), other),
+        };
         match self
             .attempt_idempotency_journal
-            .record_observation(claim, kind, evidence)
+            .record_observation(claim, kind, &evidence)
         {
             Ok(observation) => provider_observation(command, observation_outcome(&observation)),
             Err(_) => provider_observation(command, WorkloadRestartCommandOutcome::Ambiguous),
         }
+    }
+}
+
+fn effect_fields(
+    mode: WorkloadRestartCommandMode,
+    effect: ProviderRestartEffectObservation,
+) -> (ProviderCommandObservationKind, Vec<u8>) {
+    let kind = observation_kind(mode, &effect);
+    let evidence = match effect {
+        ProviderRestartEffectObservation::Succeeded { evidence }
+        | ProviderRestartEffectObservation::DefiniteFailure { evidence }
+        | ProviderRestartEffectObservation::Absent { evidence }
+        | ProviderRestartEffectObservation::InProgress { evidence }
+        | ProviderRestartEffectObservation::Ambiguous { evidence } => evidence,
+    };
+    (kind, evidence)
+}
+
+fn published_result(
+    command: &ConfirmedWorkloadRestartCommand,
+    result: Result<((), ProviderCommandObservation), ProviderCommandJournalError>,
+) -> WorkloadRestartProviderObservation {
+    match result {
+        Ok(((), observation)) => provider_observation(command, observation_outcome(&observation)),
+        Err(error) => journal_error_observation(command, &error),
     }
 }
 
@@ -198,16 +311,6 @@ const fn observation_kind(
         ProviderRestartEffectObservation::Ambiguous { .. } => {
             ProviderCommandObservationKind::Ambiguous
         }
-    }
-}
-
-fn effect_evidence(effect: &ProviderRestartEffectObservation) -> &[u8] {
-    match effect {
-        ProviderRestartEffectObservation::Succeeded { evidence }
-        | ProviderRestartEffectObservation::DefiniteFailure { evidence }
-        | ProviderRestartEffectObservation::Absent { evidence }
-        | ProviderRestartEffectObservation::InProgress { evidence }
-        | ProviderRestartEffectObservation::Ambiguous { evidence } => evidence,
     }
 }
 

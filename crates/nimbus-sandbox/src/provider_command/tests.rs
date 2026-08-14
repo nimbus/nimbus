@@ -722,6 +722,115 @@ fn stale_execution_claim_cannot_start_after_retry_authority_advances() {
 }
 
 #[test]
+fn claimed_inspection_fences_delayed_provision_restart_and_teardown_tokens() {
+    for (label, operation, restart_ordinal) in [
+        ("provision", ProviderCommandOperation::ActivateWorkload, 0),
+        (
+            "restart",
+            ProviderCommandOperation::ActivateRestartedWorkload,
+            1,
+        ),
+        ("teardown", ProviderCommandOperation::StopExecution, 0),
+    ] {
+        let root = tempfile::tempdir().expect("temporary root should exist");
+        let journal = journal(root.path());
+        let first = command_claim(operation, restart_ordinal, 0);
+        let execution = match journal
+            .claim_dispatch_epoch(&first)
+            .expect("the first provider epoch should claim")
+        {
+            ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+            ProviderCommandClaimDecision::AdoptExactAttempt(_) => unreachable!(),
+        };
+        let delayed = journal
+            .resume_current_claim(execution.observation())
+            .expect("a delayed owner can retain the exact current token");
+
+        let (_, absent) = journal
+            .inspect_claimed_current_and_publish(execution, |current| {
+                assert_eq!(current.claim(), &first);
+                (
+                    (),
+                    ProviderCommandObservationKind::Absent,
+                    None,
+                    format!("{label} inspection proves exact absence").into_bytes(),
+                )
+            })
+            .expect("the inspection owner should publish exact absence");
+        assert_eq!(absent.kind(), ProviderCommandObservationKind::Absent);
+
+        let next = command_claim(operation, restart_ordinal, 1);
+        assert!(matches!(
+            journal
+                .claim_dispatch_epoch(&next)
+                .expect("exact absence should authorize the adjacent epoch"),
+            ProviderCommandClaimDecision::ExecuteClaimed(_)
+        ));
+
+        let mut provider_calls = 0_u64;
+        assert!(matches!(
+            journal.execute_current_claim(delayed, |_| {
+                provider_calls += 1;
+                (
+                    (),
+                    ProviderCommandObservationKind::Succeeded,
+                    None,
+                    b"delayed effect must not run".to_vec(),
+                )
+            }),
+            Err(ProviderCommandJournalError::StaleDispatchEpoch {
+                current: 1,
+                candidate: 0,
+            })
+        ));
+        assert_eq!(provider_calls, 0, "{label} must fail before provider I/O");
+    }
+}
+
+#[test]
+fn adopted_nonterminal_inspection_publishes_under_the_current_stream_lock() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let first = claim(0);
+    let execution = match journal
+        .claim_dispatch_epoch(&first)
+        .expect("the provision epoch should claim")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => unreachable!(),
+    };
+    let (_, ambiguous) = journal
+        .execute_current_claim(execution, |_| {
+            (
+                (),
+                ProviderCommandObservationKind::Ambiguous,
+                None,
+                b"activation response was lost".to_vec(),
+            )
+        })
+        .expect("the ambiguous effect should publish");
+
+    let (_, absent) = journal
+        .inspect_current_claim_and_publish(&ambiguous, |current| {
+            assert_eq!(current, &ambiguous);
+            (
+                (),
+                ProviderCommandObservationKind::Absent,
+                None,
+                b"exact activation is absent".to_vec(),
+            )
+        })
+        .expect("the adopted nonterminal inspection should publish atomically");
+    assert_eq!(absent.kind(), ProviderCommandObservationKind::Absent);
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(&claim(1))
+            .expect("the exact adjacent retry should claim"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+}
+
+#[test]
 fn execution_publishes_its_result_before_releasing_the_live_claim_lock() {
     let root = tempfile::tempdir().expect("temporary root should exist");
     let journal = Arc::new(journal(root.path()));

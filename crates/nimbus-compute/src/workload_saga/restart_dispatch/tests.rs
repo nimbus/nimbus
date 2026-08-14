@@ -869,3 +869,90 @@ async fn provider_journal_exact_replay_never_executes_the_effect_twice() {
         WorkloadRestartCommandOutcome::Succeeded { .. }
     ));
 }
+
+#[tokio::test]
+async fn provider_journal_adopted_claimed_restart_inspects_exact_absence() {
+    let (confirmed, _) = inspection_confirmed("provider-journal-claimed").await;
+    let (_, command) = confirmed_parts(&confirmed);
+    let root = tempfile::tempdir().expect("temporary provider journal root should exist");
+    let journal =
+        nimbus_sandbox::ProviderCommandAttemptJournal::open(root.path(), "restart-claimed")
+            .expect("provider restart journal should open");
+    let claim = crate::workload_saga::restart_provider_command::claim_for_command(command)
+        .expect("confirmed restart command should produce one claim");
+    let execution = match journal
+        .claim_dispatch_epoch(&claim)
+        .expect("initial claim should succeed")
+    {
+        nimbus_sandbox::ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        nimbus_sandbox::ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("first claim should grant exact execution authority")
+        }
+    };
+    let delayed_journal = journal.clone();
+    let adapter =
+        crate::workload_saga::restart_provider_command::ProviderRestartPhaseAdapter::new(journal);
+
+    let observed = adapter.inspect(command, || {
+        crate::workload_saga::restart_provider_command::ProviderRestartEffectObservation::Absent {
+            evidence: b"recovery proves the claimed restart effect absent".to_vec(),
+        }
+    });
+    assert!(matches!(
+        observed.into_outcome(),
+        WorkloadRestartCommandOutcome::AuthenticatedAbsent { .. }
+    ));
+    let effects = std::cell::Cell::new(0_u64);
+    assert!(
+        delayed_journal
+            .execute_current_claim(execution, |_| {
+                effects.set(effects.get() + 1);
+                (
+                    (),
+                    nimbus_sandbox::ProviderCommandObservationKind::Succeeded,
+                    None,
+                    b"delayed restart effect must not run".to_vec(),
+                )
+            })
+            .is_err()
+    );
+    assert_eq!(effects.get(), 0);
+}
+
+#[tokio::test]
+async fn provider_journal_adopted_restart_ambiguity_is_inspected_once() {
+    let (confirmed, _) = inspection_confirmed("provider-journal-ambiguous").await;
+    let (_, command) = confirmed_parts(&confirmed);
+    let root = tempfile::tempdir().expect("temporary provider journal root should exist");
+    let journal =
+        nimbus_sandbox::ProviderCommandAttemptJournal::open(root.path(), "restart-ambiguous")
+            .expect("provider restart journal should open");
+    let adapter =
+        crate::workload_saga::restart_provider_command::ProviderRestartPhaseAdapter::new(journal);
+
+    let ambiguous = adapter.inspect(command, || {
+        crate::workload_saga::restart_provider_command::ProviderRestartEffectObservation::Ambiguous {
+            evidence: b"provider inspection was interrupted".to_vec(),
+        }
+    });
+    assert!(matches!(
+        ambiguous.into_outcome(),
+        WorkloadRestartCommandOutcome::Ambiguous
+    ));
+    let absent = adapter.inspect(command, || {
+        crate::workload_saga::restart_provider_command::ProviderRestartEffectObservation::Absent {
+            evidence: b"exact inspection proves restart effect absent".to_vec(),
+        }
+    });
+    assert!(matches!(
+        absent.into_outcome(),
+        WorkloadRestartCommandOutcome::AuthenticatedAbsent { .. }
+    ));
+    let replay = adapter.inspect(command, || {
+        panic!("terminal restart absence must replay without another provider inspection")
+    });
+    assert!(matches!(
+        replay.into_outcome(),
+        WorkloadRestartCommandOutcome::AuthenticatedAbsent { .. }
+    ));
+}

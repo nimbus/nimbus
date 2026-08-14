@@ -48,6 +48,7 @@ NNC63B_WORKLOAD_PROVISION_DECISION_CONTRACT="scripts/nimbus-network-control-plan
 NNC64_WORKLOAD_PROVISION_DISPATCH_CONTRACT="scripts/nimbus-network-control-plane/workload-provision-dispatch-contract.sh"
 NNC64A_WORKLOAD_RESTART_CONTRACT="scripts/nimbus-network-control-plane/workload-restart-contract.sh"
 NNC65_WORKLOAD_TEARDOWN_CONTRACT="scripts/nimbus-network-control-plane/workload-teardown-contract.sh"
+NNC82_PROVIDER_CURRENT_CLAIM_CONTRACT="scripts/nimbus-network-control-plane/provider-command-current-claim-contract.sh"
 
 # shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
 . "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
@@ -1032,7 +1033,7 @@ NODE
     elif ! grep -q '^FAIL NNCV036 shared-process-harness-owner' "${output}" ||
       grep -q '^PASS NNCV036 shared-process-harness-owner' "${output}" ||
       [ "$(grep -c '^FAIL NNCV' "${output}")" -ne 1 ] ||
-      ! grep -q '^Summary: 36 passed, 1 failed$' "${output}"; then
+      ! grep -q '^Summary: 37 passed, 1 failed$' "${output}"; then
       printf 'SELFTEST FAIL NNCV036 mutation %s did not fail exclusively\n' "${mutation}"
       nnc81_fail=$((nnc81_fail + 1))
     else
@@ -1164,7 +1165,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 36 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 37 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1972,7 +1973,7 @@ NODE
     grep -q '^PASS NNCV035 fenced-workload-teardown' \
       "${temporary}/nnc65-aggregate-mutation.out" ||
     [ "$(grep -c '^FAIL NNCV' "${temporary}/nnc65-aggregate-mutation.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 36 passed, 1 failed$' \
+    ! grep -q '^Summary: 37 passed, 1 failed$' \
       "${temporary}/nnc65-aggregate-mutation.out"; then
     printf 'SELFTEST FAIL NNCV035 aggregate mutation did not fail exclusively\n'
     self_fail=$((self_fail + 1))
@@ -1983,11 +1984,23 @@ NODE
   run_nnc81_process_harness_self_tests "${script}" "${temporary}"
   self_fail=$((self_fail + $?))
 
+  if ! bash "${NNC82_PROVIDER_CURRENT_CLAIM_CONTRACT}" --self-test \
+    >"${temporary}/nnc82-contract-self-test.out" 2>&1; then
+    printf 'SELFTEST FAIL NNCV037 current-claim mutation suite failed\n'
+    self_fail=$((self_fail + 1))
+  elif ! rg -q '^NNC8\.2 current-claim contract self-test: 9 passed, 0 failed$' \
+    "${temporary}/nnc82-contract-self-test.out"; then
+    printf 'SELFTEST FAIL NNCV037 current-claim mutation count is not exact\n'
+    self_fail=$((self_fail + 1))
+  else
+    sed -n '1,180p' "${temporary}/nnc82-contract-self-test.out"
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 567 passed, 0 failed\n'
+  printf 'self-test: 576 passed, 0 failed\n'
 }
 
 run_nnc81_affected_self_test() {
@@ -2014,7 +2027,7 @@ run_nnc81_affected_self_test() {
     grep -q '^PASS NNCV035 fenced-workload-teardown' \
       "${temporary}/nnc65-aggregate-mutation.out" ||
     [ "$(grep -c '^FAIL NNCV' "${temporary}/nnc65-aggregate-mutation.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 36 passed, 1 failed$' \
+    ! grep -q '^Summary: 37 passed, 1 failed$' \
       "${temporary}/nnc65-aggregate-mutation.out"; then
     printf 'SELFTEST FAIL NNCV035 affected aggregate mutation did not fail exclusively\n'
     affected_fail=$((affected_fail + 1))
@@ -2049,6 +2062,14 @@ fi
 if [ "${1:-}" = "--self-test-nnc81" ]; then
   run_nnc81_affected_self_test
   exit 0
+fi
+if [ "${1:-}" = "--self-test-nnc82" ]; then
+  bash "${NNC82_PROVIDER_CURRENT_CLAIM_CONTRACT}" --self-test
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    printf 'NNC8.2 affected self-test: 9 passed, 0 failed\n'
+  fi
+  exit "${status}"
 fi
 if [ "${1:-}" = "--self-test-nnc61e" ]; then
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-network-nnc61e-self-test.XXXXXX")" || {
@@ -2359,6 +2380,24 @@ verify_nnc81_process_harness_owner() {
   fi
 }
 
+verify_nnc82_provider_current_claim_authority() {
+  if [ ! -f "${NNC82_PROVIDER_CURRENT_CLAIM_CONTRACT}" ]; then
+    fail "NNCV037" "provider-command-current-claim-authority" \
+      "missing ${NNC82_PROVIDER_CURRENT_CLAIM_CONTRACT}"
+    return
+  fi
+
+  current_claim_error="$(
+    bash "${NNC82_PROVIDER_CURRENT_CLAIM_CONTRACT}" --check 2>&1
+  )"
+  current_claim_status=$?
+  if [ "${current_claim_status}" -eq 0 ]; then
+    pass "NNCV037" "provider-command-current-claim-authority"
+  else
+    fail "NNCV037" "provider-command-current-claim-authority" "${current_claim_error}"
+  fi
+}
+
 printf 'Nimbus network control-plane static verifier\n'
 printf 'Repo: %s\n\n' "${REPO_ROOT}"
 
@@ -2399,6 +2438,7 @@ verify_nnc64_workload_provision_dispatch
 verify_nnc64a_workload_restart
 verify_nnc65_workload_teardown
 verify_nnc81_process_harness_owner
+verify_nnc82_provider_current_claim_authority
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

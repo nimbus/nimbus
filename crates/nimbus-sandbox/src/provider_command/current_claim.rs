@@ -35,7 +35,7 @@ impl ProviderCommandAttemptJournal {
     ///
     /// The journal lock stays held through the callback. An inspection cannot
     /// authorize a later epoch while an older claimant can still start its effect.
-    pub(crate) fn execute_current_claim<T>(
+    pub fn execute_current_claim<T>(
         &self,
         execution_claim: ProviderCommandExecutionClaim,
         execute: impl FnOnce(
@@ -44,6 +44,44 @@ impl ProviderCommandAttemptJournal {
     ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError> {
         let locked = self.clone().lock_current_execution(execution_claim)?;
         let (output, kind, failure_code, evidence) = execute(&locked.current);
+        let observation = locked.finish(kind, failure_code, evidence)?;
+        Ok((output, observation))
+    }
+
+    /// Run and publish one read-only inspection owned by a new claimed epoch.
+    ///
+    /// This consumes the sole execution token without invoking a provider
+    /// effect. The lock stays held through inspection and publication, so a
+    /// recovered executor cannot cross the inspection result.
+    pub fn inspect_claimed_current_and_publish<T>(
+        &self,
+        execution_claim: ProviderCommandExecutionClaim,
+        inspect: impl FnOnce(
+            &ProviderCommandObservation,
+        ) -> (T, ProviderCommandObservationKind, Option<String>, Vec<u8>),
+    ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError> {
+        let locked = self.clone().lock_current_execution(execution_claim)?;
+        let (output, kind, failure_code, evidence) = inspect(locked.current.observation());
+        let observation = locked.finish(kind, failure_code, evidence)?;
+        Ok((output, observation))
+    }
+
+    /// Inspect and publish one adopted nonterminal result under one stream lock.
+    ///
+    /// A `Claimed` record can outlive the process that owned its Execute token.
+    /// Acquiring this lock either waits for a live executor to publish, or
+    /// proves that no executor currently owns the interval. Publishing the
+    /// inspection result while still locked invalidates every delayed token
+    /// before it can invoke provider I/O.
+    pub fn inspect_current_claim_and_publish<T>(
+        &self,
+        expected: &ProviderCommandObservation,
+        inspect: impl FnOnce(
+            &ProviderCommandObservation,
+        ) -> (T, ProviderCommandObservationKind, Option<String>, Vec<u8>),
+    ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError> {
+        let locked = self.clone().lock_current_inspection(expected)?;
+        let (output, kind, failure_code, evidence) = inspect(&locked.current);
         let observation = locked.finish(kind, failure_code, evidence)?;
         Ok((output, observation))
     }
@@ -79,6 +117,46 @@ impl ProviderCommandAttemptJournal {
                 spawn_blocking_journal(move || journal.lock_current_execution(execution_claim))
                     .await?;
             let (output, kind, failure_code, evidence) = execute(&locked.current).await;
+            spawn_blocking_journal(move || {
+                let observation = locked.finish(kind, failure_code, evidence)?;
+                Ok((output, observation))
+            })
+            .await
+        })
+        .await
+        .map_err(join_error)?
+    }
+
+    /// Await and publish a read-only inspection owned by a new claimed epoch.
+    ///
+    /// The detached worker preserves the same cancellation and durable
+    /// publication guarantees as asynchronous provider execution.
+    pub async fn inspect_claimed_current_async_and_publish<T, Inspect>(
+        &self,
+        execution_claim: ProviderCommandExecutionClaim,
+        inspect: Inspect,
+    ) -> Result<(T, ProviderCommandObservation), ProviderCommandJournalError>
+    where
+        T: Send + 'static,
+        Inspect: for<'a> FnOnce(
+                &'a ProviderCommandObservation,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = (T, ProviderCommandObservationKind, Option<String>, Vec<u8>),
+                        > + Send
+                        + 'a,
+                >,
+            > + Send
+            + 'static,
+    {
+        let journal = self.clone();
+        tokio::spawn(async move {
+            let locked =
+                spawn_blocking_journal(move || journal.lock_current_execution(execution_claim))
+                    .await?;
+            let (output, kind, failure_code, evidence) =
+                inspect(locked.current.observation()).await;
             spawn_blocking_journal(move || {
                 let observation = locked.finish(kind, failure_code, evidence)?;
                 Ok((output, observation))
@@ -214,9 +292,6 @@ impl ProviderCommandAttemptJournal {
         tokio::spawn(async move {
             let locked =
                 spawn_blocking_journal(move || journal.lock_current_inspection(&expected)).await?;
-            if locked.current.kind == ProviderCommandObservationKind::Claimed {
-                return Err(ProviderCommandJournalError::PriorEffectUnresolved);
-            }
             let (output, kind, failure_code, evidence) = inspect(&locked.current).await;
             spawn_blocking_journal(move || {
                 let observation = locked.finish(kind, failure_code, evidence)?;

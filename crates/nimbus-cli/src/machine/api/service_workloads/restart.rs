@@ -18,9 +18,10 @@ use nimbus_node::{
 };
 use nimbus_sandbox::{
     ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
-    ProviderCommandClaimInput, ProviderCommandJournalError, ProviderCommandObservation,
-    ProviderCommandObservationKind, ProviderCommandOperation, SandboxExecutionAttemptId,
-    SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation, SandboxRestartAttemptFence,
+    ProviderCommandClaimInput, ProviderCommandExecutionClaim, ProviderCommandJournalError,
+    ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
+    SandboxExecutionAttemptId, SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation,
+    SandboxRestartAttemptFence,
 };
 use nimbus_workloads::{
     WorkloadOwnerEvidenceDigest, WorkloadRestartEvidenceDigest, WorkloadRestartStep,
@@ -30,6 +31,7 @@ use super::{GuestNodeWorkloadService, MachineApiHttpError};
 
 const GUEST_RESTART_OBSERVATION_DOMAIN: &[u8] = b"nimbus.machine.provider-restart.observation.v1\0";
 
+#[derive(Clone)]
 struct ValidatedGuestRestartCommand {
     spec: SandboxSpec,
     sandbox_id: SandboxId,
@@ -158,40 +160,136 @@ pub(super) async fn dispatch(
         Err(error) => return Ok(journal_error(&error)),
     };
 
-    match command.mode() {
-        MachineApiWorkloadRestartCommandMode::Execute => match decision {
-            ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
-                Ok(journal_observation(&observation))
-            }
-            ProviderCommandClaimDecision::ExecuteClaimed(_) => {
-                let effect = execute_phase(service, command, &validated).await;
-                Ok(record_effect(
-                    &journal,
-                    &claim,
-                    effect,
-                    MachineApiWorkloadRestartCommandMode::Execute,
-                    false,
-                ))
-            }
-        },
-        MachineApiWorkloadRestartCommandMode::Inspect => {
-            let live = requires_live_reconciliation(command.step());
-            if !live
-                && let ProviderCommandClaimDecision::AdoptExactAttempt(observation) = &decision
-                && terminal_observation(observation.kind())
-            {
-                return Ok(journal_observation(observation));
-            }
-            let effect = inspect_phase(service, command, &validated).await;
-            Ok(record_effect(
-                &journal,
-                &claim,
-                effect,
-                MachineApiWorkloadRestartCommandMode::Inspect,
-                live,
-            ))
+    match (command.mode(), decision) {
+        (
+            MachineApiWorkloadRestartCommandMode::Execute,
+            ProviderCommandClaimDecision::ExecuteClaimed(execution),
+        ) => {
+            execute_claimed(
+                journal,
+                execution,
+                service.clone(),
+                command.clone(),
+                validated,
+            )
+            .await
         }
+        (
+            MachineApiWorkloadRestartCommandMode::Execute,
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation),
+        ) => Ok(journal_observation(&observation)),
+        (
+            MachineApiWorkloadRestartCommandMode::Inspect,
+            ProviderCommandClaimDecision::ExecuteClaimed(execution),
+        ) => {
+            inspect_claimed(
+                journal,
+                execution,
+                service.clone(),
+                command.clone(),
+                validated,
+            )
+            .await
+        }
+        (
+            MachineApiWorkloadRestartCommandMode::Inspect,
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation),
+        ) if matches!(
+            observation.kind(),
+            ProviderCommandObservationKind::Claimed
+                | ProviderCommandObservationKind::InProgress
+                | ProviderCommandObservationKind::Ambiguous
+        ) =>
+        {
+            inspect_adopted(
+                journal,
+                observation,
+                service.clone(),
+                command.clone(),
+                validated,
+            )
+            .await
+        }
+        (
+            MachineApiWorkloadRestartCommandMode::Inspect,
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation),
+        ) if requires_live_reconciliation(command.step())
+            && observation.kind() == ProviderCommandObservationKind::Succeeded =>
+        {
+            let effect = inspect_phase(service, command, &validated).await;
+            Ok(record_live_reconciliation(&journal, &claim, effect))
+        }
+        (
+            MachineApiWorkloadRestartCommandMode::Inspect,
+            ProviderCommandClaimDecision::AdoptExactAttempt(observation),
+        ) => Ok(journal_observation(&observation)),
     }
+}
+
+async fn execute_claimed(
+    journal: ProviderCommandAttemptJournal,
+    execution: ProviderCommandExecutionClaim,
+    service: GuestNodeWorkloadService,
+    command: MachineApiWorkloadRestartCommandEnvelope,
+    validated: ValidatedGuestRestartCommand,
+) -> Result<MachineApiWorkloadRestartObservation, MachineApiHttpError> {
+    let result = journal
+        .execute_current_claim_async(execution, move |_| {
+            Box::pin(async move {
+                let effect = execute_phase(&service, &command, &validated).await;
+                let (kind, evidence) = durable_observation_fields(
+                    MachineApiWorkloadRestartCommandMode::Execute,
+                    effect,
+                );
+                ((), kind, None, evidence)
+            })
+        })
+        .await;
+    Ok(published_result(result))
+}
+
+async fn inspect_claimed(
+    journal: ProviderCommandAttemptJournal,
+    execution: ProviderCommandExecutionClaim,
+    service: GuestNodeWorkloadService,
+    command: MachineApiWorkloadRestartCommandEnvelope,
+    validated: ValidatedGuestRestartCommand,
+) -> Result<MachineApiWorkloadRestartObservation, MachineApiHttpError> {
+    let result = journal
+        .inspect_claimed_current_async_and_publish(execution, move |_| {
+            Box::pin(async move {
+                let effect = inspect_phase(&service, &command, &validated).await;
+                let (kind, evidence) = durable_observation_fields(
+                    MachineApiWorkloadRestartCommandMode::Inspect,
+                    effect,
+                );
+                ((), kind, None, evidence)
+            })
+        })
+        .await;
+    Ok(published_result(result))
+}
+
+async fn inspect_adopted(
+    journal: ProviderCommandAttemptJournal,
+    observation: ProviderCommandObservation,
+    service: GuestNodeWorkloadService,
+    command: MachineApiWorkloadRestartCommandEnvelope,
+    validated: ValidatedGuestRestartCommand,
+) -> Result<MachineApiWorkloadRestartObservation, MachineApiHttpError> {
+    let result = journal
+        .inspect_current_claim_async_and_publish(&observation, move |_| {
+            Box::pin(async move {
+                let effect = inspect_phase(&service, &command, &validated).await;
+                let (kind, evidence) = durable_observation_fields(
+                    MachineApiWorkloadRestartCommandMode::Inspect,
+                    effect,
+                );
+                ((), kind, None, evidence)
+            })
+        })
+        .await;
+    Ok(published_result(result))
 }
 
 fn validate_command(
@@ -496,27 +594,45 @@ const fn operation(step: WorkloadRestartStep) -> ProviderCommandOperation {
     }
 }
 
-fn record_effect(
-    journal: &ProviderCommandAttemptJournal,
-    claim: &ProviderCommandClaim,
-    effect: MachineApiWorkloadRestartObservation,
+fn durable_observation_fields(
     mode: MachineApiWorkloadRestartCommandMode,
-    reconcile_live_absence: bool,
-) -> MachineApiWorkloadRestartObservation {
+    effect: MachineApiWorkloadRestartObservation,
+) -> (ProviderCommandObservationKind, Vec<u8>) {
     let kind = durable_observation_kind(mode, &effect);
-    let evidence = match &effect {
+    let evidence = match effect {
         MachineApiWorkloadRestartObservation::Succeeded { evidence }
         | MachineApiWorkloadRestartObservation::AuthenticatedAbsent { evidence }
         | MachineApiWorkloadRestartObservation::DefiniteFailure { evidence }
-        | MachineApiWorkloadRestartObservation::InProgress { evidence } => evidence.to_string(),
+        | MachineApiWorkloadRestartObservation::InProgress { evidence } => {
+            evidence.to_string().into_bytes()
+        }
         MachineApiWorkloadRestartObservation::Ambiguous => {
-            "guest_restart_outcome_ambiguous".to_owned()
+            b"guest_restart_outcome_ambiguous".to_vec()
         }
     };
-    let recorded = if reconcile_live_absence && kind == ProviderCommandObservationKind::Absent {
-        journal.record_reconciled_absence(claim, evidence.as_bytes())
+    (kind, evidence)
+}
+
+fn published_result(
+    result: Result<((), ProviderCommandObservation), ProviderCommandJournalError>,
+) -> MachineApiWorkloadRestartObservation {
+    match result {
+        Ok(((), observation)) => journal_observation(&observation),
+        Err(error) => journal_error(&error),
+    }
+}
+
+fn record_live_reconciliation(
+    journal: &ProviderCommandAttemptJournal,
+    claim: &ProviderCommandClaim,
+    effect: MachineApiWorkloadRestartObservation,
+) -> MachineApiWorkloadRestartObservation {
+    let (kind, evidence) =
+        durable_observation_fields(MachineApiWorkloadRestartCommandMode::Inspect, effect);
+    let recorded = if kind == ProviderCommandObservationKind::Absent {
+        journal.record_reconciled_absence(claim, &evidence)
     } else {
-        journal.record_observation(claim, kind, evidence.as_bytes())
+        journal.record_observation(claim, kind, &evidence)
     };
     match recorded {
         Ok(observation) => journal_observation(&observation),
@@ -559,15 +675,6 @@ fn requires_live_reconciliation(step: WorkloadRestartStep) -> bool {
             | WorkloadRestartStep::ActivateExecution
             | WorkloadRestartStep::Publish
             | WorkloadRestartStep::ObservePublication
-    )
-}
-
-fn terminal_observation(kind: ProviderCommandObservationKind) -> bool {
-    matches!(
-        kind,
-        ProviderCommandObservationKind::Succeeded
-            | ProviderCommandObservationKind::DefiniteFailure
-            | ProviderCommandObservationKind::Absent
     )
 }
 

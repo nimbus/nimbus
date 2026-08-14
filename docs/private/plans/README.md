@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC8.1 complete; NNC8.2 in progress`.
+- `nimbus-network-control-plane-plan.md` - `active; NNC8.2 complete; NNC8.3 in progress`.
   NNC6.5e is durably complete at `18377b1a2b17e21249c582ba49b8158280e0ff6d`;
   the prior exact checkpoint is `6b685627c94e`. NNC6.5 froze the source-derived teardown owner, caller,
   failure,
@@ -211,9 +211,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   source claim/finalize policy and distinct source/execution projections.
   Compose down, physical-machine stop, product caller cutover, public-route
   growth, and a CLI-local saga store remain forbidden.
-  NNC8.2 owns the
-  earlier provision and restart producers that do not yet retain live claim
-  authority through their effect boundaries.
+  NNC8.2 completed live-claim authority for every provision and restart
+  producer. NNC8.3 now owns orphan cleanup, quarantine, finalization, and reuse.
   The four completed provider units cover Container execution, Krun execution,
   shared host-managed attachment, and end-to-end forwarded-machine provider
   substitution. NNC6.5f is complete. Its audit prospectively splits the
