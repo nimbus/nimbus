@@ -17,15 +17,24 @@ use crate::backends::oci::network::attachment_lifecycle::{
     AttachmentBackendKind, oci_attachment_plan, oci_attachment_provider_handle,
     oci_attachment_provider_handle_for_identity,
 };
-use crate::backends::oci::network::default_network_attachment_id;
 use crate::backends::oci::network::dto::{IpamState, NetavarkProviderOperation};
 use crate::backends::oci::network::ipam::{
     begin_netavark_setup, begin_netavark_setup_execution, complete_netavark_setup,
+};
+use crate::backends::oci::network::netavark::{
+    execute_prepared_container_network_teardown_for_test, prepare_container_network_teardown,
+};
+use crate::backends::oci::network::orphan_convergence::{
+    OciOrphanCleanupKind, compile_cleanup_subject,
 };
 use crate::backends::oci::network::orphan_evidence::test_support::EvidenceFixture;
 use crate::backends::oci::network::orphan_evidence::{
     OciArtifactKind, OciArtifactObservationState, OciEvidenceUnknown, OciOrphanEvidenceCandidate,
     OciOrphanEvidenceReport, OciProviderRealmObservation, collect_oci_orphan_evidence,
+};
+use crate::backends::oci::network::{
+    OciNetavarkOperation, deallocate_container_ips_after_confirmed_detach,
+    default_network_attachment_id,
 };
 use crate::error::SandboxError;
 
@@ -1024,6 +1033,129 @@ fn substituted_provider_handle_cannot_adopt_current_generation() {
             "a same-provider handle from another realization must not authenticate in {phase:?}"
         );
     }
+}
+
+#[test]
+fn nnc8_3_cleanup_pending_crossed_provider_handle_never_compiles_cleanup_authority() {
+    let fixture = EvidenceFixture::new(
+        "cleanup-crossed-provider-handle",
+        AttachmentBackendKind::Container,
+        false,
+    );
+    let substituted_handle = NetworkProviderHandle::new(
+        selected_provider_id(OciAttachmentProviderKind::Container),
+        format!(
+            "attachment:crossed-cleanup:{}",
+            default_network_attachment_id(&fixture.sandbox_id)
+        ),
+    )
+    .expect("same-provider substituted handle should validate");
+    let (fixture, mut report) = report_with_ready_provider_explicit_handle(
+        fixture,
+        NetworkResourcePhase::Ready,
+        Some(substituted_handle),
+    );
+    let attachment_id = default_network_attachment_id(&fixture.sandbox_id);
+    let ready = fixture
+        .attachments
+        .get(&fixture.tenant_id, &attachment_id)
+        .expect("desired authority should inspect")
+        .expect("desired record should exist");
+    let (_, cleanup_pending) = fixture
+        .attachments
+        .apply_transition(
+            &fixture.tenant_id,
+            &NetworkStateTransition::new(
+                ready.resource().version().clone(),
+                NetworkResourcePhase::CleanupPending,
+                NetworkTransitionEvidence::AmbiguousEffect,
+            ),
+        )
+        .expect("crossed desired record should retain cleanup authority");
+    let candidate = only_candidate(&mut report);
+    candidate.desired = Some(cleanup_pending);
+    let association = candidate
+        .desired()
+        .expect("substituted desired state should exist")
+        .association()
+        .clone();
+    for allocator in &mut candidate.allocator {
+        allocator.observation = Ok(
+            NetworkAttachmentReservationObservation::provider_cleanup_pending(association.clone()),
+        );
+    }
+    for artifact in &mut candidate.artifacts {
+        if artifact.kind == OciArtifactKind::NetworkNamespace {
+            artifact.state = OciArtifactObservationState::Absent;
+        }
+    }
+
+    let reason = match classify_candidate(candidate) {
+        OciOrphanDisposition::Quarantine(reason) => reason,
+        OciOrphanDisposition::Adopt => panic!("cleanup-pending evidence must remain fenced"),
+    };
+    assert_eq!(
+        reason,
+        OciOrphanQuarantineReason::DesiredPhaseNotAdoptable,
+        "the phase fence intentionally precedes provider-handle authentication"
+    );
+    assert!(
+        compile_cleanup_subject(candidate, reason).is_none(),
+        "a crossed provider handle must never become backend cleanup authority"
+    );
+}
+
+#[test]
+fn nnc8_3_terminal_provider_with_retained_authority_compiles_effectful_resume() {
+    let fixture = EvidenceFixture::new(
+        "terminal-provider-retained-authority",
+        AttachmentBackendKind::Container,
+        false,
+    );
+    let (fixture, _) = report_with_ready_provider(fixture, NetworkResourcePhase::Ready);
+    let operation = OciNetavarkOperation::new(
+        &fixture.layout,
+        &fixture.config,
+        &fixture.sandbox_id,
+        "terminal-provider-retained-authority",
+        "terminal-provider-retained-authority",
+        &[],
+        None,
+    );
+    let prepared = prepare_container_network_teardown(&fixture.ipam, &operation)
+        .expect("exact provider teardown should prepare");
+    execute_prepared_container_network_teardown_for_test(&fixture.ipam, &fixture.layout, prepared)
+        .expect("provider absence should become durable");
+    fs::remove_file(&fixture.layout.netns_path)
+        .expect("persistent namespace absence should follow provider absence");
+    deallocate_container_ips_after_confirmed_detach(
+        &fixture.ipam,
+        &fixture.layout,
+        &fixture.sandbox_id,
+        &fixture.config.attachment_id,
+        &fixture.claim,
+        fixture.config.provider_kind(),
+    )
+    .expect("IPAM terminal publication should precede retained segment release");
+
+    let mut report = collect_oci_orphan_evidence(
+        &fixture.workload_root,
+        &fixture.attachments,
+        &fixture.ipam,
+        &fixture.allocator,
+    )
+    .expect("post-provider-absence evidence should collect");
+    let candidate = only_candidate(&mut report);
+    let reason = match classify_candidate(candidate) {
+        OciOrphanDisposition::Quarantine(reason) => reason,
+        OciOrphanDisposition::Adopt => {
+            panic!("retained authority after provider absence must remain fenced")
+        }
+    };
+    assert_eq!(reason, OciOrphanQuarantineReason::ProviderAttemptTerminal);
+    let subject = compile_cleanup_subject(candidate, reason)
+        .expect("terminal provider evidence should resume retained authority release");
+    assert_eq!(subject.kind(), OciOrphanCleanupKind::Effectful);
 }
 
 #[test]

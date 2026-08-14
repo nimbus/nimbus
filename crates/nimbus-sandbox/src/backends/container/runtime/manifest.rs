@@ -37,11 +37,10 @@ pub(super) use publication::{
     establish_durable_manifest_directory_chain_with, publish_with_directory_sync,
 };
 
-/// Read and authenticate the one manifest shape that may exist before any
-/// network authority is durable: an exact compiler plan plus reservation
-/// claim, with no placed attachment, listener lease, bundle, or provider
-/// effect. Startup network reconciliation may retain only these paths.
-pub(super) fn retained_reservation_pending_manifest_paths(
+/// Read and authenticate manifest paths that remain workload-owned without a
+/// current network evidence subject: an exact claim-only compiler plan or a
+/// manifest whose network cleanup is already terminal.
+pub(super) fn retained_startup_manifest_paths(
     config: &ContainerSandboxBackendConfig,
 ) -> Result<BTreeSet<PathBuf>> {
     let container_state_dirs = crate::artifact_paths::all_container_state_dirs(
@@ -68,20 +67,24 @@ pub(super) fn retained_reservation_pending_manifest_paths(
                 });
             }
         };
-        let manifest: ContainerSandboxManifest =
-            serde_json::from_slice(&bytes).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "startup container manifest {} is structurally untrusted: {error}",
-                    path.display()
-                ),
-            })?;
-        super::provider_context::validate_manifest_execution_context_for_config(config, &manifest)
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "startup container manifest {} crossed its execution context: {error}",
-                    path.display()
-                ),
-            })?;
+        let Ok(manifest) = serde_json::from_slice::<ContainerSandboxManifest>(&bytes) else {
+            continue;
+        };
+        if super::provider_context::validate_manifest_execution_context_for_config(
+            config, &manifest,
+        )
+        .is_err()
+        {
+            continue;
+        }
+
+        if manifest.start_mode == ContainerStartMode::Execute
+            && manifest.network_cleanup_complete
+            && manifest.launch_reservation_claim.is_none()
+        {
+            retained.insert(path);
+            continue;
+        }
 
         let (Some(plan), Some(_claim)) = (
             manifest.provision_network_plan.as_ref(),

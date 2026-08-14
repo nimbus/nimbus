@@ -184,6 +184,24 @@ pub(crate) fn release_reserved_network_launch_after_ports(
     authority: ReservedNetworkLaunchAuthority<'_>,
     port_compensation: Result<()>,
 ) -> Result<()> {
+    release_reserved_network_launch_after_ports_with_terminal_publication(
+        authority,
+        port_compensation,
+        || Ok(()),
+    )
+}
+
+/// Continue never-effected cleanup while publishing the backend manifest
+/// before the exact terminal IPAM retry witness is retired.
+///
+/// The callback runs only after ports, IPAM, and segment authority are
+/// terminal. If publication fails or its outcome is ambiguous, the terminal
+/// IPAM witness remains as exact startup-reconciliation evidence.
+pub(crate) fn release_reserved_network_launch_after_ports_with_terminal_publication(
+    authority: ReservedNetworkLaunchAuthority<'_>,
+    port_compensation: Result<()>,
+    publish_terminal: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     if let Err(error) = port_compensation {
         return Err(SandboxError::OperationFailed {
             message: format!(
@@ -192,7 +210,10 @@ pub(crate) fn release_reserved_network_launch_after_ports(
             ),
         });
     }
-    let errors = release_reserved_network_launch_without_effect(authority);
+    let errors = release_reserved_network_launch_without_effect_with_terminal_publication(
+        authority,
+        publish_terminal,
+    );
     if errors.is_empty() {
         Ok(())
     } else {
@@ -208,6 +229,13 @@ pub(crate) fn release_reserved_network_launch_after_ports(
 
 fn release_reserved_network_launch_without_effect(
     authority: ReservedNetworkLaunchAuthority<'_>,
+) -> Vec<SandboxError> {
+    release_reserved_network_launch_without_effect_with_terminal_publication(authority, || Ok(()))
+}
+
+fn release_reserved_network_launch_without_effect_with_terminal_publication(
+    authority: ReservedNetworkLaunchAuthority<'_>,
+    publish_terminal: impl FnOnce() -> Result<()>,
 ) -> Vec<SandboxError> {
     match authority
         .allocator
@@ -227,17 +255,7 @@ fn release_reserved_network_launch_without_effect(
             }];
         }
         Ok(NetworkSegmentReleaseOutcome::AlreadyReleased) => {
-            return super::ipam::retire_terminal_container_ipam_release(
-                authority.ipam_authority,
-                authority.layout,
-                authority.sandbox_id,
-                authority.attachment_id,
-                authority.reservation_claim,
-                authority.provider_kind,
-            )
-            .err()
-            .into_iter()
-            .collect();
+            return publish_then_retire_terminal_ipam(authority, publish_terminal);
         }
         Err(error) => return vec![error],
     };
@@ -262,17 +280,7 @@ fn release_reserved_network_launch_without_effect(
         Ok(
             NetworkSegmentReleaseOutcome::StillLive | NetworkSegmentReleaseOutcome::AlreadyReleased,
         ) => {
-            return super::ipam::retire_terminal_container_ipam_release(
-                authority.ipam_authority,
-                authority.layout,
-                authority.sandbox_id,
-                authority.attachment_id,
-                authority.reservation_claim,
-                authority.provider_kind,
-            )
-            .err()
-            .into_iter()
-            .collect();
+            return publish_then_retire_terminal_ipam(authority, publish_terminal);
         }
         Ok(NetworkSegmentReleaseOutcome::AttachmentCleanupPending) => {
             return vec![SandboxError::OperationFailed {
@@ -287,19 +295,29 @@ fn release_reserved_network_launch_without_effect(
         Ok(
             NetworkSegmentFinalizeOutcome::Released
             | NetworkSegmentFinalizeOutcome::AlreadyReleased,
-        ) => super::ipam::retire_terminal_container_ipam_release(
-            authority.ipam_authority,
-            authority.layout,
-            authority.sandbox_id,
-            authority.attachment_id,
-            authority.reservation_claim,
-            authority.provider_kind,
-        )
-        .err()
-        .into_iter()
-        .collect(),
+        ) => publish_then_retire_terminal_ipam(authority, publish_terminal),
         Err(error) => vec![error],
     }
+}
+
+fn publish_then_retire_terminal_ipam(
+    authority: ReservedNetworkLaunchAuthority<'_>,
+    publish_terminal: impl FnOnce() -> Result<()>,
+) -> Vec<SandboxError> {
+    if let Err(error) = publish_terminal() {
+        return vec![error];
+    }
+    super::ipam::retire_terminal_container_ipam_release(
+        authority.ipam_authority,
+        authority.layout,
+        authority.sandbox_id,
+        authority.attachment_id,
+        authority.reservation_claim,
+        authority.provider_kind,
+    )
+    .err()
+    .into_iter()
+    .collect()
 }
 
 fn release_network_segment_hold_with(

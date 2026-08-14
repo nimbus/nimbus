@@ -1,8 +1,10 @@
 //! Evidence-aware startup quarantine for OCI-family network authorities.
 //!
-//! This owner can read the complete durable/observed snapshot and apply only
-//! exact, fenced quarantine transitions. It deliberately has no provider,
-//! artifact-removal, release, finalization, or capacity-reuse capability.
+//! This owner can read the complete durable/observed snapshot and apply exact,
+//! fenced quarantine transitions. After a fence is durable, it can offer an
+//! identity-only subject to an injected backend cleanup context. It has no
+//! provider, artifact-removal, release, finalization, or capacity-reuse
+//! capability of its own.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -13,6 +15,9 @@ use nimbus_network::{
     NetworkSegmentQuarantineOutcome, NetworkStateTransition, NetworkTransitionEvidence,
 };
 
+use super::orphan_convergence::{
+    OciOrphanCleanupContext, OciOrphanCleanupDisposition, compile_cleanup_subject,
+};
 use super::orphan_evidence::{
     OciEvidenceUnknown, OciOrphanDisposition, OciOrphanEvidenceCandidate,
     OciOrphanQuarantineReason, classify_oci_orphan_evidence, classify_retained_desired_manifest,
@@ -22,12 +27,13 @@ use super::{OciIpamAuthority, OciSegmentAllocator};
 use crate::error::{Result, SandboxError};
 
 /// Classify the complete startup snapshot and durably fence every unsafe
-/// subject without performing cleanup.
+/// subject without a cleanup context.
 ///
 /// Exact adoption is entirely read-only. Any quarantine classification keeps
 /// admission closed even when its available durable authorities were
 /// successfully transitioned: later cleanup convergence, not startup, owns
 /// proving absence and reopening capacity.
+#[cfg(test)]
 pub(crate) fn reconcile_startup_network_state(
     workload_state_root: &Path,
     attachments: &LocalNetworkAttachmentAuthority,
@@ -49,12 +55,51 @@ pub(crate) fn reconcile_startup_network_state(
 /// Retention is read-only and applies only to an otherwise-unmatched manifest
 /// path. Any attachment, provider, allocator, namespace, status, or unknown
 /// evidence keeps the normal classifier and quarantine behavior.
+#[cfg(test)]
 pub(crate) fn reconcile_startup_network_state_with_retained_desired_manifests(
     workload_state_root: &Path,
     attachments: &LocalNetworkAttachmentAuthority,
     ipam: &OciIpamAuthority,
     allocator: &OciSegmentAllocator,
     retained_desired_manifests: &BTreeSet<PathBuf>,
+) -> Result<()> {
+    reconcile_startup_network_state_with_optional_cleanup(
+        workload_state_root,
+        attachments,
+        ipam,
+        allocator,
+        retained_desired_manifests,
+        None,
+    )
+}
+
+/// Apply exact startup quarantine, then offer only proven effectful orphans to
+/// a backend-owned cleanup-context adapter.
+pub(crate) fn reconcile_startup_network_state_with_cleanup(
+    workload_state_root: &Path,
+    attachments: &LocalNetworkAttachmentAuthority,
+    ipam: &OciIpamAuthority,
+    allocator: &OciSegmentAllocator,
+    retained_desired_manifests: &BTreeSet<PathBuf>,
+    cleanup: &dyn OciOrphanCleanupContext,
+) -> Result<()> {
+    reconcile_startup_network_state_with_optional_cleanup(
+        workload_state_root,
+        attachments,
+        ipam,
+        allocator,
+        retained_desired_manifests,
+        Some(cleanup),
+    )
+}
+
+fn reconcile_startup_network_state_with_optional_cleanup(
+    workload_state_root: &Path,
+    attachments: &LocalNetworkAttachmentAuthority,
+    ipam: &OciIpamAuthority,
+    allocator: &OciSegmentAllocator,
+    retained_desired_manifests: &BTreeSet<PathBuf>,
+    cleanup: Option<&dyn OciOrphanCleanupContext>,
 ) -> Result<()> {
     let report = collect_oci_orphan_evidence(workload_state_root, attachments, ipam, allocator)?;
     let classifications = classify_oci_orphan_evidence(&report);
@@ -67,20 +112,40 @@ pub(crate) fn reconcile_startup_network_state_with_retained_desired_manifests(
         };
         let candidate = classification.evidence();
         let application = quarantine_candidate(attachments, allocator, candidate);
-        fences.push(match application {
-            Ok(()) => format!(
-                "tenant {} attachment {}: {}",
-                candidate.tenant_id(),
-                candidate.attachment_id(),
-                reason.as_str()
-            ),
+        let fence = match application {
+            Ok(()) => {
+                if let (Some(cleanup), Some(subject)) =
+                    (cleanup, compile_cleanup_subject(candidate, reason))
+                {
+                    match cleanup.converge_quarantined_orphan(&subject) {
+                        Ok(OciOrphanCleanupDisposition::Converged) => continue,
+                        Ok(OciOrphanCleanupDisposition::Retain) => {}
+                        Err(error) => {
+                            fences.push(format!(
+                                "tenant {} attachment {}: {}; exact orphan cleanup failed: {error}",
+                                candidate.tenant_id(),
+                                candidate.attachment_id(),
+                                reason.as_str()
+                            ));
+                            continue;
+                        }
+                    }
+                }
+                format!(
+                    "tenant {} attachment {}: {}",
+                    candidate.tenant_id(),
+                    candidate.attachment_id(),
+                    reason.as_str()
+                )
+            }
             Err(error) => format!(
                 "tenant {} attachment {}: {}; exact quarantine application failed: {error}",
                 candidate.tenant_id(),
                 candidate.attachment_id(),
                 reason.as_str()
             ),
-        });
+        };
+        fences.push(fence);
     }
 
     for classification in classifications.unmatched_provider_classifications() {

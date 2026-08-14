@@ -2000,7 +2000,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 576 passed, 0 failed\n'
+  printf 'self-test: 588 passed, 0 failed\n'
 }
 
 run_nnc81_affected_self_test() {

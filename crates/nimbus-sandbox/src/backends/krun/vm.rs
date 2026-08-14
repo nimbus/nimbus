@@ -54,7 +54,7 @@ use crate::backends::oci::network::{
     OciHostManagedAttachmentBackend, OciIpamAuthority, OciNetworkConfig, OciNetworkLayout,
     OciNetworkProcess, OciSegmentAllocator, RealOciEgressPinProvider, TerminalNetworkAuthoritySet,
     TerminalNetworkFinalityEvidence, default_network_attachment_id,
-    reconcile_startup_network_state, retire_terminal_container_ipam_release,
+    retire_terminal_container_ipam_release,
 };
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
 use crate::backends::oci::port_lifecycle::{
@@ -98,6 +98,7 @@ impl OciHostManagedAttachmentBackend for KrunSandboxBackend {
 }
 mod root_authentication;
 mod start;
+mod startup_orphan_convergence;
 
 #[cfg(test)]
 use self::lifecycle::KrunLifecycleLockTestProbe;
@@ -366,17 +367,10 @@ impl KrunSandboxBackend {
                 )
             },
         );
-        let startup_network_reconciliation_error = match attachment_authority.as_ref() {
-            Err(error) => Some(Arc::<str>::from(error.to_string())),
-            Ok(attachment_authority) => reconcile_startup_network_state(
-                &config.workload_state_root,
-                attachment_authority,
-                &ipam_authority,
-                segment_allocator.as_ref(),
-            )
+        let attachment_open_error = attachment_authority
+            .as_ref()
             .err()
-            .map(|error| Arc::<str>::from(error.to_string())),
-        };
+            .map(|error| Arc::<str>::from(error.to_string()));
         let egress_proxies = match network_process.as_ref() {
             Some(process) => process.egress_registry(
                 egress_decision_log_root(&config.workload_state_root),
@@ -394,7 +388,7 @@ impl KrunSandboxBackend {
             .map_or_else(NetavarkPortLifetimeRegistry::default, |process| {
                 process.netavark_port_lifetimes()
             });
-        Self {
+        let mut backend = Self {
             config,
             segment_allocator,
             attachment_authority: attachment_authority.ok(),
@@ -408,7 +402,7 @@ impl KrunSandboxBackend {
             readiness_probe_provider: Arc::new(SocketReadinessProbeProvider),
             netavark_port_lifetimes,
             _network_process: network_process,
-            startup_network_reconciliation_error,
+            startup_network_reconciliation_error: attachment_open_error,
             #[cfg(test)]
             restart_launch_test_probe: None,
             #[cfg(test)]
@@ -419,7 +413,14 @@ impl KrunSandboxBackend {
             terminal_ipam_retirement_failure: None,
             #[cfg(test)]
             network_teardown_checkpoint_test_probe: None,
+        };
+        if backend.startup_network_reconciliation_error.is_none() {
+            backend.startup_network_reconciliation_error = backend
+                .reconcile_krun_startup_network_state()
+                .err()
+                .map(|error| Arc::<str>::from(error.to_string()));
         }
+        backend
     }
 
     fn ensure_startup_network_reconciliation_ready(&self) -> Result<()> {

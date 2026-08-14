@@ -29,7 +29,19 @@ run_nnc52d_startup_orphan_self_tests() {
     missing-container-injection \
     missing-krun-injection \
     cleanup-capability \
-    missing-exact-quarantine; do
+    missing-exact-quarantine \
+    cleanup-before-quarantine \
+    missing-cleanup-subject \
+    missing-container-context \
+    missing-krun-context \
+    generic-effect-capability \
+    missing-deleting-resume \
+    missing-terminal-resume \
+    absent-only-effectful-artifacts \
+    terminal-after-effectful \
+    retire-before-publication \
+    missing-publication-cut-proof \
+    no-op-crash-child; do
     output="${temporary}/startup-orphan-${mutation}.out"
     if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
       NIMBUS_NETWORK_VERIFY_TEST_STARTUP_ORPHAN_MUTATION="${mutation}" \

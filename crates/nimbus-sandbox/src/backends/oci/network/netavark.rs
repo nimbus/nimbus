@@ -239,6 +239,30 @@ pub(super) fn execute_prepared_container_network_setup_for_test(
     )
 }
 
+#[cfg(test)]
+pub(crate) fn setup_host_managed_network_for_test(
+    ipam_authority: &OciIpamAuthority,
+    operation: &OciNetavarkOperation<'_>,
+) -> Result<Vec<Ipv4Addr>> {
+    let prepared = prepare_container_network_setup(ipam_authority, operation)?;
+    execute_prepared_container_network_setup_for_test(ipam_authority, operation, prepared)
+}
+
+/// Cross the teardown pre-effect fence without publishing a provider result.
+#[cfg(test)]
+pub(crate) fn begin_host_managed_teardown_without_ack_for_test(
+    ipam_authority: &OciIpamAuthority,
+    operation: &OciNetavarkOperation<'_>,
+) -> Result<()> {
+    let prepared = prepare_container_network_teardown(ipam_authority, operation)?;
+    execute_prepared_container_network_teardown_ambiguously_for_test(
+        ipam_authority,
+        operation.layout,
+        prepared,
+        "injected lost Netavark teardown response",
+    )
+}
+
 fn execute_prepared_container_network_setup_with_runner(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,

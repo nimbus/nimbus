@@ -159,7 +159,7 @@ fn startup_network_reconciliation_failure_blocks_new_container_planning() {
         error
             .to_string()
             .contains("refuses new durable work because startup reconciliation did not complete")
-            && error.to_string().contains("is structurally untrusted")
+            && error.to_string().contains("unmatched artifact")
             && error
                 .to_string()
                 .contains(&corrupt_manifest_path.display().to_string()),

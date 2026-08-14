@@ -10,16 +10,12 @@ use crate::backends::oci::egress::{
 use crate::backends::oci::network::{
     ConfiguredSegmentAllocator, MachinePortProxyLifetimeRegistry, OciIpamAuthority,
     OciNetworkProcess, OciNetworkProcessError, OciSegmentAllocator, RealOciEgressPinProvider,
-    reconcile_startup_network_state_with_retained_desired_manifests,
 };
 use crate::backends::oci::port_lifecycle::{NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator};
 #[cfg(test)]
 use crate::backends::readiness_probe::ReadinessProbeProvider;
 use crate::backends::readiness_probe::SocketReadinessProbeProvider;
 
-use super::manifest::{
-    reconcile_startup_manifest_publications, retained_reservation_pending_manifest_paths,
-};
 use super::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 
 impl ContainerSandboxBackend {
@@ -167,24 +163,10 @@ impl ContainerSandboxBackend {
             || LocalNetworkAttachmentAuthority::open(&config.network_state_root),
             |process| Ok(process.attachment_authority()),
         );
-        let startup_reconciliation_error = match attachment_authority.as_ref() {
-            Err(error) => Some(Arc::<str>::from(error.to_string())),
-            Ok(attachment_authority) => {
-                reconcile_startup_manifest_publications(&config.workload_state_root)
-                    .and_then(|()| retained_reservation_pending_manifest_paths(&config))
-                    .and_then(|retained_desired_manifests| {
-                        reconcile_startup_network_state_with_retained_desired_manifests(
-                            &config.workload_state_root,
-                            attachment_authority,
-                            &ipam_authority,
-                            segment_allocator.as_ref(),
-                            &retained_desired_manifests,
-                        )
-                    })
-            }
+        let attachment_open_error = attachment_authority
+            .as_ref()
             .err()
-            .map(|error| Arc::<str>::from(error.to_string())),
-        };
+            .map(|error| Arc::<str>::from(error.to_string()));
         let netavark_port_lifetimes = network_process
             .as_ref()
             .map_or_else(NetavarkPortLifetimeRegistry::default, |process| {
@@ -195,7 +177,7 @@ impl ContainerSandboxBackend {
             .map_or_else(MachinePortProxyLifetimeRegistry::default, |process| {
                 process.machine_port_proxy_lifetimes()
             });
-        Self {
+        let mut backend = Self {
             config,
             segment_allocator,
             attachment_authority: attachment_authority.ok(),
@@ -210,7 +192,7 @@ impl ContainerSandboxBackend {
             netavark_port_lifetimes,
             machine_port_proxies,
             _network_process: network_process,
-            startup_reconciliation_error,
+            startup_reconciliation_error: attachment_open_error,
             #[cfg(test)]
             restart_launch_test_probe: None,
             #[cfg(test)]
@@ -223,7 +205,14 @@ impl ContainerSandboxBackend {
             post_egress_reload_ack_observer: None,
             #[cfg(test)]
             network_teardown_checkpoint_test_probe: None,
+        };
+        if backend.startup_reconciliation_error.is_none() {
+            backend.startup_reconciliation_error = backend
+                .reconcile_container_startup_network_state()
+                .err()
+                .map(|error| Arc::<str>::from(error.to_string()));
         }
+        backend
     }
 
     #[cfg(any(test, feature = "test-hooks"))]

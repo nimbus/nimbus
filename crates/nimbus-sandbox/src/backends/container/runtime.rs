@@ -23,6 +23,7 @@ mod provider_context;
 mod provision;
 mod restart;
 mod runner;
+mod startup_orphan_convergence;
 mod status;
 mod teardown;
 #[cfg(any(test, feature = "test-hooks"))]

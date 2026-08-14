@@ -624,7 +624,8 @@ fn corrupt_claim_only_manifest_is_fenced_on_fresh_backend_without_mutation() {
         .as_deref()
         .expect("corrupt pending manifest should fence startup");
     assert!(
-        startup_error.contains("structurally untrusted"),
+        startup_error.contains("unmatched artifact")
+            && startup_error.contains(&manifest.conmon_layout.manifest_path.display().to_string()),
         "{startup_error}"
     );
     let error = reopened

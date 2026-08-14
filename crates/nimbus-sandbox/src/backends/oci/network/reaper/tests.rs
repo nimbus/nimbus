@@ -1,5 +1,8 @@
 use super::super::OciNetworkConfig;
 use super::*;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
+
 use crate::backends::oci::network::{
     SingleNodeSegmentAllocator, default_network_attachment_id, direct_test_ipam_authority,
 };
@@ -11,6 +14,15 @@ use nimbus_network::{
 use tempfile::tempdir;
 
 use crate::instance::SandboxId;
+
+const SEGMENT_CRASH_CHILD: &str = concat!(
+    "backends::oci::network::reaper::tests::",
+    "nnc8_3_segment_release_crash_child"
+);
+const SEGMENT_CRASH_ROOT: &str = "NIMBUS_NNC83_SEGMENT_CRASH_ROOT";
+const SEGMENT_CRASH_CUT: &str = "NIMBUS_NNC83_SEGMENT_CRASH_CUT";
+const SEGMENT_CRASH_EXIT: i32 = 88;
+const SEGMENT_CHILD_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn reservation_claim(attempt: &str) -> NetworkReservationClaim {
     let provider =
@@ -356,4 +368,135 @@ fn failed_bridge_cleanup_must_fence_segment_from_reuse() {
         "10.0.2.0/24",
         "the recovered slot is owned exactly once, not handed out twice"
     );
+}
+
+#[test]
+#[ignore = "spawned only by the NNC8.3 segment-release crash parent"]
+fn nnc8_3_segment_release_crash_child() {
+    let root = std::env::var(SEGMENT_CRASH_ROOT).expect("crash child root should be set");
+    let cut = std::env::var(SEGMENT_CRASH_CUT).expect("crash child cut should be set");
+    let root = std::path::Path::new(&root);
+    let tenant = TenantId::new(format!("tenant-{cut}")).expect("child tenant should validate");
+    let attachment = default_network_attachment_id(&SandboxId::new(format!("sandbox-{cut}")));
+    let allocator = SingleNodeSegmentAllocator::single_node_default(root);
+    let errors = release_network_segment_hold_with(&allocator, &tenant, &attachment, None, |_| {
+        remove_bridge_effect_once(root);
+        if cut == "bridge-removed" {
+            std::process::exit(SEGMENT_CRASH_EXIT);
+        }
+        Ok(())
+    });
+    assert!(
+        errors.is_empty(),
+        "segment release should reach finalization"
+    );
+    assert_eq!(cut, "allocation-finalized", "unknown crash cut");
+    std::process::exit(SEGMENT_CRASH_EXIT);
+}
+
+#[test]
+fn nnc8_3_fresh_process_bridge_and_allocation_crash_cuts_converge_once() {
+    for cut in ["bridge-removed", "allocation-finalized"] {
+        let root = tempfile::tempdir().expect("segment crash root should create");
+        let tenant = TenantId::new(format!("tenant-{cut}")).expect("tenant should validate");
+        let attachment = default_network_attachment_id(&SandboxId::new(format!("sandbox-{cut}")));
+        let allocator = SingleNodeSegmentAllocator::single_node_default(root.path());
+        let original = allocator
+            .acquire(&tenant, &attachment)
+            .expect("original segment should allocate");
+        std::fs::write(root.path().join("bridge-present"), b"present\n")
+            .expect("bridge effect should exist before cleanup");
+        drop(allocator);
+
+        let output = run_segment_crash_child(root.path(), cut);
+        assert_eq!(
+            output.status.code(),
+            Some(SEGMENT_CRASH_EXIT),
+            "child must die at {cut}; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let recovered = SingleNodeSegmentAllocator::single_node_default(root.path());
+        let errors =
+            release_network_segment_hold_with(&recovered, &tenant, &attachment, None, |_| {
+                remove_bridge_effect_once(root.path());
+                Ok(())
+            });
+        assert!(errors.is_empty(), "recovery after {cut} should converge");
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("bridge-effects"))
+                .expect("bridge effect log should exist")
+                .lines()
+                .count(),
+            1,
+            "recovery after {cut} must not repeat the bridge effect"
+        );
+        let replacement = recovered
+            .acquire(
+                &TenantId::new(format!("replacement-{cut}")).expect("tenant should validate"),
+                &default_network_attachment_id(&SandboxId::new(format!(
+                    "replacement-sandbox-{cut}"
+                ))),
+            )
+            .expect("finalized allocation should become reusable");
+        assert_eq!(replacement.cidr(), original.cidr());
+        assert_ne!(
+            replacement.segment_id(),
+            original.segment_id(),
+            "a reused location must mint a new stable identity"
+        );
+    }
+}
+
+fn remove_bridge_effect_once(root: &std::path::Path) {
+    let bridge = root.join("bridge-present");
+    if bridge.try_exists().expect("bridge effect should inspect") {
+        std::fs::remove_file(&bridge).expect("bridge effect should remove");
+        use std::io::Write;
+        writeln!(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(root.join("bridge-effects"))
+                .expect("bridge effect log should open"),
+            "removed"
+        )
+        .expect("bridge effect should record");
+    }
+}
+
+fn run_segment_crash_child(root: &std::path::Path, cut: &str) -> Output {
+    let mut child = Command::new(std::env::current_exe().expect("test binary should resolve"))
+        .args(["--exact", SEGMENT_CRASH_CHILD, "--ignored", "--nocapture"])
+        .env(SEGMENT_CRASH_ROOT, root)
+        .env(SEGMENT_CRASH_CUT, cut)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("segment crash child should spawn");
+    let deadline = Instant::now() + SEGMENT_CHILD_TIMEOUT;
+    loop {
+        if child
+            .try_wait()
+            .expect("segment crash child should inspect")
+            .is_some()
+        {
+            return child
+                .wait_with_output()
+                .expect("segment crash child output should read");
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("timed-out segment child should stop");
+            let output = child
+                .wait_with_output()
+                .expect("timed-out segment child output should read");
+            panic!(
+                "segment crash child timed out at {cut}; stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }

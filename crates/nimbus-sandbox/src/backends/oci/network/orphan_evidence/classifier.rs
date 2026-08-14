@@ -252,6 +252,12 @@ fn classify_candidate(candidate: &OciOrphanEvidenceCandidate) -> OciOrphanDispos
         return quarantine(OciOrphanQuarantineReason::UnknownInspection);
     }
 
+    if desired.resource().phase() == NetworkResourcePhase::Released
+        || provider.lifecycle() == OciIpamEvidenceLifecycle::Terminal
+    {
+        return classify_terminal_candidate(candidate, desired, provider, backend);
+    }
+
     if provider.lifecycle() != OciIpamEvidenceLifecycle::Live {
         return quarantine(OciOrphanQuarantineReason::ProviderAttemptTerminal);
     }
@@ -379,6 +385,88 @@ fn classify_candidate(candidate: &OciOrphanEvidenceCandidate) -> OciOrphanDispos
     OciOrphanDisposition::Adopt
 }
 
+fn classify_terminal_candidate(
+    candidate: &OciOrphanEvidenceCandidate,
+    desired: &nimbus_network::DurableNetworkAttachmentState,
+    provider: &crate::backends::oci::network::ipam::OciAttachmentProviderEvidence,
+    backend: AttachmentBackendKind,
+) -> OciOrphanDisposition {
+    if desired.resource().phase() != NetworkResourcePhase::Released
+        || provider.lifecycle() != OciIpamEvidenceLifecycle::Terminal
+        || !matches!(
+            provider.provider_operation(),
+            NetavarkProviderOperation::Detached
+        )
+    {
+        return quarantine(OciOrphanQuarantineReason::ProviderAttemptTerminal);
+    }
+    let expected_provider_handle = match oci_attachment_provider_handle_for_identity(
+        desired.resource().version().plan_id(),
+        candidate.attachment_id(),
+        backend,
+    ) {
+        Ok(handle) => handle,
+        Err(_) => {
+            return quarantine(OciOrphanQuarantineReason::DesiredProviderHandleMismatch);
+        }
+    };
+    if desired.resource().provider_handle() != Some(&expected_provider_handle) {
+        return quarantine(OciOrphanQuarantineReason::DesiredProviderHandleMismatch);
+    }
+
+    let mut desired_allocator = false;
+    let mut provider_allocator = false;
+    for evidence in candidate.allocator() {
+        if evidence.reservation_claim() != provider.reservation_claim() {
+            return quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence);
+        }
+        let observation = match evidence.observation() {
+            Ok(observation) => observation,
+            Err(_) => return quarantine(OciOrphanQuarantineReason::UnknownInspection),
+        };
+        if observation.state() != NetworkAttachmentReservationState::Absent {
+            return quarantine(OciOrphanQuarantineReason::AllocatorCleanupPending);
+        }
+        match evidence.source() {
+            OciAllocatorEvidenceSource::DesiredAttachment if !desired_allocator => {
+                desired_allocator = true;
+            }
+            OciAllocatorEvidenceSource::ProviderAttempt if !provider_allocator => {
+                provider_allocator = true;
+            }
+            _ => return quarantine(OciOrphanQuarantineReason::AllocatorEvidenceIncomplete),
+        }
+    }
+    if !desired_allocator || !provider_allocator {
+        return quarantine(OciOrphanQuarantineReason::AllocatorEvidenceIncomplete);
+    }
+
+    let mut manifest_present = false;
+    let mut namespace_absent = false;
+    let mut status_absent = false;
+    for artifact in candidate.artifacts() {
+        match (artifact.kind(), artifact.state()) {
+            (OciArtifactKind::Manifest, OciArtifactObservationState::Present) => {
+                manifest_present = true;
+            }
+            (OciArtifactKind::NetworkNamespace, OciArtifactObservationState::Absent) => {
+                namespace_absent = true;
+            }
+            (OciArtifactKind::Status, OciArtifactObservationState::Absent) => {
+                status_absent = true;
+            }
+            (_, OciArtifactObservationState::Unknown(_)) => {
+                return quarantine(OciOrphanQuarantineReason::UnknownInspection);
+            }
+            _ => return quarantine(OciOrphanQuarantineReason::ArtifactEvidenceIncomplete),
+        }
+    }
+    if !manifest_present || !namespace_absent || !status_absent {
+        return quarantine(OciOrphanQuarantineReason::ArtifactEvidenceIncomplete);
+    }
+    quarantine(OciOrphanQuarantineReason::ProviderAttemptTerminal)
+}
+
 /// Retain the one legitimate no-desired shape produced before attachment
 /// lifecycle begins.
 ///
@@ -426,8 +514,10 @@ fn classify_reserved_pre_effect_without_desired(
             return quarantine(OciOrphanQuarantineReason::AllocatorHoldMissing);
         }
         NetworkAttachmentReservationState::Reserved => {}
-        NetworkAttachmentReservationState::ReservationCleanupPending
-        | NetworkAttachmentReservationState::Adopted
+        NetworkAttachmentReservationState::ReservationCleanupPending => {
+            return quarantine(OciOrphanQuarantineReason::AllocatorCleanupPending);
+        }
+        NetworkAttachmentReservationState::Adopted
         | NetworkAttachmentReservationState::ProviderCleanupPending => {
             return quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence);
         }

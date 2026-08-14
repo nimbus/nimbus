@@ -169,7 +169,7 @@ pub(super) fn inspect_provider(
             };
             match operation {
                 NetavarkProviderOperation::Ready { setup_attempt }
-                    if namespace_present && status_projection.is_some() =>
+                    if status_projection.is_some() =>
                 {
                     match load_container_ips_for_segment_if_present(
                         ipam,
@@ -183,7 +183,10 @@ pub(super) fn inspect_provider(
                             &setup_attempt,
                             &assigned_ips,
                         ) {
-                            Ok(()) => AttachmentProviderObservation::Present { assigned_ips },
+                            Ok(()) if namespace_present => {
+                                AttachmentProviderObservation::Present { assigned_ips }
+                            }
+                            Ok(()) => AttachmentProviderObservation::ExactCleanupRequired,
                             Err(reason) => AttachmentProviderObservation::Unknown { reason },
                         },
                         Ok(None) => AttachmentProviderObservation::Unknown {

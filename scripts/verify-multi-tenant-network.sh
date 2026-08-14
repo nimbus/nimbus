@@ -26,14 +26,17 @@ NETWORK="crates/nimbus-sandbox/src/backends/oci/network.rs"
 CONTAINER_RT="crates/nimbus-sandbox/src/backends/container/runtime.rs"
 CONTAINER_NETWORK="crates/nimbus-sandbox/src/backends/container/runtime/network_launch.rs"
 CONTAINER_COMPOSITION="crates/nimbus-sandbox/src/backends/container/runtime/network_composition.rs"
+CONTAINER_STARTUP_CONVERGENCE="crates/nimbus-sandbox/src/backends/container/runtime/startup_orphan_convergence.rs"
 CONTAINER_MANIFEST="crates/nimbus-sandbox/src/backends/container/runtime/manifest.rs"
 CONTAINER_CLEANUP="crates/nimbus-sandbox/src/backends/container/runtime/execution_cleanup.rs"
 KRUN_VM="crates/nimbus-sandbox/src/backends/krun/vm.rs"
 KRUN_LIFECYCLE="crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs"
+KRUN_STARTUP_CONVERGENCE="crates/nimbus-sandbox/src/backends/krun/vm/startup_orphan_convergence.rs"
 EGRESS_PROOF="crates/nimbus-sandbox/tests/krun_linux_egress.rs"
 REAPER="crates/nimbus-sandbox/src/backends/oci/network/reaper.rs"
 ATTACHMENT_LIFECYCLE="crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle.rs"
 STARTUP_RECONCILIATION="crates/nimbus-sandbox/src/backends/oci/network/startup_reconciliation.rs"
+ORPHAN_CONVERGENCE="crates/nimbus-sandbox/src/backends/oci/network/orphan_convergence.rs"
 STARTUP_RECONCILIATION_TESTS="crates/nimbus-sandbox/src/backends/oci/network/startup_reconciliation/tests.rs"
 SCHEDULING="crates/nimbus-workloads/src/scheduling.rs"
 PLACEMENT="crates/nimbus-sandbox/src/backends/oci/network/placement.rs"
@@ -152,7 +155,8 @@ step 8 "MTN4 teardown saga WIRED in both backends (hold, quarantine, detach, rel
 # NNC5.1 moved lifecycle ordering into one shared deep module. Both actual
 # backends must enter that module; the reaper still owns bridge finalization.
 if has_all "${ATTACHMENT_LIFECYCLE}" 'fn detach_host_managed\(' \
-  'quarantine_network_segment_hold\(' 'release_network_segment_hold\(' \
+  && has_all "${REAPER}" 'fn quarantine_network_segment_hold\(' \
+  'fn release_network_segment_hold\(' \
   && grep -qE '\.detach_host_managed\(' "${CONTAINER_CLEANUP}" \
   && grep -qE '\.detach_host_managed\(' "${KRUN_LIFECYCLE}" \
   && has_all "${REAPER}" 'NetworkSegmentReleaseOutcome::CleanupPending' \
@@ -197,23 +201,33 @@ fi
 
 # -------- MTN6: startup orphan quarantine -----------------------------------
 
-step 12 "MTN6 evidence-aware startup quarantine is wired into both backends"
-# Startup may apply exact desired/allocator quarantine, but it cannot treat a
-# filename as liveness or gain cleanup/release/finalization authority.
+step 12 "MTN6 startup quarantine and least-authority cleanup are wired into both backends"
+# The generic startup owner applies exact desired/allocator quarantine before
+# it offers an identity-only subject to either backend cleanup adapter. It
+# cannot treat a filename as liveness or own a provider effect.
 if has_all "${STARTUP_RECONCILIATION}" 'collect_oci_orphan_evidence\(' \
   'classify_oci_orphan_evidence\(' 'NetworkTransitionEvidence::AmbiguousEffect' \
-  'allocator\.quarantine\(' \
-  && grep -qE 'reconcile_startup_network_state\(' "${CONTAINER_COMPOSITION}" \
-  && grep -qE 'reconcile_startup_network_state\(' "${KRUN_VM}" \
+  'allocator\.quarantine\(' 'compile_cleanup_subject\(' \
+  'cleanup\.converge_quarantined_orphan\(' \
+  && has_all "${ORPHAN_CONVERGENCE}" 'struct OciOrphanCleanupSubject' \
+  'trait OciOrphanCleanupContext' \
+  && has_all "${CONTAINER_STARTUP_CONVERGENCE}" \
+  'reconcile_startup_network_state_with_cleanup\(' \
+  'impl OciOrphanCleanupContext for ContainerSandboxBackend' \
+  && has_all "${KRUN_STARTUP_CONVERGENCE}" \
+  'reconcile_startup_network_state_with_cleanup\(' \
+  'impl OciOrphanCleanupContext for KrunSandboxBackend' \
+  && grep -qE 'reconcile_container_startup_network_state\(' "${CONTAINER_COMPOSITION}" \
+  && grep -qE 'reconcile_krun_startup_network_state\(' "${KRUN_VM}" \
   && grep -qE 'missing_namespace_quarantines_exact_authorities_without_cleanup_or_reuse' \
   "${STARTUP_RECONCILIATION_TESTS}" \
   && ! grep -qE 'fn reconcile_orphans|reconcile_network_segment_orphans|live_netns_holds' \
   "${NETWORK_SEGMENT}" "${SEG}" "${REAPER}" "${NETWORK}" \
-  && ! grep -qE 'release_network_segment_hold|finalize_release|reap_bridge_interface' \
+  && ! grep -qE 'release_network_segment_hold|finalize_release|reap_bridge_interface|detach_host_managed|Netavark' \
   "${STARTUP_RECONCILIATION}"; then
-  pass "both backends collect/classify once and apply only exact startup quarantine without filename or cleanup authority"
+  pass "both backends share exact quarantine and receive only identity-only cleanup subjects through effect-owning adapters"
 else
-  fail "MTN6 orphan quarantine not wired" "expected shared evidence-aware startup quarantine, both backend injections, no-effect proof, and deleted filename authority"
+  fail "MTN6 orphan convergence not wired" "expected quarantine-before-cleanup, both backend adapters, no generic provider effect, and deleted filename authority"
 fi
 
 step 13 "MTN6 remaining-segment dimension on NodeCapacity (fail-closed placement)"

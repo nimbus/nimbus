@@ -25,6 +25,7 @@ mod ipam;
 mod layout;
 mod netavark;
 mod netns;
+mod orphan_convergence;
 mod orphan_evidence;
 mod placement;
 mod process;
@@ -73,6 +74,18 @@ pub(crate) use ipam::{
     allocate_container_ips, begin_netavark_setup_without_ack_for_test,
     reconcile_terminal_container_ipam_releases,
 };
+#[cfg(test)]
+pub(crate) fn terminal_container_ipam_release_is_absent_for_test(
+    authority: &OciIpamAuthority,
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+) -> crate::error::Result<bool> {
+    Ok(matches!(
+        ipam::inspect_container_ipam_authority(authority, layout, config, sandbox_id)?,
+        ipam::ContainerIpamAuthorityState::Absent
+    ))
+}
 pub(crate) use layout::{
     OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, bridge_gateway_addr,
 };
@@ -81,7 +94,14 @@ pub(crate) use netavark::{
     authenticate_container_network_generation_for_cleanup,
 };
 #[cfg(test)]
-pub(crate) use netavark::{setup_container_network, teardown_container_network};
+pub(crate) use netavark::{
+    begin_host_managed_teardown_without_ack_for_test, setup_container_network,
+    setup_host_managed_network_for_test, teardown_container_network,
+};
+pub(crate) use orphan_convergence::{
+    OciOrphanCleanupContext, OciOrphanCleanupDisposition, OciOrphanCleanupKind,
+    OciOrphanCleanupSubject,
+};
 pub(crate) use placement::{OciPlacementAuthority, OciPlacementProvider, place_sandbox_on_block};
 pub(crate) use process::{
     MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,
@@ -104,14 +124,12 @@ pub(crate) use reaper::{
     ReservedNetworkLaunchAuthority, ReservedNetworkLaunchIdentity,
     compensate_reserved_network_launch_after_ports, quarantine_network_segment_hold,
     release_network_segment_hold, release_reserved_network_launch_after_ports,
+    release_reserved_network_launch_after_ports_with_terminal_publication,
 };
 #[cfg(test)]
 pub(crate) use segment::SingleNodeSegmentAllocator;
 pub(crate) use segment::{ConfiguredSegmentAllocator, DEFAULT_TENANT_PREFIX};
-pub(crate) use startup_reconciliation::{
-    reconcile_startup_network_state,
-    reconcile_startup_network_state_with_retained_desired_manifests,
-};
+pub(crate) use startup_reconciliation::reconcile_startup_network_state_with_cleanup;
 #[cfg(test)]
 pub(crate) use test_support::{
     RecordingSegmentAllocator, SegmentAllocatorOperation, direct_test_ipam_authority,
