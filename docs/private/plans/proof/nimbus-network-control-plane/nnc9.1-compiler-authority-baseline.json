@@ -1,0 +1,1474 @@
+{
+  "schema_version": 2,
+  "input": {
+    "sha256": "f36faf3e0c3290dcb43c8017fc8e7fa4c3e424bf1896d0c9e3feb9ab528382c6",
+    "files": 1657
+  },
+  "inventory": {
+    "path": "docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json",
+    "sha256": "f33b62d64246df1b05ecd3d58db92bb2899639960fb8b8bc9feaa473e5a43142"
+  },
+  "compiler": {
+    "rustc": {
+      "command": "/Users/jack/.cargo/bin/rustc",
+      "command_sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1",
+      "binary": "/Users/jack/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc",
+      "binary_sha256": "d10051fa870c54067bd21047e9709084141ffff65695537eb2c0c5d2477467d4",
+      "version": "rustc 1.96.1 (31fca3adb 2026-06-26)\nbinary: rustc\ncommit-hash: 31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd\ncommit-date: 2026-06-26\nhost: aarch64-apple-darwin\nrelease: 1.96.1\nLLVM version: 22.1.2"
+    },
+    "cargo": {
+      "command": "/Users/jack/.cargo/bin/cargo",
+      "command_sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1",
+      "binary": "/Users/jack/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+      "binary_sha256": "f00ad85ca0a5b0f15b2a7658f15ef3195d9a04d2763921c1f9eaaa51f0136fe8",
+      "version": "cargo 1.96.1 (356927216 2026-06-26)\nrelease: 1.96.1\ncommit-hash: 356927216a2d746168cf76e5e88cc3f4b58e029d\ncommit-date: 2026-06-26\nhost: aarch64-apple-darwin\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.7.1 (sys:0.4.87+curl-8.19.0 system ssl:(SecureTransport) LibreSSL/3.3.6)\nssl: OpenSSL 3.5.4 30 Sep 2025\nos: Mac OS 15.7.2 [64-bit]"
+    },
+    "host": "aarch64-apple-darwin",
+    "target": "aarch64-apple-darwin",
+    "target_cfg": [
+      "debug_assertions",
+      "panic=\"unwind\"",
+      "target_abi=\"\"",
+      "target_arch=\"aarch64\"",
+      "target_endian=\"little\"",
+      "target_env=\"\"",
+      "target_family=\"unix\"",
+      "target_feature=\"aes\"",
+      "target_feature=\"crc\"",
+      "target_feature=\"dit\"",
+      "target_feature=\"dotprod\"",
+      "target_feature=\"dpb\"",
+      "target_feature=\"dpb2\"",
+      "target_feature=\"fcma\"",
+      "target_feature=\"fhm\"",
+      "target_feature=\"flagm\"",
+      "target_feature=\"fp16\"",
+      "target_feature=\"frintts\"",
+      "target_feature=\"jsconv\"",
+      "target_feature=\"lor\"",
+      "target_feature=\"lse\"",
+      "target_feature=\"neon\"",
+      "target_feature=\"paca\"",
+      "target_feature=\"pacg\"",
+      "target_feature=\"pan\"",
+      "target_feature=\"pmuv3\"",
+      "target_feature=\"ras\"",
+      "target_feature=\"rcpc\"",
+      "target_feature=\"rcpc2\"",
+      "target_feature=\"rdm\"",
+      "target_feature=\"sb\"",
+      "target_feature=\"sha2\"",
+      "target_feature=\"sha3\"",
+      "target_feature=\"ssbs\"",
+      "target_feature=\"vh\"",
+      "target_has_atomic=\"128\"",
+      "target_has_atomic=\"16\"",
+      "target_has_atomic=\"32\"",
+      "target_has_atomic=\"64\"",
+      "target_has_atomic=\"8\"",
+      "target_has_atomic=\"ptr\"",
+      "target_os=\"macos\"",
+      "target_pointer_width=\"64\"",
+      "target_vendor=\"apple\"",
+      "unix"
+    ],
+    "sysroot": "/Users/jack/.rustup/toolchains/stable-aarch64-apple-darwin",
+    "environment": {},
+    "cargo_configs": [
+      {
+        "label": "$REPO/.cargo/config.toml",
+        "search_order": 0,
+        "bytes": 1112,
+        "sha256": "4429c2ba8b1c5f6779731ffe26aede6bccb5a4f945e3e1c60fb0b54a59dfbafb"
+      },
+      {
+        "label": "$CARGO_HOME/config.toml",
+        "search_order": 1,
+        "bytes": 380,
+        "sha256": "7792831dd51cbd7a65e90071e6241be22fcacc1324f2b44ce16f023308b321a8"
+      }
+    ]
+  },
+  "configuration": {
+    "target": "aarch64-apple-darwin",
+    "features": "all-features",
+    "production_target_kinds": [
+      "lib",
+      "bin"
+    ],
+    "test_cfg": false,
+    "uncompiled_source_rule": "direct calls must reconcile with MIR; parsed qself/glob/operation-shaped macros fail closed"
+  },
+  "production_targets": [
+    {
+      "package": "nimbus-cli",
+      "targets": [
+        {
+          "name": "nimbus_cli",
+          "kind": "lib",
+          "selector": [
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "nimbus-kv",
+      "targets": [
+        {
+          "name": "nimbus_kv",
+          "kind": "lib",
+          "selector": [
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "nimbus-network",
+      "targets": [
+        {
+          "name": "nimbus_network",
+          "kind": "lib",
+          "selector": [
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "nimbus-proxy",
+      "targets": [
+        {
+          "name": "nimbus_proxy",
+          "kind": "lib",
+          "selector": [
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "nimbus-sandbox",
+      "targets": [
+        {
+          "name": "nimbus-guest-user-switch",
+          "kind": "bin",
+          "selector": [
+            "--bin",
+            "nimbus-guest-user-switch"
+          ]
+        },
+        {
+          "name": "nimbus_sandbox",
+          "kind": "lib",
+          "selector": [
+            "--lib"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "nimbus-server",
+      "targets": [
+        {
+          "name": "nimbus_server",
+          "kind": "lib",
+          "selector": [
+            "--lib"
+          ]
+        }
+      ]
+    }
+  ],
+  "owner_packages": [
+    {
+      "package": "nimbus-cli",
+      "targets": [
+        {
+          "name": "nimbus_cli",
+          "kind": "lib",
+          "bytes": 35650518,
+          "sha256": "9d2ccfef4c8a451538fc9a10e6de5830fa5db3ddd2984f7bee48ab5397083fe9",
+          "calls": {
+            "tcp-bind": 2,
+            "tcp-from-std": 1,
+            "tcp-from-raw-fd": 1,
+            "tcp-from-owned-fd": 0,
+            "tcp-from-raw-socket": 0,
+            "tcp-from-owned-socket": 0,
+            "udp-bind": 0,
+            "udp-from-std": 0,
+            "udp-from-raw-fd": 0,
+            "udp-from-owned-fd": 0,
+            "udp-from-raw-socket": 0,
+            "udp-from-owned-socket": 0,
+            "unix-bind": 3,
+            "unix-from-std": 2,
+            "unix-from-raw-fd": 0,
+            "unix-from-owned-fd": 0
+          }
+        }
+      ],
+      "calls": {
+        "tcp-bind": 2,
+        "tcp-from-std": 1,
+        "tcp-from-raw-fd": 1,
+        "tcp-from-owned-fd": 0,
+        "tcp-from-raw-socket": 0,
+        "tcp-from-owned-socket": 0,
+        "udp-bind": 0,
+        "udp-from-std": 0,
+        "udp-from-raw-fd": 0,
+        "udp-from-owned-fd": 0,
+        "udp-from-raw-socket": 0,
+        "udp-from-owned-socket": 0,
+        "unix-bind": 3,
+        "unix-from-std": 2,
+        "unix-from-raw-fd": 0,
+        "unix-from-owned-fd": 0
+      }
+    },
+    {
+      "package": "nimbus-kv",
+      "targets": [
+        {
+          "name": "nimbus_kv",
+          "kind": "lib",
+          "bytes": 728090,
+          "sha256": "646128aedaa2a79d0ff0e898de194d3650bc0bcdad971001b7c653482c2d1d08",
+          "calls": {
+            "tcp-bind": 1,
+            "tcp-from-std": 0,
+            "tcp-from-raw-fd": 0,
+            "tcp-from-owned-fd": 0,
+            "tcp-from-raw-socket": 0,
+            "tcp-from-owned-socket": 0,
+            "udp-bind": 0,
+            "udp-from-std": 0,
+            "udp-from-raw-fd": 0,
+            "udp-from-owned-fd": 0,
+            "udp-from-raw-socket": 0,
+            "udp-from-owned-socket": 0,
+            "unix-bind": 0,
+            "unix-from-std": 0,
+            "unix-from-raw-fd": 0,
+            "unix-from-owned-fd": 0
+          }
+        }
+      ],
+      "calls": {
+        "tcp-bind": 1,
+        "tcp-from-std": 0,
+        "tcp-from-raw-fd": 0,
+        "tcp-from-owned-fd": 0,
+        "tcp-from-raw-socket": 0,
+        "tcp-from-owned-socket": 0,
+        "udp-bind": 0,
+        "udp-from-std": 0,
+        "udp-from-raw-fd": 0,
+        "udp-from-owned-fd": 0,
+        "udp-from-raw-socket": 0,
+        "udp-from-owned-socket": 0,
+        "unix-bind": 0,
+        "unix-from-std": 0,
+        "unix-from-raw-fd": 0,
+        "unix-from-owned-fd": 0
+      }
+    },
+    {
+      "package": "nimbus-network",
+      "targets": [
+        {
+          "name": "nimbus_network",
+          "kind": "lib",
+          "bytes": 9422593,
+          "sha256": "21aa0be62fbc07a67eceddbc07be78e5fc011d3d52f4c8832be9bf157052abb5",
+          "calls": {
+            "tcp-bind": 0,
+            "tcp-from-std": 0,
+            "tcp-from-raw-fd": 0,
+            "tcp-from-owned-fd": 0,
+            "tcp-from-raw-socket": 0,
+            "tcp-from-owned-socket": 0,
+            "udp-bind": 0,
+            "udp-from-std": 0,
+            "udp-from-raw-fd": 0,
+            "udp-from-owned-fd": 0,
+            "udp-from-raw-socket": 0,
+            "udp-from-owned-socket": 0,
+            "unix-bind": 0,
+            "unix-from-std": 0,
+            "unix-from-raw-fd": 0,
+            "unix-from-owned-fd": 0
+          }
+        }
+      ],
+      "calls": {
+        "tcp-bind": 0,
+        "tcp-from-std": 0,
+        "tcp-from-raw-fd": 0,
+        "tcp-from-owned-fd": 0,
+        "tcp-from-raw-socket": 0,
+        "tcp-from-owned-socket": 0,
+        "udp-bind": 0,
+        "udp-from-std": 0,
+        "udp-from-raw-fd": 0,
+        "udp-from-owned-fd": 0,
+        "udp-from-raw-socket": 0,
+        "udp-from-owned-socket": 0,
+        "unix-bind": 0,
+        "unix-from-std": 0,
+        "unix-from-raw-fd": 0,
+        "unix-from-owned-fd": 0
+      }
+    },
+    {
+      "package": "nimbus-proxy",
+      "targets": [
+        {
+          "name": "nimbus_proxy",
+          "kind": "lib",
+          "bytes": 2577875,
+          "sha256": "b1bae608d116e6d4e8869cbc13ef0edac03c7152a03c8e5e3dcfc1d1792621cc",
+          "calls": {
+            "tcp-bind": 1,
+            "tcp-from-std": 1,
+            "tcp-from-raw-fd": 0,
+            "tcp-from-owned-fd": 0,
+            "tcp-from-raw-socket": 0,
+            "tcp-from-owned-socket": 0,
+            "udp-bind": 0,
+            "udp-from-std": 0,
+            "udp-from-raw-fd": 0,
+            "udp-from-owned-fd": 0,
+            "udp-from-raw-socket": 0,
+            "udp-from-owned-socket": 0,
+            "unix-bind": 0,
+            "unix-from-std": 0,
+            "unix-from-raw-fd": 0,
+            "unix-from-owned-fd": 0
+          }
+        }
+      ],
+      "calls": {
+        "tcp-bind": 1,
+        "tcp-from-std": 1,
+        "tcp-from-raw-fd": 0,
+        "tcp-from-owned-fd": 0,
+        "tcp-from-raw-socket": 0,
+        "tcp-from-owned-socket": 0,
+        "udp-bind": 0,
+        "udp-from-std": 0,
+        "udp-from-raw-fd": 0,
+        "udp-from-owned-fd": 0,
+        "udp-from-raw-socket": 0,
+        "udp-from-owned-socket": 0,
+        "unix-bind": 0,
+        "unix-from-std": 0,
+        "unix-from-raw-fd": 0,
+        "unix-from-owned-fd": 0
+      }
+    },
+    {
+      "package": "nimbus-sandbox",
+      "targets": [
+        {
+          "name": "nimbus-guest-user-switch",
+          "kind": "bin",
+          "bytes": 21746,
+          "sha256": "3c40a62f4c64201c7a20090421e2fff8284f4dde026d7bb945d8b800d876cd74",
+          "calls": {
+            "tcp-bind": 0,
+            "tcp-from-std": 0,
+            "tcp-from-raw-fd": 0,
+            "tcp-from-owned-fd": 0,
+            "tcp-from-raw-socket": 0,
+            "tcp-from-owned-socket": 0,
+            "udp-bind": 0,
+            "udp-from-std": 0,
+            "udp-from-raw-fd": 0,
+            "udp-from-owned-fd": 0,
+            "udp-from-raw-socket": 0,
+            "udp-from-owned-socket": 0,
+            "unix-bind": 0,
+            "unix-from-std": 0,
+            "unix-from-raw-fd": 0,
+            "unix-from-owned-fd": 0
+          }
+        },
+        {
+          "name": "nimbus_sandbox",
+          "kind": "lib",
+          "bytes": 38055898,
+          "sha256": "eaf3013940a81faabc248bf1597c70758e30b77b93e86e67052cb8ec2668f4a9",
+          "calls": {
+            "tcp-bind": 1,
+            "tcp-from-std": 0,
+            "tcp-from-raw-fd": 0,
+            "tcp-from-owned-fd": 0,
+            "tcp-from-raw-socket": 0,
+            "tcp-from-owned-socket": 0,
+            "udp-bind": 0,
+            "udp-from-std": 0,
+            "udp-from-raw-fd": 0,
+            "udp-from-owned-fd": 0,
+            "udp-from-raw-socket": 0,
+            "udp-from-owned-socket": 0,
+            "unix-bind": 0,
+            "unix-from-std": 0,
+            "unix-from-raw-fd": 0,
+            "unix-from-owned-fd": 0
+          }
+        }
+      ],
+      "calls": {
+        "tcp-bind": 1,
+        "tcp-from-std": 0,
+        "tcp-from-raw-fd": 0,
+        "tcp-from-owned-fd": 0,
+        "tcp-from-raw-socket": 0,
+        "tcp-from-owned-socket": 0,
+        "udp-bind": 0,
+        "udp-from-std": 0,
+        "udp-from-raw-fd": 0,
+        "udp-from-owned-fd": 0,
+        "udp-from-raw-socket": 0,
+        "udp-from-owned-socket": 0,
+        "unix-bind": 0,
+        "unix-from-std": 0,
+        "unix-from-raw-fd": 0,
+        "unix-from-owned-fd": 0
+      }
+    },
+    {
+      "package": "nimbus-server",
+      "targets": [
+        {
+          "name": "nimbus_server",
+          "kind": "lib",
+          "bytes": 16339583,
+          "sha256": "6ac92b89b1624a12bf38a7b4afa6ba140b65c5cc5a543654fa3432fb51f95dff",
+          "calls": {
+            "tcp-bind": 2,
+            "tcp-from-std": 1,
+            "tcp-from-raw-fd": 0,
+            "tcp-from-owned-fd": 0,
+            "tcp-from-raw-socket": 0,
+            "tcp-from-owned-socket": 0,
+            "udp-bind": 0,
+            "udp-from-std": 0,
+            "udp-from-raw-fd": 0,
+            "udp-from-owned-fd": 0,
+            "udp-from-raw-socket": 0,
+            "udp-from-owned-socket": 0,
+            "unix-bind": 0,
+            "unix-from-std": 0,
+            "unix-from-raw-fd": 0,
+            "unix-from-owned-fd": 0
+          }
+        }
+      ],
+      "calls": {
+        "tcp-bind": 2,
+        "tcp-from-std": 1,
+        "tcp-from-raw-fd": 0,
+        "tcp-from-owned-fd": 0,
+        "tcp-from-raw-socket": 0,
+        "tcp-from-owned-socket": 0,
+        "udp-bind": 0,
+        "udp-from-std": 0,
+        "udp-from-raw-fd": 0,
+        "udp-from-owned-fd": 0,
+        "udp-from-raw-socket": 0,
+        "udp-from-owned-socket": 0,
+        "unix-bind": 0,
+        "unix-from-std": 0,
+        "unix-from-raw-fd": 0,
+        "unix-from-owned-fd": 0
+      }
+    }
+  ],
+  "aggregate_calls": {
+    "tcp-bind": 7,
+    "tcp-from-std": 3,
+    "tcp-from-raw-fd": 1,
+    "tcp-from-owned-fd": 0,
+    "tcp-from-raw-socket": 0,
+    "tcp-from-owned-socket": 0,
+    "udp-bind": 0,
+    "udp-from-std": 0,
+    "udp-from-raw-fd": 0,
+    "udp-from-owned-fd": 0,
+    "udp-from-raw-socket": 0,
+    "udp-from-owned-socket": 0,
+    "unix-bind": 3,
+    "unix-from-std": 2,
+    "unix-from-raw-fd": 0,
+    "unix-from-owned-fd": 0
+  },
+  "expected_calls": {
+    "tcp-bind": 7,
+    "tcp-from-std": 3,
+    "tcp-from-raw-fd": 1,
+    "tcp-from-owned-fd": 0,
+    "tcp-from-raw-socket": 0,
+    "tcp-from-owned-socket": 0,
+    "udp-bind": 0,
+    "udp-from-std": 0,
+    "udp-from-raw-fd": 0,
+    "udp-from-owned-fd": 0,
+    "udp-from-raw-socket": 0,
+    "udp-from-owned-socket": 0,
+    "unix-bind": 3,
+    "unix-from-std": 2,
+    "unix-from-raw-fd": 0,
+    "unix-from-owned-fd": 0
+  },
+  "expected_calls_by_package": {
+    "nimbus-cli": {
+      "tcp-bind": 2,
+      "tcp-from-std": 1,
+      "tcp-from-raw-fd": 1,
+      "tcp-from-owned-fd": 0,
+      "tcp-from-raw-socket": 0,
+      "tcp-from-owned-socket": 0,
+      "udp-bind": 0,
+      "udp-from-std": 0,
+      "udp-from-raw-fd": 0,
+      "udp-from-owned-fd": 0,
+      "udp-from-raw-socket": 0,
+      "udp-from-owned-socket": 0,
+      "unix-bind": 3,
+      "unix-from-std": 2,
+      "unix-from-raw-fd": 0,
+      "unix-from-owned-fd": 0
+    },
+    "nimbus-kv": {
+      "tcp-bind": 1,
+      "tcp-from-std": 0,
+      "tcp-from-raw-fd": 0,
+      "tcp-from-owned-fd": 0,
+      "tcp-from-raw-socket": 0,
+      "tcp-from-owned-socket": 0,
+      "udp-bind": 0,
+      "udp-from-std": 0,
+      "udp-from-raw-fd": 0,
+      "udp-from-owned-fd": 0,
+      "udp-from-raw-socket": 0,
+      "udp-from-owned-socket": 0,
+      "unix-bind": 0,
+      "unix-from-std": 0,
+      "unix-from-raw-fd": 0,
+      "unix-from-owned-fd": 0
+    },
+    "nimbus-network": {
+      "tcp-bind": 0,
+      "tcp-from-std": 0,
+      "tcp-from-raw-fd": 0,
+      "tcp-from-owned-fd": 0,
+      "tcp-from-raw-socket": 0,
+      "tcp-from-owned-socket": 0,
+      "udp-bind": 0,
+      "udp-from-std": 0,
+      "udp-from-raw-fd": 0,
+      "udp-from-owned-fd": 0,
+      "udp-from-raw-socket": 0,
+      "udp-from-owned-socket": 0,
+      "unix-bind": 0,
+      "unix-from-std": 0,
+      "unix-from-raw-fd": 0,
+      "unix-from-owned-fd": 0
+    },
+    "nimbus-proxy": {
+      "tcp-bind": 1,
+      "tcp-from-std": 1,
+      "tcp-from-raw-fd": 0,
+      "tcp-from-owned-fd": 0,
+      "tcp-from-raw-socket": 0,
+      "tcp-from-owned-socket": 0,
+      "udp-bind": 0,
+      "udp-from-std": 0,
+      "udp-from-raw-fd": 0,
+      "udp-from-owned-fd": 0,
+      "udp-from-raw-socket": 0,
+      "udp-from-owned-socket": 0,
+      "unix-bind": 0,
+      "unix-from-std": 0,
+      "unix-from-raw-fd": 0,
+      "unix-from-owned-fd": 0
+    },
+    "nimbus-sandbox": {
+      "tcp-bind": 1,
+      "tcp-from-std": 0,
+      "tcp-from-raw-fd": 0,
+      "tcp-from-owned-fd": 0,
+      "tcp-from-raw-socket": 0,
+      "tcp-from-owned-socket": 0,
+      "udp-bind": 0,
+      "udp-from-std": 0,
+      "udp-from-raw-fd": 0,
+      "udp-from-owned-fd": 0,
+      "udp-from-raw-socket": 0,
+      "udp-from-owned-socket": 0,
+      "unix-bind": 0,
+      "unix-from-std": 0,
+      "unix-from-raw-fd": 0,
+      "unix-from-owned-fd": 0
+    },
+    "nimbus-server": {
+      "tcp-bind": 2,
+      "tcp-from-std": 1,
+      "tcp-from-raw-fd": 0,
+      "tcp-from-owned-fd": 0,
+      "tcp-from-raw-socket": 0,
+      "tcp-from-owned-socket": 0,
+      "udp-bind": 0,
+      "udp-from-std": 0,
+      "udp-from-raw-fd": 0,
+      "udp-from-owned-fd": 0,
+      "udp-from-raw-socket": 0,
+      "udp-from-owned-socket": 0,
+      "unix-bind": 0,
+      "unix-from-std": 0,
+      "unix-from-raw-fd": 0,
+      "unix-from-owned-fd": 0
+    }
+  },
+  "source_boundaries": {
+    "scanner_sha256": "cb9e5334e938e7fe6c5ba02cb11f3e482ba2b5d8f7fc37e4f80ca4b1abd35267",
+    "include_expansions": [
+      {
+        "path": "crates/nimbus-firebase/src/grpc.rs",
+        "kind": "include-expansion",
+        "detail": "concat ! (env ! (\"OUT_DIR\") , \"/firebase_grpc.rs\")",
+        "line": 4
+      }
+    ],
+    "conditional_module_paths": [
+      {
+        "path": "crates/nimbus-cli/src/machine/backend/provision.rs",
+        "kind": "module-path",
+        "detail": "provision/restart.rs",
+        "line": 1626
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "module-path",
+        "detail": "stub/api.rs",
+        "line": 14
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "module-path",
+        "detail": "stub/backend.rs",
+        "line": 19
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "module-path",
+        "detail": "stub/bootstrap.rs",
+        "line": 24
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "module-path",
+        "detail": "stub/client.rs",
+        "line": 29
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "module-path",
+        "detail": "stub/manager.rs",
+        "line": 39
+      },
+      {
+        "path": "crates/nimbus-node/src/direct_process.rs",
+        "kind": "module-path",
+        "detail": "direct_process/teardown.rs",
+        "line": 16
+      },
+      {
+        "path": "crates/nimbus-node/src/host_lifecycle.rs",
+        "kind": "module-path",
+        "detail": "host_lifecycle/activation_fence.rs",
+        "line": 18
+      },
+      {
+        "path": "crates/nimbus-node/src/host_lifecycle.rs",
+        "kind": "module-path",
+        "detail": "host_lifecycle/restart.rs",
+        "line": 21
+      },
+      {
+        "path": "crates/nimbus-node/src/host_lifecycle.rs",
+        "kind": "module-path",
+        "detail": "host_lifecycle/teardown.rs",
+        "line": 24
+      },
+      {
+        "path": "crates/nimbus-node/src/systemd_transient.rs",
+        "kind": "module-path",
+        "detail": "systemd_transient/teardown.rs",
+        "line": 19
+      },
+      {
+        "path": "crates/nimbus-node/src/systemd_transient.rs",
+        "kind": "module-path",
+        "detail": "systemd_transient/teardown_store.rs",
+        "line": 21
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/conmon/creator.rs",
+        "kind": "module-path",
+        "detail": "creator/attempt_annotation.rs",
+        "line": 27
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/conmon/creator.rs",
+        "kind": "module-path",
+        "detail": "creator/recovery.rs",
+        "line": 29
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/host_teardown.rs",
+        "kind": "module-path",
+        "detail": "host_teardown/state.rs",
+        "line": 7
+      },
+      {
+        "path": "crates/nimbus-server/src/listener_lease.rs",
+        "kind": "module-path",
+        "detail": "listener_lease/restart_retain.rs",
+        "line": 29
+      },
+      {
+        "path": "crates/nimbus-server/src/listener_lease.rs",
+        "kind": "module-path",
+        "detail": "listener_lease/terminal_settlement.rs",
+        "line": 34
+      },
+      {
+        "path": "crates/nimbus-server/src/workload_ingress.rs",
+        "kind": "module-path",
+        "detail": "workload_ingress/final_withdrawal.rs",
+        "line": 61
+      },
+      {
+        "path": "crates/nimbus-server/src/workload_ingress.rs",
+        "kind": "module-path",
+        "detail": "workload_ingress/route_workers.rs",
+        "line": 64
+      },
+      {
+        "path": "crates/nimbus-workloads/src/saga/state.rs",
+        "kind": "module-path",
+        "detail": "state/provision.rs",
+        "line": 6
+      },
+      {
+        "path": "crates/nimbus-workloads/src/saga/state.rs",
+        "kind": "module-path",
+        "detail": "state/restart.rs",
+        "line": 8
+      },
+      {
+        "path": "crates/nimbus-workloads/src/saga/state.rs",
+        "kind": "module-path",
+        "detail": "state/teardown.rs",
+        "line": 10
+      }
+    ],
+    "conditional_modules": [
+      {
+        "path": "crates/nimbus-assets/src/lib.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(feature = \"js-packages\")|crates/nimbus-assets/src/js_packages.rs,crates/nimbus-assets/src/js_packages/mod.rs",
+        "line": 10
+      },
+      {
+        "path": "crates/nimbus-assets/src/lib.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(feature = \"templates\")|crates/nimbus-assets/src/templates.rs,crates/nimbus-assets/src/templates/mod.rs",
+        "line": 13
+      },
+      {
+        "path": "crates/nimbus-assets/src/lib.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(feature = \"ui\")|crates/nimbus-assets/src/ui.rs,crates/nimbus-assets/src/ui/mod.rs",
+        "line": 16
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-cli/src/machine/api.rs,crates/nimbus-cli/src/machine/api/mod.rs",
+        "line": 11
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(not (unix))|crates/nimbus-cli/src/machine/stub/api.rs",
+        "line": 14
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-cli/src/machine/backend.rs,crates/nimbus-cli/src/machine/backend/mod.rs",
+        "line": 16
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(not (unix))|crates/nimbus-cli/src/machine/stub/backend.rs",
+        "line": 19
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-cli/src/machine/bootstrap.rs,crates/nimbus-cli/src/machine/bootstrap/mod.rs",
+        "line": 21
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(not (unix))|crates/nimbus-cli/src/machine/stub/bootstrap.rs",
+        "line": 24
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-cli/src/machine/client.rs,crates/nimbus-cli/src/machine/client/mod.rs",
+        "line": 26
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(not (unix))|crates/nimbus-cli/src/machine/stub/client.rs",
+        "line": 29
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-cli/src/machine/manager.rs,crates/nimbus-cli/src/machine/manager/mod.rs",
+        "line": 36
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(not (unix))|crates/nimbus-cli/src/machine/stub/manager.rs",
+        "line": 39
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-cli/src/machine/provision_source.rs,crates/nimbus-cli/src/machine/provision_source/mod.rs",
+        "line": 46
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-cli/src/machine/publication_authority.rs,crates/nimbus-cli/src/machine/publication_authority/mod.rs",
+        "line": 48
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-cli/src/machine/stop_authority.rs,crates/nimbus-cli/src/machine/stop_authority/mod.rs",
+        "line": 53
+      },
+      {
+        "path": "crates/nimbus-crypto/src/lib.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(feature = \"aws-kms\")|crates/nimbus-crypto/src/aws_kms.rs,crates/nimbus-crypto/src/aws_kms/mod.rs",
+        "line": 15
+      },
+      {
+        "path": "crates/nimbus-engine/src/persistence.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (feature = \"libsql\" , feature = \"mysql\" , feature = \"postgres\"))|crates/nimbus-engine/src/persistence/runtime_hooks.rs,crates/nimbus-engine/src/persistence/runtime_hooks/mod.rs",
+        "line": 105
+      },
+      {
+        "path": "crates/nimbus-engine/src/tenant.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (test , feature = \"test-hooks\"))|crates/nimbus-engine/src/tenant/pause_barrier.rs,crates/nimbus-engine/src/tenant/pause_barrier/mod.rs",
+        "line": 44
+      },
+      {
+        "path": "crates/nimbus-engine/src/tenant/mutation.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (test , feature = \"test-hooks\"))|crates/nimbus-engine/src/tenant/mutation/pause.rs,crates/nimbus-engine/src/tenant/mutation/pause/mod.rs",
+        "line": 9
+      },
+      {
+        "path": "crates/nimbus-machine/src/api.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-machine/src/api/restart.rs,crates/nimbus-machine/src/api/restart/mod.rs",
+        "line": 30
+      },
+      {
+        "path": "crates/nimbus-machine/src/api.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-machine/src/api/teardown.rs,crates/nimbus-machine/src/api/teardown/mod.rs",
+        "line": 40
+      },
+      {
+        "path": "crates/nimbus-node/src/systemd_transient.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(all (target_os = \"linux\" , feature = \"systemd-dbus\"))|crates/nimbus-node/src/systemd_transient/zbus_client.rs,crates/nimbus-node/src/systemd_transient/zbus_client/mod.rs",
+        "line": 34
+      },
+      {
+        "path": "crates/nimbus-runtime/src/backends/bun_jsc/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(feature = \"bun-jsc-linked-adapter\")|crates/nimbus-runtime/src/backends/bun_jsc/linked.rs,crates/nimbus-runtime/src/backends/bun_jsc/linked/mod.rs",
+        "line": 14
+      },
+      {
+        "path": "crates/nimbus-runtime/src/backends/bun_jsc/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(feature = \"bun-jsc-linked-adapter\")|crates/nimbus-runtime/src/backends/bun_jsc/manifest.rs,crates/nimbus-runtime/src/backends/bun_jsc/manifest/mod.rs",
+        "line": 16
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/container/runtime.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (test , feature = \"test-hooks\"))|crates/nimbus-sandbox/src/backends/container/runtime/test_hooks.rs,crates/nimbus-sandbox/src/backends/container/runtime/test_hooks/mod.rs",
+        "line": 30
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/krun/vm.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (test , feature = \"test-hooks\"))|crates/nimbus-sandbox/src/backends/krun/vm/test_hooks.rs,crates/nimbus-sandbox/src/backends/krun/vm/test_hooks/mod.rs",
+        "line": 90
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (test , feature = \"test-hooks\"))|crates/nimbus-sandbox/src/backends/test_hooks.rs,crates/nimbus-sandbox/src/backends/test_hooks/mod.rs",
+        "line": 11
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (test , feature = \"test-hooks\"))|crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/test_api.rs,crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/test_api/mod.rs",
+        "line": 124
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/ipam.rs",
+        "kind": "conditional-module",
+        "detail": "cfg_attr(not (test) , expect (dead_code , reason = \"NNC5.2b stages typed evidence fields consumed by NNC5.2c classification\"))|crates/nimbus-sandbox/src/backends/oci/network/ipam/evidence.rs,crates/nimbus-sandbox/src/backends/oci/network/ipam/evidence/mod.rs",
+        "line": 32
+      },
+      {
+        "path": "crates/nimbus-storage/src/lib.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(feature = \"libsql\")|crates/nimbus-storage/src/libsql.rs,crates/nimbus-storage/src/libsql/mod.rs",
+        "line": 14
+      },
+      {
+        "path": "crates/nimbus-storage/src/lib.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(feature = \"mysql\")|crates/nimbus-storage/src/mysql.rs,crates/nimbus-storage/src/mysql/mod.rs",
+        "line": 18
+      },
+      {
+        "path": "crates/nimbus-storage/src/lib.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(feature = \"postgres\")|crates/nimbus-storage/src/postgres.rs,crates/nimbus-storage/src/postgres/mod.rs",
+        "line": 21
+      },
+      {
+        "path": "crates/nimbus-storage/src/lib.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (test , feature = \"test-hooks\"))|crates/nimbus-storage/src/provider_test_fixtures.rs,crates/nimbus-storage/src/provider_test_fixtures/mod.rs",
+        "line": 24
+      },
+      {
+        "path": "crates/nimbus-storage/src/lib.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (test , feature = \"libsql\" , feature = \"mysql\" , feature = \"postgres\"))|crates/nimbus-storage/src/runtime_bridge.rs,crates/nimbus-storage/src/runtime_bridge/mod.rs",
+        "line": 31
+      },
+      {
+        "path": "crates/nimbus-storage/src/lib.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (feature = \"libsql\" , feature = \"mysql\" , feature = \"postgres\"))|crates/nimbus-storage/src/sql.rs,crates/nimbus-storage/src/sql/mod.rs",
+        "line": 36
+      },
+      {
+        "path": "crates/nimbus-storage/src/sql.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (feature = \"mysql\" , feature = \"postgres\"))|crates/nimbus-storage/src/sql/index_history.rs,crates/nimbus-storage/src/sql/index_history/mod.rs",
+        "line": 32
+      },
+      {
+        "path": "crates/nimbus-storage/src/sql.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (feature = \"mysql\" , feature = \"postgres\"))|crates/nimbus-storage/src/sql/predicate.rs,crates/nimbus-storage/src/sql/predicate/mod.rs",
+        "line": 34
+      },
+      {
+        "path": "crates/nimbus-storage/src/sql.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (feature = \"mysql\" , feature = \"postgres\"))|crates/nimbus-storage/src/sql/read_snapshot.rs,crates/nimbus-storage/src/sql/read_snapshot/mod.rs",
+        "line": 36
+      },
+      {
+        "path": "crates/nimbus-storage/src/sql.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (feature = \"mysql\" , feature = \"postgres\"))|crates/nimbus-storage/src/sql/row.rs,crates/nimbus-storage/src/sql/row/mod.rs",
+        "line": 38
+      },
+      {
+        "path": "crates/nimbus-storage/src/sql.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (feature = \"mysql\" , feature = \"postgres\"))|crates/nimbus-storage/src/sql/scheduler_core.rs,crates/nimbus-storage/src/sql/scheduler_core/mod.rs",
+        "line": 40
+      },
+      {
+        "path": "crates/nimbus-storage/src/sql.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (feature = \"mysql\" , feature = \"postgres\"))|crates/nimbus-storage/src/sql/schema_events.rs,crates/nimbus-storage/src/sql/schema_events/mod.rs",
+        "line": 42
+      },
+      {
+        "path": "crates/nimbus-storage/src/sql.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (feature = \"mysql\" , feature = \"postgres\"))|crates/nimbus-storage/src/sql/write_pipeline.rs,crates/nimbus-storage/src/sql/write_pipeline/mod.rs",
+        "line": 46
+      },
+      {
+        "path": "crates/nimbus-storage/src/sqlite.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(any (test , feature = \"libsql\"))|crates/nimbus-storage/src/sqlite/replica_cache.rs,crates/nimbus-storage/src/sqlite/replica_cache/mod.rs",
+        "line": 43
+      }
+    ],
+    "qself_bind_adoptions": [],
+    "network_glob_imports": [],
+    "authority_shaped_macros": [
+      {
+        "path": "crates/nimbus-cli/src/compose/quadlet_export.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"        - containerPort: {}\\n          hostPort: {}\\n          hostIP: {}\\n\" , port . guest_port , port . host_port , yaml_string (& port . host_address . to_string ())",
+        "line": 636
+      },
+      {
+        "path": "crates/nimbus-cli/src/compose/quadlet_export.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"{}:{}:{}\" , render_ip (port . host_address) , port . host_port , port . guest_port",
+        "line": 766
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/container/bundle.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"duplicate sandbox host port binding: {}:{}\" , port_binding . host_address , port_binding . host_port",
+        "line": 237
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"{} slot {index} {}:{} ({mutation}); exact post-effect inspection failed: \\\n             {inspection_error}\" , action . label () , expectation . bindings [index] . host_address , expectation . bindings [index] . host_port",
+        "line": 1721
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"krun sandbox host_port must be greater than zero for binding {}\" , port_binding . name",
+        "line": 543
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"duplicate sandbox host port binding: {}:{}\" , port_binding . host_address , port_binding . host_port",
+        "line": 559
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"{}:{}:{}\" , format_port_map_host_address (binding . host_address) , binding . host_port , binding . guest_port",
+        "line": 574
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"failed to encode gvproxy {action} request for {}:{}: {error}\" , binding . host_address , binding . host_port",
+        "line": 644
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"gvproxy lists {} conflicting routes for {}:{}\" , slot_routes . len () , binding . host_address , binding . host_port",
+        "line": 717
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"machine forwarder {action} for {}:{} is ambiguous at provider generation {} \\\n             ({mutation_detail}); exact current observation failed: {inspection_error}\" , binding . host_address , binding . host_port , provider_generation . as_u64 () ,",
+        "line": 771
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\":{}\" , binding . host_port",
+        "line": 1209
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"failed to bind machine port proxy {} -> {} for {}:{}: {error}\" , guest_listener_addr , target_addr , binding . host_address , binding . host_port",
+        "line": 346
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"sandbox port lease {} selected {} for explicit binding {}\" , request . lease_id () , selected , binding . host_port",
+        "line": 340
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"listener {:?} lease {} at {}:{} withdrawal was blocked: {error}\" , binding . name , request . lease_id () , binding . host_address , binding . host_port",
+        "line": 1398
+      },
+      {
+        "path": "crates/nimbus-tenant/src/operator_policy.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"{}/{} {} {}:{}{}\" , self . service , self . name , protocol_label (self . protocol) , self . host , self . host_port , guest",
+        "line": 355
+      },
+      {
+        "path": "crates/nimbus-tenant/src/operator_policy/prove.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "format|\"{} {} {}\" , endpoint . service . to_ascii_lowercase () , endpoint . name . to_ascii_lowercase () , endpoint . host_port",
+        "line": 327
+      },
+      {
+        "path": "crates/nimbus-tenant/src/operator_policy/prove.rs",
+        "kind": "authority-shaped-macro",
+        "detail": "matches|endpoint . host_port , 5432 | 3306 | 27017 | 6379",
+        "line": 339
+      }
+    ],
+    "classified_risks": [
+      {
+        "path": "crates/nimbus-cli/src/compose/quadlet_export.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "render_kube_ports",
+        "ordinal": 1,
+        "line": 636
+      },
+      {
+        "path": "crates/nimbus-cli/src/compose/quadlet_export.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "render_port",
+        "ordinal": 1,
+        "line": 766
+      },
+      {
+        "path": "crates/nimbus-cli/src/kv.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "prepare_kv_command",
+        "ordinal": 1,
+        "line": 91
+      },
+      {
+        "path": "crates/nimbus-cli/src/start/adapters/convex_tenancy.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "resolve_convex_tenancy",
+        "ordinal": 1,
+        "line": 51
+      },
+      {
+        "path": "crates/nimbus-cli/src/start/adapters/firebase.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "resolve_firebase",
+        "ordinal": 1,
+        "line": 38
+      },
+      {
+        "path": "crates/nimbus-cli/src/start/boot.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "run_start_command_inner",
+        "ordinal": 1,
+        "line": 261
+      },
+      {
+        "path": "crates/nimbus-compute/src/config/deployment.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "with_convex_silo_auth_verifier",
+        "ordinal": 1,
+        "line": 48
+      },
+      {
+        "path": "crates/nimbus-compute/src/deploy.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "deploy_app",
+        "ordinal": 1,
+        "line": 132
+      },
+      {
+        "path": "crates/nimbus-convex/src/tenancy.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "from_operator_spec",
+        "ordinal": 1,
+        "line": 136
+      },
+      {
+        "path": "crates/nimbus-dynamodb/src/config.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "with_access_key",
+        "ordinal": 1,
+        "line": 69
+      },
+      {
+        "path": "crates/nimbus-kv/src/server.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "single_dev",
+        "ordinal": 1,
+        "line": 95
+      },
+      {
+        "path": "crates/nimbus-kv/src/server.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "generated_dev_for",
+        "ordinal": 1,
+        "line": 116
+      },
+      {
+        "path": "crates/nimbus-kv/src/server.rs",
+        "kind": "ambiguous-associated-bind",
+        "symbol": "bind_listener",
+        "ordinal": 1,
+        "line": 277
+      },
+      {
+        "path": "crates/nimbus-mongodb/src/credential_registry.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "from_operator_spec",
+        "ordinal": 1,
+        "line": 176
+      },
+      {
+        "path": "crates/nimbus-proxy/src/pingora_io.rs",
+        "kind": "ambiguous-descriptor-adoption",
+        "symbol": "socket_digest",
+        "ordinal": 1,
+        "line": 317
+      },
+      {
+        "path": "crates/nimbus-proxy/src/pingora_io.rs",
+        "kind": "ambiguous-descriptor-adoption",
+        "symbol": "socket_digest",
+        "ordinal": 2,
+        "line": 322
+      },
+      {
+        "path": "crates/nimbus-runtime/src/runtime/bootstrap/state.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "new",
+        "ordinal": 1,
+        "line": 37
+      },
+      {
+        "path": "crates/nimbus-runtime/src/runtime/bootstrap/state.rs",
+        "kind": "ambiguous-instance-bind",
+        "symbol": "bind_runtime_host_bridge",
+        "ordinal": 1,
+        "line": 586
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/conmon/creator.rs",
+        "kind": "ambiguous-descriptor-adoption",
+        "symbol": "launch_gate_pipe",
+        "ordinal": 1,
+        "line": 550
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/conmon/creator.rs",
+        "kind": "ambiguous-descriptor-adoption",
+        "symbol": "launch_gate_pipe",
+        "ordinal": 2,
+        "line": 552
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/conmon/runtime_process.rs",
+        "kind": "ambiguous-descriptor-adoption",
+        "symbol": "signal_authenticated_runtime_process",
+        "ordinal": 1,
+        "line": 306
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/container/bundle.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "validate_port_bindings",
+        "ordinal": 1,
+        "line": 237
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "ambiguous_mutation_error",
+        "ordinal": 1,
+        "line": 1721
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "validate_port_bindings",
+        "ordinal": 1,
+        "line": 543
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "validate_port_bindings",
+        "ordinal": 2,
+        "line": 559
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "format_port_map",
+        "ordinal": 1,
+        "line": 574
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "encode_gvproxy_request",
+        "ordinal": 1,
+        "line": 644
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "authenticate_current_routes",
+        "ordinal": 1,
+        "line": 717
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "mutation_observation_error",
+        "ordinal": 1,
+        "line": 771
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+        "kind": "ambiguous-descriptor-adoption",
+        "symbol": "connect_unix_with_timeout",
+        "ordinal": 1,
+        "line": 989
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "machine_forward_remote",
+        "ordinal": 1,
+        "line": 1209
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "prepare",
+        "ordinal": 1,
+        "line": 346
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "reserve_launch_ports_for_sandbox",
+        "ordinal": 1,
+        "line": 340
+      },
+      {
+        "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "withdraw_bindings",
+        "ordinal": 1,
+        "line": 1398
+      },
+      {
+        "path": "crates/nimbus-tenant/src/operator_policy.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "summary",
+        "ordinal": 1,
+        "line": 355
+      },
+      {
+        "path": "crates/nimbus-tenant/src/operator_policy/prove.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "is_write_capable_endpoint",
+        "ordinal": 1,
+        "line": 327
+      },
+      {
+        "path": "crates/nimbus-tenant/src/operator_policy/prove.rs",
+        "kind": "authority-shaped-macro",
+        "symbol": "is_write_capable_endpoint",
+        "ordinal": 2,
+        "line": 339
+      }
+    ]
+  },
+  "generated": {
+    "outputs": [
+      {
+        "file": "firebase_grpc.rs",
+        "bytes": 461,
+        "sha256": "b7d837be7005640b841cd7e3d7bf231a43629a5bab2901f52c59fd00481dd888"
+      },
+      {
+        "file": "google.api.rs",
+        "bytes": 16758,
+        "sha256": "70462b1371c306c2c1e0316c0b4cb643b0a5dceec687989833dd0183f80f9730"
+      },
+      {
+        "file": "google.firestore.v1.rs",
+        "bytes": 117211,
+        "sha256": "e203487d079c81506001b5ec87e853d0ed68012858ab8779cd983f5bcec36505"
+      },
+      {
+        "file": "google.r#type.rs",
+        "bytes": 227,
+        "sha256": "9726883f3f1c4511dbcabd8576f1071480c0bc00fc6bca6db778adb6620b8191"
+      },
+      {
+        "file": "google.rpc.rs",
+        "bytes": 347,
+        "sha256": "0070e667eb36e003873ac8ed207c467999217ac7edb59e978c68b2585d41d022"
+      }
+    ],
+    "scan_counts": {
+      "authorities": 0,
+      "risks": 0,
+      "composition": 0,
+      "boundaries": 0
+    },
+    "covered_includes": [
+      {
+        "file": "firebase_grpc.rs",
+        "line": 4,
+        "target": "google.api.rs"
+      },
+      {
+        "file": "firebase_grpc.rs",
+        "line": 8,
+        "target": "google.firestore.v1.rs"
+      },
+      {
+        "file": "firebase_grpc.rs",
+        "line": 12,
+        "target": "google.r#type.rs"
+      },
+      {
+        "file": "firebase_grpc.rs",
+        "line": 15,
+        "target": "google.rpc.rs"
+      }
+    ],
+    "forbidden_findings": []
+  }
+}

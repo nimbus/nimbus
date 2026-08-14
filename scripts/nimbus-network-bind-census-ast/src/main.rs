@@ -11,7 +11,7 @@ use syn::visit::{self, Visit};
 use syn::{
     Arm, Attribute, Expr, ExprCall, ExprMethodCall, ExprPath, ExprStruct, Field, FieldValue, FnArg,
     ForeignItem, ForeignItemFn, ImplItem, ImplItemFn, ImplItemType, Item, ItemFn, ItemImpl,
-    ItemMod, ItemStruct, ItemType, Lit, LitStr, Macro, ReturnType, Stmt, Token, TraitItem,
+    ItemMod, ItemStruct, ItemType, ItemUse, Lit, LitStr, Macro, ReturnType, Stmt, Token, TraitItem,
     TraitItemFn, TraitItemType, Type, UseTree, Variant,
 };
 
@@ -24,7 +24,18 @@ struct ScanOutput {
     risks: Vec<Occurrence>,
     composition: Vec<Occurrence>,
     declarations: Vec<Declaration>,
+    boundaries: Vec<Boundary>,
     errors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct Boundary {
+    path: String,
+    kind: String,
+    detail: String,
+    line: usize,
+    #[serde(skip_serializing)]
+    column: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -72,6 +83,7 @@ fn main() {
     let mut risks = Vec::new();
     let mut composition = Vec::new();
     let mut declarations = Vec::new();
+    let mut boundaries = Vec::new();
     let mut errors = Vec::new();
     for file in files {
         let display = normalized_path(&file);
@@ -92,6 +104,7 @@ fn main() {
             &mut risks,
             &mut composition,
             &mut declarations,
+            &mut boundaries,
             &mut errors,
             &exempt_paths,
         );
@@ -107,6 +120,7 @@ fn main() {
             &mut risks,
             &mut composition,
             &mut declarations,
+            &mut boundaries,
             &mut errors,
             &exempt_paths,
         );
@@ -121,11 +135,20 @@ fn main() {
             .then(left.line.cmp(&right.line))
             .then(left.name.cmp(&right.name))
     });
+    boundaries.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.line.cmp(&right.line))
+            .then(left.column.cmp(&right.column))
+            .then(left.kind.cmp(&right.kind))
+            .then(left.detail.cmp(&right.detail))
+    });
     let output = ScanOutput {
         authorities,
         risks,
         composition,
         declarations,
+        boundaries,
         errors,
     };
     serde_json::to_writer(std::io::stdout(), &output).unwrap_or_else(|error| {
@@ -201,6 +224,7 @@ fn scan_source(
     risks: &mut Vec<Occurrence>,
     composition: &mut Vec<Occurrence>,
     declarations: &mut Vec<Declaration>,
+    boundaries: &mut Vec<Boundary>,
     errors: &mut Vec<String>,
     exempt_paths: &BTreeSet<String>,
 ) {
@@ -216,14 +240,33 @@ fn scan_source(
         }
     };
     verify_exempt_references(path, &file, exempt_paths, errors);
+    let source_path = PathBuf::from(path);
+    let source_directory = source_path.parent().unwrap_or(Path::new(""));
+    let module_directory = if source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "lib.rs" | "main.rs" | "mod.rs"))
+    {
+        source_directory.to_path_buf()
+    } else {
+        source_directory.join(
+            source_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or_default(),
+        )
+    };
     let mut scanner = Scanner {
         path,
+        source_directory: source_directory.to_path_buf(),
+        module_directories: vec![module_directory],
         symbols: Vec::new(),
         impl_types: Vec::new(),
         authorities,
         risks,
         composition,
         declarations,
+        boundaries,
         errors,
     };
     scanner.visit_file(&file);
@@ -438,6 +481,86 @@ fn path_attribute(attributes: &[Attribute]) -> Option<String> {
     })
 }
 
+fn module_path_boundaries(attributes: &[Attribute]) -> Vec<String> {
+    fn collect(meta: &syn::Meta, paths: &mut Vec<String>) {
+        if let syn::Meta::NameValue(name_value) = meta
+            && name_value.path.is_ident("path")
+            && let Expr::Lit(literal) = &name_value.value
+            && let Lit::Str(value) = &literal.lit
+        {
+            paths.push(value.value());
+            return;
+        }
+        let syn::Meta::List(list) = meta else {
+            return;
+        };
+        if !list.path.is_ident("cfg_attr") {
+            return;
+        }
+        let Ok(items) = list.parse_args_with(Punctuated::<syn::Meta, Token![,]>::parse_terminated)
+        else {
+            return;
+        };
+        for item in items.iter().skip(1) {
+            collect(item, paths);
+        }
+    }
+
+    let mut paths = Vec::new();
+    for attribute in attributes {
+        collect(&attribute.meta, &mut paths);
+    }
+    paths
+}
+
+fn conditional_module_predicates(attributes: &[Attribute]) -> Vec<String> {
+    attributes
+        .iter()
+        .filter_map(|attribute| {
+            let syn::Meta::List(list) = &attribute.meta else {
+                return None;
+            };
+            if attribute.path().is_ident("cfg") {
+                Some(format!("cfg({})", list.tokens))
+            } else if attribute.path().is_ident("cfg_attr") {
+                Some(format!("cfg_attr({})", list.tokens))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn network_glob_roots(tree: &UseTree) -> Vec<String> {
+    fn visit(tree: &UseTree, prefix: &mut Vec<String>, roots: &mut Vec<String>) {
+        match tree {
+            UseTree::Path(path) => {
+                prefix.push(path.ident.to_string());
+                visit(&path.tree, prefix, roots);
+                prefix.pop();
+            }
+            UseTree::Group(group) => {
+                for item in &group.items {
+                    visit(item, prefix, roots);
+                }
+            }
+            UseTree::Glob(_) => {
+                let is_network_root = matches!(prefix.first().map(String::as_str), Some("socket2"))
+                    || matches!(prefix.first().map(String::as_str), Some("std" | "tokio"))
+                        && prefix.iter().any(|segment| segment == "net");
+                if is_network_root {
+                    roots.push(prefix.join("::"));
+                }
+            }
+            UseTree::Name(_) | UseTree::Rename(_) => {}
+        }
+    }
+
+    let mut roots = Vec::new();
+    visit(tree, &mut Vec::new(), &mut roots);
+    roots
+}
+
 fn finish_ordinals(occurrences: &mut Vec<Occurrence>) {
     occurrences.sort_by(|left, right| {
         left.path
@@ -461,16 +584,46 @@ fn finish_ordinals(occurrences: &mut Vec<Occurrence>) {
 
 struct Scanner<'a> {
     path: &'a str,
+    source_directory: PathBuf,
+    module_directories: Vec<PathBuf>,
     symbols: Vec<String>,
     impl_types: Vec<String>,
     authorities: &'a mut Vec<Occurrence>,
     risks: &'a mut Vec<Occurrence>,
     composition: &'a mut Vec<Occurrence>,
     declarations: &'a mut Vec<Declaration>,
+    boundaries: &'a mut Vec<Boundary>,
     errors: &'a mut Vec<String>,
 }
 
 impl Scanner<'_> {
+    fn module_directory(&self) -> &Path {
+        self.module_directories
+            .last()
+            .map(PathBuf::as_path)
+            .unwrap_or(&self.source_directory)
+    }
+
+    fn conditional_module_sources(&self, item: &ItemMod) -> Vec<String> {
+        let explicit = module_path_boundaries(&item.attrs);
+        let mut sources = BTreeSet::new();
+        if explicit.is_empty() {
+            let name = item.ident.to_string();
+            sources.insert(normalized_path(
+                &self.module_directory().join(format!("{name}.rs")),
+            ));
+            sources.insert(normalized_path(
+                &self.module_directory().join(name).join("mod.rs"),
+            ));
+        } else {
+            for raw in explicit {
+                sources.insert(normalized_path(&self.source_directory.join(&raw)));
+                sources.insert(normalized_path(&self.module_directory().join(raw)));
+            }
+        }
+        sources.into_iter().collect()
+    }
+
     fn symbol(&self) -> String {
         self.symbols
             .last()
@@ -502,6 +655,17 @@ impl Scanner<'_> {
             start.column + 1,
             message.into()
         ));
+    }
+
+    fn boundary(&mut self, kind: &str, detail: impl Into<String>, span: Span) {
+        let start = span.start();
+        self.boundaries.push(Boundary {
+            path: self.path.to_owned(),
+            kind: kind.to_owned(),
+            detail: detail.into(),
+            line: start.line,
+            column: start.column,
+        });
     }
 
     fn visit_signature_body(
@@ -578,6 +742,36 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
         } else {
             visit::visit_item_impl(self, item);
         }
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast ItemMod) {
+        for path in module_path_boundaries(&item.attrs) {
+            self.boundary("module-path", path, item.ident.span());
+        }
+        let predicates = conditional_module_predicates(&item.attrs);
+        if item.content.is_none() && !predicates.is_empty() {
+            let sources = self.conditional_module_sources(item);
+            self.boundary(
+                "conditional-module",
+                format!("{}|{}", predicates.join(" && "), sources.join(",")),
+                item.ident.span(),
+            );
+        }
+        if item.content.is_some() {
+            self.module_directories
+                .push(self.module_directory().join(item.ident.to_string()));
+            visit::visit_item_mod(self, item);
+            self.module_directories.pop();
+        } else {
+            visit::visit_item_mod(self, item);
+        }
+    }
+
+    fn visit_item_use(&mut self, item: &'ast ItemUse) {
+        for root in network_glob_roots(&item.tree) {
+            self.boundary("network-glob-import", root, item.span());
+        }
+        visit::visit_item_use(self, item);
     }
 
     fn visit_trait_item(&mut self, item: &'ast TraitItem) {
@@ -803,6 +997,12 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
 
     fn visit_expr_path(&mut self, expression: &'ast ExprPath) {
         let segments = expression.path.segments.iter().collect::<Vec<_>>();
+        if expression.qself.is_some()
+            && let Some(operation) = segments.last().map(|segment| segment.ident.to_string())
+            && is_bind_operation(&operation)
+        {
+            self.boundary("qself-bind-adoption", operation, expression.span());
+        }
         if segments.len() >= 2 {
             let operation = segments[segments.len() - 1].ident.to_string();
             let receiver = segments[segments.len() - 2].ident.to_string();
@@ -879,6 +1079,21 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
 
     fn visit_macro(&mut self, macro_invocation: &'ast Macro) {
         let tokens = macro_invocation.tokens.to_string();
+        let macro_name = macro_invocation
+            .path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::");
+        if macro_invocation
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "include")
+        {
+            self.boundary("include-expansion", tokens.clone(), macro_invocation.span());
+        }
         if tokens.contains("NetworkCapabilityBundle :: new") {
             self.composition("capability-bundle-construction", macro_invocation.span());
         }
@@ -888,19 +1103,35 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
         if tokens.contains("ssh-port") {
             self.authority("gvproxy-ssh-port-request", macro_invocation.span());
         }
-        if [
-            "TcpListener",
-            "UdpSocket",
-            "TcpSocket",
-            "UnixListener",
-            "UnixDatagram",
-            "host_port",
-            "port_mappings",
-        ]
-        .iter()
-        .any(|needle| tokens.contains(needle))
+        let name_words = macro_name
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .collect::<BTreeSet<_>>();
+        let operation_shaped_name = ["bind", "adopt", "reserve", "allocate"]
+            .iter()
+            .any(|word| name_words.contains(word))
+            && ["listener", "socket", "port", "fd", "stream"]
+                .iter()
+                .any(|word| name_words.contains(word));
+        if operation_shaped_name
+            || [
+                "TcpListener",
+                "UdpSocket",
+                "TcpSocket",
+                "UnixListener",
+                "UnixDatagram",
+                "host_port",
+                "port_mappings",
+            ]
+            .iter()
+            .any(|needle| tokens.contains(needle))
         {
             self.risk("authority-shaped-macro", macro_invocation.span());
+            self.boundary(
+                "authority-shaped-macro",
+                format!("{macro_name}|{tokens}"),
+                macro_invocation.span(),
+            );
         }
         visit::visit_macro(self, macro_invocation);
     }

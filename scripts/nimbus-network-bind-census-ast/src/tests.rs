@@ -9,6 +9,7 @@ fn scan_fixture_with_exemptions(source: &str, exempt_paths: &BTreeSet<String>) -
     let mut risks = Vec::new();
     let mut composition = Vec::new();
     let mut declarations = Vec::new();
+    let mut boundaries = Vec::new();
     let mut errors = Vec::new();
     scan_source(
         FIXTURE_PATH,
@@ -17,6 +18,7 @@ fn scan_fixture_with_exemptions(source: &str, exempt_paths: &BTreeSet<String>) -
         &mut risks,
         &mut composition,
         &mut declarations,
+        &mut boundaries,
         &mut errors,
         exempt_paths,
     );
@@ -27,8 +29,98 @@ fn scan_fixture_with_exemptions(source: &str, exempt_paths: &BTreeSet<String>) -
         risks,
         composition,
         declarations,
+        boundaries,
         errors,
     }
+}
+
+fn boundary_kinds(output: &ScanOutput) -> Vec<&str> {
+    output
+        .boundaries
+        .iter()
+        .map(|boundary| boundary.kind.as_str())
+        .collect()
+}
+
+#[test]
+fn parsed_compiler_boundaries_cover_multiline_qself_globs_modules_and_macros() {
+    let output = scan_fixture(
+        r#"
+use std::net::{self, *};
+#[path = "unix.rs"]
+#[cfg_attr(windows, path = "windows.rs")]
+mod platform;
+#[cfg(windows)]
+mod windows_listener;
+#[cfg_attr(unix, cfg_attr(windows, path = "nested.rs"))]
+mod nested_platform;
+fn qself<T: ListenerFactory>() {
+    let _ = <T
+        as ListenerFactory>::bind("127.0.0.1:0");
+}
+fn generated() {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+    bind_listener!();
+    format!("TcpListener host_port");
+}
+"#,
+    );
+
+    assert_eq!(
+        boundary_kinds(&output),
+        vec![
+            "network-glob-import",
+            "module-path",
+            "module-path",
+            "conditional-module",
+            "conditional-module",
+            "module-path",
+            "conditional-module",
+            "qself-bind-adoption",
+            "include-expansion",
+            "authority-shaped-macro",
+            "authority-shaped-macro",
+        ]
+    );
+    assert_eq!(output.boundaries[0].detail, "std::net");
+    assert_eq!(output.boundaries[1].detail, "unix.rs");
+    assert_eq!(output.boundaries[2].detail, "windows.rs");
+    assert!(output.boundaries[3].detail.contains("cfg_attr(windows"));
+    assert!(output.boundaries[4].detail.contains("windows_listener.rs"));
+    assert_eq!(output.boundaries[5].detail, "nested.rs");
+    assert!(output.boundaries[6].detail.contains("cfg_attr(unix"));
+    assert_eq!(output.boundaries[7].detail, "bind");
+    assert!(output.boundaries[8].detail.contains("OUT_DIR"));
+    assert!(output.boundaries[9].detail.starts_with("bind_listener|"));
+    assert!(output.boundaries[10].detail.starts_with("format|"));
+}
+
+#[test]
+fn parsed_generated_authority_covers_raw_and_instance_binds() {
+    let output = scan_fixture(
+        r#"
+fn raw() {
+    unsafe { libc::bind(0, std::ptr::null(), 0); }
+}
+fn instance(socket: socket2::Socket) {
+    socket.bind(&"127.0.0.1:0".parse().unwrap()).unwrap();
+}
+"#,
+    );
+
+    assert!(output.errors.is_empty(), "{:?}", output.errors);
+    assert!(
+        output
+            .risks
+            .iter()
+            .any(|risk| risk.kind == "ambiguous-associated-bind")
+    );
+    assert!(
+        output
+            .risks
+            .iter()
+            .any(|risk| risk.kind == "ambiguous-instance-bind")
+    );
 }
 
 fn authority_kinds(output: &ScanOutput) -> Vec<&str> {

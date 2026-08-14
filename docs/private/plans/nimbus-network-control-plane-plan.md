@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC8.6 complete; NNC9.1 in progress`
+Status: `active; NNC9.1 complete; NNC9.2 in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,20 +36,20 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC8.6 complete; NNC9.1 in progress` |
+| Plan status | `active; NNC9.1 complete; NNC9.2 in progress` |
 | Current band | `NNC9 — closeout, sovereignty, and architecture truth` |
-| Current item | `NNC9.1 — static verifier closure` |
-| Last completed item | `NNC8.6 — failure-contract row closure`; the commit containing this transition is its durable checkpoint. |
-| Next action | Audit the current `38/38` verifier against NNC9.1 compiler-resolved, generated-code, authority-census, and ledger obligations. |
-| Current acceptance checkpoint | NNC8.6 K1-K9 pass. All `22/22` rows have current deterministic evidence. The sole review finding is corrected, and the affected gates pass. |
+| Current item | `NNC9.2 — complete offline sovereign lifecycle` |
+| Last completed item | `NNC9.1 — static verifier closure`; the commit containing this transition is its durable checkpoint. |
+| Next action | Re-read the NNC4.7 tripwire proof and harness, confirm the named minicloud host preflight, then run the complete NNC9.2 lifecycle without install or download. |
+| Current acceptance checkpoint | NNC9.1 K1-K10 are green: scanner `14/14`, compiler helper `18/18`, authenticated cheap/deep evidence, aggregate `607/607`, live verifier `39/39`, strict quality, docs `108`, and site `17/17`. NNC9.2 has not started its live lifecycle run. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
-| Execution base | Current `origin/main` is `8877eaff43a36d9606a1feaa0ab31d0377539d9d`; the NNC8.5 checkpoint `e5a2eeeb4bb8bb1105c9742af94f86d926c0559d` is `0 behind / 169 ahead`. No merge or rebase is required. |
-| Last checkpoint commit | The commit containing this transition is the durable NNC8.6 checkpoint. Its clean parent is NNC8.5 at `e5a2eeeb4bb8bb1105c9742af94f86d926c0559d`. |
-| Owned paths | NNC9.1 owns the static verifier and its concept-owned helpers, its proof, this ledger, and routing status. No NNC9.1 product path is dirty at activation. |
-| Latest dirty-state checkpoint | NNC8.6 closes as an exact three-document checkpoint. NNC9.1 starts without a dirty implementation path. |
-| Last completed item review | NNC8.6 used one GPT-5.6 Sol/xhigh/fast review. It accepted one P3 recovery-path omission at `0.99`. The documentation correction is green, and no narrow review ran. |
+| Execution base | Current `origin/main` is `8877eaff43a36d9606a1feaa0ab31d0377539d9d`; the commit containing the NNC9.1 transition is `0 behind / 171 ahead`. No merge or rebase is required. |
+| Last checkpoint commit | NNC8.6 is the last existing checkpoint at `23d75f4a4ecd255c11264990602ee9b6e520b585`. The candidate commit containing this transition makes NNC9.1 durable. |
+| Owned paths | NNC9.2 initially owns only `proof/nimbus-network-control-plane/nnc9.2-offline-sovereign-lifecycle.md`, this ledger, and routing status. Its read-only preflight must attribute any harness correction before an edit. |
+| Latest dirty-state checkpoint | The NNC9.1 item commit contains nine verifier/scanner/baseline/proof/plan/routing paths and no product path. NNC9.2 starts from that clean checkpoint. The ignored Python bytecode cache remains unowned. |
+| Last completed item review | NNC9.1 used one full and one narrow GPT-5.6 Sol/xhigh/fast review. All eleven accepted findings are corrected and proven; review cadence is exhausted. |
 | NNC6.5d4 full-review input identity | Staged tree `7440423203e010ad6d42cc13d97b22ec7e0c5613`; patch SHA-256 `7e455251c72fb15af7c8ce75800deb62d7d09750de8f7c3f5f7c3bf2e1e254ad`; thread `019feeef-9501-7772-bca7-ecfa538657d5`; `34` paths, including `26` Rust paths. The wrapper ran one item-bundle pass. |
 | NNC6.5d4 narrow-review input identity | The sole narrow review used staged tree `cddb5db89fe32db1743ca45e6c39ed926194b27c`, patch SHA-256 `085d9a6a6f9c89982982848743b6784db8c2dbbd4af291fbe79e2912d181b895`, and thread `019feeff-debb-7021-bc42-1733d2766e85`. The wrapper ran one correction-bundle pass. |
 | NNC6.5d4 narrow-review result | Zero findings. The review confirms the P2 correction and the P1 rejection at confidence `0.99`. No further NNC6.5d4 review is authorized or needed. |
@@ -61,9 +61,9 @@ ledger transition.
 | NNC6.5e narrow-review result | Six findings are accepted and corrected: exact provider-realm identity, effect-free unmanaged-definition deletion, unadvanced-claim finalizer authentication, aliased/UFCS stop scans, exact-realm composition dataflow, and helper-body scheduler-poll scans. One P3 fixed-count-poll claim is rejected because the remaining server loop is deadline-bounded semantic observation and its exact test passes `1/1`. Review cadence is exhausted. |
 | NNC6.5e final corrected candidate identity | Final pre-ledger-closeout staged tree `550bc50cbed9e18f9d7672abef65bee0b6d07a93`; patch SHA-256 `7e21c7d9310ac4530defb1cf22780da2ef32c6af4df9352b768b6aa8b0c9830c`; `59` paths, including `50` Rust paths; `9,198` insertions and `554` deletions. K28 is green. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. Per owner direction on 2026-07-24, all future structured autoreviews use `gpt-5.6-sol` at `xhigh` reasoning with fast mode explicitly enabled; do not use Claude Opus 4.8. |
-| Last green | NNC8.6 matrix `22/22`; network `248 + 1 + 1`; compute `284 + 1`; sandbox `47 + 2` child-only ignores; server `2`; services `2`; system `84`; verifier `38/38`; docs `108`; site `17/17`. |
-| Latest verification checkpoint | NNC8.6 K1-K9 pass. The post-review verifier passes `38/38`; strict proof lint, Rustfmt, Prettier, diff, docs `108`, and site `17/17` pass. |
-| Next | Start NNC9.1 with a read-only condition-to-evidence audit. Add or change a verifier condition only for a demonstrated closure gap. |
+| Last green | NNC9.1 scanner `14/14`; compiler mutations `18/18`; cheap/deep compiler contracts six packages / seven targets / 16 calls / five generated outputs; aggregate `607/607`; live verifier `39/39`; Bash, ShellCheck, Node, Prettier, Rustfmt, diff, proof lint, docs `108`, and site `17/17`. |
+| Latest verification checkpoint | The sole narrow review used staged tree `8a1287cea5ce3133ad82072abf547fb597f8a6e4`, GPT-5.6 Sol/xhigh/fast, one pass, and TruffleHog-clean input. It accepted six P2 executable defects at `0.97`; the final evidence proves every correction. |
+| Next | Audit and execute NNC9.2 on the named minicloud host. Preserve the no-install/no-download lifecycle condition and record PASS/FAIL/SKIPPED evidence exactly. |
 | Blocker | none |
 
 Recovery protocol:
@@ -2094,8 +2094,8 @@ checkpoint.
 | NNC8.4 | `done` | **Dependency:** NNC8.3 is complete at `fa10498777d5b44b5c698b7a91bb127b2aa23db4`. **Evidence:** `proof/nimbus-network-control-plane/nnc8.4-stale-generation-restart-eligibility.md`. **Result:** K1-K14 pass. One table-driven real-dispatcher test crosses all ten provider-observation fences; unchanged owners retain the bounded stale-callback matrix. **Last green:** focused `145`; compute `477 + 1 ignored`; NNCV034 `86/86`; architecture `38/38`; strict affected quality; docs `108`; site `17/17`; proof lint zero. **Review:** the one Sol/xhigh/fast item review accepted one P3 recovery-text defect at `0.98`; the code and behavior were accepted. The P3 is corrected. No narrow review ran because the correction changed no executable code. **Checkpoint:** the commit containing this row is the durable item commit. **Blocker:** none. |
 | NNC8.5 | `done` | **Dependency:** NNC8.4 is complete at `ee0837369700fe7b677aebccc901fe484678c53f`. **Evidence:** `proof/nimbus-network-control-plane/nnc8.5-bounded-retries-backoff-cancellation.md`. **Result:** K1-K13 pass. Permanent restart-store failure uses capped exponential backoff that advisory hints cannot bypass, emits structured diagnostics, cancels cooperatively, and resets after recovery. Provision, restart, teardown, startup recovery, projections, authority locks, placement, IPAM, and forwarding have exact bounded or retained contracts. **Last green:** fail-before `14/15` with 33 page calls at time zero; store matrix `16/16`; restart watch `11/11`; saga `283/283`; compute `481 + 1 ignored`; unchanged owner proofs `14/14`; strict affected quality; live verifier `38/38`; docs `108`; site `17/17`; proof lint zero. **Review:** the full Sol/xhigh/fast review accepted one P3 scheduler-yield test defect. Its race-safe bounded observation correction is proven, and the one narrow review is clean at `0.98`. **Checkpoint:** `e5a2eeeb4bb8bb1105c9742af94f86d926c0559d`. **Blocker:** none. |
 | NNC8.6 | `done` | **Evidence:** `proof/nimbus-network-control-plane/nnc8.6-failure-contract-closure.md`. **Result:** K1-K9 pass. All `22/22` rows map in exact order to current deterministic tests. Network, compute, sandbox, server, services, and system owner proofs pass. The live verifier passes `38/38`; strict proof lint, Rustfmt, Prettier, diff, docs `108`, and site `17/17` pass. The one Sol/xhigh/fast review accepted one P3 recovery-path omission at `0.99`; the documentation correction is green and needs no narrow review. Product and verifier paths are unchanged. **Checkpoint:** the commit containing this row is the exact NNC8.6 item checkpoint. **Blocker:** none. |
-| NNC9.1 | `in_progress` | **Dependency:** NNC0-NNC8 are complete. **Evidence:** planned `proof/nimbus-network-control-plane/nnc9.1-static-verifier-closure.md`. **Owned paths:** `scripts/verify-nimbus-network-control-plane.sh`, concept-owned helpers under `scripts/nimbus-network-control-plane/`, this ledger, routing status, and the NNC9.1 proof. **Last green:** NNC8.6 live verifier `38/38` and post-review docs gates. **Next:** map each NNC9.1 success clause to current source, generated/compiler evidence, self-test mutation, and live condition before edits. **Blocker:** none. |
-| NNC9.2 | `todo` | — |
+| NNC9.1 | `done` | **Dependency:** NNC0-NNC8 are complete. **Evidence:** `proof/nimbus-network-control-plane/nnc9.1-static-verifier-closure.md` and its compiler baseline. **Result:** K1-K10 pass. The exact source census now composes with authenticated compiler, Cargo, parsed-boundary, and generated-Rust evidence without moving product authority. **Last green:** scanner `14/14`; compiler helper `18/18`; cheap/deep six packages, seven targets, 16 calls, and five generated outputs; aggregate `607/607`; live `39/39`; strict quality; docs `108`; site `17/17`. **Review:** one full and one narrow Sol/xhigh/fast review; all eleven accepted findings are corrected and proven; cadence is exhausted. **Checkpoint:** the commit containing this row is the exact item commit. **Blocker:** none. |
+| NNC9.2 | `in_progress` | **Dependency:** NNC9.1 is complete. **Evidence:** `proof/nimbus-network-control-plane/nnc9.2-offline-sovereign-lifecycle.md` will record the run. **Owned paths:** the new proof, this ledger, and routing status; read-only preflight must attribute any harness correction before an edit. **Last green:** NNC4.7 proved its deterministic tripwire `70/70` with two LinuxKit runs; NNC9.2 has not yet run the complete offline lifecycle. **Next:** inspect the NNC4.7 harness and preflight `nimbus@192.168.4.29`, then execute the no-install/no-download selection-through-teardown matrix. **Blocker:** none. |
 | NNC9.3 | `todo` | — |
 | NNC9.4 | `todo` | — |
 | NNC9.5 | `todo` | — |
