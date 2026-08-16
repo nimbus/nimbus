@@ -53,3 +53,31 @@ pass.
 NNC9.6 changes no executable code, so its written acceptance contract requires
 no structured review. No push or PR occurred. The plan can close after the
 final verifier, docs, diff, commit, and post-commit status checks pass.
+
+## Post-closure verifier performance addendum
+
+The user-authorized verifier performance work on 2026-08-16 is separate from
+NNC9.6 and does not reopen the completed architecture plan. A bounded
+eight-worker process runner executes independent mutation cases. It preserves
+ordered output, exact result accounting, owned-process cancellation, the full
+green baseline, and every fail-closed mutation.
+
+Acceptance evidence:
+
+- The runner lifecycle suite passes `9/9`.
+- The bind-census AST suite passes `14/14`.
+- The live architecture verifier passes `39/39`.
+- The complete mutation suite passes `610/610` in `400.69` seconds with
+  `NIMBUS_NETWORK_MUTATION_JOBS=8`.
+- Bash syntax, ShellCheck, and diff integrity pass.
+- The full Sol/xhigh/fast review found one P2 selector-overlap defect.
+- The fail-before child runs only NNCV006 and exits `0`.
+- The corrected child exits `1`. It reports NNCV006 passing, NNCV005 failing,
+  and exact `1 passed, 1 failed, 37 skipped` accounting.
+- The permitted narrow Sol/xhigh/fast correction review is clean with no
+  findings at `0.96` confidence.
+
+The correction unions and deduplicates every check implied by inherited
+mutation fixtures. A fixture from one family can no longer hide a failing
+condition from another family. The work does not change product behavior or
+network-control-plane authority.

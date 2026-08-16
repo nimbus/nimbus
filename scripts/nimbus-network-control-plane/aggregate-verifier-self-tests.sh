@@ -278,6 +278,25 @@ run_self_test() {
     printf 'SELFTEST PASS targeted green fixture cannot impersonate a complete baseline\n'
   fi
 
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'#[cfg(test)]\nfn test_only() { TcpListener::bind("127.0.0.1:0"); }\n' \
+    NIMBUS_NETWORK_VERIFY_TEST_LEGACY_PORT_AUTHORITY='synthetic.rs:1:struct PortManager' \
+    "${script}" >"${temporary}/overlapping-selectors.out" 2>&1; then
+    printf 'SELFTEST FAIL overlapping targeted fixtures skipped a failing condition\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^PASS NNCV006 unclassified-production-bind$' \
+    "${temporary}/overlapping-selectors.out" ||
+    ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority$' \
+      "${temporary}/overlapping-selectors.out" ||
+    ! grep -q '^Targeted summary: 1 passed, 1 failed, 37 skipped$' \
+      "${temporary}/overlapping-selectors.out"; then
+    printf 'SELFTEST FAIL overlapping targeted fixtures did not retain every selected condition\n'
+    sed -n '1,80p' "${temporary}/overlapping-selectors.out"
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS overlapping targeted fixtures retain every selected condition\n'
+  fi
+
   focused_inventory="${NIMBUS_NETWORK_VERIFY_INVENTORY:-docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json}"
   if NIMBUS_NETWORK_VERIFY_FOCUSED_BIND_CHILD=1 \
     node "${BIND_CENSUS_HELPER}" --inventory "${focused_inventory}" \
@@ -1325,7 +1344,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 609 passed, 0 failed\n'
+  printf 'self-test: 610 passed, 0 failed\n'
 }
 
 run_nnc81_affected_self_test() {

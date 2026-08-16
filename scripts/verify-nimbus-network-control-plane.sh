@@ -1250,79 +1250,123 @@ verify_nnc91_compiler_authority_closure() {
   fi
 }
 
+append_self_test_checks() {
+  requested_checks="$1"
+  old_ifs="${IFS}"
+  IFS=,
+  for requested_check in ${requested_checks}; do
+    case ",${self_test_selected_checks}," in
+      *",${requested_check},"*) ;;
+      *)
+        self_test_selected_checks="${self_test_selected_checks}${self_test_selected_checks:+,}${requested_check}"
+        ;;
+    esac
+  done
+  IFS="${old_ifs}"
+}
+
 self_test_check_selection() {
+  self_test_selected_checks=""
   if [ "${NIMBUS_NETWORK_VERIFY_COMPILER_SELF_TEST_FORCE:-0}" = 1 ]; then
-    printf 'NNCV038\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_NNC82_MUTATION:-}" ]; then
-    printf 'NNCV037\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_NNC81_METADATA:-}" ]; then
-    printf 'NNCV036\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE:-}" ] ||
+    append_self_test_checks NNCV038
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_NNC82_MUTATION:-}" ]; then
+    append_self_test_checks NNCV037
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_NNC81_METADATA:-}" ]; then
+    append_self_test_checks NNCV036
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_TEARDOWN_MUTATION:-}" ]; then
-    printf 'NNCV035\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_RECOVERY_STORE_SOURCE:-}" ] ||
+    append_self_test_checks NNCV035
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_RECOVERY_STORE_SOURCE:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_SOURCE:-}" ]; then
-    printf 'NNCV027\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_COORDINATOR_MUTATION:-}" ]; then
-    printf 'NNCV026\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_MANAGER_MUTATION:-}" ]; then
-    printf 'NNCV025\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_INSPECTION_MUTATION:-}" ]; then
-    printf 'NNCV024\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_SEALED_EFFECT_CAPABILITY:-}" ] ||
+    append_self_test_checks NNCV027
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_COORDINATOR_MUTATION:-}" ]; then
+    append_self_test_checks NNCV026
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_MANAGER_MUTATION:-}" ]; then
+    append_self_test_checks NNCV025
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_INSPECTION_MUTATION:-}" ]; then
+    append_self_test_checks NNCV024
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_SEALED_EFFECT_CAPABILITY:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_TEST_PORTABLE_EFFECT_CAPABILITY:-}" ]; then
-    printf 'NNCV023\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_SANDBOX_EFFECT_LOCALITY:-}" ]; then
-    printf 'NNCV022\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_MACHINE_BATCH_CONVERGENCE_MUTATION:-}" ]; then
-    printf 'NNCV021\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_CRASH_MUTATION:-}" ]; then
-    printf 'NNCV020\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_READINESS_MUTATION:-}" ]; then
-    printf 'NNCV019\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_STARTUP_ORPHAN_MUTATION:-}" ]; then
-    printf 'NNCV018\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_ORDERING_MUTATION:-}" ]; then
-    printf 'NNCV017\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_SOVEREIGNTY_HELPER:-}" ]; then
-    printf 'NNCV016\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE:-}" ] ||
+    append_self_test_checks NNCV023
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_SANDBOX_EFFECT_LOCALITY:-}" ]; then
+    append_self_test_checks NNCV022
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_MACHINE_BATCH_CONVERGENCE_MUTATION:-}" ]; then
+    append_self_test_checks NNCV021
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_CRASH_MUTATION:-}" ]; then
+    append_self_test_checks NNCV020
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_READINESS_MUTATION:-}" ]; then
+    append_self_test_checks NNCV019
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_STARTUP_ORPHAN_MUTATION:-}" ]; then
+    append_self_test_checks NNCV018
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_ORDERING_MUTATION:-}" ]; then
+    append_self_test_checks NNCV017
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_SOVEREIGNTY_HELPER:-}" ]; then
+    append_self_test_checks NNCV016
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_MUTATION:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_TEST_DROP_COMPOSITION_KEY:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_COMPOSITION_CENSUS:-}" ]; then
-    printf 'NNCV006,NNCV015\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_NETWORK_SCAN_ROOT:-}" ]; then
-    printf 'NNCV012,NNCV013,NNCV014\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ADDRESS_IDENTITY:-}" ]; then
-    printf 'NNCV014\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_DUPLICATE_DEFINITION:-}" ]; then
-    printf 'NNCV013\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_DEPENDENCY:-}" ] ||
+    append_self_test_checks NNCV006,NNCV015
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_NETWORK_SCAN_ROOT:-}" ]; then
+    append_self_test_checks NNCV012,NNCV013,NNCV014
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ADDRESS_IDENTITY:-}" ]; then
+    append_self_test_checks NNCV014
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_DUPLICATE_DEFINITION:-}" ]; then
+    append_self_test_checks NNCV013
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_DEPENDENCY:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_EFFECT:-}" ]; then
-    printf 'NNCV012\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_CORE_SCAN_ROOT:-}" ]; then
-    printf 'NNCV010\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_SWAP_SITE_IDS:-}" ] ||
+    append_self_test_checks NNCV012
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_CORE_SCAN_ROOT:-}" ]; then
+    append_self_test_checks NNCV010
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_SWAP_SITE_IDS:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_TEST_CORRUPT_SITE_DECLARATION:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_TEST_CLASSIFIED_OCCURRENCE:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_TEST_UNCLASSIFIED:-}" ] ||
     [ -n "${NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE:-}" ]; then
-    printf 'NNCV006\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_LEGACY_PORT_AUTHORITY:-}" ]; then
-    printf 'NNCV005\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_DEPENDENCY_CONTRACT_CASE:-}" ]; then
-    printf 'NNCV004\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_INVENTORY:-}" ]; then
-    printf 'NNCV002,NNCV006\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_DEPENDENCIES:-}" ]; then
-    printf 'NNCV002,NNCV007\n'
-  elif [ -n "${NIMBUS_NETWORK_VERIFY_PLAN:-}" ]; then
+    append_self_test_checks NNCV006
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_LEGACY_PORT_AUTHORITY:-}" ]; then
+    append_self_test_checks NNCV005
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_TEST_DEPENDENCY_CONTRACT_CASE:-}" ]; then
+    append_self_test_checks NNCV004
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_INVENTORY:-}" ]; then
+    append_self_test_checks NNCV002,NNCV006
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_DEPENDENCIES:-}" ]; then
+    append_self_test_checks NNCV002,NNCV007
+  fi
+  if [ -n "${NIMBUS_NETWORK_VERIFY_PLAN:-}" ]; then
     if [ -f "${PLAN}" ]; then
-      printf 'NNCV001,NNCV008,NNCV009\n'
+      append_self_test_checks NNCV001,NNCV008,NNCV009
     else
-      printf 'NNCV001\n'
+      append_self_test_checks NNCV001
     fi
   fi
+  printf '%s\n' "${self_test_selected_checks}"
 }
 
 verifier_function_for_id() {
