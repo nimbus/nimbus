@@ -9,7 +9,10 @@ use nimbus_network::{NetworkProviderHandle, NetworkResourceGeneration};
 use serde::Serialize;
 
 use crate::backends::conmon::lifecycle::{RuntimeStateObservation, runtime_state};
-use crate::backends::oci::network::OciAttachmentBaseReadinessState;
+use crate::backends::oci::egress::EgressReadinessFailure;
+use crate::backends::oci::network::{
+    OciAttachmentBaseReadinessState, OciAttachmentReadinessFailure,
+};
 use crate::provision::{
     ProvisionActivationObservationKind, ProvisionActivationRuntimeState,
     classify_provision_activation,
@@ -621,6 +624,11 @@ impl ContainerSandboxBackend {
             OciAttachmentBaseReadinessState::Ready(_) => {
                 Ok(crate::SandboxProvisionPhaseObservation::Succeeded { evidence })
             }
+            OciAttachmentBaseReadinessState::NotReady(
+                OciAttachmentReadinessFailure::PepNotReady(
+                    EgressReadinessFailure::MissingRegistration,
+                ),
+            ) => Ok(crate::SandboxProvisionPhaseObservation::Absent { evidence }),
             OciAttachmentBaseReadinessState::NotReady(_) => {
                 Ok(crate::SandboxProvisionPhaseObservation::InProgress { evidence })
             }
@@ -795,18 +803,7 @@ impl ContainerSandboxBackend {
                 )?,
             });
         };
-        let private_endpoints = manifest
-            .spec
-            .port_bindings
-            .iter()
-            .map(|binding| {
-                nimbus_network::PublishedEndpoint::new(
-                    binding.name.clone(),
-                    binding.protocol,
-                    std::net::SocketAddr::new(assigned_ip.into(), binding.guest_port),
-                )
-            })
-            .collect::<Vec<_>>();
+        let private_endpoints = status::private_readiness_endpoints(&manifest.spec, assigned_ip);
         let application = crate::backends::readiness_probe::inspect_application_readiness(
             manifest.status,
             &private_endpoints,

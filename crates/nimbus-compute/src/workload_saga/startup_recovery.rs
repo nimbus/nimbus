@@ -43,6 +43,7 @@ trait WorkloadStartupProvisionOwner: Send + Sync {
     fn resume(
         &self,
         key: WorkloadSagaKey,
+        owner_reopened_publication: bool,
     ) -> WorkloadStartupOwnerFuture<'_, StartupProvisionResult>;
 }
 
@@ -54,13 +55,18 @@ impl WorkloadStartupProvisionOwner for WorkloadStartupProvisionAdapter {
     fn resume(
         &self,
         key: WorkloadSagaKey,
+        owner_reopened_publication: bool,
     ) -> WorkloadStartupOwnerFuture<'_, StartupProvisionResult> {
         Box::pin(async move {
-            let outcome = self
-                .owner
-                .resume(key, &WorkloadProvisionCancellation::default())
-                .await
-                .map_err(|error| error.to_string())?;
+            let cancellation = WorkloadProvisionCancellation::default();
+            let outcome = if owner_reopened_publication {
+                self.owner
+                    .resume_owner_reopened_publication(key, &cancellation)
+                    .await
+            } else {
+                self.owner.resume(key, &cancellation).await
+            }
+            .map_err(|error| error.to_string())?;
             Ok(StartupProvisionResult {
                 record: outcome.record().clone(),
                 disposition: outcome.disposition(),
@@ -400,7 +406,12 @@ impl WorkloadStartupRecovery {
         }
 
         match decision.action() {
-            WorkloadSagaAction::Provision(_) => self.recover_provision(current, false).await,
+            WorkloadSagaAction::Provision(_) => {
+                let owner_reopened_publication =
+                    current.needs_owner_reopened_publication_recovery();
+                self.recover_provision(current, false, owner_reopened_publication)
+                    .await
+            }
             WorkloadSagaAction::Teardown(_) => self.recover_teardown(current, false).await,
             WorkloadSagaAction::PromoteSuccessor { .. } => self.promote_successor(current).await,
             WorkloadSagaAction::Quiescent => Ok(WorkloadStartupRecoveryOutcome::new(
@@ -439,17 +450,19 @@ impl WorkloadStartupRecovery {
         &self,
         current: WorkloadSagaRecord,
         promoted_successor: bool,
+        owner_reopened_publication: bool,
     ) -> Result<WorkloadStartupRecoveryOutcome, WorkloadStartupRecoveryError> {
         let key = current.key().clone();
         let provisioner = self.provision_owner.as_ref().ok_or_else(|| {
             WorkloadStartupRecoveryError::MissingProvisionOwner { key: key.clone() }
         })?;
-        let outcome = provisioner.resume(key.clone()).await.map_err(|error| {
-            WorkloadStartupRecoveryError::Provision {
+        let outcome = provisioner
+            .resume(key.clone(), owner_reopened_publication)
+            .await
+            .map_err(|error| WorkloadStartupRecoveryError::Provision {
                 key: key.clone(),
                 message: error.to_string(),
-            }
-        })?;
+            })?;
 
         if outcome.disposition == WorkloadProvisionRunDisposition::SuccessorSettlementReady {
             let withdrawal = self
@@ -457,6 +470,9 @@ impl WorkloadStartupRecovery {
                 .commit_provision_settlement_teardown(&outcome.record)
                 .await?;
             return self.recover_teardown(withdrawal, true).await;
+        }
+        if outcome.disposition == WorkloadProvisionRunDisposition::SuccessorSettlementCommitted {
+            return self.recover_teardown(outcome.record, true).await;
         }
 
         let disposition = match outcome.compensation {
@@ -500,6 +516,9 @@ impl WorkloadStartupRecovery {
                 }
                 WorkloadProvisionRunDisposition::SuccessorSettlementReady => {
                     unreachable!("successor settlement returned before outcome mapping")
+                }
+                WorkloadProvisionRunDisposition::SuccessorSettlementCommitted => {
+                    unreachable!("committed successor settlement returned before outcome mapping")
                 }
             },
         };
@@ -551,7 +570,7 @@ impl WorkloadStartupRecovery {
             .promote_recorded_successor(&current)
             .await?;
         match promoted.active_intent().desired_state() {
-            DesiredWorkloadState::Running => self.recover_provision(promoted, true).await,
+            DesiredWorkloadState::Running => self.recover_provision(promoted, true, false).await,
             DesiredWorkloadState::Stopped => {
                 debug_assert_eq!(promoted.phase(), WorkloadSagaPhase::Recorded);
                 Ok(WorkloadStartupRecoveryOutcome::new(

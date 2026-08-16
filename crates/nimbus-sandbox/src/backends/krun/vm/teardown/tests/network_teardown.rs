@@ -157,6 +157,7 @@ impl NetworkTeardownFixture {
             .read_manifest(&id)
             .expect("attached manifest should read")
             .expect("attached manifest should exist");
+        settle_separate_publication_without_effect(&backend, &attached, &reservation_claim);
         attached.launch_authority = KrunLaunchAuthority::ProviderOwned;
         attached.creator_handoff = KrunCreatorHandoffState::RuntimeObserved {
             receipt: CreatorAttemptReceipt::for_test(format!("creator-network-{label}")),
@@ -241,7 +242,9 @@ impl NetworkTeardownFixture {
             .require_network_config()
             .expect("adopting fixture should retain network config");
         match cut {
-            InterruptedAdoptionAllocatorCut::Reserved => {}
+            InterruptedAdoptionAllocatorCut::Reserved => {
+                settle_separate_publication_without_effect(&backend, &manifest, &reservation_claim);
+            }
             InterruptedAdoptionAllocatorCut::Adopted => {
                 backend
                     .segment_allocator
@@ -251,6 +254,7 @@ impl NetworkTeardownFixture {
                         &reservation_claim,
                     )
                     .expect("fixture allocator adoption should persist");
+                settle_separate_publication_without_effect(&backend, &manifest, &reservation_claim);
             }
             InterruptedAdoptionAllocatorCut::ReservationCleanupPending => {
                 backend
@@ -348,6 +352,29 @@ impl NetworkTeardownFixture {
             KrunStopProgress::ExecutionStopped { fence, .. }
                 if fence == stop.provider_claim()
         ));
+        let mut stopped = self.manifest();
+        match stopped.creator_handoff.clone() {
+            KrunCreatorHandoffState::RuntimeObserved { receipt } => {
+                stopped.creator_handoff = KrunCreatorHandoffState::Quiesced {
+                    proof: CreatorQuiescenceProof::dead_contained(receipt),
+                };
+            }
+            KrunCreatorHandoffState::NotSpawned => {}
+            state => panic!(
+                "network fixture must have a terminal creator handoff after stop, got {state:?}"
+            ),
+        }
+        stopped.conmon_launch.delete_command = CommandSpec::new("/usr/bin/true");
+        stopped.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([
+            "-c".to_owned(),
+            format!(
+                "printf '%s\\n' 'container `{0}` does not exist: open `/run/crun/{0}/status`: No such file or directory' >&2; exit 1",
+                stopped.handle.id
+            ),
+        ]);
+        self.backend
+            .write_manifest(&stopped)
+            .expect("stopped network fixture should persist exact provider absence");
         stop
     }
 
@@ -415,6 +442,43 @@ impl NetworkTeardownFixture {
         ))
         .expect("retained network authority should encode")
     }
+}
+
+fn settle_separate_publication_without_effect(
+    backend: &KrunSandboxBackend,
+    manifest: &KrunSandboxManifest,
+    reservation_claim: &nimbus_network::NetworkReservationClaim,
+) {
+    let plan = manifest
+        .provision_network_plan
+        .as_ref()
+        .expect("fixture should retain its exact provision plan");
+    let complete_plan = manifest
+        .egress_proxy
+        .as_ref()
+        .map(|assignment| assignment.compiled_plan_members(plan))
+        .unwrap_or_else(|| plan.port_leases());
+    backend
+        .port_lease_coordinator()
+        .release_never_bound_plan_members(&complete_plan, &manifest.port_leases, reservation_claim)
+        .expect("separate publication owner should publish terminal no-effect authority");
+}
+
+fn retain_stale_runtime_artifacts(manifest: &KrunSandboxManifest) -> [PathBuf; 3] {
+    let paths = [
+        manifest.conmon_layout.pidfile.clone(),
+        manifest.conmon_layout.conmon_pidfile.clone(),
+        manifest.conmon_layout.exit_status_file.clone(),
+    ];
+    for path in &paths {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("runtime artifact parent should create");
+        }
+    }
+    fs::write(&paths[0], format!("{}\n", i32::MAX)).expect("stale runtime pidfile should persist");
+    fs::write(&paths[1], format!("{}\n", i32::MAX)).expect("dead conmon receipt should persist");
+    fs::write(&paths[2], b"0\n").expect("exit-status receipt should persist");
+    paths
 }
 
 #[test]
@@ -642,13 +706,16 @@ fn krun_network_teardown_detaches_retained_then_releases_in_order() {
 
     let ports = fixture.backend.port_lease_coordinator();
     let listener_records = ports
-        .port_lease_records_snapshot(&retained.port_leases, "retained Krun listeners")
-        .expect("retained listener authority should inspect");
-    assert!(listener_records.iter().all(|record| {
-        record.phase() == PortLeasePhase::Reserved
-            && record.binding().is_none()
-            && record.active_lifetime().is_none()
-    }));
+        .port_lease_records_snapshot(&retained.port_leases, "terminal separate-owner listeners")
+        .expect("separately owned listener evidence should inspect");
+    assert!(
+        listener_records.iter().all(|record| {
+            record.phase() == PortLeasePhase::Released
+                && record.binding().is_none()
+                && record.active_lifetime().is_none()
+        }),
+        "attachment detach must consume, not retain or rewrite, terminal separate-owner publication"
+    );
     let pep = retained
         .egress_proxy
         .as_ref()
@@ -708,6 +775,7 @@ fn krun_network_teardown_detaches_retained_then_releases_in_order() {
     );
     assert_eq!(fixture.runtime.signals(), signals);
 
+    let runtime_artifacts = retain_stale_runtime_artifacts(&retained);
     let release = fixture.network_command(&stop, SandboxNetworkTeardownOperation::Release, 1);
     let released = execute_network(&fixture.backend, &release);
 
@@ -766,6 +834,16 @@ fn krun_network_teardown_detaches_retained_then_releases_in_order() {
         KrunStopProgress::ExecutionStopped { fence, .. }
             if fence == stop.provider_claim()
     ));
+    assert_eq!(terminal.status, SandboxStatus::Stopped);
+    assert_eq!(terminal.handle.status, SandboxStatus::Stopped);
+    assert!(terminal.shutdown_requested);
+    assert!(terminal.launch_artifact.is_none());
+    assert_eq!(terminal.launch_authority, KrunLaunchAuthority::Released);
+    assert!(runtime_artifacts.iter().all(|path| !path.exists()));
+    assert!(
+        terminal.has_terminal_network_finality(),
+        "ReleaseNetwork must not report success before provider-local artifact cleanup and terminal manifest publication"
+    );
 }
 
 #[test]
@@ -890,6 +968,11 @@ fn krun_network_two_thread_contenders_have_one_detach_and_release_winner() {
     );
     assert_eq!(fixture.runtime.signals(), signals);
 
+    let mut expected_released_runtime = retained.clone();
+    expected_released_runtime.launch_artifact = None;
+    expected_released_runtime.shutdown_requested = true;
+    expected_released_runtime.status = SandboxStatus::Stopped;
+    expected_released_runtime.handle.status = SandboxStatus::Stopped;
     let release = fixture.network_command(&stop, SandboxNetworkTeardownOperation::Release, 1);
     let release_outcomes = contend_network(&fixture, &release);
     assert!(release_outcomes.iter().all(|(role, kind)| matches!(
@@ -907,7 +990,12 @@ fn krun_network_two_thread_contenders_have_one_detach_and_release_winner() {
         released.network_teardown.release_phase(),
         HostManagedAttachmentReleasePhase::Released
     );
-    assert_eq!(runtime_authority(&released), stopped_runtime);
+    assert_eq!(
+        runtime_authority(&released),
+        runtime_authority(&expected_released_runtime)
+    );
+    assert_eq!(released.launch_authority, KrunLaunchAuthority::Released);
+    assert!(released.has_terminal_network_finality());
     assert_eq!(
         fixture.runtime.terminal_checks.load(Ordering::Acquire),
         terminal_checks

@@ -11,7 +11,7 @@ fn teardown_record_round_trips_strict_portable_wire() {
 
     assert_eq!(decoded, inspection);
     assert_eq!(decoded.format_version(), WORKLOAD_SAGA_FORMAT_VERSION);
-    assert_eq!(WORKLOAD_SAGA_FORMAT_VERSION, 6);
+    assert_eq!(WORKLOAD_SAGA_FORMAT_VERSION, 7);
     assert_eq!(
         serde_json::to_vec(decoded.teardown_disposition().unwrap()).unwrap(),
         serde_json::to_vec(inspection.teardown_disposition().unwrap()).unwrap()

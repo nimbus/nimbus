@@ -5,7 +5,9 @@ use nimbus_sandbox::{
     ProviderCommandClaimInput, ProviderCommandJournalError, ProviderCommandObservationKind,
     ProviderCommandOperation,
 };
-use nimbus_workloads::{WorkloadTeardownCommandMode, WorkloadTeardownStep};
+use nimbus_workloads::{
+    WorkloadTeardownCommandMode, WorkloadTeardownDispatchAuthorization, WorkloadTeardownStep,
+};
 
 use super::{
     ConfirmedTeardownProviderCommand, ConfirmedTeardownProviderJournal, provider_operation,
@@ -20,6 +22,7 @@ fn command(
 ) -> ConfirmedTeardownProviderCommand {
     ConfirmedTeardownProviderCommand {
         mode,
+        authorization: WorkloadTeardownDispatchAuthorization::Initial,
         claim: ProviderCommandClaim::new(ProviderCommandClaimInput {
             authority_id: "wsg_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 .to_owned(),

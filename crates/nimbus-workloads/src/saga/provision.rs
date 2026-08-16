@@ -7,10 +7,11 @@ use super::*;
 mod dispatch;
 
 pub use dispatch::{
-    WorkloadProvisionAbsenceEvidence, WorkloadProvisionCommandId, WorkloadProvisionCommandMode,
-    WorkloadProvisionDispatchAuthorization, WorkloadProvisionDispatchClaim,
-    WorkloadProvisionDispatchEpoch, WorkloadProvisionInspectionResult,
-    WorkloadProvisionProviderTarget,
+    WorkloadProvisionAbsenceEvidence, WorkloadProvisionAbsenceOrigin, WorkloadProvisionCommandId,
+    WorkloadProvisionCommandMode, WorkloadProvisionDispatchAuthorization,
+    WorkloadProvisionDispatchClaim, WorkloadProvisionDispatchEpoch,
+    WorkloadProvisionInspectionResult, WorkloadProvisionProviderTarget,
+    WorkloadProvisionRepublicationRetryEvidence,
 };
 
 define_decimal_counter!(
@@ -829,6 +830,10 @@ fn validate_attempt_input(input: &WorkloadProvisionAttemptInput) -> Result<(), W
         ) | (
             WorkloadProvisionStep::Publish,
             WorkloadSagaPhase::Ready,
+            WorkloadSagaPhase::Published
+        ) | (
+            WorkloadProvisionStep::Publish,
+            WorkloadSagaPhase::Published,
             WorkloadSagaPhase::Published
         ) | (
             WorkloadProvisionStep::ObservePublication,

@@ -677,7 +677,7 @@ fn startup_failure_never_becomes_registered_capability() {
     assert_cached_startup_failure(
         &container_start.to_string(),
         &corrupt_container_manifest,
-        "is structurally untrusted",
+        "unmatched artifact",
     );
     let krun_start = reserve_and_prepare_krun(
         &krun,
@@ -713,7 +713,7 @@ fn startup_failure_never_becomes_registered_capability() {
             container_registration.expect_err("container registration must fail closed"),
             CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
             &corrupt_container_manifest,
-            "is structurally untrusted",
+            "unmatched artifact",
         );
         assert_startup_registration_failure(
             krun_registration.expect_err("krun registration must fail closed"),

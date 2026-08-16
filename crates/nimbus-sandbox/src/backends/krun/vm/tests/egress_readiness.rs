@@ -28,7 +28,10 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = pep_port..=pep_port;
     let pin_provider = Arc::new(FixedOciEgressPinProvider::ready());
-    let backend = KrunSandboxBackend::new(config).with_egress_pin_provider(pin_provider.clone());
+    let readiness_provider = Arc::new(FixedReadinessProbeProvider::ready());
+    let backend = KrunSandboxBackend::new(config)
+        .with_egress_pin_provider(pin_provider.clone())
+        .with_readiness_probe_provider(readiness_provider.clone());
     let sandbox_id = SandboxId::new("krun-pep-readiness-withdrawal");
     let spec = sample_spec_for_tenant("krun-pep-readiness-withdrawal", "live-runtime")
         .with_port_bindings([SandboxPortBinding::tcp(
@@ -120,6 +123,15 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
     backend
         .ensure_complete_host_managed_attachment_readiness_for_test(&manifest)
         .expect("complete evidence should reach the existing VMM-spawn boundary");
+    let status: serde_json::Value = serde_json::from_slice(
+        &fs::read(&manifest.network_layout.status_path).expect("exact Netavark status should read"),
+    )
+    .expect("exact Netavark status should decode");
+    let assigned_ip = status["assigned_ips"][0]
+        .as_str()
+        .expect("status should contain one assigned IPv4 address")
+        .parse::<std::net::Ipv4Addr>()
+        .expect("assigned IPv4 address should parse");
     let initially_ready = backend
         .inspect_sync(&manifest.handle.id)
         .expect("live runtime inspection should succeed")
@@ -137,6 +149,14 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
     let published_endpoint = initially_ready.handle.published_endpoints[0].clone();
     assert_eq!(published_endpoint.name, "published-api");
     assert_eq!(published_endpoint.address.port(), endpoint_port);
+    assert_eq!(
+        readiness_provider.calls().last().map(|(target, _)| *target),
+        Some(ReadinessProbeTarget::Tcp(std::net::SocketAddr::new(
+            assigned_ip.into(),
+            endpoint_port,
+        ))),
+        "sandbox execution readiness must inspect the provider-private attachment, not the public ingress endpoint whose withdrawal is ordered before restart",
+    );
 
     let status_bytes =
         fs::read(&manifest.network_layout.status_path).expect("exact Netavark status should read");

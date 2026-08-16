@@ -1,4 +1,5 @@
 mod bundle;
+mod ingress;
 mod state;
 mod vm;
 

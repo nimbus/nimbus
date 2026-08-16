@@ -43,18 +43,19 @@ use crate::backends::oci::egress::{
 use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
 };
-#[cfg(test)]
-use crate::backends::oci::network::HostManagedAttachmentCheckpointTestProbe;
 use crate::backends::oci::network::{
     AttachmentAttachAuthority, AttachmentBackendKind, ConfiguredSegmentAllocator,
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
     DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, OciAttachmentAdapter,
     OciAttachmentAuxiliaryListener, OciAttachmentInput, OciAttachmentLifecycle,
-    OciAttachmentProviderPaths, OciAttachmentReadinessState, OciEgressPinProvider,
-    OciHostManagedAttachmentBackend, OciIpamAuthority, OciNetworkConfig, OciNetworkLayout,
-    OciNetworkProcess, OciSegmentAllocator, RealOciEgressPinProvider, TerminalNetworkAuthoritySet,
-    TerminalNetworkFinalityEvidence, default_network_attachment_id,
-    retire_terminal_container_ipam_release,
+    OciAttachmentProviderPaths, OciEgressPinProvider, OciHostManagedAttachmentBackend,
+    OciIpamAuthority, OciNetworkConfig, OciNetworkLayout, OciNetworkProcess, OciSegmentAllocator,
+    RealOciEgressPinProvider, TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence,
+    default_network_attachment_id, retire_terminal_container_ipam_release,
+};
+#[cfg(test)]
+use crate::backends::oci::network::{
+    HostManagedAttachmentCheckpointTestProbe, OciAttachmentReadinessState,
 };
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
 use crate::backends::oci::port_lifecycle::{
@@ -569,7 +570,7 @@ impl KrunSandboxBackend {
         network_config: &'a OciNetworkConfig,
         hostname: &'a str,
     ) -> OciAttachmentAdapter<'a> {
-        <Self as OciHostManagedAttachmentBackend>::host_managed_attachment_adapter(
+        <Self as OciHostManagedAttachmentBackend>::non_routable_attachment_adapter(
             OciAttachmentInput {
                 workload_state_root: &self.config.workload_state_root,
                 tenant_id: &manifest.spec.tenant_id,
@@ -589,6 +590,8 @@ impl KrunSandboxBackend {
                 config: network_config,
                 // Provider ownership consumes the launch-authority variant but
                 // retained detach still authenticates the immutable complete-plan claim.
+                // Server ingress owns publication and must already have made its
+                // listener leases terminal before private attachment teardown.
                 launch_claim: Some(&network_config.reservation_claim),
             },
         )

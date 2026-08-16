@@ -48,6 +48,10 @@ impl RunningIngressRoute {
         let (listener, lease, _) = listener.into_std_parts();
         if let Err(error) = listener.set_nonblocking(true) {
             drop(listener);
+            if expected.request.plan_id().is_some() {
+                drop(lease);
+                return Err(error);
+            }
             return match lease.settle_after_confirmed_local_close() {
                 Ok(()) => Err(error),
                 Err(cleanup) => Err(io::Error::new(
@@ -165,7 +169,7 @@ impl RunningIngressRoute {
         }))
     }
 
-    fn stop_and_settle(&mut self) {
+    fn stop_and_settle_or_retain(&mut self) {
         self.stop.store(true, Ordering::Release);
         let listener_result = self.worker.take().map_or(Ok(()), |worker| {
             worker.join().map_err(|_| {
@@ -175,10 +179,12 @@ impl RunningIngressRoute {
         let connections_result = join_all_connection_workers(&self.connections);
         match listener_result.and(connections_result) {
             Ok(()) => {
-                if let Some(lease) = self.lease.take()
-                    && let Err(error) = lease.settle_after_confirmed_local_close()
-                {
-                    tracing::error!(%error, "failed to settle workload ingress listener");
+                if let Some(lease) = self.lease.take() {
+                    if self.expected.request.plan_id().is_some() {
+                        drop(lease);
+                    } else if let Err(error) = lease.settle_after_confirmed_local_close() {
+                        tracing::error!(%error, "failed to settle workload ingress listener");
+                    }
                 }
             }
             Err(error) => {
@@ -287,7 +293,7 @@ pub(super) fn cancel_and_join_ingress_workers(
 
 impl Drop for RunningIngressRoute {
     fn drop(&mut self) {
-        self.stop_and_settle();
+        self.stop_and_settle_or_retain();
     }
 }
 

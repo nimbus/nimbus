@@ -40,6 +40,10 @@ use crate::error::{Result, SandboxError};
 use super::OciNetworkLayout;
 
 const NFT_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
+// `nft -nn` renders `NF_CT_STATE_BIT(IP_CT_ESTABLISHED)` and
+// `NF_CT_STATE_BIT(IP_CT_RELATED)` as their exact kernel bit values.
+const NFT_CT_STATE_ESTABLISHED: u64 = 1 << 1;
+const NFT_CT_STATE_RELATED: u64 = 1 << 2;
 
 /// Honest observation of the exact deny-by-default namespace pin.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -447,22 +451,8 @@ fn classify_exact_pin_rule(
         return Some(ExactPinRule::Loopback);
     }
 
-    let established = serde_json::json!({
-        "match": {
-            "op": "in",
-            "left": {"ct": {"key": "state"}},
-            "right": {"set": ["established", "related"]}
-        }
-    });
-    let established_reversed = serde_json::json!({
-        "match": {
-            "op": "in",
-            "left": {"ct": {"key": "state"}},
-            "right": {"set": ["related", "established"]}
-        }
-    });
     if expressions.len() == 2
-        && (expressions[0] == established || expressions[0] == established_reversed)
+        && is_exact_established_related_match(&expressions[0])
         && expressions[1] == accept
     {
         return Some(ExactPinRule::Established);
@@ -490,6 +480,50 @@ fn classify_exact_pin_rule(
         return Some(ExactPinRule::OwnPep);
     }
     None
+}
+
+fn is_exact_established_related_match(expression: &serde_json::Value) -> bool {
+    let Some(expression) = expression.as_object() else {
+        return false;
+    };
+    let Some(rule_match) = expression
+        .get("match")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return false;
+    };
+    if expression.len() != 1
+        || rule_match.len() != 3
+        || rule_match.get("op") != Some(&serde_json::json!("in"))
+        || rule_match.get("left") != Some(&serde_json::json!({"ct": {"key": "state"}}))
+    {
+        return false;
+    }
+
+    let Some(right) = rule_match.get("right") else {
+        return false;
+    };
+    let states = match right {
+        serde_json::Value::Array(states) => states.as_slice(),
+        serde_json::Value::Object(set) if set.len() == 1 => {
+            let Some(states) = set.get("set").and_then(serde_json::Value::as_array) else {
+                return false;
+            };
+            states.as_slice()
+        }
+        _ => return false,
+    };
+    if states.len() != 2 {
+        return false;
+    }
+    matches!(
+        (states[0].as_str(), states[1].as_str()),
+        (Some("established"), Some("related")) | (Some("related"), Some("established"))
+    ) || matches!(
+        (states[0].as_u64(), states[1].as_u64()),
+        (Some(NFT_CT_STATE_ESTABLISHED), Some(NFT_CT_STATE_RELATED))
+            | (Some(NFT_CT_STATE_RELATED), Some(NFT_CT_STATE_ESTABLISHED))
+    )
 }
 
 fn pin_not_ready(reason: impl Into<String>) -> OciEgressPinObservation {
@@ -654,6 +688,19 @@ mod tests {
         document
     }
 
+    fn nft_1_1_3_table_inspection(expected: SocketAddr) -> serde_json::Value {
+        let mut document = real_table_inspection(expected);
+        document["nftables"][4]["rule"]["expr"][0]["match"]["right"] =
+            serde_json::json!(["established", "related"]);
+        document
+    }
+
+    fn nft_1_1_3_numeric_table_inspection(expected: SocketAddr) -> serde_json::Value {
+        let mut document = real_table_inspection(expected);
+        document["nftables"][4]["rule"]["expr"][0]["match"]["right"] = serde_json::json!([2, 4]);
+        document
+    }
+
     #[test]
     fn real_nft_anonymous_set_and_active_table_shape_is_ready() {
         let expected: SocketAddr = "10.89.0.1:15000".parse().expect("address should parse");
@@ -662,6 +709,61 @@ mod tests {
             OciEgressPinObservation::Ready,
             "the JSON emitted by list-table inspection must authenticate the installed ruleset"
         );
+    }
+
+    #[test]
+    fn nft_1_1_3_array_state_shape_is_ready() {
+        let expected: SocketAddr = "10.89.0.1:15000".parse().expect("address should parse");
+        assert_eq!(
+            inspect_nft_json_rules(&nft_1_1_3_table_inspection(expected), expected),
+            OciEgressPinObservation::Ready,
+            "the nft 1.1.3 list-table shape must authenticate the installed ruleset"
+        );
+    }
+
+    #[test]
+    fn nft_1_1_3_double_numeric_state_shape_is_ready() {
+        let expected: SocketAddr = "10.89.0.1:15000".parse().expect("address should parse");
+        assert_eq!(
+            inspect_nft_json_rules(&nft_1_1_3_numeric_table_inspection(expected), expected),
+            OciEgressPinObservation::Ready,
+            "the nft 1.1.3 -j -nn list-table shape must authenticate the installed ruleset"
+        );
+    }
+
+    #[test]
+    fn established_state_encodings_are_structural_and_exact() {
+        let expression = |right| {
+            serde_json::json!({
+                "match": {
+                    "op": "in",
+                    "left": {"ct": {"key": "state"}},
+                    "right": right
+                }
+            })
+        };
+        for accepted in [
+            serde_json::json!(["established", "related"]),
+            serde_json::json!(["related", "established"]),
+            serde_json::json!([2, 4]),
+            serde_json::json!([4, 2]),
+            serde_json::json!({"set": ["established", "related"]}),
+            serde_json::json!({"set": ["related", "established"]}),
+            serde_json::json!({"set": [2, 4]}),
+            serde_json::json!({"set": [4, 2]}),
+        ] {
+            assert!(is_exact_established_related_match(&expression(accepted)));
+        }
+        for rejected in [
+            serde_json::json!(["established"]),
+            serde_json::json!(["established", "related", "new"]),
+            serde_json::json!(["established", "invalid"]),
+            serde_json::json!([2, 8]),
+            serde_json::json!(["established", 4]),
+            serde_json::json!({"set": ["established", "related"], "extra": true}),
+        ] {
+            assert!(!is_exact_established_related_match(&expression(rejected)));
+        }
     }
 
     #[test]

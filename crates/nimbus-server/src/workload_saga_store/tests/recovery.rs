@@ -283,7 +283,7 @@ async fn durable_recovery_pages_are_bounded_stable_cursor_strict_and_complete() 
 
     let (first, first_page_sizes) = collect_recovery_pages(&store, 4).await;
     let (second, second_page_sizes) = collect_recovery_pages(&store, 4).await;
-    assert_eq!(first_page_sizes, vec![4, 4, 4, 3]);
+    assert_eq!(first_page_sizes, vec![4, 4, 4, 4]);
     assert_eq!(second_page_sizes, first_page_sizes);
     assert_eq!(first, expected);
     assert_eq!(second, expected, "repeated recovery reads must be stable");
@@ -311,7 +311,7 @@ async fn durable_recovery_pages_are_bounded_stable_cursor_strict_and_complete() 
     );
     let reopened = EngineWorkloadSagaStore::new(engine(&root));
     let (after_reopen, reopened_page_sizes) = collect_recovery_pages(&reopened, 4).await;
-    assert_eq!(reopened_page_sizes, vec![4, 4, 4, 3]);
+    assert_eq!(reopened_page_sizes, vec![4, 4, 4, 4]);
     assert_eq!(
         after_reopen, expected,
         "a fresh Engine must decode every tagged durable phase without snapshot handoff"
@@ -491,16 +491,16 @@ fn recovery_fixtures() -> RecoveryFixtures {
         ));
     }
     recoverable.push(cleanup_pending_history("recover-cleanup"));
+    recoverable.push(history_through_phase(
+        provision_history(
+            "recover-owner-reopened-publication",
+            WorkloadActivationIntent::ActivateWhenAttached,
+            WorkloadPublicationIntent::PublishWhenReady,
+        ),
+        WorkloadSagaPhase::Observed,
+    ));
 
     let quiescent = vec![
-        history_through_phase(
-            provision_history(
-                "quiescent-observed",
-                WorkloadActivationIntent::ActivateWhenAttached,
-                WorkloadPublicationIntent::PublishWhenReady,
-            ),
-            WorkloadSagaPhase::Observed,
-        ),
         provision_history(
             "quiescent-prepare-only",
             WorkloadActivationIntent::PrepareOnly,

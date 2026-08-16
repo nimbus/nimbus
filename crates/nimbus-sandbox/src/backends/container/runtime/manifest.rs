@@ -1,6 +1,6 @@
 //! Container runtime manifest and launch DTOs.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
@@ -15,8 +15,8 @@ use crate::backends::oci::conmon::{OciConmonLaunchPlan, OciConmonLayout};
 use crate::backends::oci::egress::{EgressPolicyReloadState, EgressProxyAssignment};
 use crate::backends::oci::materializer::MaterializedImageRootfs;
 use crate::backends::oci::network::{
-    OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkLayout, TerminalNetworkAuthoritySet,
-    TerminalNetworkFinalityEvidence,
+    OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkLayout, OciRetainedManifestEvidence,
+    TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence,
 };
 use crate::error::{Result, SandboxError};
 use crate::execution_attempt::{SandboxExecutionAttemptId, SandboxRestartAttemptFence};
@@ -42,7 +42,7 @@ pub(super) use publication::{
 /// manifest whose network cleanup is already terminal.
 pub(super) fn retained_startup_manifest_paths(
     config: &ContainerSandboxBackendConfig,
-) -> Result<BTreeSet<PathBuf>> {
+) -> Result<Vec<OciRetainedManifestEvidence>> {
     let container_state_dirs = crate::artifact_paths::all_container_state_dirs(
         &config.workload_state_root,
     )
@@ -52,7 +52,7 @@ pub(super) fn retained_startup_manifest_paths(
             config.workload_state_root.display()
         ),
     })?;
-    let mut retained = BTreeSet::new();
+    let mut retained = Vec::new();
     for state_dir in container_state_dirs {
         let path = state_dir.join("manifest.json");
         let bytes = match std::fs::read(&path) {
@@ -82,7 +82,19 @@ pub(super) fn retained_startup_manifest_paths(
             && manifest.network_cleanup_complete
             && manifest.launch_reservation_claim.is_none()
         {
-            retained.insert(path);
+            let evidence = match manifest.network_config.as_ref() {
+                Some(network_config) if manifest.has_terminal_network_finality() => {
+                    OciRetainedManifestEvidence::terminal(
+                        path,
+                        manifest.spec.tenant_id.clone(),
+                        network_config.attachment_id.clone(),
+                        network_config.reservation_claim.clone(),
+                        network_config.provider_kind(),
+                    )
+                }
+                _ => OciRetainedManifestEvidence::claim_only(path),
+            };
+            retained.push(evidence);
             continue;
         }
 
@@ -122,7 +134,7 @@ pub(super) fn retained_startup_manifest_paths(
                 ),
             });
         }
-        retained.insert(path);
+        retained.push(OciRetainedManifestEvidence::claim_only(path));
     }
     Ok(retained)
 }

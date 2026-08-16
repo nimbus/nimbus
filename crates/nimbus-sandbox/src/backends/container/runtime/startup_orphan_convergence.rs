@@ -5,7 +5,6 @@ use nimbus_network::NetworkAttachmentReservationState;
 use super::manifest::{reconcile_startup_manifest_publications, retained_startup_manifest_paths};
 use super::teardown::state::ContainerStopProgress;
 use super::*;
-use crate::backends::conmon::lifecycle::inspect_runtime_artifact_presence;
 use crate::backends::oci::network::{
     AttachmentAuxiliaryDisposition, AttachmentBackendKind, AttachmentTeardownMode,
     OciNetworkConfig, OciOrphanCleanupContext, OciOrphanCleanupDisposition, OciOrphanCleanupKind,
@@ -16,6 +15,81 @@ use crate::backends::oci::network::{
 };
 
 impl ContainerSandboxBackend {
+    /// Finish provider-local cleanup for an execute-mode manifest whose exact
+    /// network release was durable before the prior process could publish
+    /// terminal manifest finality.
+    fn reconcile_released_container_manifests(&self) -> Result<()> {
+        let state_dirs =
+            crate::artifact_paths::all_container_state_dirs(&self.config.workload_state_root)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to enumerate released Container manifests under {}: {error}",
+                        self.config.workload_state_root.display()
+                    ),
+                })?;
+        for state_dir in state_dirs {
+            let path = state_dir.join("manifest.json");
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to read released Container manifest {}: {error}",
+                            path.display()
+                        ),
+                    });
+                }
+            };
+            let Ok(snapshot) = serde_json::from_slice::<ContainerSandboxManifest>(&bytes) else {
+                continue;
+            };
+            if self.validate_manifest_execution_context(&snapshot).is_err()
+                || snapshot.conmon_layout.manifest_path != path
+                || snapshot.start_mode != ContainerStartMode::Execute
+                || snapshot.network_teardown.release_phase()
+                    != crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+                || snapshot.has_terminal_network_finality()
+            {
+                continue;
+            }
+            if snapshot
+                .runner_config
+                .validated_machine_port_forwarder(&snapshot.handle.id)?
+                .is_some()
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "released Container workload {} uses provider-managed forwarding; host startup cannot finalize it",
+                        snapshot.handle.id
+                    ),
+                });
+            }
+
+            let (_lifecycle, mut current) =
+                runner::lock_execute_lifecycle_and_read_current_for_backend(self, &snapshot)?;
+            if current.has_terminal_network_finality() {
+                continue;
+            }
+            if current.network_teardown.release_phase()
+                != crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+                || !matches!(
+                    current.execution_teardown.stop(),
+                    ContainerStopProgress::ExecutionStopped { .. }
+                )
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "released Container workload {} crossed its durable stop or network finality while startup held its lifecycle lock",
+                        current.handle.id
+                    ),
+                });
+            }
+            self.finalize_released_network_manifest(&mut current)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn reconcile_container_startup_network_state(&self) -> Result<()> {
         let attachments = self
             .attachment_authority
@@ -25,6 +99,7 @@ impl ContainerSandboxBackend {
                     .to_owned(),
             })?;
         reconcile_startup_manifest_publications(&self.config.workload_state_root)?;
+        self.reconcile_released_container_manifests()?;
         let retained_desired_manifests = retained_startup_manifest_paths(&self.config)?;
         reconcile_startup_network_state_with_cleanup(
             &self.config.workload_state_root,
@@ -149,7 +224,7 @@ impl ContainerSandboxBackend {
                 "exit-status receipt",
             ),
         ] {
-            if inspect_runtime_artifact_presence(path, label)? {
+            if crate::backends::conmon::lifecycle::inspect_runtime_artifact_presence(path, label)? {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "Container orphan {} retains {label}; runtime absence is not proven",

@@ -6,8 +6,11 @@
 
 use super::readiness::synchronize_handle_status;
 use super::*;
-use crate::backends::oci::egress::PepPreAdoptionReleaseAuthority;
-use crate::backends::oci::network::OciAttachmentBaseReadinessState;
+use crate::backends::krun::ingress::{private_tsi_readiness_endpoints, private_tsi_upstream_port};
+use crate::backends::oci::egress::{EgressReadinessFailure, PepPreAdoptionReleaseAuthority};
+use crate::backends::oci::network::{
+    OciAttachmentBaseReadinessState, OciAttachmentReadinessFailure,
+};
 use crate::backends::readiness_probe::inspect_application_readiness;
 use crate::provision::{
     ProvisionActivationObservationKind, ProvisionActivationRuntimeState,
@@ -295,20 +298,12 @@ impl KrunSandboxBackend {
                 Ok(()) => return Ok(false),
                 Err(error) => error,
             };
-        let ports = self.port_lease_coordinator();
-        let hostname = start::hostname_for(&manifest.spec);
-        self.non_routable_attachment_adapter(
-            manifest,
-            manifest.require_network_config()?,
-            &hostname,
-        )
-        .authenticate_active_deferred_pep_recovery(&self.attachment_lifecycle(&ports))
-        .map_err(|recovery_error| SandboxError::OperationFailed {
-            message: format!(
-                "{never_bound}; exact Active private-attachment PEP recovery also rejected authority: {recovery_error}"
-            ),
-        })?;
-        self.start_planned_provision_pep(manifest, reservation_claim)?;
+        self.recover_active_planned_pep_process_after_owner_death(manifest)
+            .map_err(|recovery_error| SandboxError::OperationFailed {
+                message: format!(
+                    "{never_bound}; exact Active private-attachment PEP recovery also rejected authority: {recovery_error}"
+                ),
+            })?;
         match self.inspect_provision_network_attachment(&manifest.handle.id, expected_attempt_id)? {
             SandboxProvisionPhaseObservation::Succeeded { .. } => Ok(true),
             observation => Err(SandboxError::OperationFailed {
@@ -318,6 +313,36 @@ impl KrunSandboxBackend {
                 ),
             }),
         }
+    }
+
+    fn recover_active_planned_pep_process_after_owner_death(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<()> {
+        let ports = self.port_lease_coordinator();
+        let hostname = start::hostname_for(&manifest.spec);
+        self.non_routable_attachment_adapter(
+            manifest,
+            manifest.require_network_config()?,
+            &hostname,
+        )
+        .authenticate_active_deferred_pep_recovery(&self.attachment_lifecycle(&ports))?;
+        let plan_members = Self::provision_port_plan_witness(manifest);
+        self.ensure_egress_proxy_running_with_release_authority(
+            manifest,
+            PepPreAdoptionReleaseAuthority::PlannedRebind {
+                plan_members: &plan_members,
+            },
+        )
+    }
+
+    fn owner_reopened_pep_is_missing(readiness: &OciAttachmentBaseReadinessState) -> bool {
+        matches!(
+            readiness,
+            OciAttachmentBaseReadinessState::NotReady(OciAttachmentReadinessFailure::PepNotReady(
+                EgressReadinessFailure::MissingRegistration
+            ))
+        )
     }
 
     fn require_current_provision_attachment_plan(
@@ -368,6 +393,42 @@ impl KrunSandboxBackend {
         };
         manifest.require_execution_attempt(expected_attempt_id, "krun provision attachment")?;
         manifest.require_execution_admission_open("Krun provision attachment")?;
+        if manifest.launch_authority == KrunLaunchAuthority::ProviderOwned {
+            let readiness = self.non_routable_attachment_readiness(&manifest)?;
+            if matches!(readiness, OciAttachmentBaseReadinessState::Ready(_)) {
+                return Ok(SandboxProvisionPhaseObservation::Succeeded {
+                    evidence: phase_evidence("owner_reopened_network_already_ready", sandbox_id)?,
+                });
+            }
+            if !Self::owner_reopened_pep_is_missing(&readiness) {
+                return Ok(SandboxProvisionPhaseObservation::InProgress {
+                    evidence: phase_evidence(
+                        "owner_reopened_network_recovery_waiting",
+                        &format!("{readiness:?}"),
+                    )?,
+                });
+            }
+            self.recover_active_planned_pep_process_after_owner_death(&manifest)?;
+            let recovered = self.non_routable_attachment_readiness(&manifest)?;
+            return match recovered {
+                OciAttachmentBaseReadinessState::Ready(_) => {
+                    Ok(SandboxProvisionPhaseObservation::Succeeded {
+                        evidence: phase_evidence(
+                            "owner_reopened_network_pep_recovered",
+                            sandbox_id,
+                        )?,
+                    })
+                }
+                OciAttachmentBaseReadinessState::NotReady(_) => {
+                    Ok(SandboxProvisionPhaseObservation::InProgress {
+                        evidence: phase_evidence(
+                            "owner_reopened_network_recovery_incomplete",
+                            &format!("{recovered:?}"),
+                        )?,
+                    })
+                }
+            };
+        }
         self.require_current_provision_attachment_plan(&manifest)?;
         if !manifest.provision_prepared {
             return Err(SandboxError::OperationFailed {
@@ -418,7 +479,7 @@ impl KrunSandboxBackend {
             false,
         )?;
         self.start_planned_provision_pep(&manifest, &reservation_claim)?;
-        self.require_non_routable_activation_prerequisites(&manifest)?;
+        let _assigned_ip = self.require_non_routable_activation_prerequisites(&manifest)?;
         Ok(SandboxProvisionPhaseObservation::Succeeded {
             evidence: phase_evidence("network_attached", &manifest.handle)?,
         })
@@ -444,6 +505,13 @@ impl KrunSandboxBackend {
         match readiness {
             OciAttachmentBaseReadinessState::Ready(_) => {
                 Ok(SandboxProvisionPhaseObservation::Succeeded { evidence })
+            }
+            OciAttachmentBaseReadinessState::NotReady(
+                OciAttachmentReadinessFailure::PepNotReady(
+                    EgressReadinessFailure::MissingRegistration,
+                ),
+            ) if manifest.launch_authority == KrunLaunchAuthority::ProviderOwned => {
+                Ok(SandboxProvisionPhaseObservation::Absent { evidence })
             }
             OciAttachmentBaseReadinessState::NotReady(_) => {
                 Ok(SandboxProvisionPhaseObservation::InProgress { evidence })
@@ -494,7 +562,8 @@ impl KrunSandboxBackend {
             });
         }
         start::ensure_guest_user_helper_available(&self.config, &manifest)?;
-        self.require_non_routable_activation_prerequisites(&manifest)?;
+        let assigned_ip = self.require_non_routable_activation_prerequisites(&manifest)?;
+        self.finalize_provision_private_ingress_bundle(&manifest, assigned_ip)?;
         let runtime_state = self.spawn_creator_and_wait_for_runtime(&mut manifest)?;
         if runtime_state != "running" {
             run_status_checked(&manifest.conmon_launch.start_command)?;
@@ -602,18 +671,8 @@ impl KrunSandboxBackend {
                 )?,
             });
         };
-        let private_endpoints = manifest
-            .spec
-            .port_bindings
-            .iter()
-            .map(|binding| {
-                PublishedEndpoint::new(
-                    binding.name.clone(),
-                    binding.protocol,
-                    std::net::SocketAddr::new(assigned_ip.into(), binding.guest_port),
-                )
-            })
-            .collect::<Vec<_>>();
+        let private_endpoints =
+            private_tsi_readiness_endpoints(&manifest.spec.port_bindings, assigned_ip);
         let application = inspect_application_readiness(
             manifest.status,
             &private_endpoints,
@@ -677,20 +736,30 @@ impl KrunSandboxBackend {
                 ),
             });
         };
-        let reservation_claim = manifest.require_reserved_claim()?.clone();
-        let targets = crate::SandboxProvisionIngressTargets::from_private_attachment(
-            network_plan,
-            &manifest.spec,
-            durable_plan,
-            &config.attachment_id,
-            reservation_claim,
-            assigned_ip.into(),
-        )
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "krun sandbox {sandbox_id} rejected crossed server-ingress targets: {error}"
-            ),
-        })?;
+        if manifest.launch_authority != KrunLaunchAuthority::ProviderOwned {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun sandbox {sandbox_id} requires provider-owned launch authority before server-ingress publication, got {:?}",
+                    manifest.launch_authority
+                ),
+            });
+        }
+        let reservation_claim = config.reservation_claim.clone();
+        let targets =
+            crate::SandboxProvisionIngressTargets::from_private_attachment_with_upstream_port(
+                network_plan,
+                &manifest.spec,
+                durable_plan,
+                &config.attachment_id,
+                reservation_claim,
+                assigned_ip.into(),
+                private_tsi_upstream_port,
+            )
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "krun sandbox {sandbox_id} rejected crossed server-ingress targets: {error}"
+                ),
+            })?;
         Ok(crate::SandboxProvisionIngressTargetObservation::Ready {
             evidence: phase_evidence(
                 "server_ingress_targets_ready",
@@ -709,7 +778,7 @@ impl KrunSandboxBackend {
         })
     }
 
-    fn non_routable_attachment_readiness(
+    pub(super) fn non_routable_attachment_readiness(
         &self,
         manifest: &KrunSandboxManifest,
     ) -> Result<OciAttachmentBaseReadinessState> {
@@ -729,10 +798,21 @@ impl KrunSandboxBackend {
     fn require_non_routable_activation_prerequisites(
         &self,
         manifest: &KrunSandboxManifest,
-    ) -> Result<()> {
+    ) -> Result<std::net::Ipv4Addr> {
         ensure_linux_host("krun")?;
         match self.non_routable_attachment_readiness(manifest)? {
-            OciAttachmentBaseReadinessState::Ready(_) => Ok(()),
+            OciAttachmentBaseReadinessState::Ready(attachment) => {
+                let [assigned_ip] = attachment.assigned_ips() else {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "krun sandbox {} requires exactly one authenticated IPv4 attachment address before activation, found {}",
+                            manifest.handle.id,
+                            attachment.assigned_ips().len()
+                        ),
+                    });
+                };
+                Ok(*assigned_ip)
+            }
             OciAttachmentBaseReadinessState::NotReady(reason) => {
                 Err(SandboxError::OperationFailed {
                     message: format!(
@@ -742,5 +822,27 @@ impl KrunSandboxBackend {
                 })
             }
         }
+    }
+
+    pub(super) fn finalize_provision_private_ingress_bundle(
+        &self,
+        manifest: &KrunSandboxManifest,
+        assigned_ip: std::net::Ipv4Addr,
+    ) -> Result<()> {
+        let mut options = start::krun_bundle_options(
+            &self.config,
+            &manifest.spec,
+            &manifest.image_metadata,
+            &manifest.handle.id,
+            manifest.egress_proxy.as_ref(),
+        )?;
+        options.private_tsi_bind_address = Some(assigned_ip);
+        write_bundle_config(
+            &manifest.bundle_layout,
+            &start::hostname_for(&manifest.spec),
+            &manifest.spec,
+            Some(manifest.network_layout.netns_path.as_path()),
+            &options,
+        )
     }
 }

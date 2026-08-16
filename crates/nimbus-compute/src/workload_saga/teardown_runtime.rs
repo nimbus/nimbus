@@ -52,6 +52,21 @@ impl WorkloadTeardownCancellationToken {
         *self.signal.borrow()
     }
 
+    /// Wait until this caller cancels its interest in retained teardown work.
+    /// Cancellation never revokes work that is already durable or retained by
+    /// the runtime.
+    pub async fn cancelled(&self) {
+        let mut receiver = self.signal.subscribe();
+        if *receiver.borrow() {
+            return;
+        }
+        while receiver.changed().await.is_ok() {
+            if *receiver.borrow() {
+                return;
+            }
+        }
+    }
+
     fn register_waiter(&self) -> Result<watch::Receiver<bool>, WorkloadTeardownSubmissionError> {
         let mut receiver = self.signal.subscribe();
         #[cfg(test)]

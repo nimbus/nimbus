@@ -1,7 +1,5 @@
 use std::io::Write;
 
-#[cfg(test)]
-use super::readiness::running_status;
 use super::readiness::synchronize_handle_status;
 #[cfg(test)]
 use super::start::ensure_guest_user_helper_available;
@@ -9,6 +7,8 @@ use super::start::hostname_for;
 use super::*;
 
 use crate::backends::conmon::lifecycle::RuntimeStateObservation;
+use crate::backends::krun::ingress::private_tsi_readiness_endpoints;
+use crate::backends::oci::network::OciAttachmentBaseReadinessState;
 #[cfg(test)]
 use crate::backends::oci::network::{AttachmentAuxiliaryDisposition, AttachmentTeardownMode};
 
@@ -371,38 +371,43 @@ impl KrunSandboxBackend {
         &self,
         manifest: &KrunSandboxManifest,
     ) -> Result<SandboxStatus> {
-        let application_status = running_status(manifest, self.readiness_probe_provider.as_ref());
-        if self
-            .host_managed_attachment_readiness(
-                manifest,
-                self.authenticated_egress_readiness(manifest)?,
-            )?
-            .is_ready()
-        {
-            Ok(application_status)
-        } else {
-            Ok(SandboxStatus::NotReady)
-        }
+        self.running_status_with_egress_evidence(manifest)
+            .map(|(status, _)| status)
     }
 
     pub(super) fn running_status_with_egress_evidence(
         &self,
         manifest: &KrunSandboxManifest,
     ) -> Result<(SandboxStatus, Vec<u8>)> {
-        let application = crate::backends::readiness_probe::inspect_application_readiness(
-            manifest.status,
-            &super::readiness::published_endpoints(&manifest.spec),
-            super::readiness::readiness_probe_timeout(manifest),
-            self.readiness_probe_provider.as_ref(),
-        );
-        let readiness = self.host_managed_attachment_readiness(
-            manifest,
-            self.authenticated_egress_readiness(manifest)?,
-        )?;
-        let status = if readiness.is_ready() {
-            application.status()
-        } else {
-            SandboxStatus::NotReady
+        let readiness = self.non_routable_attachment_readiness(manifest)?;
+        let (status, application) = match &readiness {
+            OciAttachmentBaseReadinessState::Ready(attachment) => {
+                let Some(assigned_ip) = attachment.assigned_ips().first().copied() else {
+                    return Ok((
+                        SandboxStatus::NotReady,
+                        serde_json::to_vec(&(
+                            "missing_private_address",
+                            format!("{readiness:?}"),
+                        ))
+                        .map_err(|error| SandboxError::OperationFailed {
+                                message: format!(
+                                    "failed to serialize krun readiness observation for {}: {error}",
+                                    manifest.handle.id
+                                ),
+                            })?,
+                    ));
+                };
+                let endpoints =
+                    private_tsi_readiness_endpoints(&manifest.spec.port_bindings, assigned_ip);
+                let application = crate::backends::readiness_probe::inspect_application_readiness(
+                    manifest.status,
+                    &endpoints,
+                    super::readiness::readiness_probe_timeout(manifest),
+                    self.readiness_probe_provider.as_ref(),
+                );
+                (application.status(), Some(application))
+            }
+            OciAttachmentBaseReadinessState::NotReady(_) => (SandboxStatus::NotReady, None),
         };
         let evidence =
             serde_json::to_vec(&(&application, format!("{readiness:?}"))).map_err(|error| {
@@ -1009,6 +1014,7 @@ impl KrunSandboxBackend {
         )
     }
 
+    #[cfg(test)]
     fn host_managed_attachment_readiness(
         &self,
         manifest: &KrunSandboxManifest,

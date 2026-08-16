@@ -2,6 +2,12 @@
 
 use super::*;
 
+enum ProvisionTeardownSettlement {
+    Settled,
+    InspectedAbsent(WorkloadProvisionTeardownAbsence),
+    OwnerReopenedAttachmentSucceeded(WorkloadProvisionDispatchClaim),
+}
+
 pub(super) fn validate_teardown_disposition(
     record: &WorkloadSagaRecord,
 ) -> Result<(), WorkloadSagaError> {
@@ -267,10 +273,15 @@ fn validate_context_for_record(
             WorkloadPhaseDetail::Teardown(detail) => Some(detail.origin()),
             _ => None,
         };
+        let lifecycle_origin_matches = origin.is_none_or(|origin| {
+            absence.claim().attempt().source_phase() == origin
+                || (origin == WorkloadSagaPhase::Observed
+                    && owner_reopened_attachment_claim_context_is_exact(record, absence.claim()))
+        });
         if !matches!(context.cause(), WorkloadTeardownCause::Successor { .. })
             || absence.claim().attempt().generation() != record.active_intent.generation()
             || absence.claim().attempt().desired_digest() != record.active_intent.desired_digest()
-            || origin.is_some_and(|origin| absence.claim().attempt().source_phase() != origin)
+            || !lifecycle_origin_matches
         {
             return Err(WorkloadSagaError::InvalidEvidence(
                 "provision teardown absence is crossed with lifecycle origin",
@@ -525,6 +536,23 @@ impl WorkloadSagaRecord {
         provision_absence: Option<WorkloadProvisionTeardownAbsence>,
         restart_settlement: Option<WorkloadRestartTeardownSettlement>,
     ) -> Result<Self, WorkloadSagaError> {
+        let provision_settlement = provision_absence.map_or(
+            ProvisionTeardownSettlement::Settled,
+            ProvisionTeardownSettlement::InspectedAbsent,
+        );
+        self.commit_teardown_successor_with_settlement(
+            successor,
+            provision_settlement,
+            restart_settlement,
+        )
+    }
+
+    fn commit_teardown_successor_with_settlement(
+        &self,
+        successor: WorkloadSagaIntent,
+        provision_settlement: ProvisionTeardownSettlement,
+        restart_settlement: Option<WorkloadRestartTeardownSettlement>,
+    ) -> Result<Self, WorkloadSagaError> {
         if !self.phase.is_provision() || successor.generation() <= self.active_intent.generation() {
             return Err(WorkloadSagaError::InvalidTransition(
                 "successor teardown requires a higher generation from provision state",
@@ -536,19 +564,39 @@ impl WorkloadSagaRecord {
         };
         let fence =
             WorkloadTeardownSuccessorFence::new(successor.generation(), successor.desired_digest());
-        match (&self.provision_disposition, &provision_absence) {
-            (Some(WorkloadProvisionDisposition::Ready), None) => {}
-            (Some(WorkloadProvisionDisposition::InspectionRequired(claim)), None)
-                if claim.attempt().target_phase() == self.phase => {}
-            (Some(WorkloadProvisionDisposition::InspectionRequired(claim)), Some(absence))
-                if absence.claim() == claim
-                    && absence.evidence().matches_inspection(self, claim) => {}
+        match (&self.provision_disposition, &provision_settlement) {
+            (Some(WorkloadProvisionDisposition::Ready), ProvisionTeardownSettlement::Settled) => {}
+            (
+                Some(WorkloadProvisionDisposition::InspectionRequired(claim)),
+                ProvisionTeardownSettlement::Settled,
+            ) if claim.attempt().target_phase() == self.phase => {}
+            (
+                Some(WorkloadProvisionDisposition::InspectionRequired(claim)),
+                ProvisionTeardownSettlement::Settled,
+            ) if self.phase == WorkloadSagaPhase::Published
+                && claim.attempt().step() == WorkloadProvisionStep::ObservePublication
+                && claim.attempt().source_phase() == WorkloadSagaPhase::Published
+                && claim.attempt().target_phase() == WorkloadSagaPhase::Observed => {}
+            (
+                Some(WorkloadProvisionDisposition::InspectionRequired(claim)),
+                ProvisionTeardownSettlement::InspectedAbsent(absence),
+            ) if absence.claim() == claim && absence.evidence().matches_inspection(self, claim) => {
+            }
+            (
+                Some(WorkloadProvisionDisposition::InspectionRequired(claim)),
+                ProvisionTeardownSettlement::OwnerReopenedAttachmentSucceeded(succeeded),
+            ) if claim == succeeded && owner_reopened_attachment_fence_is_exact(self) => {}
             _ => {
                 return Err(WorkloadSagaError::InvalidTransition(
-                    "successor teardown requires ready provision state or exact inspected absence",
+                    "successor teardown requires settled provision state, terminal publication inspection, or exact inspected absence",
                 ));
             }
         }
+        let provision_absence = match provision_settlement {
+            ProvisionTeardownSettlement::InspectedAbsent(absence) => Some(absence),
+            ProvisionTeardownSettlement::Settled
+            | ProvisionTeardownSettlement::OwnerReopenedAttachmentSucceeded(_) => None,
+        };
         let context = WorkloadTeardownContext::new(
             cause,
             Some(fence),
@@ -703,7 +751,8 @@ impl WorkloadSagaRecord {
     ) -> Result<Self, WorkloadSagaError> {
         let claim = match self.provision_disposition.as_ref() {
             Some(WorkloadProvisionDisposition::InspectionRequired(claim))
-                if claim.attempt().source_phase() == self.phase
+                if (claim.attempt().source_phase() == self.phase
+                    || owner_reopened_attachment_fence_is_exact(self))
                     && evidence.matches_inspection(self, claim) =>
             {
                 claim.clone()
@@ -722,6 +771,35 @@ impl WorkloadSagaRecord {
                 ))?;
         let absence = WorkloadProvisionTeardownAbsence::new(claim, evidence)?;
         self.commit_teardown_successor(successor, Some(absence), None)
+    }
+
+    /// Commit withdrawal after exact inspection confirms that a fenced
+    /// owner-reopened attachment repair completed before its owner exited.
+    pub fn owner_reopened_attachment_success_to_teardown(
+        &self,
+        claim: &WorkloadProvisionDispatchClaim,
+    ) -> Result<Self, WorkloadSagaError> {
+        if !owner_reopened_attachment_fence_is_exact(self)
+            || self
+                .provision_disposition()
+                .and_then(WorkloadProvisionDisposition::claim)
+                != Some(claim)
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "owner-reopened attachment success is crossed with its teardown fence",
+            ));
+        }
+        let successor =
+            self.successor_intent
+                .clone()
+                .ok_or(WorkloadSagaError::InvalidTransition(
+                    "owner-reopened attachment success requires a queued successor",
+                ))?;
+        self.commit_teardown_successor_with_settlement(
+            successor,
+            ProvisionTeardownSettlement::OwnerReopenedAttachmentSucceeded(claim.clone()),
+            None,
+        )
     }
 
     /// Commit withdrawal after a fenced provision success is durably recorded.

@@ -1,24 +1,87 @@
 //! Krun cleanup context for exact startup-quarantined network orphans.
 
-use std::collections::BTreeSet;
-
 use nimbus_network::NetworkAttachmentReservationState;
 
 use super::start::hostname_for;
 use super::teardown::state::KrunStopProgress;
 use super::*;
-use crate::backends::conmon::lifecycle::inspect_runtime_artifact_presence;
 use crate::backends::oci::network::{
     AttachmentAuxiliaryDisposition, AttachmentTeardownMode, OciOrphanCleanupContext,
     OciOrphanCleanupDisposition, OciOrphanCleanupKind, OciOrphanCleanupSubject,
-    ReservedNetworkLaunchAuthority, ReservedNetworkLaunchIdentity,
+    OciRetainedManifestEvidence, ReservedNetworkLaunchAuthority, ReservedNetworkLaunchIdentity,
     reconcile_startup_network_state_with_cleanup,
     release_reserved_network_launch_after_ports_with_terminal_publication,
     retire_terminal_container_ipam_release,
 };
 
 impl KrunSandboxBackend {
-    fn retained_krun_startup_manifest_paths(&self) -> Result<BTreeSet<std::path::PathBuf>> {
+    /// Finish the provider-local half of a release that an older process
+    /// durably acknowledged after canonical network authority was gone.
+    ///
+    /// This prepass runs before orphan classification so an authenticated
+    /// `Released` manifest cannot be retained forever with a launch artifact.
+    fn reconcile_released_krun_manifests(&self) -> Result<()> {
+        let paths = crate::artifact_paths::all_manifest_paths(&self.config.workload_state_root)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to enumerate released Krun manifests under {}: {error}",
+                    self.config.workload_state_root.display()
+                ),
+            })?;
+        for path in paths {
+            let bytes = std::fs::read(&path).map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to read released Krun manifest {}: {error}",
+                    path.display()
+                ),
+            })?;
+            let Ok(snapshot) = serde_json::from_slice::<KrunSandboxManifest>(&bytes) else {
+                continue;
+            };
+            if self
+                .validate_manifest_roots(&snapshot.handle.id, &snapshot)
+                .is_err()
+                || snapshot.conmon_layout.manifest_path != path
+                || snapshot.start_mode != KrunStartMode::Execute
+                || snapshot.network_teardown.release_phase()
+                    != crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+                || snapshot.has_terminal_network_finality()
+            {
+                continue;
+            }
+
+            let _lifecycle = self.lock_launch_lifecycle(&snapshot)?;
+            let mut current = self
+                .read_exact_manifest(&snapshot.spec.tenant_id, &snapshot.handle.id)?
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "released Krun workload {} lost its manifest under the lifecycle lock",
+                        snapshot.handle.id
+                    ),
+                })?;
+            if current.has_terminal_network_finality() {
+                continue;
+            }
+            if current.network_teardown.release_phase()
+                != crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+                || !matches!(
+                    current.execution_teardown.stop(),
+                    KrunStopProgress::ExecutionStopped { .. }
+                )
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "released Krun workload {} crossed its durable stop or network finality while startup held its lifecycle lock",
+                        current.handle.id
+                    ),
+                });
+            }
+            self.finalize_released_network_manifest(&mut current)?;
+        }
+        Ok(())
+    }
+
+    fn retained_krun_startup_manifest_paths(&self) -> Result<Vec<OciRetainedManifestEvidence>> {
         let paths = crate::artifact_paths::all_manifest_paths(&self.config.workload_state_root)
             .map_err(|error| SandboxError::OperationFailed {
                 message: format!(
@@ -26,7 +89,7 @@ impl KrunSandboxBackend {
                     self.config.workload_state_root.display()
                 ),
             })?;
-        let mut retained = BTreeSet::new();
+        let mut retained = Vec::new();
         for path in paths {
             let bytes = std::fs::read(&path).map_err(|error| SandboxError::OperationFailed {
                 message: format!(
@@ -50,7 +113,19 @@ impl KrunSandboxBackend {
                     && manifest.port_leases.is_empty()
                     && manifest.egress_proxy.is_none());
             if authority_free && manifest.conmon_layout.manifest_path == path {
-                retained.insert(path);
+                let evidence = match manifest.network_config.as_ref() {
+                    Some(network_config) if manifest.has_terminal_network_finality() => {
+                        OciRetainedManifestEvidence::terminal(
+                            path,
+                            manifest.spec.tenant_id.clone(),
+                            network_config.attachment_id.clone(),
+                            network_config.reservation_claim.clone(),
+                            network_config.provider_kind(),
+                        )
+                    }
+                    _ => OciRetainedManifestEvidence::claim_only(path),
+                };
+                retained.push(evidence);
             }
         }
         Ok(retained)
@@ -64,6 +139,7 @@ impl KrunSandboxBackend {
                 message: "krun startup cannot reconcile network state without portable attachment authority"
                     .to_owned(),
             })?;
+        self.reconcile_released_krun_manifests()?;
         let retained_manifests = self.retained_krun_startup_manifest_paths()?;
         reconcile_startup_network_state_with_cleanup(
             &self.config.workload_state_root,
@@ -157,7 +233,7 @@ impl KrunSandboxBackend {
                 "exit-status receipt",
             ),
         ] {
-            if inspect_runtime_artifact_presence(path, label)? {
+            if crate::backends::conmon::lifecycle::inspect_runtime_artifact_presence(path, label)? {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "Krun orphan {} retains {label}; runtime absence is not proven",

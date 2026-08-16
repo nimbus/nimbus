@@ -1114,7 +1114,7 @@ fn exact_machine_publish_is_first_routable_effect_and_replay_is_idempotent() {
 }
 
 #[test]
-fn fresh_backend_recovers_planned_pep_and_machine_listener_after_lost_response() {
+fn fresh_backend_inspects_absent_then_recovers_planned_pep_and_machine_listener() {
     let mut fixture = PlanOnlyMachineProvisionFixture::prepared("planned-dead-owner-recovery");
     fixture.attach();
     drop(fixture.published_reservation.take());
@@ -1203,6 +1203,13 @@ fn fresh_backend_recovers_planned_pep_and_machine_listener_after_lost_response()
     drop(contender);
 
     fixture.reopen_backend_after_process_death();
+    assert!(matches!(
+        fixture
+            .backend
+            .inspect_provision_network_attachment(&fixture.id, &fixture.execution_attempt_id)
+            .expect("fresh owner should inspect the retained private attachment"),
+        crate::SandboxProvisionPhaseObservation::Absent { .. }
+    ));
     fixture
         .backend
         .attach_provision_network_with_test_host(&fixture.id, &fixture.execution_attempt_id)

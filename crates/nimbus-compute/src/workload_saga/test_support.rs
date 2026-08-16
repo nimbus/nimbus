@@ -450,3 +450,101 @@ pub(crate) fn scheduled_restart_record(label: &str, not_before: u64) -> Workload
         .expect("withheld restart fixture should enter quiescence");
     succeed_restart_command(quiescence, "restart-quiesced")
 }
+
+pub(crate) fn completed_restart_record(label: &str) -> WorkloadSagaRecord {
+    let mut current = scheduled_restart_record(label, 0);
+    let request_id = current
+        .restart_state()
+        .active()
+        .expect("restart fixture should remain active")
+        .admission()
+        .request_id()
+        .clone();
+    let due = current
+        .restart_state()
+        .active()
+        .expect("restart fixture should remain active")
+        .admission()
+        .not_before_unix_millis();
+    current = current
+        .advance_scheduled_restart(&request_id, due)
+        .expect("due restart fixture should advance");
+    for evidence in [
+        "restart-prepared",
+        "restart-attached",
+        "restart-prerequisites",
+        "restart-activated",
+        "restart-ready",
+    ] {
+        current = succeed_restart_command(current, evidence);
+    }
+    current = current
+        .advance_restart_without_effect(&request_id)
+        .expect("withheld restart publication should advance");
+    current
+        .advance_restart_without_effect(&request_id)
+        .expect("withheld restart observation should complete")
+}
+
+pub(crate) fn completed_published_restart_record(label: &str) -> WorkloadSagaRecord {
+    let record = super::recovery::tests::provision_record(
+        label,
+        WorkloadSagaPhase::Observed,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let input = WorkloadRestartAdmissionInput {
+        expected_revision: record.revision(),
+        trigger: WorkloadRestartTrigger::Explicit,
+        inspection_version: None,
+        request_id: WorkloadRestartRequestId::for_explicit(
+            record.saga_id(),
+            record.active_intent().source().source_generation(),
+            "published-owner-reopen",
+        )
+        .expect("published restart request identity should validate"),
+        not_before_unix_millis: WorkloadRestartNotBeforeUnixMillis::new(0),
+    };
+    let WorkloadRestartAdmissionUpdate::Transition(admitted) = record
+        .admit_restart(input)
+        .expect("published restart fixture should admit")
+    else {
+        panic!("published restart fixture admission should transition");
+    };
+    let request_id = admitted
+        .restart_state()
+        .active()
+        .expect("published restart fixture should be active")
+        .admission()
+        .request_id()
+        .clone();
+    let mut current = admitted
+        .advance_restart_without_effect(&request_id)
+        .expect("published restart fixture should fence resolution first");
+    for evidence in ["restart-withdrawn", "restart-quiesced"] {
+        current = succeed_restart_command(current, evidence);
+    }
+    let due = current
+        .restart_state()
+        .active()
+        .expect("published restart fixture should remain active")
+        .admission()
+        .not_before_unix_millis();
+    current = current
+        .advance_scheduled_restart(&request_id, due)
+        .expect("published restart fixture should become due");
+    for evidence in [
+        "restart-prepared",
+        "restart-attached",
+        "restart-prerequisites",
+        "restart-activated",
+        "restart-ready",
+        "restart-published",
+        "restart-observed",
+    ] {
+        current = succeed_restart_command(current, evidence);
+    }
+    assert!(current.restart_state().active().is_none());
+    assert_eq!(current.phase(), WorkloadSagaPhase::Observed);
+    current
+}

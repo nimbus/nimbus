@@ -209,6 +209,17 @@ impl WorkloadSagaCoordinator {
         Ok(withdrawal)
     }
 
+    /// Persist the inspection boundary that a fresh composition owner needs
+    /// before it can recreate process-bound publication effects.
+    pub(crate) async fn reopen_observed_publication_for_owner_recovery(
+        &self,
+        observed: &WorkloadSagaRecord,
+    ) -> Result<WorkloadSagaRecord, WorkloadSagaStoreError> {
+        let reopened = observed.reopen_observed_publication_for_owner_recovery()?;
+        self.commit_loaded(Some(observed), reopened.clone()).await?;
+        Ok(reopened)
+    }
+
     /// Commit the exact retained definite provision failure as the sole
     /// durable compensation cause. A lost response or competing coordinator
     /// is adopted only after an exact read authenticates the same lifecycle.

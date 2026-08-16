@@ -3,6 +3,9 @@
 use std::cell::RefCell;
 
 use crate::backends::CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY;
+use crate::backends::conmon::lifecycle::{
+    delete_runtime_and_confirm_absent, inspect_runtime_artifact_presence, remove_if_exists,
+};
 use crate::backends::oci::network::{
     AttachmentAuxiliaryDisposition, AttachmentReleaseActions,
     HostManagedAttachmentCommandInspection, HostManagedAttachmentCommandInspectionError,
@@ -17,8 +20,8 @@ use crate::{
 
 use super::teardown::state::ContainerNetworkStopRequirementError;
 use super::{
-    ContainerLifecycleCoordinator, ContainerNetworkPublicationMode, ContainerSandboxBackend,
-    ContainerSandboxManifest, ContainerStartMode, hostname_for,
+    ContainerCreatorHandoffState, ContainerLifecycleCoordinator, ContainerNetworkPublicationMode,
+    ContainerSandboxBackend, ContainerSandboxManifest, ContainerStartMode, hostname_for,
 };
 
 mod forwarded;
@@ -372,6 +375,11 @@ impl ContainerSandboxBackend {
             }
         }
         progress.borrow().validate()?;
+        if command.operation() == SandboxNetworkTeardownOperation::Release {
+            let mut terminal = context.clone();
+            terminal.network_teardown = progress.borrow().clone();
+            self.finalize_released_network_manifest(&mut terminal)?;
+        }
         succeeded(
             match composition {
                 NetworkTeardownComposition::HostManaged => "container_host_attachment_teardown",
@@ -396,6 +404,87 @@ impl ContainerSandboxBackend {
             probe.exit_if_reached(progress);
         }
         Ok(())
+    }
+
+    /// Finish provider-local cleanup only after durable network release.
+    ///
+    /// Durable `Released` authorizes the idempotent pointer and artifact
+    /// removals. Terminal manifest publication follows those effects, so a
+    /// crash at either cut remains inspectable and retryable without repeating
+    /// network release.
+    pub(super) fn finalize_released_network_manifest(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+    ) -> crate::Result<()> {
+        manifest.network_teardown.validate()?;
+        if manifest.network_teardown.release_phase()
+            != crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "Container workload {} cannot finalize provider artifacts before durable network release",
+                    manifest.handle.id
+                ),
+            });
+        }
+        if manifest.has_terminal_network_finality() {
+            return Ok(());
+        }
+        if !manifest.creator_handoff.authorizes_runtime_cleanup() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "Container workload {} cannot finalize released provider artifacts while creator handoff {:?} may still create effects",
+                    manifest.handle.id, manifest.creator_handoff
+                ),
+            });
+        }
+        self.finalize_released_runtime_artifacts(manifest)?;
+        self.remove_runner_manifest_pointer(manifest)?;
+        self.cleanup_manifest_launch_artifacts(manifest)?;
+        manifest.launch_artifact = None;
+        manifest.launch_reservation_claim = None;
+        manifest.network_cleanup_complete = true;
+        manifest.shutdown_requested = true;
+        super::synchronize_handle_status(manifest, crate::SandboxStatus::Stopped);
+        self.write_existing_workload_manifest(manifest)
+    }
+
+    fn finalize_released_runtime_artifacts(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+    ) -> crate::Result<()> {
+        if manifest.creator_handoff == ContainerCreatorHandoffState::NotSpawned {
+            for (path, label) in [
+                (&manifest.conmon_layout.pidfile, "runtime pidfile"),
+                (&manifest.conmon_layout.conmon_pidfile, "conmon pidfile"),
+                (
+                    &manifest.conmon_layout.exit_status_file,
+                    "exit-status receipt",
+                ),
+            ] {
+                if inspect_runtime_artifact_presence(path, label)? {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "Container workload {} is marked never spawned but retains {label}; provider finality remains fenced",
+                            manifest.handle.id
+                        ),
+                    });
+                }
+            }
+            return Ok(());
+        }
+
+        let proof = self.authenticate_creator_quiescence(manifest)?;
+        delete_runtime_and_confirm_absent(
+            &manifest.conmon_launch.delete_command,
+            &manifest.conmon_launch.state_command,
+            manifest.handle.id.as_str(),
+        )?;
+        super::restart::confirm_source_conmon_absence(manifest, &proof, false)?;
+        self.persist_creator_quiescence(manifest, proof)?;
+        remove_if_exists(&manifest.conmon_layout.pidfile)?;
+        remove_if_exists(&manifest.conmon_layout.conmon_pidfile)?;
+        remove_if_exists(&manifest.conmon_layout.exit_status_file)
     }
 
     fn inspect_network_teardown_inner(
@@ -439,6 +528,14 @@ impl ContainerSandboxBackend {
         match inspected.inspect_and_rebase_command(command, provider_observation) {
             Ok(HostManagedAttachmentCommandInspection::ExactTerminalSuccess) => {
                 self.require_forwarded_publication_absence_if_selected(&manifest, composition)?;
+                if command.operation() == SandboxNetworkTeardownOperation::Release
+                    && !manifest.has_terminal_network_finality()
+                {
+                    return Ok(SandboxNetworkTeardownObservation::RetryAuthorized {
+                        evidence: b"Container network authority is released; provider-local artifact and terminal-manifest finalization remains authorized"
+                            .to_vec(),
+                    });
+                }
                 succeeded(
                     match composition {
                         NetworkTeardownComposition::HostManaged => {

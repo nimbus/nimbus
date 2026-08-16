@@ -9,6 +9,7 @@ use nimbus_network::{NetworkCapabilitySourceDigest, NetworkResourcePhase, PortLe
 
 use super::*;
 use crate::backends::CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY;
+use crate::backends::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
 use crate::backends::container::runtime::machine_port_publication::{
     MachinePortPublicationAction, MachinePortPublicationCheckpoint, MachinePortPublicationObserver,
 };
@@ -23,7 +24,7 @@ use crate::{
     ProviderCommandClaim, ProviderCommandObservation, SandboxNetworkTeardownCommand,
     SandboxNetworkTeardownCommandInput, SandboxNetworkTeardownIdentity,
     SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownObservation,
-    SandboxNetworkTeardownOperation,
+    SandboxNetworkTeardownOperation, SandboxStatus,
 };
 
 #[path = "network_teardown/fresh_process.rs"]
@@ -550,6 +551,47 @@ fn runtime_authority(manifest: &ContainerSandboxManifest) -> Vec<u8> {
     .expect("runtime authority should serialize")
 }
 
+fn retain_stale_runtime_artifacts(
+    fixture: &TeardownFixture,
+    manifest: &mut ContainerSandboxManifest,
+    label: &str,
+) -> [PathBuf; 3] {
+    manifest.creator_handoff = ContainerCreatorHandoffState::Quiesced {
+        proof: CreatorQuiescenceProof::dead_contained(CreatorAttemptReceipt::for_test(format!(
+            "container-network-{label}"
+        ))),
+    };
+    manifest.conmon_launch.delete_command = CommandSpec::new("/usr/bin/true");
+    manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([
+        "-c".to_owned(),
+        format!(
+            "printf '%s\\n' 'container `{0}` does not exist: open `/run/crun/{0}/status`: No such file or directory' >&2; exit 1",
+            manifest.handle.id
+        ),
+    ]);
+    fixture
+        .backend
+        .write_existing_workload_manifest(manifest)
+        .expect("Container release fixture should persist exact provider absence");
+
+    let paths = [
+        manifest.conmon_layout.pidfile.clone(),
+        manifest.conmon_layout.conmon_pidfile.clone(),
+        manifest.conmon_layout.exit_status_file.clone(),
+    ];
+    for path in &paths {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("runtime artifact parent should create");
+        }
+    }
+    std::fs::write(&paths[0], format!("{}\n", i32::MAX))
+        .expect("stale runtime pidfile should persist");
+    std::fs::write(&paths[1], format!("{}\n", i32::MAX))
+        .expect("dead conmon receipt should persist");
+    std::fs::write(&paths[2], b"0\n").expect("exit-status receipt should persist");
+    paths
+}
+
 #[test]
 fn forwarded_container_attachment_teardown_accepts_composite_stop_then_releases_machine_ports() {
     let mut forwarded = ForwardedNetworkFixture::attached("composite-stop", true);
@@ -1000,6 +1042,9 @@ fn container_network_teardown_detaches_retained_then_releases_in_order() {
             if observation.kind() == ProviderCommandObservationKind::Succeeded
     ));
 
+    let mut retained = fixture.manifest();
+    let runtime_artifacts =
+        retain_stale_runtime_artifacts(&fixture, &mut retained, "direct-release");
     let release = network_command(&fixture, &stop, SandboxNetworkTeardownOperation::Release, 1);
     let released = execute_network(&fixture, &release);
     assert_eq!(
@@ -1031,6 +1076,17 @@ fn container_network_teardown_detaches_retained_then_releases_in_order() {
     assert_eq!(
         attachment.resource().phase(),
         NetworkResourcePhase::Released
+    );
+    assert_eq!(terminal.status, SandboxStatus::Stopped);
+    assert_eq!(terminal.handle.status, SandboxStatus::Stopped);
+    assert!(terminal.shutdown_requested);
+    assert!(terminal.launch_artifact.is_none());
+    assert!(terminal.launch_reservation_claim.is_none());
+    assert!(terminal.network_cleanup_complete);
+    assert!(runtime_artifacts.iter().all(|path| !path.exists()));
+    assert!(
+        terminal.has_terminal_network_finality(),
+        "ReleaseNetwork must not report success before provider-local artifact cleanup and terminal manifest publication"
     );
 }
 

@@ -5,8 +5,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use serde_json::Value;
 
-use super::binaries::resolve_binary;
 use super::*;
+use crate::provider_binaries::resolve_binary;
 
 pub(super) async fn machine_api_bootc_status(
     State(state): State<MachineApiState>,

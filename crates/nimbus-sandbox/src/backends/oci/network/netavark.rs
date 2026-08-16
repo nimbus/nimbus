@@ -6,6 +6,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::net::Ipv4Addr;
 use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -31,6 +33,19 @@ use super::layout::{OciNetworkConfig, OciNetworkLayout};
 use super::{
     DEFAULT_CONTAINER_INTERFACE_NAME, NETAVARK_OPTION_ISOLATE, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
 };
+
+#[cfg(target_os = "linux")]
+const NETAVARK_LINK_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NetavarkLinkObservation {
+    Present,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Absent,
+    Unknown {
+        reason: String,
+    },
+}
 
 #[cfg(test)]
 #[path = "netavark/recovery_tests.rs"]
@@ -149,14 +164,20 @@ pub(super) fn execute_prepared_container_network_teardown(
     operation: &OciNetavarkOperation<'_>,
     prepared: PreparedNetavarkTeardown,
 ) -> Result<()> {
-    execute_prepared_container_network_teardown_with_runner(
+    let mut runner =
+        |action: &str, assigned_ips: &[Ipv4Addr]| run_netavark(action, operation, assigned_ips);
+    let mut inspect_deleting =
+        |netns_path: &Path| inspect_ambiguous_netavark_delete(operation, netns_path);
+    execute_teardown_plan_with_inspector(
         ipam_authority,
         operation.layout,
         prepared.plan,
-        |action, assigned_ips| run_netavark(action, operation, assigned_ips),
+        &mut runner,
+        &mut inspect_deleting,
     )
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 fn execute_prepared_container_network_teardown_with_runner(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
@@ -401,6 +422,18 @@ fn execute_teardown_plan(
     plan: NetavarkTeardownPlan,
     runner: &mut impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
 ) -> Result<()> {
+    execute_teardown_plan_with_inspector(ipam_authority, layout, plan, runner, &mut |_| {
+        NetavarkLinkObservation::Present
+    })
+}
+
+fn execute_teardown_plan_with_inspector(
+    ipam_authority: &OciIpamAuthority,
+    layout: &OciNetworkLayout,
+    plan: NetavarkTeardownPlan,
+    runner: &mut impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
+    inspect_deleting: &mut impl FnMut(&Path) -> NetavarkLinkObservation,
+) -> Result<()> {
     let claim = match plan {
         NetavarkTeardownPlan::AlreadyDetached => {
             require_netavark_status_absent(&layout.status_path)?;
@@ -426,16 +459,40 @@ fn execute_teardown_plan(
                         ),
                     });
                 }
-                Ok(_) => {
+                Ok(metadata) if !metadata.file_type().is_file() => {
                     return Err(SandboxError::OperationFailed {
                         message: format!(
-                            "Netavark teardown for attachment {} already crossed its pre-effect \
-                             fence while provider evidence remains present; refusing a duplicate \
-                             delete",
+                            "persistent network namespace {} is not an exact regular artifact \
+                             while reconciling Netavark delete for attachment {}",
+                            layout.netns_path.display(),
                             claim.attachment_id()
                         ),
                     });
                 }
+                Ok(_) => match inspect_deleting(&layout.netns_path) {
+                    NetavarkLinkObservation::Absent => {
+                        confirm_netavark_provider_detached(ipam_authority, layout, &claim)?;
+                    }
+                    NetavarkLinkObservation::Present => {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "Netavark teardown for attachment {} already crossed its \
+                                 pre-effect fence while its exact container interface remains \
+                                 present; refusing a duplicate delete",
+                                claim.attachment_id()
+                            ),
+                        });
+                    }
+                    NetavarkLinkObservation::Unknown { reason } => {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "cannot authenticate ambiguous Netavark delete for attachment {}: \
+                                 {reason}",
+                                claim.attachment_id()
+                            ),
+                        });
+                    }
+                },
             }
             claim
         }
@@ -467,6 +524,124 @@ fn execute_teardown_plan(
     };
     remove_netavark_status(&layout.status_path)?;
     complete_netavark_teardown(ipam_authority, layout, &claim)
+}
+
+fn inspect_ambiguous_netavark_delete(
+    operation: &OciNetavarkOperation<'_>,
+    netns_path: &Path,
+) -> NetavarkLinkObservation {
+    if !operation.port_bindings.is_empty() {
+        return NetavarkLinkObservation::Unknown {
+            reason: "host port mappings require provider-specific cleanup evidence beyond \
+                     container-interface absence"
+                .to_owned(),
+        };
+    }
+    if operation.config.enable_dns {
+        return NetavarkLinkObservation::Unknown {
+            reason: "Netavark DNS publication requires provider-specific cleanup evidence beyond \
+                     container-interface absence"
+                .to_owned(),
+        };
+    }
+    inspect_netavark_container_interface(netns_path, DEFAULT_CONTAINER_INTERFACE_NAME)
+}
+
+#[cfg(target_os = "linux")]
+fn inspect_netavark_container_interface(
+    netns_path: &Path,
+    interface_name: &str,
+) -> NetavarkLinkObservation {
+    use std::process::Command;
+
+    let mut command = Command::new("nsenter");
+    command
+        .arg(format!("--net={}", netns_path.display()))
+        .arg("--")
+        .arg("ip")
+        .arg("-j")
+        .arg("link")
+        .arg("show")
+        .arg("dev")
+        .arg(interface_name)
+        .env("LC_ALL", "C");
+    match crate::backends::oci::command::run_bounded_command_output(
+        &mut command,
+        NETAVARK_LINK_INSPECTION_TIMEOUT,
+    ) {
+        Ok(output) => classify_netavark_link_command_output(
+            output.status.success(),
+            &output.stdout,
+            &output.stderr,
+            interface_name,
+        ),
+        Err(error) => NetavarkLinkObservation::Unknown {
+            reason: format!(
+                "bounded inspection of interface {interface_name} in {} failed: {error}",
+                netns_path.display()
+            ),
+        },
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn inspect_netavark_container_interface(
+    netns_path: &Path,
+    interface_name: &str,
+) -> NetavarkLinkObservation {
+    NetavarkLinkObservation::Unknown {
+        reason: format!(
+            "interface {interface_name} in {} requires Linux network-namespace inspection",
+            netns_path.display()
+        ),
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn classify_netavark_link_command_output(
+    success: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+    interface_name: &str,
+) -> NetavarkLinkObservation {
+    if success {
+        let interfaces = match serde_json::from_slice::<Vec<serde_json::Value>>(stdout) {
+            Ok(interfaces) => interfaces,
+            Err(error) => {
+                return NetavarkLinkObservation::Unknown {
+                    reason: format!(
+                        "ip returned malformed JSON for interface {interface_name}: {error}"
+                    ),
+                };
+            }
+        };
+        return if interfaces.len() == 1
+            && interfaces[0].get("ifname").and_then(Value::as_str) == Some(interface_name)
+        {
+            NetavarkLinkObservation::Present
+        } else {
+            NetavarkLinkObservation::Unknown {
+                reason: format!(
+                    "ip returned a substituted or non-exact interface set for {interface_name}"
+                ),
+            }
+        };
+    }
+
+    let stdout = String::from_utf8_lossy(stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
+    let expected_device = format!("Device \"{interface_name}\" does not exist.");
+    let expected_missing = format!("Cannot find device \"{interface_name}\"");
+    if stdout.is_empty() && (stderr == expected_device || stderr == expected_missing) {
+        NetavarkLinkObservation::Absent
+    } else {
+        NetavarkLinkObservation::Unknown {
+            reason: format!(
+                "ip could not authenticate interface {interface_name}: {}",
+                render_command_failure(stdout.as_bytes(), stderr.as_bytes())
+            ),
+        }
+    }
 }
 
 fn remove_netavark_status(path: &Path) -> Result<()> {

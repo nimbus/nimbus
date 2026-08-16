@@ -48,10 +48,12 @@ impl OciAttachmentBaseReadinessEvidence {
 }
 
 impl OciAttachmentReadinessEvidence {
+    #[cfg(test)]
     pub(crate) fn observation(&self) -> &NetworkObservation {
         &self.observation
     }
 
+    #[cfg(test)]
     pub(crate) fn assigned_ips(&self) -> &[Ipv4Addr] {
         &self.assigned_ips
     }
@@ -92,6 +94,7 @@ pub(crate) enum OciAttachmentBaseReadinessState {
 }
 
 impl OciAttachmentReadinessState {
+    #[cfg(test)]
     pub(crate) fn is_ready(&self) -> bool {
         match self {
             Self::Ready(evidence) => {

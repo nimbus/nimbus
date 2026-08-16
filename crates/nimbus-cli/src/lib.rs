@@ -26,6 +26,7 @@ mod node_service;
 mod object_storage;
 mod path_boundary;
 mod policy;
+mod provider_binaries;
 mod provision;
 mod run;
 mod sandbox;

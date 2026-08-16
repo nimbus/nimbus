@@ -5,7 +5,11 @@ use nimbus_sandbox::{
     SandboxStatus,
 };
 
-use super::{authenticated_restart_exit, build_restart_runtime};
+use super::{
+    authenticated_restart_exit, build_restart_runtime,
+    completed_restart_requires_resolution_reconciliation,
+};
+use crate::workload_saga::test_support;
 
 fn inspection(
     execution: SandboxExecutionObservation,
@@ -77,6 +81,24 @@ fn automatic_restart_ignores_non_exit_provider_observations() {
         },
     );
     assert_eq!(authenticated_restart_exit(&present), Ok(None));
+}
+
+#[test]
+fn completed_restart_without_an_active_epoch_requires_resolution_reconciliation() {
+    let observed = test_support::restart_observed_record(
+        "runtime-reconcile-observed",
+        nimbus_workloads::WorkloadRestartPolicy::Always { max_restarts: 1 },
+    );
+    assert!(!completed_restart_requires_resolution_reconciliation(
+        &observed
+    ));
+
+    let completed = test_support::completed_restart_record("runtime-reconcile-completed");
+    assert!(completed.restart_state().active().is_none());
+    assert!(completed.restart_state().last_completed().is_some());
+    assert!(completed_restart_requires_resolution_reconciliation(
+        &completed
+    ));
 }
 
 #[test]

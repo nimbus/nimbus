@@ -57,9 +57,9 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::binaries::default_guest_helper_binary_dirs;
 #[cfg(test)]
 pub(crate) use self::listener::bind_direct_listener;
+pub(crate) use crate::provider_binaries::default_container_provider_binary_dirs as default_guest_helper_binary_dirs;
 
 use self::binaries::apply_resolved_runtime_paths;
 use self::listener::resolve_machine_api_listener;

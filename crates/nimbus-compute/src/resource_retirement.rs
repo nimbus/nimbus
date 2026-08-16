@@ -5,6 +5,7 @@
 //! restart settlement, exact five-capability teardown, and finalization.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use nimbus_core::{Error, TenantId, WorkloadId};
 use nimbus_network::NetworkResourceGeneration;
@@ -33,6 +34,8 @@ use crate::workload_saga::{
     WorkloadTeardownCancellationToken, WorkloadTeardownRunDisposition, WorkloadTeardownRuntime,
     WorkloadTeardownSubmissionError,
 };
+
+const SERVICE_RETIREMENT_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 /// Exact native service retirement response facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +138,52 @@ impl ComputeResourceRetirer {
         context: &TenantIsolationContext,
         service_name: &str,
     ) -> Result<SandboxServiceRetirementOutcome, ComputeResourceRetirementError> {
+        self.submit_service_teardown_once(
+            context,
+            service_name,
+            &WorkloadTeardownCancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Retire one service and retain foreground ownership while durable
+    /// provision, restart, or teardown work reports a safe pending state.
+    ///
+    /// Every retry reopens exact source and saga truth through the existing
+    /// one-shot path. Definite failures and `CleanupPending` remain terminal;
+    /// caller cancellation detaches only this waiter and leaves durable work
+    /// available for a later exact replay.
+    pub async fn submit_service_teardown_until_terminal(
+        &self,
+        context: &TenantIsolationContext,
+        service_name: &str,
+        cancellation: &WorkloadTeardownCancellationToken,
+    ) -> Result<SandboxServiceRetirementOutcome, ComputeResourceRetirementError> {
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(cancelled_retirement());
+            }
+            match self
+                .submit_service_teardown_once(context, service_name, cancellation)
+                .await
+            {
+                Ok(outcome) => return Ok(outcome),
+                Err(error) if foreground_retirement_can_retry(&error) => {}
+                Err(error) => return Err(error),
+            }
+            tokio::select! {
+                () = cancellation.cancelled() => return Err(cancelled_retirement()),
+                () = tokio::time::sleep(SERVICE_RETIREMENT_RETRY_DELAY) => {}
+            }
+        }
+    }
+
+    async fn submit_service_teardown_once(
+        &self,
+        context: &TenantIsolationContext,
+        service_name: &str,
+        cancellation: &WorkloadTeardownCancellationToken,
+    ) -> Result<SandboxServiceRetirementOutcome, ComputeResourceRetirementError> {
         let prepared = self
             .services
             .prepare_sandbox_service_provision_source(context.tenant_id(), service_name)?;
@@ -184,7 +233,7 @@ impl ComputeResourceRetirer {
             return Err(error);
         }
         let (claim, run) = self
-            .drive_recorded_teardown(&key, loaded, claim, joined_provision)
+            .drive_recorded_teardown(&key, loaded, claim, joined_provision, cancellation)
             .await?;
         authenticate_recorded_stop(&run)?;
         let terminal_execution = recorded_terminal_execution(&run)?;
@@ -260,8 +309,9 @@ impl ComputeResourceRetirer {
             self.release_unadvanced_retirement_claim(&key, &claim)?;
             return Err(error);
         }
+        let cancellation = WorkloadTeardownCancellationToken::new();
         let (claim, run) = self
-            .drive_recorded_teardown(&key, loaded, claim, joined_provision)
+            .drive_recorded_teardown(&key, loaded, claim, joined_provision, &cancellation)
             .await?;
         authenticate_recorded_stop(&run)?;
         let snapshot = self
@@ -353,8 +403,9 @@ impl ComputeResourceRetirer {
             self.release_unadvanced_retirement_claim(&key, &claim)?;
             return Err(error);
         }
+        let cancellation = WorkloadTeardownCancellationToken::new();
         let (claim, run) = self
-            .drive_recorded_teardown(&key, loaded, claim, joined_provision)
+            .drive_recorded_teardown(&key, loaded, claim, joined_provision, &cancellation)
             .await?;
         authenticate_recorded_stop(&run)?;
         let definition = self
@@ -434,6 +485,7 @@ impl ComputeResourceRetirer {
         loaded: WorkloadSagaRecord,
         claim: WorkloadSourceRetirementClaim,
         joined_provision: Option<WorkloadProvisionOutcome>,
+        cancellation: &WorkloadTeardownCancellationToken,
     ) -> Result<(WorkloadSourceRetirementClaim, WorkloadSagaRecord), ComputeResourceRetirementError>
     {
         let claim = self.services.advance_source_retirement_claim_saga_fence(
@@ -451,10 +503,9 @@ impl ComputeResourceRetirer {
             .await?;
         self.settle_issued_restart_before_native_teardown(key)
             .await?;
-        let cancellation = WorkloadTeardownCancellationToken::default();
         let run = self
             .teardown_runtime
-            .submit(key.clone(), &cancellation)
+            .submit(key.clone(), cancellation)
             .await?;
         if run.disposition() != WorkloadTeardownRunDisposition::Completed
             || run.record().phase() != WorkloadSagaPhase::Recorded
@@ -574,6 +625,7 @@ impl ComputeResourceRetirer {
                         .commit_provision_settlement_teardown(outcome.record())
                         .await?;
                 }
+                WorkloadProvisionRunDisposition::SuccessorSettlementCommitted => {}
                 WorkloadProvisionRunDisposition::Observed
                 | WorkloadProvisionRunDisposition::DefiniteFailure => {}
             }
@@ -666,6 +718,21 @@ impl ComputeState {
             teardown_runtime,
         ))
     }
+}
+
+fn foreground_retirement_can_retry(error: &ComputeResourceRetirementError) -> bool {
+    matches!(
+        error,
+        ComputeResourceRetirementError::ProvisionSettlementPending
+            | ComputeResourceRetirementError::RestartSettlementPending
+            | ComputeResourceRetirementError::TeardownPending(
+                WorkloadTeardownRunDisposition::Waiting
+            )
+    )
+}
+
+fn cancelled_retirement() -> ComputeResourceRetirementError {
+    ComputeResourceRetirementError::Teardown(WorkloadTeardownSubmissionError::Cancelled)
 }
 
 fn workload_key(tenant_id: &TenantId, stable_id: &str) -> Result<WorkloadSagaKey, Error> {

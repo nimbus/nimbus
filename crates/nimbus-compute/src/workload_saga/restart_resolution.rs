@@ -67,6 +67,18 @@ impl WorkloadRestartResolutionFence for ServiceManagerWorkloadRestartResolutionF
                     "restart resolution restore requires completed restart evidence".to_owned(),
                 )
             })?;
+            if !self
+                .manager
+                .service_resolution_withdrawal_requires_restore(
+                    record.key().tenant_id(),
+                    source.source_identity().stable_name(),
+                    source.source_generation().as_u64(),
+                    source.resource_version().as_str(),
+                    completed.admission().attempt_id(),
+                )?
+            {
+                return Ok(());
+            }
             match self.projector.project_observed_record(record).await {
                 WorkloadProjectionState::Projected => {}
                 WorkloadProjectionState::Pending(reason) => {

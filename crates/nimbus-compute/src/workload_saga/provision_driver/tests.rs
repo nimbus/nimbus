@@ -48,6 +48,9 @@ enum ProviderBehavior {
     InProgressAt(WorkloadProvisionStep),
     AmbiguousAt(WorkloadProvisionStep),
     AbsentWhenInspectedAt(WorkloadProvisionStep),
+    AbsentOnceWhenInspectedAt(WorkloadProvisionStep),
+    OwnerReopenedProcessEffectsAbsentOnce,
+    OwnerReopenedProcessEffectsAbsentOnceWithRepublishRetry,
     AmbiguousExecuteAbsentInspectAt(WorkloadProvisionStep),
 }
 
@@ -147,6 +150,82 @@ impl RecordingProvider {
                 WorkloadProvisionInspectionResult::Absent {
                     evidence: command
                         .absence_evidence(WorkloadOwnerEvidenceDigest::sha256("fixture absent")),
+                }
+            }
+            ProviderBehavior::AbsentOnceWhenInspectedAt(step)
+                if step == command.step()
+                    && command.mode() == WorkloadProvisionCommandMode::Inspect
+                    && self
+                        .calls
+                        .lock()
+                        .expect("provider call lock is healthy")
+                        .iter()
+                        .filter(|call| call.step == step)
+                        .count()
+                        == 1 =>
+            {
+                WorkloadProvisionInspectionResult::Absent {
+                    evidence: command.absence_evidence(WorkloadOwnerEvidenceDigest::sha256(
+                        "fixture process-bound effect absent",
+                    )),
+                }
+            }
+            ProviderBehavior::OwnerReopenedProcessEffectsAbsentOnce
+            | ProviderBehavior::OwnerReopenedProcessEffectsAbsentOnceWithRepublishRetry
+                if matches!(
+                    command.step(),
+                    WorkloadProvisionStep::AttachNetwork
+                        | WorkloadProvisionStep::ObservePublication
+                ) && command.mode() == WorkloadProvisionCommandMode::Inspect
+                    && self
+                        .calls
+                        .lock()
+                        .expect("provider call lock is healthy")
+                        .iter()
+                        .filter(|call| call.step == command.step())
+                        .count()
+                        == 1 =>
+            {
+                WorkloadProvisionInspectionResult::Absent {
+                    evidence: command.absence_evidence(WorkloadOwnerEvidenceDigest::sha256(
+                        "fixture owner-reopened process effect absent",
+                    )),
+                }
+            }
+            ProviderBehavior::OwnerReopenedProcessEffectsAbsentOnceWithRepublishRetry
+                if command.step() == WorkloadProvisionStep::Publish
+                    && command.mode() == WorkloadProvisionCommandMode::Execute
+                    && self
+                        .calls
+                        .lock()
+                        .expect("provider call lock is healthy")
+                        .iter()
+                        .filter(|call| call.step == WorkloadProvisionStep::Publish)
+                        .count()
+                        == 1 =>
+            {
+                WorkloadProvisionInspectionResult::Ambiguous {
+                    attempt_id: command.attempt_id().clone(),
+                    dispatch_epoch: command.dispatch_epoch(),
+                    provider_target: command.provider_target().clone(),
+                }
+            }
+            ProviderBehavior::OwnerReopenedProcessEffectsAbsentOnceWithRepublishRetry
+                if command.step() == WorkloadProvisionStep::Publish
+                    && command.mode() == WorkloadProvisionCommandMode::Inspect
+                    && self
+                        .calls
+                        .lock()
+                        .expect("provider call lock is healthy")
+                        .iter()
+                        .filter(|call| call.step == WorkloadProvisionStep::Publish)
+                        .count()
+                        == 2 =>
+            {
+                WorkloadProvisionInspectionResult::Absent {
+                    evidence: command.absence_evidence(WorkloadOwnerEvidenceDigest::sha256(
+                        "fixture first owner-reopened publication attempt absent",
+                    )),
                 }
             }
             ProviderBehavior::AmbiguousExecuteAbsentInspectAt(step)
@@ -682,6 +761,292 @@ async fn ambiguous_publication_inspects_before_retry() {
             },
         ]
     );
+}
+
+#[tokio::test]
+async fn fresh_owner_republishes_once_after_exact_observation_absence() {
+    let initial = provision_record(
+        "fresh-owner-republication",
+        WorkloadSagaPhase::IntentCommitted,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let store = DurableTestStore::with_record(initial.clone());
+    let provider = RecordingProvider::new(ProviderBehavior::AbsentOnceWhenInspectedAt(
+        WorkloadProvisionStep::ObservePublication,
+    ));
+    let driver = driver(store, &initial, provider.clone());
+
+    let run = driver
+        .resume(initial.key())
+        .await
+        .expect("one exact publication absence should republish and converge");
+
+    assert_eq!(run.disposition(), WorkloadProvisionRunDisposition::Observed);
+    assert_eq!(run.record().phase(), WorkloadSagaPhase::Observed);
+    assert_eq!(
+        provider
+            .calls()
+            .iter()
+            .filter(|call| call.step == WorkloadProvisionStep::Publish)
+            .copied()
+            .collect::<Vec<_>>(),
+        [
+            ProviderCall {
+                step: WorkloadProvisionStep::Publish,
+                mode: WorkloadProvisionCommandMode::Execute,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::Publish,
+                mode: WorkloadProvisionCommandMode::Execute,
+            },
+        ]
+    );
+    assert_eq!(
+        provider
+            .calls()
+            .iter()
+            .filter(|call| call.step == WorkloadProvisionStep::ObservePublication)
+            .copied()
+            .collect::<Vec<_>>(),
+        [
+            ProviderCall {
+                step: WorkloadProvisionStep::ObservePublication,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::ObservePublication,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn owner_reopened_observed_publication_inspects_before_one_exact_republish() {
+    let observed = provision_record(
+        "owner-reopened-observed-publication",
+        WorkloadSagaPhase::Observed,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let store =
+        DurableTestStore::with_record_and_fault(observed.clone(), CasFault::AmbiguousAfterApply);
+    let provider = RecordingProvider::new(ProviderBehavior::OwnerReopenedProcessEffectsAbsentOnce);
+    let driver = driver(store, &observed, provider.clone());
+
+    let run = driver
+        .resume_owner_reopened_publication(observed.key())
+        .await
+        .expect("exact owner-reopened publication absence should republish and converge");
+
+    assert_eq!(run.disposition(), WorkloadProvisionRunDisposition::Observed);
+    assert_eq!(run.record().phase(), WorkloadSagaPhase::Observed);
+    assert_eq!(
+        provider.calls(),
+        [
+            ProviderCall {
+                step: WorkloadProvisionStep::AttachNetwork,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::AttachNetwork,
+                mode: WorkloadProvisionCommandMode::Execute,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::ObservePublication,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::Publish,
+                mode: WorkloadProvisionCommandMode::Execute,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::ObservePublication,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn owner_reopened_republication_absence_retries_then_reobserves() {
+    let observed = provision_record(
+        "owner-reopened-republication-retry",
+        WorkloadSagaPhase::Observed,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let store = DurableTestStore::with_record(observed.clone());
+    let provider = RecordingProvider::new(
+        ProviderBehavior::OwnerReopenedProcessEffectsAbsentOnceWithRepublishRetry,
+    );
+    let driver = driver(store, &observed, provider.clone());
+
+    let run = driver
+        .resume_owner_reopened_publication(observed.key())
+        .await
+        .expect("an absent first republication should retry and re-observe exactly once");
+
+    assert_eq!(run.disposition(), WorkloadProvisionRunDisposition::Observed);
+    assert_eq!(run.record().phase(), WorkloadSagaPhase::Observed);
+    assert_eq!(
+        provider.calls(),
+        [
+            ProviderCall {
+                step: WorkloadProvisionStep::AttachNetwork,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::AttachNetwork,
+                mode: WorkloadProvisionCommandMode::Execute,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::ObservePublication,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::Publish,
+                mode: WorkloadProvisionCommandMode::Execute,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::Publish,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::Publish,
+                mode: WorkloadProvisionCommandMode::Execute,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::ObservePublication,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn unresolved_owner_reopen_claim_retries_without_a_blind_provider_call() {
+    let observed = provision_record(
+        "unresolved-owner-reopened-publication",
+        WorkloadSagaPhase::Observed,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let store =
+        DurableTestStore::with_record_and_fault(observed.clone(), CasFault::AmbiguousBeforeApply);
+    let provider = RecordingProvider::new(ProviderBehavior::AbsentOnceWhenInspectedAt(
+        WorkloadProvisionStep::ObservePublication,
+    ));
+    let driver = driver(Arc::clone(&store), &observed, provider.clone());
+
+    assert!(matches!(
+        driver
+            .resume_owner_reopened_publication(observed.key())
+            .await,
+        Err(WorkloadProvisionRunError::Saga(
+            WorkloadSagaStoreError::Ambiguous
+        ))
+    ));
+    assert_eq!(store.record(), observed);
+    assert!(provider.calls().is_empty());
+
+    let run = driver
+        .resume_owner_reopened_publication(observed.key())
+        .await
+        .expect("retry after unresolved owner-reopen CAS should inspect and converge");
+    assert_eq!(run.disposition(), WorkloadProvisionRunDisposition::Observed);
+    assert_eq!(
+        provider.calls(),
+        [
+            ProviderCall {
+                step: WorkloadProvisionStep::AttachNetwork,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::ObservePublication,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::Publish,
+                mode: WorkloadProvisionCommandMode::Execute,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::ObservePublication,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn crash_after_owner_reopen_claim_resumes_with_inspection_only() {
+    let observed = provision_record(
+        "crash-after-owner-reopened-publication-claim",
+        WorkloadSagaPhase::Observed,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let reopened = observed
+        .reopen_observed_publication_for_owner_recovery()
+        .expect("owner-reopen claim should be durable before provider inspection");
+    let store = DurableTestStore::with_record(reopened.clone());
+    let provider = RecordingProvider::new(ProviderBehavior::AbsentOnceWhenInspectedAt(
+        WorkloadProvisionStep::ObservePublication,
+    ));
+    let driver = driver(store, &reopened, provider.clone());
+
+    let run = driver
+        .resume(reopened.key())
+        .await
+        .expect("replayed owner-reopen claim should inspect and converge");
+
+    assert_eq!(run.disposition(), WorkloadProvisionRunDisposition::Observed);
+    assert_eq!(
+        provider.calls(),
+        [
+            ProviderCall {
+                step: WorkloadProvisionStep::AttachNetwork,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::ObservePublication,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::Publish,
+                mode: WorkloadProvisionCommandMode::Execute,
+            },
+            ProviderCall {
+                step: WorkloadProvisionStep::ObservePublication,
+                mode: WorkloadProvisionCommandMode::Inspect,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn ordinary_resume_keeps_observed_publication_quiescent() {
+    let observed = provision_record(
+        "ordinary-observed-publication-resume",
+        WorkloadSagaPhase::Observed,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let store = DurableTestStore::with_record(observed.clone());
+    let provider = RecordingProvider::new(ProviderBehavior::AbsentOnceWhenInspectedAt(
+        WorkloadProvisionStep::ObservePublication,
+    ));
+    let driver = driver(store, &observed, provider.clone());
+
+    let run = driver
+        .resume(observed.key())
+        .await
+        .expect("ordinary observed resume should remain quiescent");
+
+    assert_eq!(run.disposition(), WorkloadProvisionRunDisposition::Observed);
+    assert_eq!(run.record(), &observed);
+    assert!(provider.calls().is_empty());
 }
 
 #[tokio::test]

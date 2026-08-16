@@ -258,12 +258,23 @@ impl WorkloadSagaStore for NativeSagaStore {
 
 struct NativeProvisionProvider {
     calls: Mutex<Vec<(WorkloadSagaKey, nimbus_workloads::WorkloadProvisionStep)>>,
+    provision_behavior: NativeProvisionBehavior,
+    provision_in_progress_calls: AtomicUsize,
+    provision_in_progress: Semaphore,
     teardown_calls: Mutex<Vec<WorkloadTeardownStep>>,
     teardown_modes: Mutex<Vec<WorkloadTeardownCommandMode>>,
     failure_step: Option<nimbus_workloads::WorkloadProvisionStep>,
     teardown_behavior: NativeTeardownBehavior,
     teardown_one_shot_observed: AtomicBool,
     execution_observations: AtomicUsize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum NativeProvisionBehavior {
+    #[default]
+    Succeed,
+    InProgressThenSucceededAt(nimbus_workloads::WorkloadProvisionStep),
+    AlwaysInProgressAt(nimbus_workloads::WorkloadProvisionStep),
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -278,6 +289,9 @@ impl Default for NativeProvisionProvider {
     fn default() -> Self {
         Self {
             calls: Mutex::new(Vec::new()),
+            provision_behavior: NativeProvisionBehavior::Succeed,
+            provision_in_progress_calls: AtomicUsize::new(0),
+            provision_in_progress: Semaphore::new(0),
             teardown_calls: Mutex::new(Vec::new()),
             teardown_modes: Mutex::new(Vec::new()),
             failure_step: None,
@@ -297,6 +311,28 @@ impl NativeProvisionProvider {
             .lock()
             .expect("native provision provider lock should remain healthy")
             .push((command.claim().attempt().key().clone(), command.step()));
+        let in_progress = match self.provision_behavior {
+            NativeProvisionBehavior::InProgressThenSucceededAt(step) if step == command.step() => {
+                self.provision_in_progress_calls
+                    .fetch_add(1, Ordering::AcqRel)
+                    < 2
+            }
+            NativeProvisionBehavior::AlwaysInProgressAt(step) if step == command.step() => {
+                self.provision_in_progress_calls
+                    .fetch_add(1, Ordering::AcqRel);
+                true
+            }
+            _ => false,
+        };
+        if in_progress {
+            self.provision_in_progress.add_permits(1);
+            return WorkloadProvisionInspectionResult::InProgress {
+                attempt_id: command.attempt_id().clone(),
+                dispatch_epoch: command.dispatch_epoch(),
+                provider_target: command.provider_target().clone(),
+                evidence: WorkloadOwnerEvidenceDigest::sha256("native fixture in progress"),
+            };
+        }
         if self.failure_step == Some(command.step()) {
             return WorkloadProvisionInspectionResult::DefiniteFailure {
                 attempt_id: command.attempt_id().clone(),
@@ -329,6 +365,20 @@ impl NativeProvisionProvider {
     fn failing_at(step: nimbus_workloads::WorkloadProvisionStep) -> Arc<Self> {
         Arc::new(Self {
             failure_step: Some(step),
+            ..Self::default()
+        })
+    }
+
+    fn in_progress_then_succeeded_at(step: nimbus_workloads::WorkloadProvisionStep) -> Arc<Self> {
+        Arc::new(Self {
+            provision_behavior: NativeProvisionBehavior::InProgressThenSucceededAt(step),
+            ..Self::default()
+        })
+    }
+
+    fn always_in_progress_at(step: nimbus_workloads::WorkloadProvisionStep) -> Arc<Self> {
+        Arc::new(Self {
+            provision_behavior: NativeProvisionBehavior::AlwaysInProgressAt(step),
             ..Self::default()
         })
     }
@@ -822,6 +872,125 @@ async fn native_service_and_sandbox_callers_use_compute_dispatch() {
         provider.execution_observations.load(Ordering::Acquire),
         4,
         "exact replay may refresh read-only observed state but must not repeat provider effects"
+    );
+}
+
+fn native_service_facade(
+    service_name: &str,
+    provider: Arc<NativeProvisionProvider>,
+) -> (
+    Arc<NativeSagaStore>,
+    Arc<WorkloadProvisioner>,
+    ComputeResourceProvisioner,
+) {
+    let manager = Arc::new(ServiceManager::new(
+        Arc::new(EmptyServiceDefinitionCatalog),
+        SandboxBackendKind::Krun,
+    ));
+    manager
+        .create_service_definition(
+            &tenant(),
+            service_name,
+            ServiceBackend::sandbox(SandboxSpec::new(
+                tenant(),
+                SandboxOwnerSpec::service(service_name),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::rootfs(format!("/fixture/{service_name}")),
+                SandboxProcessSpec::new(["/bin/service"]),
+            )),
+            BTreeMap::new(),
+        )
+        .expect("native service source should be declared");
+    let store = Arc::new(NativeSagaStore::default());
+    let provisioner = native_provisioner(Arc::clone(&manager), Arc::clone(&store), provider);
+    let facade = ComputeResourceProvisioner::new(Arc::clone(&manager), Arc::clone(&provisioner));
+    (store, provisioner, facade)
+}
+
+#[tokio::test]
+async fn foreground_service_provision_resumes_durable_waiting_until_exact_projection() {
+    let service_name = "foreground-convergence";
+    let provider = NativeProvisionProvider::in_progress_then_succeeded_at(
+        nimbus_workloads::WorkloadProvisionStep::AttachNetwork,
+    );
+    let (store, _provisioner, facade) = native_service_facade(service_name, Arc::clone(&provider));
+    let context = TenantIsolationContext::system(tenant(), "foreground-convergence");
+
+    let snapshot = facade
+        .provision_sandbox_service_until_observed(
+            &context,
+            service_name,
+            &WorkloadProvisionCancellation::default(),
+        )
+        .await
+        .expect("foreground compute owner should resume exact durable truth until projection");
+
+    assert!(snapshot.observation.is_some());
+    let key = WorkloadSagaKey::new(
+        tenant(),
+        WorkloadId::new(service_name).expect("fixture service ID should validate"),
+    );
+    assert_eq!(store.record(&key).phase(), WorkloadSagaPhase::Observed);
+    assert_eq!(provider.calls_for(&key), 8);
+    assert_eq!(
+        provider.provision_in_progress_calls.load(Ordering::Acquire),
+        3,
+        "one Execute and one bounded Inspect return in progress before exact resume observes success"
+    );
+}
+
+#[tokio::test]
+async fn foreground_service_provision_cancels_without_a_busy_retry_owner() {
+    let service_name = "foreground-cancellation";
+    let provider = NativeProvisionProvider::always_in_progress_at(
+        nimbus_workloads::WorkloadProvisionStep::AttachNetwork,
+    );
+    let (_store, provisioner, facade) = native_service_facade(service_name, Arc::clone(&provider));
+    let key = WorkloadSagaKey::new(
+        tenant(),
+        WorkloadId::new(service_name).expect("fixture service ID should validate"),
+    );
+    let cancellation = WorkloadProvisionCancellation::default();
+    let waiter_cancellation = cancellation.clone();
+    let waiter = tokio::spawn(async move {
+        facade
+            .provision_sandbox_service_until_observed(
+                &TenantIsolationContext::system(tenant(), "foreground-cancellation"),
+                service_name,
+                &waiter_cancellation,
+            )
+            .await
+    });
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        provider.provision_in_progress.acquire_many(3),
+    )
+    .await
+    .expect("foreground provision should enter its first exact resume")
+    .expect("provider progress signal should remain open")
+    .forget();
+    cancellation.cancel();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+        .await
+        .expect("cancelled foreground waiter should return")
+        .expect("cancelled foreground task should join");
+    assert!(matches!(
+        result,
+        Err(ComputeResourceProvisionError::Provision(error))
+            if matches!(error.as_ref(), WorkloadProvisionError::WaiterCancelled)
+    ));
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while provisioner.has_running_tracked_task(&key) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the exact tracked resume task should settle after its waiter cancels");
+    assert!(
+        !provisioner.has_running_tracked_task(&key),
+        "cancellation must leave no running owner that can retry provider inspection"
     );
 }
 

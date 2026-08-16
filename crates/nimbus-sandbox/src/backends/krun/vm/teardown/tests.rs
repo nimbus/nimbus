@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use nimbus_core::TenantId;
 
-use crate::backends::conmon::creator::CreatorAttemptReceipt;
+use crate::backends::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
 use crate::backends::conmon::runtime_process::{
     RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
     RuntimeProcessSignalOutcome,
@@ -994,7 +994,7 @@ fn krun_execution_stop_requires_the_exact_drain_fence() {
             .provider_claim(),
         ProviderCommandOperation::StopExecution,
     );
-    crossed_workload_input.attempt_id = "crossed-stop-attempt".to_owned();
+    crossed_workload_input.desired_digest = "9".repeat(64);
     let crossed_workload = SandboxExecutionTeardownCommand::new(
         drain.tenant_id().clone(),
         fixture.id.clone(),
@@ -1015,6 +1015,27 @@ fn krun_execution_stop_requires_the_exact_drain_fence() {
     ));
     assert_eq!(snapshot_files(fixture.root.path()), before_crossed_workload);
     assert!(fixture.runtime.signals().is_empty());
+}
+
+#[test]
+fn krun_execution_stop_accepts_a_distinct_step_attempt_for_the_same_lifecycle() {
+    let fixture = TeardownFixture::new("stop-after-distinct-drain-attempt");
+    fixture.drain("drain-step-attempt", 1);
+    fixture.runtime.set_terminal(true);
+    let stop = fixture.command(
+        SandboxExecutionTeardownOperation::Stop,
+        "stop-step-attempt",
+        1,
+    );
+
+    assert!(matches!(
+        fixture.backend.execute_execution_teardown(&stop),
+        SandboxExecutionTeardownObservation::Succeeded { .. }
+    ));
+    assert!(matches!(
+        fixture.manifest().execution_teardown.stop(),
+        KrunStopProgress::ExecutionStopped { fence, .. } if fence == stop.provider_claim()
+    ));
 }
 
 #[test]

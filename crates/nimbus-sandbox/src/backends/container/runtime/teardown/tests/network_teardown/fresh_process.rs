@@ -5,6 +5,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::backends::container::ContainerSandboxBackendConfig;
+use crate::backends::container::runtime::ContainerLaunchArtifact;
 use crate::backends::oci::network::{
     FixedOciEgressPinProvider, HostManagedAttachmentCheckpointTestProbe,
     HostManagedAttachmentDetachPhase, HostManagedAttachmentReleasePhase,
@@ -183,8 +184,30 @@ fn fresh_process_network_teardown_container_recovers_every_durable_checkpoint() 
             "{stdout}"
         );
         assert_ne!(child_pid(&writer.stdout), child_pid(&recovery.stdout));
+        if let Some(sentinel) = fixture.artifact_sentinel.as_ref() {
+            assert!(
+                !sentinel.exists(),
+                "recovery at {} must remove the exact provider-owned launch artifact",
+                case.label
+            );
+        }
+        if let Some(runtime_artifacts) = fixture.runtime_artifacts.as_ref() {
+            assert!(
+                runtime_artifacts.iter().all(|path| !path.exists()),
+                "recovery at {} must remove the exact stale runtime receipts",
+                case.label
+            );
+        }
 
         let backend = reopen_backend(fixture.root.path(), fixture.pep_port);
+        if operation == SandboxNetworkTeardownOperation::Release {
+            assert!(
+                backend.startup_reconciliation_error.is_none(),
+                "terminal Container replay at {} must accept the released desired tombstone after its provider retry witness is retired: {:?}",
+                case.label,
+                backend.startup_reconciliation_error
+            );
+        }
         let command = network_command_from_backend(&backend, &fixture.id, operation);
         let manifest = backend
             .read_manifest(command.sandbox_id())
@@ -316,6 +339,8 @@ struct PreparedFixture {
     root: tempfile::TempDir,
     id: SandboxId,
     pep_port: u16,
+    artifact_sentinel: Option<PathBuf>,
+    runtime_artifacts: Option<[PathBuf; 3]>,
 }
 
 fn prepared_fixture(label: &str, operation: SandboxNetworkTeardownOperation) -> PreparedFixture {
@@ -340,12 +365,54 @@ fn prepared_fixture(label: &str, operation: SandboxNetworkTeardownOperation) -> 
             ProviderCommandObservationKind::Succeeded
         );
     }
+    let artifact_sentinel = if operation == SandboxNetworkTeardownOperation::Release {
+        let mut manifest = fixture.manifest();
+        let artifact_root = crate::artifact_paths::rootfs_root(
+            &fixture.backend.config.workload_state_root,
+            &manifest.spec.tenant_id,
+            &fixture.id,
+        )
+        .join(fixture.id.as_str());
+        let rootfs_path = artifact_root.join("rootfs");
+        std::fs::create_dir_all(&rootfs_path).expect("Container owned rootfs should create");
+        let sentinel = rootfs_path.join("provider-finality-sentinel");
+        std::fs::write(&sentinel, b"owned").expect("Container artifact sentinel should persist");
+        manifest.launch_artifact = Some(ContainerLaunchArtifact::Rootfs(
+            crate::backends::oci::materializer::MaterializedImageRootfs {
+                image_reference: "registry.example.com/nimbus/finality:test".to_owned(),
+                rootfs_path,
+            },
+        ));
+        fixture
+            .backend
+            .write_existing_workload_manifest(&manifest)
+            .expect("Container release fixture should retain its owned launch artifact");
+        Some(sentinel)
+    } else {
+        None
+    };
+    let runtime_artifacts = if operation == SandboxNetworkTeardownOperation::Release {
+        let mut manifest = fixture.manifest();
+        Some(retain_stale_runtime_artifacts(
+            &fixture,
+            &mut manifest,
+            "fresh-process-release",
+        ))
+    } else {
+        None
+    };
     let TeardownFixture {
         root, backend, id, ..
     } = fixture;
     drop(runtime);
     drop(backend);
-    PreparedFixture { root, id, pep_port }
+    PreparedFixture {
+        root,
+        id,
+        pep_port,
+        artifact_sentinel,
+        runtime_artifacts,
+    }
 }
 
 fn crash_child(
@@ -388,6 +455,15 @@ fn recovery_child(
     operation: SandboxNetworkTeardownOperation,
 ) {
     let backend = reopen_backend(root, pep_port);
+    if operation == SandboxNetworkTeardownOperation::Release
+        && required_env(PHASE_ENV) == "released"
+    {
+        let startup_terminal = backend
+            .read_manifest(sandbox_id)
+            .expect("startup-finalized Container manifest should read")
+            .expect("startup-finalized Container manifest should exist");
+        assert!(startup_terminal.has_terminal_network_finality());
+    }
     let command = network_command_from_backend(&backend, sandbox_id, operation);
     let journal = backend
         .attempt_idempotency_journal()
@@ -403,6 +479,7 @@ fn recovery_child(
     assert!(matches!(
         inspected,
         SandboxNetworkTeardownObservation::InProgress { .. }
+            | SandboxNetworkTeardownObservation::RetryAuthorized { .. }
             | SandboxNetworkTeardownObservation::Succeeded { .. }
     ));
     println!("NNC65D3_CONTAINER_INSPECT:{inspected:?}");
@@ -413,6 +490,13 @@ fn recovery_child(
         .execute_network_teardown_with_claim(&command, execution)
         .expect("recovered execution should publish");
     assert_eq!(result.kind(), ProviderCommandObservationKind::Succeeded);
+    if operation == SandboxNetworkTeardownOperation::Release {
+        let terminal = backend
+            .read_manifest(sandbox_id)
+            .expect("terminal Container manifest should read")
+            .expect("terminal Container manifest should exist");
+        assert!(terminal.has_terminal_network_finality());
+    }
     println!("NNC65D3_CONTAINER_CONVERGED:succeeded");
 }
 

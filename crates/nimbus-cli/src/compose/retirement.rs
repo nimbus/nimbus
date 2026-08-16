@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use nimbus::{Engine, Error, TenantId};
 use nimbus_compute::state::ComputeError;
+use nimbus_compute::workload_saga::WorkloadTeardownCancellationToken;
 use nimbus_compute::{ComputeResourceRetirementError, WorkloadTeardownDisposition};
 use nimbus_server::EngineWorkloadSagaStore;
 use nimbus_tenant::TenantIsolationContext;
@@ -200,11 +201,12 @@ pub(super) async fn retire_compose_services(
         .resource_retirer()
         .map_err(|error| ComposeRetirementError::Setup(compute_error(error)))?;
     let tenant_context = TenantIsolationContext::system(tenant_id.clone(), "compose-down");
+    let cancellation = WorkloadTeardownCancellationToken::new();
     let mut outcomes = Vec::with_capacity(service_names.len());
 
     for service_name in service_names {
         let outcome = match retirer
-            .submit_service_teardown(&tenant_context, &service_name)
+            .submit_service_teardown_until_terminal(&tenant_context, &service_name, &cancellation)
             .await
         {
             Ok(outcome) => outcome,

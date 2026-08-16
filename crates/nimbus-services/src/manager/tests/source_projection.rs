@@ -626,6 +626,111 @@ fn tenant_retirement_barrier_fences_only_the_exact_tenant_service_set() {
 }
 
 #[test]
+fn restart_resolution_withdrawal_claims_before_first_observation() {
+    let tenant_id = TenantId::new("tenant").expect("tenant ID should validate");
+    let (manager, backend) = manager_with_backend();
+    let definition = manager
+        .create_service_definition(
+            &tenant_id,
+            "api",
+            ServiceBackend::sandbox(SandboxSpec::new(
+                tenant_id.clone(),
+                SandboxOwnerSpec::service("api"),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::oci_image_reference("registry.example.com/service:1"),
+                SandboxProcessSpec::new(["/bin/service"]),
+            )),
+            BTreeMap::new(),
+        )
+        .expect("fixture service definition should create");
+    let mut source_handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let source_execution =
+        execution_reference_for_handle(&mut source_handle, definition.generation, 0);
+    let source_attempt = source_execution.attempt_id().clone();
+    let target_attempt = WorkloadExecutionAttemptId::for_execution(
+        source_execution.execution_id(),
+        WorkloadRestartEpoch::new(1),
+    );
+
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, "api")
+            .expect("unobserved service lookup should succeed")
+            .is_none()
+    );
+    for _ in 0..2 {
+        manager
+            .claim_service_resolution_withdrawal(
+                &tenant_id,
+                "api",
+                definition.generation,
+                &definition.resource_version,
+                &source_attempt,
+                &target_attempt,
+            )
+            .expect("an already absent exact resolution should claim or replay");
+    }
+    assert!(
+        manager
+            .service_resolution_withdrawal_requires_restore(
+                &tenant_id,
+                "api",
+                definition.generation,
+                &definition.resource_version,
+                &target_attempt,
+            )
+            .expect("exact active fence check should succeed")
+    );
+
+    let mut target_handle = backend.sandbox_handle(&tenant_id, "api", SandboxStatus::Ready);
+    let target_execution =
+        execution_reference_for_handle(&mut target_handle, definition.generation, 1);
+    assert_eq!(target_execution.attempt_id(), &target_attempt);
+    manager
+        .project_service_definition_execution_observation(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &target_execution,
+            service_instance_observation(
+                target_handle.clone(),
+                endpoint_handles_for_handle(&target_handle, definition.generation),
+            ),
+        )
+        .expect("restart target observation should project while fenced");
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, "api")
+            .expect("active restart fence lookup should succeed")
+            .is_none()
+    );
+    manager
+        .release_service_resolution_withdrawal(
+            &tenant_id,
+            "api",
+            definition.generation,
+            &definition.resource_version,
+            &target_attempt,
+        )
+        .expect("exact target observation should release the fence");
+    assert!(
+        !manager
+            .service_resolution_withdrawal_requires_restore(
+                &tenant_id,
+                "api",
+                definition.generation,
+                &definition.resource_version,
+                &target_attempt,
+            )
+            .expect("exact released fence check should succeed")
+    );
+    assert!(
+        RuntimeServiceRegistry::resolve_service_binding(&manager, &tenant_id, "api")
+            .expect("released target lookup should succeed")
+            .is_some()
+    );
+}
+
+#[test]
 fn restart_resolution_withdrawal_is_attempt_fenced_and_replay_safe() {
     let tenant_id = TenantId::new("tenant").expect("tenant ID should validate");
     let (manager, backend) = manager_with_backend();

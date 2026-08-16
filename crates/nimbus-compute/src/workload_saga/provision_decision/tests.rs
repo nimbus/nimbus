@@ -2,10 +2,10 @@
 
 use nimbus_workloads::{
     WorkloadActivationIntent, WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest,
-    WorkloadPhaseDetail, WorkloadProvisionDispatchClaim, WorkloadProvisionDisposition,
-    WorkloadProvisionEffectResult, WorkloadProvisionStep, WorkloadProvisionSubjects,
-    WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent, WorkloadSagaPhase,
-    WorkloadSagaRecord,
+    WorkloadPhaseDetail, WorkloadProvisionAbsenceEvidence, WorkloadProvisionDispatchClaim,
+    WorkloadProvisionDisposition, WorkloadProvisionEffectResult, WorkloadProvisionStep,
+    WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent,
+    WorkloadSagaIntentUpdate, WorkloadSagaPhase, WorkloadSagaRecord,
 };
 
 use super::*;
@@ -678,5 +678,64 @@ fn ingress_and_recovery_delegate_to_same_provision_reducer() {
     assert_eq!(
         recovery.action(),
         &crate::workload_saga::WorkloadSagaAction::Provision(expected)
+    );
+}
+
+#[test]
+fn owner_reopened_attachment_success_with_stopped_successor_enters_withdrawal() {
+    let observed = record(WorkloadSagaPhase::Observed);
+    let reopened = observed
+        .reopen_observed_publication_for_owner_recovery()
+        .expect("observed publication should reopen attachment inspection");
+    let inspection_claim = reopened
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::claim)
+        .expect("owner reopen should retain its inspection claim");
+    let absence = WorkloadProvisionAbsenceEvidence::for_inspection(
+        &reopened,
+        inspection_claim,
+        WorkloadOwnerEvidenceDigest::sha256("owner-reopened attachment absent"),
+    )
+    .expect("owner-reopened absence should bind the inspection");
+    let repair = reopened
+        .inspection_to_retry_dispatch(absence)
+        .expect("owner-reopened absence should authorize one repair");
+    let WorkloadSagaIntentUpdate::Transition(fenced) = repair
+        .apply_intent(crate::workload_saga::recovery::tests::stopped_intent(
+            "decision-observed",
+            2,
+        ))
+        .expect("stopped successor should fence the unresolved repair")
+    else {
+        panic!("stopped successor should change durable repair state");
+    };
+    let claim = fenced
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::claim)
+        .expect("fenced repair should retain its exact claim");
+    let WorkloadProvisionDecision::Proposed(withdrawal) = WorkloadProvisionDecision::reduce(
+        &fenced,
+        WorkloadProvisionEffectResult::Succeeded {
+            attempt_id: claim.attempt().attempt_id().clone(),
+            evidence: success_for(claim.attempt()),
+        },
+    )
+    .expect("confirmed repair success should enter withdrawal") else {
+        panic!("confirmed repair success should propose one withdrawal");
+    };
+
+    assert_eq!(
+        withdrawal.candidate().phase(),
+        WorkloadSagaPhase::WithdrawalCommitted
+    );
+    assert!(withdrawal.action_after_confirmation().is_none());
+    assert!(
+        withdrawal
+            .candidate()
+            .teardown_disposition()
+            .expect("withdrawal should retain teardown context")
+            .context()
+            .provision_absence()
+            .is_none()
     );
 }

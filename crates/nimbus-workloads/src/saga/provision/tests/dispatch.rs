@@ -27,6 +27,7 @@ fn absence_for_claim(
         "transitionId": format!("wst_{}", "7".repeat(64)),
         "providerTarget": claim.provider_target(),
         "step": claim.attempt().step(),
+        "origin": "provision_inspection",
         "evidence": WorkloadOwnerEvidenceDigest::sha256(label),
     }))
     .expect("absence fixture should decode")

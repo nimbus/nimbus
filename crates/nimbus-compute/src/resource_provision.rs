@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use nimbus_core::{Error, TenantId};
 use nimbus_network::{EndpointProtocol, NetworkTlsBehavior};
@@ -25,9 +26,12 @@ use crate::state::{ComputeError, ComputeState};
 use crate::workload_projection::WorkloadProjectionState;
 use crate::workload_provisioner::{
     WorkloadProvisionCancellation, WorkloadProvisionEndpointSemantics, WorkloadProvisionError,
-    WorkloadProvisionRequest, WorkloadProvisionSource, WorkloadProvisioner,
+    WorkloadProvisionOutcome, WorkloadProvisionRequest, WorkloadProvisionSource,
+    WorkloadProvisioner,
 };
 use crate::workload_saga::sandbox_execution_provider_id;
+
+const SERVICE_PROVISION_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 /// Exact service definition plus its optional services-owned observation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,6 +168,71 @@ impl ComputeResourceProvisioner {
         service_name: &str,
         cancellation: &WorkloadProvisionCancellation,
     ) -> Result<SandboxServiceProvisionSnapshot, ComputeResourceProvisionError> {
+        self.provision_sandbox_service_once(context, service_name, cancellation)
+            .await
+            .map(|(snapshot, _)| snapshot)
+    }
+
+    /// Provision one service and retain compute ownership until its exact
+    /// services projection is observed or the caller cancels its wait.
+    ///
+    /// Each retry reopens durable saga truth through [`WorkloadProvisioner`].
+    /// Provider effects remain behind the existing capability dispatcher, and
+    /// the delay prevents an in-progress provider observation from becoming a
+    /// busy reconciliation loop.
+    pub async fn provision_sandbox_service_until_observed(
+        &self,
+        context: &TenantIsolationContext,
+        service_name: &str,
+        cancellation: &WorkloadProvisionCancellation,
+    ) -> Result<SandboxServiceProvisionSnapshot, ComputeResourceProvisionError> {
+        let (snapshot, mut outcome) = self
+            .provision_sandbox_service_once(context, service_name, cancellation)
+            .await?;
+        if outcome.projection() == WorkloadProjectionState::Projected {
+            return Ok(snapshot);
+        }
+
+        let definition = snapshot.definition;
+        let key = WorkloadSagaKey::new(
+            context.tenant_id().clone(),
+            nimbus_core::WorkloadId::new(service_name)?,
+        );
+        loop {
+            tokio::select! {
+                _ = cancellation.cancelled() => {
+                    return Err(ComputeResourceProvisionError::Provision(Arc::new(
+                        WorkloadProvisionError::WaiterCancelled,
+                    )));
+                }
+                () = tokio::time::sleep(SERVICE_PROVISION_RETRY_DELAY) => {}
+            }
+            outcome = self
+                .provisioner
+                .resume(key.clone(), cancellation)
+                .await
+                .map_err(ComputeResourceProvisionError::Provision)?;
+            let snapshot = self.service_snapshot_for_outcome(
+                context.tenant_id(),
+                service_name,
+                &definition,
+                &outcome,
+            )?;
+            if outcome.projection() == WorkloadProjectionState::Projected {
+                return Ok(snapshot);
+            }
+        }
+    }
+
+    async fn provision_sandbox_service_once(
+        &self,
+        context: &TenantIsolationContext,
+        service_name: &str,
+        cancellation: &WorkloadProvisionCancellation,
+    ) -> Result<
+        (SandboxServiceProvisionSnapshot, WorkloadProvisionOutcome),
+        ComputeResourceProvisionError,
+    > {
         let prepared = self
             .services
             .prepare_sandbox_service_provision_source(context.tenant_id(), service_name)?;
@@ -207,10 +276,40 @@ impl ComputeResourceProvisioner {
             })
             .await
             .map_err(ComputeResourceProvisionError::Provision)?;
+        let snapshot = self.service_snapshot_for_outcome(
+            context.tenant_id(),
+            service_name,
+            &definition,
+            &outcome,
+        )?;
+        Ok((snapshot, outcome))
+    }
+
+    fn service_snapshot_for_outcome(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+        definition: &ServiceDefinition,
+        outcome: &WorkloadProvisionOutcome,
+    ) -> Result<SandboxServiceProvisionSnapshot, ComputeResourceProvisionError> {
         require_accepted_projection(outcome.projection())?;
+        let current_definition = self
+            .services
+            .service_definition_for_tenant(tenant_id, service_name)
+            .ok_or_else(|| ComputeResourceProvisionError::MissingProjection {
+                tenant_id: tenant_id.clone(),
+                name: service_name.to_owned(),
+            })?;
+        if current_definition != *definition {
+            return Err(ComputeResourceProvisionError::Source(Error::conflict(
+                format!(
+                    "service `{service_name}` for tenant `{tenant_id}` changed while its workload provision was converging"
+                ),
+            )));
+        }
         let observation = self
             .services
-            .service_definition_observation_for_tenant(context.tenant_id(), service_name);
+            .service_definition_observation_for_tenant(tenant_id, service_name);
         if outcome.projection() == WorkloadProjectionState::Projected
             && observation.as_ref().is_none_or(|observation| {
                 observation.source_generation != definition.generation
@@ -218,12 +317,12 @@ impl ComputeResourceProvisioner {
             })
         {
             return Err(ComputeResourceProvisionError::MissingProjection {
-                tenant_id: context.tenant_id().clone(),
+                tenant_id: tenant_id.clone(),
                 name: service_name.to_owned(),
             });
         }
         Ok(SandboxServiceProvisionSnapshot {
-            definition,
+            definition: definition.clone(),
             observation,
         })
     }

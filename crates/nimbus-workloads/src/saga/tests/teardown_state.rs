@@ -1363,7 +1363,7 @@ fn cleanup_pending_rejects_successor_replacement_claim_rewrite_and_reuse() {
 }
 
 #[test]
-fn failed_provision_compensation_releases_only_observed_resources_in_reverse_order() {
+fn failed_provision_compensation_releases_observed_resources_and_preserves_terminal_evidence() {
     let initial = WorkloadSagaRecord::new(
         key("tenant-a", "workload-a"),
         running_intent(1, WorkloadPublicationIntent::PublishWhenReady),
@@ -1439,4 +1439,29 @@ fn failed_provision_compensation_releases_only_observed_resources_in_reverse_ord
         target,
         WorkloadTeardownProviderTarget::Attachment { .. }
     ));
+
+    let released = complete_effectful_teardown_step(&record, "release-after-failed-provision");
+    let recorded = released
+        .record_terminal_teardown()
+        .expect("failed-provision compensation should record its terminal evidence");
+    let WorkloadPhaseDetail::Recorded(recorded_detail) = recorded.phase_detail() else {
+        panic!("completed compensation should retain recorded evidence");
+    };
+    let terminal_digest = recorded_detail.terminal_evidence_digest();
+    let terminal_execution = recorded_detail.terminal_execution_reference().cloned();
+
+    let WorkloadSagaIntentUpdate::Transition(stopped) = recorded
+        .apply_intent(stopped_intent(2))
+        .expect("a direct stopped successor should preserve compensation evidence")
+    else {
+        panic!("a direct stopped successor should advance the recorded generation");
+    };
+    let WorkloadPhaseDetail::Recorded(stopped_detail) = stopped.phase_detail() else {
+        panic!("a stopped successor should remain recorded");
+    };
+    assert_eq!(stopped_detail.terminal_evidence_digest(), terminal_digest);
+    assert_eq!(
+        stopped_detail.terminal_execution_reference(),
+        terminal_execution.as_ref()
+    );
 }

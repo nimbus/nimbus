@@ -115,24 +115,52 @@ impl ServiceManager {
                 "service `{service_name}` rejected a stale or crossed resolution withdrawal"
             ))),
             None => {
-                let observation =
-                    state
-                        .service_definition_observations
-                        .get(&key)
-                        .ok_or_else(|| {
-                            Error::PreconditionFailed(format!(
-                                "service `{service_name}` has no observed execution to withdraw"
-                            ))
-                        })?;
-                if observation.execution.attempt_id() != source_attempt_id {
+                if let Some(observation) = state.service_definition_observations.get(&key)
+                    && observation.execution.attempt_id() != source_attempt_id
+                {
                     return Err(Error::PreconditionFailed(format!(
                         "service `{service_name}` changed execution before resolution withdrawal"
                     )));
                 }
+                // A workload can exit after portable observation but before
+                // its first services projection. Resolution is already
+                // absent in that race, but the exact active fence must still
+                // be installed so the restart target cannot become visible
+                // before compute releases it.
                 state.service_resolution_withdrawals.insert(key, withdrawal);
                 Ok(())
             }
         }
+    }
+
+    /// Report whether the exact restart target still has an active logical
+    /// resolution fence. Missing state is already restored; crossed state
+    /// fails closed.
+    pub fn service_resolution_withdrawal_requires_restore(
+        &self,
+        tenant_id: &TenantId,
+        service_name: &str,
+        source_generation: u64,
+        resource_version: &str,
+        target_attempt_id: &WorkloadExecutionAttemptId,
+    ) -> Result<bool, Error> {
+        let key = TenantServiceKey::new(tenant_id, service_name);
+        let state = self
+            .state
+            .lock()
+            .expect("manager lock should not be poisoned");
+        let Some(current) = state.service_resolution_withdrawals.get(&key) else {
+            return Ok(false);
+        };
+        if current.source_generation != source_generation
+            || current.resource_version != resource_version
+            || &current.target_attempt_id != target_attempt_id
+        {
+            return Err(Error::PreconditionFailed(format!(
+                "service `{service_name}` rejected a stale or crossed resolution restore check"
+            )));
+        }
+        Ok(current.active)
     }
 
     /// Release only the exact restart fence after durable publication

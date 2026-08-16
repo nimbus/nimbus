@@ -30,7 +30,7 @@ use readers::{
 mod classifier;
 pub(in crate::backends::oci::network) use classifier::{
     OciOrphanDisposition, OciOrphanQuarantineReason, classify_oci_orphan_evidence,
-    classify_retained_desired_manifest,
+    classify_retained_desired_manifest, classify_retained_terminal_manifest,
 };
 
 /// Durable authority that supplied a claim-qualified allocator observation.
@@ -109,6 +109,60 @@ impl OciArtifactKind {
             Self::NetworkNamespace => "network namespace artifact",
             Self::Status => "provider status artifact",
         }
+    }
+}
+
+/// Backend-authenticated manifest evidence retained across startup scans.
+///
+/// The path recognizes an otherwise-unmatched workload manifest. Optional
+/// terminal identity proves that a released desired attachment whose provider
+/// retry witness was already retired belongs to this exact generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OciRetainedManifestEvidence {
+    path: PathBuf,
+    terminal: Option<OciRetainedTerminalAttachment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OciRetainedTerminalAttachment {
+    tenant_id: TenantId,
+    attachment_id: NetworkAttachmentId,
+    reservation_claim: NetworkReservationClaim,
+    provider_kind: super::provider_locator::OciAttachmentProviderKind,
+}
+
+impl OciRetainedManifestEvidence {
+    pub(crate) fn claim_only(path: PathBuf) -> Self {
+        Self {
+            path,
+            terminal: None,
+        }
+    }
+
+    pub(crate) fn terminal(
+        path: PathBuf,
+        tenant_id: TenantId,
+        attachment_id: NetworkAttachmentId,
+        reservation_claim: NetworkReservationClaim,
+        provider_kind: super::provider_locator::OciAttachmentProviderKind,
+    ) -> Self {
+        Self {
+            path,
+            terminal: Some(OciRetainedTerminalAttachment {
+                tenant_id,
+                attachment_id,
+                reservation_claim,
+                provider_kind,
+            }),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn terminal_attachment(&self) -> Option<&OciRetainedTerminalAttachment> {
+        self.terminal.as_ref()
     }
 }
 

@@ -136,3 +136,122 @@ fn empty_netavark_cleanup_requires_cardinality_and_provider_authentication() {
         "provider rejection must name both configured and requested owners: {provider}"
     );
 }
+
+#[test]
+fn separate_owner_terminal_publication_accepts_foreign_historical_provider_evidence_read_only() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000);
+    let tenant = tenant_id("tenant-separate-owner-terminal");
+    let sandbox = SandboxId::new("separate-owner-terminal");
+    let spec = crate::SandboxSpec::new(
+        tenant.clone(),
+        crate::SandboxOwnerSpec::standalone_named("separate-owner-terminal"),
+        crate::SandboxBackendKind::Krun,
+        crate::SandboxRootSpec::rootfs("/separate-owner-terminal"),
+        crate::SandboxProcessSpec::new(["/bin/true"]),
+    )
+    .with_port_binding(SandboxPortBinding::tcp("http", 15_000, 8080));
+    let plan = crate::provision::test_support::sandbox_provision_network_plan_fixture(
+        &spec,
+        &sandbox,
+        "separate-owner-terminal",
+    );
+    let claim = new_launch_reservation_claim().expect("launch claim should mint");
+    let mut reserved = manager
+        .reserve_exact_provision_ports(&plan, None, &claim)
+        .expect("separate owner listener should reserve");
+    reserved
+        .confirm_manifest_published()
+        .expect("exact plan members should become durable");
+    let bindings = reserved.published_bindings.clone();
+    let authority = nimbus_network::LocalPortLeaseAuthority::open(temp_dir.path())
+        .expect("authority should reopen");
+    let request = &reserved.published_leases[0];
+    let provider_handle = nimbus_network::NetworkProviderHandle::new(
+        nimbus_network::NetworkProviderId::for_registration_key("nimbus-server.test-ingress"),
+        "server-owned-test-listener",
+    )
+    .expect("foreign provider handle should validate");
+    let bind_claim = nimbus_network::PortBindClaim::new(provider_handle.clone());
+    let provider_binding = nimbus_network::PortLeaseBinding::new(
+        nimbus_network::PortBoundEndpoint::new(
+            request.binding().protocol(),
+            request.binding().realm().clone(),
+            request.binding().target().clone(),
+            std::num::NonZeroU16::new(15_000).expect("fixture port should be non-zero"),
+        )
+        .expect("foreign provider endpoint should validate"),
+        nimbus_network::PortBindingProvenance::NimbusOwned,
+        provider_handle,
+    );
+    authority
+        .claim_bind(
+            request,
+            Some(&reserved.reservation_claim),
+            bind_claim.clone(),
+        )
+        .expect("foreign provider attempt should become durable");
+    authority
+        .adopt_claimed(
+            request,
+            Some(&reserved.reservation_claim),
+            &bind_claim,
+            provider_binding,
+        )
+        .expect("foreign provider binding should become durable");
+    authority
+        .activate_claimed(request, &bind_claim)
+        .expect("foreign provider listener should activate");
+    let active = authority
+        .list()
+        .expect("active separate-owner evidence should inspect");
+    let error = manager
+        .authenticate_separate_owner_publication_terminal(
+            &reserved.published_leases,
+            &tenant,
+            &bindings,
+            &reserved.published_leases,
+        )
+        .expect_err("attachment teardown must reject a separate owner's live effect");
+    assert!(
+        error.to_string().contains("effect owner") && error.to_string().contains("Active"),
+        "live rejection must identify the unresolved separate authority: {error}"
+    );
+    assert_eq!(
+        authority
+            .list()
+            .expect("failed terminal authentication should re-inspect"),
+        active,
+        "failed terminal authentication must be read-only"
+    );
+
+    authority
+        .withdraw(request)
+        .expect("separate owner should withdraw its exact listener");
+    authority
+        .release(request)
+        .expect("separate owner should record terminal release");
+    let before = authority
+        .list()
+        .expect("terminal separate-owner evidence should inspect");
+    assert!(
+        before[0].binding().is_some(),
+        "terminal authority should retain historical foreign-provider evidence"
+    );
+    let records = manager
+        .authenticate_separate_owner_publication_terminal(
+            &reserved.published_leases,
+            &tenant,
+            &bindings,
+            &reserved.published_leases,
+        )
+        .expect("provider-neutral terminal authentication should accept the exact foreign record");
+    assert_eq!(records, before);
+    assert_eq!(
+        authority
+            .list()
+            .expect("terminal authentication should remain read-only"),
+        before,
+        "attachment teardown must not rewrite or release separate-owner evidence"
+    );
+}

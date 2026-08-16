@@ -31,6 +31,7 @@ pub(super) fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
         .collect()
 }
 
+#[cfg(not(target_os = "linux"))]
 fn sample_execution_attempt_id(id: &SandboxId) -> crate::SandboxExecutionAttemptId {
     crate::SandboxExecutionAttemptId::new(format!("test-execution-attempt:{id}"))
         .expect("test execution attempt should validate")
@@ -382,9 +383,8 @@ fn plan_start_writes_bundle_and_manifest_under_backend_roots() {
     let rendered_bundle =
         fs::read_to_string(bundle_path).expect("bundle config should be readable");
     assert!(
-        rendered_bundle
-            .contains("\"krun.port_map\": \"127.0.0.1:15432:5432,127.0.0.1:18080:8080\""),
-        "bundle config should preserve the address:host:guest TSI mapping"
+        rendered_bundle.contains("\"krun.port_map\": \"0.0.0.0:15432:5432,0.0.0.0:18080:8080\""),
+        "prepared bundle should retain the pre-attachment private TSI placeholder"
     );
 }
 
@@ -965,7 +965,7 @@ fn oci_image_root_plan_only_previews_ports_without_reserving_them() {
         fs::read_to_string(bundle_config_path(temp_dir.path(), &third_spec, &third.id))
             .expect("third bundle config should be readable");
     assert!(
-        third_bundle.contains("\"krun.port_map\": \"127.0.0.1:15000:8080\""),
+        third_bundle.contains("\"krun.port_map\": \"0.0.0.0:15000:8080\""),
         "auto-assigned bindings should rewrite the krun port map annotation"
     );
 }

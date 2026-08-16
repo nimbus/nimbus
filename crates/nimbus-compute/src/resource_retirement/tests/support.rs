@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU16;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nimbus_core::{TenantId, WorkloadId};
@@ -993,6 +993,9 @@ pub(super) struct RecordingTeardownProvider {
     gate: Mutex<Option<TeardownGate>>,
     gate_entered: AtomicBool,
     definite_failure_step: Mutex<Option<WorkloadTeardownStep>>,
+    wait_once_step: Mutex<Option<WorkloadTeardownStep>>,
+    wait_once_state: AtomicU8,
+    wait_once_entered: Mutex<Option<Arc<Semaphore>>>,
 }
 
 impl RecordingTeardownProvider {
@@ -1003,6 +1006,9 @@ impl RecordingTeardownProvider {
             gate: Mutex::new(None),
             gate_entered: AtomicBool::new(false),
             definite_failure_step: Mutex::new(None),
+            wait_once_step: Mutex::new(None),
+            wait_once_state: AtomicU8::new(0),
+            wait_once_entered: Mutex::new(None),
         })
     }
 
@@ -1029,6 +1035,24 @@ impl RecordingTeardownProvider {
         });
         self.gate_entered.store(false, Ordering::Release);
         (entered, release)
+    }
+
+    /// Make one effect result ambiguous and its first exact inspection report
+    /// in-progress. The next inspection succeeds. This models the durable
+    /// `Waiting` boundary seen by foreground retirement without authorizing a
+    /// duplicate effect.
+    pub(super) fn wait_once_at(&self, step: WorkloadTeardownStep) -> Arc<Semaphore> {
+        let entered = Arc::new(Semaphore::new(0));
+        *self
+            .wait_once_step
+            .lock()
+            .expect("teardown wait-step lock should remain healthy") = Some(step);
+        self.wait_once_state.store(0, Ordering::Release);
+        *self
+            .wait_once_entered
+            .lock()
+            .expect("teardown wait signal lock should remain healthy") = Some(entered.clone());
+        entered
     }
 
     pub(super) fn call_count(&self) -> usize {
@@ -1085,6 +1109,54 @@ impl RecordingTeardownProvider {
                 ),
             };
             return WorkloadTeardownProviderObservation::for_command(command, outcome);
+        }
+        let wait_step = *self
+            .wait_once_step
+            .lock()
+            .expect("teardown wait-step lock should remain healthy");
+        if wait_step == Some(command.step()) {
+            match command.mode() {
+                WorkloadTeardownCommandMode::Execute
+                    if self
+                        .wait_once_state
+                        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok() =>
+                {
+                    return WorkloadTeardownProviderObservation::for_command(
+                        command,
+                        WorkloadTeardownProviderOutcome::Execute(
+                            WorkloadTeardownExecuteOutcome::Ambiguous,
+                        ),
+                    );
+                }
+                WorkloadTeardownCommandMode::Inspect
+                    if self
+                        .wait_once_state
+                        .compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok() =>
+                {
+                    if let Some(entered) = self
+                        .wait_once_entered
+                        .lock()
+                        .expect("teardown wait signal lock should remain healthy")
+                        .as_ref()
+                    {
+                        entered.add_permits(1);
+                    }
+                    return WorkloadTeardownProviderObservation::for_command(
+                        command,
+                        WorkloadTeardownProviderOutcome::Inspect(
+                            WorkloadTeardownInspectOutcome::InProgress(
+                                WorkloadOwnerEvidenceDigest::sha256(format!(
+                                    "retirement-wait-{:?}",
+                                    command.step()
+                                )),
+                            ),
+                        ),
+                    );
+                }
+                _ => {}
+            }
         }
         let success = teardown_success(command.step(), command.subjects());
         let outcome = match command.mode() {

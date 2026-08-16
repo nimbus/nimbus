@@ -68,6 +68,10 @@ impl<'a> AttachmentPublicationMode<'a> {
         matches!(self, Self::Deferred)
     }
 
+    fn is_machine_forwarded(self) -> bool {
+        matches!(self, Self::MachineForwarded(_))
+    }
+
     fn netavark_bindings(self, bindings: &[SandboxPortBinding]) -> &[SandboxPortBinding] {
         if self.owns_netavark_bindings() {
             bindings
@@ -125,7 +129,6 @@ mod test_api;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
 pub(crate) use attachment_readiness::OciAttachmentReadinessFailure;
 pub(crate) use attachment_readiness::{
     OciAttachmentBaseReadinessState, OciAttachmentReadinessState,

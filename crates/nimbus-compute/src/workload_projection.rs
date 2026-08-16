@@ -508,7 +508,8 @@ impl WorkloadProjectionOrchestrator {
     ) -> WorkloadProjectionState {
         match disposition {
             WorkloadProvisionRunDisposition::Waiting
-            | WorkloadProvisionRunDisposition::SuccessorSettlementReady => {
+            | WorkloadProvisionRunDisposition::SuccessorSettlementReady
+            | WorkloadProvisionRunDisposition::SuccessorSettlementCommitted => {
                 return WorkloadProjectionState::Pending(
                     WorkloadProjectionPendingReason::ProvisionWaiting,
                 );
@@ -571,6 +572,27 @@ impl WorkloadProjectionOrchestrator {
                 Ok(validated) => validated,
                 Err(reason) => return WorkloadProjectionState::Rejected(reason),
             };
+        if intent.activation() == nimbus_workloads::WorkloadActivationIntent::ActivateWhenAttached {
+            match handle.status {
+                SandboxStatus::Ready => {}
+                SandboxStatus::Starting | SandboxStatus::NotReady | SandboxStatus::Stopping => {
+                    // An exact current attempt can exit after the portable
+                    // saga reaches Observed but before this read-only
+                    // projection completes. The restart coordinator owns
+                    // convergence from authenticated stopping/exit evidence;
+                    // projection must neither publish it nor misclassify it
+                    // as crossed execution identity.
+                    return WorkloadProjectionState::Pending(
+                        WorkloadProjectionPendingReason::ExecutionInProgress,
+                    );
+                }
+                SandboxStatus::Stopped | SandboxStatus::Failed => {
+                    return WorkloadProjectionState::Rejected(
+                        WorkloadProjectionRejectedReason::InvalidExecutionEvidence,
+                    );
+                }
+            }
+        }
         let mut ingress_observations = Vec::new();
         let published_endpoint_handles = match intent.publication() {
             WorkloadPublicationIntent::Withheld => {
@@ -809,18 +831,24 @@ fn validate_execution_observation(
         || handle.id != SandboxId::new(execution.execution_id().as_str())
         || handle.name != spec.display_name()
         || handle.backend != spec.backend
-        || (intent.activation() == nimbus_workloads::WorkloadActivationIntent::ActivateWhenAttached
-            && handle.status != SandboxStatus::Ready)
     {
         return Err(WorkloadProjectionRejectedReason::InvalidExecutionEvidence);
     }
-    validate_sandbox_network_status(record, inspection.network_status.as_ref())?;
+    let endpoints_should_be_visible = intent.activation()
+        == nimbus_workloads::WorkloadActivationIntent::PrepareOnly
+        || handle.status == SandboxStatus::Ready;
+    validate_sandbox_network_status(
+        record,
+        inspection.network_status.as_ref(),
+        endpoints_should_be_visible,
+    )?;
     Ok((spec, handle, inspection.network_status))
 }
 
 fn validate_sandbox_network_status(
     record: &WorkloadSagaRecord,
     status: Option<&SandboxNetworkStatus>,
+    endpoints_should_be_visible: bool,
 ) -> Result<(), WorkloadProjectionRejectedReason> {
     let content = record.active_intent().network().compiled_plan().content();
     let expected_generation = content.identity().generation();
@@ -855,12 +883,13 @@ fn validate_sandbox_network_status(
         .iter()
         .map(|endpoint| endpoint.endpoint_id().clone())
         .collect::<BTreeSet<_>>();
-    let expected_visible_endpoint_ids =
-        if content.publication() == WorkloadPublicationIntent::PublishWhenReady {
-            expected_endpoint_ids
-        } else {
-            BTreeSet::new()
-        };
+    let expected_visible_endpoint_ids = if endpoints_should_be_visible
+        && content.publication() == WorkloadPublicationIntent::PublishWhenReady
+    {
+        expected_endpoint_ids
+    } else {
+        BTreeSet::new()
+    };
     if observed_endpoint_ids != expected_visible_endpoint_ids {
         return Err(WorkloadProjectionRejectedReason::InvalidNetworkStatus);
     }

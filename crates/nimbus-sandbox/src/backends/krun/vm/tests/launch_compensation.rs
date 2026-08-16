@@ -784,9 +784,12 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
     assert!(
         cleanup_error
             .to_string()
-            .contains("refusing a duplicate delete"),
-        "outer cleanup must inspect the exact durable delete attempt without replaying its \
-         ambiguous provider effect: {cleanup_error}"
+            .contains("cannot authenticate ambiguous Netavark delete")
+            && cleanup_error
+                .to_string()
+                .contains("host port mappings require provider-specific cleanup evidence"),
+        "outer cleanup must retain the exact durable delete attempt when interface absence \
+         cannot prove that Netavark removed its host port effects: {cleanup_error}"
     );
     assert!(
         manifest.network_layout.netns_path.exists(),

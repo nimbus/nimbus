@@ -7,7 +7,8 @@
 use nimbus_workloads::{
     WorkloadActivationIntent, WorkloadEffectReferences, WorkloadExecutionReference,
     WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
-    WorkloadProvisionAttempt, WorkloadProvisionAttemptInput, WorkloadProvisionDispatchClaim,
+    WorkloadProvisionAttempt, WorkloadProvisionAttemptInput,
+    WorkloadProvisionDispatchAuthorization, WorkloadProvisionDispatchClaim,
     WorkloadProvisionDisposition, WorkloadProvisionEffectResult,
     WorkloadProvisionPrerequisiteEvidence, WorkloadProvisionProviderTarget, WorkloadProvisionStep,
     WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence, WorkloadPublicationIntent,
@@ -233,6 +234,20 @@ impl WorkloadProvisionDecision {
             }
             WorkloadProvisionEffectResult::Succeeded { evidence, .. } => {
                 validate_success(attempt, &evidence)?;
+                if owner_reopened_attachment_recovery(claim) {
+                    let candidate = if record.successor_intent().is_some() {
+                        record.owner_reopened_attachment_success_to_teardown(claim)?
+                    } else {
+                        record.owner_reopened_attachment_to_publication_inspection()?
+                    };
+                    return Ok(Self::Proposed(ProposedWorkloadProvisionTransition::new(
+                        candidate,
+                        record
+                            .successor_intent()
+                            .is_none()
+                            .then_some(WorkloadProvisionSymbolicAction::InspectExactAttempt),
+                    )));
+                }
                 if attempt.step() == WorkloadProvisionStep::InspectActivationPrerequisites {
                     let prerequisite = WorkloadProvisionPrerequisiteEvidence::new(
                         attempt.attempt_id().clone(),
@@ -246,12 +261,31 @@ impl WorkloadProvisionDecision {
                     );
                 }
                 let phase_detail = phase_detail_after_success(record, &evidence)?;
+                if attempt.step() == WorkloadProvisionStep::Publish
+                    && claim.republication_observation_absence().is_some()
+                    && record.successor_intent().is_none()
+                {
+                    let candidate = record.republication_to_observation(phase_detail)?;
+                    return Ok(Self::Proposed(ProposedWorkloadProvisionTransition::new(
+                        candidate,
+                        Some(WorkloadProvisionSymbolicAction::InspectExactAttempt),
+                    )));
+                }
                 let candidate = record.dispatch_to_success(attempt.target_phase(), phase_detail)?;
                 Ok(Self::Proposed(ProposedWorkloadProvisionTransition::new(
                     candidate, None,
                 )))
             }
         }
+    }
+}
+
+fn owner_reopened_attachment_recovery(claim: &WorkloadProvisionDispatchClaim) -> bool {
+    match claim.authorization() {
+        WorkloadProvisionDispatchAuthorization::OwnerReopenedAttachmentInspection => true,
+        WorkloadProvisionDispatchAuthorization::RetryAfterAbsence(absence) => absence.origin()
+            == nimbus_workloads::WorkloadProvisionAbsenceOrigin::OwnerReopenedAttachmentInspection,
+        _ => false,
     }
 }
 
@@ -515,10 +549,29 @@ fn phase_detail_after_success(
             reference,
             evidence,
         } => {
-            observations.push(WorkloadOwnerObservation::PublicationPresent {
+            let observation = WorkloadOwnerObservation::PublicationPresent {
                 reference: reference.clone(),
                 evidence: *evidence,
-            });
+            };
+            if record.phase() == WorkloadSagaPhase::Published {
+                let retained =
+                    observations
+                        .last_mut()
+                        .ok_or(WorkloadSagaError::InvalidEvidence(
+                            "republication requires prior publication evidence",
+                        ))?;
+                if !matches!(
+                    retained,
+                    WorkloadOwnerObservation::PublicationPresent { .. }
+                ) {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "republication must replace exact prior publication evidence",
+                    ));
+                }
+                *retained = observation;
+            } else {
+                observations.push(observation);
+            }
             WorkloadSagaPhase::Published
         }
         WorkloadProvisionSuccessEvidence::PublicationObserved {

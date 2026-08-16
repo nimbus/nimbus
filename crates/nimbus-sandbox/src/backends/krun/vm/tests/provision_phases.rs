@@ -19,6 +19,183 @@ fn crossed_execution_attempt_id(id: &SandboxId) -> crate::SandboxExecutionAttemp
 }
 
 #[test]
+fn reserve_preserves_sparse_oci_process_until_preparation_resolves_image_defaults() {
+    let root = TempDir::new().expect("temporary root should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(root.path()));
+    let id = SandboxId::new("wex-sparse-oci-reservation");
+    let spec = sparse_build_spec(
+        "sparse-oci-reservation",
+        "local-sparse-image",
+        root.path().join("Dockerfile"),
+        root.path().join("context"),
+    );
+    let network_plan = sample_provision_network_plan(&spec, &id, "sparse-oci-reservation");
+
+    backend
+        .reserve_provision_network(
+            spec.clone(),
+            id.clone(),
+            sample_execution_attempt_id(&id),
+            network_plan,
+        )
+        .expect("network reservation must not require image process defaults");
+    let manifest = backend
+        .read_manifest(&id)
+        .expect("reserved manifest should read")
+        .expect("reserved manifest should exist");
+    assert_eq!(manifest.spec, spec);
+    assert!(manifest.spec.process.args.is_empty());
+    assert!(matches!(manifest.spec.root, SandboxRootSpec::OciImage(_)));
+    assert!(!manifest.provision_prepared);
+}
+
+#[test]
+fn activation_finalizes_private_tsi_bundle_with_authenticated_attachment_address() {
+    let root = TempDir::new().expect("temporary root should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(root.path()));
+    let id = SandboxId::new("wex-private-tsi-finalization");
+    let spec = sample_spec_for_tenant("private-tsi-finalization", "api").with_port_binding(
+        SandboxPortBinding::new("http", EndpointProtocol::Http, 18_080, 8_080),
+    );
+    let network_plan = sample_provision_network_plan(&spec, &id, "private-tsi-finalization");
+    backend
+        .reserve_provision_network(
+            spec,
+            id.clone(),
+            sample_execution_attempt_id(&id),
+            network_plan,
+        )
+        .expect("private TSI fixture should reserve");
+    backend
+        .prepare_provision_workload(&id, &sample_execution_attempt_id(&id))
+        .expect("private TSI fixture should prepare");
+    let manifest = backend
+        .read_manifest(&id)
+        .expect("private TSI manifest should read")
+        .expect("private TSI manifest should exist");
+    let prepared = fs::read_to_string(&manifest.bundle_layout.config_path)
+        .expect("prepared private TSI bundle should read");
+    assert!(prepared.contains("\"krun.port_map\": \"0.0.0.0:18080:8080\""));
+
+    backend
+        .finalize_provision_private_ingress_bundle(&manifest, std::net::Ipv4Addr::new(10, 0, 0, 2))
+        .expect("authenticated attachment address should finalize the bundle");
+
+    let finalized = fs::read_to_string(&manifest.bundle_layout.config_path)
+        .expect("finalized private TSI bundle should read");
+    assert!(finalized.contains("\"krun.port_map\": \"10.0.0.2:18080:8080\""));
+    assert!(
+        finalized.contains(&format!(
+            "\"path\": \"{}\"",
+            manifest.network_layout.netns_path.display()
+        )),
+        "finalization must preserve the authenticated sandbox network namespace"
+    );
+}
+
+#[test]
+fn server_ingress_targets_retain_launch_claim_after_provider_adoption() {
+    let root = TempDir::new().expect("temporary root should exist");
+    let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
+    let pep_port = pep_reservation
+        .local_addr()
+        .expect("PEP tripwire should report its port")
+        .port();
+    let mut config = KrunSandboxBackendConfig::under_root(root.path());
+    config.node_network_supernet = "127.0.0.0/24".to_owned();
+    config.published_port_range = pep_port..=pep_port;
+    let backend = KrunSandboxBackend::new(config)
+        .with_egress_pin_provider(Arc::new(FixedOciEgressPinProvider::ready()));
+    let id = SandboxId::new("wex-provider-owned-ingress-targets");
+    let spec = sample_spec_for_tenant("provider-owned-ingress-targets", "api")
+        .with_port_binding(SandboxPortBinding::tcp("http", 18_080, 8_080));
+    let network_plan = sample_provision_network_plan(&spec, &id, "provider-owned-ingress");
+    let execution_attempt = sample_execution_attempt_id(&id);
+
+    backend
+        .reserve_provision_network(
+            spec,
+            id.clone(),
+            execution_attempt.clone(),
+            network_plan.clone(),
+        )
+        .expect("server-ingress fixture should reserve");
+    backend
+        .prepare_provision_workload(&id, &execution_attempt)
+        .expect("server-ingress fixture should prepare");
+    let mut manifest = backend
+        .read_manifest(&id)
+        .expect("server-ingress manifest should read")
+        .expect("server-ingress manifest should exist");
+    let reservation_claim = manifest
+        .require_reserved_claim()
+        .expect("launch claim should exist before provider adoption")
+        .clone();
+    backend
+        .mark_attachment_adopting(&mut manifest)
+        .expect("fixture should enter attachment adoption");
+    backend
+        .persist_effect_barrier(&manifest, "test server-ingress adoption intent")
+        .expect("adoption intent should persist");
+    let network_config = manifest
+        .require_network_config()
+        .expect("fixture should retain its network config")
+        .clone();
+    backend
+        .segment_allocator
+        .adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &network_config.attachment_id,
+            &reservation_claim,
+        )
+        .expect("fixture should adopt exact attachment authority");
+    manifest
+        .mark_adopted()
+        .expect("fixture should retain adopted launch authority");
+    backend
+        .persist_effect_barrier(&manifest, "test server-ingress adoption result")
+        .expect("adopted authority should persist");
+    {
+        let ports = backend.port_lease_coordinator();
+        let hostname = super::super::start::hostname_for(&manifest.spec);
+        backend
+            .non_routable_attachment_adapter(&manifest, &network_config, &hostname)
+            .attach_with_test_host(
+                &backend.attachment_lifecycle(&ports),
+                AttachmentAttachAuthority::FreshLaunch(&reservation_claim),
+                |_| {
+                    backend.egress_pin_provider.apply(
+                        &manifest.network_layout,
+                        manifest
+                            .egress_proxy
+                            .as_ref()
+                            .expect("fixture should retain its planned PEP"),
+                    )
+                },
+            )
+            .expect("fixture should realize the private attachment");
+    }
+    drop(pep_reservation);
+    backend
+        .start_planned_provision_pep(&manifest, &reservation_claim)
+        .expect("fixture PEP should become ready");
+    manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
+    backend
+        .persist_effect_barrier(&manifest, "test server-ingress provider adoption")
+        .expect("provider-owned authority should persist");
+
+    let observed = backend
+        .inspect_provision_server_ingress_targets(&id, &execution_attempt, &network_plan)
+        .expect("provider-owned workload should expose authenticated private ingress targets");
+    let crate::SandboxProvisionIngressTargetObservation::Ready { targets, .. } = observed else {
+        panic!("provider-owned ready attachment should yield ingress targets");
+    };
+    assert_eq!(targets.reservation_claim(), &reservation_claim);
+    assert_eq!(targets.routes().len(), 1);
+    assert_eq!(targets.routes()[0].upstream().port(), 18_080);
+}
+
+#[test]
 fn krun_provision_activation_classifies_runtime_state() {
     let root = TempDir::new().expect("temporary root should exist");
     let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(root.path()));
@@ -639,7 +816,7 @@ fn krun_attach_uses_compiler_planned_pep_authority() {
 }
 
 #[test]
-fn krun_attach_recovers_dead_compiler_planned_pep_owner() {
+fn krun_owner_reopened_attach_recovers_dead_compiler_planned_pep_owner() {
     let root = TempDir::new().expect("temporary root should exist");
     let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
     let pep_port = pep_reservation
@@ -739,6 +916,10 @@ fn krun_attach_recovers_dead_compiler_planned_pep_owner() {
         .expect("initial PEP should retain its process lifetime")
         .generation();
     drop(authority);
+    manifest.launch_authority = super::super::KrunLaunchAuthority::ProviderOwned;
+    backend
+        .write_manifest(&manifest)
+        .expect("provider-owned manifest should persist before owner exit");
     drop(manifest);
     drop(backend);
 
@@ -759,6 +940,12 @@ fn krun_attach_recovers_dead_compiler_planned_pep_owner() {
 
     let restarted = KrunSandboxBackend::new(backend_config)
         .with_egress_pin_provider(Arc::new(FixedOciEgressPinProvider::ready()));
+    assert!(matches!(
+        restarted
+            .inspect_provision_network_attachment(&id, &sample_execution_attempt_id(&id))
+            .expect("fresh-owner attachment inspection should authenticate absence"),
+        crate::SandboxProvisionPhaseObservation::Absent { .. }
+    ));
     let observed = restarted
         .attach_provision_network(&id, &sample_execution_attempt_id(&id))
         .expect("attachment replay should recover the exact dead planned PEP owner");

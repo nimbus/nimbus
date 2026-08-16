@@ -20,7 +20,7 @@ impl ContainerSandboxBackend {
     /// This does not inspect or stop the runtime and does not remove the
     /// conmon receipt. The restart phase owns those later checks and persists
     /// the returned proof before it advances the workload execution attempt.
-    pub(super) fn authenticate_restart_creator_quiescence(
+    pub(super) fn authenticate_creator_quiescence(
         &self,
         manifest: &mut ContainerSandboxManifest,
     ) -> Result<CreatorQuiescenceProof> {
@@ -37,14 +37,14 @@ impl ContainerSandboxBackend {
                     }
                     CreatorContainmentObservation::Live => Err(SandboxError::OperationFailed {
                         message: format!(
-                            "container creator attempt {} remains live; restart source quiescence remains fenced",
+                            "container creator attempt {} remains live; provider cleanup remains fenced",
                             receipt.attempt_id()
                         ),
                     }),
                     CreatorContainmentObservation::Escaped { reason } => {
                         Err(SandboxError::OperationFailed {
                             message: format!(
-                                "container creator attempt {} escaped its authenticated containment: {reason}; restart source quiescence remains fenced",
+                                "container creator attempt {} escaped its authenticated containment: {reason}; provider cleanup remains fenced",
                                 receipt.attempt_id()
                             ),
                         })
@@ -52,7 +52,7 @@ impl ContainerSandboxBackend {
                     CreatorContainmentObservation::Unknown { reason } => {
                         Err(SandboxError::OperationFailed {
                             message: format!(
-                                "container creator attempt {} cannot be authenticated: {reason}; restart source quiescence remains fenced",
+                                "container creator attempt {} cannot be authenticated: {reason}; provider cleanup remains fenced",
                                 receipt.attempt_id()
                             ),
                         })
@@ -62,7 +62,7 @@ impl ContainerSandboxBackend {
             ContainerCreatorHandoffState::SpawnIntent { .. }
             | ContainerCreatorHandoffState::Pending { .. } => Err(SandboxError::OperationFailed {
                 message: format!(
-                    "container creator handoff for {} remained pending after restart reconciliation",
+                    "container creator handoff for {} remained pending after reconciliation",
                     manifest.handle.id
                 ),
             }),

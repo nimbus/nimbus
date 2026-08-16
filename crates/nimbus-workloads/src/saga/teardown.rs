@@ -367,12 +367,7 @@ impl WorkloadRestartTeardownSettlement {
                 Some(WorkloadSagaPhase::WorkloadActivated)
             }
             (WorkloadRestartStep::InspectReadiness, true, _)
-            | (WorkloadRestartStep::Publish, false, _)
-            | (
-                WorkloadRestartStep::ObservePublication,
-                false,
-                WorkloadRestartEffectResult::AuthenticatedAbsent { .. },
-            ) => Some(WorkloadSagaPhase::Ready),
+            | (WorkloadRestartStep::Publish, false, _) => Some(WorkloadSagaPhase::Ready),
             (WorkloadRestartStep::Publish, true, _)
             | (WorkloadRestartStep::ObservePublication, false, _) => {
                 Some(WorkloadSagaPhase::Published)

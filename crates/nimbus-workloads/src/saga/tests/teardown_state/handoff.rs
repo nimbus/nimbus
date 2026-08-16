@@ -67,6 +67,81 @@ fn observed_restart_record() -> WorkloadSagaRecord {
     record
 }
 
+fn pending_restart_publication_observation() -> (WorkloadSagaRecord, WorkloadRestartCommandClaim) {
+    let intent = intent_with_restart_policy(
+        "tenant-a",
+        "handoff-publication",
+        1,
+        DesiredWorkloadState::Running,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+        8,
+        WorkloadRestartPolicy::Always { max_restarts: 2 },
+    );
+    let publication = publication_reference(&intent, 0x53);
+    let mut record = WorkloadSagaRecord::new(key("tenant-a", "handoff-publication"), intent)
+        .expect("published restart handoff fixture should validate");
+    for phase in [
+        WorkloadSagaPhase::NetworkReserved,
+        WorkloadSagaPhase::WorkloadPrepared,
+        WorkloadSagaPhase::NetworkAttached,
+        WorkloadSagaPhase::WorkloadActivated,
+        WorkloadSagaPhase::Ready,
+        WorkloadSagaPhase::Published,
+        WorkloadSagaPhase::Observed,
+    ] {
+        record = advance_provision(&record, phase, Some(&publication));
+    }
+
+    let admitted = admit_restart(&record, "issued-publication-observation");
+    let request_id = admitted
+        .restart_state()
+        .active()
+        .expect("restart should remain active")
+        .admission()
+        .request_id()
+        .clone();
+    record = admitted
+        .advance_restart_without_effect(&request_id)
+        .expect("published restart should begin with withdrawal");
+    for label in ["publication-withdrawn", "source-quiesced"] {
+        record = succeed_restart_command(record, label);
+    }
+    let due = record
+        .restart_state()
+        .active()
+        .expect("scheduled restart should remain active")
+        .admission()
+        .not_before_unix_millis();
+    record = record
+        .advance_scheduled_restart(&request_id, due)
+        .expect("scheduled restart should become due");
+    for label in [
+        "target-prepared",
+        "target-attached",
+        "target-prerequisites",
+        "target-activated",
+        "target-ready",
+        "target-published",
+    ] {
+        record = succeed_restart_command(record, label);
+    }
+    let pending = record
+        .claim_restart_command(&request_id)
+        .expect("publication observation should claim");
+    let claim = pending
+        .restart_state()
+        .active()
+        .and_then(|active| active.disposition().claim())
+        .expect("publication observation should retain its exact claim")
+        .clone();
+    assert_eq!(claim.step(), WorkloadRestartStep::ObservePublication);
+    let inspection = pending
+        .restart_dispatch_to_inspection(&claim)
+        .expect("publication observation should require exact inspection");
+    (inspection, claim)
+}
+
 fn admit_restart(record: &WorkloadSagaRecord, request_key: &str) -> WorkloadSagaRecord {
     let input = WorkloadRestartAdmissionInput {
         expected_revision: record.revision(),
@@ -542,6 +617,61 @@ fn restart_result_is_settled_before_withdrawal_committed() {
         recorded_detail.terminal_execution_reference(),
         released_detail.terminal_execution_reference()
     );
+}
+
+#[test]
+fn authenticated_observation_absence_preserves_prior_publication_for_final_withdrawal() {
+    let (inspection, claim) = pending_restart_publication_observation();
+    assert!(matches!(
+        inspection
+            .restart_state()
+            .active()
+            .and_then(|active| active.owner_observations().last()),
+        Some(WorkloadOwnerObservation::PublicationPresent { .. })
+    ));
+    let WorkloadSagaIntentUpdate::Transition(fenced) = inspection
+        .apply_intent(stopped_intent(2))
+        .expect("stopped successor should fence publication observation")
+    else {
+        panic!("stopped successor must change the durable record");
+    };
+    let settled = fenced
+        .apply_restart_effect_result(
+            &claim,
+            WorkloadRestartEffectResult::AuthenticatedAbsent {
+                evidence: WorkloadRestartEvidenceDigest::sha256(
+                    "target-publication-authenticated-absent",
+                ),
+            },
+        )
+        .expect("authenticated absence should settle the successor-vetoed observation");
+    let withdrawal = settled
+        .commit_restart_settlement_teardown()
+        .expect("settled publication observation should enter canonical teardown");
+    let settlement = withdrawal
+        .teardown_disposition()
+        .and_then(|disposition| disposition.context().restart_settlement())
+        .expect("withdrawal should retain the exact restart settlement");
+    assert!(matches!(
+        settlement.owner_observations().last(),
+        Some(WorkloadOwnerObservation::PublicationPresent { .. })
+    ));
+    let WorkloadPhaseDetail::Teardown(detail) = withdrawal.phase_detail() else {
+        panic!("restart settlement teardown should retain exact phase detail");
+    };
+    assert_eq!(detail.origin(), WorkloadSagaPhase::Published);
+    assert!(matches!(
+        withdrawal.decide_teardown().unwrap(),
+        WorkloadTeardownDecision::PersistCandidate(
+            ProposedWorkloadTeardownTransition::Claim { attempt, .. }
+        ) if attempt.step() == WorkloadTeardownStep::WithdrawPublication
+    ));
+
+    let mut downgraded = serde_json::to_value(&withdrawal).unwrap();
+    downgraded["phaseDetail"]["value"]["origin"] =
+        serde_json::to_value(WorkloadSagaPhase::Ready).unwrap();
+    rehash_encoded_record(&mut downgraded);
+    assert!(serde_json::from_value::<WorkloadSagaRecord>(downgraded).is_err());
 }
 
 #[test]

@@ -112,8 +112,8 @@ verify_current_format_and_correlations() {
   state_source="$(source_without_comments "${SAGA_STATE}")"
   if [ "${NIMBUS_NETWORK_NNC62A_TEST_MUTATION:-}" = "wrong-version" ] ||
     ! printf '%s\n' "${saga_source}" |
-      rg -q 'WORKLOAD_SAGA_FORMAT_VERSION:[[:space:]]*u32[[:space:]]*=[[:space:]]*6'; then
-    add_error "workload saga format version is not the current strict v6"
+      rg -q 'WORKLOAD_SAGA_FORMAT_VERSION:[[:space:]]*u32[[:space:]]*=[[:space:]]*7'; then
+    add_error "workload saga format version is not the current strict v7"
   else
     pass_check
   fi
@@ -344,7 +344,7 @@ run_self_test() {
     case "${mutation}" in
       missing-carrier) expected='missing or empty workloads-owned compiled-plan carrier' ;;
       tuple-authority) expected='compiled-plan carrier retains caller-supplied tuple authority' ;;
-      wrong-version) expected='workload saga format version is not the current strict v6' ;;
+      wrong-version) expected='workload saga format version is not the current strict v7' ;;
       physical-tuple) expected='physical codec/schema retains flattened network tuple authority' ;;
       missing-action-plan) expected='pure reserve attempt does not bind the exact durable compiled-plan digest' ;;
       snapshot-handoff) expected='distinct-process proof permits snapshot/payload handoff' ;;

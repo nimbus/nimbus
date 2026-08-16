@@ -1,5 +1,6 @@
 //! Runtime status, readiness probing, and endpoint publication.
 
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use crate::backends::readiness_probe::DEFAULT_READINESS_PROBE_TIMEOUT;
@@ -70,4 +71,46 @@ pub(super) fn published_endpoints(spec: &SandboxSpec) -> Vec<PublishedEndpoint> 
             .with_guest_port(port_binding.guest_port)
         })
         .collect()
+}
+
+pub(super) fn private_readiness_endpoints(
+    spec: &SandboxSpec,
+    assigned_ip: Ipv4Addr,
+) -> Vec<PublishedEndpoint> {
+    spec.port_bindings
+        .iter()
+        .map(|binding| {
+            PublishedEndpoint::new(
+                binding.name.clone(),
+                binding.protocol,
+                std::net::SocketAddr::new(assigned_ip.into(), binding.guest_port),
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    use super::private_readiness_endpoints;
+    use crate::SandboxPortBinding;
+    use crate::backends::container::runtime::support::sample_spec;
+
+    #[test]
+    fn private_readiness_uses_attachment_address_and_guest_port() {
+        let spec = sample_spec().with_port_binding(
+            SandboxPortBinding::tcp("http", 18_080, 8_080)
+                .with_host_address(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        );
+
+        let endpoints = private_readiness_endpoints(&spec, Ipv4Addr::new(10, 0, 0, 9));
+
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(
+            endpoints[0].address,
+            SocketAddr::from(([10, 0, 0, 9], 8_080))
+        );
+        assert_eq!(endpoints[0].guest_port, None);
+    }
 }

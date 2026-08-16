@@ -813,7 +813,11 @@ fn provision_matrix_accepts_every_allowed_publication_branch() {
             record = advance_provision(&record, WorkloadSagaPhase::Observed, None);
         }
         assert_eq!(record.phase(), WorkloadSagaPhase::Observed);
-        assert!(!record.requires_recovery());
+        assert_eq!(
+            record.requires_recovery(),
+            publication == WorkloadPublicationIntent::PublishWhenReady,
+            "a fresh process must inspect process-bound publication, while withheld observation stays quiescent",
+        );
     }
 }
 
@@ -1529,6 +1533,276 @@ fn validated_record_rejects_successor_while_provision_remains_active() {
     forged["lastTransition"]["successorGeneration"] = json!("2");
     rehash_encoded_record(&mut forged);
     assert!(serde_json::from_value::<WorkloadSagaRecord>(forged).is_err());
+}
+
+#[test]
+fn owner_reopened_publication_recovery_retains_exact_inspection_authority() {
+    let ready = record_at_ready(WorkloadPublicationIntent::PublishWhenReady);
+    let publication = ready
+        .phase_detail()
+        .references()
+        .publication()
+        .expect("publishable ready record has publication authority")
+        .clone();
+    let published = advance_provision(&ready, WorkloadSagaPhase::Published, Some(&publication));
+    let observed = advance_provision(&published, WorkloadSagaPhase::Observed, Some(&publication));
+
+    assert!(observed.needs_owner_reopened_publication_recovery());
+    let reopened = observed
+        .reopen_observed_publication_for_owner_recovery()
+        .expect("fresh owner should first persist inspection-only attachment authority");
+    assert_eq!(reopened.phase(), WorkloadSagaPhase::Observed);
+    let attachment_claim = reopened
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::claim)
+        .expect("reopened owner should retain an attachment inspection claim");
+    assert!(matches!(
+        reopened.provision_disposition(),
+        Some(WorkloadProvisionDisposition::InspectionRequired(_))
+    ));
+    assert_eq!(
+        attachment_claim.attempt().step(),
+        WorkloadProvisionStep::AttachNetwork
+    );
+    assert!(matches!(
+        attachment_claim.authorization(),
+        WorkloadProvisionDispatchAuthorization::OwnerReopenedAttachmentInspection
+    ));
+    assert_eq!(
+        reopened.phase_detail().references().publication(),
+        Some(&publication)
+    );
+    let WorkloadPhaseDetail::Provision(detail) = reopened.phase_detail() else {
+        panic!("reopened publication should retain provision evidence");
+    };
+    assert_eq!(detail.observations().len(), 7);
+    assert!(matches!(
+        detail.observations().last(),
+        Some(WorkloadOwnerObservation::PublicationObserved { reference, .. })
+            if reference == &publication
+    ));
+    assert_eq!(
+        serde_json::from_slice::<WorkloadSagaRecord>(&serde_json::to_vec(&reopened).unwrap())
+            .unwrap(),
+        reopened
+    );
+
+    let mut forged = serde_json::to_value(&reopened).unwrap();
+    forged["provisionDisposition"]["value"]["authorization"]["kind"] = json!("initial");
+    rehash_encoded_record(&mut forged);
+    assert!(serde_json::from_value::<WorkloadSagaRecord>(forged).is_err());
+    assert!(
+        reopened
+            .reopen_observed_publication_for_owner_recovery()
+            .is_err()
+    );
+    assert!(
+        !record_at_ready(WorkloadPublicationIntent::Withheld)
+            .needs_owner_reopened_publication_recovery()
+    );
+
+    let attachment_absence = WorkloadProvisionAbsenceEvidence::for_inspection(
+        &reopened,
+        attachment_claim,
+        WorkloadOwnerEvidenceDigest::sha256("owner-reopened attachment absent"),
+    )
+    .expect("owner-reopened attachment absence should bind the exact inspection");
+    assert_eq!(
+        attachment_absence.origin(),
+        WorkloadProvisionAbsenceOrigin::OwnerReopenedAttachmentInspection
+    );
+    let mut crossed_origin = serde_json::to_value(&attachment_absence).unwrap();
+    crossed_origin["origin"] = json!("provision_inspection");
+    let crossed_origin =
+        serde_json::from_value(crossed_origin).expect("absence wire should decode");
+    assert!(
+        reopened
+            .inspection_to_retry_dispatch(crossed_origin)
+            .is_err()
+    );
+    let attachment_repair = reopened
+        .inspection_to_retry_dispatch(attachment_absence)
+        .expect("exact owner-reopened absence should authorize attachment repair");
+    let attachment_repair_claim = attachment_repair
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::claim)
+        .expect("attachment repair should retain its exact claim");
+    assert!(matches!(
+        attachment_repair_claim.authorization(),
+        WorkloadProvisionDispatchAuthorization::RetryAfterAbsence(evidence)
+            if evidence.origin()
+                == WorkloadProvisionAbsenceOrigin::OwnerReopenedAttachmentInspection
+    ));
+    assert_eq!(
+        serde_json::from_slice::<WorkloadSagaRecord>(
+            &serde_json::to_vec(&attachment_repair).unwrap()
+        )
+        .expect("owner-reopened attachment repair must survive a durable round trip"),
+        attachment_repair
+    );
+    let repeated_inspection = attachment_repair
+        .dispatch_to_inspection()
+        .expect("owner-reopened repair should require exact inspection after dispatch");
+    let repeated_claim = repeated_inspection
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::claim)
+        .expect("repeated attachment inspection should retain its retry claim");
+    let repeated_absence = WorkloadProvisionAbsenceEvidence::for_inspection(
+        &repeated_inspection,
+        repeated_claim,
+        WorkloadOwnerEvidenceDigest::sha256("owner-reopened attachment absent again"),
+    )
+    .expect("a second absence should bind the exact owner-reopened repair claim");
+    assert_eq!(
+        repeated_absence.origin(),
+        WorkloadProvisionAbsenceOrigin::OwnerReopenedAttachmentInspection,
+        "retry epochs must retain the inspection authority that originated the lineage"
+    );
+    let repeated_repair = repeated_inspection
+        .inspection_to_retry_dispatch(repeated_absence)
+        .expect("the retained owner-reopened origin should authorize the next exact epoch");
+    assert!(matches!(
+        repeated_repair
+            .provision_disposition()
+            .and_then(WorkloadProvisionDisposition::claim)
+            .map(WorkloadProvisionDispatchClaim::authorization),
+        Some(WorkloadProvisionDispatchAuthorization::RetryAfterAbsence(evidence))
+            if evidence.origin()
+                == WorkloadProvisionAbsenceOrigin::OwnerReopenedAttachmentInspection
+    ));
+    let WorkloadSagaIntentUpdate::Transition(fenced_repair) = attachment_repair
+        .apply_intent(stopped_intent(2))
+        .expect("a stopped successor must fence owner-reopened attachment repair")
+    else {
+        panic!("a stopped successor must change durable attachment-repair state");
+    };
+    assert!(matches!(
+        fenced_repair.provision_disposition(),
+        Some(WorkloadProvisionDisposition::InspectionRequired(retained))
+            if retained == attachment_repair_claim
+    ));
+    assert_eq!(
+        serde_json::from_slice::<WorkloadSagaRecord>(&serde_json::to_vec(&fenced_repair).unwrap())
+            .expect("fenced owner-reopened attachment repair must survive a durable round trip"),
+        *fenced_repair
+    );
+    assert!(fenced_repair.commit_queued_successor_teardown().is_err());
+    let fenced_absence = WorkloadProvisionAbsenceEvidence::for_inspection(
+        &fenced_repair,
+        attachment_repair_claim,
+        WorkloadOwnerEvidenceDigest::sha256("fenced owner-reopened attachment absent"),
+    )
+    .expect("fenced attachment absence must bind the exact repair claim");
+    let absent_withdrawal = fenced_repair
+        .provision_inspection_absence_to_teardown(fenced_absence)
+        .expect("exact fenced attachment absence must enter withdrawal");
+    assert_eq!(
+        absent_withdrawal.phase(),
+        WorkloadSagaPhase::WithdrawalCommitted
+    );
+    let succeeded_withdrawal = fenced_repair
+        .owner_reopened_attachment_success_to_teardown(attachment_repair_claim)
+        .expect("exact fenced attachment success must enter withdrawal");
+    assert_eq!(
+        succeeded_withdrawal.phase(),
+        WorkloadSagaPhase::WithdrawalCommitted
+    );
+
+    let publication_inspection = attachment_repair
+        .owner_reopened_attachment_to_publication_inspection()
+        .expect("authenticated attachment repair should precede publication inspection");
+    assert_eq!(publication_inspection.phase(), WorkloadSagaPhase::Published);
+    let publication_claim = publication_inspection
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::claim)
+        .expect("reopened publication should retain an inspection claim");
+    assert_eq!(
+        publication_claim.attempt().step(),
+        WorkloadProvisionStep::ObservePublication
+    );
+    assert!(matches!(
+        publication_claim.authorization(),
+        WorkloadProvisionDispatchAuthorization::OwnerReopenedPublicationInspection
+    ));
+    let WorkloadPhaseDetail::Provision(detail) = publication_inspection.phase_detail() else {
+        panic!("publication inspection should retain provision evidence");
+    };
+    assert_eq!(detail.observations().len(), 6);
+    assert!(matches!(
+        detail.observations().last(),
+        Some(WorkloadOwnerObservation::PublicationPresent { reference, .. })
+            if reference == &publication
+    ));
+
+    let publication_absence = WorkloadProvisionAbsenceEvidence::for_inspection(
+        &publication_inspection,
+        publication_claim,
+        WorkloadOwnerEvidenceDigest::sha256("owner-reopened publication absent"),
+    )
+    .expect("owner-reopened publication absence should bind the exact inspection");
+    assert_eq!(
+        publication_absence.origin(),
+        WorkloadProvisionAbsenceOrigin::OwnerReopenedPublicationInspection
+    );
+    let republish = publication_inspection
+        .publication_observation_absence_to_republication(publication_absence)
+        .expect("exact owner-reopened publication absence should authorize republication");
+    let republish_claim = republish
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::claim)
+        .expect("republication should retain its exact claim");
+    assert!(matches!(
+        republish_claim.authorization(),
+        WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(evidence)
+            if evidence.origin()
+                == WorkloadProvisionAbsenceOrigin::OwnerReopenedPublicationInspection
+    ));
+
+    let republish_inspection = republish
+        .dispatch_to_inspection()
+        .expect("an ambiguous republication should retain its exact claim for inspection");
+    let retained_republish = republish_inspection
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::claim)
+        .expect("republication inspection should retain its exact claim");
+    let republish_absence = WorkloadProvisionAbsenceEvidence::for_inspection(
+        &republish_inspection,
+        retained_republish,
+        WorkloadOwnerEvidenceDigest::sha256("owner-reopened republication absent"),
+    )
+    .expect("republication absence should bind the exact inspected publish claim");
+    assert_eq!(
+        republish_absence.origin(),
+        WorkloadProvisionAbsenceOrigin::OwnerReopenedPublicationInspection,
+        "publication retry must retain its owner-reopened observation lineage"
+    );
+    let republish_retry = republish_inspection
+        .inspection_to_retry_dispatch(republish_absence)
+        .expect("exact republication absence should authorize the adjacent publish epoch");
+    let republish_retry_claim = republish_retry
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::claim)
+        .expect("republication retry should retain its exact claim");
+    assert!(matches!(
+        republish_retry_claim.authorization(),
+        WorkloadProvisionDispatchAuthorization::RetryRepublishAfterAbsence(lineage)
+            if lineage.publication_absence().step() == WorkloadProvisionStep::Publish
+                && lineage.observation_absence().origin()
+                    == WorkloadProvisionAbsenceOrigin::OwnerReopenedPublicationInspection
+    ));
+    let reobserve = republish_retry
+        .republication_to_observation(republish_retry.phase_detail().clone())
+        .expect("successful republication retry should schedule exact re-observation");
+    assert!(matches!(
+        reobserve
+            .provision_disposition()
+            .and_then(WorkloadProvisionDisposition::claim)
+            .map(WorkloadProvisionDispatchClaim::authorization),
+        Some(WorkloadProvisionDispatchAuthorization::ReobserveAfterRetriedRepublication(lineage))
+            if lineage.publication_absence().step() == WorkloadProvisionStep::Publish
+                && lineage.observation_absence().origin()
+                    == WorkloadProvisionAbsenceOrigin::OwnerReopenedPublicationInspection
+    ));
 }
 
 #[test]

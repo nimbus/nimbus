@@ -48,6 +48,7 @@ use crate::spec::SandboxPortBinding;
 
 mod authority;
 mod batch_state;
+mod external_publication;
 mod machine;
 mod netavark_lifetime;
 mod planned_netavark;

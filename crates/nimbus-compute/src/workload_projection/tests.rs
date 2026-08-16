@@ -473,6 +473,78 @@ fn exact_inspection(record: &WorkloadSagaRecord) -> SandboxInspection {
     )
 }
 
+fn exact_in_progress_inspection(
+    record: &WorkloadSagaRecord,
+    status: SandboxStatus,
+) -> SandboxInspection {
+    assert!(matches!(
+        status,
+        SandboxStatus::Starting | SandboxStatus::NotReady
+    ));
+    let exact = exact_inspection(record);
+    let attachment = exact
+        .network_status
+        .as_ref()
+        .and_then(SandboxNetworkStatus::attachment)
+        .cloned()
+        .expect("fixture should have an exact attachment");
+    let execution = record.current_execution_reference();
+    let mut handle = exact.handle;
+    handle.status = status;
+    handle.published_endpoints.clear();
+    SandboxInspection::provider_authenticated_running_with_network_status(
+        handle,
+        Some(
+            SandboxNetworkStatus::new(Some(attachment), [])
+                .expect("in-progress network status should validate"),
+        ),
+        SandboxExecutionAttemptId::new(execution.attempt_id().to_string())
+            .expect("fixture attempt ID should be valid"),
+        b"workload-projection-in-progress-fixture",
+    )
+}
+
+fn exact_exit_inspection(
+    record: &WorkloadSagaRecord,
+    status: SandboxStatus,
+    exit_code: i32,
+) -> SandboxInspection {
+    assert!(matches!(
+        status,
+        SandboxStatus::Stopping | SandboxStatus::Stopped | SandboxStatus::Failed
+    ));
+    let exact = exact_inspection(record);
+    let attachment = exact
+        .network_status
+        .as_ref()
+        .and_then(SandboxNetworkStatus::attachment)
+        .cloned()
+        .expect("fixture should have an exact attachment");
+    let execution = record.current_execution_reference();
+    let mut handle = exact.handle;
+    handle.status = status;
+    handle.published_endpoints.clear();
+    SandboxInspection::provider_authenticated_running_with_network_status(
+        handle.clone(),
+        Some(
+            SandboxNetworkStatus::new(Some(attachment), [])
+                .expect("stopping network status should validate"),
+        ),
+        SandboxExecutionAttemptId::new(execution.attempt_id().to_string())
+            .expect("fixture attempt ID should be valid"),
+        b"workload-projection-exit-fixture",
+    )
+    .with_provider_projection(
+        handle,
+        nimbus_sandbox::SandboxExecutionObservation::Exited { exit_code },
+        nimbus_sandbox::SandboxRestartAssessment::Candidate {
+            exit_code,
+            blocker: None,
+        },
+        nimbus_sandbox::SandboxCleanupObservation::Retained,
+    )
+}
+
 fn authenticated_inspection_with_status(
     record: &WorkloadSagaRecord,
     status: SandboxNetworkStatus,
@@ -730,6 +802,95 @@ async fn observed_withheld_reads_execution_once_and_projects_exact_identity() {
             .as_str()
     );
     assert!(projections[0].handle().published_endpoints.is_empty());
+}
+
+#[tokio::test]
+async fn authenticated_execution_readiness_transition_stays_pending_before_publication() {
+    let fixture = fixture(WorkloadPublicationIntent::PublishWhenReady);
+    let provider = RecordingProvider::new(
+        WorkloadProviderObservation::Present(exact_in_progress_inspection(
+            &fixture.observed,
+            SandboxStatus::Starting,
+        )),
+        WorkloadProviderObservation::Present(vec![exact_ingress(&fixture.observed)]),
+    );
+    let sink = Arc::new(RecordingSink::default());
+    let projection_orchestrator = orchestrator(&fixture, provider.clone(), sink.clone());
+
+    for status in [SandboxStatus::Starting, SandboxStatus::NotReady] {
+        provider.set_execution(WorkloadProviderObservation::Present(
+            exact_in_progress_inspection(&fixture.observed, status),
+        ));
+        assert_eq!(
+            projection_orchestrator
+                .project_record(&fixture.observed, WorkloadProvisionRunDisposition::Observed,)
+                .await,
+            WorkloadProjectionState::Pending(WorkloadProjectionPendingReason::ExecutionInProgress)
+        );
+    }
+
+    assert_eq!(provider.execution_calls.load(Ordering::Acquire), 2);
+    assert_eq!(provider.ingress_calls.load(Ordering::Acquire), 0);
+    assert_eq!(provider.effect_calls.load(Ordering::Acquire), 0);
+    assert_eq!(sink.calls.load(Ordering::Acquire), 0);
+}
+
+#[tokio::test]
+async fn authenticated_current_attempt_exit_stays_pending_for_restart_convergence() {
+    let fixture = fixture(WorkloadPublicationIntent::PublishWhenReady);
+    let provider = RecordingProvider::new(
+        WorkloadProviderObservation::Present(exact_exit_inspection(
+            &fixture.observed,
+            SandboxStatus::Stopping,
+            23,
+        )),
+        WorkloadProviderObservation::Present(vec![exact_ingress(&fixture.observed)]),
+    );
+    let sink = Arc::new(RecordingSink::default());
+
+    assert_eq!(
+        orchestrator(&fixture, provider.clone(), sink.clone())
+            .project_record(&fixture.observed, WorkloadProvisionRunDisposition::Observed)
+            .await,
+        WorkloadProjectionState::Pending(WorkloadProjectionPendingReason::ExecutionInProgress)
+    );
+    assert_eq!(provider.execution_calls.load(Ordering::Acquire), 1);
+    assert_eq!(provider.ingress_calls.load(Ordering::Acquire), 0);
+    assert_eq!(provider.effect_calls.load(Ordering::Acquire), 0);
+    assert_eq!(sink.calls.load(Ordering::Acquire), 0);
+    assert!(sink.projections().is_empty());
+}
+
+#[tokio::test]
+async fn closed_execution_handles_remain_rejected_before_ingress_or_sink_access() {
+    let fixture = fixture(WorkloadPublicationIntent::PublishWhenReady);
+    let provider = RecordingProvider::new(
+        WorkloadProviderObservation::Absent,
+        WorkloadProviderObservation::Present(vec![exact_ingress(&fixture.observed)]),
+    );
+    let sink = Arc::new(RecordingSink::default());
+    let projection_orchestrator = orchestrator(&fixture, provider.clone(), sink.clone());
+
+    for status in [SandboxStatus::Stopped, SandboxStatus::Failed] {
+        provider.set_execution(WorkloadProviderObservation::Present(exact_exit_inspection(
+            &fixture.observed,
+            status,
+            23,
+        )));
+        assert_eq!(
+            projection_orchestrator
+                .project_record(&fixture.observed, WorkloadProvisionRunDisposition::Observed)
+                .await,
+            WorkloadProjectionState::Rejected(
+                WorkloadProjectionRejectedReason::InvalidExecutionEvidence
+            )
+        );
+    }
+    assert_eq!(provider.execution_calls.load(Ordering::Acquire), 2);
+    assert_eq!(provider.ingress_calls.load(Ordering::Acquire), 0);
+    assert_eq!(provider.effect_calls.load(Ordering::Acquire), 0);
+    assert_eq!(sink.calls.load(Ordering::Acquire), 0);
+    assert!(sink.projections().is_empty());
 }
 
 #[tokio::test]

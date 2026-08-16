@@ -17,7 +17,7 @@ use crate::{
 
 use crate::error::{Result, SandboxError};
 
-const DETACHED_PROOF_SCHEMA_VERSION: u32 = 4;
+const DETACHED_PROOF_SCHEMA_VERSION: u32 = 5;
 const FORWARDED_PROVIDER_ABSENCE_DOMAIN: &[u8] =
     b"nimbus.sandbox.forwarded-release.provider-absence.v1\0";
 
@@ -26,6 +26,7 @@ const FORWARDED_PROVIDER_ABSENCE_DOMAIN: &[u8] =
 #[serde(deny_unknown_fields, rename_all = "snake_case", tag = "mode")]
 pub(crate) enum RetainedAttachmentPublicationEvidence {
     HostManaged,
+    Deferred { terminal_sha256: String },
     MachineForwarded { absence_sha256: String },
 }
 
@@ -143,6 +144,11 @@ impl NeverEffectedAttachmentAuthority {
 }
 
 impl RetainedAttachmentPublicationEvidence {
+    pub(super) fn deferred(terminal_sha256: String) -> Result<Self> {
+        require_sha256("deferred publication terminality", &terminal_sha256)?;
+        Ok(Self::Deferred { terminal_sha256 })
+    }
+
     pub(crate) fn machine_forwarded(absence_sha256: String) -> Result<Self> {
         require_sha256("machine publication absence", &absence_sha256)?;
         Ok(Self::MachineForwarded { absence_sha256 })
@@ -151,6 +157,9 @@ impl RetainedAttachmentPublicationEvidence {
     fn validate(&self) -> Result<()> {
         match self {
             Self::HostManaged => Ok(()),
+            Self::Deferred { terminal_sha256 } => {
+                require_sha256("deferred publication terminality", terminal_sha256)
+            }
             Self::MachineForwarded { absence_sha256 } => {
                 require_sha256("machine publication absence", absence_sha256)
             }

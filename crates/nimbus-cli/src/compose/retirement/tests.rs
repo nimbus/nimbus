@@ -92,6 +92,7 @@ struct RecordingComposeProvider {
     provider_root: PathBuf,
     calls: Mutex<Vec<ProviderCall>>,
     ambiguous_once: Mutex<Option<WorkloadTeardownStep>>,
+    in_progress_inspection_once: Mutex<Option<WorkloadTeardownStep>>,
     gate: Mutex<Option<StepGate>>,
     gate_entered: AtomicBool,
 }
@@ -105,6 +106,7 @@ impl RecordingComposeProvider {
             provider_root,
             calls: Mutex::new(Vec::new()),
             ambiguous_once: Mutex::new(None),
+            in_progress_inspection_once: Mutex::new(None),
             gate: Mutex::new(None),
             gate_entered: AtomicBool::new(false),
         })
@@ -120,6 +122,14 @@ impl RecordingComposeProvider {
 
     fn ambiguous_once_at(&self, step: WorkloadTeardownStep) {
         *self.ambiguous_once.lock().expect("ambiguous fault lock") = Some(step);
+    }
+
+    fn waiting_once_at(&self, step: WorkloadTeardownStep) {
+        self.ambiguous_once_at(step);
+        *self
+            .in_progress_inspection_once
+            .lock()
+            .expect("in-progress fault lock") = Some(step);
     }
 
     fn install_gate(&self, step: WorkloadTeardownStep) -> (Arc<Semaphore>, Arc<Semaphore>) {
@@ -240,7 +250,23 @@ impl RecordingComposeProvider {
                 })
             }
             WorkloadTeardownCommandMode::Inspect => {
-                WorkloadTeardownProviderOutcome::Inspect(if marker.is_file() {
+                let in_progress = {
+                    let mut fault = self
+                        .in_progress_inspection_once
+                        .lock()
+                        .expect("in-progress fault lock");
+                    if fault.as_ref() == Some(&command.step()) {
+                        fault.take();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                WorkloadTeardownProviderOutcome::Inspect(if in_progress {
+                    WorkloadTeardownInspectOutcome::InProgress(WorkloadOwnerEvidenceDigest::sha256(
+                        "provider-effect-in-progress",
+                    ))
+                } else if marker.is_file() {
                     WorkloadTeardownInspectOutcome::Satisfied(Box::new(success()))
                 } else {
                     WorkloadTeardownInspectOutcome::NotCompleted(
@@ -714,8 +740,12 @@ impl AmbiguousOnceStore {
     fn new(engine: Arc<Engine>) -> Arc<Self> {
         Arc::new(Self {
             inner: EngineWorkloadSagaStore::new(engine),
-            fail_next_cas: AtomicBool::new(true),
+            fail_next_cas: AtomicBool::new(false),
         })
+    }
+
+    fn fail_next_compare_and_swap(&self) {
+        self.fail_next_cas.store(true, Ordering::Release);
     }
 }
 
@@ -905,9 +935,10 @@ fn compose_down_unresolved_submission_makes_zero_provider_calls() {
         let faulting_store = AmbiguousOnceStore::new(Arc::clone(&fixture.engine));
         let runtime = fixture
             .composition()
-            .into_foreground_runtime(faulting_store)
+            .into_foreground_runtime(faulting_store.clone())
             .await
             .expect("foreground startup recovery should complete");
+        faulting_store.fail_next_compare_and_swap();
 
         let error = retire_compose_services(
             &fixture.command(Some("db")),
@@ -1039,6 +1070,45 @@ fn compose_down_ambiguous_result_reopens_with_inspection_only() {
         assert_eq!(stop_calls[1].mode, WorkloadTeardownCommandMode::Inspect);
         assert_eq!(stop_calls[0].attempt_id, stop_calls[1].attempt_id);
         assert_eq!(stop_calls[0].dispatch_epoch, stop_calls[1].dispatch_epoch);
+        assert_eq!(effect_markers(&fixture.root).len(), 5);
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn compose_down_waiting_result_resumes_to_terminal_truth() {
+    run_async(async move {
+        let temp = TempDir::new().expect("fixture root");
+        let fixture = Fixture::open(temp.path(), SandboxBackendKind::Krun, &["db"], &["db"]);
+        fixture.provision(&["db"]).await;
+        fixture
+            .provider
+            .waiting_once_at(WorkloadTeardownStep::StopExecution);
+
+        let report = fixture
+            .retire(Some("db"))
+            .await
+            .expect("foreground Compose down should retain a safe waiting result");
+        assert_eq!(
+            report.outcomes()[0].disposition(),
+            ComposeServiceRetirementDisposition::Recorded
+        );
+        let stop_calls = fixture
+            .provider
+            .calls()
+            .into_iter()
+            .filter(|call| call.step == WorkloadTeardownStep::StopExecution)
+            .collect::<Vec<_>>();
+        assert_eq!(stop_calls.len(), 3);
+        assert_eq!(stop_calls[0].mode, WorkloadTeardownCommandMode::Execute);
+        assert_eq!(stop_calls[1].mode, WorkloadTeardownCommandMode::Inspect);
+        assert_eq!(stop_calls[2].mode, WorkloadTeardownCommandMode::Inspect);
+        assert!(
+            stop_calls
+                .windows(2)
+                .all(|pair| pair[0].attempt_id == pair[1].attempt_id),
+            "foreground resume must inspect one exact retained attempt"
+        );
         assert_eq!(effect_markers(&fixture.root).len(), 5);
     });
 }

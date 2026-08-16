@@ -184,7 +184,7 @@ impl ServerIngressPublicationAdapter {
         Ok(ValidatedPublication {
             key: PublicationKey {
                 saga_id: command.saga_id().as_str().to_owned(),
-                attempt_id: command.attempt_id().as_str().to_owned(),
+                attempt_id: validated.execution_attempt_id().as_str().to_owned(),
                 execution_id: validated.sandbox_id().as_str().to_owned(),
                 generation: command.generation().as_u64(),
                 network_plan_digest: command.network_plan_digest().to_string(),
@@ -573,6 +573,27 @@ impl ServerIngressPublicationAdapter {
         }
     }
 
+    fn inspect_restart_publication_observation(
+        &self,
+        validated: &ValidatedRestartPublication,
+        successor_veto_generation: Option<nimbus_workloads::WorkloadGeneration>,
+    ) -> ProviderRestartEffectObservation {
+        let observation =
+            self.inspect_restart_publication(validated, successor_veto_generation.is_some());
+        match (successor_veto_generation, observation) {
+            (Some(generation), ProviderRestartEffectObservation::InProgress { evidence }) => {
+                let mut settled = format!(
+                    "server_restart_ingress_absent_after_successor_veto:{}:",
+                    generation.as_u64()
+                )
+                .into_bytes();
+                settled.extend_from_slice(&evidence);
+                ProviderRestartEffectObservation::Absent { evidence: settled }
+            }
+            (_, observation) => observation,
+        }
+    }
+
     fn inspect_restart_source(
         &self,
         validated: &ValidatedRestartPublication,
@@ -692,7 +713,7 @@ impl IngressPublicationInspectionCapability for ServerIngressPublicationAdapter 
         Box::pin(async move {
             let validated = self.validate(command);
             self.phases.inspect_live(command, || match validated {
-                Ok(validated) => self.inspect(&validated, false),
+                Ok(validated) => self.inspect(&validated, true),
                 Err(error) => error,
             })
         })
@@ -762,7 +783,10 @@ impl RestartPublicationObservationCapability for ServerIngressPublicationAdapter
         let observation = self
             .restart_phases
             .inspect_live(command, || match validated {
-                Ok(validated) => self.inspect_restart_publication(&validated, false),
+                Ok(validated) => self.inspect_restart_publication_observation(
+                    &validated,
+                    command.successor_veto_generation(),
+                ),
                 Err(observation) => observation,
             });
         Box::pin(std::future::ready(observation))
@@ -1055,9 +1079,13 @@ impl RunningIngressBatch {
     }
 
     fn stop_and_retain_for_restart(mut self) -> io::Result<Vec<u8>> {
+        self.stop_and_retain_routes_for_rebind()
+    }
+
+    fn stop_and_retain_routes_for_rebind(&mut self) -> io::Result<Vec<u8>> {
         if !self.is_healthy() {
             return Err(io::Error::other(
-                "cannot retain an unhealthy workload ingress batch for restart",
+                "cannot retain an unhealthy workload ingress batch for rebind",
             ));
         }
         let mut stopping = Vec::with_capacity(self.routes.len());
@@ -1196,6 +1224,27 @@ impl RunningIngressBatch {
     }
 }
 
+impl Drop for RunningIngressBatch {
+    fn drop(&mut self) {
+        if self.final_phase != FinalIngressPhase::Published
+            || self
+                .routes
+                .iter()
+                .all(|route| route.lease.is_none() && route.worker.is_none())
+        {
+            return;
+        }
+        if let Err(error) = self.stop_and_retain_routes_for_rebind() {
+            tracing::error!(
+                %error,
+                plan_id = %self.plan_id,
+                generation = self.generation.as_u64(),
+                "failed to retain workload ingress listeners during server owner exit"
+            );
+        }
+    }
+}
+
 fn source_evidence(label: &str, targets: &SandboxProvisionIngressTargets) -> Vec<u8> {
     format!(
         "{label}:{}:{}:{}:{}",
@@ -1277,6 +1326,9 @@ fn restart_bind_error(error: io::Error) -> ProviderRestartEffectObservation {
     }
 }
 
+#[cfg(test)]
+#[path = "workload_ingress/owner_exit_tests.rs"]
+mod owner_exit_tests;
 #[cfg(test)]
 #[path = "workload_ingress/tests.rs"]
 mod tests;

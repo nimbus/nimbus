@@ -4,7 +4,7 @@ use nimbus_engine::Engine;
 use nimbus_network::{
     LocalNetworkManager, NetworkControlPlaneLocality, NetworkSovereigntyRequirements,
 };
-use nimbus_workloads::WorkloadSagaPhase;
+use nimbus_workloads::{WorkloadSagaPhase, WorkloadTeardownStep};
 use tempfile::tempdir;
 
 use super::super::ComputeResourceRetirementError;
@@ -23,7 +23,8 @@ use crate::workload_projection::ServiceManagerWorkloadProjectionSink;
 use crate::workload_provision_source::ServiceManagerWorkloadProvisionSourceAuthority;
 use crate::workload_saga::{
     WorkloadProvisionSourceAuthority, WorkloadRestartCapabilityRegistry,
-    sandbox_execution_provider_id,
+    WorkloadTeardownCancellationToken, WorkloadTeardownRunDisposition,
+    WorkloadTeardownSubmissionError, sandbox_execution_provider_id,
 };
 
 #[test]
@@ -134,6 +135,85 @@ fn cancellation_before_source_claim_makes_zero_store_source_or_provider_mutation
         );
         assert!(!harness.service_source_is_fenced());
         assert_eq!(harness.teardown_provider.call_count(), 0);
+    });
+}
+
+#[test]
+fn pre_cancelled_foreground_stop_makes_zero_source_store_or_provider_mutation() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.declare_service();
+        harness.start_service().await;
+        harness.reset_retirement_evidence();
+        let before_record = harness.store.record(&key(SERVICE_NAME));
+        let before_source = harness
+            .manager
+            .service_definition_for_tenant(harness.context.tenant_id(), SERVICE_NAME);
+        let before_store = harness.store.counts();
+        let cancellation = WorkloadTeardownCancellationToken::new();
+        cancellation.cancel();
+
+        let error = harness
+            .retire
+            .submit_service_teardown_until_terminal(&harness.context, SERVICE_NAME, &cancellation)
+            .await
+            .expect_err("pre-cancelled foreground retirement must not start");
+
+        assert!(matches!(
+            error,
+            ComputeResourceRetirementError::Teardown(WorkloadTeardownSubmissionError::Cancelled)
+        ));
+        assert_eq!(harness.store.counts(), before_store);
+        assert_eq!(harness.store.record(&key(SERVICE_NAME)), before_record);
+        assert_eq!(
+            harness
+                .manager
+                .service_definition_for_tenant(harness.context.tenant_id(), SERVICE_NAME),
+            before_source
+        );
+        assert!(!harness.service_source_is_fenced());
+        assert_eq!(harness.teardown_provider.call_count(), 0);
+    });
+}
+
+#[test]
+fn foreground_stop_does_not_retry_cleanup_pending() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.declare_service();
+        harness.start_service().await;
+        harness.reset_retirement_evidence();
+        harness
+            .teardown_provider
+            .fail_definitely_at(WorkloadTeardownStep::StopExecution);
+
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            harness.retire.submit_service_teardown_until_terminal(
+                &harness.context,
+                SERVICE_NAME,
+                &WorkloadTeardownCancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("CleanupPending must return instead of retrying")
+        .expect_err("definite provider failure must remain fail-closed");
+
+        assert!(matches!(
+            error,
+            ComputeResourceRetirementError::TeardownPending(
+                WorkloadTeardownRunDisposition::CleanupPending
+            )
+        ));
+        assert_eq!(
+            harness.store.record(&key(SERVICE_NAME)).phase(),
+            WorkloadSagaPhase::CleanupPending
+        );
+        assert_eq!(
+            harness.teardown_provider.call_count(),
+            3,
+            "foreground retirement must not retry or continue after definite stop failure"
+        );
     });
 }
 

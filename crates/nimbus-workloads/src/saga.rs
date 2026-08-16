@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use crate::{DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadUid};
 
 /// Portable saga format understood by this crate.
-pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 6;
+pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 7;
 
 /// A rejected workload-saga value or transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1705,12 +1705,13 @@ pub use executable::{
 };
 pub use network::{WorkloadNetworkIntent, WorkloadNetworkReference};
 pub use provision::{
-    WorkloadExecutionProviderId, WorkloadProvisionAbsenceEvidence, WorkloadProvisionAttempt,
-    WorkloadProvisionAttemptId, WorkloadProvisionAttemptInput, WorkloadProvisionCommandId,
-    WorkloadProvisionCommandMode, WorkloadProvisionDispatchAuthorization,
-    WorkloadProvisionDispatchClaim, WorkloadProvisionDispatchEpoch, WorkloadProvisionDisposition,
-    WorkloadProvisionEffectResult, WorkloadProvisionInspectionResult,
-    WorkloadProvisionPrerequisiteEvidence, WorkloadProvisionProviderTarget,
+    WorkloadExecutionProviderId, WorkloadProvisionAbsenceEvidence, WorkloadProvisionAbsenceOrigin,
+    WorkloadProvisionAttempt, WorkloadProvisionAttemptId, WorkloadProvisionAttemptInput,
+    WorkloadProvisionCommandId, WorkloadProvisionCommandMode,
+    WorkloadProvisionDispatchAuthorization, WorkloadProvisionDispatchClaim,
+    WorkloadProvisionDispatchEpoch, WorkloadProvisionDisposition, WorkloadProvisionEffectResult,
+    WorkloadProvisionInspectionResult, WorkloadProvisionPrerequisiteEvidence,
+    WorkloadProvisionProviderTarget, WorkloadProvisionRepublicationRetryEvidence,
     WorkloadProvisionSourceDigest, WorkloadProvisionSourceEvidence,
     WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity,
     WorkloadProvisionSourceKind, WorkloadProvisionSourceResourceVersion, WorkloadProvisionStep,

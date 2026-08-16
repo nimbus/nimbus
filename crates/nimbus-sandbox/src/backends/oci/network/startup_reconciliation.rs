@@ -6,8 +6,7 @@
 //! provider, artifact-removal, release, finalization, or capacity-reuse
 //! capability of its own.
 
-use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use nimbus_network::{
     DurableNetworkAttachmentState, LocalNetworkAttachmentAuthority,
@@ -20,7 +19,8 @@ use super::orphan_convergence::{
 };
 use super::orphan_evidence::{
     OciEvidenceUnknown, OciOrphanDisposition, OciOrphanEvidenceCandidate,
-    OciOrphanQuarantineReason, classify_oci_orphan_evidence, classify_retained_desired_manifest,
+    OciOrphanQuarantineReason, OciRetainedManifestEvidence, classify_oci_orphan_evidence,
+    classify_retained_desired_manifest, classify_retained_terminal_manifest,
     collect_oci_orphan_evidence,
 };
 use super::{OciIpamAuthority, OciSegmentAllocator};
@@ -45,7 +45,7 @@ pub(crate) fn reconcile_startup_network_state(
         attachments,
         ipam,
         allocator,
-        &BTreeSet::new(),
+        &[],
     )
 }
 
@@ -61,14 +61,14 @@ pub(crate) fn reconcile_startup_network_state_with_retained_desired_manifests(
     attachments: &LocalNetworkAttachmentAuthority,
     ipam: &OciIpamAuthority,
     allocator: &OciSegmentAllocator,
-    retained_desired_manifests: &BTreeSet<PathBuf>,
+    retained_manifests: &[OciRetainedManifestEvidence],
 ) -> Result<()> {
     reconcile_startup_network_state_with_optional_cleanup(
         workload_state_root,
         attachments,
         ipam,
         allocator,
-        retained_desired_manifests,
+        retained_manifests,
         None,
     )
 }
@@ -80,7 +80,7 @@ pub(crate) fn reconcile_startup_network_state_with_cleanup(
     attachments: &LocalNetworkAttachmentAuthority,
     ipam: &OciIpamAuthority,
     allocator: &OciSegmentAllocator,
-    retained_desired_manifests: &BTreeSet<PathBuf>,
+    retained_manifests: &[OciRetainedManifestEvidence],
     cleanup: &dyn OciOrphanCleanupContext,
 ) -> Result<()> {
     reconcile_startup_network_state_with_optional_cleanup(
@@ -88,7 +88,7 @@ pub(crate) fn reconcile_startup_network_state_with_cleanup(
         attachments,
         ipam,
         allocator,
-        retained_desired_manifests,
+        retained_manifests,
         Some(cleanup),
     )
 }
@@ -98,7 +98,7 @@ fn reconcile_startup_network_state_with_optional_cleanup(
     attachments: &LocalNetworkAttachmentAuthority,
     ipam: &OciIpamAuthority,
     allocator: &OciSegmentAllocator,
-    retained_desired_manifests: &BTreeSet<PathBuf>,
+    retained_manifests: &[OciRetainedManifestEvidence],
     cleanup: Option<&dyn OciOrphanCleanupContext>,
 ) -> Result<()> {
     let report = collect_oci_orphan_evidence(workload_state_root, attachments, ipam, allocator)?;
@@ -111,6 +111,12 @@ fn reconcile_startup_network_state_with_optional_cleanup(
             OciOrphanDisposition::Quarantine(reason) => reason,
         };
         let candidate = classification.evidence();
+        if reason == OciOrphanQuarantineReason::ProviderAttemptMissing
+            && classify_retained_terminal_manifest(candidate, retained_manifests)
+                == Some(OciOrphanDisposition::Adopt)
+        {
+            continue;
+        }
         let application = quarantine_candidate(attachments, allocator, candidate);
         let fence = match application {
             Ok(()) => {
@@ -163,10 +169,7 @@ fn reconcile_startup_network_state_with_optional_cleanup(
 
     for classification in classifications.unmatched_artifact_classifications() {
         if matches!(
-            classify_retained_desired_manifest(
-                classification.evidence(),
-                retained_desired_manifests,
-            ),
+            classify_retained_desired_manifest(classification.evidence(), retained_manifests,),
             Some(OciOrphanDisposition::Adopt)
         ) {
             continue;

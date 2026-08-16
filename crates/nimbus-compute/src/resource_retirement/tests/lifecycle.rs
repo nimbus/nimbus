@@ -10,7 +10,10 @@ use nimbus_workloads::{
 };
 
 use crate::WorkloadTeardownDisposition;
-use crate::workload_saga::{ExplicitWorkloadRestartRequest, WorkloadRestartCancellationToken};
+use crate::workload_saga::{
+    ExplicitWorkloadRestartRequest, WorkloadRestartCancellationToken,
+    WorkloadTeardownCancellationToken, WorkloadTeardownSubmissionError,
+};
 
 use super::support::{
     RetirementHarness, SANDBOX_ID, SERVICE_NAME, assert_complete_teardown_order, key,
@@ -118,6 +121,100 @@ fn service_stop_persists_then_observes_complete_teardown_order() {
         );
         assert_terminal_network_successor(&running, &record);
         assert_complete_teardown_order(&harness.log.entries(), &key(SERVICE_NAME));
+    });
+}
+
+#[test]
+fn foreground_service_stop_resumes_waiting_without_duplicate_effect() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.declare_service();
+        harness.start_service().await;
+        harness.reset_retirement_evidence();
+        harness
+            .teardown_provider
+            .wait_once_at(WorkloadTeardownStep::StopExecution);
+
+        let outcome = harness
+            .retire
+            .submit_service_teardown_until_terminal(
+                &harness.context,
+                SERVICE_NAME,
+                &WorkloadTeardownCancellationToken::new(),
+            )
+            .await
+            .expect("foreground retirement should resume a safe waiting result");
+
+        assert_eq!(outcome.disposition(), WorkloadTeardownDisposition::Recorded);
+        assert_eq!(
+            harness.store.record(&key(SERVICE_NAME)).phase(),
+            WorkloadSagaPhase::Recorded
+        );
+        assert_waiting_step_was_inspected_without_duplicate_effect(
+            &harness.log.entries(),
+            WorkloadTeardownStep::StopExecution,
+        );
+    });
+}
+
+#[test]
+fn cancelled_foreground_service_stop_remains_replayable() {
+    run_async_test(async {
+        let harness = RetirementHarness::new();
+        harness.declare_service();
+        harness.start_service().await;
+        harness.reset_retirement_evidence();
+        let waiting = harness
+            .teardown_provider
+            .wait_once_at(WorkloadTeardownStep::StopExecution);
+        let cancellation = WorkloadTeardownCancellationToken::new();
+        let retire = harness.retire.clone();
+        let context = harness.context.clone();
+        let waiter_cancellation = cancellation.clone();
+        let retirement = tokio::spawn(async move {
+            retire
+                .submit_service_teardown_until_terminal(
+                    &context,
+                    SERVICE_NAME,
+                    &waiter_cancellation,
+                )
+                .await
+        });
+        harness
+            .wait_for_signal(
+                &waiting,
+                "foreground retirement did not reach its durable waiting boundary",
+            )
+            .await;
+        cancellation.cancel();
+
+        let error = tokio::time::timeout(std::time::Duration::from_secs(2), retirement)
+            .await
+            .expect("cancelled foreground waiter should return")
+            .expect("foreground retirement task should join")
+            .expect_err("caller cancellation should detach the foreground waiter");
+        assert!(matches!(
+            error,
+            crate::ComputeResourceRetirementError::Teardown(
+                WorkloadTeardownSubmissionError::Cancelled
+            )
+        ));
+        assert_ne!(
+            harness.store.record(&key(SERVICE_NAME)).phase(),
+            WorkloadSagaPhase::Recorded,
+            "cancellation must not invent terminal state"
+        );
+
+        let replay = harness
+            .retire
+            .submit_service_teardown(&harness.context, SERVICE_NAME)
+            .await
+            .expect("a later exact replay should finish retained teardown work");
+        assert_eq!(replay.disposition(), WorkloadTeardownDisposition::Recorded);
+        assert_waiting_step_was_inspected_without_duplicate_effect(
+            &harness.log.entries(),
+            WorkloadTeardownStep::StopExecution,
+        );
     });
 }
 
@@ -385,4 +482,48 @@ fn assert_terminal_network_successor(running: &WorkloadSagaRecord, stopped: &Wor
     assert!(stopped.dependency_listeners().is_empty());
     assert_eq!(stopped.activation(), WorkloadActivationIntent::PrepareOnly);
     assert_eq!(stopped.publication(), WorkloadPublicationIntent::Withheld);
+}
+
+fn assert_waiting_step_was_inspected_without_duplicate_effect(
+    events: &[super::support::LifecycleEvent],
+    waiting_step: WorkloadTeardownStep,
+) {
+    use nimbus_workloads::WorkloadTeardownCommandMode;
+
+    for step in [
+        WorkloadTeardownStep::WithdrawPublication,
+        WorkloadTeardownStep::DrainExecution,
+        WorkloadTeardownStep::StopExecution,
+        WorkloadTeardownStep::DetachNetwork,
+        WorkloadTeardownStep::ReleaseNetwork,
+    ] {
+        let execute_count = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    super::support::LifecycleEvent::Teardown(_, candidate, WorkloadTeardownCommandMode::Execute)
+                        if *candidate == step
+                )
+            })
+            .count();
+        assert_eq!(
+            execute_count, 1,
+            "durable foreground resume must not duplicate the {step:?} effect"
+        );
+    }
+    let inspections = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                super::support::LifecycleEvent::Teardown(_, candidate, WorkloadTeardownCommandMode::Inspect)
+                    if *candidate == waiting_step
+            )
+        })
+        .count();
+    assert_eq!(
+        inspections, 2,
+        "the ambiguous effect must be inspected once into Waiting and once into terminal truth"
+    );
 }

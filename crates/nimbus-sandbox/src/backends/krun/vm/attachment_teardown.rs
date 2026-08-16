@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use nimbus_network::NetworkAttachmentReservationState;
 
 use crate::backends::KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY;
+use crate::backends::conmon::lifecycle::{inspect_runtime_artifact_presence, remove_if_exists};
 use crate::backends::oci::network::{
     AttachmentAuxiliaryDisposition, HostManagedAttachmentCommandInspection,
     HostManagedAttachmentCommandInspectionError, HostManagedAttachmentTeardownState,
@@ -17,7 +18,10 @@ use crate::{
 };
 
 use super::teardown::state::KrunNetworkStopRequirementError;
-use super::{KrunLaunchAuthority, KrunSandboxBackend, KrunSandboxManifest, KrunStartMode};
+use super::{
+    KrunCreatorHandoffState, KrunLaunchAuthority, KrunSandboxBackend, KrunSandboxManifest,
+    KrunStartMode,
+};
 
 type NetworkTeardownResult<T> = std::result::Result<T, NetworkTeardownAdapterError>;
 
@@ -217,14 +221,14 @@ impl KrunSandboxBackend {
         match command.operation() {
             SandboxNetworkTeardownOperation::Detach => {
                 let proof = if confirmed_no_effect {
-                    adapter.detach_host_managed_never_effected_retained(
+                    adapter.detach_deferred_never_effected_retained(
                         &lifecycle,
                         command,
                         context.adopting_association(),
                     )?
                 } else {
                     let current_phase = progress.borrow().detach_phase();
-                    adapter.detach_host_managed_retained(
+                    adapter.detach_deferred_retained(
                         &lifecycle,
                         command,
                         current_phase,
@@ -263,7 +267,7 @@ impl KrunSandboxBackend {
             SandboxNetworkTeardownOperation::Release => {
                 let current = progress.borrow().clone();
                 let proof = current.require_detached_for_release(command)?.clone();
-                adapter.release_host_managed_detached(
+                adapter.release_deferred_detached(
                     &lifecycle,
                     command,
                     &proof,
@@ -307,6 +311,11 @@ impl KrunSandboxBackend {
             }
         }
         progress.borrow().validate()?;
+        if command.operation() == SandboxNetworkTeardownOperation::Release {
+            let mut terminal = context.clone();
+            terminal.network_teardown = progress.borrow().clone();
+            self.finalize_released_network_manifest(&mut terminal)?;
+        }
         succeeded("krun_host_attachment_teardown", &progress.borrow())
     }
 
@@ -317,17 +326,90 @@ impl KrunSandboxBackend {
     ) -> crate::Result<()> {
         let mut next = context.clone();
         next.network_teardown = progress.clone();
-        if progress.release_phase()
-            == crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
-        {
-            next.launch_authority = KrunLaunchAuthority::Released;
-        }
         self.persist_effect_barrier(&next, "krun host attachment teardown progress")?;
         #[cfg(test)]
         if let Some(probe) = self.network_teardown_checkpoint_test_probe {
             probe.exit_if_reached(progress);
         }
         Ok(())
+    }
+
+    /// Finish provider-local cleanup only after durable network release.
+    ///
+    /// The released phase is the durable authorization before the artifact
+    /// effect. A crash after artifact removal retains its exact descriptor, so
+    /// retry can authenticate the same path, confirm absence idempotently, and
+    /// publish terminal status without repeating network release.
+    pub(super) fn finalize_released_network_manifest(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+    ) -> crate::Result<()> {
+        manifest.network_teardown.validate()?;
+        if manifest.network_teardown.release_phase()
+            != crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "Krun workload {} cannot finalize provider artifacts before durable network release",
+                    manifest.handle.id
+                ),
+            });
+        }
+        if manifest.has_terminal_network_finality() {
+            return Ok(());
+        }
+        if !manifest.shutdown_requested
+            || !manifest.creator_handoff.authorizes_provider_cleanup()
+            || manifest.provider_failure_cleanup.is_active()
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "Krun workload {} cannot finalize released provider artifacts from shutdown={}, creator={:?}, provider_failure_cleanup={:?}",
+                    manifest.handle.id,
+                    manifest.shutdown_requested,
+                    manifest.creator_handoff,
+                    manifest.provider_failure_cleanup,
+                ),
+            });
+        }
+        self.finalize_released_runtime_artifacts(manifest)?;
+        self.cleanup_manifest_launch_artifacts(manifest)?;
+        manifest.launch_artifact = None;
+        manifest.launch_authority = KrunLaunchAuthority::Released;
+        super::readiness::synchronize_handle_status(manifest, crate::SandboxStatus::Stopped);
+        self.persist_effect_barrier(manifest, "krun released provider finality")
+    }
+
+    fn finalize_released_runtime_artifacts(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+    ) -> crate::Result<()> {
+        if manifest.creator_handoff == KrunCreatorHandoffState::NotSpawned {
+            for (path, label) in [
+                (&manifest.conmon_layout.pidfile, "runtime pidfile"),
+                (&manifest.conmon_layout.conmon_pidfile, "conmon pidfile"),
+                (
+                    &manifest.conmon_layout.exit_status_file,
+                    "exit-status receipt",
+                ),
+            ] {
+                if inspect_runtime_artifact_presence(path, label)? {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "Krun workload {} is marked never spawned but retains {label}; provider finality remains fenced",
+                            manifest.handle.id
+                        ),
+                    });
+                }
+            }
+            return Ok(());
+        }
+
+        self.delete_runtime_and_confirm_absent(manifest)?;
+        self.persist_creator_quiescence_after_runtime_absence(manifest)?;
+        remove_if_exists(&manifest.conmon_layout.pidfile)?;
+        remove_if_exists(&manifest.conmon_layout.conmon_pidfile)?;
+        remove_if_exists(&manifest.conmon_layout.exit_status_file)
     }
 
     fn inspect_network_teardown_inner(
@@ -345,6 +427,14 @@ impl KrunSandboxBackend {
         let mut inspected = manifest.network_teardown.clone();
         match inspected.inspect_and_rebase_command(command, provider_observation) {
             Ok(HostManagedAttachmentCommandInspection::ExactTerminalSuccess) => {
+                if command.operation() == SandboxNetworkTeardownOperation::Release
+                    && !manifest.has_terminal_network_finality()
+                {
+                    return Ok(SandboxNetworkTeardownObservation::RetryAuthorized {
+                        evidence: b"Krun network authority is released; provider-local artifact and terminal-manifest finalization remains authorized"
+                            .to_vec(),
+                    });
+                }
                 succeeded("krun_host_attachment_terminal", &manifest.network_teardown)
                     .map_err(NetworkTeardownAdapterError::ambiguous_error)
             }

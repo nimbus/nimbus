@@ -419,6 +419,14 @@ impl KrunSandboxBackend {
                             Some(exit_code),
                         );
                     }
+                    KrunExecutionTerminalObservation::ExactStopped => {
+                        return self.persist_execution_stopped(
+                            claim,
+                            manifest,
+                            "graceful_provider_stopped_observed",
+                            None,
+                        );
+                    }
                     KrunExecutionTerminalObservation::ExplicitAbsence => {
                         return self.persist_execution_stopped(
                             claim,
@@ -490,6 +498,14 @@ impl KrunSandboxBackend {
                             manifest,
                             "kill_exit_receipt_observed",
                             Some(exit_code),
+                        );
+                    }
+                    KrunExecutionTerminalObservation::ExactStopped => {
+                        return self.persist_execution_stopped(
+                            claim,
+                            manifest,
+                            "kill_provider_stopped_observed",
+                            None,
                         );
                     }
                     KrunExecutionTerminalObservation::ExplicitAbsence => {
@@ -591,6 +607,14 @@ impl KrunSandboxBackend {
                     manifest,
                     "terminal_before_signal",
                     Some(exit_code),
+                );
+            }
+            KrunExecutionTerminalObservation::ExactStopped => {
+                return self.persist_execution_stopped(
+                    claim,
+                    manifest,
+                    "provider_stopped_before_signal",
+                    None,
                 );
             }
             KrunExecutionTerminalObservation::ExplicitAbsence => {
@@ -832,7 +856,7 @@ fn require_matching_drain(
             message: "Krun execution stop requires exact durable drain completion".to_owned(),
         });
     };
-    if same_workload_fence(fence, stop_claim) && fence.attempt_id() == stop_claim.attempt_id() {
+    if same_workload_fence(fence, stop_claim) {
         Ok(())
     } else {
         Err(SandboxError::InvalidSpec {

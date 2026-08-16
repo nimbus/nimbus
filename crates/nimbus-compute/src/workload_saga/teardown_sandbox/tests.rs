@@ -19,6 +19,9 @@ use crate::workload_saga::provision_sandbox::{
 use crate::workload_saga::recovery::tests::{
     begin_teardown, finish_teardown, stopped_intent, teardown_record,
 };
+use crate::workload_saga::teardown_command::{
+    WorkloadTeardownCommandResult, WorkloadTeardownResultDecision, apply_teardown_result,
+};
 use crate::workload_saga::teardown_decision::materialize_teardown_candidate;
 use crate::workload_saga::teardown_registry::ExactWorkloadTeardownCapability;
 use crate::workload_saga::teardown_test_support::DurableTeardownStore;
@@ -653,6 +656,127 @@ async fn network_inspect_unclaimed_is_not_completed_and_byte_stable() {
         ),)
     );
     assert_eq!(snapshot_files(root.path()), before);
+}
+
+#[tokio::test]
+async fn network_retry_after_not_completed_claims_the_exact_adjacent_provider_epoch() {
+    let observed = observed_container_record(Path::new("/tmp/nnc92-network-retry-lineage"));
+    let (_, inspect, dispatch_record) = confirmed_teardown_commands_with_claimed_record(
+        teardown_record_at(&observed, WorkloadSagaPhase::WorkloadStopped),
+    )
+    .await;
+    let inspection_record = dispatch_record
+        .teardown_dispatch_to_inspection(inspect.claim())
+        .expect("the exact pending claim should enter inspection state");
+    let validated_inspect = attachment::validate_sandbox_network_teardown_command(
+        &inspect,
+        SandboxBackendKind::Container,
+    )
+    .expect("exact Container detach inspection should lower");
+    let root = tempfile::tempdir().expect("network journal root should exist");
+    let journal = ProviderCommandAttemptJournal::open(root.path(), "container-network")
+        .expect("network journal should open");
+    let initial_claim = validated_inspect.sandbox_command().provider_claim().clone();
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(&initial_claim)
+            .expect("the initial network epoch should claim"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+    journal
+        .record_observation(
+            &initial_claim,
+            ProviderCommandObservationKind::Ambiguous,
+            b"detach outcome was lost before the workload result committed",
+        )
+        .expect("the ambiguous initial epoch should persist");
+
+    let writer = journal.clone();
+    let phase = ProviderTeardownPhaseAdapter::new(journal);
+    let before_inspect = snapshot_files(root.path());
+    let inspected = phase.inspect_network(&inspect, &validated_inspect, |observation| {
+        assert_eq!(observation.claim(), &initial_claim);
+        assert_eq!(
+            observation.kind(),
+            ProviderCommandObservationKind::Ambiguous
+        );
+        SandboxNetworkTeardownObservation::RetryAuthorized {
+            evidence: b"exact retained progress permits adjacent detach recovery".to_vec(),
+        }
+    });
+    assert!(matches!(
+        inspected,
+        WorkloadTeardownProviderOutcome::Inspect(WorkloadTeardownInspectOutcome::NotCompleted(_))
+    ));
+    assert_eq!(
+        snapshot_files(root.path()),
+        before_inspect,
+        "Inspect must leave the provider journal byte-identical"
+    );
+
+    let inspected_result =
+        WorkloadTeardownCommandResult::for_command(&inspection_record, &inspect, inspected)
+            .expect("the exact inspection result should correlate");
+    let WorkloadTeardownResultDecision::PersistCandidate(retry_candidate) =
+        apply_teardown_result(&inspection_record, &inspect, inspected_result)
+            .expect("NotCompleted should materialize one adjacent retry")
+    else {
+        panic!("NotCompleted must advance to an adjacent retry claim");
+    };
+    let confirmed =
+        WorkloadSagaCoordinator::new(DurableTeardownStore::with_record(inspection_record.clone()))
+            .confirm_teardown_transition(&inspection_record, (*retry_candidate).clone())
+            .await
+            .expect("the adjacent retry transition should confirm");
+    let retry = confirmed
+        .command()
+        .expect("the confirmed retry should produce Execute authority")
+        .clone();
+    assert_eq!(
+        retry.dispatch_epoch().as_u64(),
+        initial_claim.dispatch_epoch() + 1
+    );
+    let validated_retry = attachment::validate_sandbox_network_teardown_command(
+        &retry,
+        SandboxBackendKind::Container,
+    )
+    .expect("the adjacent Container detach retry should lower");
+    let retry_claim = validated_retry.sandbox_command().provider_claim().clone();
+    let effects = AtomicUsize::new(0);
+    let first = phase.execute_network(
+        &retry,
+        &validated_retry,
+        |execution| {
+            effects.fetch_add(1, Ordering::SeqCst);
+            writer.record_observation(
+                execution.claim(),
+                ProviderCommandObservationKind::Succeeded,
+                b"exact adjacent detach completed",
+            )
+        },
+        |_| panic!("the newly authorized retry must execute, not reinspect"),
+    );
+    assert!(matches!(
+        first,
+        WorkloadTeardownProviderOutcome::Execute(WorkloadTeardownExecuteOutcome::Succeeded(_))
+    ));
+    let replay = phase.execute_network(
+        &retry,
+        &validated_retry,
+        |_| panic!("terminal adjacent retry replay must not repeat the provider effect"),
+        |_| panic!("terminal adjacent retry replay must not inspect the provider"),
+    );
+    assert_eq!(replay, first);
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    let durable = writer
+        .adopt_exact_attempt(&retry_claim)
+        .expect("the adjacent provider claim should read")
+        .expect("the adjacent provider claim should be durable");
+    assert_eq!(durable.kind(), ProviderCommandObservationKind::Succeeded);
+    assert!(
+        durable.authenticates_retry_progress(&initial_claim),
+        "the adjacent claim must retain the inspected predecessor receipt"
+    );
 }
 
 #[tokio::test]

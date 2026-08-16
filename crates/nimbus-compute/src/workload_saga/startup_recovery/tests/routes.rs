@@ -34,12 +34,17 @@ impl WorkloadStartupProvisionOwner for ScriptedProvisionOwner {
     fn resume(
         &self,
         _key: WorkloadSagaKey,
+        owner_reopened_publication: bool,
     ) -> WorkloadStartupOwnerFuture<'_, StartupProvisionResult> {
         Box::pin(async move {
             self.events
                 .lock()
                 .expect("route event log remains healthy")
-                .push("provision");
+                .push(if owner_reopened_publication {
+                    "publication-reconcile"
+                } else {
+                    "provision"
+                });
             self.outcomes
                 .lock()
                 .expect("provision script remains healthy")
@@ -539,4 +544,38 @@ async fn quiescent_record_calls_no_lifecycle_owner() {
 
     assert_eq!(outcome.disposition(), WorkloadStartupDisposition::Quiescent);
     assert!(events.lock().expect("event log remains healthy").is_empty());
+}
+
+#[tokio::test]
+async fn fresh_owner_reconciles_observed_publication_before_reporting_quiescent() {
+    let observed = crate::workload_saga::recovery::tests::provision_record(
+        "startup-owner-reopened-publication",
+        WorkloadSagaPhase::Observed,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let provision = ScriptedProvisionOwner::new(
+        Arc::clone(&events),
+        [Ok(provision_result(
+            observed.clone(),
+            WorkloadProvisionRunDisposition::Observed,
+            WorkloadProvisionCompensationState::NotRequired,
+        ))],
+    );
+    let restart = ScriptedRestartOwner::new(Arc::clone(&events), []);
+    let recovery = recovery_with_owners(observed.clone(), Some(provision), restart, None);
+
+    let outcome = route_once(&recovery, observed)
+        .await
+        .expect("fresh owner should reconcile its process-bound publication");
+
+    assert_eq!(
+        outcome.disposition(),
+        WorkloadStartupDisposition::ProvisionObserved
+    );
+    assert_eq!(
+        *events.lock().expect("route event log remains healthy"),
+        ["publication-reconcile"]
+    );
 }

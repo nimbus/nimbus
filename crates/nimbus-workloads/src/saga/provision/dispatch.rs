@@ -234,6 +234,36 @@ impl WorkloadProvisionProviderTarget {
     }
 }
 
+/// Durable origin of one exact provider absence observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkloadProvisionAbsenceOrigin {
+    ProvisionInspection,
+    OwnerReopenedAttachmentInspection,
+    OwnerReopenedPublicationInspection,
+}
+
+impl WorkloadProvisionAbsenceOrigin {
+    fn for_claim(claim: &WorkloadProvisionDispatchClaim) -> Self {
+        match claim.authorization() {
+            WorkloadProvisionDispatchAuthorization::OwnerReopenedAttachmentInspection => {
+                Self::OwnerReopenedAttachmentInspection
+            }
+            WorkloadProvisionDispatchAuthorization::OwnerReopenedPublicationInspection => {
+                Self::OwnerReopenedPublicationInspection
+            }
+            WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(absence)
+            | WorkloadProvisionDispatchAuthorization::ReobserveAfterRepublication(absence)
+            | WorkloadProvisionDispatchAuthorization::RetryAfterAbsence(absence) => absence.origin,
+            WorkloadProvisionDispatchAuthorization::RetryRepublishAfterAbsence(lineage)
+            | WorkloadProvisionDispatchAuthorization::ReobserveAfterRetriedRepublication(lineage) => {
+                lineage.observation_absence.origin
+            }
+            WorkloadProvisionDispatchAuthorization::Initial => Self::ProvisionInspection,
+        }
+    }
+}
+
 /// Proof that an exact inspected dispatch did not create its provider effect.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -244,6 +274,7 @@ pub struct WorkloadProvisionAbsenceEvidence {
     transition_id: WorkloadSagaTransitionId,
     provider_target: WorkloadProvisionProviderTarget,
     step: WorkloadProvisionStep,
+    origin: WorkloadProvisionAbsenceOrigin,
     evidence: WorkloadOwnerEvidenceDigest,
 }
 
@@ -285,6 +316,7 @@ impl WorkloadProvisionAbsenceEvidence {
             transition_id,
             provider_target: claim.provider_target().clone(),
             step: claim.attempt().step(),
+            origin: WorkloadProvisionAbsenceOrigin::for_claim(claim),
             evidence,
         }
     }
@@ -313,6 +345,10 @@ impl WorkloadProvisionAbsenceEvidence {
         self.step
     }
 
+    pub const fn origin(&self) -> WorkloadProvisionAbsenceOrigin {
+        self.origin
+    }
+
     pub const fn evidence(&self) -> WorkloadOwnerEvidenceDigest {
         self.evidence
     }
@@ -322,6 +358,7 @@ impl WorkloadProvisionAbsenceEvidence {
             && self.dispatch_epoch == claim.dispatch_epoch()
             && self.provider_target == *claim.provider_target()
             && self.step == claim.attempt().step()
+            && self.origin == WorkloadProvisionAbsenceOrigin::for_claim(claim)
     }
 
     pub(crate) fn matches_inspection(
@@ -339,6 +376,52 @@ impl WorkloadProvisionAbsenceEvidence {
     }
 }
 
+/// Exact original observation and latest publish absence for a retried republication.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct WorkloadProvisionRepublicationRetryEvidence {
+    observation_absence: WorkloadProvisionAbsenceEvidence,
+    publication_absence: WorkloadProvisionAbsenceEvidence,
+}
+
+impl WorkloadProvisionRepublicationRetryEvidence {
+    fn new(
+        observation_absence: WorkloadProvisionAbsenceEvidence,
+        publication_absence: WorkloadProvisionAbsenceEvidence,
+    ) -> Result<Self, WorkloadSagaError> {
+        let evidence = Self {
+            observation_absence,
+            publication_absence,
+        };
+        evidence.validate()?;
+        Ok(evidence)
+    }
+
+    pub fn observation_absence(&self) -> &WorkloadProvisionAbsenceEvidence {
+        &self.observation_absence
+    }
+
+    pub fn publication_absence(&self) -> &WorkloadProvisionAbsenceEvidence {
+        &self.publication_absence
+    }
+
+    fn validate(&self) -> Result<(), WorkloadSagaError> {
+        if self.observation_absence.step != WorkloadProvisionStep::ObservePublication
+            || self.publication_absence.step != WorkloadProvisionStep::Publish
+            || self.observation_absence.provider_target != self.publication_absence.provider_target
+            || self.observation_absence.origin != self.publication_absence.origin
+            || self.observation_absence.confirmed_revision
+                >= self.publication_absence.confirmed_revision
+            || self.observation_absence.dispatch_epoch >= self.publication_absence.dispatch_epoch
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "republication retry evidence must retain exact observation and publish absence lineage",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Why a durable dispatch claim may execute at its epoch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -349,7 +432,13 @@ impl WorkloadProvisionAbsenceEvidence {
 )]
 pub enum WorkloadProvisionDispatchAuthorization {
     Initial,
+    OwnerReopenedAttachmentInspection,
+    OwnerReopenedPublicationInspection,
     RetryAfterAbsence(WorkloadProvisionAbsenceEvidence),
+    RepublishAfterObservationAbsence(WorkloadProvisionAbsenceEvidence),
+    RetryRepublishAfterAbsence(WorkloadProvisionRepublicationRetryEvidence),
+    ReobserveAfterRepublication(WorkloadProvisionAbsenceEvidence),
+    ReobserveAfterRetriedRepublication(WorkloadProvisionRepublicationRetryEvidence),
 }
 
 /// Durable claim that authorizes one exact provider effect or inspection.
@@ -411,6 +500,46 @@ impl WorkloadProvisionDispatchClaim {
         Ok(claim)
     }
 
+    pub(crate) fn owner_reopened_publication_inspection(
+        attempt: WorkloadProvisionAttempt,
+        provider_target: WorkloadProvisionProviderTarget,
+    ) -> Result<Self, WorkloadSagaError> {
+        let claimed_revision = attempt
+            .issuing_revision()
+            .checked_next()
+            .ok_or(WorkloadSagaError::RevisionOverflow)?;
+        let claim = Self {
+            attempt,
+            claimed_revision,
+            dispatch_epoch: WorkloadProvisionDispatchEpoch::new(0),
+            provider_target,
+            authorization:
+                WorkloadProvisionDispatchAuthorization::OwnerReopenedPublicationInspection,
+        };
+        claim.validate()?;
+        Ok(claim)
+    }
+
+    pub(crate) fn owner_reopened_attachment_inspection(
+        attempt: WorkloadProvisionAttempt,
+        provider_target: WorkloadProvisionProviderTarget,
+    ) -> Result<Self, WorkloadSagaError> {
+        let claimed_revision = attempt
+            .issuing_revision()
+            .checked_next()
+            .ok_or(WorkloadSagaError::RevisionOverflow)?;
+        let claim = Self {
+            attempt,
+            claimed_revision,
+            dispatch_epoch: WorkloadProvisionDispatchEpoch::new(0),
+            provider_target,
+            authorization:
+                WorkloadProvisionDispatchAuthorization::OwnerReopenedAttachmentInspection,
+        };
+        claim.validate()?;
+        Ok(claim)
+    }
+
     pub(crate) fn retry_after_absence(
         previous: &Self,
         claimed_revision: WorkloadSagaRevision,
@@ -433,12 +562,105 @@ impl WorkloadProvisionDispatchClaim {
                 .ok_or(WorkloadSagaError::InvalidCounter(
                     "workload provision dispatch epoch overflow",
                 ))?;
+        let authorization = match &previous.authorization {
+            WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(
+                observation_absence,
+            ) => WorkloadProvisionDispatchAuthorization::RetryRepublishAfterAbsence(
+                WorkloadProvisionRepublicationRetryEvidence::new(
+                    observation_absence.clone(),
+                    absence,
+                )?,
+            ),
+            WorkloadProvisionDispatchAuthorization::RetryRepublishAfterAbsence(lineage) => {
+                WorkloadProvisionDispatchAuthorization::RetryRepublishAfterAbsence(
+                    WorkloadProvisionRepublicationRetryEvidence::new(
+                        lineage.observation_absence.clone(),
+                        absence,
+                    )?,
+                )
+            }
+            _ => WorkloadProvisionDispatchAuthorization::RetryAfterAbsence(absence),
+        };
         let claim = Self {
             attempt: previous.attempt.clone(),
             claimed_revision,
             dispatch_epoch,
             provider_target: previous.provider_target.clone(),
-            authorization: WorkloadProvisionDispatchAuthorization::RetryAfterAbsence(absence),
+            authorization,
+        };
+        claim.validate()?;
+        Ok(claim)
+    }
+
+    pub(crate) fn republish_after_observation_absence(
+        observation: &Self,
+        attempt: WorkloadProvisionAttempt,
+        claimed_revision: WorkloadSagaRevision,
+        absence: WorkloadProvisionAbsenceEvidence,
+    ) -> Result<Self, WorkloadSagaError> {
+        if observation.attempt.step != WorkloadProvisionStep::ObservePublication
+            || !absence.matches_claim(observation)
+            || absence.confirmed_revision != attempt.issuing_revision
+            || !same_publication_lineage(&observation.attempt, &attempt)
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "provision republish requires exact publication-observation absence",
+            ));
+        }
+        let dispatch_epoch =
+            observation
+                .dispatch_epoch
+                .checked_next()
+                .ok_or(WorkloadSagaError::InvalidCounter(
+                    "workload provision dispatch epoch overflow",
+                ))?;
+        let claim = Self {
+            attempt,
+            claimed_revision,
+            dispatch_epoch,
+            provider_target: observation.provider_target.clone(),
+            authorization: WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(
+                absence,
+            ),
+        };
+        claim.validate()?;
+        Ok(claim)
+    }
+
+    pub(crate) fn reobserve_after_republication(
+        publication: &Self,
+        attempt: WorkloadProvisionAttempt,
+        claimed_revision: WorkloadSagaRevision,
+    ) -> Result<Self, WorkloadSagaError> {
+        let authorization = match &publication.authorization {
+            WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(absence) => {
+                WorkloadProvisionDispatchAuthorization::ReobserveAfterRepublication(absence.clone())
+            }
+            WorkloadProvisionDispatchAuthorization::RetryRepublishAfterAbsence(lineage) => {
+                WorkloadProvisionDispatchAuthorization::ReobserveAfterRetriedRepublication(
+                    lineage.clone(),
+                )
+            }
+            _ => {
+                return Err(WorkloadSagaError::InvalidEvidence(
+                    "publication re-observation requires exact republication authority",
+                ));
+            }
+        };
+        if publication.attempt.step != WorkloadProvisionStep::Publish
+            || publication.claimed_revision != attempt.issuing_revision
+            || !same_publication_lineage(&publication.attempt, &attempt)
+        {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "publication re-observation is crossed with its republication",
+            ));
+        }
+        let claim = Self {
+            attempt,
+            claimed_revision,
+            dispatch_epoch: publication.dispatch_epoch,
+            provider_target: publication.provider_target.clone(),
+            authorization,
         };
         claim.validate()?;
         Ok(claim)
@@ -464,6 +686,35 @@ impl WorkloadProvisionDispatchClaim {
         &self.authorization
     }
 
+    /// The original publication-observation absence that authorized republication.
+    pub fn republication_observation_absence(&self) -> Option<&WorkloadProvisionAbsenceEvidence> {
+        if self.attempt.step() != WorkloadProvisionStep::Publish {
+            return None;
+        }
+        match &self.authorization {
+            WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(absence) => {
+                Some(absence)
+            }
+            WorkloadProvisionDispatchAuthorization::RetryRepublishAfterAbsence(lineage) => {
+                Some(lineage.observation_absence())
+            }
+            _ => None,
+        }
+    }
+
+    /// The immediate absence that authorizes this exact publication epoch.
+    pub fn republication_dispatch_absence(&self) -> Option<&WorkloadProvisionAbsenceEvidence> {
+        match &self.authorization {
+            WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(absence) => {
+                Some(absence)
+            }
+            WorkloadProvisionDispatchAuthorization::RetryRepublishAfterAbsence(lineage) => {
+                Some(lineage.publication_absence())
+            }
+            _ => None,
+        }
+    }
+
     fn validate(&self) -> Result<(), WorkloadSagaError> {
         self.provider_target.validate_for_attempt(&self.attempt)?;
         if self.claimed_revision <= self.attempt.issuing_revision() {
@@ -481,6 +732,30 @@ impl WorkloadProvisionDispatchClaim {
                     ));
                 }
             }
+            WorkloadProvisionDispatchAuthorization::OwnerReopenedPublicationInspection => {
+                if self.dispatch_epoch != WorkloadProvisionDispatchEpoch::new(0)
+                    || self.attempt.issuing_revision().checked_next() != Some(self.claimed_revision)
+                    || self.attempt.step() != WorkloadProvisionStep::ObservePublication
+                    || self.attempt.source_phase() != WorkloadSagaPhase::Published
+                    || self.attempt.target_phase() != WorkloadSagaPhase::Observed
+                {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "owner-reopened publication inspection must bind epoch zero to the exact published-to-observed attempt",
+                    ));
+                }
+            }
+            WorkloadProvisionDispatchAuthorization::OwnerReopenedAttachmentInspection => {
+                if self.dispatch_epoch != WorkloadProvisionDispatchEpoch::new(0)
+                    || self.attempt.issuing_revision().checked_next() != Some(self.claimed_revision)
+                    || self.attempt.step() != WorkloadProvisionStep::AttachNetwork
+                    || self.attempt.source_phase() != WorkloadSagaPhase::WorkloadPrepared
+                    || self.attempt.target_phase() != WorkloadSagaPhase::NetworkAttached
+                {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "owner-reopened attachment inspection must bind epoch zero to the exact prepared-to-attached attempt",
+                    ));
+                }
+            }
             WorkloadProvisionDispatchAuthorization::RetryAfterAbsence(absence) => {
                 if absence.attempt_id != *self.attempt.attempt_id()
                     || absence.provider_target != self.provider_target
@@ -493,9 +768,89 @@ impl WorkloadProvisionDispatchClaim {
                     ));
                 }
             }
+            WorkloadProvisionDispatchAuthorization::RetryRepublishAfterAbsence(lineage) => {
+                lineage.validate()?;
+                let absence = lineage.publication_absence();
+                if self.attempt.step != WorkloadProvisionStep::Publish
+                    || self.attempt.source_phase != WorkloadSagaPhase::Published
+                    || self.attempt.target_phase != WorkloadSagaPhase::Published
+                    || absence.attempt_id != *self.attempt.attempt_id()
+                    || absence.provider_target != self.provider_target
+                    || absence.dispatch_epoch.checked_next() != Some(self.dispatch_epoch)
+                    || absence.confirmed_revision.checked_next() != Some(self.claimed_revision)
+                    || lineage.observation_absence().confirmed_revision
+                        != self.attempt.issuing_revision
+                {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "retried republication is not authorized by exact observation and publish absence lineage",
+                    ));
+                }
+            }
+            WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(absence) => {
+                if self.attempt.step != WorkloadProvisionStep::Publish
+                    || self.attempt.source_phase != WorkloadSagaPhase::Published
+                    || self.attempt.target_phase != WorkloadSagaPhase::Published
+                    || absence.step != WorkloadProvisionStep::ObservePublication
+                    || absence.provider_target != self.provider_target
+                    || absence.dispatch_epoch.checked_next() != Some(self.dispatch_epoch)
+                    || absence.confirmed_revision != self.attempt.issuing_revision
+                    || self.attempt.issuing_revision.checked_next() != Some(self.claimed_revision)
+                {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "provision republish is not authorized by exact publication-observation absence",
+                    ));
+                }
+            }
+            WorkloadProvisionDispatchAuthorization::ReobserveAfterRepublication(absence) => {
+                if self.attempt.step != WorkloadProvisionStep::ObservePublication
+                    || absence.step != WorkloadProvisionStep::ObservePublication
+                    || absence.provider_target != self.provider_target
+                    || absence.dispatch_epoch.checked_next() != Some(self.dispatch_epoch)
+                    || absence.confirmed_revision.checked_next()
+                        != Some(self.attempt.issuing_revision)
+                    || self.attempt.issuing_revision.checked_next() != Some(self.claimed_revision)
+                {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "publication re-observation is not authorized by exact republication lineage",
+                    ));
+                }
+            }
+            WorkloadProvisionDispatchAuthorization::ReobserveAfterRetriedRepublication(lineage) => {
+                lineage.validate()?;
+                let absence = lineage.publication_absence();
+                if self.attempt.step != WorkloadProvisionStep::ObservePublication
+                    || absence.provider_target != self.provider_target
+                    || absence.dispatch_epoch.checked_next() != Some(self.dispatch_epoch)
+                    || absence.confirmed_revision.checked_next()
+                        != Some(self.attempt.issuing_revision)
+                    || self.attempt.issuing_revision.checked_next() != Some(self.claimed_revision)
+                {
+                    return Err(WorkloadSagaError::InvalidEvidence(
+                        "publication re-observation is not authorized by exact retried republication lineage",
+                    ));
+                }
+            }
         }
         Ok(())
     }
+}
+
+fn same_publication_lineage(
+    previous: &WorkloadProvisionAttempt,
+    next: &WorkloadProvisionAttempt,
+) -> bool {
+    previous.key == next.key
+        && previous.saga_id == next.saga_id
+        && previous.generation == next.generation
+        && previous.desired_digest == next.desired_digest
+        && previous.required_node == next.required_node
+        && previous.source_digest == next.source_digest
+        && previous.execution_provider_id == next.execution_provider_id
+        && previous.network_plan_digest == next.network_plan_digest
+        && previous.selection_evidence == next.selection_evidence
+        && previous.subjects == next.subjects
+        && previous.prerequisite.is_none()
+        && next.prerequisite.is_none()
 }
 
 /// Closed side-effect-free observation of one provider dispatch claim.

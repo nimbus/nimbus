@@ -96,8 +96,8 @@ pub(crate) fn prepare_network_teardown_fixture(
             sandbox_id: detached.sandbox_id().as_str().to_owned(),
         })?;
     attached.launch_authority = KrunLaunchAuthority::ProviderOwned;
-    attached.status = SandboxStatus::Ready;
-    attached.handle.status = SandboxStatus::Ready;
+    attached.shutdown_requested = true;
+    super::readiness::synchronize_handle_status(&mut attached, SandboxStatus::Stopping);
     attached
         .execution_teardown
         .set_stop(KrunStopProgress::ExecutionStopped {

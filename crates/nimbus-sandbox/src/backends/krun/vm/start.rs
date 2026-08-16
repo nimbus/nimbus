@@ -310,8 +310,17 @@ impl KrunSandboxBackend {
                 ),
             });
         }
-        let mut resolved_launch = resolve_start_spec(spec, launch_defaults)?;
-        apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
+        let defers_oci_image_defaults = provision_network_plan.is_some()
+            && !prepare_bundle
+            && matches!(spec.root, SandboxRootSpec::OciImage(_));
+        let mut resolved_launch = if defers_oci_image_defaults {
+            unresolved_oci_provision_reservation(spec)
+        } else {
+            resolve_start_spec(spec, launch_defaults)?
+        };
+        if !defers_oci_image_defaults {
+            apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
+        }
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_launch.spec)?;
         let manager = self.port_lease_coordinator();
@@ -792,6 +801,13 @@ pub(super) fn resolve_start_spec(
     })
 }
 
+fn unresolved_oci_provision_reservation(spec: &SandboxSpec) -> KrunResolvedLaunchSpec {
+    KrunResolvedLaunchSpec {
+        spec: spec.clone(),
+        image_metadata: KrunImageMetadata::default(),
+    }
+}
+
 fn required_rootfs(spec: &SandboxSpec) -> Result<&SandboxRootfsSpec> {
     spec.rootfs().ok_or_else(|| SandboxError::InvalidSpec {
         message: format!(
@@ -886,6 +902,7 @@ pub(super) fn krun_bundle_options(
             .map(EgressProxyAssignment::proxy_url)
             .transpose()?,
         egress_trust_anchor_guest_path,
+        private_tsi_bind_address: None,
     })
 }
 

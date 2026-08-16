@@ -134,7 +134,7 @@ impl ConfirmedWorkloadProvisionCommand {
         }
 
         let attempt = claim.attempt();
-        let execution = WorkloadExecutionReference::for_intent(record.active_intent());
+        let execution = record.current_execution_reference();
         let command_id = WorkloadProvisionCommandId::for_confirmed_dispatch(
             claim,
             record.revision(),
@@ -308,7 +308,6 @@ impl WorkloadProvisionCommandResult {
                 command.step,
                 WorkloadProvisionStep::InspectActivationPrerequisites
                     | WorkloadProvisionStep::InspectWorkloadReadiness
-                    | WorkloadProvisionStep::ObservePublication
             )
         {
             return Err(nimbus_workloads::WorkloadSagaError::InvalidEvidence(
@@ -413,11 +412,18 @@ pub fn reduce_command_result(
                 )
                 .into());
             }
-            let candidate = record.inspection_to_retry_dispatch(evidence)?;
+            let candidate = match (command.step, record.successor_intent().is_some()) {
+                (_, true) => record.provision_inspection_absence_to_teardown(evidence)?,
+                (WorkloadProvisionStep::ObservePublication, false) => {
+                    record.publication_observation_absence_to_republication(evidence)?
+                }
+                (_, _) => record.inspection_to_retry_dispatch(evidence)?,
+            };
             Ok(WorkloadProvisionDecision::Proposed(
                 ProposedWorkloadProvisionTransition::new(
                     candidate,
-                    Some(WorkloadProvisionSymbolicAction::StartExactAttempt),
+                    (record.successor_intent().is_none())
+                        .then_some(WorkloadProvisionSymbolicAction::StartExactAttempt),
                 ),
             ))
         }

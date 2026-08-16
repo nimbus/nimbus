@@ -48,7 +48,12 @@ impl OciAttachmentAdapter<'_> {
         record_phase: impl FnMut(HostManagedAttachmentDetachPhase) -> Result<()>,
         stop_auxiliary: impl FnOnce(AttachmentAuxiliaryDisposition) -> Result<()>,
     ) -> Result<HostManagedAttachmentDetachedProof> {
-        lifecycle.detach_host_managed_retained(
+        require_publication_mode(
+            &self.context,
+            self.context.publication.owns_netavark_bindings(),
+            "host-managed",
+        )?;
+        lifecycle.detach_retained(
             &self.context,
             command,
             &RealAttachmentHostEffects,
@@ -61,20 +66,53 @@ impl OciAttachmentAdapter<'_> {
         )
     }
 
-    /// Confirm that this exact attachment never reached IPAM or provider
-    /// effects, while retaining its portable, segment, and port authority for
-    /// the separately fenced release command.
-    pub(crate) fn detach_host_managed_never_effected_retained(
+    /// Detach a private attachment whose separately owned publication has
+    /// already reached exact terminal port-lease state.
+    pub(crate) fn detach_deferred_retained(
+        &self,
+        lifecycle: &OciAttachmentLifecycle<'_>,
+        command: &SandboxNetworkTeardownCommand,
+        current_phase: HostManagedAttachmentDetachPhase,
+        record_phase: impl FnMut(HostManagedAttachmentDetachPhase) -> Result<()>,
+        stop_auxiliary: impl FnOnce(AttachmentAuxiliaryDisposition) -> Result<()>,
+    ) -> Result<HostManagedAttachmentDetachedProof> {
+        require_publication_mode(
+            &self.context,
+            self.context.publication.is_deferred(),
+            "deferred",
+        )?;
+        lifecycle.detach_retained(
+            &self.context,
+            command,
+            &RealAttachmentHostEffects,
+            current_phase,
+            record_phase,
+            RetainedDetachActions {
+                retain_publication: || {
+                    Err(SandboxError::OperationFailed {
+                        message: "deferred publication must use durable terminal lease evidence"
+                            .to_owned(),
+                    })
+                },
+                stop_auxiliary,
+            },
+        )
+    }
+
+    /// Confirm no private attachment effect while separately owned publication
+    /// is already terminal under its own durable lease authority.
+    pub(crate) fn detach_deferred_never_effected_retained(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         command: &SandboxNetworkTeardownCommand,
         absent_association: Option<&NetworkAttachmentSegmentAssociation>,
     ) -> Result<HostManagedAttachmentDetachedProof> {
-        lifecycle.detach_host_managed_never_effected_retained(
+        require_publication_mode(
             &self.context,
-            command,
-            absent_association,
-        )
+            self.context.publication.is_deferred(),
+            "deferred",
+        )?;
+        lifecycle.detach_never_effected_retained(&self.context, command, absent_association)
     }
 
     /// Detach a machine-forwarded private attachment after its publication
@@ -88,7 +126,12 @@ impl OciAttachmentAdapter<'_> {
         retain_publication: impl FnOnce() -> Result<RetainedAttachmentPublicationEvidence>,
         stop_auxiliary: impl FnOnce(AttachmentAuxiliaryDisposition) -> Result<()>,
     ) -> Result<HostManagedAttachmentDetachedProof> {
-        lifecycle.detach_host_managed_retained(
+        require_publication_mode(
+            &self.context,
+            self.context.publication.is_machine_forwarded(),
+            "machine-forwarded",
+        )?;
+        lifecycle.detach_retained(
             &self.context,
             command,
             &RealAttachmentHostEffects,
@@ -103,13 +146,13 @@ impl OciAttachmentAdapter<'_> {
 }
 
 impl OciAttachmentLifecycle<'_> {
-    fn detach_host_managed_never_effected_retained(
+    fn detach_never_effected_retained(
         &self,
         context: &OciAttachmentContext<'_>,
         command: &SandboxNetworkTeardownCommand,
         absent_association: Option<&NetworkAttachmentSegmentAssociation>,
     ) -> Result<HostManagedAttachmentDetachedProof> {
-        authenticate_exact_command_context(context, command, false)?;
+        authenticate_exact_command_context(context, command)?;
         let association = authority::authenticate_detach_association_with_fallback(
             self.attachments,
             self.allocator,
@@ -174,6 +217,12 @@ impl OciAttachmentLifecycle<'_> {
                 });
             }
         }
+        let publication_evidence = self.retained_publication_evidence(context, || {
+            Err(SandboxError::OperationFailed {
+                message: "machine-forwarded no-effect detach requires explicit publication absence"
+                    .to_owned(),
+            })
+        })?;
         let snapshot = self.inspect_never_effected_authority(context, &association)?;
 
         HostManagedAttachmentDetachedProof::new(HostManagedAttachmentDetachedProofInput {
@@ -206,11 +255,11 @@ impl OciAttachmentLifecycle<'_> {
                 context,
                 attachment.as_ref(),
             )?,
-            publication_evidence: RetainedAttachmentPublicationEvidence::HostManaged,
+            publication_evidence,
         })
     }
 
-    fn detach_host_managed_retained(
+    fn detach_retained(
         &self,
         context: &OciAttachmentContext<'_>,
         command: &SandboxNetworkTeardownCommand,
@@ -226,8 +275,8 @@ impl OciAttachmentLifecycle<'_> {
             retain_publication,
             stop_auxiliary,
         } = actions;
-        let machine_forwarded = !context.publication.owns_netavark_bindings();
-        authenticate_exact_command_context(context, command, machine_forwarded)?;
+        let host_managed_publication = context.publication.owns_netavark_bindings();
+        authenticate_exact_command_context(context, command)?;
         authenticate_container_network_generation_for_cleanup(
             self.ipam,
             context.layout,
@@ -302,7 +351,7 @@ impl OciAttachmentLifecycle<'_> {
             record_phase(HostManagedAttachmentDetachPhase::PepRetained)?;
         }
 
-        let published_batch_state = (!machine_forwarded
+        let published_batch_state = (host_managed_publication
             && current_phase < HostManagedAttachmentDetachPhase::ListenersRetained)
             .then(|| {
                 self.ports.classify_planned_netavark_cleanup_batch(
@@ -349,21 +398,8 @@ impl OciAttachmentLifecycle<'_> {
                 | LaunchPortBatchState::TerminalNoEffect,
             ) => {}
         }
-        let publication_evidence = if machine_forwarded {
-            let evidence = retain_publication()?;
-            if !matches!(
-                evidence,
-                RetainedAttachmentPublicationEvidence::MachineForwarded { .. }
-            ) {
-                return Err(SandboxError::OperationFailed {
-                    message: "machine-forwarded retained detach received host-managed publication evidence"
-                        .to_owned(),
-                });
-            }
-            evidence
-        } else {
-            RetainedAttachmentPublicationEvidence::HostManaged
-        };
+        let publication_evidence =
+            self.retained_publication_evidence(context, retain_publication)?;
 
         if current_phase < HostManagedAttachmentDetachPhase::ProviderAbsent {
             let prepared_teardown = if detach.provider_absent {
@@ -383,7 +419,7 @@ impl OciAttachmentLifecycle<'_> {
                         | recovery::AttachmentProviderObservation::DetachedNamespacePending
                 )
             {
-                if !machine_forwarded {
+                if host_managed_publication {
                     self.ports.retain_ambiguous_netavark_cleanup(
                         self.lifetimes,
                         context.tenant_id,
@@ -399,7 +435,7 @@ impl OciAttachmentLifecycle<'_> {
                 recovery::AttachmentProviderObservation::Absent
                     | recovery::AttachmentProviderObservation::DetachedNamespacePending
             ) {
-                if !machine_forwarded {
+                if host_managed_publication {
                     self.ports.retain_ambiguous_netavark_cleanup(
                         self.lifetimes,
                         context.tenant_id,
@@ -427,7 +463,7 @@ impl OciAttachmentLifecycle<'_> {
                 recovery::AttachmentProviderObservation::DetachedNamespacePending
             ) && let Err(error) = host.remove_namespace(context)
             {
-                if !machine_forwarded {
+                if host_managed_publication {
                     self.ports.retain_ambiguous_netavark_cleanup(
                         self.lifetimes,
                         context.tenant_id,
@@ -439,7 +475,7 @@ impl OciAttachmentLifecycle<'_> {
             }
             let after_namespace = host.inspect_provider(self.ipam, context);
             if after_namespace != recovery::AttachmentProviderObservation::Absent {
-                if !machine_forwarded {
+                if host_managed_publication {
                     self.ports.retain_ambiguous_netavark_cleanup(
                         self.lifetimes,
                         context.tenant_id,
@@ -574,7 +610,22 @@ impl OciAttachmentLifecycle<'_> {
             });
         }
         let (listeners, pep) = self.retained_port_plan_snapshot(context)?;
-        require_retained_records(&listeners, context.launch_claim, "published listener")?;
+        match context.publication {
+            AttachmentPublicationMode::Deferred => {
+                let current = self.separate_owner_publication_evidence(context)?;
+                if current != publication_evidence {
+                    return Err(SandboxError::OperationFailed {
+                        message:
+                            "deferred publication terminal evidence changed during retained detach"
+                                .to_owned(),
+                    });
+                }
+            }
+            AttachmentPublicationMode::HostManaged
+            | AttachmentPublicationMode::MachineForwarded(_) => {
+                require_retained_records(&listeners, context.launch_claim, "published listener")?;
+            }
+        }
         require_retained_records(&pep, context.launch_claim, "PEP listener")?;
 
         HostManagedAttachmentDetachedProof::new(HostManagedAttachmentDetachedProofInput {
@@ -615,6 +666,52 @@ impl OciAttachmentLifecycle<'_> {
             attachment_retained_evidence_sha256: retained_attachment_authority_digest(&attachment)?,
             publication_evidence,
         })
+    }
+
+    fn retained_publication_evidence(
+        &self,
+        context: &OciAttachmentContext<'_>,
+        machine_forwarded_absence: impl FnOnce() -> Result<RetainedAttachmentPublicationEvidence>,
+    ) -> Result<RetainedAttachmentPublicationEvidence> {
+        match context.publication {
+            AttachmentPublicationMode::HostManaged => {
+                Ok(RetainedAttachmentPublicationEvidence::HostManaged)
+            }
+            AttachmentPublicationMode::Deferred => {
+                self.separate_owner_publication_evidence(context)
+            }
+            AttachmentPublicationMode::MachineForwarded(_) => {
+                let evidence = machine_forwarded_absence()?;
+                if !matches!(
+                    evidence,
+                    RetainedAttachmentPublicationEvidence::MachineForwarded { .. }
+                ) {
+                    return Err(SandboxError::OperationFailed {
+                        message: "machine-forwarded retained detach received crossed publication evidence"
+                            .to_owned(),
+                    });
+                }
+                Ok(evidence)
+            }
+        }
+    }
+
+    pub(super) fn separate_owner_publication_evidence(
+        &self,
+        context: &OciAttachmentContext<'_>,
+    ) -> Result<RetainedAttachmentPublicationEvidence> {
+        let records = self
+            .ports
+            .authenticate_separate_owner_publication_terminal(
+                &complete_port_plan_members(context),
+                context.tenant_id,
+                context.bindings,
+                context.leases,
+            )?;
+        RetainedAttachmentPublicationEvidence::deferred(evidence_digest(
+            "deferred_publication_terminal",
+            &records,
+        )?)
     }
 
     pub(super) fn inspect_never_effected_authority(
@@ -676,42 +773,62 @@ impl OciAttachmentLifecycle<'_> {
             }
         };
 
-        let plan_members = complete_port_plan_members(context);
-        let published_batch = self.ports.classify_planned_netavark_cleanup_batch(
-            &plan_members,
-            context.tenant_id,
-            context.bindings,
-            context.leases,
-            context.launch_claim,
-        )?;
         let (listeners, pep) = self.retained_port_plan_snapshot(context)?;
-        let port_authority = classify_never_effected_port_records(
-            &listeners,
-            &pep,
-            context.launch_claim,
-            "no-effect attachment",
-        )?;
-        let published_matches = match port_authority {
-            NeverEffectedPortAuthority::NoMembers => {
-                published_batch == LaunchPortBatchState::TerminalNoEffect
+        let port_authority = match context.publication {
+            AttachmentPublicationMode::Deferred => {
+                self.separate_owner_publication_evidence(context)?;
+                classify_never_effected_port_records(
+                    &[],
+                    &pep,
+                    context.launch_claim,
+                    "no-effect attachment-owned PEP",
+                )?
             }
-            NeverEffectedPortAuthority::Retained => {
-                published_batch == LaunchPortBatchState::NeverBound
-                    || (context.leases.is_empty()
-                        && published_batch == LaunchPortBatchState::TerminalNoEffect)
+            AttachmentPublicationMode::HostManaged => {
+                let plan_members = complete_port_plan_members(context);
+                let published_batch = self.ports.classify_planned_netavark_cleanup_batch(
+                    &plan_members,
+                    context.tenant_id,
+                    context.bindings,
+                    context.leases,
+                    context.launch_claim,
+                )?;
+                let port_authority = classify_never_effected_port_records(
+                    &listeners,
+                    &pep,
+                    context.launch_claim,
+                    "no-effect attachment",
+                )?;
+                let published_matches = match port_authority {
+                    NeverEffectedPortAuthority::NoMembers => {
+                        published_batch == LaunchPortBatchState::TerminalNoEffect
+                    }
+                    NeverEffectedPortAuthority::Retained => {
+                        published_batch == LaunchPortBatchState::NeverBound
+                            || (context.leases.is_empty()
+                                && published_batch == LaunchPortBatchState::TerminalNoEffect)
+                    }
+                    NeverEffectedPortAuthority::Released => {
+                        published_batch == LaunchPortBatchState::TerminalNoEffect
+                    }
+                };
+                if !published_matches {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "{} attachment {} crossed its exact no-effect port batch ({port_authority:?}, {published_batch:?})",
+                            context.provider_label, context.sandbox_id
+                        ),
+                    });
+                }
+                port_authority
             }
-            NeverEffectedPortAuthority::Released => {
-                published_batch == LaunchPortBatchState::TerminalNoEffect
+            AttachmentPublicationMode::MachineForwarded(_) => {
+                return Err(SandboxError::OperationFailed {
+                    message: "machine-forwarded no-effect detach requires its publication owner"
+                        .to_owned(),
+                });
             }
         };
-        if !published_matches {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "{} attachment {} crossed its exact no-effect port batch ({port_authority:?}, {published_batch:?})",
-                    context.provider_label, context.sandbox_id
-                ),
-            });
-        }
 
         let segment = self.allocator.inspect_attachment_reservation(
             context.tenant_id,
@@ -908,19 +1025,8 @@ pub(super) fn complete_port_plan_members(
 pub(super) fn authenticate_exact_command_context(
     context: &OciAttachmentContext<'_>,
     command: &SandboxNetworkTeardownCommand,
-    machine_forwarded: bool,
 ) -> Result<()> {
     context.validate_backend_publication()?;
-    if machine_forwarded == context.publication.owns_netavark_bindings() {
-        return Err(SandboxError::OperationFailed {
-            message: if machine_forwarded {
-                "retained machine-forwarded detach requires machine-forwarded publication"
-                    .to_owned()
-            } else {
-                "retained host detach requires host-managed publication".to_owned()
-            },
-        });
-    }
     let expected_provider = host_managed_attachment_provider_id(
         plan::oci_attachment_registration_kind(context.backend),
     );
@@ -942,6 +1048,23 @@ pub(super) fn authenticate_exact_command_context(
         });
     }
     Ok(())
+}
+
+fn require_publication_mode(
+    context: &OciAttachmentContext<'_>,
+    matches: bool,
+    expected: &str,
+) -> Result<()> {
+    if matches {
+        Ok(())
+    } else {
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "{} attachment {} requires {expected} publication composition",
+                context.provider_label, context.sandbox_id
+            ),
+        })
+    }
 }
 
 pub(super) fn require_retained_records(

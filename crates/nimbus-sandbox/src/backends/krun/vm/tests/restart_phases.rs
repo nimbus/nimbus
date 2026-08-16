@@ -2,7 +2,6 @@
 
 use std::net::TcpListener;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::backends::conmon::creator::OwnedConmonCreator;
 use crate::backends::oci::command::CommandSpec;
@@ -71,13 +70,15 @@ fn restart_fixture(root: &Path, id_value: &str, runtime_present: bool) -> Restar
         fs::write(&runtime_marker, b"running\n").expect("runtime marker should persist");
     }
 
-    let mut creator = OwnedConmonCreator::spawn(&CommandSpec::new("/usr/bin/true"))
-        .expect("creator fixture should spawn");
+    let mut creator = OwnedConmonCreator::spawn(
+        &CommandSpec::new("/bin/sh").args(["-c".to_owned(), "exec sleep 60".to_owned()]),
+    )
+    .expect("creator fixture should spawn");
     let receipt = creator
         .attempt_receipt(&format!("{id_value}-creator"))
         .expect("creator receipt should capture");
     creator
-        .reap_after_runtime_observed(Duration::from_secs(1))
+        .cancel_containment_and_reap()
         .expect("creator fixture should quiesce");
     manifest.creator_handoff = KrunCreatorHandoffState::RuntimeObserved { receipt };
     backend
@@ -438,13 +439,15 @@ fn fresh_backend_execute_repairs_process_local_retained_network_state() {
         .start_planned_provision_pep(&manifest, &reservation_claim)
         .expect("fixture should start its process-local PEP");
 
-    let mut creator = OwnedConmonCreator::spawn(&CommandSpec::new("/usr/bin/true"))
-        .expect("creator fixture should spawn");
+    let mut creator = OwnedConmonCreator::spawn(
+        &CommandSpec::new("/bin/sh").args(["-c".to_owned(), "exec sleep 60".to_owned()]),
+    )
+    .expect("creator fixture should spawn");
     let receipt = creator
         .attempt_receipt("krun-process-local-restart-creator")
         .expect("creator receipt should capture");
     creator
-        .reap_after_runtime_observed(Duration::from_secs(1))
+        .cancel_containment_and_reap()
         .expect("creator fixture should quiesce");
     manifest.creator_handoff = KrunCreatorHandoffState::RuntimeObserved { receipt };
     manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;

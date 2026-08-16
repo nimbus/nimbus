@@ -10,8 +10,11 @@ mod restart_state;
 mod teardown_state;
 
 use provision_state::{
-    initial_provision_disposition, validate_provision_disposition,
-    validate_provision_disposition_transition,
+    initial_provision_disposition, owner_reopened_attachment_claim_context_is_exact,
+    owner_reopened_attachment_fence_is_exact, owner_reopened_attachment_recovery_is_exact,
+    owner_reopened_publication_inspection_is_exact, owner_reopened_publication_source_is_exact,
+    owner_reopened_publication_transition_is_exact, republication_evidence_refresh_is_exact,
+    validate_provision_disposition, validate_provision_disposition_transition,
 };
 use restart_state::{
     initial_restart_state, validate_restart_state, validate_restart_state_transition,
@@ -273,6 +276,9 @@ impl WorkloadSagaRecord {
         if self.restart.active().is_some() {
             return true;
         }
+        if self.needs_owner_reopened_publication_recovery() {
+            return true;
+        }
         (self.phase == WorkloadSagaPhase::Recorded && self.successor_intent.is_some())
             || (self.phase.is_recoverable()
                 && !(self.phase == WorkloadSagaPhase::NetworkAttached
@@ -481,6 +487,105 @@ impl WorkloadSagaRecord {
         )
     }
 
+    /// Reopen process-bound private attachment state before publication.
+    ///
+    /// A fresh composition owner cannot inherit the in-process PEP that made
+    /// the retained private attachment ready. The first durable action is
+    /// therefore an inspection-only attachment claim. Only authenticated
+    /// absence may authorize one exact repair before publication inspection.
+    pub fn reopen_observed_publication_for_owner_recovery(
+        &self,
+    ) -> Result<Self, WorkloadSagaError> {
+        if !owner_reopened_publication_source_is_exact(self) {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "owner-reopened publication recovery requires exact quiescent observed authority",
+            ));
+        }
+        let attempt = self.owner_reopened_attachment_attempt()?;
+        let provider_target = WorkloadProvisionProviderTarget::for_attempt(&attempt)?.ok_or(
+            WorkloadSagaError::InvalidEvidence(
+                "owner-reopened attachment inspection requires an attachment provider target",
+            ),
+        )?;
+        let claim = WorkloadProvisionDispatchClaim::owner_reopened_attachment_inspection(
+            attempt,
+            provider_target,
+        )?;
+        self.build_next_with_provision_disposition(
+            self.active_intent.clone(),
+            None,
+            self.phase,
+            self.phase_detail.clone(),
+            Some(WorkloadProvisionDisposition::InspectionRequired(claim)),
+            None,
+        )
+    }
+
+    /// Continue an authenticated owner-reopened attachment result into the
+    /// existing publication inspection protocol.
+    pub fn owner_reopened_attachment_to_publication_inspection(
+        &self,
+    ) -> Result<Self, WorkloadSagaError> {
+        if !owner_reopened_attachment_recovery_is_exact(self) {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "owner-reopened publication inspection requires exact attachment recovery authority",
+            ));
+        }
+        let WorkloadPhaseDetail::Provision(detail) = &self.phase_detail else {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "observed publication recovery requires provision evidence",
+            ));
+        };
+        let Some((last, retained_observations)) = detail.observations.split_last() else {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "observed publication recovery requires its final owner observation",
+            ));
+        };
+        if !matches!(
+            last,
+            WorkloadOwnerObservation::PublicationObserved { reference, .. }
+                if detail.references.publication() == Some(reference)
+        ) {
+            return Err(WorkloadSagaError::InvalidEvidence(
+                "owner-reopened publication recovery requires the exact final publication observation",
+            ));
+        }
+        let phase_detail = WorkloadPhaseDetail::provision(
+            WorkloadSagaPhase::Published,
+            &self.active_intent,
+            detail.references.clone(),
+            retained_observations.to_vec(),
+        )?;
+        let attempt = self.publication_attempt_from_phase(
+            WorkloadSagaPhase::Published,
+            WorkloadProvisionStep::ObservePublication,
+            WorkloadSagaPhase::Observed,
+        )?;
+        let provider_target = WorkloadProvisionProviderTarget::for_attempt(&attempt)?.ok_or(
+            WorkloadSagaError::InvalidEvidence(
+                "owner-reopened publication inspection requires an ingress provider target",
+            ),
+        )?;
+        let claim = WorkloadProvisionDispatchClaim::owner_reopened_publication_inspection(
+            attempt,
+            provider_target,
+        )?;
+        self.build_next_with_provision_disposition(
+            self.active_intent.clone(),
+            None,
+            WorkloadSagaPhase::Published,
+            phase_detail,
+            Some(WorkloadProvisionDisposition::InspectionRequired(claim)),
+            None,
+        )
+    }
+
+    /// True only for an observed process-bound publication that a fresh
+    /// composition owner must inspect before it can report recovery complete.
+    pub fn needs_owner_reopened_publication_recovery(&self) -> bool {
+        owner_reopened_publication_source_is_exact(self)
+    }
+
     /// Authorize the same stable attempt at the next epoch after exact absence.
     pub fn inspection_to_retry_dispatch(
         &self,
@@ -519,6 +624,176 @@ impl WorkloadSagaRecord {
             WorkloadProvisionDisposition::DispatchPending(next),
             None,
         )
+    }
+
+    /// Republish one process-bound endpoint batch after exact observation absence.
+    pub fn publication_observation_absence_to_republication(
+        &self,
+        absence: WorkloadProvisionAbsenceEvidence,
+    ) -> Result<Self, WorkloadSagaError> {
+        if self.successor_intent.is_some() {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "successor-fenced provision cannot republish after observation absence",
+            ));
+        }
+        let previous = match self.provision_disposition.as_ref() {
+            Some(
+                WorkloadProvisionDisposition::DispatchPending(previous)
+                | WorkloadProvisionDisposition::InspectionRequired(previous),
+            ) if self.phase == WorkloadSagaPhase::Published
+                && previous.attempt().step() == WorkloadProvisionStep::ObservePublication
+                && absence.matches_inspection(self, previous) =>
+            {
+                previous
+            }
+            _ => {
+                return Err(WorkloadSagaError::InvalidEvidence(
+                    "republication requires exact durable publication-observation absence",
+                ));
+            }
+        };
+        let attempt =
+            self.publication_attempt(WorkloadProvisionStep::Publish, WorkloadSagaPhase::Published)?;
+        let claimed_revision = self
+            .revision
+            .checked_next()
+            .ok_or(WorkloadSagaError::RevisionOverflow)?;
+        let next = WorkloadProvisionDispatchClaim::republish_after_observation_absence(
+            previous,
+            attempt,
+            claimed_revision,
+            absence,
+        )?;
+        self.build_provision_transition(
+            self.phase,
+            self.phase_detail.clone(),
+            WorkloadProvisionDisposition::DispatchPending(next),
+            None,
+        )
+    }
+
+    /// Re-observe the same publication at the exact epoch that republished it.
+    pub fn republication_to_observation(
+        &self,
+        phase_detail: WorkloadPhaseDetail,
+    ) -> Result<Self, WorkloadSagaError> {
+        if self.successor_intent.is_some() {
+            return Err(WorkloadSagaError::InvalidTransition(
+                "successor-fenced republication cannot schedule observation",
+            ));
+        }
+        let publication = match self.provision_disposition.as_ref() {
+            Some(
+                WorkloadProvisionDisposition::DispatchPending(publication)
+                | WorkloadProvisionDisposition::InspectionRequired(publication),
+            ) if self.phase == WorkloadSagaPhase::Published
+                && publication.attempt().step() == WorkloadProvisionStep::Publish
+                && publication.republication_observation_absence().is_some() =>
+            {
+                publication
+            }
+            _ => {
+                return Err(WorkloadSagaError::InvalidTransition(
+                    "publication re-observation requires one exact republication dispatch",
+                ));
+            }
+        };
+        let attempt = self.publication_attempt(
+            WorkloadProvisionStep::ObservePublication,
+            WorkloadSagaPhase::Observed,
+        )?;
+        let claimed_revision = self
+            .revision
+            .checked_next()
+            .ok_or(WorkloadSagaError::RevisionOverflow)?;
+        let observation = WorkloadProvisionDispatchClaim::reobserve_after_republication(
+            publication,
+            attempt,
+            claimed_revision,
+        )?;
+        self.build_provision_transition(
+            self.phase,
+            phase_detail,
+            WorkloadProvisionDisposition::DispatchPending(observation),
+            None,
+        )
+    }
+
+    fn publication_attempt(
+        &self,
+        step: WorkloadProvisionStep,
+        target_phase: WorkloadSagaPhase,
+    ) -> Result<WorkloadProvisionAttempt, WorkloadSagaError> {
+        self.publication_attempt_from_phase(self.phase, step, target_phase)
+    }
+
+    fn publication_attempt_from_phase(
+        &self,
+        source_phase: WorkloadSagaPhase,
+        step: WorkloadProvisionStep,
+        target_phase: WorkloadSagaPhase,
+    ) -> Result<WorkloadProvisionAttempt, WorkloadSagaError> {
+        let intent = &self.active_intent;
+        let reference = self
+            .phase_detail
+            .references()
+            .publication()
+            .cloned()
+            .ok_or(WorkloadSagaError::InvalidEvidence(
+                "publication retry requires its durable publication reference",
+            ))?;
+        WorkloadProvisionAttempt::new(WorkloadProvisionAttemptInput {
+            key: self.key.clone(),
+            saga_id: self.saga_id.clone(),
+            issuing_revision: self.revision,
+            generation: intent.generation,
+            desired_digest: intent.desired_digest,
+            required_node: intent.admission.assigned_node().clone(),
+            source_digest: intent.source.source_digest(),
+            execution_provider_id: intent.source.execution_provider_id().clone(),
+            network_plan_digest: intent.network.digest(),
+            selection_evidence: intent
+                .network
+                .compiled_plan()
+                .content()
+                .capability_selection_evidence()
+                .cloned(),
+            source_phase,
+            target_phase,
+            step,
+            subjects: WorkloadProvisionSubjects::Publication(reference),
+            prerequisite: None,
+        })
+    }
+
+    fn owner_reopened_attachment_attempt(
+        &self,
+    ) -> Result<WorkloadProvisionAttempt, WorkloadSagaError> {
+        let intent = &self.active_intent;
+        WorkloadProvisionAttempt::new(WorkloadProvisionAttemptInput {
+            key: self.key.clone(),
+            saga_id: self.saga_id.clone(),
+            issuing_revision: self.revision,
+            generation: intent.generation,
+            desired_digest: intent.desired_digest,
+            required_node: intent.admission.assigned_node().clone(),
+            source_digest: intent.source.source_digest(),
+            execution_provider_id: intent.source.execution_provider_id().clone(),
+            network_plan_digest: intent.network.digest(),
+            selection_evidence: intent
+                .network
+                .compiled_plan()
+                .content()
+                .capability_selection_evidence()
+                .cloned(),
+            source_phase: WorkloadSagaPhase::WorkloadPrepared,
+            target_phase: WorkloadSagaPhase::NetworkAttached,
+            step: WorkloadProvisionStep::AttachNetwork,
+            subjects: WorkloadProvisionSubjects::Network(WorkloadNetworkReference::for_intent(
+                intent,
+            )),
+            prerequisite: None,
+        })
     }
 
     /// Persist one exact successful dispatch and return to ready disposition.
@@ -690,7 +965,7 @@ impl WorkloadSagaRecord {
                 .map(WorkloadSagaIntentUpdate::Transition)
             }
             std::cmp::Ordering::Greater if self.phase == WorkloadSagaPhase::Recorded => {
-                let (phase, detail) = initial_phase_detail(&candidate)?;
+                let (phase, detail) = promoted_phase_detail(self, &candidate)?;
                 self.build_next(candidate, None, phase, detail, None)
                     .map(Box::new)
                     .map(WorkloadSagaIntentUpdate::Transition)
@@ -809,6 +1084,7 @@ impl WorkloadSagaRecord {
             }
         } else if candidate.phase != self.phase
             && !legal_phase_edge(self.phase, candidate.phase, self.active_intent.publication)
+            && !owner_reopened_publication_transition_is_exact(self, candidate)
         {
             return Err(WorkloadSagaError::InvalidTransition(
                 "candidate contains an illegal phase edge",
@@ -1148,6 +1424,7 @@ impl WorkloadSagaRecord {
             }
             if source_phase != self.phase
                 && !legal_phase_edge(source_phase, self.phase, self.active_intent.publication)
+                && !owner_reopened_publication_inspection_is_exact(self)
             {
                 let (initial_phase, initial_detail) = initial_phase_detail(&self.active_intent)?;
                 let is_generation_promotion = source_phase == WorkloadSagaPhase::Recorded
@@ -1271,6 +1548,9 @@ fn validate_evidence_continuity(
     if active_changed {
         return Ok(());
     }
+    if owner_reopened_publication_transition_is_exact(current, candidate) {
+        return Ok(());
+    }
     if current.phase == candidate.phase {
         let completes_restart = current
             .restart
@@ -1282,7 +1562,9 @@ fn validate_evidence_continuity(
         if completes_restart {
             return Ok(());
         }
-        if current.phase_detail != candidate.phase_detail || current.failure != candidate.failure {
+        if (current.phase_detail != candidate.phase_detail || current.failure != candidate.failure)
+            && !republication_evidence_refresh_is_exact(current, candidate)
+        {
             return Err(WorkloadSagaError::InvalidEvidence(
                 "same-phase transition cannot rewrite lifecycle evidence",
             ));

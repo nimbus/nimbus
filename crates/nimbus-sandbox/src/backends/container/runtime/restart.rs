@@ -248,7 +248,7 @@ fn source_runtime_state(
     }
 }
 
-fn confirm_source_conmon_absence(
+pub(super) fn confirm_source_conmon_absence(
     manifest: &ContainerSandboxManifest,
     proof: &CreatorQuiescenceProof,
     retired_receipt_is_durable: bool,
@@ -381,7 +381,7 @@ impl ContainerSandboxBackend {
             }
         }
 
-        let creator_quiescence = self.authenticate_restart_creator_quiescence(&mut manifest)?;
+        let creator_quiescence = self.authenticate_creator_quiescence(&mut manifest)?;
         let runtime = source_runtime_state(&manifest, &creator_quiescence)?;
         if let RuntimeStateObservation::Present(_) = runtime {
             self.stop_running_restart_source(&manifest)?;

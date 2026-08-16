@@ -185,18 +185,37 @@ impl ContainerSandboxBackend {
         &self,
         manifest: &ContainerSandboxManifest,
     ) -> Result<(SandboxStatus, Vec<u8>)> {
-        let application = crate::backends::readiness_probe::inspect_application_readiness(
-            manifest.status,
-            &status::published_endpoints(&manifest.spec),
-            status::readiness_probe_timeout(manifest),
-            self.readiness_probe_provider.as_ref(),
-        );
         let readiness = self.authenticated_egress_readiness(manifest)?;
-        let attachment = self.complete_attachment_readiness(manifest, readiness)?;
-        let status = if attachment.is_ready() {
-            application.status()
-        } else {
-            SandboxStatus::NotReady
+        let attachment = self.non_routable_attachment_readiness(manifest, readiness)?;
+        let (status, application) = match &attachment {
+            crate::backends::oci::network::OciAttachmentBaseReadinessState::Ready(attachment) => {
+                let Some(assigned_ip) = attachment.assigned_ips().first().copied() else {
+                    return Ok((
+                        SandboxStatus::NotReady,
+                        serde_json::to_vec(&(
+                            "missing_private_address",
+                            format!("{attachment:?}"),
+                        ))
+                        .map_err(|error| SandboxError::OperationFailed {
+                                message: format!(
+                                    "failed to serialize container readiness observation for {}: {error}",
+                                    manifest.handle.id
+                                ),
+                            })?,
+                    ));
+                };
+                let endpoints = status::private_readiness_endpoints(&manifest.spec, assigned_ip);
+                let application = crate::backends::readiness_probe::inspect_application_readiness(
+                    manifest.status,
+                    &endpoints,
+                    status::readiness_probe_timeout(manifest),
+                    self.readiness_probe_provider.as_ref(),
+                );
+                (application.status(), Some(application))
+            }
+            crate::backends::oci::network::OciAttachmentBaseReadinessState::NotReady(_) => {
+                (SandboxStatus::NotReady, None)
+            }
         };
         let evidence =
             serde_json::to_vec(&(&application, format!("{attachment:?}"))).map_err(|error| {

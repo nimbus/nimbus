@@ -14,7 +14,7 @@ use super::*;
 impl KrunSandboxBackend {
     /// Convert a runtime-observed creator receipt into durable quiescence only
     /// after the caller has independently confirmed runtime absence.
-    pub(super) fn persist_restart_creator_quiescence_after_runtime_absence(
+    pub(super) fn persist_creator_quiescence_after_runtime_absence(
         &self,
         manifest: &mut KrunSandboxManifest,
     ) -> Result<()> {
@@ -56,14 +56,14 @@ impl KrunSandboxBackend {
             }
             KrunCreatorHandoffState::NotSpawned => Err(SandboxError::OperationFailed {
                 message: format!(
-                    "krun restart for {} cannot quiesce provider-owned execution without a creator-attempt receipt",
+                    "krun provider cleanup for {} cannot quiesce provider-owned execution without a creator-attempt receipt",
                     manifest.handle.id
                 ),
             }),
             KrunCreatorHandoffState::SpawnIntent { .. }
             | KrunCreatorHandoffState::Pending { .. } => Err(SandboxError::OperationFailed {
                 message: format!(
-                    "krun restart for {} cannot publish quiescence while creator handoff {:?} may still materialize provider effects",
+                    "krun provider cleanup for {} cannot publish quiescence while creator handoff {:?} may still materialize provider effects",
                     manifest.handle.id, manifest.creator_handoff
                 ),
             }),

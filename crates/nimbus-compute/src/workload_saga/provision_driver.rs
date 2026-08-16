@@ -34,6 +34,9 @@ pub enum WorkloadProvisionRunDisposition {
     /// An exact issued provision result is durable and the queued terminal
     /// successor can enter withdrawal without another provider call.
     SuccessorSettlementReady,
+    /// Exact inspected absence has already committed the queued successor's
+    /// withdrawal transition. The teardown owner can resume directly.
+    SuccessorSettlementCommitted,
     /// A definite provider failure is durably recorded at the last completed phase.
     DefiniteFailure,
 }
@@ -112,6 +115,24 @@ impl WorkloadProvisionDriver {
             .await?
             .ok_or(WorkloadProvisionRunError::Missing)?;
         self.drive(record).await
+    }
+
+    /// Reopen one observed process-bound publication through a durable
+    /// inspection claim before this fresh composition owner can republish it.
+    pub async fn resume_owner_reopened_publication(
+        &self,
+        key: &WorkloadSagaKey,
+    ) -> Result<WorkloadProvisionRun, WorkloadProvisionRunError> {
+        let observed = self
+            .coordinator
+            .load(key)
+            .await?
+            .ok_or(WorkloadProvisionRunError::Missing)?;
+        let reopened = self
+            .coordinator
+            .reopen_observed_publication_for_owner_recovery(&observed)
+            .await?;
+        self.drive(reopened).await
     }
 
     async fn drive(
@@ -221,6 +242,15 @@ impl WorkloadProvisionDriver {
                             _ => return Err(WorkloadProvisionRunError::UnconfirmedTransition),
                         }
                     };
+                    if durable.phase() == WorkloadSagaPhase::WithdrawalCommitted
+                        && durable.successor_intent().is_some()
+                    {
+                        return Ok(WorkloadProvisionRun {
+                            record: durable,
+                            disposition:
+                                WorkloadProvisionRunDisposition::SuccessorSettlementCommitted,
+                        });
+                    }
                     if provision_successor_settlement_ready(&durable) {
                         return Ok(WorkloadProvisionRun {
                             record: durable,

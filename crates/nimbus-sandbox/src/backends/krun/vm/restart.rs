@@ -181,7 +181,7 @@ impl KrunSandboxBackend {
                 });
             }
         }
-        self.persist_restart_creator_quiescence_after_runtime_absence(&mut manifest)?;
+        self.persist_creator_quiescence_after_runtime_absence(&mut manifest)?;
         let record = self.persist_and_read_restart_provider_record(
             &manifest,
             KrunRestartProviderRecord::new(fence, KrunRestartProviderPhase::SourceQuiesced),

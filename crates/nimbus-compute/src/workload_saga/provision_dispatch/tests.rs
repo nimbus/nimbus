@@ -6,8 +6,9 @@ use std::{
 use nimbus_core::TenantId;
 use nimbus_workloads::{
     WorkloadActivationIntent, WorkloadFailureEvidence, WorkloadProvisionDisposition,
-    WorkloadPublicationIntent, WorkloadSagaFuture, WorkloadSagaPage, WorkloadSagaPageRequest,
-    WorkloadSagaPhase, WorkloadSagaStore, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    WorkloadPublicationIntent, WorkloadSagaFuture, WorkloadSagaIntentUpdate, WorkloadSagaPage,
+    WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaStore, WorkloadSagaTenantPage,
+    WorkloadSagaTenantPageRequest,
 };
 
 use super::*;
@@ -383,6 +384,156 @@ async fn inspection_absence_authorizes_same_attempt_next_epoch() {
             .checked_next()
             .expect("fixture epoch should advance")
     );
+}
+
+#[tokio::test]
+async fn publication_observation_does_not_block_stopped_successor_teardown() {
+    let published = current("publication-observation-stop", WorkloadSagaPhase::Published);
+    let pending = proposal(&published).into_candidate();
+    let WorkloadSagaIntentUpdate::Transition(fenced) = pending
+        .apply_intent(crate::workload_saga::recovery::tests::stopped_intent(
+            "publication-observation-stop",
+            2,
+        ))
+        .expect("a stopped successor should fence publication observation")
+    else {
+        panic!("a stopped successor should change durable provision truth");
+    };
+
+    let withdrawal = fenced
+        .commit_queued_successor_teardown()
+        .expect("inspection-only publication observation must not block final withdrawal");
+    assert_eq!(withdrawal.phase(), WorkloadSagaPhase::WithdrawalCommitted);
+    assert!(
+        withdrawal
+            .teardown_disposition()
+            .and_then(|disposition| disposition.context().provision_absence())
+            .is_none(),
+        "the final ingress teardown owns live-or-absent listener reconciliation"
+    );
+}
+
+#[tokio::test]
+async fn publication_absence_with_stopped_successor_enters_teardown_without_retry() {
+    let published = current("publication-absence-stop", WorkloadSagaPhase::Published);
+    let pending = proposal(&published).into_candidate();
+    let WorkloadSagaIntentUpdate::Transition(fenced) = pending
+        .apply_intent(crate::workload_saga::recovery::tests::stopped_intent(
+            "publication-absence-stop",
+            2,
+        ))
+        .expect("a stopped successor should fence publication observation")
+    else {
+        panic!("a stopped successor should change durable provision truth");
+    };
+    let fenced = *fenced;
+    let store = TestStore::new(Ok(Some(fenced.clone())), Ok(WorkloadSagaCommit::Applied));
+    let coordinator = WorkloadSagaCoordinator::new(store);
+    let confirmed = coordinator
+        .inspect_confirmed_provision(fenced.key())
+        .await
+        .expect("fenced publication observation should remain inspectable");
+    let command = confirmed
+        .command()
+        .expect("fenced publication observation should issue one inspection");
+    let absence = command.absence_evidence(WorkloadOwnerEvidenceDigest::sha256(
+        "process-bound publication absent after owner exit",
+    ));
+    let result = WorkloadProvisionCommandResult::for_command(
+        command,
+        WorkloadProvisionInspectionResult::Absent { evidence: absence },
+    )
+    .expect("exact publication absence should correlate");
+    let WorkloadProvisionDecision::Proposed(withdrawal) =
+        reduce_command_result(confirmed_record(&confirmed), command, result)
+            .expect("a stopped successor should consume absence into teardown")
+    else {
+        panic!("publication absence should propose one durable withdrawal");
+    };
+
+    assert_eq!(
+        withdrawal.candidate().phase(),
+        WorkloadSagaPhase::WithdrawalCommitted
+    );
+    assert!(
+        withdrawal
+            .candidate()
+            .teardown_disposition()
+            .and_then(|disposition| disposition.context().provision_absence())
+            .is_some()
+    );
+    assert!(withdrawal.action_after_confirmation().is_none());
+}
+
+#[tokio::test]
+async fn owner_reopened_attachment_absence_with_stopped_successor_enters_teardown() {
+    let observed = current(
+        "owner-reopened-attachment-stop",
+        WorkloadSagaPhase::Observed,
+    );
+    let reopened = observed
+        .reopen_observed_publication_for_owner_recovery()
+        .expect("observed publication should reopen attachment inspection");
+    let inspection_claim = reopened
+        .provision_disposition()
+        .and_then(WorkloadProvisionDisposition::claim)
+        .expect("owner reopen should retain its inspection claim");
+    let first_absence = WorkloadProvisionAbsenceEvidence::for_inspection(
+        &reopened,
+        inspection_claim,
+        WorkloadOwnerEvidenceDigest::sha256("owner-reopened attachment absent"),
+    )
+    .expect("owner-reopened absence should bind the inspection");
+    let repair = reopened
+        .inspection_to_retry_dispatch(first_absence)
+        .expect("owner-reopened absence should authorize one repair");
+    let WorkloadSagaIntentUpdate::Transition(fenced) = repair
+        .apply_intent(crate::workload_saga::recovery::tests::stopped_intent(
+            "owner-reopened-attachment-stop",
+            2,
+        ))
+        .expect("a stopped successor should fence attachment repair")
+    else {
+        panic!("a stopped successor should change durable repair truth");
+    };
+    let fenced = *fenced;
+    let store = TestStore::new(Ok(Some(fenced.clone())), Ok(WorkloadSagaCommit::Applied));
+    let coordinator = WorkloadSagaCoordinator::new(store);
+    let confirmed = coordinator
+        .inspect_confirmed_provision(fenced.key())
+        .await
+        .expect("fenced attachment repair should remain inspectable");
+    let command = confirmed
+        .command()
+        .expect("fenced attachment repair should issue one inspection");
+    assert_eq!(command.step(), WorkloadProvisionStep::AttachNetwork);
+    let absence = command.absence_evidence(WorkloadOwnerEvidenceDigest::sha256(
+        "fenced attachment repair absent after owner exit",
+    ));
+    let result = WorkloadProvisionCommandResult::for_command(
+        command,
+        WorkloadProvisionInspectionResult::Absent { evidence: absence },
+    )
+    .expect("exact attachment absence should correlate");
+    let WorkloadProvisionDecision::Proposed(withdrawal) =
+        reduce_command_result(confirmed_record(&confirmed), command, result)
+            .expect("stopped successor should consume attachment absence into teardown")
+    else {
+        panic!("attachment absence should propose one durable withdrawal");
+    };
+
+    assert_eq!(
+        withdrawal.candidate().phase(),
+        WorkloadSagaPhase::WithdrawalCommitted
+    );
+    assert!(
+        withdrawal
+            .candidate()
+            .teardown_disposition()
+            .and_then(|disposition| disposition.context().provision_absence())
+            .is_some()
+    );
+    assert!(withdrawal.action_after_confirmation().is_none());
 }
 
 #[tokio::test]

@@ -89,6 +89,35 @@ fn journal(root: &Path) -> ProviderCommandAttemptJournal {
 }
 
 #[test]
+fn first_claim_establishes_a_deeply_nested_configured_state_root() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let state_root = root
+        .path()
+        .join("services")
+        .join("projects")
+        .join("project-alpha")
+        .join("backends")
+        .join("krun")
+        .join("state");
+    let journal = journal(&state_root);
+
+    assert!(
+        !state_root.exists(),
+        "opening a provider journal must remain effect-free"
+    );
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(&claim(0))
+            .expect("the first claim should establish its configured state root"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+    assert!(
+        state_root.join(JOURNAL_DIRECTORY).is_dir(),
+        "the claimed provider journal must exist below the configured state root"
+    );
+}
+
+#[test]
 fn provision_and_restart_operations_require_their_exact_ordinal_domain() {
     let restart_operations = [
         ProviderCommandOperation::WithdrawPublication,
@@ -493,28 +522,45 @@ fn exact_inspection_absence_atomically_authorizes_one_adjacent_epoch() {
 }
 
 #[test]
-fn inspected_absence_cannot_synthesize_an_unfenced_local_attempt() {
+fn inspected_unclaimed_epoch_atomically_authorizes_its_exact_successor() {
     let root = tempfile::tempdir().expect("temporary root should exist");
     let journal = journal(root.path());
+    let first = command_claim(ProviderCommandOperation::DrainExecution, 0, 0);
     let second = command_claim(ProviderCommandOperation::DrainExecution, 0, 1);
 
-    assert_eq!(
+    let execution = match journal
+        .claim_dispatch_epoch_after_inspected_absence(
+            &second,
+            first.dispatch_epoch(),
+            b"confirmed inspection found no local provider authority",
+        )
+        .expect("confirmed unclaimed inspection should atomically claim its successor")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution,
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("the first adjacent retry must receive Execute authority")
+        }
+    };
+    assert!(execution.observation().authenticates_retry_progress(&first));
+    assert!(matches!(
         journal
             .claim_dispatch_epoch_after_inspected_absence(
                 &second,
-                0,
-                b"unfenced inspection found no local provider record",
+                first.dispatch_epoch(),
+                b"confirmed inspection found no local provider authority",
             )
-            .expect_err("a missing local predecessor cannot authorize an adjacent retry"),
-        ProviderCommandJournalError::RetryWithoutAuthority
-    );
-    let first = command_claim(ProviderCommandOperation::DrainExecution, 0, 0);
-    assert!(matches!(
+            .expect("the exact successor should replay"),
+        ProviderCommandClaimDecision::AdoptExactAttempt(_)
+    ));
+    assert_eq!(
         journal
             .claim_dispatch_epoch(&first)
-            .expect("the exact original epoch must remain eligible"),
-        ProviderCommandClaimDecision::ExecuteClaimed(_)
-    ));
+            .expect_err("the retained predecessor receipt must fence stale Execute authority"),
+        ProviderCommandJournalError::StaleDispatchEpoch {
+            current: second.dispatch_epoch(),
+            candidate: first.dispatch_epoch(),
+        }
+    );
 }
 
 #[test]
@@ -983,6 +1029,290 @@ fn process_bound_publish_success_reconciles_to_exact_absence_before_retry() {
             .expect("exact next publish epoch should receive authority"),
         ProviderCommandClaimDecision::ExecuteClaimed(_)
     ));
+}
+
+#[test]
+fn process_bound_observation_success_reconciles_to_exact_absence_before_reobservation() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let first = command_claim(ProviderCommandOperation::ObserveIngress, 0, 0);
+    journal
+        .claim_dispatch_epoch(&first)
+        .expect("observation claim should persist");
+    journal
+        .record_observation(
+            &first,
+            ProviderCommandObservationKind::Succeeded,
+            b"first owner observed its process-bound publication",
+        )
+        .expect("observation success should persist");
+
+    let reconciled = journal
+        .record_reconciled_absence(
+            &first,
+            b"fresh owner proved the process-bound publication absent",
+        )
+        .expect("provider-proven process absence should supersede observation success");
+    assert_eq!(reconciled.kind(), ProviderCommandObservationKind::Absent);
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(&command_claim(
+                ProviderCommandOperation::ObserveIngress,
+                0,
+                1,
+            ))
+            .expect("exact next observation epoch should receive authority"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+}
+
+#[test]
+fn owner_reopened_observation_rotates_only_resolved_exact_authority() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let initial = command_claim(ProviderCommandOperation::ObserveIngress, 0, 0);
+    journal
+        .claim_dispatch_epoch(&initial)
+        .expect("initial observation claim should persist");
+    journal
+        .record_observation(
+            &initial,
+            ProviderCommandObservationKind::Succeeded,
+            b"initial owner observed publication",
+        )
+        .expect("initial observation should resolve");
+
+    let mut reopened = initial.clone();
+    reopened.attempt_id = NEXT_ATTEMPT.to_owned();
+    reopened.effect_subject = r#"{"kind":"publication","id":"restarted"}"#.to_owned();
+    assert_eq!(
+        journal
+            .claim_dispatch_epoch(&reopened)
+            .expect_err("ordinary crossed claims must remain rejected"),
+        ProviderCommandJournalError::CrossedClaim
+    );
+    assert!(matches!(
+        journal
+            .claim_owner_reopened_publication_inspection(&reopened)
+            .expect("exact owner reopen should rotate the resolved stream"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+    assert_eq!(
+        journal
+            .record_observation(
+                &initial,
+                ProviderCommandObservationKind::Succeeded,
+                b"late initial-owner callback",
+            )
+            .expect_err("the rotated stream must fence the prior owner"),
+        ProviderCommandJournalError::CrossedClaim
+    );
+    journal
+        .record_observation(
+            &reopened,
+            ProviderCommandObservationKind::Succeeded,
+            b"fresh owner observed publication",
+        )
+        .expect("fresh-owner observation should resolve");
+
+    let mut next_owner = reopened.clone();
+    next_owner.attempt_id = SOURCE_ATTEMPT.to_owned();
+    next_owner.effect_subject =
+        r#"{"kind":"publication","id":"same-execution-next-owner"}"#.to_owned();
+    assert!(matches!(
+        journal
+            .claim_owner_reopened_publication_inspection(&next_owner)
+            .expect("a later owner must receive a distinct claim"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+
+    let unresolved_root = tempfile::tempdir().expect("temporary root should exist");
+    let unresolved =
+        ProviderCommandAttemptJournal::open(unresolved_root.path(), "container-runtime")
+            .expect("unresolved fixture journal should open");
+    unresolved
+        .claim_dispatch_epoch(&initial)
+        .expect("unresolved initial claim should persist");
+    assert_eq!(
+        unresolved
+            .claim_owner_reopened_publication_inspection(&reopened)
+            .expect_err("an unresolved prior owner must remain fenced"),
+        ProviderCommandJournalError::PriorEffectUnresolved
+    );
+}
+
+#[test]
+fn owner_reopened_attachment_rotates_only_resolved_exact_authority() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let initial = command_claim(ProviderCommandOperation::AttachNetwork, 0, 0);
+    journal
+        .claim_dispatch_epoch(&initial)
+        .expect("initial attachment claim should persist");
+    journal
+        .record_observation(
+            &initial,
+            ProviderCommandObservationKind::Succeeded,
+            b"initial owner attached private network and PEP",
+        )
+        .expect("initial attachment should resolve");
+
+    let mut reopened = initial.clone();
+    reopened.attempt_id = NEXT_ATTEMPT.to_owned();
+    assert_eq!(
+        journal
+            .claim_dispatch_epoch(&reopened)
+            .expect_err("ordinary crossed attachment claims must remain rejected"),
+        ProviderCommandJournalError::CrossedClaim
+    );
+    assert!(matches!(
+        journal
+            .claim_owner_reopened_attachment_inspection(&reopened)
+            .expect("exact owner reopen should rotate the resolved attachment stream"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+    let absence = journal
+        .record_reconciled_absence(&reopened, b"fresh owner proved the PEP absent")
+        .expect("authenticated PEP absence should replace attachment success");
+    assert_eq!(absence.kind(), ProviderCommandObservationKind::Absent);
+
+    let mut retry = reopened.clone();
+    retry.dispatch_epoch = 1;
+    assert!(matches!(
+        journal
+            .claim_dispatch_epoch(&retry)
+            .expect("exact next attachment epoch should receive repair authority"),
+        ProviderCommandClaimDecision::ExecuteClaimed(_)
+    ));
+    assert_eq!(
+        journal
+            .record_observation(
+                &initial,
+                ProviderCommandObservationKind::Succeeded,
+                b"late initial-owner callback",
+            )
+            .expect_err("the rotated attachment stream must fence the prior owner"),
+        ProviderCommandJournalError::CrossedClaim
+    );
+}
+
+#[test]
+fn owner_reopened_publication_retry_atomically_installs_exact_absence_lineage() {
+    let root = tempfile::tempdir().expect("temporary root should exist");
+    let journal = journal(root.path());
+    let initial = publish_claim(0);
+    journal
+        .claim_dispatch_epoch(&initial)
+        .expect("initial publication claim should persist");
+    journal
+        .record_observation(
+            &initial,
+            ProviderCommandObservationKind::Succeeded,
+            b"initial listener was published",
+        )
+        .expect("initial publication should resolve");
+
+    let mut retry = initial.clone();
+    retry.attempt_id = NEXT_ATTEMPT.to_owned();
+    retry.effect_subject = r#"{"kind":"publication","id":"restarted"}"#.to_owned();
+    retry.dispatch_epoch = 1;
+    assert_eq!(
+        journal
+            .claim_dispatch_epoch(&retry)
+            .expect_err("ordinary crossed publication retry must remain rejected"),
+        ProviderCommandJournalError::CrossedClaim
+    );
+    let decision = journal
+        .claim_publication_after_owner_reopened_absence(
+            &retry,
+            0,
+            b"owner-reopened observation proved publication absent",
+        )
+        .expect("exact owner-reopened absence should authorize one retry");
+    let ProviderCommandClaimDecision::ExecuteClaimed(execution) = decision else {
+        panic!("first owner-reopened retry must receive execution authority");
+    };
+    let mut inspected = retry.clone();
+    inspected.dispatch_epoch = 0;
+    assert!(
+        execution
+            .observation()
+            .authenticates_retry_progress(&inspected)
+    );
+    assert_eq!(
+        journal
+            .record_observation(
+                &initial,
+                ProviderCommandObservationKind::Succeeded,
+                b"late initial publication callback",
+            )
+            .expect_err("the owner-reopened retry must fence the prior publisher"),
+        ProviderCommandJournalError::CrossedClaim
+    );
+    journal
+        .record_observation(
+            &retry,
+            ProviderCommandObservationKind::Succeeded,
+            b"fresh owner published once",
+        )
+        .expect("owner-reopened publication should resolve");
+    assert!(matches!(
+        journal
+            .claim_publication_after_owner_reopened_absence(
+                &retry,
+                0,
+                b"owner-reopened observation proved publication absent",
+            )
+            .expect("exact retry replay should adopt its result"),
+        ProviderCommandClaimDecision::AdoptExactAttempt(ProviderCommandObservation {
+            kind: ProviderCommandObservationKind::Succeeded,
+            ..
+        })
+    ));
+
+    let mut second_retry = retry.clone();
+    second_retry.dispatch_epoch = 2;
+    let decision = journal
+        .claim_publication_after_owner_reopened_absence(
+            &second_retry,
+            1,
+            b"the next exact owner proved the first retry absent",
+        )
+        .expect("each exact adjacent publication absence should authorize one retry");
+    let ProviderCommandClaimDecision::ExecuteClaimed(execution) = decision else {
+        panic!("the second adjacent retry must receive execution authority");
+    };
+    assert!(
+        execution.observation().authenticates_retry_progress(&retry),
+        "the second retry must retain the exact prior publication epoch as absence lineage"
+    );
+    journal
+        .record_observation(
+            &second_retry,
+            ProviderCommandObservationKind::Succeeded,
+            b"next owner published once",
+        )
+        .expect("the second exact publication retry should resolve");
+
+    let mut skipped = second_retry.clone();
+    skipped.dispatch_epoch = 4;
+    assert!(matches!(
+        journal.claim_publication_after_owner_reopened_absence(
+            &skipped,
+            2,
+            b"crossed non-adjacent observation",
+        ),
+        Err(ProviderCommandJournalError::InvalidClaim { .. })
+    ));
+
+    let mut crossed = retry.clone();
+    crossed.desired_digest = DIGEST_B.to_owned();
+    assert_eq!(
+        journal
+            .claim_publication_after_owner_reopened_absence(&crossed, 0, b"crossed observation",)
+            .expect_err("crossed durable authority must remain rejected"),
+        ProviderCommandJournalError::CrossedClaim
+    );
 }
 
 #[test]

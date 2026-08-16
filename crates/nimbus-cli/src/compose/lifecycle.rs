@@ -149,7 +149,7 @@ impl ComposeServiceProvision for ComposeForegroundOwner {
             self.runtime.resource_provisioner();
         Box::pin(async move {
             resource_provisioner
-                .provision_sandbox_service(context, service_name, &self.cancellation)
+                .provision_sandbox_service_until_observed(context, service_name, &self.cancellation)
                 .await
                 .map_err(|error| Error::Internal(error.to_string()))
         })

@@ -38,7 +38,6 @@ mod startup_reconciliation;
 #[cfg(test)]
 mod test_support;
 
-#[cfg(test)]
 pub(crate) use attachment_lifecycle::OciAttachmentReadinessFailure;
 pub(crate) use attachment_lifecycle::{
     AttachmentAttachAuthority, AttachmentAuxiliaryDisposition, AttachmentBackendKind,
@@ -102,6 +101,7 @@ pub(crate) use orphan_convergence::{
     OciOrphanCleanupContext, OciOrphanCleanupDisposition, OciOrphanCleanupKind,
     OciOrphanCleanupSubject,
 };
+pub(crate) use orphan_evidence::OciRetainedManifestEvidence;
 pub(crate) use placement::{OciPlacementAuthority, OciPlacementProvider, place_sandbox_on_block};
 pub(crate) use process::{
     MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,

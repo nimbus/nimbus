@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::net::IpAddr;
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,8 @@ use crate::backends::oci::egress::{
 use crate::backends::oci::hardening::{masked_paths_json, readonly_paths_json};
 use crate::error::{Result, SandboxError};
 use crate::spec::{SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxSpec};
+
+use super::ingress::format_private_tsi_port_map;
 
 const DEFAULT_PATH_ENV: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const MIN_MEMORY_LIMIT_BYTES: u64 = 1024 * 1024;
@@ -183,6 +185,10 @@ pub(crate) struct KrunBundleOptions {
     /// env; when absent (plan-only / no assignment) no proxy env is injected.
     pub egress_proxy_url: Option<String>,
     pub egress_trust_anchor_guest_path: Option<String>,
+    /// Exact provider-private IPv4 address authenticated after attachment.
+    /// Preparation uses an unspecified placeholder that activation must
+    /// replace before the VMM creator can start.
+    pub private_tsi_bind_address: Option<Ipv4Addr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,7 +295,12 @@ pub(crate) fn build_bundle_config(
     if !spec.port_bindings.is_empty() {
         annotations.insert(
             "krun.port_map".to_owned(),
-            Value::String(format_port_map(&spec.port_bindings)),
+            Value::String(format_private_tsi_port_map(
+                &spec.port_bindings,
+                options
+                    .private_tsi_bind_address
+                    .unwrap_or(Ipv4Addr::UNSPECIFIED),
+            )),
         );
     }
 
@@ -525,7 +536,7 @@ fn build_linux_resources(resources: &SandboxResourceLimits) -> Option<Value> {
 
 fn validate_port_bindings(port_bindings: &[SandboxPortBinding]) -> Result<()> {
     let mut names = BTreeSet::new();
-    let mut host_ports = BTreeSet::new();
+    let mut private_tsi_ports = BTreeSet::new();
 
     for port_binding in port_bindings {
         if port_binding.name.trim().is_empty() {
@@ -554,39 +565,17 @@ fn validate_port_bindings(port_bindings: &[SandboxPortBinding]) -> Result<()> {
                 ),
             });
         }
-        if !host_ports.insert((port_binding.host_address, port_binding.host_port)) {
+        if !private_tsi_ports.insert(port_binding.host_port) {
             return Err(SandboxError::InvalidSpec {
                 message: format!(
-                    "duplicate sandbox host port binding: {}:{}",
-                    port_binding.host_address, port_binding.host_port
+                    "duplicate krun private TSI bridge port: {}",
+                    port_binding.host_port
                 ),
             });
         }
     }
 
     Ok(())
-}
-
-pub(crate) fn format_port_map(port_bindings: &[SandboxPortBinding]) -> String {
-    port_bindings
-        .iter()
-        .map(|binding| {
-            format!(
-                "{}:{}:{}",
-                format_port_map_host_address(binding.host_address),
-                binding.host_port,
-                binding.guest_port
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-fn format_port_map_host_address(host_address: IpAddr) -> String {
-    match host_address {
-        IpAddr::V4(address) => address.to_string(),
-        IpAddr::V6(address) => format!("[{address}]"),
-    }
 }
 
 #[cfg(test)]
@@ -600,9 +589,10 @@ mod tests {
 
     use nimbus_core::TenantId;
 
+    use super::super::ingress::format_private_tsi_port_map;
     use super::{
         KRUN_REQUIRED_CAPABILITIES, KrunBundleLayout, KrunBundleMount, KrunBundleOptions,
-        build_bundle_config, format_port_map, write_bundle_config,
+        build_bundle_config, write_bundle_config,
     };
     use crate::backend::SandboxBackendKind;
     use crate::backends::oci::hardening::{DEFAULT_MASKED_PATHS, DEFAULT_READONLY_PATHS};
@@ -635,7 +625,7 @@ mod tests {
         assert_eq!(config["annotations"]["run.oci.handler"], "krun");
         assert_eq!(
             config["annotations"]["krun.port_map"],
-            "127.0.0.1:15432:5432,127.0.0.1:18080:8080"
+            "0.0.0.0:15432:5432,0.0.0.0:18080:8080"
         );
         assert_eq!(config["process"]["terminal"], false);
         assert_eq!(
@@ -709,13 +699,13 @@ mod tests {
 
         let rendered = fs::read_to_string(&layout.config_path).expect("config should be readable");
         assert!(
-            rendered.contains("\"krun.port_map\": \"127.0.0.1:15432:5432,127.0.0.1:18080:8080\""),
+            rendered.contains("\"krun.port_map\": \"0.0.0.0:15432:5432,0.0.0.0:18080:8080\""),
             "rendered config should include the expected krun port map annotation"
         );
     }
 
     #[test]
-    fn format_port_map_carries_configured_host_addresses() {
+    fn format_port_map_does_not_project_configured_host_addresses() {
         let port_bindings = [
             SandboxPortBinding::tcp("loopback", 18080, 8080)
                 .with_host_address(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2))),
@@ -724,17 +714,20 @@ mod tests {
         ];
 
         assert_eq!(
-            format_port_map(&port_bindings),
-            "127.0.0.2:18080:8080,10.0.0.5:18443:8443"
+            format_private_tsi_port_map(&port_bindings, Ipv4Addr::UNSPECIFIED),
+            "0.0.0.0:18080:8080,0.0.0.0:18443:8443"
         );
     }
 
     #[test]
-    fn format_port_map_brackets_ipv6_host_addresses() {
+    fn format_port_map_keeps_ipv6_host_publication_out_of_the_provider_namespace() {
         let port_bindings = [SandboxPortBinding::tcp("ipv6", 18080, 8080)
             .with_host_address(IpAddr::V6(Ipv6Addr::LOCALHOST))];
 
-        assert_eq!(format_port_map(&port_bindings), "[::1]:18080:8080");
+        assert_eq!(
+            format_private_tsi_port_map(&port_bindings, Ipv4Addr::UNSPECIFIED),
+            "0.0.0.0:18080:8080"
+        );
     }
 
     #[test]
@@ -810,6 +803,7 @@ mod tests {
                 }],
                 egress_proxy_url: Some("http://10.89.0.1:15000".to_owned()),
                 egress_trust_anchor_guest_path: Some("/run/nimbus/egress/ca.pem".to_owned()),
+                private_tsi_bind_address: None,
             },
         )
         .expect("bundle config should build");
@@ -1352,6 +1346,38 @@ mod tests {
                 .to_string()
                 .contains("guest_port must be greater than zero"),
             "expected actionable guest port validation error, got: {error}"
+        );
+    }
+
+    #[test]
+    fn bundle_config_rejects_duplicate_private_tsi_bridge_ports() {
+        let spec = SandboxSpec::new(
+            TenantId::new("tenant").expect("tenant id should be valid"),
+            SandboxOwnerSpec::service("duplicate-private-port"),
+            SandboxBackendKind::Krun,
+            SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
+            SandboxProcessSpec::new(["/usr/bin/service"]),
+        )
+        .with_port_bindings([
+            SandboxPortBinding::tcp("loopback", 18_080, 8_080)
+                .with_host_address(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            SandboxPortBinding::tcp("private", 18_080, 8_081)
+                .with_host_address(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))),
+        ]);
+
+        let error = build_bundle_config(
+            "duplicate-private-port",
+            &spec,
+            None,
+            &KrunBundleOptions::default(),
+        )
+        .expect_err("one private namespace cannot bind the same wildcard port twice");
+
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate krun private TSI bridge port: 18080"),
+            "expected actionable private TSI port validation error, got: {error}"
         );
     }
 

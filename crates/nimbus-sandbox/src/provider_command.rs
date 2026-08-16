@@ -201,7 +201,9 @@ impl ProviderCommandOperation {
     const fn permits_live_absence_reconciliation(self) -> bool {
         matches!(
             self,
-            Self::PublishIngress
+            Self::AttachNetwork
+                | Self::PublishIngress
+                | Self::ObserveIngress
                 | Self::AttachRetainedNetwork
                 | Self::ActivateRestartedWorkload
                 | Self::PublishRestartIngress
@@ -392,6 +394,16 @@ impl ProviderCommandClaim {
     fn same_workload_fence(&self, other: &Self) -> bool {
         self.authority_id == other.authority_id
             && self.effect_subject == other.effect_subject
+            && self.workload_generation == other.workload_generation
+            && self.desired_digest == other.desired_digest
+            && self.source_digest == other.source_digest
+            && self.network_plan_digest == other.network_plan_digest
+            && self.provider_target_digest == other.provider_target_digest
+            && self.operation == other.operation
+    }
+
+    fn same_provider_operation_authority(&self, other: &Self) -> bool {
+        self.authority_id == other.authority_id
             && self.workload_generation == other.workload_generation
             && self.desired_digest == other.desired_digest
             && self.source_digest == other.source_digest
@@ -824,14 +836,155 @@ impl ProviderCommandAttemptJournal {
         }
     }
 
+    /// Rotate a resolved process-bound observation to one exact fresh-owner inspection.
+    ///
+    /// The compute-owned caller must first authenticate the durable
+    /// owner-reopened publication authorization. The provider journal then
+    /// replaces only a resolved `ObserveIngress` success under the same stable
+    /// operation authority. A prior callback is fenced as soon as the new
+    /// claim is durable; unresolved or failed prior effects remain fail-closed.
+    pub fn claim_owner_reopened_publication_inspection(
+        &self,
+        claim: &ProviderCommandClaim,
+    ) -> Result<ProviderCommandClaimDecision, ProviderCommandJournalError> {
+        self.claim_owner_reopened_process_effect_inspection(
+            claim,
+            ProviderCommandOperation::ObserveIngress,
+            "publication",
+        )
+    }
+
+    /// Rotate a resolved private-attachment observation to one exact
+    /// fresh-owner inspection before a process-local PEP may be repaired.
+    pub fn claim_owner_reopened_attachment_inspection(
+        &self,
+        claim: &ProviderCommandClaim,
+    ) -> Result<ProviderCommandClaimDecision, ProviderCommandJournalError> {
+        self.claim_owner_reopened_process_effect_inspection(
+            claim,
+            ProviderCommandOperation::AttachNetwork,
+            "attachment",
+        )
+    }
+
+    fn claim_owner_reopened_process_effect_inspection(
+        &self,
+        claim: &ProviderCommandClaim,
+        operation: ProviderCommandOperation,
+        label: &str,
+    ) -> Result<ProviderCommandClaimDecision, ProviderCommandJournalError> {
+        claim.validate()?;
+        if claim.operation != operation || claim.dispatch_epoch != 0 {
+            return Err(ProviderCommandJournalError::InvalidClaim {
+                message: format!(
+                    "owner-reopened {label} inspection requires {operation:?} epoch zero"
+                ),
+            });
+        }
+        let paths = self.paths(claim);
+        self.establish_directory(&paths.directory)?;
+        let _guard = lock(&paths.lock)?;
+        remove_stale_stage(&paths.stage)?;
+        let current = read_if_present(&paths.record)?
+            .ok_or(ProviderCommandJournalError::RetryWithoutAuthority)?;
+        if current.claim == *claim {
+            return Ok(ProviderCommandClaimDecision::AdoptExactAttempt(current));
+        }
+        if !claim.same_provider_operation_authority(&current.claim) {
+            self.reject_stale_or_crossed(&current.claim, claim)?;
+            return Err(ProviderCommandJournalError::CrossedClaim);
+        }
+        match current.kind {
+            ProviderCommandObservationKind::Succeeded => {
+                self.publish_new_claim(&paths, claim.clone(), None)
+            }
+            ProviderCommandObservationKind::Claimed
+            | ProviderCommandObservationKind::InProgress
+            | ProviderCommandObservationKind::Ambiguous => {
+                Err(ProviderCommandJournalError::PriorEffectUnresolved)
+            }
+            ProviderCommandObservationKind::DefiniteFailure
+            | ProviderCommandObservationKind::Absent
+            | ProviderCommandObservationKind::RetryAuthorized => {
+                Err(ProviderCommandJournalError::RetryWithoutAuthority)
+            }
+        }
+    }
+
+    /// Claim one owner-reopened publication retry after exact observed absence.
+    ///
+    /// The compute-owned caller authenticates the cross-operation absence. The
+    /// journal atomically replaces only a resolved `PublishIngress` success
+    /// with an exact synthetic absence for the new owner attempt and publishes
+    /// its adjacent retry claim. No intermediate unfenced state is durable.
+    pub fn claim_publication_after_owner_reopened_absence(
+        &self,
+        claim: &ProviderCommandClaim,
+        inspected_dispatch_epoch: u64,
+        inspection_evidence: &[u8],
+    ) -> Result<ProviderCommandClaimDecision, ProviderCommandJournalError> {
+        claim.validate()?;
+        if claim.operation != ProviderCommandOperation::PublishIngress
+            || inspected_dispatch_epoch.checked_add(1) != Some(claim.dispatch_epoch)
+        {
+            return Err(ProviderCommandJournalError::InvalidClaim {
+                message: "owner-reopened publication retry requires PublishIngress at the exact epoch adjacent to its inspected absence"
+                    .to_owned(),
+            });
+        }
+        let paths = self.paths(claim);
+        self.establish_directory(&paths.directory)?;
+        let _guard = lock(&paths.lock)?;
+        remove_stale_stage(&paths.stage)?;
+        let current = read_if_present(&paths.record)?
+            .ok_or(ProviderCommandJournalError::RetryWithoutAuthority)?;
+        if current.claim == *claim {
+            return Ok(ProviderCommandClaimDecision::AdoptExactAttempt(current));
+        }
+        if !claim.same_provider_operation_authority(&current.claim) {
+            self.reject_stale_or_crossed(&current.claim, claim)?;
+            return Err(ProviderCommandJournalError::CrossedClaim);
+        }
+        match current.kind {
+            ProviderCommandObservationKind::Succeeded => {
+                let mut inspected_claim = claim.clone();
+                inspected_claim.dispatch_epoch = inspected_dispatch_epoch;
+                inspected_claim.validate()?;
+                let absence = ProviderCommandObservation {
+                    claim: inspected_claim,
+                    kind: ProviderCommandObservationKind::Absent,
+                    evidence_sha256: Some(evidence_sha256(inspection_evidence)),
+                    prepared_request: None,
+                    prepared_request_sha256: None,
+                    failure_code: None,
+                    retry_lineage: Vec::new(),
+                };
+                self.publish_new_claim(&paths, claim.clone(), Some(absence))
+            }
+            ProviderCommandObservationKind::Claimed
+            | ProviderCommandObservationKind::InProgress
+            | ProviderCommandObservationKind::Ambiguous => {
+                Err(ProviderCommandJournalError::PriorEffectUnresolved)
+            }
+            ProviderCommandObservationKind::DefiniteFailure
+            | ProviderCommandObservationKind::Absent
+            | ProviderCommandObservationKind::RetryAuthorized => {
+                Err(ProviderCommandJournalError::RetryWithoutAuthority)
+            }
+        }
+    }
+
     /// Claim one adjacent epoch after the coordinator confirms exact absence.
     ///
     /// The caller must authenticate its coordinator-owned inspection receipt
     /// before it invokes this seam. The journal then binds that receipt to the
     /// exact prior provider epoch under the same stream lock that publishes the
-    /// successor claim. `Claimed` is never eligible because its Execute token
-    /// can still start. Inspect remains read-only, and a crash cannot leave an
-    /// unfenced gap between absence authorization and the successor claim.
+    /// successor claim. If the stream has no record, its persistent absence proves
+    /// that the provider never received Execute authority; the successor retains a
+    /// derived exact absence receipt instead of first publishing a live predecessor.
+    /// `Claimed` is never eligible because its Execute token can still start.
+    /// Inspect remains read-only, and a crash cannot leave an unfenced gap between
+    /// absence authorization and the successor claim.
     pub fn claim_dispatch_epoch_after_inspected_absence(
         &self,
         claim: &ProviderCommandClaim,
@@ -847,7 +1000,19 @@ impl ProviderCommandAttemptJournal {
         let _guard = lock(&paths.lock)?;
         remove_stale_stage(&paths.stage)?;
         let Some(current) = read_if_present(&paths.record)? else {
-            return Err(ProviderCommandJournalError::RetryWithoutAuthority);
+            let mut inspected_claim = claim.clone();
+            inspected_claim.dispatch_epoch = inspected_dispatch_epoch;
+            inspected_claim.validate()?;
+            let absence = ProviderCommandObservation {
+                claim: inspected_claim,
+                kind: ProviderCommandObservationKind::Absent,
+                evidence_sha256: Some(evidence_sha256(inspection_evidence)),
+                prepared_request: None,
+                prepared_request_sha256: None,
+                failure_code: None,
+                retry_lineage: Vec::new(),
+            };
+            return self.publish_new_claim(&paths, claim.clone(), Some(absence));
         };
 
         if current.claim == *claim {

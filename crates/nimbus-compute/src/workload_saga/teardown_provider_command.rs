@@ -10,7 +10,9 @@ use nimbus_sandbox::{
     ProviderCommandObservationKind, ProviderCommandOperation, ProviderCommandStartedClaimDecision,
     ProviderCommandStartedExecutionClaim,
 };
-use nimbus_workloads::{WorkloadTeardownCommandMode, WorkloadTeardownStep};
+use nimbus_workloads::{
+    WorkloadTeardownCommandMode, WorkloadTeardownDispatchAuthorization, WorkloadTeardownStep,
+};
 
 use super::ConfirmedWorkloadTeardownCommand;
 
@@ -22,6 +24,7 @@ use super::ConfirmedWorkloadTeardownCommand;
 #[derive(Debug, Clone)]
 pub struct ConfirmedTeardownProviderCommand {
     mode: WorkloadTeardownCommandMode,
+    authorization: WorkloadTeardownDispatchAuthorization,
     claim: ProviderCommandClaim,
 }
 
@@ -47,6 +50,7 @@ impl ConfirmedTeardownProviderCommand {
         })?;
         Ok(Self {
             mode: command.mode(),
+            authorization: command.claim().authorization().clone(),
             claim,
         })
     }
@@ -57,6 +61,10 @@ impl ConfirmedTeardownProviderCommand {
 
     pub fn claim(&self) -> &ProviderCommandClaim {
         &self.claim
+    }
+
+    fn authorization(&self) -> &WorkloadTeardownDispatchAuthorization {
+        &self.authorization
     }
 }
 
@@ -80,7 +88,25 @@ impl ConfirmedTeardownProviderJournal {
         command: &ConfirmedTeardownProviderCommand,
     ) -> Result<ProviderCommandClaimDecision, ProviderCommandJournalError> {
         require_mode(command, WorkloadTeardownCommandMode::Execute)?;
-        self.journal.claim_dispatch_epoch(command.claim())
+        match command.authorization() {
+            WorkloadTeardownDispatchAuthorization::Initial => {
+                self.journal.claim_dispatch_epoch(command.claim())
+            }
+            WorkloadTeardownDispatchAuthorization::RetryAfterNotCompleted(evidence) => {
+                let inspection_evidence = serde_json::to_vec(evidence).map_err(|error| {
+                    ProviderCommandJournalError::InvalidClaim {
+                        message: format!(
+                            "failed to encode confirmed teardown retry evidence: {error}"
+                        ),
+                    }
+                })?;
+                self.journal.claim_dispatch_epoch_after_inspected_absence(
+                    command.claim(),
+                    evidence.dispatch_epoch().as_u64(),
+                    &inspection_evidence,
+                )
+            }
+        }
     }
 
     /// Atomically claim Execute authority with its exact prepared request.

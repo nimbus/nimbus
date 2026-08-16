@@ -1,6 +1,7 @@
 use super::*;
 use nimbus_network::{
-    EndpointProtocol, NetworkLeaseEpoch, NetworkPlanContentDigest, PortBindingSpec, PortLeaseFence,
+    EndpointProtocol, NetworkLeaseEpoch, NetworkPlanContentDigest, NetworkProviderHandle,
+    NetworkProviderId, NetworkReservationClaim, PortBindingSpec, PortLeaseFence,
     PublishedEndpointId,
 };
 
@@ -47,6 +48,66 @@ fn provision_plan_with_binding(
         )],
         [],
     )
+}
+
+fn ingress_reservation_claim() -> NetworkReservationClaim {
+    NetworkReservationClaim::new(
+        NetworkProviderHandle::new(
+            NetworkProviderId::for_registration_key("nimbus-sandbox.ingress-test"),
+            "provider-private-ingress",
+        )
+        .expect("ingress fixture provider handle should validate"),
+    )
+}
+
+#[test]
+fn private_attachment_targets_keep_default_and_provider_specific_upstream_ports_distinct() {
+    let plan = provision_plan_with_binding(PortBindingSpec::new(
+        PortProtocol::Tcp,
+        PortBindRealm::Host,
+        PortBindTarget::ipv4_specific(std::net::Ipv4Addr::LOCALHOST),
+        PortExposure::Loopback,
+        PortRequestMode::Exact(NonZeroU16::new(18_080).expect("non-zero port")),
+    ))
+    .expect("fixture plan should validate");
+    let spec = crate::SandboxSpec::new(
+        plan.tenant_id().clone(),
+        crate::SandboxOwnerSpec::service("validation-workload"),
+        crate::SandboxBackendKind::Container,
+        crate::SandboxRootSpec::Rootfs(crate::SandboxRootfsSpec::new("/srv/rootfs")),
+        crate::SandboxProcessSpec::new(["/usr/bin/service"]),
+    )
+    .with_port_binding(crate::SandboxPortBinding::tcp("api", 18_080, 8_080));
+    let assigned_ip = "10.0.0.8".parse().expect("assigned IP should parse");
+
+    let default_targets = SandboxProvisionIngressTargets::from_private_attachment(
+        &plan,
+        &spec,
+        plan.network_plan(),
+        plan.attachment_id(),
+        ingress_reservation_claim(),
+        assigned_ip,
+    )
+    .expect("default private route should validate");
+    let provider_targets =
+        SandboxProvisionIngressTargets::from_private_attachment_with_upstream_port(
+            &plan,
+            &spec,
+            plan.network_plan(),
+            plan.attachment_id(),
+            ingress_reservation_claim(),
+            assigned_ip,
+            |binding| binding.host_port,
+        )
+        .expect("provider-private route should validate");
+
+    assert_eq!(default_targets.routes()[0].upstream().port(), 8_080);
+    assert_eq!(provider_targets.routes()[0].upstream().port(), 18_080);
+    assert_eq!(
+        default_targets.routes()[0].upstream().ip(),
+        provider_targets.routes()[0].upstream().ip(),
+        "provider routing may select a private port but must retain the authenticated attachment address"
+    );
 }
 
 #[test]

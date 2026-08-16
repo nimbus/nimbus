@@ -11,7 +11,8 @@ use nimbus_sandbox::{
     ProviderCommandObservation, ProviderCommandObservationKind, ProviderCommandOperation,
 };
 use nimbus_workloads::{
-    WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest, WorkloadProvisionInspectionResult,
+    WorkloadFailureEvidence, WorkloadOwnerEvidenceDigest, WorkloadProvisionAbsenceOrigin,
+    WorkloadProvisionDispatchAuthorization, WorkloadProvisionInspectionResult,
     WorkloadProvisionStep, WorkloadProvisionSubjects, WorkloadProvisionSuccessEvidence,
 };
 
@@ -48,10 +49,7 @@ impl ProviderProvisionPhaseAdapter {
             Ok(claim) => claim,
             Err(error) => return journal_error_result(command, &error),
         };
-        match self
-            .attempt_idempotency_journal
-            .claim_dispatch_epoch(&claim)
-        {
+        match self.claim_execution(command, &claim) {
             Ok(ProviderCommandClaimDecision::ExecuteClaimed(execution)) => {
                 self.execute_claimed(command, execution, effect)
             }
@@ -62,20 +60,83 @@ impl ProviderProvisionPhaseAdapter {
         }
     }
 
+    fn claim_execution(
+        &self,
+        command: &ConfirmedWorkloadProvisionCommand,
+        claim: &ProviderCommandClaim,
+    ) -> Result<ProviderCommandClaimDecision, ProviderCommandJournalError> {
+        if command.step() == WorkloadProvisionStep::Publish
+            && let Some(origin_absence) = command.claim().republication_observation_absence()
+            && let Some(dispatch_absence) = command.claim().republication_dispatch_absence()
+            && origin_absence.origin()
+                == WorkloadProvisionAbsenceOrigin::OwnerReopenedPublicationInspection
+        {
+            let evidence = encode_publication_absence(dispatch_absence)?;
+            return self
+                .attempt_idempotency_journal
+                .claim_publication_after_owner_reopened_absence(
+                    claim,
+                    dispatch_absence.dispatch_epoch().as_u64(),
+                    &evidence,
+                );
+        }
+        match self.attempt_idempotency_journal.claim_dispatch_epoch(claim) {
+            Err(ProviderCommandJournalError::RetryWithoutAuthority)
+                if command.step() == WorkloadProvisionStep::Publish
+                    && matches!(
+                        command.claim().authorization(),
+                        WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(_)
+                    ) =>
+            {
+                let WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(
+                    absence,
+                ) = command.claim().authorization()
+                else {
+                    unreachable!("the guarded republication authorization is exact")
+                };
+                let prior = claim_for_command_at_epoch(command, absence.dispatch_epoch().as_u64())?;
+                let evidence = encode_publication_absence(absence)?;
+                self.attempt_idempotency_journal
+                    .record_reconciled_absence(&prior, &evidence)?;
+                self.attempt_idempotency_journal.claim_dispatch_epoch(claim)
+            }
+            decision => decision,
+        }
+    }
+
+    fn claim_inspection(
+        &self,
+        command: &ConfirmedWorkloadProvisionCommand,
+        claim: &ProviderCommandClaim,
+    ) -> Result<ProviderCommandClaimDecision, ProviderCommandJournalError> {
+        match command.claim().authorization() {
+            WorkloadProvisionDispatchAuthorization::OwnerReopenedAttachmentInspection => self
+                .attempt_idempotency_journal
+                .claim_owner_reopened_attachment_inspection(claim),
+            WorkloadProvisionDispatchAuthorization::OwnerReopenedPublicationInspection => self
+                .attempt_idempotency_journal
+                .claim_owner_reopened_publication_inspection(claim),
+            _ => self.attempt_idempotency_journal.claim_dispatch_epoch(claim),
+        }
+    }
+
     /// Inspect exact provider state without granting effect authority.
     pub fn inspect(
         &self,
         command: &ConfirmedWorkloadProvisionCommand,
         inspect: impl FnOnce() -> ProviderProvisionEffectObservation,
     ) -> WorkloadProvisionInspectionResult {
+        if matches!(
+            command.claim().authorization(),
+            WorkloadProvisionDispatchAuthorization::OwnerReopenedAttachmentInspection
+        ) {
+            return self.inspect_live(command, inspect);
+        }
         let claim = match claim_for_command(command) {
             Ok(claim) => claim,
             Err(error) => return journal_error_result(command, &error),
         };
-        let decision = match self
-            .attempt_idempotency_journal
-            .claim_dispatch_epoch(&claim)
-        {
+        let decision = match self.claim_inspection(command, &claim) {
             Ok(decision) => decision,
             Err(error) => return journal_error_result(command, &error),
         };
@@ -123,10 +184,7 @@ impl ProviderProvisionPhaseAdapter {
             Ok(claim) => claim,
             Err(error) => return journal_error_result(command, &error),
         };
-        let decision = match self
-            .attempt_idempotency_journal
-            .claim_dispatch_epoch(&claim)
-        {
+        let decision = match self.claim_inspection(command, &claim) {
             Ok(decision) => decision,
             Err(error) => return journal_error_result(command, &error),
         };
@@ -251,6 +309,14 @@ fn effect_fields(
     }
 }
 
+fn encode_publication_absence(
+    absence: &nimbus_workloads::WorkloadProvisionAbsenceEvidence,
+) -> Result<Vec<u8>, ProviderCommandJournalError> {
+    serde_json::to_vec(absence).map_err(|error| ProviderCommandJournalError::InvalidClaim {
+        message: format!("confirmed publication absence cannot be encoded: {error}"),
+    })
+}
+
 fn published_result(
     command: &ConfirmedWorkloadProvisionCommand,
     result: Result<((), ProviderCommandObservation), ProviderCommandJournalError>,
@@ -263,6 +329,13 @@ fn published_result(
 
 fn claim_for_command(
     command: &ConfirmedWorkloadProvisionCommand,
+) -> Result<ProviderCommandClaim, ProviderCommandJournalError> {
+    claim_for_command_at_epoch(command, command.dispatch_epoch().as_u64())
+}
+
+fn claim_for_command_at_epoch(
+    command: &ConfirmedWorkloadProvisionCommand,
+    dispatch_epoch: u64,
 ) -> Result<ProviderCommandClaim, ProviderCommandJournalError> {
     let effect_subject = serde_json::to_string(command.subjects()).map_err(|error| {
         ProviderCommandJournalError::InvalidClaim {
@@ -278,8 +351,8 @@ fn claim_for_command(
         authority_id: command.saga_id().as_str().to_owned(),
         effect_subject,
         source_attempt_id: None,
-        attempt_id: command.attempt_id().as_str().to_owned(),
-        dispatch_epoch: command.dispatch_epoch().as_u64(),
+        attempt_id: provider_attempt_id(command).to_owned(),
+        dispatch_epoch,
         workload_generation: command.generation().as_u64(),
         restart_ordinal: 0,
         desired_digest: command.desired_digest().to_string(),
@@ -288,6 +361,36 @@ fn claim_for_command(
         provider_target_digest: WorkloadOwnerEvidenceDigest::sha256(target).to_string(),
         operation: operation(command.step()),
     })
+}
+
+fn provider_attempt_id(command: &ConfirmedWorkloadProvisionCommand) -> &str {
+    match command.claim().authorization() {
+        WorkloadProvisionDispatchAuthorization::OwnerReopenedPublicationInspection => {
+            return command.attempt_id().as_str();
+        }
+        WorkloadProvisionDispatchAuthorization::RepublishAfterObservationAbsence(absence)
+        | WorkloadProvisionDispatchAuthorization::ReobserveAfterRepublication(absence)
+            if absence.origin()
+                == WorkloadProvisionAbsenceOrigin::OwnerReopenedPublicationInspection =>
+        {
+            return absence.attempt_id().as_str();
+        }
+        WorkloadProvisionDispatchAuthorization::RetryRepublishAfterAbsence(lineage)
+        | WorkloadProvisionDispatchAuthorization::ReobserveAfterRetriedRepublication(lineage)
+            if lineage.observation_absence().origin()
+                == WorkloadProvisionAbsenceOrigin::OwnerReopenedPublicationInspection =>
+        {
+            return lineage.observation_absence().attempt_id().as_str();
+        }
+        _ => {}
+    }
+    match (command.step(), command.subjects()) {
+        (
+            WorkloadProvisionStep::Publish | WorkloadProvisionStep::ObservePublication,
+            WorkloadProvisionSubjects::Publication(reference),
+        ) => reference.execution().attempt_id().as_str(),
+        _ => command.attempt_id().as_str(),
+    }
 }
 
 const fn operation(step: WorkloadProvisionStep) -> ProviderCommandOperation {

@@ -545,7 +545,7 @@ fn record_tenant_and_transition_identity_bind_complete_compiled_content() {
 }
 
 #[test]
-fn saga_v6_rejects_older_and_future_record_versions() {
+fn saga_v7_rejects_older_and_future_record_versions() {
     let tenant_id = tenant("tenant-network-version");
     let intent = saga_intent(
         &tenant_id,
@@ -565,9 +565,9 @@ fn saga_v6_rejects_older_and_future_record_versions() {
         intent,
     )
     .unwrap();
-    assert_eq!(record.format_version(), 6);
+    assert_eq!(record.format_version(), 7);
 
-    for version in [1, 2, 3, 4, 5, 7] {
+    for version in [1, 2, 3, 4, 5, 6, 8] {
         let mut wire = serde_json::to_value(&record).unwrap();
         wire["formatVersion"] = json!(version);
         assert!(serde_json::from_value::<WorkloadSagaRecord>(wire).is_err());

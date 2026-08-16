@@ -100,6 +100,18 @@ impl AutomaticRestartCoordinator {
                 .map_err(|error| error.to_string())?;
             return Ok(());
         }
+        if completed_restart_requires_resolution_reconciliation(&record) {
+            // Durable restart completion can precede a retryable services
+            // projection. Resume the completed epoch first so an active
+            // process-local resolution fence is restored without replaying a
+            // provider effect. An already released or post-crash fence is a
+            // cheap no-op, after which ordinary exit observation continues.
+            self.driver
+                .resume(record.key(), now)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())?;
+        }
 
         let request = WorkloadExecutionObservationRequest::for_record(&record);
         let observation = self
@@ -168,6 +180,10 @@ impl AutomaticRestartCoordinator {
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
+}
+
+fn completed_restart_requires_resolution_reconciliation(record: &WorkloadSagaRecord) -> bool {
+    record.restart_state().active().is_none() && record.restart_state().last_completed().is_some()
 }
 
 fn authenticated_restart_exit(inspection: &SandboxInspection) -> Result<Option<i32>, String> {

@@ -170,6 +170,18 @@ impl WorkloadProvisionCancellation {
     fn subscribe(&self) -> watch::Receiver<bool> {
         self.signal.subscribe()
     }
+
+    pub(crate) async fn cancelled(&self) {
+        let mut signal = self.subscribe();
+        if *signal.borrow() {
+            return;
+        }
+        while signal.changed().await.is_ok() {
+            if *signal.borrow() {
+                return;
+            }
+        }
+    }
 }
 
 /// Invalid immutable provider-realm configuration.
@@ -375,7 +387,8 @@ impl WorkloadProvisioner {
             }
             WorkloadProvisionRunDisposition::Observed
             | WorkloadProvisionRunDisposition::Waiting
-            | WorkloadProvisionRunDisposition::SuccessorSettlementReady => (
+            | WorkloadProvisionRunDisposition::SuccessorSettlementReady
+            | WorkloadProvisionRunDisposition::SuccessorSettlementCommitted => (
                 run.record().clone(),
                 WorkloadProvisionCompensationState::NotRequired,
             ),
@@ -597,7 +610,23 @@ impl WorkloadProvisioner {
         if cancellation.is_cancelled() {
             return Err(Arc::new(WorkloadProvisionError::CancelledBeforeSubmission));
         }
-        let receiver = self.track_resume(key, cancellation, false)?;
+        let receiver = self.track_resume(key, cancellation, false, false)?;
+        #[cfg(test)]
+        self.notify_test_wait_boundary();
+        wait_for_completion(receiver, cancellation).await
+    }
+
+    /// Resume one exact process-bound publication after this composition
+    /// owner reopened the durable roots but before startup recovery completes.
+    pub(crate) async fn resume_owner_reopened_publication(
+        self: &Arc<Self>,
+        key: WorkloadSagaKey,
+        cancellation: &WorkloadProvisionCancellation,
+    ) -> WorkloadProvisionResult {
+        if cancellation.is_cancelled() {
+            return Err(Arc::new(WorkloadProvisionError::CancelledBeforeSubmission));
+        }
+        let receiver = self.track_resume(key, cancellation, false, true)?;
         #[cfg(test)]
         self.notify_test_wait_boundary();
         wait_for_completion(receiver, cancellation).await
@@ -711,7 +740,7 @@ impl WorkloadProvisioner {
         key: WorkloadSagaKey,
     ) -> WorkloadProvisionResult {
         let cancellation = WorkloadProvisionCancellation::default();
-        let receiver = self.track_resume(key, &cancellation, true)?;
+        let receiver = self.track_resume(key, &cancellation, true, false)?;
         wait_for_completion(receiver, &cancellation).await
     }
 
@@ -809,6 +838,7 @@ impl WorkloadProvisioner {
         key: WorkloadSagaKey,
         cancellation: &WorkloadProvisionCancellation,
         allow_retirement: bool,
+        owner_reopened_publication: bool,
     ) -> Result<watch::Receiver<Option<WorkloadProvisionResult>>, Arc<WorkloadProvisionError>> {
         let cancellation_guard = cancellation.signal.borrow();
         if *cancellation_guard {
@@ -850,7 +880,7 @@ impl WorkloadProvisioner {
         drop(supervisor);
         drop(cancellation_guard);
 
-        self.spawn_resume_task(key, sender);
+        self.spawn_resume_task(key, sender, owner_reopened_publication);
         Ok(receiver)
     }
 
@@ -880,11 +910,20 @@ impl WorkloadProvisioner {
         self: &Arc<Self>,
         key: WorkloadSagaKey,
         sender: watch::Sender<Option<WorkloadProvisionResult>>,
+        owner_reopened_publication: bool,
     ) {
         let provisioner = Arc::clone(self);
         let task_key = key.clone();
         let task = tokio::spawn(async move {
-            let result = match provisioner.driver.resume(&task_key).await {
+            let resumed = if owner_reopened_publication {
+                provisioner
+                    .driver
+                    .resume_owner_reopened_publication(&task_key)
+                    .await
+            } else {
+                provisioner.driver.resume(&task_key).await
+            };
+            let result = match resumed {
                 Ok(run) => provisioner.finalize_run(run).await,
                 Err(error) => Err(Arc::new(WorkloadProvisionError::Run(error))),
             };
@@ -1003,6 +1042,17 @@ impl WorkloadProvisioner {
             .expect("workload provision supervisor lock should not be poisoned")
             .in_flight
             .contains_key(key)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_running_tracked_task(&self, key: &WorkloadSagaKey) -> bool {
+        self.supervisor
+            .lock()
+            .expect("workload provision supervisor lock should not be poisoned")
+            .in_flight
+            .get(key)
+            .and_then(|entry| entry._task.as_ref())
+            .is_some_and(|task| !task.is_finished())
     }
 }
 

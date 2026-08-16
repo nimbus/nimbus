@@ -411,6 +411,26 @@ impl SandboxProvisionIngressTargets {
         reservation_claim: NetworkReservationClaim,
         assigned_ip: IpAddr,
     ) -> Result<Self, SandboxProvisionNetworkPlanError> {
+        Self::from_private_attachment_with_upstream_port(
+            plan,
+            actual_spec,
+            actual_network_plan,
+            actual_attachment_id,
+            reservation_claim,
+            assigned_ip,
+            |binding| binding.guest_port,
+        )
+    }
+
+    pub(crate) fn from_private_attachment_with_upstream_port(
+        plan: &SandboxProvisionNetworkPlan,
+        actual_spec: &crate::SandboxSpec,
+        actual_network_plan: &NetworkPlan,
+        actual_attachment_id: &NetworkAttachmentId,
+        reservation_claim: NetworkReservationClaim,
+        assigned_ip: IpAddr,
+        upstream_port: impl Fn(&crate::SandboxPortBinding) -> u16,
+    ) -> Result<Self, SandboxProvisionNetworkPlanError> {
         if actual_spec.tenant_id != *plan.tenant_id() {
             return Err(SandboxProvisionNetworkPlanError::TenantMismatch);
         }
@@ -440,7 +460,7 @@ impl SandboxProvisionIngressTargets {
             routes.push(SandboxProvisionIngressRoute {
                 listener_id: listener.listener_id().clone(),
                 port_lease: listener.port_lease().clone(),
-                upstream: std::net::SocketAddr::new(assigned_ip, binding.guest_port),
+                upstream: std::net::SocketAddr::new(assigned_ip, upstream_port(binding)),
             });
         }
         Ok(Self {

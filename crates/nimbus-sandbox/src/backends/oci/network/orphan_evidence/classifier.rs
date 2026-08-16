@@ -4,15 +4,13 @@
 //! filesystem, provider, mutable-authority, cleanup, release, or reuse
 //! capability.
 
-use std::collections::BTreeSet;
-use std::path::PathBuf;
-
 use nimbus_network::{NetworkAttachmentReservationState, NetworkResourcePhase};
 
 use super::{
     OciAllocatorEvidenceSource, OciArtifactKind, OciArtifactObservation,
     OciArtifactObservationState, OciEvidenceUnknown, OciOrphanEvidenceCandidate,
-    OciOrphanEvidenceReport, OciProviderRealmObservation, OciUnmatchedProviderEvidence,
+    OciOrphanEvidenceReport, OciProviderRealmObservation, OciRetainedManifestEvidence,
+    OciUnmatchedProviderEvidence,
 };
 use crate::backends::capabilities::{
     SandboxAttachmentRegistrationKind, host_managed_attachment_provider_id,
@@ -200,12 +198,66 @@ pub(in crate::backends::oci::network) fn classify_oci_orphan_evidence<'a>(
 /// `SandboxId`; the manifest owner retains those responsibilities.
 pub(in crate::backends::oci::network) fn classify_retained_desired_manifest(
     artifact: &OciArtifactObservation,
-    retained_desired_manifests: &BTreeSet<PathBuf>,
+    retained_manifests: &[OciRetainedManifestEvidence],
 ) -> Option<OciOrphanDisposition> {
     (artifact.kind() == OciArtifactKind::Manifest
         && matches!(artifact.state(), OciArtifactObservationState::Present)
-        && retained_desired_manifests.contains(artifact.path()))
+        && retained_manifests
+            .iter()
+            .any(|evidence| evidence.path() == artifact.path()))
     .then_some(OciOrphanDisposition::Adopt)
+}
+
+/// Adopt a released desired attachment only when its exact backend manifest
+/// authenticates the generation whose provider retry witness was retired.
+///
+/// The desired tombstone, absent allocator hold, and terminal manifest are
+/// independent durable facts. Missing or crossed evidence remains fenced.
+pub(in crate::backends::oci::network) fn classify_retained_terminal_manifest(
+    candidate: &OciOrphanEvidenceCandidate,
+    retained_manifests: &[OciRetainedManifestEvidence],
+) -> Option<OciOrphanDisposition> {
+    let desired = candidate.desired()?;
+    if candidate.provider().is_some()
+        || !candidate.artifacts().is_empty()
+        || desired.resource().phase() != NetworkResourcePhase::Released
+    {
+        return None;
+    }
+    let [allocator] = candidate.allocator() else {
+        return None;
+    };
+    if allocator.source() != OciAllocatorEvidenceSource::DesiredAttachment
+        || allocator.reservation_claim() != desired.association().reservation_claim()
+    {
+        return None;
+    }
+    let observation = allocator.observation().ok()?;
+    if observation.state() != NetworkAttachmentReservationState::Absent
+        || observation.association().is_some()
+    {
+        return None;
+    }
+
+    retained_manifests.iter().find_map(|evidence| {
+        let terminal = evidence.terminal_attachment()?;
+        if &terminal.tenant_id != candidate.tenant_id()
+            || &terminal.attachment_id != candidate.attachment_id()
+            || terminal.reservation_claim != *desired.association().reservation_claim()
+            || desired.selected_provider_id() != &selected_provider_id(terminal.provider_kind)
+        {
+            return None;
+        }
+        let backend = attachment_backend_kind(terminal.provider_kind);
+        let expected_handle = oci_attachment_provider_handle_for_identity(
+            desired.resource().version().plan_id(),
+            candidate.attachment_id(),
+            backend,
+        )
+        .ok()?;
+        (desired.resource().provider_handle() == Some(&expected_handle))
+            .then_some(OciOrphanDisposition::Adopt)
+    })
 }
 
 fn classify_candidate(candidate: &OciOrphanEvidenceCandidate) -> OciOrphanDisposition {

@@ -614,3 +614,194 @@ fn projection_retry_does_not_rerun_confirmed_netavark_teardown() {
     )
     .expect("completed projection cleanup may release exact IPAM authority");
 }
+
+#[test]
+fn deleting_recovery_confirms_exact_interface_absence_without_rerunning_provider() {
+    let temp_dir = tempdir().expect("temporary directory should create");
+    let tenant = TenantId::new("tenant-netavark-delete-interface-absent")
+        .expect("tenant identity should validate");
+    let sandbox = SandboxId::new("netavark-delete-interface-absent");
+    let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
+    layout
+        .ensure_directories()
+        .expect("network layout should create");
+    let config = OciNetworkConfig::default();
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
+        .expect("current generation should reserve IPAM");
+    setup_container_network_with_runner(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        |action, _| {
+            assert_eq!(action, "setup");
+            Ok(Value::Null)
+        },
+    )
+    .expect("fixture setup should publish exact provider authority");
+    std::fs::write(&layout.netns_path, b"namespace-without-provider-interface")
+        .expect("separately owned namespace should remain present");
+
+    let claim = match begin_netavark_teardown(&ipam_authority, &layout, &config, &sandbox, None)
+        .expect("teardown should prepare")
+    {
+        NetavarkTeardownPlan::Run { claim, .. } => claim,
+        _ => panic!("ready provider authority must prepare exact delete"),
+    };
+    begin_netavark_teardown_execution(&ipam_authority, &layout, &claim)
+        .expect("lost-response fixture should cross the pre-effect fence");
+    let recovered = begin_netavark_teardown(&ipam_authority, &layout, &config, &sandbox, None)
+        .expect("fresh owner should recover exact deleting authority");
+    assert!(matches!(
+        recovered,
+        NetavarkTeardownPlan::InspectDeleting { .. }
+    ));
+
+    let provider_calls = AtomicUsize::new(0);
+    let inspection_calls = AtomicUsize::new(0);
+    execute_teardown_plan_with_inspector(
+        &ipam_authority,
+        &layout,
+        recovered,
+        &mut |_, _| {
+            provider_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::Null)
+        },
+        &mut |path| {
+            assert_eq!(path, layout.netns_path);
+            inspection_calls.fetch_add(1, Ordering::SeqCst);
+            NetavarkLinkObservation::Absent
+        },
+    )
+    .expect("exact interface absence should complete the ambiguous delete");
+
+    assert_eq!(provider_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(inspection_calls.load(Ordering::SeqCst), 1);
+    assert!(
+        layout.netns_path.exists(),
+        "Netavark recovery must not absorb separately owned namespace removal"
+    );
+    assert!(
+        !layout.status_path.exists(),
+        "confirmed provider absence must remove only its observed projection"
+    );
+    assert!(matches!(
+        inspect_netavark_provider_operation(&ipam_authority, &layout, &config, &sandbox)
+            .expect("terminal provider operation should inspect"),
+        super::super::dto::NetavarkProviderOperation::Detached
+    ));
+}
+
+#[test]
+fn deleting_recovery_refuses_present_or_unknown_interface_without_provider_calls() {
+    for (label, observation, expected) in [
+        (
+            "present",
+            NetavarkLinkObservation::Present,
+            "exact container interface remains present",
+        ),
+        (
+            "unknown",
+            NetavarkLinkObservation::Unknown {
+                reason: "injected inspection ambiguity".to_owned(),
+            },
+            "injected inspection ambiguity",
+        ),
+    ] {
+        let temp_dir = tempdir().expect("temporary directory should create");
+        let tenant = TenantId::new(format!("tenant-netavark-delete-interface-{label}"))
+            .expect("tenant identity should validate");
+        let sandbox = SandboxId::new(format!("netavark-delete-interface-{label}"));
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
+        let ipam_authority = direct_test_ipam_authority(&layout);
+        layout
+            .ensure_directories()
+            .expect("network layout should create");
+        let config = OciNetworkConfig::default();
+        allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
+            .expect("current generation should reserve IPAM");
+        setup_container_network_with_runner(&ipam_authority, &layout, &config, &sandbox, |_, _| {
+            Ok(Value::Null)
+        })
+        .expect("fixture setup should publish exact provider authority");
+        std::fs::write(&layout.netns_path, b"namespace-provider-state-uncertain")
+            .expect("provider namespace marker should remain present");
+        let claim = match begin_netavark_teardown(&ipam_authority, &layout, &config, &sandbox, None)
+            .expect("teardown should prepare")
+        {
+            NetavarkTeardownPlan::Run { claim, .. } => claim,
+            _ => panic!("ready provider authority must prepare exact delete"),
+        };
+        begin_netavark_teardown_execution(&ipam_authority, &layout, &claim)
+            .expect("fixture should cross the pre-effect fence");
+        let recovered = begin_netavark_teardown(&ipam_authority, &layout, &config, &sandbox, None)
+            .expect("fresh owner should recover exact deleting authority");
+        let authority_path = LocalNetworkStateStore::authority_path_for(temp_dir.path());
+        let before = std::fs::read(&authority_path).expect("deleting authority should read");
+        let provider_calls = AtomicUsize::new(0);
+        let error = execute_teardown_plan_with_inspector(
+            &ipam_authority,
+            &layout,
+            recovered,
+            &mut |_, _| {
+                provider_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Value::Null)
+            },
+            &mut |_| observation.clone(),
+        )
+        .expect_err("present or ambiguous provider effect must remain fenced");
+        assert!(
+            error.to_string().contains(expected),
+            "failure must name the exact observation: {error}"
+        );
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            std::fs::read(&authority_path).expect("fenced authority should reread"),
+            before,
+            "failed inspection must be byte-stable"
+        );
+        assert!(layout.status_path.exists());
+    }
+}
+
+#[test]
+fn netavark_link_output_classifier_accepts_only_exact_presence_or_absence() {
+    assert_eq!(
+        classify_netavark_link_command_output(
+            true,
+            br#"[{"ifindex":2,"ifname":"eth0"}]"#,
+            b"",
+            "eth0",
+        ),
+        NetavarkLinkObservation::Present
+    );
+    for stderr in [
+        b"Device \"eth0\" does not exist.".as_slice(),
+        b"Cannot find device \"eth0\"".as_slice(),
+    ] {
+        assert_eq!(
+            classify_netavark_link_command_output(false, b"", stderr, "eth0"),
+            NetavarkLinkObservation::Absent
+        );
+    }
+    for (success, stdout, stderr) in [
+        (true, br#"[]"#.as_slice(), b"".as_slice()),
+        (
+            true,
+            br#"[{"ifindex":2,"ifname":"eth1"}]"#.as_slice(),
+            b"".as_slice(),
+        ),
+        (true, b"not-json".as_slice(), b"".as_slice()),
+        (
+            false,
+            b"".as_slice(),
+            b"nsenter: reassociate failed".as_slice(),
+        ),
+    ] {
+        assert!(matches!(
+            classify_netavark_link_command_output(success, stdout, stderr, "eth0"),
+            NetavarkLinkObservation::Unknown { .. }
+        ));
+    }
+}

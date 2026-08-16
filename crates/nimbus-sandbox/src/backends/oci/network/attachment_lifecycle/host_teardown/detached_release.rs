@@ -27,20 +27,33 @@ use crate::backends::oci::network::netns::ExactRegularArtifactObservation;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReleasePublicationComposition {
     HostManaged,
+    Deferred,
     MachineForwarded,
 }
 
 impl ReleasePublicationComposition {
     fn from_context(context: &OciAttachmentContext<'_>) -> Self {
-        if context.publication.owns_netavark_bindings() {
-            Self::HostManaged
-        } else {
-            Self::MachineForwarded
+        match context.publication {
+            AttachmentPublicationMode::HostManaged => Self::HostManaged,
+            AttachmentPublicationMode::Deferred => Self::Deferred,
+            AttachmentPublicationMode::MachineForwarded(_) => Self::MachineForwarded,
         }
     }
 
-    fn is_machine_forwarded(self) -> bool {
-        self == Self::MachineForwarded
+    fn matches_evidence(self, evidence: &RetainedAttachmentPublicationEvidence) -> bool {
+        matches!(
+            (self, evidence),
+            (
+                Self::HostManaged,
+                RetainedAttachmentPublicationEvidence::HostManaged
+            ) | (
+                Self::Deferred,
+                RetainedAttachmentPublicationEvidence::Deferred { .. }
+            ) | (
+                Self::MachineForwarded,
+                RetainedAttachmentPublicationEvidence::MachineForwarded { .. }
+            )
+        )
     }
 
     fn evidence_for_resume(
@@ -48,7 +61,7 @@ impl ReleasePublicationComposition {
         current_phase: HostManagedAttachmentReleasePhase,
         require_publication_absent: &mut impl FnMut() -> Result<RetainedAttachmentPublicationEvidence>,
     ) -> Result<Option<RetainedAttachmentPublicationEvidence>> {
-        if self.is_machine_forwarded()
+        if self != Self::HostManaged
             || current_phase == HostManagedAttachmentReleasePhase::NotStarted
         {
             require_publication_absent().map(Some)
@@ -64,6 +77,7 @@ impl ReleasePublicationComposition {
     ) -> Result<()> {
         match self {
             Self::HostManaged => release_host_managed(),
+            Self::Deferred => Ok(()),
             Self::MachineForwarded => release_machine_forwarded(),
         }
     }
@@ -120,6 +134,31 @@ impl OciAttachmentAdapter<'_> {
         )
     }
 
+    /// Release attachment-owned authority while the separately owned
+    /// publication remains authenticated as exact terminal lease evidence.
+    pub(crate) fn release_deferred_detached(
+        &self,
+        lifecycle: &OciAttachmentLifecycle<'_>,
+        command: &SandboxNetworkTeardownCommand,
+        proof: &HostManagedAttachmentDetachedProof,
+        current_phase: HostManagedAttachmentReleasePhase,
+        record_phase: impl FnMut(HostManagedAttachmentReleasePhase) -> Result<()>,
+        release_auxiliary: impl FnMut() -> Result<()>,
+    ) -> Result<()> {
+        lifecycle.release_host_managed_detached(
+            &self.context,
+            command,
+            proof,
+            current_phase,
+            record_phase,
+            AttachmentReleaseActions::new(
+                || lifecycle.separate_owner_publication_evidence(&self.context),
+                || Ok(()),
+                release_auxiliary,
+            ),
+        )
+    }
+
     /// Release a machine-forwarded attachment after the retained detach proof
     /// and the same exact machine-publication absence are authenticated.
     pub(crate) fn release_machine_forwarded_detached(
@@ -166,8 +205,7 @@ impl OciAttachmentLifecycle<'_> {
             mut release_auxiliary,
         } = actions;
         let composition = ReleasePublicationComposition::from_context(context);
-        let machine_forwarded = composition.is_machine_forwarded();
-        authenticate_exact_command_context(context, command, machine_forwarded)?;
+        authenticate_exact_command_context(context, command)?;
         proof.validate_release_command(command)?;
         let association = authority::authenticate_detach_association_with_fallback(
             self.attachments,
@@ -189,12 +227,7 @@ impl OciAttachmentLifecycle<'_> {
         let publication_evidence =
             composition.evidence_for_resume(current_phase, &mut require_publication_absent)?;
         if let Some(publication_evidence) = publication_evidence.as_ref() {
-            if machine_forwarded
-                != matches!(
-                    publication_evidence,
-                    RetainedAttachmentPublicationEvidence::MachineForwarded { .. }
-                )
-            {
+            if !composition.matches_evidence(publication_evidence) {
                 return Err(SandboxError::OperationFailed {
                     message: "ReleaseNetwork crossed its retained publication composition"
                         .to_owned(),
@@ -256,12 +289,33 @@ impl OciAttachmentLifecycle<'_> {
                 "detached published listener",
             )?;
             if current_phase < HostManagedAttachmentReleasePhase::ListenerReleaseMayExist {
-                require_releaseable_port_records(
-                    &listeners,
-                    context.launch_claim,
-                    proof,
-                    "published listener",
-                )?;
+                match composition {
+                    ReleasePublicationComposition::Deferred => {
+                        let expected = publication_evidence.as_ref().ok_or_else(|| {
+                            SandboxError::OperationFailed {
+                                message: "deferred release omitted terminal publication evidence"
+                                    .to_owned(),
+                            }
+                        })?;
+                        let current = self.separate_owner_publication_evidence(context)?;
+                        if &current != expected {
+                            return Err(SandboxError::OperationFailed {
+                                message:
+                                    "separately owned publication changed during attachment release"
+                                        .to_owned(),
+                            });
+                        }
+                    }
+                    ReleasePublicationComposition::HostManaged
+                    | ReleasePublicationComposition::MachineForwarded => {
+                        require_releaseable_port_records(
+                            &listeners,
+                            context.launch_claim,
+                            proof,
+                            "published listener",
+                        )?;
+                    }
+                }
                 record_phase(HostManagedAttachmentReleasePhase::ListenerReleaseMayExist)?;
             }
             composition.release_listener_authority(
@@ -560,7 +614,21 @@ impl OciAttachmentLifecycle<'_> {
             });
         }
         let (listeners, pep) = self.retained_port_plan_snapshot(context)?;
-        require_retained_records(&listeners, context.launch_claim, "published listener")?;
+        match context.publication {
+            AttachmentPublicationMode::Deferred => {
+                let current = self.separate_owner_publication_evidence(context)?;
+                if &current != publication_evidence {
+                    return Err(SandboxError::OperationFailed {
+                        message: "ReleaseNetwork crossed deferred terminal publication evidence"
+                            .to_owned(),
+                    });
+                }
+            }
+            AttachmentPublicationMode::HostManaged
+            | AttachmentPublicationMode::MachineForwarded(_) => {
+                require_retained_records(&listeners, context.launch_claim, "published listener")?;
+            }
+        }
         require_retained_records(&pep, context.launch_claim, "PEP listener")?;
         proof.require_current_evidence(HostManagedAttachmentDetachedEvidence {
             stable_handle_sha256: &evidence_digest("stable_handle", handle)?,
@@ -756,6 +824,28 @@ mod tests {
     }
 
     #[test]
+    fn deferred_attachment_release_never_claims_netavark_or_forwarder_authority() {
+        let host_calls = Cell::new(0);
+        let machine_calls = Cell::new(0);
+
+        ReleasePublicationComposition::Deferred
+            .release_listener_authority(
+                || {
+                    host_calls.set(host_calls.get() + 1);
+                    Ok(())
+                },
+                || {
+                    machine_calls.set(machine_calls.get() + 1);
+                    Ok(())
+                },
+            )
+            .expect("deferred release should consume only terminal durable evidence");
+
+        assert_eq!(host_calls.get(), 0);
+        assert_eq!(machine_calls.get(), 0);
+    }
+
+    #[test]
     fn forwarded_container_attachment_teardown_release_reauthenticates_absence_after_reopen() {
         let calls = Cell::new(0);
         for phase in [
@@ -775,6 +865,31 @@ mod tests {
             assert!(matches!(
                 evidence,
                 Some(RetainedAttachmentPublicationEvidence::MachineForwarded { .. })
+            ));
+        }
+        assert_eq!(calls.get(), 6);
+    }
+
+    #[test]
+    fn deferred_attachment_release_reauthenticates_terminal_leases_after_reopen() {
+        let calls = Cell::new(0);
+        for phase in [
+            HostManagedAttachmentReleasePhase::ReleaseAuthenticated,
+            HostManagedAttachmentReleasePhase::PepReleaseMayExist,
+            HostManagedAttachmentReleasePhase::PepReleased,
+            HostManagedAttachmentReleasePhase::ListenerReleaseMayExist,
+            HostManagedAttachmentReleasePhase::ListenersReleased,
+            HostManagedAttachmentReleasePhase::IpamReleaseMayExist,
+        ] {
+            let evidence = ReleasePublicationComposition::Deferred
+                .evidence_for_resume(phase, &mut || {
+                    calls.set(calls.get() + 1);
+                    RetainedAttachmentPublicationEvidence::deferred("b".repeat(64))
+                })
+                .expect("reopened deferred release should inspect exact terminal leases");
+            assert!(matches!(
+                evidence,
+                Some(RetainedAttachmentPublicationEvidence::Deferred { .. })
             ));
         }
         assert_eq!(calls.get(), 6);

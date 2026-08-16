@@ -96,11 +96,15 @@ fn assert_execute_succeeded(
     command: &super::ConfirmedWorkloadTeardownCommand,
 ) {
     assert!(observation.matches_command(command));
+    let outcome = observation.into_outcome();
     let WorkloadTeardownProviderOutcome::Execute(WorkloadTeardownExecuteOutcome::Succeeded(
         success,
-    )) = observation.into_outcome()
+    )) = &outcome
     else {
-        panic!("real {:?} effect must succeed", command.step());
+        panic!(
+            "real {:?} effect must succeed, got {outcome:?}",
+            command.step()
+        );
     };
     assert_eq!(success.step(), command.step());
 }

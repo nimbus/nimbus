@@ -109,6 +109,12 @@ struct AuthenticatedDurableIngressPlan {
     ingress_records: Vec<PortLeaseRecord>,
 }
 
+enum AuthenticatedAbsentIngressInspection {
+    Satisfied(Vec<PortLeaseRecord>),
+    RetryRequired(Vec<PortLeaseRecord>),
+    InProgress(Vec<PortLeaseRecord>),
+}
+
 impl From<PortLeaseError> for FinalIngressReconciliationError {
     fn from(_: PortLeaseError) -> Self {
         Self::Authority
@@ -338,15 +344,8 @@ impl ServerIngressPublicationAdapter {
             return match batch.final_phase {
                 FinalIngressPhase::Published => inspect_not_completed(command, batch.evidence()),
                 FinalIngressPhase::Withdrawing => {
-                    match self.recover_dead_batch_after_final_withdrawal(batch) {
-                        Ok(records) => prove_exact_ingress_absence(
-                            command,
-                            &validated.reference,
-                            &records,
-                            batch.evidence(),
-                        ),
-                        Err(_) => inspect_ambiguous(command),
-                    }
+                    drop(running);
+                    self.inspect_exact_durable_final_withdrawal(command, &validated)
                 }
                 FinalIngressPhase::Released => {
                     inspect_satisfied(command, &validated.reference, batch.evidence())
@@ -362,8 +361,16 @@ impl ServerIngressPublicationAdapter {
             );
         }
         drop(running);
-        let records = match self.reconcile_absent_live_batch_after_owner_death(&validated) {
-            Ok(records) => records,
+        self.inspect_exact_durable_final_withdrawal(command, &validated)
+    }
+
+    fn inspect_exact_durable_final_withdrawal(
+        &self,
+        command: &ConfirmedWorkloadTeardownCommand,
+        validated: &ValidatedFinalWithdrawal,
+    ) -> WorkloadTeardownProviderObservation {
+        let authenticated = match self.exact_durable_ingress_records(validated) {
+            Ok(authenticated) => authenticated,
             Err(FinalIngressReconciliationError::CrossedMembership(reason)) => {
                 return inspect_failure(command, invalid_command_failure(reason));
             }
@@ -371,12 +378,29 @@ impl ServerIngressPublicationAdapter {
                 return inspect_ambiguous(command);
             }
         };
-        prove_exact_ingress_absence(
-            command,
-            &validated.reference,
-            &records,
-            b"no live server ingress batch",
-        )
+        match inspect_authenticated_absent_ingress(&self.port_leases, authenticated) {
+            Ok(AuthenticatedAbsentIngressInspection::Satisfied(records)) => {
+                prove_exact_ingress_absence(
+                    command,
+                    &validated.reference,
+                    &records,
+                    b"durable server ingress is released",
+                )
+            }
+            Ok(AuthenticatedAbsentIngressInspection::RetryRequired(records)) => {
+                inspect_not_completed_digest(
+                    command,
+                    record_evidence(&validated.reference, &records),
+                )
+            }
+            Ok(AuthenticatedAbsentIngressInspection::InProgress(records)) => {
+                inspect_in_progress_digest(command, record_evidence(&validated.reference, &records))
+            }
+            Err(FinalIngressReconciliationError::CrossedMembership(reason)) => {
+                inspect_failure(command, invalid_command_failure(reason))
+            }
+            Err(FinalIngressReconciliationError::Authority) => inspect_ambiguous(command),
+        }
     }
 
     fn recover_dead_batch_after_final_withdrawal(
@@ -407,28 +431,7 @@ impl ServerIngressPublicationAdapter {
         validated: &ValidatedFinalWithdrawal,
     ) -> Result<Vec<PortLeaseRecord>, FinalIngressReconciliationError> {
         let authenticated = self.exact_durable_ingress_records(validated)?;
-        if authenticated
-            .ingress_records
-            .iter()
-            .all(|record| record.phase() == PortLeasePhase::Released)
-        {
-            return Ok(authenticated.ingress_records);
-        }
-        let requests = authenticated
-            .ingress_records
-            .iter()
-            .map(|record| record.request().clone())
-            .collect::<Vec<_>>();
-        let recoveries = self
-            .port_leases
-            .recover_dead_plan_members(&authenticated.plan_members, &requests)?;
-        Ok(self
-            .port_leases
-            .release_process_bound_plan_members_after_owner_death(
-                &authenticated.plan_members,
-                &requests,
-                &recoveries,
-            )?)
+        settle_authenticated_absent_ingress(&self.port_leases, authenticated)
     }
 
     fn exact_durable_ingress_records(
@@ -480,6 +483,93 @@ impl ServerIngressPublicationAdapter {
             ingress_records,
         })
     }
+}
+
+fn settle_authenticated_absent_ingress(
+    port_leases: &nimbus_network::LocalPortLeaseAuthority,
+    authenticated: AuthenticatedDurableIngressPlan,
+) -> Result<Vec<PortLeaseRecord>, FinalIngressReconciliationError> {
+    if authenticated
+        .ingress_records
+        .iter()
+        .all(|record| record.phase() == PortLeasePhase::Released)
+    {
+        return Ok(authenticated.ingress_records);
+    }
+    let requests = authenticated
+        .ingress_records
+        .iter()
+        .map(|record| record.request().clone())
+        .collect::<Vec<_>>();
+    if authenticated
+        .ingress_records
+        .iter()
+        .all(is_restart_retained_after_confirmed_stop)
+    {
+        return Ok(port_leases
+            .release_plan_members_after_confirmed_stop(&authenticated.plan_members, &requests)?);
+    }
+    let recoveries =
+        port_leases.recover_dead_plan_members(&authenticated.plan_members, &requests)?;
+    Ok(
+        port_leases.release_process_bound_plan_members_after_owner_death(
+            &authenticated.plan_members,
+            &requests,
+            &recoveries,
+        )?,
+    )
+}
+
+fn inspect_authenticated_absent_ingress(
+    port_leases: &nimbus_network::LocalPortLeaseAuthority,
+    authenticated: AuthenticatedDurableIngressPlan,
+) -> Result<AuthenticatedAbsentIngressInspection, FinalIngressReconciliationError> {
+    if authenticated
+        .ingress_records
+        .iter()
+        .all(|record| record.phase() == PortLeasePhase::Released)
+    {
+        return Ok(AuthenticatedAbsentIngressInspection::Satisfied(
+            authenticated.ingress_records,
+        ));
+    }
+    if authenticated
+        .ingress_records
+        .iter()
+        .all(is_restart_retained_after_confirmed_stop)
+    {
+        return Ok(AuthenticatedAbsentIngressInspection::RetryRequired(
+            authenticated.ingress_records,
+        ));
+    }
+    let requests = authenticated
+        .ingress_records
+        .iter()
+        .map(|record| record.request().clone())
+        .collect::<Vec<_>>();
+    match port_leases.recover_dead_plan_members(&authenticated.plan_members, &requests) {
+        Ok(recoveries) => {
+            drop(recoveries);
+            Ok(AuthenticatedAbsentIngressInspection::RetryRequired(
+                authenticated.ingress_records,
+            ))
+        }
+        Err(PortLeaseError::LifetimeOwnerLive { .. }) => Ok(
+            AuthenticatedAbsentIngressInspection::InProgress(authenticated.ingress_records),
+        ),
+        Err(_) => Err(FinalIngressReconciliationError::Authority),
+    }
+}
+
+fn is_restart_retained_after_confirmed_stop(record: &PortLeaseRecord) -> bool {
+    record.phase() == PortLeasePhase::Reserved
+        && record.reservation_claim().is_none()
+        && record.bind_claim().is_none()
+        && record.adoption_claim().is_none()
+        && record.binding().is_none()
+        && record.confirmed_stopped_binding().is_some()
+        && record.failure().is_none()
+        && record.active_lifetime().is_none()
 }
 
 impl RunningIngressBatch {
@@ -721,6 +811,30 @@ fn inspect_not_completed(
         command,
         WorkloadTeardownProviderOutcome::Inspect(WorkloadTeardownInspectOutcome::NotCompleted(
             WorkloadOwnerEvidenceDigest::sha256(evidence),
+        )),
+    )
+}
+
+fn inspect_not_completed_digest(
+    command: &ConfirmedWorkloadTeardownCommand,
+    evidence: WorkloadOwnerEvidenceDigest,
+) -> WorkloadTeardownProviderObservation {
+    WorkloadTeardownProviderObservation::for_command(
+        command,
+        WorkloadTeardownProviderOutcome::Inspect(WorkloadTeardownInspectOutcome::NotCompleted(
+            evidence,
+        )),
+    )
+}
+
+fn inspect_in_progress_digest(
+    command: &ConfirmedWorkloadTeardownCommand,
+    evidence: WorkloadOwnerEvidenceDigest,
+) -> WorkloadTeardownProviderObservation {
+    WorkloadTeardownProviderObservation::for_command(
+        command,
+        WorkloadTeardownProviderOutcome::Inspect(WorkloadTeardownInspectOutcome::InProgress(
+            evidence,
         )),
     )
 }

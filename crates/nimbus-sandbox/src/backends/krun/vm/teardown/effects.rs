@@ -17,6 +17,9 @@ use super::super::{KrunCreatorHandoffState, KrunSandboxManifest};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::backends::krun::vm) enum KrunExecutionTerminalObservation {
     NotObserved,
+    /// The exact creator-qualified provider state is terminal but the runtime
+    /// object remains available for later network and artifact cleanup.
+    ExactStopped,
     #[cfg_attr(
         not(test),
         expect(
@@ -78,36 +81,32 @@ impl KrunExecutionTeardownRuntime for HostKrunExecutionTeardownRuntime {
         &self,
         manifest: &KrunSandboxManifest,
     ) -> Result<KrunExecutionTerminalObservation> {
-        let exact_creator_absent = match &manifest.creator_handoff {
-            KrunCreatorHandoffState::Quiesced { proof } => matches!(
-                runtime_state_for_creator_attempt(
-                    &manifest.conmon_launch.state_command,
-                    manifest.handle.id.as_str(),
-                    proof.attempt_id(),
-                )?,
-                RuntimeStateObservation::ExplicitlyAbsent
-            ),
-            KrunCreatorHandoffState::RuntimeObserved { receipt } => matches!(
-                runtime_state_for_creator_attempt(
+        let provider_state = match &manifest.creator_handoff {
+            KrunCreatorHandoffState::Quiesced { proof } => Some(runtime_state_for_creator_attempt(
+                &manifest.conmon_launch.state_command,
+                manifest.handle.id.as_str(),
+                proof.attempt_id(),
+            )?),
+            KrunCreatorHandoffState::RuntimeObserved { receipt } => {
+                Some(runtime_state_for_creator_attempt(
                     &manifest.conmon_launch.state_command,
                     manifest.handle.id.as_str(),
                     receipt.attempt_id(),
-                )?,
-                RuntimeStateObservation::ExplicitlyAbsent
-            ),
+                )?)
+            }
             KrunCreatorHandoffState::NotSpawned
             | KrunCreatorHandoffState::SpawnIntent { .. }
-            | KrunCreatorHandoffState::Pending { .. } => false,
+            | KrunCreatorHandoffState::Pending { .. } => None,
         };
         // Krun's legacy integer exit-status path is not attempt-qualified. It
         // cannot prove that a receipt belongs to the current execution. Treat
-        // exact current-creator absence as the authority and leave the exit
-        // code unset; a future attempt-qualified receipt may return ExactExit.
-        Ok(if exact_creator_absent {
-            KrunExecutionTerminalObservation::ExplicitAbsence
-        } else {
-            KrunExecutionTerminalObservation::NotObserved
-        })
+        // exact current-creator provider state as the authority and leave the
+        // exit code unset; a future attempt-qualified receipt may return
+        // ExactExit.
+        provider_state.map_or_else(
+            || Ok(KrunExecutionTerminalObservation::NotObserved),
+            terminal_observation,
+        )
     }
 
     fn capture_process(&self, manifest: &KrunSandboxManifest) -> Result<RuntimeProcessIdentity> {
@@ -146,6 +145,20 @@ impl KrunExecutionTeardownRuntime for HostKrunExecutionTeardownRuntime {
     }
 }
 
+fn terminal_observation(
+    provider_state: RuntimeStateObservation,
+) -> Result<KrunExecutionTerminalObservation> {
+    match provider_state {
+        RuntimeStateObservation::ExplicitlyAbsent => {
+            Ok(KrunExecutionTerminalObservation::ExplicitAbsence)
+        }
+        RuntimeStateObservation::Present(status) if status == "stopped" => {
+            Ok(KrunExecutionTerminalObservation::ExactStopped)
+        }
+        RuntimeStateObservation::Present(_) => Ok(KrunExecutionTerminalObservation::NotObserved),
+    }
+}
+
 fn current_creator_attempt_id(manifest: &KrunSandboxManifest) -> Result<&str> {
     match &manifest.creator_handoff {
         KrunCreatorHandoffState::RuntimeObserved { receipt }
@@ -158,5 +171,29 @@ fn current_creator_attempt_id(manifest: &KrunSandboxManifest) -> Result<&str> {
                 manifest.handle.id
             ),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_creator_qualified_stopped_state_is_terminal_without_claiming_absence() {
+        assert_eq!(
+            terminal_observation(RuntimeStateObservation::Present("stopped".to_owned()))
+                .expect("stopped state should classify"),
+            KrunExecutionTerminalObservation::ExactStopped
+        );
+        assert_eq!(
+            terminal_observation(RuntimeStateObservation::Present("running".to_owned()))
+                .expect("running state should classify"),
+            KrunExecutionTerminalObservation::NotObserved
+        );
+        assert_eq!(
+            terminal_observation(RuntimeStateObservation::ExplicitlyAbsent)
+                .expect("absence should classify"),
+            KrunExecutionTerminalObservation::ExplicitAbsence
+        );
     }
 }

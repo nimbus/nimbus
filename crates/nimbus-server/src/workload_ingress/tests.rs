@@ -7,9 +7,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use nimbus_compute::workload_executable::encode_sandbox_spec;
 use nimbus_compute::workload_saga::{
     IngressProvisionCapabilities, IngressTeardownCapabilities, WorkloadProvisionCapabilityRegistry,
-    WorkloadProvisionDecision, WorkloadProvisionSourceAuthority,
+    WorkloadProvisionDecision, WorkloadProvisionDispatcher, WorkloadProvisionSourceAuthority,
     WorkloadProvisionSourceAuthorityError, WorkloadProvisionSourceFuture, WorkloadSagaCoordinator,
     WorkloadTeardownCancellationToken, WorkloadTeardownCapabilityRegistry, WorkloadTeardownRuntime,
 };
@@ -29,10 +30,14 @@ use nimbus_network::{
     PortLeaseAccounting, PortLeaseFence, PortLeaseId, PortLeaseLifetime, PortLeaseRequest,
     PortProtocol, PortPublicationIntent, PortRequestMode, PublishedEndpointId,
 };
+use nimbus_sandbox::{
+    SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
+    SandboxSpec,
+};
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadExecutableEncoding,
-    WorkloadExecutableIntent, WorkloadExecutionReference, WorkloadNetworkEndpointSemantics,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadExecutionReference,
+    WorkloadNetworkAttachmentBlueprint, WorkloadNetworkEndpointSemantics,
     WorkloadNetworkForwardingBehavior, WorkloadNetworkIntent, WorkloadNetworkListenerBlueprint,
     WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest,
     WorkloadProvisionDisposition, WorkloadProvisionEffectResult, WorkloadProvisionSourceEvidence,
@@ -73,6 +78,25 @@ impl LocalSandboxIngressTargetSource for AbsentContainerIngressSource {
     ) -> Result<SandboxProvisionIngressTargetObservation, SandboxError> {
         Ok(SandboxProvisionIngressTargetObservation::Absent {
             evidence: b"fixture private attachment absent".to_vec(),
+        })
+    }
+}
+
+struct InProgressContainerIngressSource;
+
+impl LocalSandboxIngressTargetSource for InProgressContainerIngressSource {
+    fn backend_kind(&self) -> SandboxBackendKind {
+        SandboxBackendKind::Container
+    }
+
+    fn inspect_targets(
+        &self,
+        _sandbox_id: &nimbus_sandbox::SandboxId,
+        _execution_attempt_id: &nimbus_sandbox::SandboxExecutionAttemptId,
+        _network_plan: &SandboxProvisionNetworkPlan,
+    ) -> Result<SandboxProvisionIngressTargetObservation, SandboxError> {
+        Ok(SandboxProvisionIngressTargetObservation::InProgress {
+            evidence: b"restart target private routes remain in progress".to_vec(),
         })
     }
 }
@@ -132,6 +156,72 @@ fn real_server_ingress_adapter_substitutes_for_publication_inspection_and_observ
         )],
     )
     .expect("the real server adapter should earn all three narrow ingress capabilities");
+}
+
+#[tokio::test]
+async fn publication_and_observation_commands_share_stable_registry_identity() {
+    let _process_authority_guard = process_network_authority_test_guard_async().await;
+    let root = tempfile::tempdir().expect("publication identity fixture root should exist");
+    let bundle = runtime_network_bundle();
+    let publish = confirmed_runtime_provision_command(
+        &root.path().join("publish"),
+        &bundle,
+        WorkloadSagaPhase::Ready,
+    )
+    .await;
+    let observe = confirmed_runtime_provision_command(
+        &root.path().join("observe"),
+        &bundle,
+        WorkloadSagaPhase::Published,
+    )
+    .await;
+
+    assert_eq!(publish.step(), WorkloadProvisionStep::Publish);
+    assert_eq!(observe.step(), WorkloadProvisionStep::ObservePublication);
+    assert_ne!(
+        publish.attempt_id(),
+        observe.attempt_id(),
+        "separate saga steps must retain separate dispatch-attempt identities"
+    );
+    assert_eq!(
+        publish.execution(),
+        observe.execution(),
+        "both steps must retain one stable generation-scoped execution"
+    );
+
+    let bootstrap = LocalNetworkManager::bootstrap(root.path().join("network"))
+        .expect("publication identity network authority should bootstrap");
+    let manager = Arc::new(
+        bootstrap.freeze(
+            NetworkCapabilityRegistry::new([bundle])
+                .expect("publication identity provider report should validate"),
+        ),
+    );
+    let adapter = ServerIngressPublicationAdapter::new(
+        Arc::new(AbsentContainerIngressSource),
+        manager.authority(),
+    )
+    .expect("publication identity adapter should open");
+    let Ok(published) = adapter.validate(&publish) else {
+        panic!("publish command should validate");
+    };
+    let Ok(observed) = adapter.validate(&observe) else {
+        panic!("observation command should validate");
+    };
+
+    assert_eq!(
+        published.execution_attempt_id,
+        observed.execution_attempt_id
+    );
+    assert_eq!(
+        published.key, observed.key,
+        "publication lookup must use stable execution identity, not step-attempt identity"
+    );
+    assert_eq!(
+        published.key.attempt_id,
+        published.execution_attempt_id.as_str(),
+        "the registry fence must name the exact sandbox execution attempt"
+    );
 }
 
 #[test]
@@ -962,6 +1052,57 @@ impl WorkloadProvisionSourceAuthority for RuntimeSourceAuthority {
     }
 }
 
+async fn confirmed_runtime_provision_command(
+    root: &Path,
+    bundle: &nimbus_network::NetworkCapabilityBundle,
+    phase: WorkloadSagaPhase,
+) -> nimbus_compute::workload_saga::ConfirmedWorkloadProvisionCommand {
+    let history = runtime_withdrawal_history(bundle);
+    let index = history
+        .iter()
+        .position(|record| {
+            record.phase() == phase
+                && matches!(
+                    record.provision_disposition(),
+                    Some(WorkloadProvisionDisposition::Ready)
+                )
+                && record.successor_intent().is_none()
+        })
+        .expect("runtime history should retain an unclaimed requested phase");
+    let engine = Arc::new(
+        nimbus_engine::Engine::new(root.join("engine"))
+            .expect("runtime command fixture Engine should open"),
+    );
+    let store = Arc::new(EngineWorkloadSagaStore::new(engine));
+    persist_runtime_history(store.as_ref(), &history[..=index]).await;
+    let current = &history[index];
+    let source = Arc::new(RuntimeSourceAuthority {
+        key: current.key().clone(),
+        identity: current.active_intent().source().source_identity().clone(),
+        evidence: current.active_intent().source().clone(),
+    });
+    let reports = NetworkCapabilityRegistry::new([bundle.clone()])
+        .expect("runtime command provider report should validate");
+    let capabilities = Arc::new(
+        WorkloadProvisionCapabilityRegistry::new([], [], [])
+            .expect("empty runtime command capability registry should validate"),
+    );
+    let dispatcher = WorkloadProvisionDispatcher::new(source, reports, capabilities);
+    let coordinator = WorkloadSagaCoordinator::new(store);
+    let WorkloadProvisionDecision::Proposed(proposed) =
+        WorkloadProvisionDecision::plan(current).expect("runtime command phase should reduce")
+    else {
+        panic!("runtime command phase should propose one provider step");
+    };
+    dispatcher
+        .confirm_transition(&coordinator, current, &proposed)
+        .await
+        .expect("runtime command transition should confirm")
+        .command()
+        .expect("runtime command transition should issue one command")
+        .clone()
+}
+
 async fn persist_runtime_history(store: &EngineWorkloadSagaStore, history: &[WorkloadSagaRecord]) {
     for (index, record) in history.iter().enumerate() {
         let expected = index
@@ -1058,11 +1199,19 @@ fn runtime_intent_for_listeners(
     bundle: &nimbus_network::NetworkCapabilityBundle,
     listener_names: &[&str],
 ) -> WorkloadSagaIntent {
-    let executable = WorkloadExecutableIntent::new(
-        WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
-        format!(r#"{{"fixture":"runtime-ingress-{generation}"}}"#),
+    let spec = SandboxSpec::new(
+        key.tenant_id().clone(),
+        SandboxOwnerSpec::standalone_named(format!("runtime-ingress-{generation}")),
+        SandboxBackendKind::Container,
+        SandboxRootSpec::rootfs("/fixture/runtime-ingress"),
+        SandboxProcessSpec::new(["/bin/true"]),
     )
-    .expect("runtime executable should validate");
+    .with_port_bindings(
+        listener_names
+            .iter()
+            .map(|name| SandboxPortBinding::new(*name, EndpointProtocol::Http, 0, 9)),
+    );
+    let executable = encode_sandbox_spec(&spec).expect("runtime executable should validate");
     let source = WorkloadProvisionSourceEvidence::standalone_sandbox(
         WorkloadProvisionSourceIdentity::standalone_sandbox("runtime-ingress", "fixture")
             .expect("runtime source identity should validate"),
@@ -1132,6 +1281,11 @@ fn runtime_compiled_plan_for_listeners(
         NetworkResourceGeneration::new(generation),
     )
     .expect("runtime network identity should validate");
+    let attachment_blueprint =
+        (publication == WorkloadPublicationIntent::PublishWhenReady).then(|| {
+            WorkloadNetworkAttachmentBlueprint::new(&identity, "private")
+                .expect("runtime attachment blueprint should validate")
+        });
     let attachment =
         NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []);
     let endpoint = NetworkEndpointCapabilitySet::new(
@@ -1162,10 +1316,10 @@ fn runtime_compiled_plan_for_listeners(
                         Ipv4Addr::LOCALHOST.into(),
                         nimbus_workloads::WorkloadNetworkPortRequestMode::ProviderAssigned,
                         WorkloadNetworkEndpointSemantics::new(
-                            WorkloadNetworkForwardingBehavior::None,
+                            WorkloadNetworkForwardingBehavior::PortForwarded,
                             NetworkTlsBehavior::Disabled,
                         ),
-                        None,
+                        Some(9),
                     )
                     .expect("runtime listener blueprint should validate")
                 })
@@ -1183,7 +1337,7 @@ fn runtime_compiled_plan_for_listeners(
         requirements,
         selection,
         evidence,
-        None,
+        attachment_blueprint,
         [],
         listeners,
         [],
@@ -2003,6 +2157,45 @@ fn restart_without_live_listener_ownership_remains_in_progress_and_effect_free()
         WorkloadProviderObservation::InProgress
     );
     assert_eq!(snapshot_regular_files(fixture.state_root.path()), before);
+}
+
+#[test]
+fn restart_observation_allows_absence_only_after_durable_successor_veto() {
+    let fixture = live_observation_fixture(&["http"]);
+    let validated = {
+        let running = fixture
+            .adapter
+            .running
+            .lock()
+            .expect("fixture registry lock should remain healthy");
+        let (key, batch) = running
+            .first_key_value()
+            .expect("fixture should retain one live publication");
+        restart_publication_for(key, batch)
+    };
+    let restarted = ServerIngressPublicationAdapter::new(
+        Arc::new(InProgressContainerIngressSource),
+        fixture.network_authority.clone(),
+    )
+    .expect("restart observation fixture should reopen the phase journal");
+    let before = snapshot_regular_files(fixture.state_root.path());
+
+    assert!(matches!(
+        restarted.inspect_restart_publication_observation(&validated, None),
+        ProviderRestartEffectObservation::InProgress { .. }
+    ));
+    assert!(matches!(
+        restarted.inspect_restart_publication_observation(
+            &validated,
+            Some(nimbus_workloads::WorkloadGeneration::new(2)),
+        ),
+        ProviderRestartEffectObservation::Absent { .. }
+    ));
+    assert_eq!(
+        snapshot_regular_files(fixture.state_root.path()),
+        before,
+        "restart publication observation must remain effect-free"
+    );
 }
 
 #[test]
