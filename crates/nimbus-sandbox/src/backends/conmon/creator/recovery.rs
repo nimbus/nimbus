@@ -135,6 +135,13 @@ pub(crate) enum CreatorContainmentObservation {
     /// group. Recovery must not signal or supersede its owner.
     Live,
     /// The exact process is absent and the recorded group is absent.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "non-Unix containment observation fails closed as Unknown"
+        )
+    )]
     DeadContained,
     /// The exact process changed containment or disappeared while the group
     /// remains live. Numeric group identity is not safe to signal.

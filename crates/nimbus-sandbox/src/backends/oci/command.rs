@@ -250,6 +250,7 @@ impl OwnedCommandChild {
         }
     }
 
+    #[cfg(unix)]
     fn child_id(&self) -> u32 {
         self.child
             .as_ref()
