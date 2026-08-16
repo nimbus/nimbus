@@ -185,3 +185,12 @@ evidence = "These explicit allocation-scale characterization tests collect repea
 measured_at = "2026-08-16"
 owner = "nimbus-network-control-plane"
 issue = "docs/private/plans/nimbus-network-control-plane-plan.md#execution-status-ledger"
+
+[[exclusions]]
+pattern = "test(/nnc6_5d3_k14_mounted_namespace_removal_detaches_nsfs_and_deletes_mount_point$/)"
+scope = "ignored"
+reason = "privileged"
+evidence = "This Linux-only regression creates and detaches a real NSFS network-namespace mount and therefore requires root plus mount and network-namespace capabilities. Both privileged PR workflows run the exact ignored test directly."
+measured_at = "2026-08-16"
+owner = "nimbus-network-control-plane"
+issue = "docs/private/plans/nimbus-network-control-plane-plan.md#execution-status-ledger"
