@@ -7,6 +7,26 @@ subsystem mappings + second-pass gap/hygiene sweeps + extraction/identity
 inventory). Review artifact:
 `proof/architecture-review-2026-07/nimbus-architecture-review.html`.
 
+## Current architecture reconciliation (2026-08-16)
+
+The review verdict and decision records below are historical starting evidence.
+The current 43-member workspace remains acyclic, but three staged decisions
+have landed and supersede the original wording:
+
+- `nimbus-compute` is the transport-free workload-saga coordinator consumed by
+  server and CLI. Its normal dependency on `nimbus-network` carries portable
+  network plans and lifecycle evidence without moving provider effects.
+- `nimbus-network` is the transport-free connectivity-resource control plane.
+  Its only outgoing workspace edge is `nimbus-core`; concrete effects remain
+  in sandbox, server, KV, machine, proxy, and node owners.
+- SI0 created `nimbus-workload-identity`. Admission-anchored workload identity
+  projection remains distinct from provider credential minting.
+
+The network architecture and active closeout status are canonical in
+[`nimbus-network-control-plane-plan.md`](nimbus-network-control-plane-plan.md)
+and
+[`../architecture/network/control-plane.md`](../architecture/network/control-plane.md).
+
 ## What This Plan Owns
 
 Every improvement found by the 2026-07 architecture review: guarantee

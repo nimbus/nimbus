@@ -69,7 +69,7 @@ The versioned baseline is
 `nnc9.1-compiler-authority-baseline.json`. Its current candidate records:
 
 - Rust `1.96.1` on `aarch64-apple-darwin`.
-- `1,657` compiler/source inputs plus the effective Cargo configuration,
+- `1,661` compiler/source inputs plus the effective Cargo configuration,
   compiler launchers and toolchain binaries, target cfg, and relevant compiler
   environment.
 - The six effect-owner packages expose seven production targets. These targets
@@ -89,7 +89,7 @@ The versioned baseline is
   exact four `firebase_grpc.rs` `OUT_DIR` include edges to the other generated
   files.
 
-The baseline records `102,796,303` bytes of compiler MIR by target digest and
+The baseline records `103,339,693` bytes of compiler MIR by target digest and
 byte count. It does not commit those transient compiler artifacts.
 
 ## Verification Ledger

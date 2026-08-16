@@ -397,7 +397,7 @@ function verifySandboxEffectLocality() {
       "crates/nimbus-sandbox/src/backends/oci/network/netavark.rs",
       "crates/nimbus-sandbox/src/backends/oci/network/reaper.rs",
     ),
-    7,
+    8,
   );
   requireExactOwner(
     sources,

@@ -1,7 +1,7 @@
 # Horizontal Scaling Plan
 
-Promote the `docs/private/architecture/horizontal-scaling.md` design into an
-execution plan: the iroh + openraft **cluster substrate** that turns the
+Preserve the deferred horizontal-scaling design as the executable plan for the
+iroh + openraft **cluster substrate** that turns the
 single-binary Nimbus into a self-forming multi-node cluster. This plan owns the
 substrate; the stateful workloads that ride it (`secret-management`,
 `service-identity-provider-auth`, `agent-browser-service`) are consumers, not
@@ -9,7 +9,8 @@ part of this plan (§16 Consumer Plans in the architecture doc).
 
 The design is settled and source-stable: this plan is the band-by-band buildout,
 verifier, and execution ledger for it. It does **not** re-derive the
-architecture — `docs/private/architecture/horizontal-scaling.md` is the
+architecture. The formerly referenced `docs/private/architecture/horizontal-scaling.md`
+is not present in this checkout; this plan and its linked research are the
 authoritative design, `docs/private/plans/research/iroh-cluster-substrate-2026.md`
 is the iroh-v1 capability + decisions contract (version pins, API renames,
 auth≠authz enrollment model, irpc-for-RaftNetwork, connectivity profiles,
@@ -62,10 +63,10 @@ conditions rather than leaving them as prose.
   `ClusterTransport` abstraction boundary so the binary is not structurally
   coupled to Iroh internals (§11).
 - **Related plans and references:**
-  - `docs/private/architecture/horizontal-scaling.md` — **authoritative design.**
-    Sections referenced per band below. §16 lists every consumer plan and the
-    exact primitive each consumes; §17 carries the five open questions whose
-    start-simple defaults this plan adopts.
+  - This plan is the current routing owner. The earlier architecture document
+    is absent, so section references below are historical until a future
+    horizontal-scaling activation deliberately restores or replaces that
+    design. Do not infer implementation authority from the missing file.
   - `docs/private/plans/research/iroh-cluster-substrate-2026.md` — **iroh-v1
     capability + decisions contract.** Version pins, the 0.x→1.0 renames, the
     6-ALPN layout, the auth≠authz two-layer authz seam, connectivity profiles,

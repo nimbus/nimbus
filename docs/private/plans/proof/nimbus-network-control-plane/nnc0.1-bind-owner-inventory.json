@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "source_head": "b1f8969c05df560f76572ae69598c8fda376a298",
+  "source_head": "bcb0a1b06758d78155787aaf98a2cc502e02c039",
   "scope": {
     "production_network": "Every Rust production TCP/UDP allocation, availability probe, bind, provider bind request, pre-bound listener consumer, and inherited socket found by the recorded scans.",
     "local_ipc": "Production Unix-domain binds and inherited descriptors are classified separately because a host TCP/UDP PortLease must not absorb filesystem-path ownership.",
@@ -40,7 +40,7 @@
       "verification": "source-occurrence",
       "category": "allocation-adapter",
       "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
-      "line": 230,
+      "line": 231,
       "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
       "authority_kinds": [
         "suspicious-port-allocation-definition"
@@ -61,7 +61,7 @@
       "verification": "symbol-presence",
       "category": "allocation-consumer",
       "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
-      "line": 230,
+      "line": 231,
       "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
       "declaration_name": "reserve_launch_ports_for_sandbox",
       "current_owner": "nimbus-sandbox composition consuming nimbus-network authority",
@@ -875,7 +875,7 @@
       "kind": "netavark-port-mapping-request",
       "symbol": "build_netavark_request",
       "ordinal": 1,
-      "line": 606
+      "line": 781
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -939,7 +939,7 @@
       "kind": "suspicious-port-allocation-definition",
       "symbol": "reserve_launch_ports_for_sandbox",
       "ordinal": 1,
-      "line": 230
+      "line": 231
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -1131,7 +1131,7 @@
       "kind": "suspicious-port-allocation-definition",
       "symbol": "reserve_exact_provision_ports",
       "ordinal": 1,
-      "line": 388
+      "line": 389
     },
     {
       "site_id": "server-workload-ingress-listener",
@@ -1147,7 +1147,7 @@
       "kind": "tcp-bind",
       "symbol": "start",
       "ordinal": 1,
-      "line": 1018
+      "line": 1042
     }
   ],
   "non_authority_occurrences": [
@@ -1340,7 +1340,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "validate_port_bindings",
       "ordinal": 1,
-      "line": 543,
+      "line": 554,
       "reason": "Formats a validation error for a zero caller-supplied host port; it performs no allocation or socket effect."
     },
     {
@@ -1348,16 +1348,16 @@
       "kind": "authority-shaped-macro",
       "symbol": "validate_port_bindings",
       "ordinal": 2,
-      "line": 559,
+      "line": 570,
       "reason": "Formats a validation error for a duplicate caller-supplied host-port binding; it performs no allocation or socket effect."
     },
     {
-      "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+      "path": "crates/nimbus-sandbox/src/backends/krun/ingress.rs",
       "kind": "authority-shaped-macro",
-      "symbol": "format_port_map",
+      "symbol": "format_private_tsi_port_map",
       "ordinal": 1,
-      "line": 574,
-      "reason": "Serializes admitted bindings into the krun provider port-map string; it neither chooses a port nor creates or adopts a socket."
+      "line": 19,
+      "reason": "Serializes admitted bindings and the authenticated attachment address into the libkrun private TSI port-map string; it neither chooses a port nor creates or adopts a socket."
     },
     {
       "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
@@ -1412,7 +1412,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "reserve_launch_ports_for_sandbox",
       "ordinal": 1,
-      "line": 340,
+      "line": 341,
       "reason": "Formats an invariant error from the already-classified PortLease reservation path; it performs no additional allocation or socket effect."
     },
     {
@@ -1420,7 +1420,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "withdraw_bindings",
       "ordinal": 1,
-      "line": 1398,
+      "line": 1399,
       "reason": "Formats a withdrawal failure for an authenticated existing lease; the nimbus-network withdrawal call owns the state transition."
     },
     {
@@ -1606,6 +1606,13 @@
           "cfg_owner": "crates/nimbus-cli/src/machine/publication_authority/confirmed/stop_barrier.rs",
           "owner_module": "process_tests",
           "module": "process_tests"
+        },
+        {
+          "path": "crates/nimbus-server/src/workload_ingress/owner_exit_tests.rs",
+          "declared_from": "crates/nimbus-server/src/workload_ingress.rs",
+          "cfg_owner": "crates/nimbus-server/src/workload_ingress.rs",
+          "owner_module": "owner_exit_tests",
+          "module": "owner_exit_tests"
         }
       ],
       "allowed_shape": "The exact child path is admitted only while its declaration remains inside the mechanically verified #[cfg(test)] tests module and no production mod, path, or include edge reaches it."

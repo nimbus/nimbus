@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC9.2 complete; NNC9.3 in progress`
+Status: `active; NNC9.3 complete; NNC9.4 in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -31,56 +31,20 @@ owner decision and concrete type-sharing proof; the default is no dependency.
 
 ## Recovery Header
 
-This header is the first compaction/restart checkpoint. Update it with every
-ledger transition.
+This table is the compaction recovery state. Completed-item detail stays in the
+linked proofs and git history.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC9.2 complete; NNC9.3 in progress` |
-| Current band | `NNC9 — closeout, sovereignty, and architecture truth` |
-| Current item | `NNC9.3 — delete transitional material and truth up architecture maps` |
-| Last completed item | `NNC9.2 — complete offline sovereign lifecycle`; the exact item checkpoint is the commit that contains this ledger transition and its proof. |
-| Next action | Resolve the five source-derived aggregate-verifier failures: NNCV006, NNCV015, NNCV021, NNCV022, and NNCV038. Delete obsolete transitional code and documentation, regenerate exact inventories, update architecture and shared-plan truth, and compress the canonical plan/proof routing without changing accepted authority. |
-| Current acceptance checkpoint | Final Run 67 passed both attempts with K1-K14 true. Each attempt has 19 transitions, one restart, exact fresh-owner recovery, terminal provider and projection state, endpoint refusal, product and outer cleanup, six zero counters, empty DNS, and no forbidden address. Its root-owned mode-`0500` candidate is 826,137,064 bytes with SHA-256 `fd1a9030…699984`. Workloads pass `231`; compute passes `506 + 1 ignored`; sandbox passes `1,212 + 47 ignored`; CLI passes `1,011 + 4 ignored`; and serialized server passes `757 + 35 ignored`. The affected all-target check, strict Clippy, warning-denied Rustdoc, Rustfmt, diff, Python, Bash, ShellCheck, mutation `8/8`, invariant `10/10`, durability `24/24`, docs `108`, and site `17/17` gates pass. The aggregate verifier reports the expected NNC9.3 baseline: `34/39`, with only NNCV006, NNCV015, NNCV021, NNCV022, and NNCV038 failing. |
-| Run 46 acceptance update | Authenticated candidate `3ef25e2082b0d366e8c359a3c3b3c62c1ea362b58c2d80b574a40d55a6104fad` reached durable saga revision 40 `Observed`, completed restart epoch 1, and recorded successful restart publication. The harness failed because its connection-count fixture mistook a second valid private readiness probe for the public request, then waited on the provider manifest instead of the canonical product projection. The harness-only correction keeps the first attempt serving until an exact rootfs-contained trigger is recorded, uses the manifest only for next-attempt identity, and records post-restart product inspect output. Shell syntax, ShellCheck, Python compilation, and all `8/8` lifecycle self-tests pass. K1-K14 remain unclaimed until Run 47 passes twice. |
-| Run 47 acceptance update | The first workload remained live and `first-ready`; the durable compute saga reached revision 15 `Observed`, contained the exact seven ordered provision observations, and the system listener projection was Ready. The provider-local manifest correctly remained unpublished/`starting`, so the harness's initial manifest-readiness wait timed out before the explicit trigger. The proof now reads canonical readiness and publication from the exact read-only durable workload saga plus actual HTTP, and retains the manifest only for provider/execution identity. Evidence validation independently derives both initial and restart saga truth. Local Python compilation and `8/8` mutation self-tests pass. Exact product cleanup made one evidenced `Waiting` transition to `Drained`, then one retry reached terminal `Recorded`; no process, listener, namespace, interface, status, or netns artifact remains. |
-| Run 48 acceptance update | The unchanged authenticated candidate passed initial canonical readiness and HTTP, the exact exit trigger, automatic restart, and restarted HTTP. The bounded exact-saga wait closes the harness's premature observation sample. Candidate `86d16b37dffebee30f6b55ac4560a8d98cbc991dcef102ded876cdea4104c33f` proved the first restart-settlement correction incomplete because the real private-route source itself reports `InProgress`. The refined regression uses that exact source and is `0/1 -> 1/1`; the four focused settlement proofs and workload ingress `21/21` pass. Authenticated candidate `4702f1116f92900b9777bac8403e4a5743d67abbb5d694793da0ae83d8ca4b78` crossed restart settlement: the journal is now exact `Absent`, drain succeeded, and the evidence-authorized stop successor reached `execution_stopped`. It then exposed a pure lifecycle defect: the successor-vetoed `AuthenticatedAbsent` result downgraded durable prior `PublicationPresent` authority to a `Ready` teardown origin, so final withdrawal was treated as resource-free and the published port lease remained active. Detach then correctly refused reuse but produced 28 `Absent -> Ambiguous` retry epochs inside one call and exhausted the coordinator's 64-decision bound. The exact guest is stopped; detach remains durably fenced at epoch 28; no blind retry followed. The exact reducer regression is `0/1 -> 1/1`; the full workloads crate is `230/230`, compute settlement is `1/1`, final withdrawal is `7/7`, and both server restart-settlement proofs are `1/1`. The corrected reducer also rejects a forged downgrade, so Run 48 cannot be safely rewound; preserve it and start Run 49 fresh. K1-K14 remain unclaimed; blocker is none. |
-| Run 49 acceptance update | The unchanged authenticated candidate crossed every prior defect: initial readiness/HTTP, deliberate exit, exact automatic restart, restarted HTTP, and durable restart settlement all passed. At the K9 owner handoff, Nimbus received SIGINT and exited cleanly in `0.62s`, but parent-mode `strace -ff` retained the intentionally surviving conmon/guest descendants and the harness mistook tracer lifetime for foreground-owner lifetime. The deterministic harness invariant is exact `0/1 -> 1/1`; foreground product traces now use `strace -DDD -ff`, which keeps the trace complete while making the command handle track the Compose owner. The frozen product candidate is unchanged. K1-K14 remain unclaimed; blocker is none. |
-| Run 50 acceptance update | Detached tracing proved the K9 handoff itself: the first Compose owner stopped and the fresh owner opened the same roots. The fresh owner did not restore port `15992` within the bounded `300s` probe. Durable truth remained exact `Observed`, restart epoch `1`, seven ordered observations, and no active restart or nonterminal provider journal. Compute startup routes this state through normal provision resume, whose `Observed` decision is `Wait`; no owner-reopened publication inspection is scheduled. The exact route regression is `0/1 -> 1/1`. A fresh owner now persists an explicit inspection-only authorization, removes only the final process-local observation, and reuses the existing absence -> fenced republish -> reobserve protocol. Ordinary resume remains effect-free. Portable workloads pass `231/231`; compute passes `497/497` with one child-process ignore; startup routes pass `8/8`; workloads, compute, and server all-target checks pass. Run 50 cleanup is terminal with no live effects. K1-K14 remain unclaimed; blocker is none. |
-| Run 51 acceptance update | Authenticated candidate `c640eec3022a94eccb1f91e7a647c39bc744e6fcef00c868fdc62fa6a51a6113` crossed every pre-K9 condition but again timed out for `300s` waiting for fresh-owner HTTP. Durable truth stayed revision 40 `Observed/Ready` because its indexed `recoveryEligible` field was false; the new startup route was correct but never selected. The portable eligibility and fresh-Engine query regressions each fail before `0/1` and pass `1/1` after `requires_recovery` includes only the exact owner-reopened publication predicate. Run 51 cleanup returned one truthful `Waiting`, then reached `Recorded` at revision 61; no live process, listener, outer namespace, interface, status, or netns remains. Its `stopping` manifest is preserved as negative durable evidence. K1-K14 remain unclaimed; blocker is none. |
-| Run 52 acceptance update | Authenticated candidate `24370a0f08e56754db94d812b2fa0869ec1dc3d18f1020d4082726ef393d22ff` selected the exact recovery-eligible revision 40 `Observed` record and durably committed the owner-reopened inspection claim at revision 41. Exact live inspection found the process-bound ingress absent, but the sandbox provider journal rejected that truthful result because `ObserveIngress` did not permit live-absence reconciliation. The sandbox journal and compute-adapter regressions each fail before `0/1` and pass `1/1` after the existing reconciliation contract includes `ObserveIngress`. Product cleanup then removed every live effect and reached `Recorded` at revision 62, but direct promotion from that recorded running generation to `Stopped` failed because construction discarded retained terminal evidence that successor validation required. The exact workloads regression fails before `0/1` with `promoted generation must enter its exact initial phase` and passes `1/1` after direct promotion uses the existing evidence-preserving promotion constructor. K1-K14 remain unclaimed; blocker is none. |
-| Run 53 acceptance update | Authenticated 825,819,408-byte candidate `1b5b1017328de5d3cf30ce368b299fe0212513ffaefa01813fe794b7dee22058` crossed the initial lifecycle and automatic restart, then passed every namespace control before the fresh-owner HTTP probe timed out at `300s`. The exact owner-reopen correction rotates only a resolved same-authority observation stream, converts only its authenticated live absence into the next exact publication epoch, binds absence origin into saga v7, and fences old callbacks and ordinary crossed attempts. Exact owner-reopen tests pass in compute, sandbox, and workloads; affected behavior is green at compute `499 + 1 ignored`, sandbox `1,201 + 31 ignored` plus all integration targets, and workloads `231`; affected all-target check, durability `24/24`, mutation self-test `10/10`, Rustfmt, and diff check pass. A K8 fixture race that launched `/usr/bin/true` before PID authentication is replaced by a held, captured, and explicitly reaped creator; all seven restart-phase tests pass. Local and minicloud product/harness paths match by checksum and the Run 54 binary build is active. K1-K14 remain unclaimed; blocker is none. |
-| Current Run 55 checkpoint | Authenticated 801,496,040-byte candidate `f0dcef84fc159882baa7774efebcbdc537d451662c19fdeb7ca28b6a276550b4` crossed initial readiness/HTTP, deliberate exit, automatic restart, restarted HTTP, and the first owner handoff. The corrected owner-reopened command now authenticates restart epoch `1`; its provider journal remains truthfully `in_progress` instead of failing with crossed execution evidence. The fresh owner timed out at the bounded `300s` HTTP probe because exact private-route inspection reports `server_ingress_target_waiting_for_private_attachment`. Durable attachment and IPAM are Ready, while the process-bound PEP lease remains Active and the fresh process has no registered PEP handle. This is preserved negative evidence at `/var/lib/nimbus-nnc92-proof/run55/evidence.json`; do not rerun or mutate it. Next is one deterministic fresh-owner PEP recovery regression and the narrow sandbox-owned correction. K1-K14 remain frozen and unclaimed; blocker is none. |
-| Run 55 correction update | The exact compute fail-before is `0/1`: owner reopen skipped private attachment inspection and went directly to publication. The exact Krun fail-before is `0/1`: a fresh provider owner classified the retained attachment as `InProgress` instead of authenticated process-local PEP absence. The correction persists one compute-owned two-stage protocol: inspect/repair the existing attachment first, then reuse the existing publication inspect/republish protocol. Container and Krun keep their PEP effects and recover only an authenticated Active planned PEP whose process registration is absent; read-only inspection remains effect-free. Exact seam proofs pass `5/5`; portable workloads pass `231/231`; compute passes `499 + 1 ignored`; sandbox passes `1,202 + 31 ignored`; focused driver `17/17`, provider adapter `9/9`, provider journal `51 + 2 ignored`, and Krun provisioning `14/14` pass. `nimbus-network` is unchanged. K1-K14 remain unclaimed pending a fresh complete lifecycle; blocker is none. |
-| Run 55 cleanup update | Exact Compose retirement returned one truthful `Waiting`; read-only durable inspection found the stop command `in_progress`; one evidence-based retry reached `Recorded`. No Run 55 process or listener remains. The failed-run root retains a terminal detached/released manifest plus its superseded owner-reopened `ObserveIngress` journal entry. A post-terminal startup scan quarantined that old root and failed closed on crossed quarantine generation. No manual deletion or reuse followed. Preserve the root as negative evidence; fresh disjoint Run 56 must prove K11. |
-| Run 56 candidate update | Affected all-target/all-feature compilation, strict Clippy, Rustfmt, diff check, durability `24/24`, lifecycle mutations `8/8`, Python compilation, shell syntax, and ShellCheck pass. Every owned local dirty path matches the isolated minicloud worktree by checksum. One warm two-job x86_64 build completed in `4m56s`; its root-owned mode-`0500` 801,537,584-byte candidate has SHA-256 `a5372091625de741f4aca80d8873ffe235d40d78847e13d2eb992f008fee459d`. It is the sole Run 56 candidate. |
-| Run 56 acceptance update | The fresh-owner HTTP probe passed at the former Run 55 timeout boundary. Fresh and restart manifests retain the same sandbox `wex_5718…4488` and restarted attempt `wea_5fe1…b9e3`; one exact current conmon owns one live libkrun VM. The harness then failed `fresh owner duplicated or crossed` because `_process_snapshot` includes every host process whose command mentions `/usr/libexec/nimbus/crun` and the exact check assumes the VM retains that path as `argv[0]`; the real child presents `[libcrun:krun]`. This is harness-only K5/K9 evidence failure, not product duplication. Preserve Run 56 and correct only the exact process census. K1-K14 remain unclaimed; blocker is none. |
-| Run 56 cleanup correction | The exact run-owned conmon-to-`libkrun VM` census passes its deterministic invariant. Product cleanup then exposed a distinct durable defect: applying stopped successor generation 2 to the valid revision-48 owner-reopened attachment repair failed with `provision attempt is crossed with the durable workload generation`. The fail-before is exact `0/1`. The correction fences that exact claim as inspection-required, accepts only fully matched attachment success or absence into withdrawal, never retries the superseded provision effect, and keeps generic queued teardown blocked before inspection. Workloads pass `231/231`; compute passes `501/502` with one existing ignore; affected all-target/all-feature check, strict Clippy, Rustfmt, diff check, durability `24/24`, and lifecycle mutations `8/8` pass. `nimbus-network` and provider-effect ownership are unchanged. K1-K14 remain frozen and unclaimed; blocker is none. |
-| Run 56 replacement candidate | Every owned dirty path is byte-identical in the isolated minicloud worktree. One two-job debug-stripped build completed in `4m05s`. The root-owned mode-`0500`, 801,548,128-byte candidate is `/var/lib/nimbus-nnc92-candidates/26eda1c3e6189ddcba2097229894e6f0302f336a6f378f874f9adfc2e0dbc57f/nimbus`; its SHA-256 is the directory name. It is the sole candidate for exact Run 56 cleanup and fresh Run 57. |
-| Run 56 K11 checkpoint | The first provider-finality candidate exposed the remaining live edge without manual cleanup: durable network authority was `Released` and the runtime process was absent, but an exact runtime PID receipt remained, so startup correctly refused rootfs removal. The bounded correction uses the existing provider delete/absence and creator-quiescence seams, retires only the exact PID/conmon/exit receipts, removes the authenticated launch artifact, publishes terminal `Stopped`, and accepts later startup only when the released desired tombstone, allocator `Absent` observation, stable provider handle, and backend-authenticated terminal manifest all identify the same generation. Direct Krun/Container release proofs pass `2/2`; released-checkpoint fresh-process recovery and terminal replay pass `2/2`; provider-missing fencing passes `4/4`; the classifier matrix passes `14/14`; and the full serialized teardown set passes every lifecycle case (`22 passed + 2 ignored`) while its two timing-sensitive contender cases can fail closed as `Ambiguous` under the 15-second harness bound (Container then passed unchanged in isolation; prior item evidence has both isolated contenders and the full `24 + 2 ignored` set green). The checksum-clean minicloud mirror is ready for one authenticated replacement candidate, exact Run 56 convergence, and fresh Run 57. K1-K14 remain unclaimed; blocker is none. |
-| Owner branch | `codex/nimbus-network-architecture-audit` |
-| Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
-| Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
-| Execution base | Current `origin/main` is `8877eaff43a36d9606a1feaa0ab31d0377539d9d`; NNC9.1 checkpoint `6cf0cefaa647ef5340d43ee69dc125ed80b3e1d6` is `0 behind / 171 ahead`. No merge or rebase is required. |
-| Last checkpoint commit | NNC9.2 is durable in the exact item commit that contains this ledger transition and `proof/nimbus-network-control-plane/nnc9.2-offline-sovereign-lifecycle.md`. NNC9.3 is the sole active item. |
-| Owned paths | NNC9.2 owns its proof, this ledger, routing status, three scratch-lifecycle fixtures, the concept-owned tripwire lifecycle adapter/tests, and only directly proven K5-K11 corrections. Current K9-K11 corrections are confined to workload provision settlement, provider-journal publication identity/reconciliation, exact Krun execution terminality, publication owner exit/final withdrawal, and retained detach. The ignored bytecode cache remains unowned. Existing authority boundaries remain unchanged. |
-| Latest dirty-state checkpoint | From clean `6cf0cefaa`, all tracked and untracked source, test, proof, fixture, and lifecycle paths are attributable to NNC9.2; the ignored Python bytecode cache remains unowned and unstaged. Run 41 remains revision 28 `CleanupPending`. Its failed epoch-1 detach is terminal by the durable state-machine contract, so a repeated down would make no provider call. Read-only host inspection proves no Run 41 listener, guest, PEP process, or netns remains. Its published lease `15992` is `Released`; its inactive PEP lease `15000`, deleting attachment/IPAM, and cleanup-pending segment remain durably fenced and nonreusable. Preserve that truthful negative evidence. Runs 42 and 43 are complete fail-closed evidence bundles: both passed the namespace controls and outer cleanup; Run 42 rejected authenticated `Stopping` as invalid projection evidence, while Run 43 timed out because already-absent service resolution could not install the restart target fence. Run 44 passed the controls and durably completed automatic restart epoch 1, then timed out because completed restart resolution was not retried. Its exact product cleanup required one `Waiting` reconciliation retry and then recorded terminal retirement. Read-only host inspection proves no Run 44 process, listener, namespace, interface, or active network status remains; its preserved terminal evidence manifest is `stopping`, unpublished, and shutdown-requested. Run 45 passed the controls, restarted the guest, and retained the target at `network_attached` because execution inspection probed withdrawn public ingress. Exact product cleanup required one evidence-based `Waiting` retry and then recorded terminal retirement. Read-only host inspection proves no Run 45 process, listener, namespace, interface, or active network status remains. Do not reuse or mutate Runs 42-45. The superseded Run 45 candidate is `d9e4ec6dd54e597feb4336b946e2c782866d60ecb235edb46a89927d46d17d6b`, `825785096` bytes, built and debug-stripped at `2026-08-15 04:31:25 -0500`; all six corrected inputs matched local hashes exactly. Run 40 remains terminal and isolated; Run 34's fenced `veth0@if2` remains out of scope. |
-| Run 46 cleanup update | A cleanup invocation with a different fixture identity failed closed and quarantined the attachment; the exact project then rejected cleanup because its manifest could not authenticate that changed quarantine generation. No blind retry followed. Exact runtime inspection identified only `wex_c4f9d2bae417c5d5803004df1c98d57faaf1a652c19cb9dcc2edddfd2c5742ed`; targeted `crun kill`/`delete` removed it, and its now-loopback-only exact namespace mount was unmounted. Read-only host inspection proves no Run 46 process, listener on `15000`/`15992`, outer namespace, interface, or live namespace mount remains. Its durable attachment/segment stay `CleanupPending` and its leases stay fenced. Preserve the root as negative evidence. |
-| Last completed item review | NNC9.2 used one full and one narrow GPT-5.6 Sol/xhigh/fast review. The full review accepted six findings and the narrow correction review accepted five. All eleven are corrected and proven; review cadence is exhausted. |
-| NNC6.5d4 full-review input identity | Staged tree `7440423203e010ad6d42cc13d97b22ec7e0c5613`; patch SHA-256 `7e455251c72fb15af7c8ce75800deb62d7d09750de8f7c3f5f7c3bf2e1e254ad`; thread `019feeef-9501-7772-bca7-ecfa538657d5`; `34` paths, including `26` Rust paths. The wrapper ran one item-bundle pass. |
-| NNC6.5d4 narrow-review input identity | The sole narrow review used staged tree `cddb5db89fe32db1743ca45e6c39ed926194b27c`, patch SHA-256 `085d9a6a6f9c89982982848743b6784db8c2dbbd4af291fbe79e2912d181b895`, and thread `019feeff-debb-7021-bc42-1733d2766e85`. The wrapper ran one correction-bundle pass. |
-| NNC6.5d4 narrow-review result | Zero findings. The review confirms the P2 correction and the P1 rejection at confidence `0.99`. No further NNC6.5d4 review is authorized or needed. |
-| NNC6.5d4 corrected candidate identity | Pre-ledger-closeout staged tree `cddb5db89fe32db1743ca45e6c39ed926194b27c`; patch SHA-256 `085d9a6a6f9c89982982848743b6784db8c2dbbd4af291fbe79e2912d181b895`; `34` paths, including `26` Rust paths. The item commit is the final self-authenticating closeout identity. |
-| NNC6.5e full-review input identity | Staged tree `90e07c2cfb658a08f449514002f2446d40442a99`; patch SHA-256 `807111a1de586a89309f1cf6c5213e886f4b827bd186fa0275eb6a547f3aac68`; thread `019ff04b-cf09-7592-ac2a-61a3169d5f42`; `58` paths, including `49` Rust paths. The wrapper ran one full item pass with GPT-5.6 Sol/xhigh/fast. |
-| NNC6.5e full-review result | Four findings are accepted: one P1 pre-first-CAS retirement race, one P2 arbitrary public teardown registry, one P2 omitted services-finalizer source scan, and one P3 scheduler-yield test poll. All four are corrected and proven. The executable corrections authorize exactly one narrow correction review. |
-| NNC6.5e pre-narrow candidate identity | Pre-ledger-closeout staged tree `ec92d6ebd024fb1a59727e99abada9b931972852`; patch SHA-256 `34c98134205cbafd39c4217a7027cdafe82ac5971cc06cde04451641677aa69c`; `59` paths, including `50` Rust paths. |
-| NNC6.5e narrow-review input identity | Staged tree `ac5d48c3063a7ef9b29aaf2f825ea6c6d8c16d19`; patch SHA-256 `1b80b3b831b226599b2a41198be7e2a6ebf56f1beb8de0a1df8b19b2c624e04f`; internal wrapper threads `019ff0c6-bde6-7da3-b87c-5dfd4b4f863a` and `019ff0cc-6065-76d3-afc5-c79b8f986048`; GPT-5.6 Sol/xhigh/fast; TruffleHog clean. |
-| NNC6.5e narrow-review result | Six findings are accepted and corrected: exact provider-realm identity, effect-free unmanaged-definition deletion, unadvanced-claim finalizer authentication, aliased/UFCS stop scans, exact-realm composition dataflow, and helper-body scheduler-poll scans. One P3 fixed-count-poll claim is rejected because the remaining server loop is deadline-bounded semantic observation and its exact test passes `1/1`. Review cadence is exhausted. |
-| NNC6.5e final corrected candidate identity | Final pre-ledger-closeout staged tree `550bc50cbed9e18f9d7672abef65bee0b6d07a93`; patch SHA-256 `7e21c7d9310ac4530defb1cf22780da2ef32c6af4df9352b768b6aa8b0c9830c`; `59` paths, including `50` Rust paths; `9,198` insertions and `554` deletions. K28 is green. |
-| Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. Per owner direction on 2026-07-24, all future structured autoreviews use `gpt-5.6-sol` at `xhigh` reasoning with fast mode explicitly enabled; do not use Claude Opus 4.8. |
-| Last green | NNC9.2 Run 67 passes K1-K14 twice on authenticated candidate `fd1a9030…699984`. Workloads `231`, compute `506 + 1 ignored`, sandbox `1,212 + 47 ignored`, CLI `1,011 + 4 ignored`, serialized server `757 + 35 ignored`, affected quality gates, durability `24/24`, docs `108`, and site `17/17` pass. |
-| Latest verification checkpoint | NNC9.2 used one full and one narrow GPT-5.6 Sol/xhigh/fast review. All eleven accepted findings are corrected and proven. No further NNC9.2 review is required. |
-| Next | Complete NNC9.3 from its exact `34/39` verifier baseline. Resolve only NNCV006, NNCV015, NNCV021, NNCV022, and NNCV038, then truth up and compress the architecture control-plane documents. |
+| Plan status | `active; NNC9.3 complete; NNC9.4 in progress` |
+| Current item | `NNC9.4 — record focused behavior evidence` |
+| Last checkpoint commit | The commit containing this transition completes NNC9.3; its parent `bcb0a1b06758d78155787aaf98a2cc502e02c039` completed NNC9.2. |
+| Branch / worktree | `codex/nimbus-network-architecture-audit` / `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
+| Owned paths | NNC9.4 owns focused-behavior evidence and concise ledger routing. It does not reopen landed product behavior or duplicate earlier proof. |
+| Current acceptance | NNC9.3 K1-K12 pass. Final gates: aggregate `39/39`, docs `108`, site `17/17`, affected negative mutations, syntax, JSON, Rustfmt, diff, plan `991`, and index `237`. Its one Sol/xhigh/fast review found one documentation P2; the attach-before-activation boundary is restored and no executable correction review is required. |
+| Next action | Audit the existing focused test artifacts against NNC9.4's exact count, environment, seed, skip, and output requirements; add only missing evidence. |
+| Review cadence | Run one Sol/xhigh/fast NNC9.4 item review only after its written acceptance is green. Run one narrow correction review only for an accepted executable defect. |
+| Push / PR | Not authorized. |
 | Blocker | none |
 
 Recovery protocol:
@@ -92,8 +56,7 @@ Recovery protocol:
    commit that checkpoint. Never run `git clean` to recover an owner worktree.
 2. Confirm the worktree path and branch before editing; never assume the
    original checkout is clean.
-3. Read this header, the Architecture Audit Ledger, Implementation Status
-   Ledger, Item Checkpoint Ledger, and current dirty diff.
+3. Read this header, the Implementation Status Ledger, Item Checkpoint Ledger, and current dirty diff.
 4. Resume the first `in_progress` row. If none exists, resume the first `todo`
    row whose dependencies are `done`.
 5. Re-read only that band, its named files, tests, and overlapping owner plans.
@@ -112,9 +75,14 @@ Recovery protocol:
 Nimbus gains one deep module for connectivity-resource lifecycle:
 
 ```text
-provision: admit -> reserve -> start -> attach -> publish -> observe
+provision: admit -> reserve -> prepare inert -> attach -> activation-ready
+           -> activate -> workload-ready -> publish -> observe
 teardown:  withdraw -> drain -> stop -> detach -> release -> record
 ```
+
+Preparation may create the process or VMM envelope, but no tenant instruction
+runs before the same generation has an authenticated attachment and every
+required policy-enforcement prerequisite is ready.
 
 The interface hides allocation, fencing, durable transition, provider
 selection, compensation, and reconciliation depth. Effect implementations stay
@@ -304,1196 +272,85 @@ The result must provide:
     named `paths` diagnostic. NNCV008 separately validates the Recovery Header
     checkpoint.
 
-## Current Ownership And Dependency Audit
+## Landed Architecture
 
-### Current ownership
+The durable architecture is
+[`../architecture/network/control-plane.md`](../architecture/network/control-plane.md).
+The original audit, detailed state-model design, failure tables, and review
+dispositions remain recoverable from the NNC0-NNC8 proofs and item commits.
+This plan now keeps only the acceptance-bearing seams needed for closeout.
 
-| Concern | Current module/implementation | Audit result | Target owner |
-| --- | --- | --- | --- |
-| CIDR validation | `nimbus-core::net::Cidr` | Pure, zero-I/O shared primitive. | Remain `nimbus-core`. |
-| Segment vocabulary | `nimbus-core::{NetworkId, NetworkSegment}` | Not provider-neutral: names and identifiers encode Netavark realization, and index-derived IDs can collide across node super-nets. | Stable `NetworkSegmentId` and portable allocation move to `nimbus-network`; bridge/interface/Netavark identity stays in the sandbox adapter handle. |
-| Segment allocation | sandbox OCI `network/{segment,cluster}.rs` | Trait is `pub(crate)`, accepts `SandboxId`, and callers expose the concrete single-node allocator. Cluster is not drop-in. | Portable allocator/lease contracts in `nimbus-network`; OCI realization stays sandbox-owned. |
-| Per-workload IPAM | sandbox OCI `network/ipam.rs` | Provider-adjacent effect state; direct JSON replacement lacks a recorded crash-durability contract. | Effect remains sandbox-owned; durable/fenced lifecycle must conform to network contracts. |
-| Netavark/netns/nft/gvproxy | `nimbus-sandbox` | Correct effect owner; container and krun duplicate lifecycle/compensation knowledge. | Sandbox-owned deep attachment implementation behind the network seam. |
-| Endpoint vocabulary | `nimbus-sandbox::endpoint` | Imported by tenant, services, machine, node, server, system, CLI, and facade. Missing stable endpoint ID/generation. | Move/generalize into `nimbus-network`. |
-| Exposure and egress admission | `nimbus-tenant` | Policy authority already exists. | Remain `nimbus-tenant`; translate admitted decisions above network. |
-| Service naming/readiness | `nimbus-services` | Correct logical owner; stop currently risks withdrawing cached resolution after the awaited backend stop. | Remain services-owned; withdraw/fence before stop. |
-| Desired workload/saga state | `nimbus-workloads::DesiredWorkloadStore`, held concretely by `nimbus-services` | Portable interface exists, but the only implementation is in-memory and compute has no workloads dependency. | Workloads keeps vocabulary/interface; compute consumes it; a server-owned adapter persists it through an engine-owned internal mutation path. |
-| Workload orchestration | `nimbus-compute::ComputeState` and `nimbus-node::NodeWorkloadReconciler` | Natural composition seams; compute currently has neither a connectivity manager nor a workloads edge, and sandbox backends can self-restart from `inspect()`. | Inject one shared network façade/manager; compute owns the sole saga and drives restart; node reconciliation remains integrated. |
-| Main and sibling listeners | `nimbus-server` | Socket/protocol effects are correctly local; `WireProtocolAdapter` has multiple real adapters and is a proven seam. | Preserve implementation; consume shared port leases and report provider status. |
-| RESP listener | `nimbus-kv` plus CLI | Can run as a separate process, so process-local port authority is insufficient. | Retain RESP implementation; use the cross-process node lease store or adopt a pre-bound listener. |
-| CLI port probes | CLI start adapters and development wire resolver | Production probe/drop checks have no durable reservation and can race an external binder. | Migrate or adopt through the shared authority; classify command-local/test-only ephemeral binds explicitly. |
-| Sandbox machine-port proxy | OCI `MachinePortProxy` | Production socket bind is a provider effect outside the current manifest-scanning census. | Keep bind effect sandbox-owned; consume/adopt a shared lease and report its provider state. |
-| Egress policy/enforcement | `nimbus-egress` / `nimbus-proxy` | Deliberate PDP/PEP split; sandbox owns proxy lifecycle. | Preserve; migrate only PEP listener reservation and readiness handles. |
-| Observed routes/listeners/ports | `nimbus-system` | Projection records lack stable lease/provider generation authority and may record “listening” before task liveness is proven. | Remain observed projection; consume generation-scoped status. |
-| Machine capabilities | five-field `nimbus-machine::MachineProviderCapabilities` | Only the networking-ownership axis is a boolean; it is too shallow for exposure, isolation, forwarding, durability, or sovereignty. WSL2 already rejects its unavailable start/stop backend fail closed. | Confirm and extend portable network capability dimensions without merging this VMM-provider record with segment allocation; machine retains effects. |
-| Machine port allocation | CLI machine manager | Separate locked JSON allocator plus probe-then-drop bind, leaving a TOCTOU window. | Delete after shared cross-process lease migration. |
-| Cluster transport | documentation-only future `nimbus-cluster` | No current crate/product implementation. | Separate future seam under horizontal scaling. |
+### Starting versus landed ownership
+
+| Concept | Starting owner | Landed owner |
+| --- | --- | --- |
+| Portable endpoint and segment vocabulary | core plus sandbox-local types | `nimbus-network` |
+| Host-global port allocation | several probe/scan allocators | one durable `nimbus-network` lease authority |
+| Segment allocation contract | sandbox-private trait | portable `nimbus-network` contract |
+| OCI segment and attachment realization | `nimbus-sandbox` | `nimbus-sandbox` |
+| Workload lifecycle order | several upper-crate coordinators | `nimbus-compute` over `nimbus-workloads` durable saga vocabulary |
+| Logical names/readiness | `nimbus-services` | `nimbus-services` |
+| Tenant and egress policy | tenant/egress/proxy | unchanged PDP/PEP owners |
+| Observed routes/listeners/ports | `nimbus-system` | unchanged projections, never lease authority |
+| Cluster membership/routing/mesh | documentation-only | deferred horizontal-scaling owner, outside `nimbus-network` |
 
 ### Current dependency shape
 
-Arrows mean “depends on.” This is the ownership-relevant production dependency
-slice, not the complete workspace graph. NNC0.1 generates the complete
-machine-readable normal/dev/target/feature graph with source `HEAD`; the slice
-below must stay derivable from that artifact.
+Arrows mean depends on. The generated dependency baseline records normal,
+dev/test, all-feature, and four target profiles. The binding rule is that
+`nimbus-network` has one outgoing workspace edge and all upper consumers point
+toward it.
 
 ```mermaid
 flowchart TD
-    Core["nimbus-core"]
-    Storage["nimbus-storage"] --> Core
-    Egress["nimbus-egress"] --> Core
-    Proxy["nimbus-proxy"] --> Egress
-    Sandbox["nimbus-sandbox"] --> Core
-    Sandbox --> Egress
-    Sandbox --> Proxy
-    Tenant["nimbus-tenant"] --> Sandbox
-    Tenant --> Egress
-    Workloads["nimbus-workloads"] --> Tenant
-    Services["nimbus-services"] --> Tenant
-    Services --> Sandbox
-    Services --> Workloads
-    Services --> Storage
-    System["nimbus-system"] --> Tenant
-    System --> Sandbox
-    System --> Workloads
-    Node["nimbus-node"] --> Tenant
-    Node --> Workloads
-    Machine["nimbus-machine"] --> Sandbox
-    Compute["nimbus-compute"] --> Tenant
-    Compute --> Services
-    Compute --> System
-    Compute --> Machine
-    Compute --> Sandbox
-    Compute --> Node
-    Server["nimbus-server"] --> Compute
-    Server --> Tenant
-    Server --> Services
-    Server --> System
-    Server --> Sandbox
-    Server --> Workloads
-    Server --> Storage
-    Kv["nimbus-kv"] --> Core
-    Kv --> Storage
-    Cli["nimbus-cli"] --> Server
-    Cli --> Kv
-    Cli --> Machine
-    Cli --> Node
-    Cli --> Sandbox
-    Cli --> Services
-    Cli --> System
-    Cli --> Tenant
-    Cli --> Workloads
-```
-
-The existing edges `nimbus-tenant -> nimbus-sandbox` and
-`nimbus-system -> nimbus-tenant + nimbus-sandbox` make any
-`nimbus-network -> tenant|sandbox|system` design cyclic.
-
-### Target dependency shape
-
-```mermaid
-flowchart TD
-    Core["nimbus-core"]
-    Network["nimbus-network<br/>portable control plane"] --> Core
-    Storage["nimbus-storage<br/>durable data plane"] --> Core
-    Egress["nimbus-egress"] --> Core
-    Proxy["nimbus-proxy"] --> Egress
-
+    Network["nimbus-network<br/>portable connectivity lifecycle"] --> Core["nimbus-core"]
     Tenant["nimbus-tenant<br/>policy/admission"] --> Network
-    Workloads["nimbus-workloads<br/>desired workload + saga vocabulary"] --> Network
-    Workloads --> Tenant
-    Sandbox["nimbus-sandbox<br/>attachment effects"] --> Network
-    Sandbox --> Egress
-    Sandbox --> Proxy
+    Workloads["nimbus-workloads<br/>desired state + saga vocabulary"] --> Network
+    Sandbox["nimbus-sandbox<br/>provider realization"] --> Network
     Services["nimbus-services<br/>names/readiness"] --> Network
-    Services --> Workloads
-    Services --> Storage
-    Machine["nimbus-machine<br/>provider effects"] --> Network
-    Kv["nimbus-kv<br/>RESP effect"] --> Network
-    Kv --> Storage
-    System["nimbus-system<br/>observed projection"] --> Network
-    System --> Workloads
-    Node["nimbus-node<br/>node workload reconciler"] --> Network
-    Node --> Workloads
-
-    Compute["nimbus-compute<br/>workload coordinator"] --> Network
-    Compute --> Workloads
-    Compute --> Tenant
-    Compute --> Sandbox
-    Compute --> Services
-    Compute --> Machine
-    Compute --> Node
-
+    Machine["nimbus-machine<br/>provider modes"] --> Network
+    Kv["nimbus-kv<br/>RESP listener effect"] --> Network
+    System["nimbus-system<br/>observed projections"] --> Network
+    Compute["nimbus-compute<br/>sole workload coordinator"] --> Network
     Server["nimbus-server<br/>socket/protocol effects"] --> Network
-    Server --> Compute
-    Server --> Workloads
-    Server --> Storage
-    Cli["nimbus-cli<br/>composition + commands"] --> Network
-    Cli --> Server
-    Cli --> Kv
-    Cli --> Machine
-
-    Cluster["future nimbus-cluster<br/>transport + lease source"] --> Network
+    Cli["nimbus-cli<br/>composition"] --> Network
+    Node["nimbus-node"] -. development proof .-> Network
+    Testing["nimbus-testing"] -. development proof .-> Network
+    FutureCluster["future cluster transport + raft lease source"] -. consumes .-> Network
 ```
 
-Some existing upper-crate edges remain intentionally omitted from this relevant
-slice and may remain until their owning plans remove them. NNC0.1 and NNC9.3
-prove the complete production, dev/test, target-conditioned, and all-feature
-graphs separately. The binding assertion is that the new crate has no reverse
-edge and creates no cycle.
+### State and lifecycle contract
 
-## Complexity And Reliability Findings
-
-| ID | Severity | Pocket of complexity | Consequence | Required response |
-| --- | --- | --- | --- | --- |
-| NNCF1 | critical | Sandbox `PortManager` scans manifests and returns the first free number without one atomic host reservation. | Concurrent sandbox/PEP planning can select the same port, and other owners are invisible. | Deterministic collision proof then one cross-process `PortLease` authority. |
-| NNCF2 | critical | Machine ports probe with a temporary socket, release it, then bind later; server and KV have separate direct bind paths. | TOCTOU and multiple authorities prevent a node-wide guarantee. | Shared locked store plus bind/adopt protocol; migrate every production owner before deleting old allocators. |
-| NNCF3 | critical | Segment release durably frees the allocation before bridge/provider cleanup. | A stale bridge/CIDR can coexist with a newly reused segment after cleanup failure. | Two-phase `CleanupPending` quarantine; release only after inspected detach. |
-| NNCF4 | high | Segment and IPAM state use locked direct JSON replacement without an explicit atomic replace/fsync/version/checksum contract. | Crash or torn write can erase authoritative ownership or force unsafe guesswork. | Versioned, checksummed, atomic durable state with fail-closed corruption behavior and subprocess crash proof. |
-| NNCF5 | high | Netavark setup can succeed before status persistence fails; partial forwarding loops can succeed before a later step fails. | Provider effects become ambiguous and compensation may miss them. | Stable idempotency key/handle, inspect-before-retry/delete, reverse compensation, ambiguity tests. |
-| NNCF6 | high | Container and krun duplicate network setup/cleanup choreography; krun can treat netns-path existence as readiness for firewall pinning. | Caller-local knowledge drifts and can mistake a partial attachment for a safe one. | Sandbox-owned deep attachment lifecycle implementation with phase/generation and shared contract tests. |
-| NNCF7 | high | `NetworkSegmentAllocator` is private and concrete accessors leak `SingleNodeSegmentAllocator`; it accepts `SandboxId`. | Cluster-shaped allocator is not substitutable and portable allocation inherits sandbox identity. | Public/injectable allocator contract using neutral `NetworkAttachmentId`; trait-object consumers. |
-| NNCF8 | high | `NetworkId` derives from a local index and `NetworkSegment` carries Netavark names. | IDs can collide across node super-nets and portable callers learn provider realization. | Globally stable segment ID; split logical allocation from provider handle. |
-| NNCF9 | high | Placement checks block zero and grows a new block when full without revisiting existing secondary blocks. | Capacity can be stranded and repeated growth can diverge from the allocator's comment/intent. | Fail-before existing-secondary-reuse test and atomic allocation operation. |
-| NNCF10 | high | `ClusterSegmentAllocator::release` requires an unexpired lease. | Lease expiry can prevent safe cleanup and strand fenced resources. | Separate create authority from cleanup authority; stale epochs cannot create, but durable old handles remain cleanable. |
-| NNCF11 | high | Service stop awaits backend stop before the cached endpoint is necessarily withdrawn. | Resolution can continue publishing/routing while teardown is underway. | Fence/withdraw first, then drain/stop; deterministic concurrent lookup/stop test. |
-| NNCF12 | medium | Listener/system records are address- and label-oriented and can be written before sustained task liveness. | Stale observation can look authoritative or current. | Stable IDs/generations/conditions; projection remains independently retryable and rebuildable. |
-| NNCF13 | medium | `PublishedEndpoint` has no stable identity, generation, exposure class, or provider handle. | Address changes look like identity changes; stale updates cannot be rejected mechanically. | Network-owned endpoint identity and generation. |
-| NNCF14 | medium | The networking axis inside the five-field machine capability record is summarized as `uses_provider_networking`. | Existing unavailable WSL2 behavior fails closed, but supported provider modes still cannot describe isolation/exposure/sovereignty requirements precisely. | Confirm-and-extend capability matrix with typed unsatisfied-requirement errors; keep VMM capabilities distinct from segment allocation. |
-| NNCF15 | medium | No single interface states the twelve-stage cross-owner lifecycle. | Future adapters can publish early, release early, or fork compensation rules. | Persisted lifecycle state, exact transition guard, and observer-driven contract suite. |
-| NNCF16 | critical | Segment hold/attachment identity is acquired after Netavark/netns effects, while manifests are written only after configuration/spawn. | A crash can leave a live effect with no durable owner and make its identity reusable or invisible to manifest scans. | Durably reserve attachment, exact segment association, and effect attempt before the first external effect; inspect/adopt or quarantine on restart. |
-| NNCF17 | critical | Sibling listeners start sequentially; failure of a later adapter can detach earlier tasks, and spawned task errors are not supervised as group state. | Startup may return failure while an earlier protocol listener continues accepting without coherent withdrawal/release. | Server-owned structured `ListenerGroup`/ingress runtime that prepares leases/sockets, activates as a group, supervises task death, and unwinds every partial start. |
-| NNCF18 | high | Cross-domain recovery authority is ambiguous between compute and network, while desired workload state is not uniformly durable. | Network-only restart logic cannot safely decide whether an attached workload should activate, publish, or compensate. | `nimbus-compute` is sole saga coordinator; define a durable saga intent/phase handoff and integrate `nimbus-node` reconciliation. |
-| NNCF19 | medium | `nimbus-system` `routes` denotes HTTP method/path/adapter inventory, not connectivity forwarding routes. | Reusing the name/identity can collide two unrelated projections and blur observed ownership. | Structurally distinct connectivity-route observation kind/table and one conversion locality. |
-| NNCF20 | critical | Container and krun `inspect` paths may execute backend restart policy and launch a workload. | An observation interface is a second workload coordinator and can race withdrawal or activate a stale generation without current attachment/PEP proof. | Make inspection side-effect-free; compute alone decides restart through the durable prepare→attach→activate saga; fenced generations veto restart. |
-| NNCF21 | high | Production CLI dev/start probe-drop paths and the sandbox `MachinePortProxy` bind sit outside the original listener census. | A “one authority” migration can close while real callers still race or bind without a lease. | Exhaustive source-derived bind/allocation inventory with explicit migrate/adopt/exempt disposition and static unclassified-bind rejection. |
-| NNCF22 | high | `LocalNetworkManager::open` requires the final registry, while truthful sandbox registration requires backend construction and startup reconciliation; those operations need manager-derived authority first. | Production either constructs no manager, freezes speculative facts, or performs reconciliation through an unclaimed parallel root. | Staged process claim with a paired authority handle, followed by consuming one-shot registry freeze after source reconciliation. |
-| NNCF23 | high | Container and krun constructors independently mint segment adapters, PEP engines, Netavark lifetime registries, and machine-port registries. | Two backends in one process can hold divergent in-memory lifecycle truth even when durable paths happen to match. | One sandbox-owned `OciNetworkProcess` with injected/root-authenticated backend constructors and cross-backend lifecycle tests. |
-| NNCF24 | critical | A machine-forwarded workload leases and binds its wildcard proxy inside the guest, but gvproxy realizes the external publication in the parent host without a parent-host publication lease. | A guest lease cannot serialize the parent bind; conflicts can reach provider I/O, ambiguous outcomes can lose the parent fence, and the two OS-node realms are conflated. | Parent reserves/claims before Machine API I/O, activates from exact gvproxy evidence, withdraws before guest stop, and releases only after authenticated parent-effect absence. |
-| NNCF25 | high | Machine deletion reloads serialized roots but releases the SSH lease through the caller's independently resolved roots. | A mismatched caller can delete machine artifacts while leaking the real lease in another authority. | Persist canonical manager provenance, authenticate it before mutation, and pass one manager-derived handle through launch, stop, and delete. |
-| NNCF26 | medium | Start/Compose, dev prebinding, standalone KV, and server prebound handoff independently resolve or replace authority roots. | One process can reserve listeners and sandbox resources in different stores; KV may disagree with start under the same environment. | One typed root policy plus manager-derived server/KV handles; divergent prebound authority fails before durable or socket effects. |
-| NNCF27 | critical | Desired workload state is an infallible in-memory map with two product constructions, unconditional replacement, whole-map restore, no production recovery reader, and inconsistent intent-before-effect order. | Process loss erases canonical desire, stale generations can overwrite current intent, lazy activation and teardown bypass compute, and recovery cannot distinguish retry from compensation. | Workloads-owned versioned saga record and async CAS port, compute-only transition writer, and server-owned Engine execution-unit adapter in `_nimbus._workload_sagas`; delete every production in-memory authority before activation. |
-
-## Independent Review Disposition
-
-The 2026-07-23 Fable review was treated as a set of falsifiable hypotheses and
-rechecked independently against source, dependency metadata, git rules, active
-plans, and all four explanatory HTML artifacts. Every finding is incorporated;
-the amendments below prevent inaccurate evidence from becoming architecture
-truth.
-
-| Finding | Disposition | Verified correction or decision | Owning items |
-| --- | --- | --- | --- |
-| F1 | accepted and strengthened | The ignored plan is not durable; a proof mirror under `docs/private` would also be ignored. Commit `dd5b178e4` establishes a narrow force-track precedent. `HEAD` containment, not staging, is the recovery proof. | NNC0.0, NNC0.8, NNC9.1 |
-| F2 | accepted with evidence amendment | Durable-write precedents also exist in blob, crypto, and operator. Network implements one concept-owned local store and retains only the core workspace edge. | decisions 2/21, NNC2.1 |
-| F3 | accepted | Workloads owns portable desired/saga vocabulary; compute gains the workloads edge and coordinates; a server adapter persists through an engine-owned mutation path. | decision 22, NNC6.1b-e |
-| F4 | accepted and strengthened | Both sandbox `inspect` implementations can launch through restart policy. Inspection becomes side-effect-free; compute is the only restart authority. | NNC0.6a, NNC5.6, NNC6.4a, NNC8.4 |
-| F5 | accepted with inventory correction | CLI dev/start probes and `MachinePortProxy` are production gaps. Cited runtime egress and auth/token binds are test-only and remain classified exemptions. | NNC0.1, NNC3.4, NNC3.7a-b, NNC3.9 |
-| F6 | accepted with authority guard | The goal now requires a committed plan before fetch, clean-checkpoint rebase, item commits, blocker continuation/stop, and a 150-turn cap. It does not grant push/PR authority. | recovery protocol, autonomous goal |
-| F7 | accepted with precedent amendment | Thread barriers and process helpers exist, but no reusable deterministic two-process lease or named crash-cut harness exists. New proof infrastructure cannot create a `nimbus-network -> nimbus-testing` dev edge. | NNC0.1a-b and named consumers |
-| F8 | accepted and strengthened | Current reaping is netns-filename/allocator-state based. Durable attachment intent/provider-attempt state—not a manifest alone—is target authority; unmatched effects are removed or quarantined. | NNC0.7, NNC5.2a, NNC5.2b, NNC8.3 |
-| F9 | accepted with graph-kind amendment | The earlier diagram omitted workloads, node, CLI, storage, and KV→storage. Production, dev/test, target-conditioned, and all-feature graphs are proven separately. | diagrams, NNC0.1, NNC9.3 |
-| F10 | accepted | Sovereignty needs a privileged Linux isolation/tripwire harness with positive controls, DNS capture, IPv4/IPv6 deny counters, syscall/network evidence, and a complete lifecycle. | NNC4.7, NNC9.2 |
-| F11 | accepted | Machine allocation already serializes Nimbus callers; the real unsafe window is an external binder after probe/drop and before gvproxy/provider bind. | NNC0.2, NNC3.3, NNC3.7 |
-| F12 | accepted | Advisory locking and durable replacement are supported only on a same-host local filesystem; detectable unsupported network filesystems fail closed. | decision 21, NNC2.1 |
-| F13 | accepted cleanup | The plan’s seam-promotion rule wins. All four earlier HTML artifacts are marked superseded where they predeclare provider interfaces or DNS/TLS/LB effects. | NNA7 artifact cleanup |
-| F14 | accepted | NNC2 updates the horizontal-scaling ledger/reference in the same shared-seam checkpoint; it does not fork cluster authority. | NNC2.8 |
-| F15 | accepted with nuance | Machine capabilities already have five fields and unavailable WSL2 fails closed. Only the networking axis needs confirm-and-extend; VMM capability and segment allocation stay distinct. | NNCF14, NNC4.4 |
-
-### Software-pattern review
-
-The target uses these patterns deliberately:
-
-- **Deep module:** a small transport-free interface hides identity, allocation,
-  durability, fencing, compensation, and reconciliation complexity.
-- **Ports and adapters:** network defines portable capability and lifecycle
-  vocabulary; a product effect interface is promoted only after substitution
-  earns it. Sandbox, server, KV, and machine modules retain the implementations
-  that know their providers; future cluster transport stays separate.
-- **Persisted state machine:** explicit phases and legal transitions replace
-  booleans inferred from filesystem paths or observed addresses.
-- **Fenced lease:** stable owner plus generation/epoch prevents stale actors
-  from republishing or reusing a resource.
-- **Reconciliation loop:** provider inspection resolves ambiguous outcomes;
-  retries are bounded and idempotent instead of recreating effects blindly.
-- **Compensating workflow:** partial multi-provider work is unwound in reverse
-  order or quarantined; there is no fictional cross-provider transaction.
-- **Anti-corruption boundary:** provider realization names/DTOs remain inside
-  the adapter and are represented portably by opaque handles and observations.
-- **Command/observation separation:** desired commands and durable authority do
-  not depend on eventual `nimbus-system` projections.
-- **Capability satisfaction:** deterministic matching explains exactly which
-  admitted requirement cannot be met; it never silently weakens a plan.
-
-Patterns explicitly rejected:
-
-- a god `NetworkProvider`;
-- speculative interfaces with one product adapter and no real substitution;
-- using an IP, port, filesystem path, bridge name, or provider DTO as identity;
-- distributed transactions across effects;
-- best-effort cleanup followed by immediate reuse;
-- polling sleeps as concurrency or readiness proof;
-- using system projections as locks, leases, or desired state;
-- moving all code containing “network” into the new crate.
-
-### Deletion test
-
-The extraction is deep enough only if it deletes:
-
-- the production sandbox manifest-scanning port allocator;
-- the independent machine port allocator/probe authority;
-- concrete `SingleNodeSegmentAllocator` accessors at placement consumers;
-- `SandboxId` from portable allocation;
-- provider bridge/interface naming from portable segment intent;
-- duplicated endpoint type definitions or compatibility re-exports;
-- caller-local publication/cleanup ordering;
-- address-as-identity assumptions in status projection;
-- any second production port lease or segment allocation authority.
-
-If the implementation adds a registry and traits without deleting this caller
-knowledge, the seam is shallow and the band is not complete.
-
-## Target Resource And State Model
-
-Exact Rust spelling lands in NNC1 only after NNC0 tests constrain behavior.
-The semantics are binding:
-
-- `NetworkPlanId`: stable identity of compiled connectivity intent;
-- `NetworkResourceGeneration`: monotonic desired generation within a plan;
-- `NetworkAttachmentId`: neutral workload-to-network attachment identity;
-- `NetworkSegmentId`: globally stable allocation identity, not a local index;
-- `PublishedEndpointId` (final spelling may vary): stable published network
-  endpoint identity; do not reuse the horizontal-scaling/Iroh `EndpointId`
-  vocabulary;
-- `ListenerId`: stable listener identity independent of address;
-- `IngressRouteId`: stable route identity;
-- `PortLeaseId`: stable reservation identity;
-- `NetworkProviderId`: stable provider registration identity;
-- `NetworkProviderHandle`: opaque, redacted, provider- and generation-scoped;
-- `EndpointProtocol`: generalized current published endpoint protocol;
-- `EndpointIntent`: admitted requested endpoint shape;
-- `PublishedEndpoint`: actual reachable location plus stable ID/generation;
-- `NetworkPlan`: provider-neutral desired resources, capability requirements,
-  dependency handles, and generation;
-- `NetworkCondition` / `NetworkStatus`: observed provider evidence, never
-  allocation authority.
-
-`TenantId` and `WorkloadId` remain in `nimbus-core`. `Cidr` remains there while
-it is genuinely shared and zero-I/O. `NetworkAttachmentId` must distinguish
-multiple named attachments and workload reincarnations; it is not merely a
-renamed `WorkloadId`. Address and provider identity remain observations.
-
-Every desired generation carries a canonical plan digest. The same generation
-and digest is idempotent; the same generation with different desired content
-fails closed. This prevents equal-generation divergence and ABA-like stale
-callbacks.
-
-During NNC3.4, container and krun generation/epoch values remain fixed at
-`1`, but every public start mints a fresh ULID-backed sandbox ID and that
-tenant-qualified ID is the workload-incarnation fence. Reusing the same
-internal sandbox ID means the same incarnation, whose terminal resurrection is
-rejected; it is not an authority to create a second lifetime. NNC6 replaces
-this transitional source with durable saga generation/CAS. An IP address,
-port, PID, or provider handle never substitutes for incarnation identity.
-
-### Portable segment versus provider realization
+Every resource keeps desired identity/generation, durable lease/provider
+handle, and fresh observed status distinct. Stable IDs and generation/epoch
+fencing reject stale work. Addresses, ports, PIDs, and provider handles are
+locations or evidence, never workload identity. Ambiguous effects require exact
+inspection; cleanup failure prevents reuse; capability selection fails closed.
 
 ```text
-AllocatedSegment
-  { segment_id, cidr, tenant attribution, node lease epoch, generation }
-       |
-       v
-sandbox attachment adapter
-  { opaque provider handle, bridge/interface/network names, netns, status }
+provision: admit -> reserve -> prepare inert -> attach -> activation-ready
+           -> activate -> workload-ready -> publish -> observe
+teardown:  withdraw -> drain -> stop -> detach -> release -> record
 ```
 
-The portable interface never exposes Netavark names. Provider realization is
-persisted only as the opaque handle and provider-owned inspectable state needed
-for idempotent reconciliation.
-
-### Desired, durable, and observed state
-
-```text
-admitted caller intent
-  -> NetworkPlan { stable IDs, generation, requirements }
-    -> durable transition/lease records
-      { phase, epochs, provider IDs/handles, cleanup fence }
-        -> provider effects
-          -> generation-scoped observations
-            -> nimbus-system and operator projections
-```
-
-The initial durable node store is implemented directly inside
-`nimbus-network`; `nimbus-core` remains its only workspace dependency. It must
-provide:
-
-- one cross-process lock/transaction domain;
-- atomic temp write, file sync, rename/replace, and parent-directory sync;
-- versioned records and checksums;
-- explicit incompatible-version and corrupt-record errors;
-- no reconstruction by guessing from live addresses;
-- deterministic restart/reconciliation ordering;
-- bounded retention/compaction that never discards cleanup-pending ownership;
-- permissions that do not expose provider secrets or tenant-sensitive handles.
-
-The implementations in `nimbus-blob`, `nimbus-crypto`, `nimbus-operator`, and
-`nimbus-storage` are design and test precedents for durable replacement,
-checksums, lock ordering, and parent-directory sync. They are not imported
-workspace utilities. The network module owns one schema, one lock domain, and
-one durable-write implementation for all of its resources; no second network
-state authority is permitted.
-
-The state root is supported only on a same-host local filesystem whose advisory
-locks, atomic same-filesystem rename/replace, file sync, and parent-directory
-sync semantics satisfy the recorded startup capability probe. NFS, SMB, and
-other network-mounted state roots are unsupported. When the filesystem type or
-required semantics are detectable and unsupported, startup fails closed before
-reading or allocating resources; an operator override cannot silently weaken
-the contract.
-
-Modularity exception: `nimbus-network/src/state_store.rs` remains in the
-repository's 1,500–1,999-line explicit-justification band at 1,960 lines. It is a deep,
-concept-owned module rather than a composition root: the single
-lock/envelope/durable-replacement/filesystem contract stays beside its private
-crash-cut tests. Provider effects, allocation policy, orchestration, and
-unrelated helpers may not extend it. No further inline growth is permitted:
-the next concept-local test change must move the intact test module to a child
-before this owner reaches 2,000 lines.
-
-NNC3.4 reduced the sandbox allocator's `oci/network/segment.rs` production
-owner to 1,268 lines. Its complete private matrix moved intact to the
-1,194-line `segment/tests.rs` child, while attempt-scoped attachment
-reservation, adoption, exact compensation, and exact finalization retry form
-the 891-line
-`segment/reservation.rs` concept owner. The parent still owns the one durable
-segment state machine and invariant validation; the children do not create a
-second store, lock, or allocation authority.
-
-NNC3.4 keeps `nimbus-network/src/port_lease.rs` as one concept-owned lifecycle
-authority: claim/reserve/adopt/fail/activate/withdraw/release transitions,
-store transaction integration, and atomic caller-supplied tenant publication
-limits. The production parent is 1,766 lines, deliberately in the
-1,500–1,999 explicit-justification band: quota must share the same store
-transaction as reservation. Named transition vocabulary and operation-local
-diagnostics live in the 162-line concept-owned
-`port_lease/operation.rs` child. The complete confirmed-stop receipt state
-machine moved intact to the 322-line `port_lease/rebind.rs` child when the
-parent crossed 2,000 lines; it still invokes the parent's one store
-transaction and does not own a second authority. The private
-corruption/transition matrix remains in the 1,977-line
-`port_lease/tests.rs` owner; exact durable bind-claim requirements and atomic
-tenant-publication quota behavior moved intact to 40- and 151-line
-concept-owned children. Exact adopted-attempt activation and atomic Active
-batch replay live in the 137-line `port_lease/tests/adopted_replay.rs` child.
-NNC3.8 extracted portable
-process/provider lifetime fencing to the 1,227-line `lifetime.rs` child and
-reservation-publication lifetime fencing to the 110-line
-`reservation_lifetime.rs` child; their private matrices remain in 886- and
-171-line concept-owned test children. Portable request/overlap and concrete
-bind-evidence vocabulary remain in `request.rs` and `binding.rs`. No child owns
-a second store or transition authority, and no socket/provider effect, policy
-decision, or unrelated listener logic may enter the parent. Further growth
-must extract an intact concept-owned lifecycle sub-state before crossing 2,000
-lines, never mechanically split the authority across generic helpers.
-
-NNC3.8 keeps the production
-`nimbus-sandbox/src/backends/oci/port_manager.rs` composition root at 1,936
-lines after adding exact launch/restart-batch lifetime reconciliation. It
-remains in the 1,500–1,999 explicit-justification band because this one adapter
-translates sandbox publication/PEP intent into exact atomic lease batches and
-authenticates the returned authority; it owns no store or provider effect. The
-381-line
-`oci/port_manager/batch_state.rs` child owns provider-batch classification and
-restart-retained release without creating another store or effect authority.
-The 237-line `oci/port_manager/netavark_lifetime.rs` child owns only the
-Netavark lifetime/recovery state machine and delegates every durable transition
-to `nimbus-network`. Its intact private behavioral matrix is 1,920 lines and
-remains in the concept-owned
-`oci/port_manager/tests.rs` child. The test child is deliberately in the
-1,500–1,999 explicit-justification band: its exact initial/restart,
-Netavark/MachinePortProxy, quota, cross-tenant, and mixed terminal-batch cases
-all inspect the same private adapter state machine. It may receive no
-production logic or generic fixtures; before 2,000 lines, the next coherent
-provider-specific group must move intact to a concept-owned child. The
-MachinePortProxy batch group already moved intact to the 342-line
-`oci/port_manager/tests/machine_cleanup.rs` child after adding exact
-terminal-provider and uniform-coordinator proofs; the 138-line
-`oci/port_manager/tests/batch_classification.rs` child owns one-snapshot
-reservation-coordinator, exact terminal, and no-effect batch classification;
-the 155-line `tests/netavark_lifetime_cleanup.rs` child owns the live/dead owner
-and ambiguous-unbind proof. No further inline production growth is permitted:
-the next coherent provider-specific group moves intact before the parent
-crosses 2,000 lines. Provider effects, quota policy choice, and workload
-orchestration remain in their existing owners.
-
-NNC3.4 keeps `nimbus-sandbox/src/backends/oci/network/ipam.rs` at 1,954 lines
-as a deliberate deep-module exception. Its first 1,249 lines own one
-tenant-scoped IPAM allocation plus Netavark provider-operation state machine,
-including the single store transaction boundary, exact
-generation/attempt-capability checks, and release/replacement exclusion while
-an effect is ambiguous. Its remaining private tests exercise that same state
-machine and introduce no second store, provider runner, or allocation
-authority. Provider command execution remains in the 443-line
-`network/netavark.rs`; the 369-line `network/netavark/tests.rs` child owns the
-cross-thread effect-boundary and projection-only retry proofs. Unrelated
-allocation policy or provider effects may not extend `ipam.rs`; before 2,000
-lines, its intact private test module must move to a concept-owned
-`ipam/tests.rs` child.
-
-NNC3.4 keeps
-`nimbus-sandbox/src/backends/container/runtime.rs` as a 1,460-line production
-composition root. Required manifest schema, exact terminal-network-finality
-predicate, and authenticated existing-workload publication remain in the 374-line
-`runtime/manifest.rs` concept child; its
-370-line `manifest/publication.rs` child owns the single fixed-stage,
-per-sandbox OS-lock, file-sync/rename/parent-sync, exact legacy-stage
-reconciliation, trusted ancestor creation/sync, and bounded ambiguity
-protocol. The 95-line
-`runtime/provider_context.rs` child authenticates canonical state-root,
-tenant-qualified layout, and launch-time provider context before existing
-effects; it owns neither a store nor an effect. The 1,963-line
-`runtime/runner.rs` is a deliberate deep-module exception: it
-retains one execution-handoff state machine, its allowlisted immutable
-execution-identity projection, and bounded
-ownership/publication/provider-cleanup convergence with primary-error
-preservation.
-Separating those mutually authenticating phases would create a second
-lifecycle interpretation surface; no provider implementation, unrelated
-orchestration, or generic fixture may enter it. No further inline growth is
-permitted: before any additional runner change, one complete identity or
-cleanup phase and its proofs must move intact to a concept-owned child. Its
-96-line test-only `runtime/runner/test_probe.rs` child observes the real
-lifecycle-lock contention branch without adding production coordination.
-The shared 90-line `runtime/effect_fence.rs` child bounds pre-provider durable
-phase convergence at four attempts and diagnoses the exact persisted phase.
-The 220-line `runtime/direct_execution.rs` and runner both consume that helper;
-neither owns a second phase store or provider effect.
-
-The 1,010-line `backends/conmon/creator.rs` deep module owns the shared,
-provider-free creator-process state machine: bounded process-group
-cancellation, exact conmon PID-receipt validation, runtime-observed reap, and
-fail-closed escaped-process ambiguity. Transient cancellation-acknowledgement
-loss retains the dead receipt until creator containment is confirmed so a
-bounded retry preserves recoverability. The 151-line `runtime/creator.rs` is
-the container manifest adapter. A definitely unspawned attempt whose `Pending`
-publication fails must durably publish `Quiesced`, or confirm that exact
-post-rename result by readback, before compensation proceeds; its three
-ambiguity proofs live in the 167-line
-`runtime/tests/creator_persistence.rs` concept child. Container and krun refuse
-provider/network cleanup for a truly pending spawned attempt until the shared
-owner proves `Quiesced` or `RuntimeObserved`; fresh-process recovery of that
-attempt identity remains an explicit NNC3.8 consumer, and neither backend
-duplicates process authority.
-
-The 1,937-line `runtime/launch_cleanup.rs` test matrix remains a deliberate
-1,500–1,999 exception: its owner-death, cancellation, Netavark ambiguity,
-direct terminal-persistence, post-wait/explicit-stop serialization, staging
-fault, and ordered-compensation cases inspect one private lifecycle state
-machine. It may receive no production logic or generic fixtures. The intact
-runner finalization/effect-fence/reload-serialization group lives in the 1,343-line
-`runtime/tests/runner_reliability.rs` concept child. Terminal callback,
-shutdown-monotonicity, Failed cleanup, and stopped-outcome preservation proofs
-live in the 356-line `runtime/tests/status_callbacks.rs` child. Provider cleanup,
-including the creator-pending release fence, restart-retained machine receipt
-convergence, exact persisted-provider drift, substituted-context fail-before
-behavior, fresh/restart partial-start cleanup, and bounded blocking forwarder
-observation lives in the 1,429-line
-`runtime/tests/provider_cleanup.rs` child plus its 271-line
-`provider_cleanup/startup_fencing.rs` and 250-line
-`provider_cleanup/forwarder_observer.rs` concept children. The 577-line
-`runtime/tests/manifest_durability.rs` child owns the one fixed stage path,
-explicit rejection of retired unique-stage compatibility grammar,
-startup/next-write crash convergence, complete first-publication ancestor
-sync, read-side-effect, lock-contention, and pre-materialization/reload
-readiness proofs. Provider-backed cleanup remains in
-the 362-line `runtime/execution_cleanup.rs` owner. No child introduces another
-manifest path, lifecycle decision authority, or persistence loop.
-
-NNC3.4 keeps the already-separated krun behavior matrix at
-`nimbus-sandbox/src/backends/krun/vm/tests.rs` at 1,974 lines. The restart,
-PlanOnly, and startup-reconciliation authority proofs keep that coherent
-matrix below the hard threshold. This is an explicit test-band exception because
-the remaining cases inspect one private VM lifecycle state machine; it may
-receive no production logic or generic fixture. Its next line of growth must
-move one intact lifecycle group to a concept-owned child before editing.
-The first-publication durability proofs live in the 143-line
-`tests/manifest_durability.rs` child. The Ready-only
-desired/durable/observed endpoint projection proof lives in the
-91-line `tests/endpoint_projection.rs` child. The manifest wire-contract proofs live in the 70-line
-`tests/manifest_schema.rs` child. Provider-failure recovery and its
-effect-boundary crash cuts live in the 422-line
-`tests/provider_failure_recovery.rs` child. The launch-compensation proofs moved intact
-to the 1,397-line concept-owned
-`tests/launch_compensation.rs` child when the parent crossed the 2,000-line
-hard threshold. Its restart absence-before-network/provider-effect cases live
-in the 222-line `tests/launch_compensation/restart_fencing.rs` child so the
-parent gains only one concept-owned declaration. The two natural-exit
-final-convergence proofs moved intact to
-the 201-line `tests/natural_exit.rs` child when Pass-30 corrections crossed the
-threshold again. Explicit-stop convergence and lifecycle-lock serialization
-live in 519- and 353-line concept-owned children. Production planning,
-lifecycle, state, and start logic remain in their respective ownership files,
-and shared fixtures remain in `tests/support.rs`. The restart teardown proof
-remains in the coherent VM lifecycle behavior matrix; no production
-switchboard or reusable helper may be added to the test parent. The 217-line
-`tests/startup_fencing.rs` child proves retained startup failure still fences
-relaunch while exact stop and non-restarting terminal cleanup remain available;
-restart-eligible inspection is byte-for-byte read-only.
-`krun/vm/lifecycle.rs` is 1,761 lines, a deliberate 1,500–1,999 exception. It
-is the one krun provider-lifecycle state machine: runtime-stop observation,
-Netavark detach, exact restart-claim compensation, namespace removal,
-attachment finalization, acknowledged terminal manifest publication, and
-separately retryable terminal IPAM retirement must preserve one
-ordered error accumulator and one `detach_confirmed` fence. Splitting twenty
-lines mechanically would obscure that ordering. Its provider-failure
-sub-state durably checkpoints exact runtime absence, network release, artifact
-release, and terminal publication so `stop_sync` can resume without a PID;
-keeping those transitions beside the ordinary teardown predicates prevents a
-second effect authority. New planning, provider
-implementation, reusable fixtures, or unrelated status logic may not enter
-it; further lifecycle growth must extract one complete phase with its
-invariant-preserving inputs and tests. Pass 57 moved first-manifest
-serialization, no-replace publication, ambiguity readback, and full trusted
-ancestor durability into the 130-line `vm/manifest_publication.rs` concept
-owner. Container and krun publication share only the 188-line
-`oci/durable_directory.rs` validation/create/fsync algorithm; neither
-duplicates provider, manifest, or lifecycle authority. The PEP
-migration did not take a similar production exception: `oci/egress.rs` is a
-1,464-line production module after moving its private behavior matrix to the
-1,938-line concept-owned `oci/egress/tests.rs`, its
-intact registration-failure lifecycle group to the 248-line
-`oci/egress/tests/registration_failure.rs` child, and its retryable
-stop/restart state machine to the 432-line `oci/egress/cleanup.rs` concept
-owner. The 786-line `oci/egress/tests/post_activation_cleanup.rs` child owns
-the exact post-activation acknowledgement-loss, anchor-failure, restart, and
-fresh-registry fencing proofs. The test parent is explicitly in the
-1,500–1,999 band because the restart/fresh-launch capability, claim,
-trust-anchor exclusivity, and stopping-tombstone proofs inspect one private
-registry lifecycle. Registration commit/compensation proofs moved as one
-coherent group before the parent crossed 2,000 lines; future growth must follow
-the same concept-owned rule. The machine-port listener effect is now a focused
-1,038-line `oci/network/proxy.rs` production module whose bounded connection set
-owns admission,
-completed-worker reaping, checked polling setup, sticky provider-stop failure,
-unwind-safe tracked-worker drain, provider-error classification,
-connection-local availability, and lossless retryable stream forwarding. Its
-intact 1,456-line private provider matrix moved to the concept-owned
-`oci/network/proxy/tests.rs` child when the combined file crossed the hard
-threshold. No provider, allocation, policy, or orchestration authority moved or
-was duplicated. The container runtime composition root is 1,460 lines after
-its complete machine-listener registration, activation, publication,
-withdrawal, and stop state machine moved to the 1,067-line
-`runtime/machine_ports.rs` concept owner. The attempt-scoped network launch
-saga, pre-effect/artifact cleanup, and provider-backed ordered teardown are
-separate 151-, 162-, and 362-line concept children. Runner execution ownership
-lives in the 1,963-line `runtime/runner.rs` concept owner, where a bounded
-advisory OS lock, fingerprinted durable Execute/Cancel decision, owner-loss
-replay, bounded phase publication, and PlanOnly status/inspect fencing form one
-handoff state machine. Cleanup and exclusive-ownership proofs live across the
-explicitly justified 1,937-line `runtime/launch_cleanup.rs` child and the
-1,343-line concept-owned runner reliability child described above. The
-direct-execution, shared effect-fence, creator-handoff, and test-only lock-probe
-children keep new coordination and proof logic out of the composition root.
-
-`nimbus-proxy/src/engine.rs` is a 1,505-line deliberate lifecycle-owner
-exception. Its process-local preparation, running, stopping, quarantine, and
-retirement states share one exact per-workload registry authority; commit
-failure must remain beside that state machine because explicit and implicit
-retention consume the same unforgeable preparation slot. Private behavior
-proofs already live in the 1,427-line `engine/tests.rs` child. No forwarding,
-policy, socket implementation, or sandbox cleanup enters this owner; before
-further growth, one complete fairness or wait-budget concept must move intact
-to a named child without duplicating registry authority.
-
-The test-only container lifecycle matrix is 1,945 lines and remains
-deliberately in the 1,500–1,999 explicit-justification band: its private
-restart/final teardown ordering, identity-substitution rejection,
-ambiguous-unexpose retry, activation-acknowledgement-loss, and tombstone
-concurrency proofs form one coherent behavior suite. It may not receive
-production logic or generic fixtures. Its provider-cleanup group is already a
-concept-owned child; explicit-absence projection behavior lives in the 71-line
-`runtime/tests/absent_runtime_projection.rs` child, leaving only its module
-declaration in the parent. Future growth must move another intact lifecycle
-group before the parent reaches 2,000 lines.
-
-The test-only container planning matrix is a 1,620-line concept-owned child.
-Its claim-first PlanOnly/Execute, allocator substitution, atomic port
-reservation, compensation, and manifest-shape proofs all exercise the private
-planning seam and introduce no production authority or generic fixture. It may
-receive no production logic; the next coherent proof group must move intact to
-a named child before this matrix reaches 2,000 lines.
-
-`nimbus-cli/src/machine/client.rs` is 1,528 lines and remains a deliberate
-protocol-adapter exception for this item. Its production half owns one Unix
-socket request/response codec and typed machine API client; its private tests
-exercise that same wire contract. NNC3.4 removed hand-authored private
-container manifests from those tests and now seeds through the public machine
-API, but added no port or lifecycle authority. The next test growth must move
-the intact test module to a concept-owned child so the adapter does not become
-a switchboard.
-
-The NNC3.4 proof artifact is also an explicit documentation-band exception:
-`docs/private/plans/proof/nimbus-network-control-plane/nnc3.4-sandbox-pep-machine-port-migration.md`
-is the item-scoped, compaction-safe chronology for fail-before/after evidence,
-exact candidate hashes, structured-review dispositions, verification counts,
-and recovery checkpoints. Splitting that chronology before the item commit
-would create competing status authority and weaken exact recovery. It may
-receive only NNC3.4 evidence and closeout corrections, must remain below 2,000
-lines, and is frozen when NNC3.4 commits. Later items use their own proof
-artifacts.
-
-This canonical owner plan is a deliberate 2,000-line documentation exception.
-One recovery header, one binding-decision set, and the architecture, status,
-and checkpoint ledgers must remain atomic so compaction recovery cannot select
-competing authority. Item chronology and detailed test output live in the
-linked proof children; new items may add only a concise owner contract and
-ledger checkpoint here. A future deep decision must replace or link from an
-existing summary instead of creating a second inline chronology. NNC9 archives
-the completed owner as one record.
-
-### Durable workload/network saga handoff
-
-The cross-domain saga is not stored in the network node store. Its portable
-record belongs to `nimbus-workloads`. `nimbus-compute` is the only writer of
-saga transitions. Service lazy activation, node reconciliation, and sandbox
-inspection report inputs or execute issued commands. They do not decide or
-persist an independent desired phase.
-
-NNC6.1b freezes the implementation contract in
-[`proof/nimbus-network-control-plane/nnc6.1b-workload-saga-vocabulary-store-durable-home.md`](proof/nimbus-network-control-plane/nnc6.1b-workload-saga-vocabulary-store-durable-home.md).
-The canonical ownership is:
-
-| Concern | Owner |
-| --- | --- |
-| Portable record, phase graph, transition validation, CAS request, and CAS outcome | `nimbus-workloads` |
-| Cross-domain transition decisions and lifecycle order | `nimbus-compute` |
-| Durable adapter, strict codec, private schema bootstrap, and Engine calls | `nimbus-server` |
-| OCC, atomic document/index/journal commit, and durable ambiguity handling | `nimbus-engine` |
-| Network plan, leases, attachment state, and network provider evidence | `nimbus-network` |
-| Rebuildable workload status | `nimbus-system` |
-
-The logical key is `WorkloadSagaKey { TenantId, WorkloadId }`.
-`WorkloadSagaId` is a stable `wsg_` identity derived from the length-delimited
-key under `nimbus.workloads.saga.id.v1`. An admitted `TenantWorkloadUid` and a
-generation-scoped `WorkloadExecutionId` remain incarnation and execution
-evidence. NNC6.1c1 replaces the current node-local `TenantWorkloadId` authority
-with a projection of `WorkloadExecutionId`. None of these types is the logical
-saga key.
-
-`WorkloadGeneration` and `WorkloadSagaRevision` are distinct serializable
-`u64` types with checked advancement. `WorkloadDesiredDigest` binds the
-canonical desired workload encoding. Equal generations are idempotent only
-when the desired digest and complete network tuple match. Their durable Engine
-form is canonical unsigned decimal text, not an IEEE-754 JSON number.
-
-Every record carries this complete network tuple:
-
-```text
-NetworkPlanId
-NetworkResourceGeneration
-NetworkPlanDigest
-```
-
-The tuple is never partial. A workload with no exposed resource carries an
-empty valid `NetworkPlan`. The record also carries these intent values:
-
-```text
-WorkloadActivationIntent = PrepareOnly | ActivateWhenAttached
-WorkloadPublicationIntent = Withheld | PublishWhenReady
-```
-
-`WorkloadSagaTransitionId` hashes a domain-separated canonical encoding of the
-complete semantic transition payload. That payload includes both revisions,
-both phases, active and optional successor intents, exact phase detail, and
-redacted failure evidence. It omits only the transition ID slot it computes.
-Any changed next-record content therefore produces a different ID.
-
-The provision graph is:
-
-```text
-IntentCommitted
-  -> NetworkReserved
-  -> WorkloadPrepared
-  -> NetworkAttached
-  -> WorkloadActivated
-  -> Ready
-  -> Published -> Observed  (PublishWhenReady)
-  -> Observed               (Withheld)
-```
-
-The teardown graph is:
-
-```text
-WithdrawalCommitted
-  -> Withdrawn
-  -> Drained
-  -> WorkloadStopped
-  -> NetworkDetached
-  -> NetworkReleased
-  -> Recorded
-```
-
-A desired stop can move any provision phase to `WithdrawalCommitted`. An
-effect-bearing phase can enter `CleanupPending` with its last safe phase and
-exact inspection requirement. Cleanup uncertainty retains every identity and
-lease fence. NNC8.3 remains the final cleanup and reuse owner.
-
-A higher desired generation received before `Recorded` becomes one complete
-`successorIntent`; compute withdraws and records the active generation before
-promotion. A still-higher CAS may replace the pending successor. At `Recorded`,
-one CAS promotes a Running successor to `IntentCommitted`, or records a Stopped
-successor while remaining `Recorded`. Direct higher-generation terminal intent
-uses the same rule. Equal generations require exact content; lower generations
-are stale. The store never deletes the logical saga to permit restart.
-
-Every record requires admitted workload evidence and a closed tagged
-`phaseDetail`. The allowed tags are `intent`, `provision`, `teardown`,
-`cleanup_pending`, and `recorded`. Effect references contain only stable
-subjects: `N` is the complete network tuple; `E` is `TenantWorkloadUid`,
-`NodeIdentity`, `WorkloadExecutionId`, generation, and desired digest; `P` is a
-sorted `PublishedEndpointId` set plus the network tuple. Compute persists each
-reference before its effect. References never copy provider handles or state.
-
-The provision evidence matrix is exact and cumulative:
-
-| Phase | Required references | Newly required owner observation |
-| --- | --- | --- |
-| `IntentCommitted` | none | none |
-| `NetworkReserved` | `N`, `E` | `NetworkReserved(N)` |
-| `WorkloadPrepared` | `N`, `E` | `ExecutionPrepared(E)` |
-| `NetworkAttached` | `N`, `E` | `NetworkAttached(N)` |
-| `WorkloadActivated` | `N`, `E` | `ExecutionActivated(E)` |
-| `Ready` with `Withheld` | `N`, `E` | `Ready(N,E)`; `P` is forbidden |
-| `Ready` with `PublishWhenReady` | `N`, `E`, `P` | `Ready(N,E)`; publication is not yet confirmed |
-| `Published` | `N`, `E`, `P` | `PublicationPresent(P)` |
-| `Observed` | Same set as its publication intent | Same complete owner-observation set as `Ready` or `Published` |
-
-`Published` is legal only with `PublishWhenReady`. Withheld intent moves from
-`Ready` directly to `Observed`. `PrepareOnly` may remain at
-`NetworkAttached`; it cannot activate in that generation.
-
-For teardown, `T` is the exact reference set from the withdrawal origin. Each
-phase retains `T`. `Withdrawn` requires `PublicationAbsent(P)` exactly when `P`
-exists. `Drained` adds `ExecutionDrained(E)`, and `WorkloadStopped` adds
-`ExecutionStopped(E)`, exactly when `E` exists. `NetworkDetached` adds
-`NetworkDetached(N)`, and `NetworkReleased` adds `NetworkReleased(N)`, exactly
-when `N` exists. A missing reference makes the step a proven no-op and forbids
-its observation. `Recorded` retains no reference and carries completed
-generation, desired digest, and a digest of the complete terminal evidence.
-
-`cleanup_pending` requires the last safe phase and a non-empty retained
-reference set. Its ordered inspection set has exactly one matching network,
-execution, or publication requirement per retained reference, with no missing,
-duplicate, or extra subject. Fresh recovery therefore inspects every possibly
-affected subject. Provider handles and provider state remain in their owning
-stores.
-
-`WorkloadSagaStore` is an object-safe `Send + Sync` port with boxed futures.
-It exposes only point load, compare-and-swap, and bounded deterministic
-recovery pages. It does not expose mutable store access, whole-map restore,
-unconditional upsert, delete, raw Engine values, or provider effects.
-
-CAS expects `Missing` or `Revision(WorkloadSagaRevision)`. It returns `Applied`
-or `Unchanged`. An exact transition replay returns `Unchanged` without a new
-durable commit. Errors distinguish `Conflict`, `Ambiguous`, `Corrupt`,
-`Unavailable`, and `InvalidTransition`.
-
-The server adapter persists through
-`Engine::begin_mutation_execution_unit`. This is one of the three canonical
-Engine-owned mutation paths, alongside queued journal and direct mutation. The
-other two remain canonical for their callers, but their public APIs cannot bind
-the saga point read, transition check, and conditional write in one atomic
-unit. The server adapter calls Engine, never raw storage, so it does not create
-a fourth mutation path.
-
-The physical record lives at `_nimbus._workload_sagas`. This is a private
-server-owned control table in the reserved Engine tenant. It is not a
-`SystemTable`, and `nimbus-system` cannot define its schema, codec, store, or
-transitions.
-
-The format-version-1 schema is exact:
-
-| Field | JSON type | Required |
-| --- | --- | --- |
-| `formatVersion` | number | yes |
-| `sagaId` | string | yes |
-| `tenantId` | string | yes |
-| `workloadId` | string | yes |
-| `workloadKind` | string | yes |
-| `desiredState` | string | yes |
-| `desiredGeneration` | string | yes |
-| `desiredDigest` | string | yes |
-| `sagaRevision` | string | yes |
-| `phase` | string | yes |
-| `recoveryEligible` | boolean | yes |
-| `phaseDetail` | object | yes |
-| `networkPlanId` | string | yes |
-| `networkGeneration` | string | yes |
-| `networkPlanDigest` | string | yes |
-| `activationIntent` | string | yes |
-| `publicationIntent` | string | yes |
-| `admission` | object | yes |
-| `successorIntent` | object | no |
-| `lastTransition` | object | yes |
-| `failure` | object | no |
-
-All `u64` values, including nested successor, phase-detail, and transition
-counters, use canonical unsigned decimal strings. The codec accepts `0` or a
-non-zero digit followed by digits, rejects leading zeroes and overflow, and
-round-trips through `u64::MAX`. The strict codec enforces the closed nested
-intent, admission, phase-detail, acquired-evidence, inspection, transition,
-and failure shapes and cross-checks them against the top-level record. Failure
-evidence contains only a stable code and redacted-evidence digest. Free-form
-provider text stays in logs and observed projections.
-
-The index set is
-`by_tenantId_and_workloadId(tenantId, workloadId)`,
-`by_recovery(recoveryEligible, sagaId)`,
-`by_tenantId_and_phase(tenantId, phase)`, and
-`by_desiredState_and_phase(desiredState, phase)`. The Engine document ID equals
-the canonical `WorkloadSagaId`. The strict server codec rejects unknown
-versions and fields, non-canonical or out-of-range counters, invalid digests,
-partial intents or network tuples, incomplete phase evidence, crossed
-identities, and inconsistent transitions.
-
-NNC6.1d's source-derived substitution audit added the required
-`recoveryEligible` projection. Its full review then proved that the initially
-chosen phase-first cursor could return one saga twice when that saga advanced
-between pages. The corrected `by_recovery(recoveryEligible, sagaId)` index uses
-only immutable saga identity for storage pagination; workloads-owned phase
-rank remains reconciliation priority, not cursor state. The codec cross-checks
-the boolean against `WorkloadSagaRecord::requires_recovery`, so it is a derived
-query projection rather than a second lifecycle authority. Each page performs
-one bounded index window plus one lookahead row. A saga that becomes eligible
-behind the cursor waits for the next full reconciliation sweep and cannot
-repeat in the current sweep.
-
-Reserved `_nimbus` routing is the primary access boundary. A table policy that
-requires the authenticated system principal is defense in depth.
-`PrincipalContext::system()` currently uses an ordinary claim, so the policy is
-not treated as an unforgeable capability. NNC6.1d proves that each application
-protocol and credential binding rejects reserved tenant selection. Explicit
-local operator inspection remains permitted.
-
-Each CAS opens one fresh execution unit, reads and validates the current
-record, checks exact replay, verifies the expected revision and legal edge,
-stages one whole-record set with `exists(false)` or current `update_time`, and
-commits once. The store never retries a domain conflict.
-
-The Engine does not expose its internal durable-ambiguity class as a stable
-public adapter error. The adapter therefore treats each non-conflict error
-returned from `commit` as `Ambiguous`. It never parses error text or rolls back
-an uncertain record. A fresh load classifies an exact applied transition, an
-unchanged expected record, a stale competing revision, or an unavailable or
-corrupt record before any provider effect.
-
-There is no fictional transaction spanning the workload store, network node
-store, and provider effects. Compute commits desired saga intent before the
-first network reservation, calls idempotent generation-scoped operations, then
-commits the next saga phase. After a crash, a fresh process reads the durable
-saga plus network/provider inspection and chooses retry, activation,
-publication, compensation, or fenced cleanup. It never reconstructs workload
-desire from an address, manifest, network phase, or observed system projection.
-
-NNC6.1c adds both direct edges:
-
-```text
-nimbus-workloads -> nimbus-network
-nimbus-compute -> nimbus-workloads
-```
-
-`nimbus-network -> nimbus-core` remains the network crate's only outgoing
-workspace edge. `nimbus-workloads -> nimbus-engine|nimbus-server|nimbus-system`
-and `nimbus-compute -> nimbus-server|nimbus-storage` remain forbidden.
-
-NNC6.1c constructs no production store or coordinator. NNC6.1c1 performs the
-breaking operational identity cutover and deletes the service and CLI
-in-memory desired-state authorities. NNC6.1d then owns both the first durable
-server adapter and its required workload-capable `ComputeState` injection.
-This order keeps every checkpoint compilable without a no-op store, a
-production in-memory substitute, or an optional workload-capable coordinator.
-
-### Operational workload identity and false-authority cutover
-
-NNC6.1c1 is frozen in
-[`proof/nimbus-network-control-plane/nnc6.1c1-operational-identity-authority-cutover.md`](proof/nimbus-network-control-plane/nnc6.1c1-operational-identity-authority-cutover.md).
-It makes one generation-scoped execution identity canonical without composing
-the durable saga:
-
-```text
-TenantWorkloadUid + assigned NodeIdentity + WorkloadGeneration
-  -> WorkloadExecutionId
-  -> node backend key + systemd unit + observed execution evidence
-```
-
-The node-owned `TenantWorkloadId` and the parallel
-`TenantWorkloadGeneration` are deleted without aliases. A missing or crossed
-node assignment fails before backend validation, inspection, status writes, or
-provider effects. Systemd uses the complete validated `wex_` value and the
-`NIMBUS_WORKLOAD_EXECUTION_ID` selector. The rebuildable system projection
-records the exact derived execution ID and a lossless decimal generation; it
-does not become desired-state or identity authority.
-
-`DesiredWorkloadStore`, its in-memory implementation, snapshot, controller,
-both product authorities, all three services-owned upserts, and the manager's
-snapshot API are deleted. The CLI retains only a deterministic ordered
-`Vec<DesiredWorkload>` as non-authoritative planning input. The deleted stores
-have zero recovery readers, so removal deletes false recovery evidence rather
-than a recovery capability.
-
-The cutover adds no workspace edge, store implementation, coordinator
-construction, Engine adapter, lifecycle rerouting, or compatibility path.
-NNC6.1d remains the sole durable-adapter/composition owner. The source-derived
-NNC6.1e audit prospectively splits the later work before implementation:
-
-- NNC6.1e owns bounded tenant discovery, pure all-phase recovery decisions,
-  and an effect-free fresh-process decision proof;
-- NNC6.2 owns the pure compute compiler and one canonical portable compiled
-  resource payload without persisting it in the saga;
-- NNC6.2a embeds the complete compiled value in the workloads-owned saga and
-  proves exact fresh-process reconstruction before any network command;
-- NNC6.1e1 consumes NNC6.2a's durable compiled plan and owns one bounded
-  compute submission seam that confirms exact durable intent and derives a
-  pure repeatable decision without dispatching effects;
-- NNC6.1e2 runs after NNC6.3a-NNC6.3b, NNC6.4-NNC6.6 and owns final
-  startup-recovery and tenant retirement convergence.
-
-NNC6.3 is the read-only substitution audit. NNC6.3a-NNC6.3b prepare exact
-durable content and pure decisions. NNC6.4 atomically replaces every provision
-caller and deletes the old paths while adding provider effects. NNC6.4a,
-NNC6.5, and NNC6.6 retain restart, teardown, and resolution caller cutover;
-NNC8.3 retains cleanup resolution, finalization, release, and reuse authority.
-No split item may invent a placeholder network intent or promote an
-autoreview chunk into an implementation unit.
-
-### `PortLease` semantics
-
-A lease records:
-
-- stable lease and owner resource IDs;
-- tenant attribution when applicable;
-- desired generation and lease epoch;
-- TCP/UDP protocol;
-- bind realm, address family, requested exposure, and overlap domain;
-- requested exact port/range or provider-assigned mode;
-- actual address/port after bind/adoption;
-- provider ID/opaque handle;
-- provenance: Nimbus-owned bind, provider-assigned bind, or externally
-  owned/inherited listener;
-- phase: `Reserved`, `Binding`, `Active`, `Withdrawing`,
-  `CleanupPending`, `Released`, or terminal failure;
-- timestamps/renewal data where the chosen lease model requires them.
-
-Conflict rules:
-
-- TCP and UDP are separate;
-- wildcard conflicts conservatively with specific addresses in one bind realm;
-- IPv4/IPv6 dual-stack overlap defaults to conflict unless host/provider
-  capabilities prove otherwise;
-- isolated realms may reuse a number only when the adapter proves non-overlap;
-- provider-assigned port `0` is adopted into the durable lease before publish;
-- pre-bound/systemd sockets are adopted by stable lease identity and verified
-  against the requested plan;
-- externally owned/inherited sockets are observed and fenced but never released
-  as Nimbus-owned resources;
-- confirmed no-effect bind failures never publish and remain inspectable but
-  may become terminal; ambiguous or possibly effected attempts remain fenced
-  until provider cleanup is proved;
-- tenant quota remains an admission decision above the allocator.
-
-### Provider capabilities and sovereignty
-
-Capabilities describe, at minimum:
-
-- `NimbusHostManaged` versus `ProviderManaged`;
-- attachment and tenant-isolation modes;
-- address families and bind realms;
-- loopback/private/public exposure;
-- protocol families;
-- exact, Nimbus-allocated, or provider-assigned ports;
-- host/path/TLS/WebSocket/streaming ingress features where implemented;
-- forwarding and drain behavior;
-- durable inspect/reconcile/delete support;
-- local-only, operator-local, or third-party control-plane dependencies;
-- public-network, DNS, hosted certificate, or relay requirements;
-- offline restart/reconciliation support.
-
-Provider selection is deterministic. Missing capability errors name the
-provider, requirement, and safe alternatives. Nimbus never silently chooses a
-cloud provider, weakens exposure/isolation, bypasses TLS, or makes
-proxy-required egress direct.
-
-The local sovereign profile requires:
-
-- local durable segment and port allocation;
-- host-managed sandbox attachment;
-- loopback/private listener publication;
-- required PEP readiness;
-- local inspection, teardown, and orphan reconciliation;
-- offline restart;
-- no DNS, cloud API, hosted certificate, relay, or external control plane.
-
-Public DNS, public load balancing, ACME, tunnels, and provider-managed cloud
-networking remain optional providers added only for an approved consumer.
-
-## Lifecycle Contract
-
-### Provision
-
-1. **Admit — tenant/compute.** Resolve principal, tenant, workload, exposure,
-   egress, quota, and provider constraints.
-   Success: admitted intent has a stable request identity.
-   Failure proof: zero durable network record, lease, provider call, or
-   projection.
-2. **Reserve — network.** Persist plan generation; reserve attachment, segment,
-   endpoint, listener, route, and port identities; choose satisfying providers.
-   Success: all reservations are durable and fenced.
-   Failure proof: exact completed reservations compensate or remain
-   `CleanupPending`; none are published.
-3. **Start (prepare) — compute/services.** Create an inert workload envelope
-   without making the service resolvable or allowing guest application
-   execution.
-   Success: stable workload handle accepts the reserved attachment identity.
-   Binding interpretation: this preserves the approved public word `start`,
-   but it means preparation, not tenant execution.
-4. **Attach, then activate — provider adapter plus compute.** Realize
-   namespace/bridge/IPAM, provider networking, forwarding prerequisites, and
-   required PEP path.
-   Success: inspection proves the exact generation and all required safety
-   effects, including firewall/pin state—not merely netns-path existence.
-   Only then may compute activate process/VMM execution. No tenant instruction
-   may execute before attachment and required PEP evidence are ready for the
-   same generation.
-5. **Publish — ingress/name/forwarding effect owners.** Activate reachable
-   listeners/routes only after workload, attachment, and required PEP readiness.
-   Success: actual endpoint is durably adopted and tied to the plan generation.
-6. **Observe — network/system.** Emit status and project actual endpoint,
-   provider, generation, conditions, and diagnostics.
-   Success: stale observations cannot overwrite a newer generation; projection
-   failure does not affect authority.
-
-### Teardown
-
-1. **Withdraw — services/network.** Fence the generation and remove resolution,
-   routes, names, and listener admission before awaited backend stop.
-   Success: concurrent lookup cannot obtain a newly routable handle.
-2. **Drain — services/forwarding owner.** Stop new routing and drain held
-   connections under service residency/owner epochs.
-   Success: drain is bounded and reports remaining work explicitly.
-3. **Stop — compute.** Stop workload execution and obtain confirmation.
-   Success: no old workload can act on the fenced identity.
-4. **Detach — provider adapter.** Inspect and remove forwarding, PEP lifecycle
-   binding, attachment, namespace/bridge, and machine/provider effects.
-   Success: provider deletion is confirmed or resource remains
-   `CleanupPending`.
-5. **Release — network.** Release ports, addresses, holds, and segments only
-   after safe detach/unbind proof.
-   Success: property/model test permits reuse only after the proof transition.
-6. **Record — system/audit.** Publish terminal condition and cleanup evidence.
-   Success: projection may retry/rebuild without changing released/fenced
-   authority.
-
-## Failure, Rollback, And Reconciliation Contract
-
-| Failure/cut | Required converged behavior | Required proof |
-| --- | --- | --- |
-| Admission reject | No state/effect. | Zero-call mock plus empty durable store. |
-| Saga-intent commit ambiguous | Inspect/CAS the engine-owned record; do not reserve, activate, or infer desire until the committed generation is known. | Response-lost mutation plus fresh-process recovery. |
-| Partial reservation | Reverse compensation or fenced cleanup-pending records. | Fault after each durable reservation. |
-| Start failure | Never attach/publish; safe release after absence proof. | Lifecycle observer exact sequence. |
-| Attach create ambiguous | Inspect stable handle/idempotency key; no duplicate create or segment release. | Provider fake returns effect-created/response-lost. |
-| Netns exists but firewall/pin absent | Attachment remains not ready and ingress withdrawn. | Crash cut between each sandbox attachment effect. |
-| Required PEP not ready | No ingress; no direct fallback; compensate or fence. | Existing PDP/PEP behavior plus network observer. |
-| Listener bind fails | Durable failure; no publication; new retry generation only. | Real external collision and fake ambiguous bind. |
-| Partial forwarding/publish | Inspect and withdraw every possibly visible handle. | Fail Nth effect with deterministic injector. |
-| Crash after attach | Restart inspects exact generation, publishes once or compensates. | Subprocess crash/restart matrix. |
-| Crash after publish | No duplicate publish; stale callback cannot reactivate. | Restart plus delayed callback. |
-| Exit inspection races withdrawal | Inspection has no side effect; fenced generation vetoes restart; admitted retry follows prepare→attach→activate. | Container/krun semantic barrier race. |
-| Withdrawal fails | Generation fenced; no new routing; resource not reused. | Concurrent lookup/stop and cleanup-pending tests. |
-| Stop/detach ambiguous | Quarantine; inspect before retry/reuse. | Provider deletion response lost. |
-| Cluster lease expires | Reject new create; allow safe cleanup of durable old handle. | Fake clock/epoch tests. |
-| Stale epoch callback | Activation ignored; bounded old-handle cleanup evidence accepted. | Generation/epoch model test. |
-| Projection failure | Retry independently; authority unchanged. | Delete/rebuild/lag system tables. |
-| Torn/corrupt state | Fail closed with actionable path; never guess allocations. | Truncation/checksum/version/subprocess tests. |
-| Unsupported state-root semantics | Refuse startup before opening authority or allocating. | Detectable NFS/SMB/network-root capability test. |
-| Lock unavailable | Bounded failure/diagnostic; no unlocked mutation. | Cross-process lock contention test. |
-| Provider cleanup fails | Allocation stays `CleanupPending`; no reuse. | Existing segment/port reuse fail-before and pass-after. |
-| Orphan evidence incomplete/unknown | Durable owner/effect is adopted, removed, or quarantined; netns filename never proves liveness. | Full hold/intent/effect/manifest/inspection matrix. |
-
-Retry loops must be bounded, cancellable, backoff-aware, and observable.
-Metrics use bounded-cardinality labels; stable IDs belong in structured logs or
-traces, not unbounded metric labels. Provider handles are redacted.
-
-## Test Architecture And Enterprise Evidence
-
-The network interface is the primary behavioral test surface. Implementation
-details receive local unit tests only where they add a distinct invariant.
-
-### Proof layers
-
-1. **Static ownership proof**
-   - `cargo metadata` dependency graph;
-   - forbidden dependency/import scan;
-   - exactly-one endpoint, segment allocator, and port lease authority;
-   - no network crate transport/effect implementation.
-2. **Pure/model proof**
-   - property tests for CIDR/segment disjointness, port conflict keys, stable
-     IDs, legal transitions, generation ordering, and safe reuse;
-   - a reference state machine checked against randomized transition scripts;
-   - seed printed and reproducible on failure.
-3. **Deterministic concurrency proof**
-   - bounded thread barriers and a semantic parent/child control channel, never
-     polling sleeps;
-   - real cross-process same-root races with exact ready/entered/release/complete
-     acknowledgements;
-   - exact winning lease, losing identity/generation, early-exit, timeout, and
-     cleanup diagnostics asserted.
-4. **Durability/crash proof**
-   - the parent kills only after the exact named network write/effect boundary;
-   - fsync/replace failure injection where supported;
-   - restart the same state root in a fresh process from each persisted phase;
-   - corrupt/truncated/incompatible records fail closed.
-5. **Adapter contract suites**
-   - every real attachment/ingress/forwarding adapter runs the same lifecycle,
-     idempotency, ambiguity, and cleanup suite;
-   - a skipped environment lane is reported as `SKIPPED`, never `PASS`;
-   - KVM/Netavark lanes retain their existing owner proof.
-6. **Integration proof**
-   - admission through compute to attach/publish/observe;
-   - teardown race with concurrent service resolution;
-   - cross-owner listener conflicts: sandbox/PEP/server/KV/machine;
-   - system projection lag/rebuild cannot affect live authority.
-7. **Sovereignty proof**
-   - privileged Linux namespace/nft/DNS/syscall tripwire with passing positive
-     controls denies and detects external network/control-plane attempts;
-   - pre-staged local/private provision, restart, reconcile, and teardown
-     succeed;
-   - evidence records zero unexpected DNS or denied-output attempts.
-8. **Structural closeout**
-   - legacy allocators/types deleted;
-   - docs and dependency diagrams reflect code;
-   - focused suites, clippy, docs gates, and `make ci` record exact results.
-
-Reuse `nimbus-testing` utilities only in upper-layer integration harnesses whose
-dependency direction permits it. The low-level network crate may not take the
-current upper-layer `nimbus-testing` as a normal or dev dependency. Put its
-network-scoped fault points and child-role protocol in a dependency-safe local
-test support module; keep provider-local helpers beside the owning adapter until
-two owners genuinely need them.
-
-### Test quality rules
-
-- Every test names the invariant and asserts a specific state/effect result.
-- Timing tests use bounded semantic waits and fail loudly.
-- No test passes only because no panic occurred.
-- Fail-before tests must fail for the expected reason before the implementation
-  changes.
-- Expected-red static checks name the missing target; missing input is not
-  success.
-- Evidence records command, exit status, test count, environment/capability,
-  skipped lanes, seed, and artifact path.
-- A proof is not complete while the corresponding old authority remains
-  callable in production.
+Preparation may create the process or VMM envelope, but no tenant instruction
+runs before the same generation has an authenticated attachment and every
+required policy-enforcement prerequisite is ready.
+
+Compute owns this ordering. Network owns portable state and readiness
+composition. Concrete effects remain in sandbox, server, KV, machine, proxy,
+and node. Services keeps logical naming. System keeps observed projections.
+The network crate absorbs no transport, policy, service naming, certificate,
+forwarding, DNS, or cluster-membership authority.
+
+### Reliability evidence
+
+The proof stack covers deterministic state-machine contracts, substitution,
+two-process contention, subprocess crash cuts, stale/crossed generations,
+ambiguous effects, cleanup quarantine, startup recovery, listener-group
+settlement, offline sovereignty, source-derived censuses, compiler-resolved
+MIR, generated Rust, dependency profiles, and repository docs/quality gates.
+Each task closes only when its written criterion and linked proof are green.
 
 ## Staged Extraction Bands
 
@@ -1836,19 +693,12 @@ grep input, skipped lane, or unavailable provider cannot be reported as pass.
 ## Plan Coordination And Authority Boundaries
 
 - [`architecture-review-2026-07-plan.md`](architecture-review-2026-07-plan.md)
-  remains the owner for the workspace-wide review and completed
-  `nimbus-compute` extraction. This plan consumes that seam and owns only the
-  network manager injection/lifecycle integration. Record overlapping file
-  coordination before NNC6; do not add a second general architecture ledger.
-- The proposed `nimbus-sandbox-plan.md` owner routed by the plan index owns
-  backend families, routing, and sandbox capability vocabulary; no canonical
-  plan body exists in this checkout yet. NNC5 owns only the network attachment
-  lifecycle deepening required by this control-plane contract; provider effects
-  and backend selection stay sandbox-owned.
-- The prior sandbox-modernization review's §3.2 finding is retained here as
-  historical evidence for the concrete allocator defect, but its named
-  research file is not present in this checkout. NNC2 is the completed
-  implementation owner; this plan does not invent a parallel research owner.
+  remains the workspace-wide review owner. Its current reconciliation records
+  the landed compute, network, and workload-identity crates. This plan owns
+  only network lifecycle and its composition integration.
+- No promoted sandbox backend-family plan exists in this checkout.
+  `nimbus-sandbox` retains backend selection and every concrete network effect;
+  this plan must not invent a parallel owner.
 - [`archive/multi-tenant-node-network-plan.md`](archive/multi-tenant-node-network-plan.md)
   remains the completed authority for routed tenant bridges, disjoint segments,
   DNS-off posture, H1 pinning, growth, and fenced super-net lease behavior.
@@ -1857,18 +707,11 @@ grep input, skipped lane, or unavailable provider cannot be reported as pass.
   `nimbus-cluster`, `ClusterTransport`, Iroh/openraft, membership, node
   identity, routing, gossip, and replicated placement. It consumes the
   allocator/forwarding contracts only when those capabilities become real.
-  NNC2.8 is a required shared-ledger edit: in the same checkpoint that moves
-  the allocator contract, replace its historical/execution references to
-  sandbox-owned `NetworkSegmentAllocator`/`install_supernet` with the canonical
-  network seam and link this plan. That truth-up does not transfer cluster
-  transport authority.
-- [`nimbus-sandbox-egress-regression-and-seams-plan.md`](nimbus-sandbox-egress-regression-and-seams-plan.md)
-  retains KVM, firewall, readiness parity, and datapath proof work. This plan
-  owns shared port leases and lifecycle fencing; link proof rather than fork it.
-- Completed egress/proxy plans and
-  [`nimbus-proxy-policy-hardening-plan.md`](nimbus-proxy-policy-hardening-plan.md)
-  retain PDP, PEP, proxy lifecycle, decision logs, DLP, credentials, and
-  interception CA authority.
+  NNC2.8 already reconciled its ledger to the portable network contract and
+  sandbox-owned realization without transferring cluster authority.
+- `nimbus-egress` and `nimbus-proxy` retain PDP, PEP, proxy lifecycle,
+  decision logs, DLP, credentials, and interception CA authority. Unpromoted
+  proxy or sandbox backlog entries do not create plan authority.
 - `nimbus-services` remains logical service owner. Service identity/auth and
   secret plans own credentials and values; network handles carry only opaque
   references needed by an admitted provider.
@@ -1889,12 +732,11 @@ grep input, skipped lane, or unavailable provider cannot be reported as pass.
   adapter in coordination with the architecture-review owner; it must not
   create a network-owned workload store. `nimbus-services` lazy activation and
   container/krun restart policies become clients of that one coordinator.
-- The service-identity owner retains admitted credential and incarnation
-  identity. The saga consumes `TenantWorkloadUid` only as evidence and uses
-  `TenantId + WorkloadId` as its stable logical key. It cannot mint credentials
-  or redefine admission identity.
-- The native transport evolution plan may consume endpoint/listener identity
-  but does not define a second lease authority.
+- `nimbus-workload-identity` retains provider-auth policy and minting
+  vocabulary; admission identity remains tenant-owned. The saga consumes
+  identity only as evidence and cannot mint credentials.
+- Any future native transport may consume endpoint/listener identity but cannot
+  define a second lease authority.
 
 Before each band, search the active plan index again. If another active band
 touches the same composition root, record one shared edit order in both ledgers
@@ -1959,19 +801,6 @@ The plan cannot close until every answer is “yes” with linked evidence:
 - [ ] Are all transitional aliases, scanners, duplicate authorities, and
       caller-local ordering deleted?
 
-## Architecture Audit Ledger
-
-| Item | Status | Evidence |
-| --- | --- | --- |
-| NNA0 — isolated workspace | `done` | Created audit worktree/branch from fetched `origin/main`; base recorded in recovery header; original dirty checkout not edited. |
-| NNA1 — bootstrap/routing review | `done` | Read repository bootstrap, architecture, private routing, plan index, active architecture review, sandbox modernization, horizontal scaling, reliability/test guidance, and overlapping plans. |
-| NNA2 — dependency/ownership audit | `done` | `cargo metadata --format-version 1 --no-deps` plus source import/caller review produced current/target maps and cycle constraints. |
-| NNA3 — lifecycle/reliability audit | `done` | Reviewed segment/cluster/IPAM/Netavark/forwarding/port, container/krun, services stop/readiness, listener groups, node reconciliation, machine, projection, and egress paths; findings NNCF1-NNCF19. |
-| NNA4 — software-pattern/modularity audit | `done` | Applied deep-module, interface/substitution, deletion, locality, ports-and-adapters, state-machine, reconciliation, and capability-seam tests; exact decisions recorded above. |
-| NNA5 — visual architecture artifact | `done` | `/tmp/nimbus-network-architecture-audit-2026-07-23.html`; current/target ownership, lifecycle, eight deepening candidates, proof stack, and recommendation. |
-| NNA6 — plan/routing/audit verification | `done` | This owner plan and plan index were checked for routing, ledger, every-step success criteria, non-goals, coordination, recovery, static verifier, proof matrix, and paste-ready goal. Exact command results are recorded below. |
-| NNA7 — independent Fable review disposition | `done` | Re-verified F1-F15 against source, metadata, git policy/precedent, active plans, and all four HTML artifacts; incorporated every required/nice-to-have/cleanup item with evidence corrections recorded in the disposition table. |
-
 ## Implementation Status Ledger
 
 Allowed values: `todo`, `in_progress`, `blocked`, `done`. `blocked` requires a
@@ -1988,7 +817,7 @@ named dependency/owner decision and the next safe action.
 | NNC6 — compute choreography | `done` | Exact provision/teardown observers across every workload/retirement path. | NNC6.1-NNC6.6 and NNC6.1e1-NNC6.1e2 are complete. Fresh-process startup and tenant retirement reconstruct only from durable authority and converge exact fenced work. No completed item retains a temporary legacy authority. Provider effects remain with their named owners. |
 | NNC7 — integrations/projections | `done` | Protocol parity, stable service/machine handles, rebuild-safe projections, TLS guard. | NNC7.1-NNC7.6 are complete; exact behavior, quality, verifier, docs, and item-review evidence is recorded in their task proofs. |
 | NNC8 — recovery/fencing | `done` | Failure table and crash/stale/ambiguity model fully closed. | NNC8.1-NNC8.6 are complete. All `22/22` failure rows have current deterministic evidence. |
-| NNC9 — closeout | `in_progress` | Seam checklist, static verifier, sovereign proof, docs truth, repo gates. | NNC9.1 starts with a read-only closure audit of the current `38/38` verifier. |
+| NNC9 — closeout | `in_progress` | Seam checklist, static verifier, sovereign proof, docs truth, repo gates. | NNC9.1 and NNC9.2 are complete. NNC9.3 owns current generated inventories, landed architecture truth, and transitional documentation deletion. |
 
 ## Item Checkpoint Ledger
 
@@ -2113,218 +942,10 @@ checkpoint.
 | NNC8.6 | `done` | **Evidence:** `proof/nimbus-network-control-plane/nnc8.6-failure-contract-closure.md`. **Result:** K1-K9 pass. All `22/22` rows map in exact order to current deterministic tests. Network, compute, sandbox, server, services, and system owner proofs pass. The live verifier passes `38/38`; strict proof lint, Rustfmt, Prettier, diff, docs `108`, and site `17/17` pass. The one Sol/xhigh/fast review accepted one P3 recovery-path omission at `0.99`; the documentation correction is green and needs no narrow review. Product and verifier paths are unchanged. **Checkpoint:** the commit containing this row is the exact NNC8.6 item checkpoint. **Blocker:** none. |
 | NNC9.1 | `done` | **Dependency:** NNC0-NNC8 are complete. **Evidence:** `proof/nimbus-network-control-plane/nnc9.1-static-verifier-closure.md` and its compiler baseline. **Result:** K1-K10 pass. The exact source census now composes with authenticated compiler, Cargo, parsed-boundary, and generated-Rust evidence without moving product authority. **Last green:** scanner `14/14`; compiler helper `18/18`; cheap/deep six packages, seven targets, 16 calls, and five generated outputs; aggregate `607/607`; live `39/39`; strict quality; docs `108`; site `17/17`. **Review:** one full and one narrow Sol/xhigh/fast review; all eleven accepted findings are corrected and proven; cadence is exhausted. **Checkpoint:** `6cf0cefaa647ef5340d43ee69dc125ed80b3e1d6`. **Blocker:** none. |
 | NNC9.2 | `done` | **Dependency:** NNC9.1 is complete. **Evidence:** `proof/nimbus-network-control-plane/nnc9.2-offline-sovereign-lifecycle.md`. **Result:** final Run 67 passes K1-K14 twice on authenticated candidate `fd1a9030…699984`. Each attempt has 19 transitions, one restart, exact fresh-owner recovery, terminal provider and projection truth, endpoint refusal, zero named network counters, empty DNS and forbidden-address evidence, and complete product and outer cleanup. **Last green:** workloads `231`; compute `506 + 1 ignored`; sandbox `1,212 + 47 ignored`; CLI `1,011 + 4 ignored`; serialized server `757 + 35 ignored`; affected compile, strict Clippy, warning-denied Rustdoc, format/diff/script checks; mutations `8/8`; invariants `10/10`; durability `24/24`; docs `108`; site `17/17`. **Review:** one full and one narrow Sol/xhigh/fast review; all eleven accepted findings are corrected and proven. **Checkpoint:** the commit containing this row is the exact NNC9.2 item commit. **Blocker:** none. |
-| NNC9.3 | `in_progress` | **Dependency:** NNC9.2 is complete. **Expected red:** the aggregate verifier passes `34/39` and fails only NNCV006, NNCV015, NNCV021, NNCV022, and NNCV038 because source-derived inventories and complexity dispositions are stale after NNC9.2. **Next:** delete transitional material, regenerate exact inventories, truth up architecture and shared-plan maps, and compress the canonical plan/proof routing without changing accepted seams. **Blocker:** none. |
-| NNC9.4 | `todo` | — |
+| NNC9.3 | `done` | **Dependency:** NNC9.2 is complete at `bcb0a1b06758d78155787aaf98a2cc502e02c039`. **Evidence:** `proof/nimbus-network-control-plane/nnc9.3-architecture-truth-and-transitional-deletion.md`. **Result:** K1-K12 pass. Generated dependency, bind, composition, modularity, effect, and compiler evidence matches source; active architecture and routing describe landed authority; the plan/index are compressed to `991`/`237` lines. **Last green:** aggregate `39/39`; affected NNCV006/NNCV022 negative mutations; docs `108`; site `17/17`; Node/Bash/JSON syntax, Rustfmt, and diff. **Review:** one Sol/xhigh/fast review accepted one P2 lifecycle-wording defect. The documentation correction restores inert preparation, same-generation attachment, activation prerequisites, activation, readiness, and publication order. No executable code changed, so no narrow review ran. **Checkpoint:** the commit containing this row is the durable item commit. **Blocker:** none. |
+| NNC9.4 | `in_progress` | **Dependency:** NNC9.3 is complete in the parent checkpoint. **Owned paths:** focused behavior evidence plus concise plan/index routing. **Last green:** NNC9.3 aggregate `39/39`, docs `108`, site `17/17`, affected negative mutations, syntax, JSON, Rustfmt, and diff. **Next:** reconcile exact counts, output, environments, seeds, and skipped lanes without replaying already-proven historical suites. **Blocker:** none. |
 | NNC9.5 | `todo` | — |
 | NNC9.6 | `todo` | — |
-
-## Evidence Record
-
-Architecture-audit verification, 2026-07-23:
-
-- audit worktree branch/base:
-  `codex/nimbus-network-architecture-audit` /
-  `b69007a78a220847812370d9418049f1253f0384`;
-- dependency baseline:
-  `cargo metadata --format-version 1 --no-deps`;
-- visual artifact:
-  `/tmp/nimbus-network-architecture-audit-2026-07-23.html` (428 lines; opened
-  in the system browser; Chrome headless DOM load exited 0);
-- item-ledger coverage:
-  every task ID in NNC0-NNC9 has exactly one checkpoint row (`comm` returned no
-  missing/extra IDs);
-- whitespace/diff:
-  `git diff --check` exited 0;
-- Rust formatting:
-  `cargo fmt --all --check` exited 0;
-- private docs:
-  `bash scripts/check-docs.sh` exited 0 with `108 pages link-clean, source map
-  resolves, private fence intact, titles unique`;
-- docs site:
-  the first verifier run correctly reported the missing build-artifact
-  precondition; after locked local dependency install,
-  `npm --prefix website run build` produced 109 pages and
-  `bash scripts/verify-nimbus-docs-site.sh` exited 0 with `17/17 conditions
-  green`;
-- no implementation command, commit, fetch, rebase, push, or PR was run; the
-  canonical plan and routing edit were intentionally staged as the narrow
-  force-track checkpoint for future NNC0.0, but remain absent from `HEAD`;
-- generated `website/node_modules`, `website/dist`, and `website/.astro` were
-  moved to uniquely named entries in Trash after verification, so they do not
-  remain part of the audit worktree.
-
-Independent-review incorporation verification, 2026-07-23:
-
-- Fable findings:
-  all F1-F15 have exactly one disposition row; two independent source audits
-  verified F1-F11, and F12-F15 were rechecked against filesystem semantics,
-  active-plan references, artifact data, and the five-field machine capability
-  implementation;
-- task/ledger bijection:
-  83 unique NNC task IDs each occur exactly twice—once in a band and once in
-  the checkpoint ledger—with zero missing, extra, or duplicate rows;
-- autonomous goal:
-  3,250 characters including `/goal`, under the 4,000-character limit, with
-  plan-in-`HEAD`, clean-checkpoint rebase, per-item commit, blocker, no-eligible
-  item, no-PR, and 150-turn guards;
-- explanatory artifacts:
-  the 428-line architecture report, 359-line ownership map, 298-line lifecycle
-  walkthrough, and 158-line earlier review all carry the canonical-plan warning;
-  predeclared listener/attachment provider and DNS/TLS/load-balancer wording was
-  removed or explicitly deferred; Chrome headless loaded all 4/4 with exit 0;
-- source hygiene:
-  one current ownership heading, one routing-index entry, and no residual
-  predeclared-provider strings targeted by the cleanup scan;
-- `bash scripts/check-docs.sh` passed with `108 pages link-clean, source map
-  resolves, private fence intact, titles unique`;
-- `cargo fmt --all --check` and `git diff --check` exited 0;
-- the original checkout remained byte-for-byte outside this work:
-  its observed dirty paths were still the user-owned plan README,
-  runtime-tenant-isolation plan, concurrent-write research note, and Convex
-  browser bundle; it remained `main...origin/main [behind 7]`.
-
-Implementation evidence belongs under:
-
-```text
-docs/private/plans/proof/nimbus-network-control-plane/
-```
-
-Each band record must include base/HEAD, dirty state, commands with real exit
-status, test counts, environment/capabilities, skipped lanes, seeds, and
-artifacts.
-
-NNC0.0 durability evidence, 2026-07-23:
-
-- bootstrap commit:
-  `d692254ad246c5e153aa220fc19cc86e12585486`
-  (`docs(plans): establish nimbus network control plane`) before fetch, rebased
-  to `7083e67e59a9c1df7a08d7cfb0772888504c8504`;
-- completion checkpoint:
-  `0dd92bc791a309a4ba7381a0aa77d29ef2fc2e82` before fetch, rebased to
-  `bbe1a0e80f7e4b63a7902956d33407a87d7fb97d`;
-- committed paths:
-  `docs/private/plans/nimbus-network-control-plane-plan.md` and
-  `docs/private/plans/README.md`, with no source or unrelated path;
-- pre-fetch recovery proof:
-  `git cat-file -e HEAD:docs/private/plans/nimbus-network-control-plane-plan.md`
-  exited 0;
-- post-commit state:
-  `git status --short --branch` showed the owner branch ahead 1/behind 2 and no
-  dirty path;
-- reconciliation:
-  after both checkpoint commits and the plan-in-HEAD proof, `git fetch origin`
-  advanced main to `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f`;
-  `git rebase origin/main` replayed both commits without conflict, and the plan
-  remained available from `HEAD`;
-- no fetch, rebase, source edit, push, or PR preceded the durability proof; no
-  push or PR followed it.
-
-NNC0.1 baseline evidence, 2026-07-23:
-
-- source checkpoint:
-  `e990c018a20b063a0ac093ad0e78b8e71117ec70`, based on merged main
-  `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f`;
-- evidence summary:
-  `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-baseline.md`;
-- machine-readable dependency graph:
-  `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-dependency-graph.json`;
-- machine-readable source census:
-  `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json`;
-- capture implementation:
-  `scripts/capture-nimbus-network-dependency-baseline.mjs`;
-- dependency result:
-  244 declared workspace edges retain dependency kind, target, feature,
-  default-feature, and optionality metadata; six distinct normal, dev/test/build,
-  all-feature, and target-conditioned resolved graphs each contain zero cycles;
-- census result:
-  24 production sites, six portable owner sites, and three trust inputs have
-  unique classifications; zero production sites are unclassified and no
-  production UDP bind exists in the reconciled source;
-- PR #238/#239 reconciliation:
-  Cloud Functions trusted tenant binding, Convex silo verifier selection, and
-  compute deployment artifact lifetime remain upstream trust/lifecycle
-  authorities rather than network authorities;
-- verification:
-  script syntax, both JSON documents, profile-cycle assertions, summary/count
-  assertions, duplicate-ID checks, `git diff --check`, and
-  `bash scripts/check-docs.sh` passed; target-conditioned metadata resolution
-  did not claim cross-target compilation or provider execution.
-
-NNC0.1a contention-harness evidence, 2026-07-23:
-
-- starting checkpoint:
-  `929cf8955098fb8da91e454dd1aea558e88b8342`;
-- evidence:
-  `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1a-process-contention-harness.md`;
-- owner:
-  generic process coordination lives in upper-layer `nimbus-testing`; no
-  manifest changed and the future low-level network crate takes no normal or
-  dev edge to the test-fixture crate;
-- protocol:
-  two real child roles share one canonical root and acknowledge bounded
-  `ready -> entered -> released -> complete` phases after parent `enter` and
-  `release` commands, using flushed pipes and no polling sleep;
-- positive proof:
-  a real cross-process create-new race produces exactly one durable winning
-  role and one contender;
-- diagnostic proof:
-  missing participant, wrong checkpoint, early exit, timeout after release,
-  cleanup/reap, and invalid zero bound all report the named failure, with each
-  started role retaining stdout, stderr, status, last checkpoint, and cleanup
-  outcome;
-- verification:
-  cargo test and nextest each passed all seven parent tests; the one ignored
-  test is the child entrypoint explicitly spawned by those tests; all-target
-  check, focused clippy with denied warnings, format, diff, and private-doc
-  gates passed;
-- independent review:
-  Opus 4.8/max found one accepted P3 cleanup-fixture race; the silent fixture
-  now parks after stdin EOF so cleanup deterministically kills and reaps it;
-  focused proofs were rerun and the second structured pass exited clean with no
-  accepted/actionable finding;
-- bounded cold build:
-  the first 120-second test command expired during dependency compilation
-  before any test ran and is not counted as evidence; the subsequent
-  300-second bounded run passed after the shared test-profile cache existed.
-
-NNC0.1b crash-cut-harness evidence, 2026-07-23:
-
-- starting checkpoint:
-  `53ea4986a1e65eebce8504b113943311acdcd52d`;
-- evidence:
-  `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1b-subprocess-crash-cut-harness.md`;
-- owner:
-  generic kill/restart coordination is a concept-owned child of the existing
-  `nimbus-testing` process harness; caller-supplied semantic tokens avoid
-  moving network or provider fault-point vocabulary into the fixture crate;
-- exact-boundary proof:
-  the crash child syncs durable state/effect evidence, acknowledges
-  `network.store.after-state-and-effect-sync`, remains live, and is killed and
-  reaped only after that exact acknowledgement;
-- fresh-process proof:
-  a different named child process opens the same canonical root and must report
-  exact `state-committed:effect-created` evidence before exiting successfully;
-- negative proof:
-  wrong boundary, crash/recovery early exit, crash/recovery timeout, recovery
-  mismatch, and cleanup paths report role, stdout, stderr, status, last
-  checkpoint, and reap outcome; recovery never starts after a rejected crash
-  boundary;
-- verification:
-  cargo test and nextest each passed all 13 process-harness parent tests; two
-  ignored tests are the explicitly spawned child entrypoints; all-target
-  check, focused clippy with denied warnings, format, diff, and private-doc
-  gates passed;
-- correction:
-  the first clippy run found test helpers after a test module; moving them above
-  the module fixed the root cause and the final clippy run exited 0;
-- independent review:
-  Opus 4.8/max audited the exact-boundary kill/reap paths, protocol framing,
-  non-`Copy` checkpoint refactor, same-root recovery, bounded waits, contention
-  regressions, and dependency direction; the structured run exited clean with
-  no accepted/actionable finding;
-- dependency:
-  no Cargo manifest changed, so the future low-level crate gains no normal or
-  dev dependency on `nimbus-testing`.
 
 ## Completion Gate
 
@@ -2356,13 +977,15 @@ This plan is complete only when:
 - format, focused tests, architecture/network verifiers, multi-tenant network
   proof, clippy, docs gates, and `make ci` pass with exact recorded output.
 
-## Paste-Ready Autonomous Goal
+## Autonomous Goal
 
-Run this only after the planning-only handoff closes. Use the dedicated owner
-worktree in the Recovery Header unless the owner deliberately transfers both
-this ignored plan and the routing edit to another isolated worktree. Never run
-it in the original dirty checkout.
-
-```text
-/goal Execute docs/private/plans/nimbus-network-control-plane-plan.md autonomously from NNC0.0 through NNC9 in the dedicated owner worktree/branch in its Recovery Header. Before fetch/rebase or source edits, verify the plan exists and run `git cat-file -e HEAD:docs/private/plans/nimbus-network-control-plane-plan.md`; if it fails, force-add only the canonical plan and routing-index edit, commit that durability checkpoint, record it, and re-run the proof. Never use git clean/reset/checkout to recover work. From a clean checkpoint fetch origin/main, rebase onto it, resolve only owned paths, and record base/HEAD/dirty state. Before every item read the Recovery Header, three ledgers, item band, git status, and owned diff. Mark exactly one item in_progress; capture its expected-red evidence; implement only it; run named proofs with real exit status; record commands/counts/environment/capabilities/skips/seeds/artifacts/HEAD/dirty paths/last green/blocker/next command; then commit code plus ledger/evidence together. Never carry more than one completed item uncommitted. If blocked, record the exact blocker and next safe action, continue the next dependency-safe item, and stop/report if none is executable. Stop after 150 goal turns with truthful checkpoint state; never claim completion at the cap. Preserve unrelated changes and never implement in the original dirty checkout. Do not push or open/update a PR without separate explicit authority. Obey every Binding Architecture Decision and non-goal: network is a transport-free deep module with only the core workspace edge; effects/policy/naming/forwarding/projections/cluster transport stay in current owners; workloads owns durable saga vocabulary, compute is sole coordinator, and inspection cannot restart. Start with the complete dependency/bind census, deterministic real-process contention/crash harnesses, all fail-before race/durability/reuse/withdrawal/orphan/restart/listener proofs, and expected-red verifier. Then land stable identities/generation/digest/state, portable segment allocation, the network-owned crash-safe local store, injected allocator substitution, and one cross-process PortLease authority used/adopted by every classified production listener; delete scanners, probe/drop authorities, and duplicate types. Promote interfaces only after real substitution earns the seam. Prove machine modes and the Linux sovereignty tripwire; deepen sandbox attachment/reconciliation without moving effects; make inspect side-effect-free; add the server listener group; persist workload saga intent through the recorded engine path; inject network into compute; subordinate lazy activation/restart; and enforce admit->reserve->prepare->attach->activate/ready->publish->observe plus withdraw->drain->stop->detach->release->record across all workload/retirement paths. Run deterministic model/property/process/crash/ambiguity/stale-generation/projection/adapter/listener/orphan/sovereignty proofs. Finish only when every NNC item, failure-table row, proof-matrix row, seam check, verifier condition, deletion test, shared-plan truth-up, docs map, focused suite, `cargo fmt --all --check`, `make clippy`, docs gates, and `make ci` pass with exact evidence and no hidden skip.
-```
+Resume the sole `in_progress` ledger item in the dedicated owner worktree.
+Use the Recovery Header, current dirty diff, task criterion, and linked proof as
+the recovery state. Complete dependency-ready items in order; keep at most one
+item uncommitted; run focused checks during work and the written closeout gates
+only when candidate-green. Run one Sol/xhigh/fast review after each complete
+item is frozen, with one narrow correction review only for an accepted
+executable defect. Preserve all authority boundaries and the
+`nimbus-network -> nimbus-core` dependency invariant. Commit each completed
+item with its proof and ledger transition. Do not push or create or update a PR
+without separate authority.

@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
   "input": {
-    "sha256": "f36faf3e0c3290dcb43c8017fc8e7fa4c3e424bf1896d0c9e3feb9ab528382c6",
-    "files": 1657
+    "sha256": "2969b76972ccfd4208506ffbb72b968a2892d599baba7710a2034cc3455a6cc6",
+    "files": 1661
   },
   "inventory": {
     "path": "docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json",
-    "sha256": "f33b62d64246df1b05ecd3d58db92bb2899639960fb8b8bc9feaa473e5a43142"
+    "sha256": "4ceaa02c5ccb36fdd221b01818981a7281b2f1ac15de0458eec733c2e33c874c"
   },
   "compiler": {
     "rustc": {
@@ -188,8 +188,8 @@
         {
           "name": "nimbus_cli",
           "kind": "lib",
-          "bytes": 35650518,
-          "sha256": "9d2ccfef4c8a451538fc9a10e6de5830fa5db3ddd2984f7bee48ab5397083fe9",
+          "bytes": 35658665,
+          "sha256": "222c2f863ecb194b407baec2b4bb19cdb7f360d320e9e59effa120d60c11c55f",
           "calls": {
             "tcp-bind": 2,
             "tcp-from-std": 1,
@@ -400,8 +400,8 @@
         {
           "name": "nimbus_sandbox",
           "kind": "lib",
-          "bytes": 38055898,
-          "sha256": "eaf3013940a81faabc248bf1597c70758e30b77b93e86e67052cb8ec2668f4a9",
+          "bytes": 38508182,
+          "sha256": "0fc5f0753679c63d66fe3fb3eae22e89c6ad18dcf4294f6619c8739d4becbe46",
           "calls": {
             "tcp-bind": 1,
             "tcp-from-std": 0,
@@ -447,8 +447,8 @@
         {
           "name": "nimbus_server",
           "kind": "lib",
-          "bytes": 16339583,
-          "sha256": "6ac92b89b1624a12bf38a7b4afa6ba140b65c5cc5a543654fa3432fb51f95dff",
+          "bytes": 16422542,
+          "sha256": "6347244915bf5d1f5d1d9fba3e07af8ffc923eb6223ff721b2153b619012cb62",
           "calls": {
             "tcp-bind": 2,
             "tcp-from-std": 1,
@@ -636,7 +636,7 @@
     }
   },
   "source_boundaries": {
-    "scanner_sha256": "cb9e5334e938e7fe6c5ba02cb11f3e482ba2b5d8f7fc37e4f80ca4b1abd35267",
+    "scanner_sha256": "694aef33c46df62a6e2d93f004661d944ad700fbf74c3d78bd7bb91cbf51c1b4",
     "include_expansions": [
       {
         "path": "crates/nimbus-firebase/src/grpc.rs",
@@ -940,7 +940,7 @@
         "path": "crates/nimbus-sandbox/src/backends/krun/vm.rs",
         "kind": "conditional-module",
         "detail": "cfg(any (test , feature = \"test-hooks\"))|crates/nimbus-sandbox/src/backends/krun/vm/test_hooks.rs,crates/nimbus-sandbox/src/backends/krun/vm/test_hooks/mod.rs",
-        "line": 90
+        "line": 91
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/mod.rs",
@@ -952,7 +952,7 @@
         "path": "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle.rs",
         "kind": "conditional-module",
         "detail": "cfg(any (test , feature = \"test-hooks\"))|crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/test_api.rs,crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/test_api/mod.rs",
-        "line": 124
+        "line": 128
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/ipam.rs",
@@ -1076,19 +1076,19 @@
         "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
         "kind": "authority-shaped-macro",
         "detail": "format|\"krun sandbox host_port must be greater than zero for binding {}\" , port_binding . name",
-        "line": 543
+        "line": 554
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
         "kind": "authority-shaped-macro",
-        "detail": "format|\"duplicate sandbox host port binding: {}:{}\" , port_binding . host_address , port_binding . host_port",
-        "line": 559
+        "detail": "format|\"duplicate krun private TSI bridge port: {}\" , port_binding . host_port",
+        "line": 570
       },
       {
-        "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+        "path": "crates/nimbus-sandbox/src/backends/krun/ingress.rs",
         "kind": "authority-shaped-macro",
-        "detail": "format|\"{}:{}:{}\" , format_port_map_host_address (binding . host_address) , binding . host_port , binding . guest_port",
-        "line": 574
+        "detail": "format|\"{}:{}:{}\" , bind_address , binding . host_port , binding . guest_port",
+        "line": 19
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
@@ -1124,13 +1124,13 @@
         "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
         "kind": "authority-shaped-macro",
         "detail": "format|\"sandbox port lease {} selected {} for explicit binding {}\" , request . lease_id () , selected , binding . host_port",
-        "line": 340
+        "line": 341
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
         "kind": "authority-shaped-macro",
         "detail": "format|\"listener {:?} lease {} at {}:{} withdrawal was blocked: {error}\" , binding . name , request . lease_id () , binding . host_address , binding . host_port",
-        "line": 1398
+        "line": 1399
       },
       {
         "path": "crates/nimbus-tenant/src/operator_policy.rs",
@@ -1318,21 +1318,21 @@
         "kind": "authority-shaped-macro",
         "symbol": "validate_port_bindings",
         "ordinal": 1,
-        "line": 543
+        "line": 554
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
         "kind": "authority-shaped-macro",
         "symbol": "validate_port_bindings",
         "ordinal": 2,
-        "line": 559
+        "line": 570
       },
       {
-        "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+        "path": "crates/nimbus-sandbox/src/backends/krun/ingress.rs",
         "kind": "authority-shaped-macro",
-        "symbol": "format_port_map",
+        "symbol": "format_private_tsi_port_map",
         "ordinal": 1,
-        "line": 574
+        "line": 19
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
@@ -1381,14 +1381,14 @@
         "kind": "authority-shaped-macro",
         "symbol": "reserve_launch_ports_for_sandbox",
         "ordinal": 1,
-        "line": 340
+        "line": 341
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
         "kind": "authority-shaped-macro",
         "symbol": "withdraw_bindings",
         "ordinal": 1,
-        "line": 1398
+        "line": 1399
       },
       {
         "path": "crates/nimbus-tenant/src/operator_policy.rs",
