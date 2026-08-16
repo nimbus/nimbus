@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::{Read as _, Write as _};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
@@ -302,7 +303,7 @@ fn hash_tree_entry(
         ),
     })?;
     update_digest_field(hasher, relative.as_bytes());
-    update_digest_field(hasher, &metadata.permissions().mode().to_le_bytes());
+    update_permissions_identity(hasher, &metadata);
 
     if metadata.file_type().is_symlink() {
         if !preserve_symlink {
@@ -370,6 +371,23 @@ fn hash_tree_entry(
             path.display()
         ),
     })
+}
+
+#[cfg(unix)]
+fn update_permissions_identity(hasher: &mut Sha256, metadata: &fs::Metadata) {
+    update_digest_field(hasher, &metadata.permissions().mode().to_le_bytes());
+}
+
+#[cfg(windows)]
+fn update_permissions_identity(hasher: &mut Sha256, metadata: &fs::Metadata) {
+    use std::os::windows::fs::MetadataExt as _;
+
+    update_digest_field(hasher, &metadata.file_attributes().to_le_bytes());
+}
+
+#[cfg(not(any(unix, windows)))]
+fn update_permissions_identity(hasher: &mut Sha256, _metadata: &fs::Metadata) {
+    let _ = hasher;
 }
 
 fn update_digest_field(hasher: &mut Sha256, value: &[u8]) {

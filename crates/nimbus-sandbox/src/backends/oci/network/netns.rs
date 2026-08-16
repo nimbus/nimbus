@@ -24,6 +24,9 @@ use std::thread;
 
 use crate::error::{Result, SandboxError};
 
+#[cfg(target_os = "linux")]
+const NSFS_MAGIC: u64 = 0x6e73_6673;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ExactRegularArtifactObservation {
     Present,
@@ -539,42 +542,64 @@ fn remove_persistent_network_namespace_inner(
 
     #[cfg(target_os = "linux")]
     {
-        let target_fd = match &target {
-            ExactRegularArtifactSnapshot::Present(target) => target.file.as_raw_fd(),
+        let requires_unmount = match &target {
+            ExactRegularArtifactSnapshot::Present(open_target) => {
+                linux_namespace_artifact_requires_unmount(&parent, open_target, path)?
+            }
             ExactRegularArtifactSnapshot::ExplicitlyAbsent => unreachable!(),
         };
-        let pinned_target = Path::new("/proc/self/fd").join(target_fd.to_string());
-        let target_c = cstring_path(&pinned_target)?;
-        // SAFETY: `umount2` receives a NUL-terminated procfs path for the
-        // retained exact target descriptor, not a mutable directory name.
-        unsafe {
-            if libc::umount2(target_c.as_ptr(), libc::MNT_DETACH) != 0 {
-                let error = std::io::Error::last_os_error();
-                if error.raw_os_error() != Some(libc::EINVAL) {
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "failed to remove network namespace {}: {error}",
-                            path.display()
-                        ),
-                    });
+        if requires_unmount {
+            let open_target = match &target {
+                ExactRegularArtifactSnapshot::Present(open_target) => open_target,
+                ExactRegularArtifactSnapshot::ExplicitlyAbsent => unreachable!(),
+            };
+            let pinned_target =
+                Path::new("/proc/self/fd").join(open_target.file.as_raw_fd().to_string());
+            let target_c = cstring_path(&pinned_target)?;
+            // SAFETY: `umount2` receives a NUL-terminated procfs path for the
+            // retained exact target descriptor, not a mutable directory name.
+            unsafe {
+                if libc::umount2(target_c.as_ptr(), libc::MNT_DETACH) != 0 {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() != Some(libc::EINVAL) {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "failed to remove network namespace {}: {error}",
+                                path.display()
+                            ),
+                        });
+                    }
                 }
             }
         }
+        let removal_target = if requires_unmount {
+            // Detaching the NSFS mount reveals the underlying regular mount
+            // point with a different device and inode. Reopen that exact name
+            // through the retained parent before removal; the mounted identity
+            // cannot authenticate the newly revealed artifact.
+            parent
+                .inspect_target(expected_parent, path, target_name, "namespace")
+                .map_err(|message| SandboxError::OperationFailed { message })?
+        } else {
+            target
+        };
         parent
             .require_current_ambient_identity(expected_parent, path, "namespace")
             .map_err(|message| SandboxError::OperationFailed { message })?;
         parent
-            .require_current_target_identity(path, target_name, "namespace", &target)
+            .require_current_target_identity(path, target_name, "namespace", &removal_target)
             .map_err(|message| SandboxError::OperationFailed { message })?;
-        parent
-            .dir
-            .remove_file(target_name)
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to delete network-namespace file {}: {error}",
-                    path.display()
-                ),
-            })?;
+        if matches!(removal_target, ExactRegularArtifactSnapshot::Present(_)) {
+            parent
+                .dir
+                .remove_file(target_name)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to delete network-namespace file {}: {error}",
+                        path.display()
+                    ),
+                })?;
+        }
     }
     parent
         .require_current_ambient_identity(expected_parent, path, "namespace")
@@ -588,6 +613,41 @@ fn remove_persistent_network_namespace_inner(
         )
         .map_err(|message| SandboxError::OperationFailed { message })?;
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_namespace_artifact_requires_unmount(
+    parent: &OpenExactParent,
+    target: &OpenExactRegularArtifact,
+    path: &Path,
+) -> Result<bool> {
+    let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: `filesystem` points to writable storage for one `statfs`, and
+    // the pinned target descriptor remains open for the duration of the call.
+    if unsafe { libc::fstatfs(target.file.as_raw_fd(), filesystem.as_mut_ptr()) } != 0 {
+        return Err(last_os_error(&format!(
+            "failed to classify network-namespace artifact {}",
+            path.display()
+        )));
+    }
+    // SAFETY: a successful `fstatfs` initialized the complete output value.
+    let filesystem = unsafe { filesystem.assume_init() };
+    if filesystem.f_type as u64 == NSFS_MAGIC {
+        return Ok(true);
+    }
+    if target.device == parent.device {
+        // Deterministic tests and imported stale state can contain the exact
+        // regular placeholder without a namespace bind mount. Calling
+        // `umount2` for that file requires CAP_SYS_ADMIN even though there is
+        // no mount to detach, so delete it through the already pinned parent.
+        return Ok(false);
+    }
+    Err(SandboxError::OperationFailed {
+        message: format!(
+            "network-namespace artifact {} is on an unexpected mounted filesystem",
+            path.display()
+        ),
+    })
 }
 
 #[cfg(target_os = "linux")]

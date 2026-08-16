@@ -117,7 +117,7 @@ impl RuntimeProcessSignal {
 
     pub(crate) fn kill() -> Self {
         Self {
-            number: libc::SIGKILL,
+            number: kill_signal_number(),
         }
     }
 
@@ -125,6 +125,19 @@ impl RuntimeProcessSignal {
     pub(crate) const fn number(self) -> i32 {
         self.number
     }
+}
+
+#[cfg(unix)]
+const fn kill_signal_number() -> i32 {
+    libc::SIGKILL
+}
+
+#[cfg(not(unix))]
+const fn kill_signal_number() -> i32 {
+    // Non-Unix adapters reject signalling before they observe this value. A
+    // stable placeholder keeps the durable command model portable without
+    // claiming that Windows supports Unix signal semantics.
+    9
 }
 
 /// Result of one signal attempt against an authenticated process handle.

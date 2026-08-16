@@ -4,8 +4,9 @@ use std::net::TcpListener;
 use std::sync::mpsc;
 
 use nimbus_network::{
-    NetworkAttachmentReservationState, NetworkCapabilitySourceDigest, NetworkResourcePhase,
-    NetworkSegmentReleaseOutcome, PortLeasePhase,
+    LocalPortLeaseAuthority, NetworkAttachmentReservationState, NetworkCapabilitySourceDigest,
+    NetworkResourcePhase, NetworkSegmentReleaseOutcome, PortLeaseError, PortLeasePhase,
+    PortLeaseRequest,
 };
 
 use super::*;
@@ -859,6 +860,12 @@ fn krun_network_teardown_reopens_durable_owner_death_state() {
         .egress_proxy
         .as_ref()
         .expect("attached manifest should retain its PEP assignment");
+    let plan_members = pep.compiled_plan_members(
+        attached
+            .provision_network_plan
+            .as_ref()
+            .expect("attached manifest should retain its compiled plan"),
+    );
     let active_pep = fixture
         .backend
         .port_lease_coordinator()
@@ -868,6 +875,11 @@ fn krun_network_teardown_reopens_durable_owner_death_state() {
         .expect("one active PEP record should exist");
     assert_eq!(active_pep.phase(), PortLeasePhase::Active);
     assert!(active_pep.active_lifetime().is_some());
+    let port_authority = fixture
+        .backend
+        .port_lease_coordinator()
+        .cloned_authority()
+        .expect("fixture PEP authority should remain available");
 
     let NetworkTeardownFixture {
         root,
@@ -879,6 +891,7 @@ fn krun_network_teardown_reopens_durable_owner_death_state() {
     drop(runtime);
     drop(backend);
 
+    await_dead_pep_lifetime(&port_authority, &plan_members, &pep.port_lease);
     let reopened = KrunSandboxBackend::new(config.clone())
         .with_egress_pin_provider(Arc::new(FixedOciEgressPinProvider::ready()));
     let detached = execute_network(&reopened, &detach);
@@ -937,6 +950,35 @@ fn krun_network_teardown_reopens_durable_owner_death_state() {
         HostManagedAttachmentReleasePhase::Released
     );
     drop(root);
+}
+
+fn await_dead_pep_lifetime(
+    authority: &LocalPortLeaseAuthority,
+    plan_members: &[PortLeaseRequest],
+    request: &PortLeaseRequest,
+) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match authority.recover_dead_plan_members(plan_members, std::slice::from_ref(request)) {
+            Ok(recovery) => {
+                drop(recovery);
+                return;
+            }
+            Err(PortLeaseError::LifetimeOwnerLive { lease_id })
+                if lease_id == *request.lease_id() && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(2));
+            }
+            Err(PortLeaseError::LifetimeOwnerLive { lease_id })
+                if lease_id == *request.lease_id() =>
+            {
+                panic!("dropped PEP owner did not release its exact lifetime lock")
+            }
+            Err(error) => {
+                panic!("PEP plan lifetime should remain valid while its owner exits: {error}")
+            }
+        }
+    }
 }
 
 #[test]
@@ -1096,7 +1138,11 @@ fn krun_network_inspect_is_byte_stable_and_cannot_cross_older_execute() {
         .join()
         .expect("network executor should join")
         .expect("network executor should publish");
-    assert_eq!(executed.kind(), ProviderCommandObservationKind::Succeeded);
+    assert_eq!(
+        executed.kind(),
+        ProviderCommandObservationKind::Succeeded,
+        "older Krun network Execute must publish one terminal result: {executed:?}"
+    );
     let inspected = inspection_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("inspection should finish after the older Execute publishes");

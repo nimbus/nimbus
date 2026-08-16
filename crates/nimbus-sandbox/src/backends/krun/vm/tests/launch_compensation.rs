@@ -1122,6 +1122,7 @@ fn post_adoption_cleanup_failure_is_returned_with_primary_error() {
     assert!(
         message.contains("krun launch failed:")
             && (message.contains("netavark setup")
+                || message.contains("failed to unshare network namespace")
                 || message.contains("krun execution requires a Linux host")),
         "the primary launch failure must remain visible: {message}"
     );

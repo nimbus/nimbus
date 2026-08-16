@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
   "input": {
-    "sha256": "67a497b617d1b8b681ac4fb1aab8b8f31df5e4b8d42a93857f52fdabd4824e33",
+    "sha256": "0c406b1f997f78eb2ca311165bc2e67136f5526297d703984a3d25d4eb6aca43",
     "files": 1661
   },
   "inventory": {
     "path": "docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json",
-    "sha256": "4ceaa02c5ccb36fdd221b01818981a7281b2f1ac15de0458eec733c2e33c874c"
+    "sha256": "e147fd8e95e16fde068718dd141a249cb7e3137eb05cf84905b826a31b11e81c"
   },
   "compiler": {
     "rustc": {
@@ -400,8 +400,8 @@
         {
           "name": "nimbus_sandbox",
           "kind": "lib",
-          "bytes": 38514184,
-          "sha256": "a55d0ad93b5b246f667770e7d7a3df1e9b4351df5bb0401a4c32ce17198cd97a",
+          "bytes": 38520242,
+          "sha256": "8d04499da4c1a39594bc7e9428f2945886639f05e36d5d7238e52bf069ac3134",
           "calls": {
             "tcp-bind": 1,
             "tcp-from-std": 0,
@@ -636,7 +636,7 @@
     }
   },
   "source_boundaries": {
-    "scanner_sha256": "1365d8e423084f18760e5a8f5e6c58ac89e63e9a6a5948fc2be390e551edc22f",
+    "scanner_sha256": "061bc37d60f204ebd2e9462b2c296eafa3a9b27e0321957337f11521109b2a20",
     "include_expansions": [
       {
         "path": "crates/nimbus-firebase/src/grpc.rs",
@@ -722,13 +722,13 @@
         "path": "crates/nimbus-sandbox/src/backends/conmon/creator.rs",
         "kind": "module-path",
         "detail": "creator/attempt_annotation.rs",
-        "line": 27
+        "line": 28
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/conmon/creator.rs",
         "kind": "module-path",
         "detail": "creator/recovery.rs",
-        "line": 29
+        "line": 30
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/host_teardown.rs",
@@ -1094,25 +1094,25 @@
         "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
         "kind": "authority-shaped-macro",
         "detail": "format|\"failed to encode gvproxy {action} request for {}:{}: {error}\" , binding . host_address , binding . host_port",
-        "line": 644
+        "line": 652
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
         "kind": "authority-shaped-macro",
         "detail": "format|\"gvproxy lists {} conflicting routes for {}:{}\" , slot_routes . len () , binding . host_address , binding . host_port",
-        "line": 717
+        "line": 725
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
         "kind": "authority-shaped-macro",
         "detail": "format|\"machine forwarder {action} for {}:{} is ambiguous at provider generation {} \\\n             ({mutation_detail}); exact current observation failed: {inspection_error}\" , binding . host_address , binding . host_port , provider_generation . as_u64 () ,",
-        "line": 771
+        "line": 779
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
         "kind": "authority-shaped-macro",
         "detail": "format|\":{}\" , binding . host_port",
-        "line": 1209
+        "line": 1217
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
@@ -1283,21 +1283,21 @@
         "kind": "ambiguous-descriptor-adoption",
         "symbol": "launch_gate_pipe",
         "ordinal": 1,
-        "line": 550
+        "line": 551
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/conmon/creator.rs",
         "kind": "ambiguous-descriptor-adoption",
         "symbol": "launch_gate_pipe",
         "ordinal": 2,
-        "line": 552
+        "line": 553
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/conmon/runtime_process.rs",
         "kind": "ambiguous-descriptor-adoption",
         "symbol": "signal_authenticated_runtime_process",
         "ordinal": 1,
-        "line": 306
+        "line": 319
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/container/bundle.rs",
@@ -1339,35 +1339,35 @@
         "kind": "authority-shaped-macro",
         "symbol": "encode_gvproxy_request",
         "ordinal": 1,
-        "line": 644
+        "line": 652
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
         "kind": "authority-shaped-macro",
         "symbol": "authenticate_current_routes",
         "ordinal": 1,
-        "line": 717
+        "line": 725
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
         "kind": "authority-shaped-macro",
         "symbol": "mutation_observation_error",
         "ordinal": 1,
-        "line": 771
+        "line": 779
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
         "kind": "ambiguous-descriptor-adoption",
         "symbol": "connect_unix_with_timeout",
         "ordinal": 1,
-        "line": 989
+        "line": 997
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
         "kind": "authority-shaped-macro",
         "symbol": "machine_forward_remote",
         "ordinal": 1,
-        "line": 1209
+        "line": 1217
       },
       {
         "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",

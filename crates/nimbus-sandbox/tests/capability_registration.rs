@@ -194,6 +194,13 @@ fn cached_startup_reconciliation_failures_refuse_backend_registrations() {
         .expect("network authority parent should create");
         std::fs::write(&authority_path, b"{")
             .expect("corrupt network authority fixture should write");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            std::fs::set_permissions(&authority_path, std::fs::Permissions::from_mode(0o600))
+                .expect("corrupt authority fixture should retain secure state-store mode");
+        }
     }
 
     let container = ContainerSandboxBackend::new(container_config);
@@ -217,7 +224,7 @@ fn cached_startup_reconciliation_failures_refuse_backend_registrations() {
             } => {
                 assert_eq!(actual_provider_key, provider_key);
                 assert!(
-                    reason.contains("startup network reconciliation failed"),
+                    reason.contains("attachment authority store failed"),
                     "refusal must retain the cached reconciliation diagnostic: {reason}"
                 );
                 assert!(

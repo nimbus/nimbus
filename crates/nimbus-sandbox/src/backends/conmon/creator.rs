@@ -5,6 +5,7 @@
 //! contains its process group, and authenticates the separate conmon PID
 //! receipt before it acknowledges quiescence.
 
+#[cfg(unix)]
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};

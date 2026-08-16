@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(unix)]
 use super::process_group_is_absent;
 use crate::error::{Result, SandboxError};
 

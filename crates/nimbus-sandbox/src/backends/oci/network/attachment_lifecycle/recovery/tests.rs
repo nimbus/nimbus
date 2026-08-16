@@ -3,6 +3,8 @@ use std::path::Path;
 
 use nimbus_network::NetworkResourcePhase;
 
+#[cfg(target_os = "linux")]
+use super::super::super::netns::create_persistent_network_namespace;
 use super::super::super::netns::{
     ExactRegularArtifactObservation, inspect_exact_regular_artifact,
     inspect_exact_regular_artifact_with_parent_open_hook,
@@ -246,6 +248,24 @@ fn nnc6_5d3_k14_exact_present_removal_deletes_only_the_pinned_artifact() {
     assert!(
         !artifact.exists(),
         "successful namespace removal must leave the exact target absent"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires Linux CAP_SYS_ADMIN to create and detach a persistent network namespace"]
+fn nnc6_5d3_k14_mounted_namespace_removal_detaches_nsfs_and_deletes_mount_point() {
+    let root = tempfile::tempdir().expect("artifact root should exist");
+    let artifact = root.path().join("namespace");
+    create_persistent_network_namespace(&artifact)
+        .expect("the exact persistent namespace should mount");
+
+    remove_persistent_network_namespace(&artifact)
+        .expect("the exact mounted namespace and its mount point should remove");
+
+    assert!(
+        !artifact.exists(),
+        "successful mounted namespace removal must leave the exact target absent"
     );
 }
 

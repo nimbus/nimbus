@@ -108,22 +108,22 @@ impl OciMachinePortForwarderConfig {
         provider_instance: impl Into<String>,
         provider_generation: NetworkResourceGeneration,
     ) -> Result<Self> {
-        let socket_path = socket_path.into();
-        let path_prefix = path_prefix.into();
-        if !socket_path.is_absolute() {
-            return Err(SandboxError::InvalidSpec {
-                message: "machine forwarder services socket path must be absolute".to_owned(),
-            });
-        }
-        if path_prefix != DEFAULT_MACHINE_FORWARDER_PATH {
-            return Err(SandboxError::InvalidSpec {
-                message: format!(
-                    "machine forwarder services path must be {DEFAULT_MACHINE_FORWARDER_PATH}"
-                ),
-            });
-        }
         #[cfg(unix)]
         {
+            let socket_path = socket_path.into();
+            let path_prefix = path_prefix.into();
+            if !socket_path.is_absolute() {
+                return Err(SandboxError::InvalidSpec {
+                    message: "machine forwarder services socket path must be absolute".to_owned(),
+                });
+            }
+            if path_prefix != DEFAULT_MACHINE_FORWARDER_PATH {
+                return Err(SandboxError::InvalidSpec {
+                    message: format!(
+                        "machine forwarder services path must be {DEFAULT_MACHINE_FORWARDER_PATH}"
+                    ),
+                });
+            }
             let path_bytes = socket_path.as_os_str().as_bytes();
             if path_bytes.contains(&0) {
                 return Err(SandboxError::InvalidSpec {
@@ -140,25 +140,33 @@ impl OciMachinePortForwarderConfig {
                     ),
                 });
             }
+
+            Ok(Self {
+                host: "localhost".to_owned(),
+                port: 0,
+                path_prefix,
+                unix_socket_path: Some(socket_path),
+                provider_instance: Self::gvproxy_provider_handle(provider_instance).map_err(
+                    |error| SandboxError::InvalidSpec {
+                        message: format!("machine forwarder provider identity is invalid: {error}"),
+                    },
+                )?,
+                provider_generation,
+            })
         }
         #[cfg(not(unix))]
-        return Err(SandboxError::BackendUnavailable {
-            message: "machine forwarder Unix services sockets are unavailable on this platform"
-                .to_owned(),
-        });
-
-        Ok(Self {
-            host: "localhost".to_owned(),
-            port: 0,
-            path_prefix,
-            unix_socket_path: Some(socket_path),
-            provider_instance: Self::gvproxy_provider_handle(provider_instance).map_err(
-                |error| SandboxError::InvalidSpec {
-                    message: format!("machine forwarder provider identity is invalid: {error}"),
-                },
-            )?,
-            provider_generation,
-        })
+        {
+            let _ = (
+                socket_path,
+                path_prefix,
+                provider_instance,
+                provider_generation,
+            );
+            Err(SandboxError::BackendUnavailable {
+                message: "machine forwarder Unix services sockets are unavailable on this platform"
+                    .to_owned(),
+            })
+        }
     }
 
     pub fn unix_socket_path(&self) -> Option<&Path> {

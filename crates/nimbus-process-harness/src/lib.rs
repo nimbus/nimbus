@@ -568,6 +568,7 @@ impl SpawnedRole {
                 message,
             }),
             Ok(ReaderEvent::Eof) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                self.reap_after_stdout_eof(deadline)?;
                 Err(HarnessFailure::EarlyExit {
                     role: self.role.clone(),
                     expected: expected.to_owned(),
@@ -637,6 +638,34 @@ impl SpawnedRole {
         self.status = Some(status);
         self.cleanup_result = Some("exited-and-reaped".to_owned());
         Ok(())
+    }
+
+    fn reap_after_stdout_eof(&mut self, deadline: Instant) -> Result<(), HarnessFailure> {
+        self.stdin.take();
+        let Some(child) = self.child.as_mut() else {
+            return Ok(());
+        };
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    self.status = Some(status);
+                    self.cleanup_result = Some("exited-and-reaped".to_owned());
+                    return Ok(());
+                }
+                Ok(None) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Ok(None) => return Ok(()),
+                Err(error) => {
+                    return Err(HarnessFailure::Protocol {
+                        role: self.role.clone(),
+                        message: format!(
+                            "failed to inspect child after its checkpoint stream closed: {error}"
+                        ),
+                    });
+                }
+            }
+        }
     }
 
     fn cleanup(&mut self) -> ProcessDiagnostic {

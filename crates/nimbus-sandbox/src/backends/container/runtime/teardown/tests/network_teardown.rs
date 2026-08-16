@@ -1327,7 +1327,11 @@ fn container_network_inspect_is_byte_stable_and_cannot_cross_older_execute() {
         .join()
         .expect("network executor should join")
         .expect("network executor should publish");
-    assert_eq!(executed.kind(), ProviderCommandObservationKind::Succeeded);
+    assert_eq!(
+        executed.kind(),
+        ProviderCommandObservationKind::Succeeded,
+        "older Container network Execute must publish one terminal result: {executed:?}"
+    );
     let inspected = inspection_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("inspection should finish after the older Execute publishes");

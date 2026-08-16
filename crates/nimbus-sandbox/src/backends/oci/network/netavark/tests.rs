@@ -18,6 +18,36 @@ use crate::backends::oci::network::direct_test_ipam_authority;
 
 const BARRIER_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[cfg(unix)]
+#[test]
+fn successful_provider_exit_wins_the_stdin_broken_pipe_race() {
+    let mut command = std::process::Command::new("/usr/bin/true");
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let output = run_netavark_command(&mut command, &vec![b'x'; 1024 * 1024])
+        .expect("an exit-zero provider should settle a concurrent stdin close");
+
+    assert!(output.status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_provider_exit_remains_failed_after_the_stdin_broken_pipe_race() {
+    let mut command = std::process::Command::new("/usr/bin/false");
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let output = run_netavark_command(&mut command, &vec![b'x'; 1024 * 1024])
+        .expect("a concurrent stdin close should preserve the provider exit result");
+
+    assert!(!output.status.success());
+}
+
 fn foreign_provider_attempt(label: &str) -> NetworkProviderHandle {
     NetworkProviderHandle::new(
         NetworkProviderId::for_registration_key("nimbus-sandbox.netavark-substitution-test"),

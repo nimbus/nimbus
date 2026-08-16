@@ -982,10 +982,16 @@ fn manifest_files(workload_root: &Path) -> Vec<PathBuf> {
 
 fn assert_cached_startup_failure(error: &str, expected_manifest: &Path, expected_reason: &str) {
     assert!(
-        error.contains("startup reconciliation did not complete")
-            && error.contains(expected_reason)
-            && error.contains(&expected_manifest.display().to_string()),
+        error.contains("startup reconciliation did not complete"),
         "new work must preserve the cached startup failure: {error}"
+    );
+    assert_cached_startup_diagnostic(error, expected_manifest, expected_reason);
+}
+
+fn assert_cached_startup_diagnostic(error: &str, expected_manifest: &Path, expected_reason: &str) {
+    assert!(
+        error.contains(expected_reason) && error.contains(&expected_manifest.display().to_string()),
+        "cached startup diagnostic must retain its exact artifact and reason: {error}"
     );
 }
 
@@ -1002,7 +1008,7 @@ fn assert_startup_registration_failure(
             reason,
         } => {
             assert_eq!(provider_key, expected_provider);
-            assert_cached_startup_failure(&reason, expected_manifest, expected_reason);
+            assert_cached_startup_diagnostic(&reason, expected_manifest, expected_reason);
         }
         other => panic!("expected cached startup registration refusal, got {other:?}"),
     }

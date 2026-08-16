@@ -77,7 +77,7 @@ impl OciArtifactRealmId {
         }
         let mut digest = Sha256::new();
         digest.update(ARTIFACT_REALM_DOMAIN);
-        update_directory_identity(&mut digest, &metadata)?;
+        update_directory_identity(&mut digest, &file, &metadata)?;
         Ok(Self(format!(
             "{ARTIFACT_REALM_PREFIX}{}",
             digest
@@ -206,11 +206,16 @@ impl OciAttachmentProviderLocator {
     }
 }
 
-fn update_directory_identity(digest: &mut Sha256, metadata: &std::fs::Metadata) -> Result<()> {
+fn update_directory_identity(
+    digest: &mut Sha256,
+    file: &std::fs::File,
+    metadata: &std::fs::Metadata,
+) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
 
+        let _ = file;
         digest.update(b"unix\0");
         digest.update(metadata.dev().to_be_bytes());
         digest.update(metadata.ino().to_be_bytes());
@@ -219,30 +224,35 @@ fn update_directory_identity(digest: &mut Sha256, metadata: &std::fs::Metadata) 
 
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
 
-        let volume =
-            metadata
-                .volume_serial_number()
-                .ok_or_else(|| SandboxError::OperationFailed {
-                    message: "OCI workload artifact root has no stable Windows volume identity"
-                        .to_owned(),
-                })?;
-        let file = metadata
-            .file_index()
-            .ok_or_else(|| SandboxError::OperationFailed {
-                message: "OCI workload artifact root has no stable Windows file identity"
-                    .to_owned(),
-            })?;
+        let _ = metadata;
+        let mut identity = BY_HANDLE_FILE_INFORMATION::default();
+        // SAFETY: the retained standard-library file owns a valid directory
+        // handle, and `identity` points to writable storage for the complete
+        // result structure.
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut identity) } == 0 {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to inspect stable Windows OCI workload artifact root identity: {}",
+                    std::io::Error::last_os_error()
+                ),
+            });
+        }
+        let file_index =
+            (u64::from(identity.nFileIndexHigh) << 32) | u64::from(identity.nFileIndexLow);
         digest.update(b"windows\0");
-        digest.update(volume.to_be_bytes());
-        digest.update(file.to_be_bytes());
+        digest.update(identity.dwVolumeSerialNumber.to_be_bytes());
+        digest.update(file_index.to_be_bytes());
         Ok(())
     }
 
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = (digest, metadata);
+        let _ = (digest, file, metadata);
         Err(SandboxError::OperationFailed {
             message:
                 "this platform does not expose a stable OCI workload artifact directory identity"

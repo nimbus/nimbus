@@ -6,6 +6,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::net::Ipv4Addr;
 use std::path::Path;
+use std::process::Output;
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
@@ -696,7 +697,8 @@ fn run_netavark(
         serde_json::to_vec(&request).map_err(|error| SandboxError::OperationFailed {
             message: format!("failed to serialize netavark request: {error}"),
         })?;
-    let output = std::process::Command::new(&operation.config.netavark_path)
+    let mut command = std::process::Command::new(&operation.config.netavark_path);
+    command
         .arg("--config")
         .arg(&operation.layout.run_root)
         .arg("--rootless=false")
@@ -709,21 +711,16 @@ fn run_netavark(
         .env("PATH", netavark_path_env(std::env::var_os("PATH")))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(&request_bytes)?;
-            }
-            child.wait_with_output()
-        })
-        .map_err(|error| SandboxError::OperationFailed {
+        .stderr(std::process::Stdio::piped());
+    let output = run_netavark_command(&mut command, &request_bytes).map_err(|error| {
+        SandboxError::OperationFailed {
             message: format!(
                 "failed to run netavark {} for sandbox {}: {error}",
                 action,
                 operation.sandbox_id.as_str()
             ),
-        })?;
+        }
+    })?;
     if !output.status.success() {
         return Err(SandboxError::OperationFailed {
             message: format!(
@@ -744,6 +741,29 @@ fn run_netavark(
             operation.sandbox_id.as_str()
         ),
     })
+}
+
+/// Send one request and always reap the provider before classifying stdin errors.
+///
+/// A short-lived provider can exit after accepting the operation but before the
+/// parent finishes writing a pipe-buffered request. In that case `write_all`
+/// reports `BrokenPipe`, while the provider exit status is the authoritative
+/// operation result. Other local write failures remain execution failures.
+fn run_netavark_command(
+    command: &mut std::process::Command,
+    request_bytes: &[u8],
+) -> io::Result<Output> {
+    let mut child = command.spawn()?;
+    let write_result = child
+        .stdin
+        .take()
+        .map_or(Ok(()), |mut stdin| stdin.write_all(request_bytes));
+    let output = child.wait_with_output()?;
+    match write_result {
+        Ok(()) => Ok(output),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(output),
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) fn build_netavark_request(
