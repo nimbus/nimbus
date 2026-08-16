@@ -280,18 +280,11 @@ fn compose_local_and_forwarded_restart_use_compute() {
     let local = include_str!("../../network_composition.rs");
     let forwarded_server = include_str!("../../network_composition/forwarded.rs");
     let forwarded_foreground = include_str!("../provision.rs");
-    let canonical_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src/network_composition/forwarded/profile.rs");
-    let canonical = std::fs::read_to_string(&canonical_path).unwrap_or_else(|error| {
-        panic!(
-            "the canonical forwarded composition must exist at {}: {error}",
-            canonical_path.display()
-        )
-    });
+    let canonical = include_str!("../../network_composition/forwarded/profile.rs");
 
     for (owner, source) in [
         ("local server profile", local),
-        ("canonical forwarded profile", canonical.as_str()),
+        ("canonical forwarded profile", canonical),
     ] {
         assert_eq!(
             source.matches(".with_restart_capabilities()").count(),

@@ -32,7 +32,7 @@ test-group = 'runtime-v8-global'
 # recovery work inside one test. Run each without unrelated workspace load so
 # their existing semantic checkpoint bounds remain meaningful.
 [[profile.default.overrides]]
-filter = 'test(/fresh_process_network_teardown_container_recovers_every_durable_checkpoint|fresh_process_container_network_contenders_publish_one_result_per_operation|fresh_process_reopens_engine_and_plans_every_workload_saga_phase_without_snapshot_handoff|fresh_process_restart_reopens_engine/)'
+filter = 'test(/fresh_process_network_teardown_(?:container|krun)_recovers_every_durable_checkpoint|fresh_process_(?:container|krun)_network_contenders_publish_one_result_per_operation|fresh_process_reopens_engine_and_plans_every_workload_saga_phase_without_snapshot_handoff|fresh_process_restart_reopens_engine/)'
 threads-required = "num-test-threads"
 
 [profile.ci-pr]

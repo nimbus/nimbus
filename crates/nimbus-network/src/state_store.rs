@@ -868,17 +868,19 @@ fn validate_owner_file_permissions(
     Ok(())
 }
 
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), NetworkStateStoreError> {
-    #[cfg(unix)]
-    {
-        File::open(path)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|source| NetworkStateStoreError::Io {
-                operation: "sync authority directory",
-                path: path.to_path_buf(),
-                source,
-            })?;
-    }
+    File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|source| NetworkStateStoreError::Io {
+            operation: "sync authority directory",
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), NetworkStateStoreError> {
     Ok(())
 }
 
@@ -1067,9 +1069,9 @@ fn detect_filesystem_kind(path: &Path) -> Result<String, NetworkStateStoreError>
 #[cfg(windows)]
 fn detect_filesystem_kind(path: &Path) -> Result<String, NetworkStateStoreError> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
+    use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
+    use windows_sys::Win32::System::WindowsProgramming::{
         DRIVE_CDROM, DRIVE_FIXED, DRIVE_NO_ROOT_DIR, DRIVE_RAMDISK, DRIVE_REMOTE, DRIVE_REMOVABLE,
-        DRIVE_UNKNOWN, GetDriveTypeW,
     };
 
     let canonical = fs::canonicalize(path).map_err(|source| NetworkStateStoreError::Io {
@@ -1099,7 +1101,7 @@ fn detect_filesystem_kind(path: &Path) -> Result<String, NetworkStateStoreError>
         DRIVE_REMOVABLE => "windows-removable".to_owned(),
         DRIVE_CDROM => "windows-cdrom".to_owned(),
         DRIVE_NO_ROOT_DIR => "windows-no-root".to_owned(),
-        DRIVE_UNKNOWN | _ => "windows-unknown".to_owned(),
+        _ => "windows-unknown".to_owned(),
     })
 }
 

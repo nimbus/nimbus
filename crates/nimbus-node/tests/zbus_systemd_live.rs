@@ -139,24 +139,38 @@ async fn failed_unit_is_observable_via_inspect() {
 
     // The unit may be briefly activating/active before `false` exits; poll
     // until it settles into a terminal state.
-    let mut final_state = String::new();
+    let mut final_state = None;
+    let mut last_observation = "no systemd observation completed".to_owned();
     for _ in 0..50 {
-        let status = client
+        match client
             .inspect_unit(
                 SystemdInspectUnitRequest::for_execution(workload.clone())
                     .expect("inspect request should build"),
             )
             .await
-            .expect("inspect should succeed");
-        final_state = status.active_state().to_string();
-        if final_state == "failed" || final_state == "inactive" {
-            break;
+        {
+            Ok(status) => {
+                let state = status.active_state().to_owned();
+                last_observation = format!("stable state {state}/{}", status.sub_state());
+                if state == "failed" || state == "inactive" {
+                    final_state = Some(state);
+                    break;
+                }
+            }
+            Err(error) => {
+                // A fast process can exit between the two lifecycle snapshots.
+                // The client rejects that mixed observation. This bounded poll
+                // is the caller-owned retry required by that contract.
+                last_observation = format!("transient inspection error: {error}");
+            }
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(
-        final_state, "failed",
-        "a unit whose ExecStart exits non-zero should reach `failed`"
+        final_state.as_deref(),
+        Some("failed"),
+        "a unit whose ExecStart exits non-zero should reach `failed`; last observation: \
+         {last_observation}"
     );
 
     // Best-effort cleanup; unique names mean a lingering failed unit never

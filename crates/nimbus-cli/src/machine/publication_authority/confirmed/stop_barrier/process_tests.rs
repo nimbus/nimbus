@@ -295,7 +295,7 @@ pub(super) fn await_fifo(root: &Path, name: &str) -> Result<(), String> {
     let mut byte = [0_u8; 1];
     fifo.read_exact(&mut byte)
         .map_err(|error| format!("failed to receive {name} signal: {error}"))?;
-    if byte != [b'1'] {
+    if byte != *b"1" {
         return Err(format!("{name} FIFO carried an invalid semantic token"));
     }
     Ok(())

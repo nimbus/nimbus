@@ -248,6 +248,40 @@ fn adjacent_retry_observation(
     }
 }
 
+fn second_retry_observation(
+    stored: &ProviderCommandClaim,
+    prior: &ProviderCommandClaim,
+    current: &ProviderCommandClaim,
+) -> ProviderCommandObservation {
+    let root = tempfile::tempdir().expect("temporary journal root should exist");
+    let journal = ProviderCommandAttemptJournal::open(root.path(), "state-second-rebase-test")
+        .expect("provider journal fixture should open");
+    for claim in [stored, prior] {
+        assert!(matches!(
+            journal
+                .claim_dispatch_epoch(claim)
+                .expect("retry lineage claim should persist"),
+            ProviderCommandClaimDecision::ExecuteClaimed(_)
+        ));
+        journal
+            .record_observation(
+                claim,
+                ProviderCommandObservationKind::RetryAuthorized,
+                b"provider-local finalization requires another retry",
+            )
+            .expect("retry lineage authorization should persist");
+    }
+    match journal
+        .claim_dispatch_epoch(current)
+        .expect("second retry fixture should persist")
+    {
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execution.observation().clone(),
+        ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
+            panic!("a second lineage-authorized retry must grant execute authority")
+        }
+    }
+}
+
 #[test]
 fn detach_rebase_changes_only_the_selected_claim() {
     let stored = command(SandboxNetworkTeardownOperation::Detach, BASE_EPOCH);
@@ -363,7 +397,7 @@ fn nonadjacent_and_crossed_replays_are_rejected_without_writes() {
 }
 
 #[test]
-fn detached_and_released_state_reject_adjacent_rebase() {
+fn detached_state_rejects_retry_but_released_state_authorizes_exact_finalization_retry() {
     let detach_stored = command(SandboxNetworkTeardownOperation::Detach, BASE_EPOCH);
     let detach_current = command(SandboxNetworkTeardownOperation::Detach, BASE_EPOCH + 1);
     let mut detach_state = detached_state(detach_stored.clone());
@@ -398,12 +432,34 @@ fn detached_and_released_state_reject_adjacent_rebase() {
     assert_eq!(
         release_state.inspect_and_rebase_command(
             &release_current,
+            &claimed_observation(release_current.provider_claim())
+        ),
+        Err(HostManagedAttachmentCommandInspectionError::EpochInvalid)
+    );
+    assert_eq!(release_state, release_before);
+    assert_eq!(
+        release_state.inspect_and_rebase_command(
+            &release_current,
             &adjacent_retry_observation(
                 release_stored.provider_claim(),
                 release_current.provider_claim()
             )
         ),
-        Err(HostManagedAttachmentCommandInspectionError::EpochInvalid)
+        Ok(HostManagedAttachmentCommandInspection::ExactTerminalSuccess)
+    );
+    assert_eq!(release_state, release_before);
+
+    let release_later = command(SandboxNetworkTeardownOperation::Release, BASE_EPOCH + 2);
+    assert_eq!(
+        release_state.inspect_and_rebase_command(
+            &release_later,
+            &second_retry_observation(
+                release_stored.provider_claim(),
+                release_current.provider_claim(),
+                release_later.provider_claim(),
+            )
+        ),
+        Ok(HostManagedAttachmentCommandInspection::ExactTerminalSuccess)
     );
     assert_eq!(release_state, release_before);
 }

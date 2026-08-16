@@ -349,7 +349,7 @@ impl ConfirmedMachinePublicationJournal {
                 armed_path.display()
             ))
         })?;
-        if byte != [b'1'] {
+        if byte != *b"1" {
             return Err(Error::PreconditionFailed(
                 "lock-contention test FIFO carried an invalid semantic token".to_owned(),
             ));

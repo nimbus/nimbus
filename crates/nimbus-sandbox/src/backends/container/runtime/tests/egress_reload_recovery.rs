@@ -726,10 +726,14 @@ fn reload_egress_policy_updates_running_container_proxy() {
             ),
         )
         .expect("egress proxy should start on loopback test subnet");
-    manifest.launch_reservation_claim = None;
+    manifest.creator_handoff = ContainerCreatorHandoffState::RuntimeObserved {
+        receipt: crate::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+            "live-reload-runtime-observed",
+        ),
+    };
     backend
         .write_manifest(&manifest)
-        .expect("running manifest should publish post-launch authority");
+        .expect("running manifest should publish its provider-effect receipt");
     let proxy_addr = manifest
         .egress_proxy
         .as_ref()
@@ -785,6 +789,33 @@ fn reload_egress_policy_updates_running_container_proxy() {
     assert_eq!(
         reloaded_manifest.spec.egress.rules()[0].port,
         second.addr.port()
+    );
+}
+
+#[test]
+fn reload_egress_policy_rejects_a_reserved_launch_without_runtime_effect_evidence() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let proxy_port = unused_loopback_port();
+    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+    config.node_network_supernet = "127.0.0.0/24".to_owned();
+    config.published_port_range = proxy_port..=proxy_port;
+    let backend = ContainerSandboxBackend::new(config);
+    let manifest = backend
+        .plan_start_with_id(&sample_spec(), &sandbox_id(), None, None)
+        .expect("plan should retain pre-effect reservation authority")
+        .manifest;
+    backend
+        .write_manifest(&manifest)
+        .expect("reserved manifest should persist");
+
+    let error = backend
+        .reload_egress_policy(&manifest.handle.id, desired_policy())
+        .expect_err("reload must not cross a launch with no runtime effect receipt");
+    assert!(
+        error
+            .to_string()
+            .contains("without an authenticated runtime effect receipt"),
+        "rejection must name the missing provider evidence: {error}"
     );
 }
 

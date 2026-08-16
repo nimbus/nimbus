@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::Component;
-use std::path::Path;
+use std::path::{Component, Path};
 use std::time::{Duration, Instant};
 #[cfg(test)]
 use std::{
@@ -516,14 +515,15 @@ fn crun_state_reports_missing_runtime(
     let Ok(stderr) = std::str::from_utf8(stderr) else {
         return false;
     };
-    // Pinned crun 1.27.1 retains the underlying ENOENT `open` context and
-    // appends the C-locale strerror plus one newline. Anything outside this
-    // exact single-line grammar is ambiguous and cannot authorize cleanup.
-    let prefix = format!("container `{expected_runtime_id}` does not exist: open `");
-    let Some(status_path) = stderr
-        .strip_prefix(&prefix)
-        .and_then(|rest| rest.strip_suffix("`: No such file or directory\n"))
-    else {
+    // Supported crun releases retain the exact status path in one of these
+    // C-locale ENOENT diagnostics. Anything outside these closed single-line
+    // grammars is ambiguous and cannot authorize cleanup.
+    let legacy_prefix = format!("container `{expected_runtime_id}` does not exist: open `");
+    let status_path = stderr
+        .strip_prefix(&legacy_prefix)
+        .or_else(|| stderr.strip_prefix("error opening file `"))
+        .and_then(|rest| rest.strip_suffix("`: No such file or directory\n"));
+    let Some(status_path) = status_path else {
         return false;
     };
     if status_path.is_empty()
@@ -761,15 +761,24 @@ mod tests {
     #[test]
     fn runtime_state_accepts_pinned_crun_absence_diagnostic_and_rejects_unknown_failure() {
         let runtime_id = "fixture";
-        let absent = CommandSpec::new("/bin/sh").args([
-            "-c",
-            "[ \"$LC_ALL\" = C ] || { printf '%s\\n' 'unexpected locale' >&2; exit 2; }; printf '%s\\n' 'container `fixture` does not exist: open `/run/crun/fixture/status`: No such file or directory' >&2; exit 1",
-        ]);
-        assert_eq!(
-            runtime_state(&absent, runtime_id)
-                .expect("explicit not-found evidence should be classified"),
-            RuntimeStateObservation::ExplicitlyAbsent
-        );
+        for diagnostic in [
+            "container `fixture` does not exist: open `/run/crun/fixture/status`: No such file or directory",
+            "error opening file `/run/crun/fixture/status`: No such file or directory",
+            "container `fixture` does not exist: open `/run/user/1000/crun/fixture/status`: No such file or directory",
+            "error opening file `/var/lib/nimbus/crun-state/fixture/status`: No such file or directory",
+        ] {
+            let absent = CommandSpec::new("/bin/sh").args([
+                "-c",
+                &format!(
+                    "[ \"$LC_ALL\" = C ] || {{ printf '%s\\n' 'unexpected locale' >&2; exit 2; }}; printf '%s\\n' '{diagnostic}' >&2; exit 1"
+                ),
+            ]);
+            assert_eq!(
+                runtime_state(&absent, runtime_id)
+                    .expect("explicit not-found evidence should be classified"),
+                RuntimeStateObservation::ExplicitlyAbsent
+            );
+        }
 
         let unknown = CommandSpec::new("/bin/sh")
             .args(["-c", "printf '%s\n' 'permission denied' >&2; exit 1"]);
@@ -795,6 +804,12 @@ mod tests {
             "container `fixture` does not exist: open `/run/crun/fixture/status`: Permission denied",
             "crun: container `fixture` does not exist: open `/run/crun/fixture/status`: No such file or directory",
             "container `fixture` does not exist\nadditional provider failure",
+            "error opening file `/run/crun/foreign-fixture/status`: No such file or directory",
+            "error opening file `/run/crun/fixture/config`: No such file or directory",
+            "error opening file `relative/fixture/status`: No such file or directory",
+            "error opening file `/run/crun/../fixture/status`: No such file or directory",
+            "crun: error opening file `/run/crun/fixture/status`: No such file or directory",
+            "error opening file `/run/crun/fixture/status`: No such file or directory\nadditional provider failure",
         ] {
             let command = CommandSpec::new("/bin/sh")
                 .args(["-c", &format!("printf '%s\\n' '{misleading}' >&2; exit 1")]);
@@ -892,7 +907,12 @@ mod tests {
     fn runtime_state_absence_parser_rejects_noncanonical_raw_streams() {
         let expected =
             b"container `fixture` does not exist: open `/run/crun/fixture/status`: No such file or directory\n";
+        let current = b"error opening file `/run/crun/fixture/status`: No such file or directory\n";
+        let rootless =
+            b"error opening file `/run/user/1000/crun/fixture/status`: No such file or directory\n";
         assert!(crun_state_reports_missing_runtime(b"", expected, "fixture"));
+        assert!(crun_state_reports_missing_runtime(b"", current, "fixture"));
+        assert!(crun_state_reports_missing_runtime(b"", rootless, "fixture"));
 
         for (stdout, stderr, runtime_id) in [
             (&b"unexpected stdout"[..], &expected[..], "fixture"),

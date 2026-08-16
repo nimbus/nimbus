@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "input": {
-    "sha256": "abf441b7abbe9a3f34768c617fd5bf4e86daa9c778bd4d0b825c70c53911aad5",
+    "sha256": "67a497b617d1b8b681ac4fb1aab8b8f31df5e4b8d42a93857f52fdabd4824e33",
     "files": 1661
   },
   "inventory": {
@@ -282,8 +282,8 @@
         {
           "name": "nimbus_network",
           "kind": "lib",
-          "bytes": 9422593,
-          "sha256": "21aa0be62fbc07a67eceddbc07be78e5fc011d3d52f4c8832be9bf157052abb5",
+          "bytes": 9421425,
+          "sha256": "1f2724a26fbfe5ec2373cc3b5c71a6a1cce39a3586d76b5eba518a04eddb97fd",
           "calls": {
             "tcp-bind": 0,
             "tcp-from-std": 0,
@@ -400,8 +400,8 @@
         {
           "name": "nimbus_sandbox",
           "kind": "lib",
-          "bytes": 38508182,
-          "sha256": "0fc5f0753679c63d66fe3fb3eae22e89c6ad18dcf4294f6619c8739d4becbe46",
+          "bytes": 38514184,
+          "sha256": "a55d0ad93b5b246f667770e7d7a3df1e9b4351df5bb0401a4c32ce17198cd97a",
           "calls": {
             "tcp-bind": 1,
             "tcp-from-std": 0,
@@ -636,7 +636,7 @@
     }
   },
   "source_boundaries": {
-    "scanner_sha256": "8ec7f9040dbd886f05708893599e469fe2d3a26e6491893f911d2fb0e6d7e821",
+    "scanner_sha256": "1365d8e423084f18760e5a8f5e6c58ac89e63e9a6a5948fc2be390e551edc22f",
     "include_expansions": [
       {
         "path": "crates/nimbus-firebase/src/grpc.rs",

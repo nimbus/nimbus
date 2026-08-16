@@ -261,6 +261,12 @@ fn fresh_process_container_network_contenders_publish_one_result_per_operation()
             "first",
             &gate,
         );
+        wait_for_path(
+            &fixture
+                .root
+                .path()
+                .join(format!("ready-{}-first", operation_label(operation))),
+        );
         let second = spawn_contender(
             fixture.root.path(),
             &fixture.id,
@@ -273,16 +279,10 @@ fn fresh_process_container_network_contenders_publish_one_result_per_operation()
             &fixture
                 .root
                 .path()
-                .join(format!("ready-{}-first", operation_label(operation))),
-        );
-        wait_for_path(
-            &fixture
-                .root
-                .path()
                 .join(format!("ready-{}-second", operation_label(operation))),
         );
         std::fs::write(&gate, b"start\n").expect("contention gate should open");
-        let outputs = [wait_child(first), wait_child(second)];
+        let outputs = wait_contenders(first, second, operation);
         for output in &outputs {
             assert_success(output, operation_label(operation));
         }
@@ -507,14 +507,14 @@ fn contention_child(
     operation: SandboxNetworkTeardownOperation,
     role: &str,
 ) {
-    let ready = root.join(format!("ready-{}-{role}", operation_label(operation)));
-    std::fs::write(&ready, b"ready\n").expect("contender readiness should persist");
-    wait_for_path(&root.join(format!("gate-{}", operation_label(operation))));
     let backend = reopen_backend(root, pep_port);
     let command = network_command_from_backend(&backend, sandbox_id, operation);
     let journal = backend
         .attempt_idempotency_journal()
         .expect("contender journal should open");
+    let ready = root.join(format!("ready-{}-{role}", operation_label(operation)));
+    std::fs::write(&ready, b"ready\n").expect("contender readiness should persist");
+    wait_for_path(&root.join(format!("gate-{}", operation_label(operation))));
     match journal
         .claim_dispatch_epoch(command.provider_claim())
         .expect("contender should reach the exact stream")
@@ -523,11 +523,14 @@ fn contention_child(
             let result = backend
                 .execute_network_teardown_with_claim(&command, execution)
                 .expect("winning contender should publish");
-            assert_eq!(
-                result.kind(),
-                ProviderCommandObservationKind::Succeeded,
-                "winning Container contender returned {result:?}"
-            );
+            if result.kind() != ProviderCommandObservationKind::Succeeded {
+                let inspected =
+                    backend.inspect_network_teardown_with_observation(&command, &result);
+                panic!(
+                    "winning Container contender returned {result:?}; exact inspection: {inspected:?}; evidence: {}",
+                    String::from_utf8_lossy(inspected.evidence())
+                );
+            }
             println!("NNC65D3_CONTAINER_ROLE:execute");
         }
         ProviderCommandClaimDecision::AdoptExactAttempt(_) => {
@@ -686,20 +689,48 @@ fn child_command(
     command
 }
 
-fn wait_child(mut child: Child) -> Output {
+fn wait_contenders(
+    mut first: Child,
+    mut second: Child,
+    operation: SandboxNetworkTeardownOperation,
+) -> [Output; 2] {
     let started = Instant::now();
     loop {
-        if child
+        let first_done = first
             .try_wait()
-            .expect("child status should read")
-            .is_some()
-        {
-            return child.wait_with_output().expect("child output should read");
+            .expect("first child status should read")
+            .is_some();
+        let second_done = second
+            .try_wait()
+            .expect("second child status should read")
+            .is_some();
+        if first_done && second_done {
+            return [
+                first
+                    .wait_with_output()
+                    .expect("first child output should read"),
+                second
+                    .wait_with_output()
+                    .expect("second child output should read"),
+            ];
         }
-        assert!(
-            started.elapsed() < TIMEOUT,
-            "Container network child timed out"
-        );
+        if started.elapsed() >= TIMEOUT {
+            let _ = first.kill();
+            let _ = second.kill();
+            let first_output = first
+                .wait_with_output()
+                .expect("timed-out first child output should read");
+            let second_output = second
+                .wait_with_output()
+                .expect("timed-out second child output should read");
+            panic!(
+                "Container network {operation:?} contenders timed out\nfirst stdout:\n{}\nfirst stderr:\n{}\nsecond stdout:\n{}\nsecond stderr:\n{}",
+                String::from_utf8_lossy(&first_output.stdout),
+                String::from_utf8_lossy(&first_output.stderr),
+                String::from_utf8_lossy(&second_output.stdout),
+                String::from_utf8_lossy(&second_output.stderr),
+            );
+        }
         std::thread::sleep(Duration::from_millis(5));
     }
 }

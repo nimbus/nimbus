@@ -251,6 +251,12 @@ fn fresh_process_krun_network_contenders_publish_one_result_per_operation() {
             operation,
             "first",
         );
+        wait_for_path(
+            &fixture
+                .root
+                .path()
+                .join(format!("ready-{}-first", operation_label(operation))),
+        );
         let second = spawn_contender(
             fixture.root.path(),
             &fixture.id,
@@ -262,16 +268,10 @@ fn fresh_process_krun_network_contenders_publish_one_result_per_operation() {
             &fixture
                 .root
                 .path()
-                .join(format!("ready-{}-first", operation_label(operation))),
-        );
-        wait_for_path(
-            &fixture
-                .root
-                .path()
                 .join(format!("ready-{}-second", operation_label(operation))),
         );
         std::fs::write(&gate, b"start\n").expect("Krun contention gate should open");
-        let outputs = [wait_child(first), wait_child(second)];
+        let outputs = wait_contenders(first, second, operation);
         for output in &outputs {
             assert_success(output, operation_label(operation));
         }
@@ -702,14 +702,14 @@ fn contention_child(
     operation: SandboxNetworkTeardownOperation,
     role: &str,
 ) {
-    let ready = root.join(format!("ready-{}-{role}", operation_label(operation)));
-    std::fs::write(&ready, b"ready\n").expect("Krun contender readiness should persist");
-    wait_for_path(&root.join(format!("gate-{}", operation_label(operation))));
     let backend = reopen_backend(root, pep_port);
     let command = network_command_from_backend(&backend, sandbox_id, operation);
     let journal = backend
         .attempt_idempotency_journal()
         .expect("Krun contender journal should open");
+    let ready = root.join(format!("ready-{}-{role}", operation_label(operation)));
+    std::fs::write(&ready, b"ready\n").expect("Krun contender readiness should persist");
+    wait_for_path(&root.join(format!("gate-{}", operation_label(operation))));
     match journal
         .claim_dispatch_epoch(command.provider_claim())
         .expect("Krun contender should reach the exact stream")
@@ -930,19 +930,48 @@ fn child_command(
     command
 }
 
-fn wait_child(mut child: Child) -> Output {
+fn wait_contenders(
+    mut first: Child,
+    mut second: Child,
+    operation: SandboxNetworkTeardownOperation,
+) -> [Output; 2] {
     let started = Instant::now();
     loop {
-        if child
+        let first_done = first
             .try_wait()
-            .expect("Krun child status should read")
-            .is_some()
-        {
-            return child
-                .wait_with_output()
-                .expect("Krun child output should read");
+            .expect("first Krun child status should read")
+            .is_some();
+        let second_done = second
+            .try_wait()
+            .expect("second Krun child status should read")
+            .is_some();
+        if first_done && second_done {
+            return [
+                first
+                    .wait_with_output()
+                    .expect("first Krun child output should read"),
+                second
+                    .wait_with_output()
+                    .expect("second Krun child output should read"),
+            ];
         }
-        assert!(started.elapsed() < TIMEOUT, "Krun network child timed out");
+        if started.elapsed() >= TIMEOUT {
+            let _ = first.kill();
+            let _ = second.kill();
+            let first_output = first
+                .wait_with_output()
+                .expect("timed-out first Krun child output should read");
+            let second_output = second
+                .wait_with_output()
+                .expect("timed-out second Krun child output should read");
+            panic!(
+                "Krun network {operation:?} contenders timed out\nfirst stdout:\n{}\nfirst stderr:\n{}\nsecond stdout:\n{}\nsecond stderr:\n{}",
+                String::from_utf8_lossy(&first_output.stdout),
+                String::from_utf8_lossy(&first_output.stderr),
+                String::from_utf8_lossy(&second_output.stdout),
+                String::from_utf8_lossy(&second_output.stderr),
+            );
+        }
         std::thread::sleep(Duration::from_millis(5));
     }
 }

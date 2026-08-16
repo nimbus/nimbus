@@ -832,10 +832,22 @@ impl HostManagedAttachmentTeardownState {
         if !same_command_attempt(stored_claim_value, command_claim) {
             return Err(HostManagedAttachmentCommandInspectionError::Crossed);
         }
-        if terminal
-            || stored_claim_value.dispatch_epoch().checked_add(1)
-                != Some(command_claim.dispatch_epoch())
-        {
+        let is_adjacent = stored_claim_value.dispatch_epoch().checked_add(1)
+            == Some(command_claim.dispatch_epoch());
+        if terminal {
+            if command.operation() == SandboxNetworkTeardownOperation::Release
+                && current.authenticates_retry_progress(stored_claim_value)
+            {
+                // Durable Released state makes the network effect terminal, but
+                // provider-local artifact cleanup and terminal manifest
+                // publication can require more than one retry. The journal
+                // validates a contiguous lineage, so preserve the effect claim
+                // and authorize only that lineage-bound finalizer.
+                return Ok(HostManagedAttachmentCommandInspection::ExactTerminalSuccess);
+            }
+            return Err(HostManagedAttachmentCommandInspectionError::EpochInvalid);
+        }
+        if !is_adjacent {
             return Err(HostManagedAttachmentCommandInspectionError::EpochInvalid);
         }
         if current.kind() != ProviderCommandObservationKind::Claimed

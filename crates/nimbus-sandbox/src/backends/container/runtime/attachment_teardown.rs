@@ -342,35 +342,43 @@ impl ContainerSandboxBackend {
                         context.egress_proxy.as_ref(),
                     )
                 };
-                match composition {
-                    NetworkTeardownComposition::HostManaged => adapter
-                        .release_host_managed_detached(
-                            &lifecycle,
-                            command,
-                            &proof,
-                            current.release_phase(),
-                            record_phase,
-                            release_auxiliary,
-                        )?,
-                    NetworkTeardownComposition::Forwarded { .. } => adapter
-                        .release_machine_forwarded_detached(
-                            &lifecycle,
-                            command,
-                            &proof,
-                            current.release_phase(),
-                            record_phase,
-                            AttachmentReleaseActions::new(
-                                || {
-                                    forwarded::inspect_forwarded_publication_absence(
-                                        self,
-                                        &context,
-                                        composition,
-                                    )
-                                },
-                                || forwarded::release_forwarded_listener_authority(self, &context),
+                if current.release_phase()
+                    != crate::backends::oci::network::HostManagedAttachmentReleasePhase::Released
+                {
+                    match composition {
+                        NetworkTeardownComposition::HostManaged => adapter
+                            .release_host_managed_detached(
+                                &lifecycle,
+                                command,
+                                &proof,
+                                current.release_phase(),
+                                record_phase,
                                 release_auxiliary,
-                            ),
-                        )?,
+                            )?,
+                        NetworkTeardownComposition::Forwarded { .. } => adapter
+                            .release_machine_forwarded_detached(
+                                &lifecycle,
+                                command,
+                                &proof,
+                                current.release_phase(),
+                                record_phase,
+                                AttachmentReleaseActions::new(
+                                    || {
+                                        forwarded::inspect_forwarded_publication_absence(
+                                            self,
+                                            &context,
+                                            composition,
+                                        )
+                                    },
+                                    || {
+                                        forwarded::release_forwarded_listener_authority(
+                                            self, &context,
+                                        )
+                                    },
+                                    release_auxiliary,
+                                ),
+                            )?,
+                    }
                 }
             }
         }

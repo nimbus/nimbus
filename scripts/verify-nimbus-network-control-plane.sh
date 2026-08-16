@@ -439,7 +439,7 @@ verify_network_dependency_contract() {
             ["sha2", {kind: null, target: null, features: [], defaultFeatures: true}],
             ["ulid", {kind: null, target: null, features: ["serde"], defaultFeatures: true}],
             ["libc", {kind: null, target: "cfg(unix)", features: [], defaultFeatures: true}],
-            ["windows-sys", {kind: null, target: "cfg(windows)", features: ["Win32_Storage_FileSystem"], defaultFeatures: true}],
+            ["windows-sys", {kind: null, target: "cfg(windows)", features: ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming"], defaultFeatures: true}],
             ["proptest", {kind: "dev", target: null, features: [], defaultFeatures: true}],
             ["tempfile", {kind: "dev", target: null, features: [], defaultFeatures: true}],
           ]);

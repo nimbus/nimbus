@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nimbus_network::{
     ListenerId, NetworkAttachmentId, NetworkCapabilitySourceDigest, NetworkLeaseEpoch, NetworkPlan,
@@ -30,15 +30,24 @@ use nimbus_sandbox::backends::{
 use nimbus_sandbox::{
     ProviderCommandClaim, ProviderCommandClaimDecision, ProviderCommandClaimInput,
     ProviderCommandObservationKind, SandboxExecutionAttemptId, SandboxExecutionTeardownCommand,
-    SandboxExecutionTeardownOperation, SandboxHandle, SandboxId, SandboxNetworkTeardownCommand,
-    SandboxNetworkTeardownCommandInput, SandboxNetworkTeardownIdentity,
-    SandboxNetworkTeardownIdentityInput, SandboxNetworkTeardownOperation,
+    SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation, SandboxHandle,
+    SandboxId, SandboxNetworkTeardownCommand, SandboxNetworkTeardownCommandInput,
+    SandboxNetworkTeardownIdentity, SandboxNetworkTeardownIdentityInput,
+    SandboxNetworkTeardownObservation, SandboxNetworkTeardownOperation,
     SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity, SandboxProvisionListener,
     SandboxProvisionNetworkPlan, SandboxProvisionPhaseObservation, SandboxSpec,
     sandbox_network_plan_requirements,
 };
+use sha2::{Digest, Sha256};
 
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
+const EXACT_TEARDOWN_INSPECTION_TIMEOUT: Duration = Duration::from_secs(35);
+const EXACT_TEARDOWN_RETRY_EPOCHS: u64 = 8;
+
+struct ExactTeardownProviderKeys<'a> {
+    execution: &'a str,
+    attachment: &'a str,
+}
 
 pub(crate) struct ProvisionedSandbox {
     pub(crate) handle: SandboxHandle,
@@ -150,17 +159,25 @@ pub(crate) fn retire_container(
 ) -> nimbus_sandbox::Result<()> {
     retire_exact(
         fixture,
-        CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY,
-        CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
+        ExactTeardownProviderKeys {
+            execution: CONTAINER_EXECUTION_TEARDOWN_PROVIDER_KEY,
+            attachment: CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
+        },
         |command, execution| {
             backend
                 .execute_execution_teardown_with_claim(command, execution)
                 .map_err(provider_journal_error)
         },
+        |command, observation| {
+            backend.inspect_execution_teardown_with_observation(command, observation)
+        },
         |command, execution| {
             backend
                 .execute_network_teardown_with_claim(command, execution)
                 .map_err(provider_journal_error)
+        },
+        |command, observation| {
+            backend.inspect_network_teardown_with_observation(command, observation)
         },
         || {
             backend
@@ -179,17 +196,25 @@ pub(crate) fn retire_krun(
 ) -> nimbus_sandbox::Result<()> {
     retire_exact(
         fixture,
-        "nimbus-sandbox.krun-execution",
-        KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
+        ExactTeardownProviderKeys {
+            execution: "nimbus-sandbox.krun-execution",
+            attachment: KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
+        },
         |command, execution| {
             backend
                 .execute_execution_teardown_with_claim(command, execution)
                 .map_err(provider_journal_error)
         },
+        |command, observation| {
+            backend.inspect_execution_teardown_with_observation(command, observation)
+        },
         |command, execution| {
             backend
                 .execute_network_teardown_with_claim(command, execution)
                 .map_err(provider_journal_error)
+        },
+        |command, observation| {
+            backend.inspect_network_teardown_with_observation(command, observation)
         },
         || {
             backend
@@ -201,39 +226,74 @@ pub(crate) fn retire_krun(
 
 fn retire_exact(
     fixture: &ExactTeardownFixture,
-    execution_provider_key: &str,
-    attachment_provider_key: &str,
+    provider_keys: ExactTeardownProviderKeys<'_>,
     mut execute_execution: impl FnMut(
         &SandboxExecutionTeardownCommand,
         nimbus_sandbox::ProviderCommandExecutionClaim,
     ) -> nimbus_sandbox::Result<
         nimbus_sandbox::ProviderCommandObservation,
     >,
+    mut inspect_execution: impl FnMut(
+        &SandboxExecutionTeardownCommand,
+        &nimbus_sandbox::ProviderCommandObservation,
+    ) -> SandboxExecutionTeardownObservation,
     mut execute_network: impl FnMut(
         &SandboxNetworkTeardownCommand,
         nimbus_sandbox::ProviderCommandExecutionClaim,
     ) -> nimbus_sandbox::Result<
         nimbus_sandbox::ProviderCommandObservation,
     >,
+    mut inspect_network: impl FnMut(
+        &SandboxNetworkTeardownCommand,
+        &nimbus_sandbox::ProviderCommandObservation,
+    ) -> SandboxNetworkTeardownObservation,
     mut journal: impl FnMut() -> nimbus_sandbox::Result<nimbus_sandbox::ProviderCommandAttemptJournal>,
 ) -> nimbus_sandbox::Result<()> {
     for operation in [
         SandboxExecutionTeardownOperation::Drain,
         SandboxExecutionTeardownOperation::Stop,
     ] {
-        let claim = fixture.claim(operation.provider_operation(), "execution-target", 1)?;
-        let command = SandboxExecutionTeardownCommand::new(
-            fixture.tenant_id.clone(),
-            fixture.sandbox_id.clone(),
-            fixture.execution_attempt_id.clone(),
-            execution_provider_key,
-            operation,
-            claim,
-        )
-        .map_err(exact_teardown_error)?;
-        execute_claimed(&journal()?, command.provider_claim(), |execution| {
-            execute_execution(&command, execution)
-        })?;
+        let provider_target_digest = format!(
+            "{:x}",
+            Sha256::digest(format!("linux-smoke-execution:{}", provider_keys.execution))
+        );
+        let effect_subject = format!("{{\"sandbox\":\"{}\"}}", fixture.sandbox_id);
+        let mut completed = false;
+        for dispatch_epoch in 1..=EXACT_TEARDOWN_RETRY_EPOCHS {
+            let claim = fixture.claim(
+                operation.provider_operation(),
+                &effect_subject,
+                &provider_target_digest,
+                dispatch_epoch,
+            )?;
+            let command = SandboxExecutionTeardownCommand::new(
+                fixture.tenant_id.clone(),
+                fixture.sandbox_id.clone(),
+                fixture.execution_attempt_id.clone(),
+                provider_keys.execution,
+                operation,
+                claim,
+            )
+            .map_err(exact_teardown_error)?;
+            let current = execute_claimed(
+                &journal()?,
+                command.provider_claim(),
+                |execution| execute_execution(&command, execution),
+                |observation| exact_execution_inspection(inspect_execution(&command, observation)),
+            )?;
+            match current.kind() {
+                ProviderCommandObservationKind::Succeeded
+                | ProviderCommandObservationKind::Absent => {
+                    completed = true;
+                    break;
+                }
+                ProviderCommandObservationKind::RetryAuthorized => {}
+                _ => return Err(nonterminal_teardown_error(operation, &current)),
+            }
+        }
+        if !completed {
+            return Err(retry_exhausted_teardown_error(operation));
+        }
     }
 
     for operation in [
@@ -246,24 +306,45 @@ fn retire_exact(
             execution_attempt_id: fixture.execution_attempt_id.clone(),
             attachment_id: fixture.network_plan.attachment_id().clone(),
             network_plan: fixture.network_plan.network_plan().clone(),
-            provider_registration_key: attachment_provider_key.to_owned(),
+            provider_registration_key: provider_keys.attachment.to_owned(),
             provider_source_digest: NetworkCapabilitySourceDigest::from_bytes([9; 32]),
         })
         .map_err(exact_teardown_error)?;
-        let claim = fixture.claim(
-            operation.provider_operation(),
-            &identity.provider_target_digest(),
-            1,
-        )?;
-        let command = SandboxNetworkTeardownCommand::new(SandboxNetworkTeardownCommandInput {
-            identity,
-            operation,
-            provider_claim: claim,
-        })
-        .map_err(exact_teardown_error)?;
-        execute_claimed(&journal()?, command.provider_claim(), |execution| {
-            execute_network(&command, execution)
-        })?;
+        let effect_subject = identity.provider_effect_subject();
+        let provider_target_digest = identity.provider_target_digest();
+        let mut completed = false;
+        for dispatch_epoch in 1..=EXACT_TEARDOWN_RETRY_EPOCHS {
+            let claim = fixture.claim(
+                operation.provider_operation(),
+                &effect_subject,
+                &provider_target_digest,
+                dispatch_epoch,
+            )?;
+            let command = SandboxNetworkTeardownCommand::new(SandboxNetworkTeardownCommandInput {
+                identity: identity.clone(),
+                operation,
+                provider_claim: claim,
+            })
+            .map_err(exact_teardown_error)?;
+            let current = execute_claimed(
+                &journal()?,
+                command.provider_claim(),
+                |execution| execute_network(&command, execution),
+                |observation| exact_network_inspection(inspect_network(&command, observation)),
+            )?;
+            match current.kind() {
+                ProviderCommandObservationKind::Succeeded
+                | ProviderCommandObservationKind::Absent => {
+                    completed = true;
+                    break;
+                }
+                ProviderCommandObservationKind::RetryAuthorized => {}
+                _ => return Err(nonterminal_teardown_error(operation, &current)),
+            }
+        }
+        if !completed {
+            return Err(retry_exhausted_teardown_error(operation));
+        }
     }
     Ok(())
 }
@@ -274,35 +355,152 @@ fn execute_claimed(
     execute: impl FnOnce(
         nimbus_sandbox::ProviderCommandExecutionClaim,
     ) -> nimbus_sandbox::Result<nimbus_sandbox::ProviderCommandObservation>,
-) -> nimbus_sandbox::Result<()> {
-    match journal
+    mut inspect: impl FnMut(&nimbus_sandbox::ProviderCommandObservation) -> ExactTeardownInspection,
+) -> nimbus_sandbox::Result<nimbus_sandbox::ProviderCommandObservation> {
+    let mut current = match journal
         .claim_dispatch_epoch(claim)
         .map_err(provider_journal_error)?
     {
-        ProviderCommandClaimDecision::ExecuteClaimed(execution) => {
-            require_terminal(execute(execution)?)
+        ProviderCommandClaimDecision::ExecuteClaimed(execution) => execute(execution)?,
+        ProviderCommandClaimDecision::AdoptExactAttempt(observation)
+            if observation.kind() == ProviderCommandObservationKind::Claimed =>
+        {
+            let execution = journal
+                .resume_current_claim(&observation)
+                .map_err(provider_journal_error)?;
+            execute(execution)?
         }
-        ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
-            require_terminal(observation)
+        ProviderCommandClaimDecision::AdoptExactAttempt(observation) => observation,
+    };
+    let deadline = Instant::now() + EXACT_TEARDOWN_INSPECTION_TIMEOUT;
+    loop {
+        match current.kind() {
+            ProviderCommandObservationKind::Succeeded
+            | ProviderCommandObservationKind::DefiniteFailure
+            | ProviderCommandObservationKind::Absent
+            | ProviderCommandObservationKind::RetryAuthorized => return Ok(current),
+            ProviderCommandObservationKind::Claimed => {
+                return Err(nimbus_sandbox::SandboxError::OperationFailed {
+                    message:
+                        "Linux smoke exact teardown retained an unowned claimed provider state"
+                            .to_owned(),
+                });
+            }
+            ProviderCommandObservationKind::InProgress
+            | ProviderCommandObservationKind::Ambiguous => {}
+        }
+        if Instant::now() >= deadline {
+            return Err(nimbus_sandbox::SandboxError::OperationFailed {
+                message: format!(
+                    "Linux smoke exact teardown inspection timed out in provider state {:?}",
+                    current.kind()
+                ),
+            });
+        }
+        let inspected = inspect(&current);
+        current = journal
+            .record_observation_with_failure_code(
+                claim,
+                inspected.kind,
+                inspected.failure_code.as_deref(),
+                &inspected.evidence,
+            )
+            .map_err(provider_journal_error)?;
+        if matches!(
+            current.kind(),
+            ProviderCommandObservationKind::InProgress | ProviderCommandObservationKind::Ambiguous
+        ) {
+            thread::sleep(Duration::from_millis(50));
         }
     }
 }
 
-fn require_terminal(
-    observation: nimbus_sandbox::ProviderCommandObservation,
-) -> nimbus_sandbox::Result<()> {
-    if matches!(
-        observation.kind(),
-        ProviderCommandObservationKind::Succeeded | ProviderCommandObservationKind::Absent
-    ) {
-        return Ok(());
+struct ExactTeardownInspection {
+    kind: ProviderCommandObservationKind,
+    failure_code: Option<String>,
+    evidence: Vec<u8>,
+}
+
+fn exact_execution_inspection(
+    observation: SandboxExecutionTeardownObservation,
+) -> ExactTeardownInspection {
+    let kind = match &observation {
+        SandboxExecutionTeardownObservation::Succeeded { .. } => {
+            ProviderCommandObservationKind::Succeeded
+        }
+        SandboxExecutionTeardownObservation::DefiniteFailure { .. } => {
+            ProviderCommandObservationKind::DefiniteFailure
+        }
+        SandboxExecutionTeardownObservation::Absent { .. } => {
+            ProviderCommandObservationKind::Absent
+        }
+        SandboxExecutionTeardownObservation::RetryAuthorized { .. } => {
+            ProviderCommandObservationKind::RetryAuthorized
+        }
+        SandboxExecutionTeardownObservation::InProgress { .. } => {
+            ProviderCommandObservationKind::InProgress
+        }
+        SandboxExecutionTeardownObservation::Ambiguous { .. } => {
+            ProviderCommandObservationKind::Ambiguous
+        }
+    };
+    ExactTeardownInspection {
+        kind,
+        failure_code: observation.failure_code().map(str::to_owned),
+        evidence: observation.evidence().to_vec(),
     }
-    Err(nimbus_sandbox::SandboxError::OperationFailed {
+}
+
+fn exact_network_inspection(
+    observation: SandboxNetworkTeardownObservation,
+) -> ExactTeardownInspection {
+    let kind = match &observation {
+        SandboxNetworkTeardownObservation::Succeeded { .. } => {
+            ProviderCommandObservationKind::Succeeded
+        }
+        SandboxNetworkTeardownObservation::DefiniteFailure { .. } => {
+            ProviderCommandObservationKind::DefiniteFailure
+        }
+        SandboxNetworkTeardownObservation::Absent { .. } => ProviderCommandObservationKind::Absent,
+        SandboxNetworkTeardownObservation::RetryAuthorized { .. } => {
+            ProviderCommandObservationKind::RetryAuthorized
+        }
+        SandboxNetworkTeardownObservation::InProgress { .. } => {
+            ProviderCommandObservationKind::InProgress
+        }
+        SandboxNetworkTeardownObservation::Ambiguous { .. } => {
+            ProviderCommandObservationKind::Ambiguous
+        }
+    };
+    ExactTeardownInspection {
+        kind,
+        failure_code: observation.failure_code().map(str::to_owned),
+        evidence: observation.evidence().to_vec(),
+    }
+}
+
+fn nonterminal_teardown_error(
+    operation: impl std::fmt::Debug,
+    observation: &nimbus_sandbox::ProviderCommandObservation,
+) -> nimbus_sandbox::SandboxError {
+    nimbus_sandbox::SandboxError::OperationFailed {
         message: format!(
-            "Linux smoke exact teardown returned nonterminal provider state {:?}",
-            observation.kind()
+            "Linux smoke exact teardown operation {operation:?} returned provider state {:?} \
+             (failure_code={:?}, evidence_sha256={:?})",
+            observation.kind(),
+            observation.failure_code(),
+            observation.evidence_sha256()
         ),
-    })
+    }
+}
+
+fn retry_exhausted_teardown_error(operation: impl std::fmt::Debug) -> nimbus_sandbox::SandboxError {
+    nimbus_sandbox::SandboxError::OperationFailed {
+        message: format!(
+            "Linux smoke exact teardown operation {operation:?} exhausted \
+             {EXACT_TEARDOWN_RETRY_EPOCHS} retry epochs"
+        ),
+    }
 }
 
 impl ExactTeardownFixture {
@@ -314,12 +512,13 @@ impl ExactTeardownFixture {
     fn claim(
         &self,
         operation: nimbus_sandbox::ProviderCommandOperation,
+        effect_subject: &str,
         provider_target_digest: &str,
         dispatch_epoch: u64,
     ) -> nimbus_sandbox::Result<ProviderCommandClaim> {
         ProviderCommandClaim::new(ProviderCommandClaimInput {
             authority_id: format!("linux-smoke-authority:{}", self.sandbox_id),
-            effect_subject: format!("{{\"sandbox\":\"{}\"}}", self.sandbox_id),
+            effect_subject: effect_subject.to_owned(),
             source_attempt_id: None,
             attempt_id: format!("linux-smoke-retirement:{}", self.sandbox_id),
             dispatch_epoch,

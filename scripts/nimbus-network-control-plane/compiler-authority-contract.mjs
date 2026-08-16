@@ -196,16 +196,26 @@ function cargoConfigFiles() {
   const candidates = [];
   const seen = new Set();
   const add = (label, file) => {
-    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return;
-    const canonical = fs.realpathSync(file);
-    if (seen.has(canonical)) return;
-    seen.add(canonical);
-    candidates.push({
-      label,
-      search_order: candidates.length,
-      bytes: fs.statSync(canonical).size,
-      sha256: sha256(fs.readFileSync(canonical)),
-    });
+    let descriptor;
+    try {
+      descriptor = fs.openSync(file, "r");
+      const metadata = fs.fstatSync(descriptor);
+      if (!metadata.isFile()) return;
+      const canonical = fs.realpathSync(file);
+      if (seen.has(canonical)) return;
+      seen.add(canonical);
+      candidates.push({
+        label,
+        search_order: candidates.length,
+        bytes: metadata.size,
+        sha256: sha256(fs.readFileSync(descriptor)),
+      });
+    } catch (error) {
+      if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return;
+      throw error;
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
+    }
   };
   let directory = repoRoot;
   while (true) {
@@ -648,21 +658,28 @@ function readMirReports(directory, matrix) {
     const calls = zeroCalls();
     const targets = owner.targets.map((target) => {
       const file = mirFile(directory, owner.package, target);
-      if (!fs.existsSync(file) || fs.statSync(file).size === 0) {
-        throw new Error(
-          `compiler emitted no MIR for ${owner.package} ${target.kind} ${target.name}`,
-        );
+      let descriptor;
+      try {
+        descriptor = fs.openSync(file, "r");
+        const metadata = fs.fstatSync(descriptor);
+        if (!metadata.isFile() || metadata.size === 0) {
+          throw new Error(
+            `compiler emitted no MIR for ${owner.package} ${target.kind} ${target.name}`,
+          );
+        }
+        const mir = fs.readFileSync(descriptor, "utf8");
+        const targetCalls = directMirCalls(mir);
+        addCalls(calls, targetCalls);
+        return {
+          name: target.name,
+          kind: target.kind,
+          bytes: Buffer.byteLength(mir),
+          sha256: sha256(mir),
+          calls: targetCalls,
+        };
+      } finally {
+        if (descriptor !== undefined) fs.closeSync(descriptor);
       }
-      const mir = fs.readFileSync(file, "utf8");
-      const targetCalls = directMirCalls(mir);
-      addCalls(calls, targetCalls);
-      return {
-        name: target.name,
-        kind: target.kind,
-        bytes: Buffer.byteLength(mir),
-        sha256: sha256(mir),
-        calls: targetCalls,
-      };
     });
     return { package: owner.package, targets, calls };
   });

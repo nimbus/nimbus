@@ -6,7 +6,7 @@ use crate::backends::oci::egress::EgressReloadAttachmentState;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
-use super::{ContainerSandboxBackend, ContainerStartMode, runner};
+use super::{ContainerCreatorHandoffState, ContainerSandboxBackend, ContainerStartMode, runner};
 
 impl ContainerSandboxBackend {
     #[cfg(test)]
@@ -43,11 +43,17 @@ impl ContainerSandboxBackend {
                 ),
             });
         }
-        if manifest.launch_reservation_claim.is_some() {
+        if manifest.launch_reservation_claim.is_some()
+            && !matches!(
+                manifest.creator_handoff,
+                ContainerCreatorHandoffState::RuntimeObserved { .. }
+            )
+        {
             return Err(SandboxError::OperationFailed {
                 message: format!(
                     "container egress live reload for {id} requires published lifecycle \
-                     ownership; the launch reservation remains before provider effects"
+                     ownership; the launch reservation remains without an authenticated runtime \
+                     effect receipt"
                 ),
             });
         }

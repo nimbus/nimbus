@@ -598,7 +598,9 @@ fn direct_predecision_egress_reload_cannot_create_a_provider_effect() {
 
     assert!(
         error.to_string().contains("launch reservation")
-            && error.to_string().contains("provider effects"),
+            && error
+                .to_string()
+                .contains("without an authenticated runtime effect receipt"),
         "rejection must name the exact missing effect fence: {error}"
     );
     assert!(

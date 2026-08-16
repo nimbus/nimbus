@@ -106,9 +106,18 @@ function normalizeRustEntries(root, directory) {
 
 function readText(root, relativePath, { lexical = false } = {}) {
   const absolute = path.join(root, relativePath);
-  if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) return "";
-  const source = fs.readFileSync(absolute, "utf8");
-  return lexical ? maskNonCode(source) : source;
+  let descriptor;
+  try {
+    descriptor = fs.openSync(absolute, "r");
+    if (!fs.fstatSync(descriptor).isFile()) return "";
+    const source = fs.readFileSync(descriptor, "utf8");
+    return lexical ? maskNonCode(source) : source;
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return "";
+    throw error;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
 }
 
 function collectTestSources(root, directories) {
