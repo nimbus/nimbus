@@ -289,6 +289,9 @@ mod tests {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         stream
+                            .set_nonblocking(false)
+                            .expect("accepted test stream should become blocking");
+                        stream
                             .set_read_timeout(Some(Duration::from_secs(1)))
                             .expect("server read deadline");
                         stream
@@ -530,6 +533,9 @@ mod tests {
             loop {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        stream
+                            .set_nonblocking(false)
+                            .expect("accepted test stream should become blocking");
                         stream
                             .set_read_timeout(Some(Duration::from_secs(1)))
                             .expect("server read deadline");

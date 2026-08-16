@@ -482,6 +482,7 @@ fn contend_network(
     );
     let command = Arc::new(command.clone());
     let start = Arc::new(Barrier::new(3));
+    let claims_complete = Arc::new(Barrier::new(2));
     let outcomes = std::thread::scope(|scope| {
         let mut contenders = Vec::new();
         for _ in 0..2 {
@@ -489,12 +490,13 @@ fn contend_network(
             let journal = Arc::clone(&journal);
             let command = Arc::clone(&command);
             let start = Arc::clone(&start);
+            let claims_complete = Arc::clone(&claims_complete);
             contenders.push(scope.spawn(move || {
                 start.wait();
-                match journal
-                    .claim_dispatch_epoch(command.provider_claim())
-                    .expect("network contender should reach the one journal")
-                {
+                let decision = journal.claim_dispatch_epoch(command.provider_claim());
+                claims_complete.wait();
+                let decision = decision.expect("network contender should reach the one journal");
+                match decision {
                     ProviderCommandClaimDecision::ExecuteClaimed(execution) => {
                         let observation = backend
                             .execute_network_teardown_with_claim(&command, execution)

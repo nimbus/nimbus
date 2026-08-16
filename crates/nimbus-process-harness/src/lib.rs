@@ -61,7 +61,10 @@ impl ContentionChildContext {
 /// The parent owns ordering. The child acknowledges `ready`, waits for
 /// `enter`, acknowledges `entered`, waits for `release`, acknowledges
 /// `released`, performs the supplied operation, and reports its terminal
-/// contention outcome.
+/// contention outcome. The child then retains its process lifetime until the
+/// parent has observed both outcomes and sends `finish`. This prevents a
+/// winning process-scoped effect from disappearing before the contender has
+/// classified the same contention window.
 pub fn run_contention_child(
     operation: impl FnOnce(&ContentionChildContext) -> Result<ContentionOutcome, String>,
 ) -> Result<(), String> {
@@ -72,7 +75,8 @@ pub fn run_contention_child(
     expect_command(CommandMessage::Release)?;
     emit_checkpoint(Checkpoint::Released)?;
     let outcome = operation(&context)?;
-    emit_checkpoint(Checkpoint::Complete(outcome))
+    emit_checkpoint(Checkpoint::Complete(outcome))?;
+    expect_command(CommandMessage::Finish)
 }
 
 #[derive(Debug)]
@@ -415,6 +419,8 @@ impl ChildGroup {
                     .collect(),
             });
         }
+
+        self.send_all(CommandMessage::Finish)?;
 
         let deadline = Instant::now() + timeout;
         for child in &mut self.roles {
@@ -790,6 +796,7 @@ impl CheckpointExpectation {
 enum CommandMessage {
     Enter,
     Release,
+    Finish,
     Run,
     Inspect,
 }
@@ -799,6 +806,7 @@ impl CommandMessage {
         match self {
             Self::Enter => "enter",
             Self::Release => "release",
+            Self::Finish => "finish",
             Self::Run => "run",
             Self::Inspect => "inspect",
         }
@@ -808,6 +816,7 @@ impl CommandMessage {
         match value {
             "enter" => Ok(Self::Enter),
             "release" => Ok(Self::Release),
+            "finish" => Ok(Self::Finish),
             "run" => Ok(Self::Run),
             "inspect" => Ok(Self::Inspect),
             other => Err(format!("unrecognized parent command {other:?}")),

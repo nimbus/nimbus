@@ -21,7 +21,7 @@ use super::store_pool::{
 };
 
 const WASMTIME_ENGINE_CONFIG_HASH: &str =
-    "wasmtime-46.0.1|component-model|component-async|fuel|epoch";
+    "wasmtime-46.0.2|component-model|component-async|fuel|epoch";
 const WASMTIME_RUN_TO_COMPLETION_FUEL: u64 = 10_000_000;
 const WASMTIME_COOPERATIVE_FUEL_SLICE: u64 = 1_000_000;
 

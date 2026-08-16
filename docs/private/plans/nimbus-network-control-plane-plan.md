@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC9.4 complete; NNC9.5 in progress`
+Status: `active; NNC9.5 complete; NNC9.6 in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,14 +36,14 @@ linked proofs and git history.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC9.4 complete; NNC9.5 in progress` |
-| Current item | `NNC9.5 — run repository gates` |
-| Last checkpoint commit | The commit containing this transition completes NNC9.4; its parent `56e095b163c65111fc4452eb902c7bbdd6e1029d` completed NNC9.3. |
+| Plan status | `active; NNC9.5 complete; NNC9.6 in progress` |
+| Current item | `NNC9.6 — close ledger and recovery header` |
+| Last checkpoint commit | The commit containing this transition completes NNC9.5; its parent `61da5905d1763b8fd46337c7fe3f8cf44602d5ba` completed NNC9.4. |
 | Branch / worktree | `codex/nimbus-network-architecture-audit` / `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
-| Owned paths | NNC9.5 owns repository-gate evidence plus concise plan/index routing. It changes product paths only if a required gate finds a real in-scope defect. |
-| Current acceptance | NNC9.4 K1-K10 pass. Fixed-seed network `276 + 1`, matrix `28/28`, architecture `39/39`, docs `108`, site `17/17`, proof lint, Rustfmt, and diff pass. Its one Sol/xhigh/fast review accepted two documentation defects; both are corrected, and no narrow review is required. |
-| Next action | Create the NNC9.5 gate proof, then run the named focused verifier, `make clippy`, docs gates, and `make ci` with real exit status. |
-| Review cadence | Run one Sol/xhigh/fast NNC9.5 review after every written repository-gate criterion is green. Run a narrow correction review only for an accepted executable defect. |
+| Owned paths | NNC9.6 owns only the canonical plan, routing index if needed, final verification evidence, and worktree/commit truth. It changes no product code. |
+| Current acceptance | NNC9.5 K1-K10 pass. The complete item review accepted three executable defects; their affected proofs pass, and the one narrow review is clean at `0.99`. The ledger is `114/115` done. |
+| Next action | Commit the exact NNC9.5 checkpoint. Then audit every task, checklist, evidence link, final commit, and worktree state before closing NNC9.6. |
+| Review cadence | NNC9.5 review cadence is exhausted. NNC9.6 requires final static, docs, ledger, and worktree proof but no additional structured review. |
 | Push / PR | Not authorized. |
 | Blocker | none |
 
@@ -817,7 +817,7 @@ named dependency/owner decision and the next safe action.
 | NNC6 — compute choreography | `done` | Exact provision/teardown observers across every workload/retirement path. | NNC6.1-NNC6.6 and NNC6.1e1-NNC6.1e2 are complete. Fresh-process startup and tenant retirement reconstruct only from durable authority and converge exact fenced work. No completed item retains a temporary legacy authority. Provider effects remain with their named owners. |
 | NNC7 — integrations/projections | `done` | Protocol parity, stable service/machine handles, rebuild-safe projections, TLS guard. | NNC7.1-NNC7.6 are complete; exact behavior, quality, verifier, docs, and item-review evidence is recorded in their task proofs. |
 | NNC8 — recovery/fencing | `done` | Failure table and crash/stale/ambiguity model fully closed. | NNC8.1-NNC8.6 are complete. All `22/22` failure rows have current deterministic evidence. |
-| NNC9 — closeout | `in_progress` | Seam checklist, static verifier, sovereign proof, docs truth, repo gates. | NNC9.1-NNC9.4 are complete. NNC9.5 owns final repository gates; NNC9.6 closes the plan. |
+| NNC9 — closeout | `in_progress` | Seam checklist, static verifier, sovereign proof, docs truth, repo gates. | NNC9.1-NNC9.5 are complete. NNC9.6 closes the plan. |
 
 ## Item Checkpoint Ledger
 
@@ -944,8 +944,8 @@ checkpoint.
 | NNC9.2 | `done` | **Dependency:** NNC9.1 is complete. **Evidence:** `proof/nimbus-network-control-plane/nnc9.2-offline-sovereign-lifecycle.md`. **Result:** final Run 67 passes K1-K14 twice on authenticated candidate `fd1a9030…699984`. Each attempt has 19 transitions, one restart, exact fresh-owner recovery, terminal provider and projection truth, endpoint refusal, zero named network counters, empty DNS and forbidden-address evidence, and complete product and outer cleanup. **Last green:** workloads `231`; compute `506 + 1 ignored`; sandbox `1,212 + 47 ignored`; CLI `1,011 + 4 ignored`; serialized server `757 + 35 ignored`; affected compile, strict Clippy, warning-denied Rustdoc, format/diff/script checks; mutations `8/8`; invariants `10/10`; durability `24/24`; docs `108`; site `17/17`. **Review:** one full and one narrow Sol/xhigh/fast review; all eleven accepted findings are corrected and proven. **Checkpoint:** the commit containing this row is the exact NNC9.2 item commit. **Blocker:** none. |
 | NNC9.3 | `done` | **Dependency:** NNC9.2 is complete at `bcb0a1b06758d78155787aaf98a2cc502e02c039`. **Evidence:** `proof/nimbus-network-control-plane/nnc9.3-architecture-truth-and-transitional-deletion.md`. **Result:** K1-K12 pass. Generated dependency, bind, composition, modularity, effect, and compiler evidence matches source; active architecture and routing describe landed authority; the plan/index are compressed to `991`/`237` lines. **Last green:** aggregate `39/39`; affected NNCV006/NNCV022 negative mutations; docs `108`; site `17/17`; Node/Bash/JSON syntax, Rustfmt, and diff. **Review:** one Sol/xhigh/fast review accepted one P2 lifecycle-wording defect. The documentation correction restores inert preparation, same-generation attachment, activation prerequisites, activation, readiness, and publication order. No executable code changed, so no narrow review ran. **Checkpoint:** the commit containing this row is the durable item commit. **Blocker:** none. |
 | NNC9.4 | `done` | **Dependency:** NNC9.3 is complete at `56e095b163c65111fc4452eb902c7bbdd6e1029d`. **Evidence:** `proof/nimbus-network-control-plane/nnc9.4-focused-behavior-evidence.md`. **Result:** K1-K10 pass. The exact fixed-seed portable output, final affected counts, two environments, seed policy, declared skips, and all `28/28` behavioral-matrix owner proofs are durable. **Last green:** network `276 + 1` child; matrix `28/28`; zero post-NNC9.2 product paths; aggregate `39/39`; docs `108`; site `17/17`; proof lint, Rustfmt, and diff. **Review:** one Sol/xhigh/fast review accepted one P2 stale candidate-state statement and one P3 invalid displayed Git range at `0.98`; both documentation corrections are proven. No executable code changed, so no narrow review ran. **Checkpoint:** the commit containing this row is the exact item commit. **Blocker:** none. |
-| NNC9.5 | `in_progress` | **Dependency:** NNC9.4 is complete in the parent checkpoint. **Owned paths:** repository-gate proof plus concise plan/index routing; product paths only for a real in-scope gate defect. **Last green:** NNC9.4 network `276 + 1`, matrix `28/28`, architecture `39/39`, docs `108`, site `17/17`, proof lint, Rustfmt, and diff. **Next:** run focused verifier, `make clippy`, docs gates, and `make ci` with real exit status. **Blocker:** none. |
-| NNC9.6 | `todo` | — |
+| NNC9.5 | `done` | **Evidence:** `docs/private/plans/proof/nimbus-network-control-plane/nnc9.5-repository-gates.md`. **Result:** K1-K10 pass. Dependency policy has no advisory error, final `make ci` exits `0`, and the complete source/test/doc proof is durable. **Last green:** runtime `517 + 134 ignored`; workspace `7,405/7,405 + 107 skipped`; LRU correction `53 + 44`; corrected contenders `2/2`; architecture `39/39`; Clippy, dependency, attribution, docs `108`, and site `17/17`. **Review:** the complete Sol/xhigh/fast review accepted one P2 lifetime and two P3 test-contract defects. All are corrected and proven. The one narrow review is clean at `0.99`; cadence is exhausted. **Checkpoint:** the commit containing this row is the exact item commit. **Blocker:** none. |
+| NNC9.6 | `in_progress` | **Owned paths:** canonical plan, routing index only if required, and final verification evidence. **Last green:** NNC9.5 K1-K10 and its exact staged checkpoint. **Next:** commit NNC9.5, then verify every task/checklist/evidence row plus final commit and worktree status. **Blocker:** none. |
 
 ## Completion Gate
 

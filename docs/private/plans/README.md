@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC9.4 complete; NNC9.5 in progress`. Canonical owner for the transport-free connectivity-resource lifecycle. NNC9.5 runs final repository gates; detailed output stays in `proof/nimbus-network-control-plane/`. It preserves `nimbus-network -> nimbus-core` as the sole outgoing workspace edge; concrete effects stay with sandbox, server, KV, machine, proxy, and node; future cluster transport stays in the deferred horizontal-scaling lane.
+- `nimbus-network-control-plane-plan.md` - `active; NNC9.5 complete; NNC9.6 in progress`. Canonical owner for the transport-free connectivity-resource lifecycle. NNC9.6 closes the ledger and recovery header; detailed output stays in `proof/nimbus-network-control-plane/`. It preserves `nimbus-network -> nimbus-core` as the sole outgoing workspace edge; concrete effects stay with sandbox, server, KV, machine, proxy, and node; future cluster transport stays in the deferred horizontal-scaling lane.
 - `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
   architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
   `SandboxBackend` router/dispatch seam with backend families

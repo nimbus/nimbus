@@ -3,18 +3,20 @@ use std::ops::Bound::{Excluded, Included};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use imbl::OrdMap;
 use nimbus_core::ResourcePathBinding;
 use nimbus_core::{
     CommitEntry, DependencySet, Document, DocumentId, Error, Result, SequenceNumber, TableId,
     TableName, TenantEventRecord, Timestamp, commit_intersects_dependency_set,
 };
+use rpds::RedBlackTreeMapSync;
 
 use crate::tenant::WriteLogFrontierSample;
 
 const DEFAULT_MIN_RETENTION_SECS: usize = 30;
 const DEFAULT_MAX_RETENTION_SECS: usize = 300;
 const DEFAULT_SOFT_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+type PersistentOrdMap<K, V> = RedBlackTreeMapSync<K, V>;
 
 /// Retention policy for one tenant's in-memory full-image conflict window.
 ///
@@ -122,8 +124,8 @@ impl WindowEntry {
 
 #[derive(Debug)]
 struct WriteLogState {
-    published: OrdMap<SequenceNumber, Arc<WindowEntry>>,
-    pending: OrdMap<SequenceNumber, Arc<WindowEntry>>,
+    published: PersistentOrdMap<SequenceNumber, Arc<WindowEntry>>,
+    pending: PersistentOrdMap<SequenceNumber, Arc<WindowEntry>>,
     /// O(1) lookup of the latest retained published full image for caller-side
     /// single-document prepare. The Arc points back into `published`, so this
     /// index does not duplicate document payloads.
@@ -163,7 +165,7 @@ struct WriteLogState {
     /// trimming. Schema changes are rare and an execution unit may need to
     /// compare its published schema snapshot with a newer assigned epoch even
     /// after the corresponding conflict marker ages out.
-    schema_epoch_history: HashMap<TableName, OrdMap<SequenceNumber, SequenceNumber>>,
+    schema_epoch_history: HashMap<TableName, PersistentOrdMap<SequenceNumber, SequenceNumber>>,
     published_schema_epochs: HashMap<TableName, SequenceNumber>,
 }
 
@@ -200,8 +202,8 @@ impl WriteLog {
         Self {
             config,
             state: Mutex::new(WriteLogState {
-                published: OrdMap::new(),
-                pending: OrdMap::new(),
+                published: PersistentOrdMap::default(),
+                pending: PersistentOrdMap::default(),
                 published_documents: HashMap::new(),
                 pending_documents: HashMap::new(),
                 accounted_bytes: 0,
@@ -248,12 +250,12 @@ impl WriteLog {
             .map(|(sequence, entry)| (*sequence, entry.clone()))
             .collect::<Vec<_>>();
         for (sequence, entry) in removed {
-            state.pending.remove(&sequence);
+            state.pending.remove_mut(&sequence);
             state.accounted_bytes = state.accounted_bytes.saturating_sub(entry.accounted_bytes);
             if let WindowChange::WholeTables(tables) = &entry.change {
                 for table in tables.iter() {
                     if let Some(history) = state.schema_epoch_history.get_mut(table) {
-                        history.remove(&sequence);
+                        history.remove_mut(&sequence);
                     }
                 }
             }
@@ -277,7 +279,7 @@ impl WriteLog {
         }
         state.assigned_through = state
             .pending
-            .get_max()
+            .last()
             .map_or(state.published_through, |(sequence, _)| *sequence);
         state.covered_through = state.covered_through.min(state.assigned_through);
     }
@@ -332,7 +334,7 @@ impl WriteLog {
                         .schema_epoch_history
                         .entry(table.clone())
                         .or_default()
-                        .insert(sequence, sequence);
+                        .insert_mut(sequence, sequence);
                 }
             }
             if let WindowChange::DocumentCommit(commit) = &entry.change {
@@ -348,7 +350,7 @@ impl WriteLog {
                 }
             }
             state.accounted_bytes = state.accounted_bytes.saturating_add(entry.accounted_bytes);
-            state.pending.insert(sequence, entry);
+            state.pending.insert_mut(sequence, entry);
             if sequence.0 == state.covered_through.0.saturating_add(1) {
                 state.covered_through = sequence;
             }
@@ -490,7 +492,7 @@ impl WriteLog {
             .collect::<Vec<_>>();
         let mut previous_published_entry = state
             .published
-            .get_max()
+            .last()
             .map_or(state.published_through, |(sequence, _)| *sequence);
         for sequence in publish_sequences {
             assert!(
@@ -502,8 +504,13 @@ impl WriteLog {
             previous_published_entry = sequence;
             let entry = state
                 .pending
-                .remove(&sequence)
+                .get(&sequence)
+                .cloned()
                 .expect("selected pending write-log entry must still exist");
+            assert!(
+                state.pending.remove_mut(&sequence),
+                "selected pending write-log entry must still exist"
+            );
             if let WindowChange::WholeTables(tables) = &entry.change {
                 for table in tables.iter() {
                     state
@@ -541,7 +548,7 @@ impl WriteLog {
                     }
                 }
             }
-            state.published.insert(sequence, entry);
+            state.published.insert_mut(sequence, entry);
         }
         Self::advance_published_frontier_locked(&mut state);
         let published_through = state.published_through;
@@ -580,7 +587,7 @@ impl WriteLog {
         // waiters. Only an entry still owned by a local apply path is a hard
         // publication barrier.
         let mut frontier = state.observed_applied_through;
-        if let Some((first_pending, _)) = state.pending.get_min()
+        if let Some((first_pending, _)) = state.pending.first()
             && *first_pending <= frontier
         {
             frontier = SequenceNumber(first_pending.0.saturating_sub(1));
@@ -818,7 +825,7 @@ impl WriteLog {
         reader_frontier: SequenceNumber,
     ) {
         loop {
-            let Some((sequence, entry)) = state.published.get_min().map(|(k, v)| (*k, v.clone()))
+            let Some((sequence, entry)) = state.published.first().map(|(k, v)| (*k, v.clone()))
             else {
                 break;
             };
@@ -838,8 +845,13 @@ impl WriteLog {
 
             let removed = state
                 .published
-                .remove(&sequence)
+                .get(&sequence)
+                .cloned()
                 .expect("oldest published write-log entry must still exist");
+            assert!(
+                state.published.remove_mut(&sequence),
+                "oldest published write-log entry must still exist"
+            );
             state.accounted_bytes = state
                 .accounted_bytes
                 .saturating_sub(removed.accounted_bytes);
@@ -880,8 +892,8 @@ pub(crate) enum ValidationSource {
 }
 
 pub(crate) struct WriteLogView {
-    published: OrdMap<SequenceNumber, Arc<WindowEntry>>,
-    pending: OrdMap<SequenceNumber, Arc<WindowEntry>>,
+    published: PersistentOrdMap<SequenceNumber, Arc<WindowEntry>>,
+    pending: PersistentOrdMap<SequenceNumber, Arc<WindowEntry>>,
     snapshot_sequence: SequenceNumber,
     head: SequenceNumber,
 }
@@ -904,7 +916,7 @@ impl WriteLogView {
     fn entries(&self) -> Vec<Arc<WindowEntry>> {
         let pending_head = self
             .pending
-            .get_max()
+            .last()
             .map_or(self.head, |(sequence, _)| self.head.max(*sequence));
         let mut entries = self
             .published

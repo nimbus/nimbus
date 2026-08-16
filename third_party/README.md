@@ -26,3 +26,13 @@ has no released version carrying a required fix.
   Both brotli patches apply only to pingora's `^3`/`^2` nodes; the Deno
   runtime's brotli 6/8 and brotli-decompressor 4/5 stay on crates.io. Remove
   both once Pingora moves off the brotli 3.x line.
+
+- `lru-0.16.4` is copied from its crates.io release because Pingora 0.8.1 and
+  `mysql_async` 0.36 still require the 0.16 line. Nimbus backports the exact
+  panic-safety fix and regression test from upstream commit
+  `f9a7f00fcf2d33e00adb03758cb350aaaa52cddb`, which fixes
+  `RUSTSEC-2026-0253`. It also backports upstream commit
+  `a615a5b29f21de6dd222394da91ab4e2c6918016`, which binds the returned mutable
+  reference to the cache borrow. Nimbus adds state assertions to the upstream
+  panic-safety regression and a compile-fail lifetime proof. Remove this patch
+  after every consumer accepts `lru` 0.18.2 or later.
