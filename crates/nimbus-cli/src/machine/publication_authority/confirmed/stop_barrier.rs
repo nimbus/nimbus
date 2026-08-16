@@ -676,9 +676,10 @@ mod tests {
     use nimbus_core::{TenantId, WorkloadId};
     use nimbus_network::{NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration};
     use nimbus_workloads::{
-        WorkloadDesiredDigest, WorkloadExecutionReference, WorkloadGeneration,
-        WorkloadProvisionSourceDigest, WorkloadRestartEpoch, WorkloadSagaKey,
+        WorkloadDesiredDigest, WorkloadGeneration, WorkloadProvisionSourceDigest, WorkloadSagaKey,
     };
+    #[cfg(unix)]
+    use nimbus_workloads::{WorkloadExecutionReference, WorkloadRestartEpoch};
     use tempfile::TempDir;
 
     use super::super::{ConfirmedMachinePublicationEnvelope, envelope_checksum};
@@ -735,6 +736,7 @@ mod tests {
         assert_eq!(claimed.barrier().forwarder_authority(), &exact);
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn machine_stop_barrier_waits_for_inflight_engine_desire_commit() {
         let root = TempDir::new().unwrap();
@@ -777,6 +779,7 @@ mod tests {
         assert!(stop.await.unwrap().is_ok());
     }
 
+    #[cfg(unix)]
     #[test]
     fn restart_witness_replay_authenticates_the_persisted_source_execution() {
         let intent = process_tests::running_intent();
@@ -935,5 +938,5 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod process_tests;

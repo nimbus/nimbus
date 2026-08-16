@@ -13,11 +13,13 @@ use sha2::{Digest, Sha256};
 // `MachineHelperBinaryPaths` is consumed by the unix manager
 // submodules; on the non-unix stub it is only available via this
 // re-export for parity with `manager.rs` and stays unused.
+#[cfg(test)]
+use super::MachineRootLayout;
 #[allow(unused_imports)]
 pub(super) use super::record::{MachineHelperBinaryPaths, MachineRuntimeState};
 use super::{
-    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineRootLayout,
-    MachineStateRecord, write_json_file,
+    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineStateRecord,
+    write_json_file,
 };
 use crate::machine::HostMachineNetworkAuthority;
 
@@ -67,6 +69,17 @@ pub(super) fn start_machine(
 }
 
 pub(super) fn stop_machine(
+    network: &HostMachineNetworkAuthority,
+    paths: &MachinePaths,
+    config: &MachineConfigRecord,
+    state: &mut MachineStateRecord,
+    _stop_authority: &super::stop_authority::HostMachineStopAuthority,
+    _authorization: nimbus_compute::machine_stop_authority::ConfirmedMachineStopAuthorization,
+) -> Result<(), Error> {
+    stop_machine_unavailable(network, paths, config, state)
+}
+
+fn stop_machine_unavailable(
     _network: &HostMachineNetworkAuthority,
     _paths: &MachinePaths,
     config: &MachineConfigRecord,
@@ -318,7 +331,7 @@ mod tests {
 
         let network = crate::machine::HostMachineNetworkComposition::claim_at(temp_dir.path())
             .expect("stub test network authority should open");
-        let error = stop_machine(&network.authority(), &paths, &config, &mut state)
+        let error = stop_machine_unavailable(&network.authority(), &paths, &config, &mut state)
             .expect_err("an unavailable stub cannot attest a provider stop");
 
         assert!(

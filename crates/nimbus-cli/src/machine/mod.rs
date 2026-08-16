@@ -44,12 +44,17 @@ mod network_composition;
 mod non_unix_manager_contract;
 #[cfg(unix)]
 mod provision_source;
-#[cfg(unix)]
+#[cfg(not(unix))]
+#[path = "stub/provision_source.rs"]
+mod provision_source;
 mod publication_authority;
 mod record;
 mod render;
 mod server_control;
 #[cfg(unix)]
+mod stop_authority;
+#[cfg(not(unix))]
+#[path = "stub/stop_authority.rs"]
 mod stop_authority;
 
 #[cfg(test)]
@@ -66,7 +71,6 @@ pub(crate) use self::handlers::{require_default_machine_api_client, run_machine_
 pub(crate) use self::network_composition::HostMachineNetworkAuthority;
 #[cfg(test)]
 pub(crate) use self::network_composition::HostMachineNetworkComposition;
-#[cfg(unix)]
 pub(crate) use self::provision_source::{
     PreparedDefaultMachineProvisionSource, prepare_default_machine_provision_source,
 };

@@ -6,19 +6,21 @@
 
 use std::sync::Arc;
 
-use nimbus::{
-    Engine, LocalBuildAdmission, SandboxBackend, ServiceDefinitionCatalog, ServiceManager,
-};
+#[cfg(not(unix))]
+use nimbus::Error;
+use nimbus::{Engine, LocalBuildAdmission, ServiceDefinitionCatalog};
+#[cfg(unix)]
+use nimbus::{SandboxBackend, ServiceManager};
+#[cfg(unix)]
 use nimbus_compute::workload_saga::WorkloadTeardownCapabilityRegistry;
-use nimbus_server::{
-    ServerWorkloadComposition, ServerWorkloadCompositionError, ServerWorkloadProviders,
-};
+use nimbus_server::ServerWorkloadComposition;
+#[cfg(unix)]
+use nimbus_server::{ServerWorkloadCompositionError, ServerWorkloadProviders};
 
 use super::super::{FrozenLocalNetworkComposition, LocalNetworkCompositionError};
-use crate::machine::{
-    ForwardedMachineApiSandboxBackend, HostMachineNetworkAuthority,
-    PreparedDefaultMachineProvisionSource,
-};
+use crate::machine::PreparedDefaultMachineProvisionSource;
+#[cfg(unix)]
+use crate::machine::{ForwardedMachineApiSandboxBackend, HostMachineNetworkAuthority};
 
 /// Effect-free forwarded sources retained until the caller supplies an Engine.
 pub(crate) struct PreparedForwardedWorkloadProfile {
@@ -46,6 +48,14 @@ impl PreparedForwardedWorkloadProfile {
 
 /// Complete one exact forwarded provider realm after Engine construction.
 pub(crate) fn prepare_forwarded_workload_profile(
+    prepared: PreparedForwardedWorkloadProfile,
+    engine: Arc<Engine>,
+) -> Result<ServerWorkloadComposition, LocalNetworkCompositionError> {
+    prepare_forwarded_workload_profile_for_host(prepared, engine)
+}
+
+#[cfg(unix)]
+fn prepare_forwarded_workload_profile_for_host(
     prepared: PreparedForwardedWorkloadProfile,
     engine: Arc<Engine>,
 ) -> Result<ServerWorkloadComposition, LocalNetworkCompositionError> {
@@ -110,4 +120,21 @@ pub(crate) fn prepare_forwarded_workload_profile(
         providers,
     )
     .map_err(LocalNetworkCompositionError::ServerWorkload)
+}
+
+#[cfg(not(unix))]
+fn prepare_forwarded_workload_profile_for_host(
+    prepared: PreparedForwardedWorkloadProfile,
+    engine: Arc<Engine>,
+) -> Result<ServerWorkloadComposition, LocalNetworkCompositionError> {
+    let PreparedForwardedWorkloadProfile {
+        network,
+        source,
+        catalog,
+        local_build_admission,
+    } = prepared;
+    let _ = (network, source, catalog, local_build_admission, engine);
+    Err(LocalNetworkCompositionError::Compose(Error::InvalidInput(
+        "forwarded managed-machine workload provisioning is available only on macOS".to_owned(),
+    )))
 }
