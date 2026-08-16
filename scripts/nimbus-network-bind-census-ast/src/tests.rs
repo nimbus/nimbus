@@ -5,33 +5,11 @@ fn scan_fixture(source: &str) -> ScanOutput {
 }
 
 fn scan_fixture_with_exemptions(source: &str, exempt_paths: &BTreeSet<String>) -> ScanOutput {
-    let mut authorities = Vec::new();
-    let mut risks = Vec::new();
-    let mut composition = Vec::new();
-    let mut declarations = Vec::new();
-    let mut boundaries = Vec::new();
-    let mut errors = Vec::new();
-    scan_source(
-        FIXTURE_PATH,
-        source,
-        &mut authorities,
-        &mut risks,
-        &mut composition,
-        &mut declarations,
-        &mut boundaries,
-        &mut errors,
-        exempt_paths,
-    );
-    finish_ordinals(&mut authorities);
-    finish_ordinals(&mut risks);
-    ScanOutput {
-        authorities,
-        risks,
-        composition,
-        declarations,
-        boundaries,
-        errors,
-    }
+    let mut output = ScanOutput::default();
+    scan_source(FIXTURE_PATH, source, &mut output, exempt_paths);
+    finish_ordinals(&mut output.authorities);
+    finish_ordinals(&mut output.risks);
+    output
 }
 
 fn boundary_kinds(output: &ScanOutput) -> Vec<&str> {

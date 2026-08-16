@@ -6,6 +6,31 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${NIMBUS_NETWORK_NNC64A_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 SOURCE_CONTRACT="${REPO_ROOT}/scripts/verify-nimbus-network-source-contract.mjs"
+# shellcheck source=scripts/nimbus-network-control-plane/parallel-mutation-runner.sh
+. "${SCRIPT_DIR}/parallel-mutation-runner.sh"
+
+run_restart_mutation() {
+  entry="$1"
+  mutation="${entry%%|*}"
+  expected="${entry#*|}"
+  output="$({
+    NIMBUS_NETWORK_VERIFY_RESTART_FIXTURE=1 \
+      NIMBUS_NETWORK_VERIFY_RESTART_MUTATION="${mutation}" \
+      node "${SOURCE_CONTRACT}" workload-restart-contract
+  } 2>&1)"
+  status=$?
+  diagnostic_count="$(printf '%s\n' "${output}" | rg -c '^restart-contract/' || true)"
+  if [ "${status}" -eq 0 ]; then
+    printf 'SELFTEST FAIL NNCV034 mutation %s unexpectedly passed\n' "${mutation}"
+    return 1
+  fi
+  if [ "${diagnostic_count}" -ne 1 ] || ! printf '%s\n' "${output}" | rg -q -F -x "${expected}"; then
+    printf 'SELFTEST FAIL NNCV034 mutation %s did not fail with its sole named diagnostic\n' "${mutation}"
+    printf '%s\n' "${output}"
+    return 1
+  fi
+  printf 'SELFTEST PASS NNCV034 mutation %s fails closed\n' "${mutation}"
+}
 
 run_contract() {
   cd "${REPO_ROOT}" || return 1
@@ -112,28 +137,18 @@ run_self_test() {
     "watch-cancellation-drops-durable-work|restart-contract/watch: automatic restart is not a bounded compute-owned durable watch"
   )
 
-  for entry in "${cases[@]}"; do
-    mutation="${entry%%|*}"
-    expected="${entry#*|}"
-    output="$({
-      NIMBUS_NETWORK_VERIFY_RESTART_FIXTURE=1 \
-        NIMBUS_NETWORK_VERIFY_RESTART_MUTATION="${mutation}" \
-        node "${SOURCE_CONTRACT}" workload-restart-contract
-    } 2>&1)"
-    status=$?
-    diagnostic_count="$(printf '%s\n' "${output}" | rg -c '^restart-contract/' || true)"
-    if [ "${status}" -eq 0 ]; then
-      printf 'SELFTEST FAIL NNCV034 mutation %s unexpectedly passed\n' "${mutation}"
-      failures=$((failures + 1))
-    elif [ "${diagnostic_count}" -ne 1 ] || ! printf '%s\n' "${output}" | rg -q -F -x "${expected}"; then
-      printf 'SELFTEST FAIL NNCV034 mutation %s did not fail with its sole named diagnostic\n' "${mutation}"
-      printf '%s\n' "${output}"
-      failures=$((failures + 1))
-    else
-      printf 'SELFTEST PASS NNCV034 mutation %s fails closed\n' "${mutation}"
-      passed=$((passed + 1))
-    fi
-  done
+  mutation_output_root="$(mktemp -d "${TMPDIR:-/tmp}/nnc64a-mutations.XXXXXX")" || return 1
+  runner_status=0
+  run_parallel_mutation_cases \
+    "${mutation_output_root}" restart run_restart_mutation "${cases[@]}" || runner_status=$?
+  passed=$((passed + PARALLEL_MUTATION_PASSED))
+  failures=$((failures + PARALLEL_MUTATION_FAILED))
+  rm -rf "${mutation_output_root}"
+  if [ "${runner_status}" -gt 1 ]; then
+    printf 'NNC6.4a restart contract self-test: mutation runner infrastructure failed: %d\n' \
+      "${runner_status}" >&2
+    return "${runner_status}"
+  fi
 
   if [ "${failures}" -ne 0 ]; then
     printf 'NNC6.4a restart contract self-test: %d passed, %d failed\n' \

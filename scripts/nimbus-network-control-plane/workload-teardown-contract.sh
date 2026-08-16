@@ -6,6 +6,50 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${NIMBUS_NETWORK_NNC65_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 SOURCE_CONTRACT="${REPO_ROOT}/scripts/verify-nimbus-network-source-contract.mjs"
+# shellcheck source=scripts/nimbus-network-control-plane/parallel-mutation-runner.sh
+. "${SCRIPT_DIR}/parallel-mutation-runner.sh"
+
+run_teardown_mutation() {
+  entry="$1"
+  kind="${entry%%|*}"
+  remainder="${entry#*|}"
+  mutation="${remainder%%|*}"
+  expected="${remainder#*|}"
+  stage=""
+  label=""
+  if [ "${kind}" = native ]; then
+    stage=native
+    label=' native'
+  fi
+
+  if [ "${kind}" = native ]; then
+    output="$({
+      NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE=1 \
+        NIMBUS_NETWORK_VERIFY_TEARDOWN_STAGE="${stage}" \
+        NIMBUS_NETWORK_VERIFY_TEARDOWN_MUTATION="${mutation}" \
+        node "${SOURCE_CONTRACT}" workload-teardown-contract
+    } 2>&1)"
+  else
+    output="$({
+      NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE=1 \
+        NIMBUS_NETWORK_VERIFY_TEARDOWN_MUTATION="${mutation}" \
+        node "${SOURCE_CONTRACT}" workload-teardown-contract
+    } 2>&1)"
+  fi
+  status=$?
+  diagnostic_count="$(printf '%s\n' "${output}" | rg -c '^teardown-contract/' || true)"
+  if [ "${status}" -eq 0 ]; then
+    printf 'SELFTEST FAIL NNCV035%s mutation %s unexpectedly passed\n' "${label}" "${mutation}"
+    return 1
+  fi
+  if [ "${diagnostic_count}" -ne 1 ] || ! printf '%s\n' "${output}" | rg -q -F -x "${expected}"; then
+    printf 'SELFTEST FAIL NNCV035%s mutation %s did not fail with its sole named diagnostic\n' \
+      "${label}" "${mutation}"
+    printf '%s\n' "${output}"
+    return 1
+  fi
+  printf 'SELFTEST PASS NNCV035%s mutation %s fails closed\n' "${label}" "${mutation}"
+}
 
 run_contract() {
   cd "${REPO_ROOT}" || return 1
@@ -239,29 +283,6 @@ run_self_test() {
     printf 'SELFTEST PASS NNCV035 completed audit path range ignores future product work\n'
   fi
 
-  for entry in "${cases[@]}"; do
-    mutation="${entry%%|*}"
-    expected="${entry#*|}"
-    output="$({
-      NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE=1 \
-        NIMBUS_NETWORK_VERIFY_TEARDOWN_MUTATION="${mutation}" \
-        node "${SOURCE_CONTRACT}" workload-teardown-contract
-    } 2>&1)"
-    status=$?
-    diagnostic_count="$(printf '%s\n' "${output}" | rg -c '^teardown-contract/' || true)"
-    if [ "${status}" -eq 0 ]; then
-      printf 'SELFTEST FAIL NNCV035 mutation %s unexpectedly passed\n' "${mutation}"
-      failures=$((failures + 1))
-    elif [ "${diagnostic_count}" -ne 1 ] || ! printf '%s\n' "${output}" | rg -q -F -x "${expected}"; then
-      printf 'SELFTEST FAIL NNCV035 mutation %s did not fail with its sole named diagnostic\n' "${mutation}"
-      printf '%s\n' "${output}"
-      failures=$((failures + 1))
-    else
-      printf 'SELFTEST PASS NNCV035 mutation %s fails closed\n' "${mutation}"
-      passed=$((passed + 1))
-    fi
-  done
-
   native_cases=(
     'missing-native-runtime'
     'missing-native-local-registry'
@@ -286,27 +307,25 @@ run_self_test() {
     'definition-context-downgrade'
   )
   native_diagnostic='teardown-contract/native-source-retirement: native stop or definition deletion bypasses the exact compute teardown, source fence, generation split, or attributed proof'
-  for mutation in "${native_cases[@]}"; do
-    output="$({
-      NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE=1 \
-        NIMBUS_NETWORK_VERIFY_TEARDOWN_STAGE=native \
-        NIMBUS_NETWORK_VERIFY_TEARDOWN_MUTATION="${mutation}" \
-        node "${SOURCE_CONTRACT}" workload-teardown-contract
-    } 2>&1)"
-    status=$?
-    diagnostic_count="$(printf '%s\n' "${output}" | rg -c '^teardown-contract/' || true)"
-    if [ "${status}" -eq 0 ]; then
-      printf 'SELFTEST FAIL NNCV035 native mutation %s unexpectedly passed\n' "${mutation}"
-      failures=$((failures + 1))
-    elif [ "${diagnostic_count}" -ne 1 ] || ! printf '%s\n' "${output}" | rg -q -F -x "${native_diagnostic}"; then
-      printf 'SELFTEST FAIL NNCV035 native mutation %s did not fail with its sole named diagnostic\n' "${mutation}"
-      printf '%s\n' "${output}"
-      failures=$((failures + 1))
-    else
-      printf 'SELFTEST PASS NNCV035 native mutation %s fails closed\n' "${mutation}"
-      passed=$((passed + 1))
-    fi
+  parallel_cases=()
+  for entry in "${cases[@]}"; do
+    parallel_cases+=("general|${entry}")
   done
+  for mutation in "${native_cases[@]}"; do
+    parallel_cases+=("native|${mutation}|${native_diagnostic}")
+  done
+  mutation_output_root="$(mktemp -d "${TMPDIR:-/tmp}/nnc65-mutations.XXXXXX")" || return 1
+  runner_status=0
+  run_parallel_mutation_cases \
+    "${mutation_output_root}" teardown run_teardown_mutation "${parallel_cases[@]}" || runner_status=$?
+  passed=$((passed + PARALLEL_MUTATION_PASSED))
+  failures=$((failures + PARALLEL_MUTATION_FAILED))
+  rm -rf "${mutation_output_root}"
+  if [ "${runner_status}" -gt 1 ]; then
+    printf 'NNC6.5 teardown contract self-test: mutation runner infrastructure failed: %d\n' \
+      "${runner_status}" >&2
+    return "${runner_status}"
+  fi
 
   if [ "${failures}" -ne 0 ]; then
     printf 'NNC6.5 teardown contract self-test: %d passed, %d failed\n' \

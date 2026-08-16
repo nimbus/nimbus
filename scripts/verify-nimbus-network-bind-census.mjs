@@ -18,6 +18,21 @@ const inventoryPath = process.argv[inventoryFlag + 1];
 const printCandidates = process.argv.includes("--print-candidates");
 const printRisks = process.argv.includes("--print-risks");
 const printComposition = process.argv.includes("--print-composition");
+const focusedBindChild =
+  process.env.NIMBUS_NETWORK_VERIFY_FOCUSED_BIND_CHILD === "1";
+const focusedBindFixture =
+  process.env.NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE ||
+  process.env.NIMBUS_NETWORK_VERIFY_TEST_UNCLASSIFIED;
+if (
+  focusedBindChild &&
+  (process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD !== "1" ||
+    !focusedBindFixture)
+) {
+  process.stderr.write(
+    "focused bind census requires a self-test child with an injected bind fixture\n",
+  );
+  process.exit(2);
+}
 const errors = [];
 
 function readInventory() {
@@ -652,8 +667,10 @@ if (!inventory) {
   process.exit(1);
 }
 
-validateExemptionPolicy(inventory);
-const wholeFileExemptions = validatePathOwnedTestModules(inventory);
+if (!focusedBindChild) validateExemptionPolicy(inventory);
+const wholeFileExemptions = focusedBindChild
+  ? new Set()
+  : validatePathOwnedTestModules(inventory);
 const scan = runStructuralScan(wholeFileExemptions);
 const occurrences = scan.authorities;
 const risks = scan.risks;
@@ -669,29 +686,35 @@ const udpBindCount = occurrences.filter(
 const localIpcCount = occurrences.filter((occurrence) =>
   occurrence.kind.startsWith("unix-"),
 ).length;
-for (const [label, inventoryValue, observedValue] of [
-  [
-    "authority occurrence",
-    inventory.summary?.authority_occurrences,
-    occurrences.length,
-  ],
-  [
-    "TCP bind",
-    inventory.summary?.production_tcp_bind_occurrences,
-    tcpBindCount,
-  ],
-  [
-    "UDP bind",
-    inventory.summary?.production_udp_bind_occurrences,
-    udpBindCount,
-  ],
-  ["local IPC", inventory.summary?.local_ipc_occurrences, localIpcCount],
-  ["non-authority", inventory.summary?.non_authority_occurrences, risks.length],
-]) {
-  if (inventoryValue !== observedValue) {
-    errors.push(
-      `inventory ${label} summary is stale: inventory=${inventoryValue}:source=${observedValue}`,
-    );
+if (!focusedBindChild) {
+  for (const [label, inventoryValue, observedValue] of [
+    [
+      "authority occurrence",
+      inventory.summary?.authority_occurrences,
+      occurrences.length,
+    ],
+    [
+      "TCP bind",
+      inventory.summary?.production_tcp_bind_occurrences,
+      tcpBindCount,
+    ],
+    [
+      "UDP bind",
+      inventory.summary?.production_udp_bind_occurrences,
+      udpBindCount,
+    ],
+    ["local IPC", inventory.summary?.local_ipc_occurrences, localIpcCount],
+    [
+      "non-authority",
+      inventory.summary?.non_authority_occurrences,
+      risks.length,
+    ],
+  ]) {
+    if (inventoryValue !== observedValue) {
+      errors.push(
+        `inventory ${label} summary is stale: inventory=${inventoryValue}:source=${observedValue}`,
+      );
+    }
   }
 }
 
@@ -708,9 +731,9 @@ if (printComposition) {
   process.exit(errors.length === 0 ? 0 : 1);
 }
 
-const classified = (inventory.authority_occurrences ?? []).map((entry) => ({
-  ...entry,
-}));
+const classified = focusedBindChild
+  ? []
+  : (inventory.authority_occurrences ?? []).map((entry) => ({ ...entry }));
 const swapSiteIds =
   process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1"
     ? process.env.NIMBUS_NETWORK_VERIFY_TEST_SWAP_SITE_IDS
@@ -751,7 +774,7 @@ if (injectedClassifiedOccurrence) {
   });
 }
 
-validateSiteLinks(inventory, classified, declarations);
+if (!focusedBindChild) validateSiteLinks(inventory, classified, declarations);
 const classifiedByKey = new Map();
 for (const occurrence of classified) {
   const key = occurrenceKey(occurrence);
@@ -787,7 +810,9 @@ for (const key of classifiedByKey.keys()) {
   }
 }
 
-const riskClassifications = inventory.non_authority_occurrences ?? [];
+const riskClassifications = focusedBindChild
+  ? []
+  : (inventory.non_authority_occurrences ?? []);
 const riskClassifiedByKey = new Map();
 for (const classification of riskClassifications) {
   const key = occurrenceKey(classification);
@@ -838,7 +863,7 @@ if (injectedUnclassified) {
     `unclassified production bind/allocation authority: ${injectedUnclassified}`,
   );
 }
-if (inventory.summary?.unclassified_production_sites !== 0) {
+if (!focusedBindChild && inventory.summary?.unclassified_production_sites !== 0) {
   errors.push(
     `inventory summary reports ${inventory.summary?.unclassified_production_sites} unclassified production sites`,
   );

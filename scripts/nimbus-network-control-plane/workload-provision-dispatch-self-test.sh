@@ -1,6 +1,39 @@
 #!/usr/bin/env bash
 # Mutation self-test for the NNC6.4 workload-provision dispatch contract.
 
+PARALLEL_MUTATION_RUNNER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/parallel-mutation-runner.sh"
+# shellcheck source=scripts/nimbus-network-control-plane/parallel-mutation-runner.sh
+. "${PARALLEL_MUTATION_RUNNER}"
+
+run_nnc64_dispatch_mutation() {
+  mutation_case="$1"
+  mutation="${mutation_case%%|*}"
+  expected_label="${mutation_case#*|}"
+  mutation_output="$({
+    NIMBUS_NETWORK_NNC64_ROOT="${fixture_root}" \
+      NIMBUS_NETWORK_NNC64_TEST_PINNED_HISTORY=present \
+      NIMBUS_NETWORK_NNC64_TEST_MUTATION="${mutation}" \
+      bash "${SCRIPT_PATH}" --check
+  } 2>&1)"
+  mutation_status=$?
+
+  if [ "${mutation_status}" -eq 0 ]; then
+    printf 'mutation %s was not rejected\n' "${mutation}" >&2
+    return 1
+  fi
+  if printf '%s\n' "${mutation_output}" |
+    rg -q -F "mutation ${mutation} did not change its fixture"; then
+    printf 'mutation %s was a no-op:\n%s\n' "${mutation}" "${mutation_output}" >&2
+    return 1
+  fi
+  if ! printf '%s\n' "${mutation_output}" |
+    rg -q -F "NNC6.4 provider dispatch contract failure: ${expected_label}:"; then
+    printf 'mutation %s missed %s:\n%s\n' \
+      "${mutation}" "${expected_label}" "${mutation_output}" >&2
+    return 1
+  fi
+}
+
 write_nnc64_fixture() {
   fixture_root="$1"
 
@@ -579,35 +612,19 @@ run_self_test() {
     return 1
   fi
 
-  passed=0
-  failed=0
-  for mutation_case in "${mutation_cases[@]}"; do
-    mutation="${mutation_case%%|*}"
-    expected_label="${mutation_case#*|}"
-    mutation_output="$(
-      NIMBUS_NETWORK_NNC64_ROOT="${fixture_root}" \
-        NIMBUS_NETWORK_NNC64_TEST_PINNED_HISTORY=present \
-        NIMBUS_NETWORK_NNC64_TEST_MUTATION="${mutation}" \
-        bash "${SCRIPT_PATH}" --check 2>&1
-    )"
-    mutation_status=$?
-
-    if [ "${mutation_status}" -eq 0 ]; then
-      printf 'mutation %s was not rejected\n' "${mutation}" >&2
-      failed=$((failed + 1))
-    elif printf '%s\n' "${mutation_output}" |
-      rg -q -F "mutation ${mutation} did not change its fixture"; then
-      printf 'mutation %s was a no-op:\n%s\n' "${mutation}" "${mutation_output}" >&2
-      failed=$((failed + 1))
-    elif ! printf '%s\n' "${mutation_output}" |
-      rg -q -F "NNC6.4 provider dispatch contract failure: ${expected_label}:"; then
-      printf 'mutation %s missed %s:\n%s\n' \
-        "${mutation}" "${expected_label}" "${mutation_output}" >&2
-      failed=$((failed + 1))
-    else
-      passed=$((passed + 1))
-    fi
-  done
+  mutation_output_root="$(mktemp -d "${TMPDIR:-/tmp}/nnc64-mutations.XXXXXX")" || return 1
+  runner_status=0
+  run_parallel_mutation_cases \
+    "${mutation_output_root}" dispatch run_nnc64_dispatch_mutation \
+    "${mutation_cases[@]}" || runner_status=$?
+  passed="${PARALLEL_MUTATION_PASSED}"
+  failed="${PARALLEL_MUTATION_FAILED}"
+  rm -rf "${mutation_output_root}"
+  if [ "${runner_status}" -gt 1 ]; then
+    printf 'NNC6.4 provider dispatch contract self-test: mutation runner infrastructure failed: %d\n' \
+      "${runner_status}" >&2
+    return "${runner_status}"
+  fi
 
   if [ "${passed}" -ne 50 ] || [ "${failed}" -ne 0 ]; then
     printf 'NNC6.4 provider dispatch contract self-test: %d passed, %d failed\n' \

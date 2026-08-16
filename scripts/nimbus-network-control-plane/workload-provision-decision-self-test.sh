@@ -4,6 +4,9 @@
 # workload-provision-decision-contract.sh sources this file.
 # shellcheck shell=bash
 # shellcheck disable=SC2154
+# shellcheck source=scripts/nimbus-network-control-plane/parallel-mutation-runner.sh
+. "${REPO_ROOT}/scripts/nimbus-network-control-plane/parallel-mutation-runner.sh"
+
 fixture_payload() {
   printf '%s\n' \
     "${network_capability_source}" "${network_capability_tests_source}" \
@@ -479,6 +482,108 @@ write_fixture() {
   printf '%s\n' 'pub trait WorkloadSagaStore {}' >"${fixture}/crates/nimbus-workloads/src/store.rs"
 }
 
+run_nnc63b_mutation() {
+  mutation="$1"
+  output="${self_test_root}/${mutation}.out"
+  case "${mutation}" in
+    missing-result-vocabulary) expected='provision result vocabulary must contain exactly' ;;
+    unknown-result-variant) expected='provision result vocabulary must contain exactly' ;;
+    crossed-generation) expected='behavioral matrix lacks crossed_workload_generation_rejects_before_submission' ;;
+    crossed-node) expected='behavioral matrix lacks crossed_local_node_rejects_before_submission' ;;
+    crossed-selection) expected='behavioral matrix lacks crossed_provider_selection_rejects_before_submission' ;;
+    crossed-source) expected='behavioral matrix lacks crossed_source_snapshot_rejects_before_submission' ;;
+    crossed-publication) expected='behavioral matrix lacks crossed_publication_rejects_before_submission' ;;
+    crossed-forwarding) expected='behavioral matrix lacks crossed_forwarding_semantics_rejects_before_submission' ;;
+    crossed-address) expected='behavioral matrix lacks crossed_address_semantics_rejects_before_submission' ;;
+    crossed-sovereignty) expected='behavioral matrix lacks crossed_sovereignty_rejects_before_submission' ;;
+    crossed-tls) expected='behavioral matrix lacks crossed_tls_semantics_rejects_before_submission' ;;
+    missing-source-generation) expected='independent source revision lacks WorkloadProvisionSourceGeneration' ;;
+    missing-resource-version) expected='independent source revision lacks pub struct WorkloadProvisionSourceResourceVersion' ;;
+    missing-provider-report-digest) expected='selection source evidence lacks source_digest: NetworkCapabilitySourceDigest' ;;
+    missing-attempt-fence) expected='portable attempt fence lacks issuing_revision: WorkloadSagaRevision' ;;
+    crossed-attempt-id) expected='behavioral matrix lacks crossed_attempt_id_rejects_without_candidate_or_command' ;;
+    wrong-success-evidence) expected='behavioral matrix lacks wrong_success_evidence_rejects_without_state_change' ;;
+    missing-prerequisite-distinction) expected='step-specific success evidence lacks ActivationPrerequisitesReady' ;;
+    missing-ready-publication-gate) expected='behavioral matrix lacks publication_is_unreachable_before_workload_readiness' ;;
+    missing-strict-decode) expected='behavioral matrix lacks unknown_effect_result_variant_is_rejected' ;;
+    definite-failure-advances) expected='exhaustive provision decisions lacks definite_failure_retains_completed_phase' ;;
+    definite-failure-emits-later) expected='behavioral matrix lacks definite_failure_reopen_emits_no_later_command' ;;
+    ambiguous-non-inspection) expected='behavioral matrix lacks ambiguous_result_emits_exact_inspection_only' ;;
+    ambiguous-loses-correlation) expected='behavioral matrix lacks ambiguous_reopen_retains_exact_attempt_correlation' ;;
+    first-available-fallback) expected='exact selection adopts a first-available fallback' ;;
+    provider-trait) expected='seam imports, defines, or calls provider effects' ;;
+    product-effect) expected='seam imports, defines, or calls provider effects' ;;
+    caller-cutover) expected='product caller cutover appears before NNC6.4' ;;
+    unexpected-path) expected='source diff escapes the frozen allowlist' ;;
+    duplicate-coordinator) expected='expected one WorkloadSagaCoordinator' ;;
+    duplicate-store) expected='expected one WorkloadSagaStore authority' ;;
+    forbidden-dependency) expected='nimbus-network gained a forbidden workspace dependency' ;;
+    compatibility-shim) expected='provision protocol contains a compatibility shim' ;;
+    missing-behavior-proof) expected='behavioral matrix lacks every_provision_phase_and_result_is_exhaustive' ;;
+    fixture-support-production-leak) expected='workloads test support is not directly gated by cfg(test)' ;;
+    loose-attempt-revision-history) expected='exact provision-attempt revision history lacks validate_attempt_revision(record, disposition, attempt)?' ;;
+  esac
+
+  if NIMBUS_NETWORK_NNC63B_ROOT="${fixture}" \
+    NIMBUS_NETWORK_NNC63B_COMPLETION_CHECKPOINT=WORKTREE \
+    NIMBUS_NETWORK_NNC63B_TEST_MUTATION="${mutation}" \
+    NIMBUS_NETWORK_NNC63B_TEST_CHANGED_PATHS="scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh" \
+    bash "${fixture}/scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh" \
+    >"${output}" 2>&1; then
+    printf 'SELFTEST FAIL NNCV032 %s unexpectedly passed\n' "${mutation}"
+    return 1
+  fi
+  if ! rg -q -F "${expected}" "${output}"; then
+    printf 'SELFTEST FAIL NNCV032 %s missed expected diagnostic: %s\n' \
+      "${mutation}" "${expected}"
+    sed -n '1,100p' "${output}"
+    return 1
+  fi
+  if rg -q -F "mutation ${mutation} did not change its fixture" "${output}"; then
+    printf 'SELFTEST FAIL NNCV032 %s used a no-op fixture substitution\n' "${mutation}"
+    return 1
+  fi
+  printf 'SELFTEST PASS NNCV032 %s fails closed with a changed fixture\n' "${mutation}"
+}
+
+run_nnc63b_changed_path_census_self_test() {
+  census_fixture="${self_test_root}/changed-path-census-fixture"
+  cp -R "${fixture}" "${census_fixture}"
+  census_output="${self_test_root}/changed-path-census-failure.out"
+  real_git="$(command -v git)"
+  "${real_git}" -C "${census_fixture}" init -q
+  "${real_git}" -C "${census_fixture}" config user.email "nnc63b-self-test@nimbus.invalid"
+  "${real_git}" -C "${census_fixture}" config user.name "NNC6.3b self-test"
+  "${real_git}" -C "${census_fixture}" add .
+  "${real_git}" -C "${census_fixture}" commit -qm "fixture"
+  if (
+    NIMBUS_NETWORK_NNC63B_REAL_GIT="${real_git}"
+    export NIMBUS_NETWORK_NNC63B_REAL_GIT
+    # Exported for the verifier subprocess; shellcheck cannot observe that call.
+    # shellcheck disable=SC2329
+    git() {
+      case " $* " in
+        *" ls-files --others --exclude-standard "*) return 73 ;;
+      esac
+      "${NIMBUS_NETWORK_NNC63B_REAL_GIT}" "$@"
+    }
+    export -f git
+    NIMBUS_NETWORK_NNC63B_ROOT="${census_fixture}" \
+      NIMBUS_NETWORK_NNC63B_STARTING_CHECKPOINT=HEAD \
+      NIMBUS_NETWORK_NNC63B_COMPLETION_CHECKPOINT=WORKTREE \
+      bash "${census_fixture}/scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh"
+  ) >"${census_output}" 2>&1; then
+    printf 'SELFTEST FAIL NNCV032 changed-path census command failure unexpectedly passed\n'
+    return 1
+  fi
+  if ! rg -q -F 'untracked-path census failed' "${census_output}"; then
+    printf 'SELFTEST FAIL NNCV032 changed-path census missed fail-closed diagnostic\n'
+    sed -n '1,100p' "${census_output}"
+    return 1
+  fi
+  printf 'SELFTEST PASS NNCV032 changed-path census command failure fails closed\n'
+}
+
 run_self_test() {
   self_test_root="$(mktemp -d "${TMPDIR:-/tmp}/nnc63b-contract-self-test.XXXXXX")" || {
     printf 'NNC6.3b provision contract self-test: unable to create temporary directory\n' >&2
@@ -510,108 +615,30 @@ run_self_test() {
     duplicate-store forbidden-dependency compatibility-shim missing-behavior-proof
     fixture-support-production-leak loose-attempt-revision-history
   )
-  for mutation in "${mutations[@]}"; do
-    output="${self_test_root}/${mutation}.out"
-    case "${mutation}" in
-      missing-result-vocabulary) expected='provision result vocabulary must contain exactly' ;;
-      unknown-result-variant) expected='provision result vocabulary must contain exactly' ;;
-      crossed-generation) expected='behavioral matrix lacks crossed_workload_generation_rejects_before_submission' ;;
-      crossed-node) expected='behavioral matrix lacks crossed_local_node_rejects_before_submission' ;;
-      crossed-selection) expected='behavioral matrix lacks crossed_provider_selection_rejects_before_submission' ;;
-      crossed-source) expected='behavioral matrix lacks crossed_source_snapshot_rejects_before_submission' ;;
-      crossed-publication) expected='behavioral matrix lacks crossed_publication_rejects_before_submission' ;;
-      crossed-forwarding) expected='behavioral matrix lacks crossed_forwarding_semantics_rejects_before_submission' ;;
-      crossed-address) expected='behavioral matrix lacks crossed_address_semantics_rejects_before_submission' ;;
-      crossed-sovereignty) expected='behavioral matrix lacks crossed_sovereignty_rejects_before_submission' ;;
-      crossed-tls) expected='behavioral matrix lacks crossed_tls_semantics_rejects_before_submission' ;;
-      missing-source-generation) expected='independent source revision lacks WorkloadProvisionSourceGeneration' ;;
-      missing-resource-version) expected='independent source revision lacks pub struct WorkloadProvisionSourceResourceVersion' ;;
-      missing-provider-report-digest) expected='selection source evidence lacks source_digest: NetworkCapabilitySourceDigest' ;;
-      missing-attempt-fence) expected='portable attempt fence lacks issuing_revision: WorkloadSagaRevision' ;;
-      crossed-attempt-id) expected='behavioral matrix lacks crossed_attempt_id_rejects_without_candidate_or_command' ;;
-      wrong-success-evidence) expected='behavioral matrix lacks wrong_success_evidence_rejects_without_state_change' ;;
-      missing-prerequisite-distinction) expected='step-specific success evidence lacks ActivationPrerequisitesReady' ;;
-      missing-ready-publication-gate) expected='behavioral matrix lacks publication_is_unreachable_before_workload_readiness' ;;
-      missing-strict-decode) expected='behavioral matrix lacks unknown_effect_result_variant_is_rejected' ;;
-      definite-failure-advances) expected='exhaustive provision decisions lacks definite_failure_retains_completed_phase' ;;
-      definite-failure-emits-later) expected='behavioral matrix lacks definite_failure_reopen_emits_no_later_command' ;;
-      ambiguous-non-inspection) expected='behavioral matrix lacks ambiguous_result_emits_exact_inspection_only' ;;
-      ambiguous-loses-correlation) expected='behavioral matrix lacks ambiguous_reopen_retains_exact_attempt_correlation' ;;
-      first-available-fallback) expected='exact selection adopts a first-available fallback' ;;
-      provider-trait) expected='seam imports, defines, or calls provider effects' ;;
-      product-effect) expected='seam imports, defines, or calls provider effects' ;;
-      caller-cutover) expected='product caller cutover appears before NNC6.4' ;;
-      unexpected-path) expected='source diff escapes the frozen allowlist' ;;
-      duplicate-coordinator) expected='expected one WorkloadSagaCoordinator' ;;
-      duplicate-store) expected='expected one WorkloadSagaStore authority' ;;
-      forbidden-dependency) expected='nimbus-network gained a forbidden workspace dependency' ;;
-      compatibility-shim) expected='provision protocol contains a compatibility shim' ;;
-      missing-behavior-proof) expected='behavioral matrix lacks every_provision_phase_and_result_is_exhaustive' ;;
-      fixture-support-production-leak) expected='workloads test support is not directly gated by cfg(test)' ;;
-      loose-attempt-revision-history) expected='exact provision-attempt revision history lacks validate_attempt_revision(record, disposition, attempt)?' ;;
-    esac
-    if NIMBUS_NETWORK_NNC63B_ROOT="${fixture}" \
-      NIMBUS_NETWORK_NNC63B_COMPLETION_CHECKPOINT=WORKTREE \
-      NIMBUS_NETWORK_NNC63B_TEST_MUTATION="${mutation}" \
-      NIMBUS_NETWORK_NNC63B_TEST_CHANGED_PATHS="scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh" \
-      bash "${fixture}/scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh" \
-      >"${output}" 2>&1; then
-      printf 'SELFTEST FAIL NNCV032 %s unexpectedly passed\n' "${mutation}"
-      failures=$((failures + 1))
-    elif ! rg -q -F "${expected}" "${output}"; then
-      printf 'SELFTEST FAIL NNCV032 %s missed expected diagnostic: %s\n' \
-        "${mutation}" "${expected}"
-      sed -n '1,100p' "${output}"
-      failures=$((failures + 1))
-    elif rg -q -F "mutation ${mutation} did not change its fixture" "${output}"; then
-      printf 'SELFTEST FAIL NNCV032 %s used a no-op fixture substitution\n' "${mutation}"
-      failures=$((failures + 1))
-    else
-      printf 'SELFTEST PASS NNCV032 %s fails closed with a changed fixture\n' "${mutation}"
-    fi
-    if [ "${mutation}" = "unexpected-path" ]; then
-      census_output="${self_test_root}/changed-path-census-failure.out"
-      real_git="$(command -v git)"
-      "${real_git}" -C "${fixture}" init -q
-      "${real_git}" -C "${fixture}" config user.email "nnc63b-self-test@nimbus.invalid"
-      "${real_git}" -C "${fixture}" config user.name "NNC6.3b self-test"
-      "${real_git}" -C "${fixture}" add .
-      "${real_git}" -C "${fixture}" commit -qm "fixture"
-      if (
-        NIMBUS_NETWORK_NNC63B_REAL_GIT="${real_git}"
-        export NIMBUS_NETWORK_NNC63B_REAL_GIT
-        # Exported for the verifier subprocess; shellcheck cannot observe that call.
-        # shellcheck disable=SC2329
-        git() {
-          case " $* " in
-            *" ls-files --others --exclude-standard "*) return 73 ;;
-          esac
-          "${NIMBUS_NETWORK_NNC63B_REAL_GIT}" "$@"
-        }
-        export -f git
-        NIMBUS_NETWORK_NNC63B_ROOT="${fixture}" \
-          NIMBUS_NETWORK_NNC63B_STARTING_CHECKPOINT=HEAD \
-          NIMBUS_NETWORK_NNC63B_COMPLETION_CHECKPOINT=WORKTREE \
-          bash "${fixture}/scripts/nimbus-network-control-plane/workload-provision-decision-contract.sh"
-      ) >"${census_output}" 2>&1; then
-        printf 'SELFTEST FAIL NNCV032 changed-path census command failure unexpectedly passed\n'
-        failures=$((failures + 1))
-      elif ! rg -q -F 'untracked-path census failed' "${census_output}"; then
-        printf 'SELFTEST FAIL NNCV032 changed-path census missed fail-closed diagnostic\n'
-        sed -n '1,100p' "${census_output}"
-        failures=$((failures + 1))
-      else
-        printf 'SELFTEST PASS NNCV032 changed-path census command failure fails closed\n'
-      fi
-    fi
-  done
+  mutation_output_root="${self_test_root}/mutation-results"
+  runner_status=0
+  run_parallel_mutation_cases \
+    "${mutation_output_root}" provision-decision run_nnc63b_mutation \
+    "${mutations[@]}" || runner_status=$?
+  passed="${PARALLEL_MUTATION_PASSED}"
+  failures="${PARALLEL_MUTATION_FAILED}"
+  if [ "${runner_status}" -gt 1 ]; then
+    printf 'NNC6.3b provision contract self-test: mutation runner infrastructure failed: %d\n' \
+      "${runner_status}" >&2
+    return "${runner_status}"
+  fi
+
+  if ! run_nnc63b_changed_path_census_self_test; then
+    failures=$((failures + 1))
+  fi
   if [ "${#mutations[@]}" -ne 36 ]; then
     printf 'NNC6.3b provision contract self-test: expected 36 mutations, observed %d\n' \
       "${#mutations[@]}" >&2
     return 1
   fi
-  if [ "${failures}" -ne 0 ]; then
-    printf 'NNC6.3b provision contract self-test: %d failed\n' "${failures}"
+  if [ "${passed}" -ne 36 ] || [ "${failures}" -ne 0 ]; then
+    printf 'NNC6.3b provision contract self-test: %d passed, %d failed\n' \
+      "${passed}" "${failures}"
     return 1
   fi
   printf 'NNC6.3b provision contract self-test: 36 passed, 0 failed\n'

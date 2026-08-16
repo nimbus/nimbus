@@ -197,7 +197,7 @@ NODE
     elif ! grep -q '^FAIL NNCV036 shared-process-harness-owner' "${output}" ||
       grep -q '^PASS NNCV036 shared-process-harness-owner' "${output}" ||
       [ "$(grep -c '^FAIL NNCV' "${output}")" -ne 1 ] ||
-      ! grep -q '^Summary: 37 passed, 1 failed$' "${output}"; then
+      ! grep -q '^Targeted summary: 0 passed, 1 failed, 38 skipped$' "${output}"; then
       printf 'SELFTEST FAIL NNCV036 mutation %s did not fail exclusively\n' "${mutation}"
       nnc81_fail=$((nnc81_fail + 1))
     else
@@ -208,6 +208,27 @@ NODE
   return "${nnc81_fail}"
 }
 
+verify_parallel_mutation_runner() {
+  temporary="$1"
+  runner_self_test="scripts/nimbus-network-control-plane/parallel-mutation-runner-self-test.sh"
+  output="${temporary}/parallel-mutation-runner-self-test.out"
+  if [ ! -f "${runner_self_test}" ]; then
+    printf 'SELFTEST FAIL parallel mutation runner self-test is missing\n'
+    return 1
+  fi
+  if ! bash "${runner_self_test}" >"${output}" 2>&1; then
+    printf 'SELFTEST FAIL parallel mutation runner invariants failed\n'
+    sed -n '1,120p' "${output}"
+    return 1
+  fi
+  if ! grep -q '^parallel mutation runner self-test: 9 passed, 0 failed$' "${output}"; then
+    printf 'SELFTEST FAIL parallel mutation runner result is not exact\n'
+    sed -n '1,120p' "${output}"
+    return 1
+  fi
+  sed -n '1,120p' "${output}"
+}
+
 run_self_test() {
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-network-verifier-self-test.XXXXXX")" || {
     printf 'SELFTEST FAIL unable to create temporary directory\n'
@@ -216,6 +237,60 @@ run_self_test() {
   trap 'rm -rf "${temporary}"' EXIT
   script="${REPO_ROOT}/scripts/verify-nimbus-network-control-plane.sh"
   self_fail=0
+
+  verify_parallel_mutation_runner "${temporary}" || self_fail=$((self_fail + 1))
+  if ! "${script}" >"${temporary}/green-baseline.out" 2>&1; then
+    printf 'SELFTEST FAIL aggregate verifier green baseline failed\n'
+    sed -n '1,160p' "${temporary}/green-baseline.out"
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^Summary: 39 passed, 0 failed$' "${temporary}/green-baseline.out"; then
+    printf 'SELFTEST FAIL aggregate verifier green baseline count is not exact\n'
+    sed -n '1,160p' "${temporary}/green-baseline.out"
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS aggregate verifier authenticates one complete green baseline\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_ONLY=NNCV038 \
+    "${script}" >"${temporary}/unsupported-selector.out" 2>&1; then
+    printf 'SELFTEST FAIL direct targeted selector unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^NIMBUS_NETWORK_VERIFY_ONLY is unsupported;' \
+    "${temporary}/unsupported-selector.out"; then
+    printf 'SELFTEST FAIL direct targeted selector missed its fail-closed diagnostic\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS direct targeted selector fails closed\n'
+  fi
+
+  if ! NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'#[cfg(test)]\nfn test_only() { TcpListener::bind("127.0.0.1:0"); }\n' \
+    "${script}" >"${temporary}/targeted-green.out" 2>&1; then
+    printf 'SELFTEST FAIL targeted green fixture unexpectedly failed\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^Targeted summary: 1 passed, 0 failed, 38 skipped$' \
+    "${temporary}/targeted-green.out" ||
+    grep -q '^Summary: 39 passed, 0 failed$' "${temporary}/targeted-green.out"; then
+    printf 'SELFTEST FAIL targeted green fixture impersonated a complete baseline\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS targeted green fixture cannot impersonate a complete baseline\n'
+  fi
+
+  focused_inventory="${NIMBUS_NETWORK_VERIFY_INVENTORY:-docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json}"
+  if NIMBUS_NETWORK_VERIFY_FOCUSED_BIND_CHILD=1 \
+    node "${BIND_CENSUS_HELPER}" --inventory "${focused_inventory}" \
+    >"${temporary}/focused-bind-bypass.out" 2>&1; then
+    printf 'SELFTEST FAIL direct focused bind census unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^focused bind census requires a self-test child with an injected bind fixture$' \
+    "${temporary}/focused-bind-bypass.out"; then
+    printf 'SELFTEST FAIL direct focused bind census missed its fail-closed diagnostic\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS direct focused bind census fails closed\n'
+  fi
 
   run_parallel_self_test_batch() {
     launched_lanes=""
@@ -380,7 +455,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 37 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Targeted summary: 0 passed, 1 failed, 38 skipped$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1190,7 +1265,7 @@ NODE
     grep -q '^PASS NNCV035 fenced-workload-teardown' \
       "${temporary}/nnc65-aggregate-mutation.out" ||
     [ "$(grep -c '^FAIL NNCV' "${temporary}/nnc65-aggregate-mutation.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 37 passed, 1 failed$' \
+    ! grep -q '^Targeted summary: 0 passed, 1 failed, 38 skipped$' \
       "${temporary}/nnc65-aggregate-mutation.out"; then
     printf 'SELFTEST FAIL NNCV035 aggregate mutation did not fail exclusively\n'
     self_fail=$((self_fail + 1))
@@ -1238,7 +1313,7 @@ NODE
     grep -q '^PASS NNCV038 compiler-generated-authority-closure' \
       "${temporary}/nnc91-missing-baseline.out" ||
     [ "$(grep -c '^FAIL NNCV' "${temporary}/nnc91-missing-baseline.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 38 passed, 1 failed$' \
+    ! grep -q '^Targeted summary: 0 passed, 1 failed, 38 skipped$' \
       "${temporary}/nnc91-missing-baseline.out"; then
     printf 'SELFTEST FAIL NNCV038 missing baseline did not fail exclusively\n'
     self_fail=$((self_fail + 1))
@@ -1277,7 +1352,7 @@ run_nnc81_affected_self_test() {
     grep -q '^PASS NNCV035 fenced-workload-teardown' \
       "${temporary}/nnc65-aggregate-mutation.out" ||
     [ "$(grep -c '^FAIL NNCV' "${temporary}/nnc65-aggregate-mutation.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 37 passed, 1 failed$' \
+    ! grep -q '^Targeted summary: 0 passed, 1 failed, 38 skipped$' \
       "${temporary}/nnc65-aggregate-mutation.out"; then
     printf 'SELFTEST FAIL NNCV035 affected aggregate mutation did not fail exclusively\n'
     affected_fail=$((affected_fail + 1))

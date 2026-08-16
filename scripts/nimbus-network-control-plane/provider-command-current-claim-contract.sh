@@ -71,7 +71,8 @@ run_self_test() {
     grep -q '^PASS NNCV037 provider-command-current-claim-authority' \
       "${aggregate_output}" ||
     [ "$(grep -c '^FAIL NNCV' "${aggregate_output}")" -ne 1 ] ||
-    ! grep -q '^Summary: 37 passed, 1 failed$' "${aggregate_output}"; then
+    ! grep -q '^Targeted summary: 0 passed, 1 failed, 38 skipped$' \
+      "${aggregate_output}"; then
     printf 'SELFTEST FAIL NNCV037 aggregate mutation did not fail exclusively\n'
     failures=$((failures + 1))
   else

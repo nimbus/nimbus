@@ -529,7 +529,21 @@ verify_bind_census() {
     fail "NNCV006" "unclassified-production-bind" "unable to create census output file"
     return
   }
-  node "${BIND_CENSUS_HELPER}" --inventory "${INVENTORY}" >"${census_output}"
+  focused_bind_child=0
+  if [ "${NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD:-}" = 1 ] &&
+    [ -z "${NIMBUS_NETWORK_VERIFY_INVENTORY:-}" ] &&
+    [ -z "${NIMBUS_NETWORK_VERIFY_TEST_SWAP_SITE_IDS:-}" ] &&
+    [ -z "${NIMBUS_NETWORK_VERIFY_TEST_CORRUPT_SITE_DECLARATION:-}" ] &&
+    { [ -n "${NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE:-}" ] ||
+      [ -n "${NIMBUS_NETWORK_VERIFY_TEST_UNCLASSIFIED:-}" ]; }; then
+    # The aggregate self-test authenticates the complete source-derived census
+    # once before launching mutation children. A focused child therefore scans
+    # only its injected Rust fixture; inventory and site-link mutations retain
+    # the complete workspace scan below.
+    focused_bind_child=1
+  fi
+  NIMBUS_NETWORK_VERIFY_FOCUSED_BIND_CHILD="${focused_bind_child}" \
+    node "${BIND_CENSUS_HELPER}" --inventory "${INVENTORY}" >"${census_output}"
   status=$?
   error="$(<"${census_output}")"
   rm -f "${census_output}"
@@ -1236,8 +1250,183 @@ verify_nnc91_compiler_authority_closure() {
   fi
 }
 
+self_test_check_selection() {
+  if [ "${NIMBUS_NETWORK_VERIFY_COMPILER_SELF_TEST_FORCE:-0}" = 1 ]; then
+    printf 'NNCV038\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_NNC82_MUTATION:-}" ]; then
+    printf 'NNCV037\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_NNC81_METADATA:-}" ]; then
+    printf 'NNCV036\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEARDOWN_FIXTURE:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_TEARDOWN_MUTATION:-}" ]; then
+    printf 'NNCV035\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_RECOVERY_STORE_SOURCE:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_SOURCE:-}" ]; then
+    printf 'NNCV027\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_COORDINATOR_MUTATION:-}" ]; then
+    printf 'NNCV026\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_MANAGER_MUTATION:-}" ]; then
+    printf 'NNCV025\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_INSPECTION_MUTATION:-}" ]; then
+    printf 'NNCV024\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_SEALED_EFFECT_CAPABILITY:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_TEST_PORTABLE_EFFECT_CAPABILITY:-}" ]; then
+    printf 'NNCV023\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_SANDBOX_EFFECT_LOCALITY:-}" ]; then
+    printf 'NNCV022\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_MACHINE_BATCH_CONVERGENCE_MUTATION:-}" ]; then
+    printf 'NNCV021\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_CRASH_MUTATION:-}" ]; then
+    printf 'NNCV020\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_READINESS_MUTATION:-}" ]; then
+    printf 'NNCV019\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_STARTUP_ORPHAN_MUTATION:-}" ]; then
+    printf 'NNCV018\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_ORDERING_MUTATION:-}" ]; then
+    printf 'NNCV017\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_SOVEREIGNTY_HELPER:-}" ]; then
+    printf 'NNCV016\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_MUTATION:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_TEST_DROP_COMPOSITION_KEY:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_COMPOSITION_CENSUS:-}" ]; then
+    printf 'NNCV006,NNCV015\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_NETWORK_SCAN_ROOT:-}" ]; then
+    printf 'NNCV012,NNCV013,NNCV014\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_ADDRESS_IDENTITY:-}" ]; then
+    printf 'NNCV014\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_DUPLICATE_DEFINITION:-}" ]; then
+    printf 'NNCV013\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_DEPENDENCY:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_EFFECT:-}" ]; then
+    printf 'NNCV012\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_CORE_SCAN_ROOT:-}" ]; then
+    printf 'NNCV010\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_SWAP_SITE_IDS:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_TEST_CORRUPT_SITE_DECLARATION:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_TEST_CLASSIFIED_OCCURRENCE:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_TEST_UNCLASSIFIED:-}" ] ||
+    [ -n "${NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE:-}" ]; then
+    printf 'NNCV006\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_LEGACY_PORT_AUTHORITY:-}" ]; then
+    printf 'NNCV005\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_TEST_DEPENDENCY_CONTRACT_CASE:-}" ]; then
+    printf 'NNCV004\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_INVENTORY:-}" ]; then
+    printf 'NNCV002,NNCV006\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_DEPENDENCIES:-}" ]; then
+    printf 'NNCV002,NNCV007\n'
+  elif [ -n "${NIMBUS_NETWORK_VERIFY_PLAN:-}" ]; then
+    if [ -f "${PLAN}" ]; then
+      printf 'NNCV001,NNCV008,NNCV009\n'
+    else
+      printf 'NNCV001\n'
+    fi
+  fi
+}
+
+verifier_function_for_id() {
+  case "$1" in
+    NNCV000) printf 'require_tools\n' ;;
+    NNCV001) printf 'verify_plan_in_head\n' ;;
+    NNCV002) printf 'verify_baseline_inputs\n' ;;
+    NNCV003) printf 'verify_network_crate\n' ;;
+    NNCV004) printf 'verify_network_dependency_contract\n' ;;
+    NNCV005) printf 'verify_single_port_authority\n' ;;
+    NNCV006) printf 'verify_bind_census\n' ;;
+    NNCV007) printf 'verify_dependency_baseline\n' ;;
+    NNCV008) printf 'verify_checkpoint_ledger\n' ;;
+    NNCV009) printf 'verify_routing_owner\n' ;;
+    NNCV010) printf 'verify_foundation_invariants\n' ;;
+    NNCV011) printf 'verify_portable_vocabulary_owner\n' ;;
+    NNCV012) printf 'verify_forbidden_network_dependencies_effects\n' ;;
+    NNCV013) printf 'verify_single_network_definition_owner\n' ;;
+    NNCV014) printf 'verify_address_is_not_network_identity\n' ;;
+    NNCV015) printf 'verify_local_network_composition_census\n' ;;
+    NNCV016) printf 'verify_sovereignty_tripwire_contract\n' ;;
+    NNCV017) printf 'verify_nnc52a_attachment_effect_ordering\n' ;;
+    NNCV018) printf 'verify_nnc52d_startup_orphan_reconciliation\n' ;;
+    NNCV019) printf 'verify_nnc53_attachment_readiness\n' ;;
+    NNCV020) printf 'verify_nnc54_attachment_crash_convergence\n' ;;
+    NNCV021) printf 'verify_nnc54a_machine_forwarded_batch_convergence\n' ;;
+    NNCV022) printf 'verify_nnc55_sandbox_effect_locality\n' ;;
+    NNCV023) printf 'verify_nnc55_sealed_effect_capabilities\n' ;;
+    NNCV024) printf 'verify_nnc56_side_effect_free_sandbox_inspection\n' ;;
+    NNCV025) printf 'verify_nnc61_compute_network_manager_injection\n' ;;
+    NNCV026) printf 'verify_nnc61a_compute_node_workload_coordinator\n' ;;
+    NNCV027) printf 'verify_nnc61d_durable_workload_saga_store\n' ;;
+    NNCV028) printf 'verify_nnc62_workload_network_plan_compiler\n' ;;
+    NNCV029) printf 'verify_nnc62a_workload_network_plan_durability\n' ;;
+    NNCV030) printf 'verify_nnc61e1_workload_saga_ingress\n' ;;
+    NNCV031) printf 'verify_nnc63a_workload_executable_carrier\n' ;;
+    NNCV032) printf 'verify_nnc63b_workload_provision_decision\n' ;;
+    NNCV033) printf 'verify_nnc64_workload_provision_dispatch\n' ;;
+    NNCV034) printf 'verify_nnc64a_workload_restart\n' ;;
+    NNCV035) printf 'verify_nnc65_workload_teardown\n' ;;
+    NNCV036) printf 'verify_nnc81_process_harness_owner\n' ;;
+    NNCV037) printf 'verify_nnc82_provider_current_claim_authority\n' ;;
+    NNCV038) printf 'verify_nnc91_compiler_authority_closure\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+run_selected_self_test_checks() {
+  selection="$1"
+  selected_count=0
+  selected_ids=""
+  old_ifs="${IFS}"
+  IFS=,
+  for check_id in ${selection}; do
+    case ",${selected_ids}," in
+      *",${check_id},"*)
+        printf 'duplicate targeted verifier condition: %s\n' "${check_id}" >&2
+        IFS="${old_ifs}"
+        return 2
+        ;;
+    esac
+    verifier_function_for_id "${check_id}" >/dev/null || {
+      printf 'unknown targeted verifier condition: %s\n' "${check_id}" >&2
+      IFS="${old_ifs}"
+      return 2
+    }
+    selected_ids="${selected_ids}${selected_ids:+,}${check_id}"
+    selected_count=$((selected_count + 1))
+  done
+  IFS="${old_ifs}"
+
+  PASS_COUNT=0
+  FAIL_COUNT=0
+  TARGETED_SKIPPED_COUNT=$((39 - selected_count))
+
+  IFS=,
+  for check_id in ${selection}; do
+    check_function="$(verifier_function_for_id "${check_id}")"
+    "${check_function}"
+  done
+  IFS="${old_ifs}"
+}
+
 printf 'Nimbus network control-plane static verifier\n'
 printf 'Repo: %s\n\n' "${REPO_ROOT}"
+
+if [ -n "${NIMBUS_NETWORK_VERIFY_ONLY:-}" ]; then
+  printf 'NIMBUS_NETWORK_VERIFY_ONLY is unsupported; targeted checks are selected only by named mutation fixtures\n' >&2
+  exit 2
+fi
+
+self_test_selection=""
+if [ "${NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD:-0}" = 1 ]; then
+  self_test_selection="$(self_test_check_selection)"
+fi
+if [ -n "${self_test_selection}" ]; then
+  run_selected_self_test_checks "${self_test_selection}" || exit $?
+  printf '\nTargeted summary: %d passed, %d failed, %d skipped\n' \
+    "${PASS_COUNT}" "${FAIL_COUNT}" "${TARGETED_SKIPPED_COUNT}"
+  if [ "${FAIL_COUNT}" -ne 0 ]; then
+    exit 1
+  fi
+  exit 0
+fi
 
 require_tools
 verify_plan_in_head

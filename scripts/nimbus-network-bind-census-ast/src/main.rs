@@ -18,7 +18,7 @@ use syn::{
 const FIXTURE_PATH: &str =
     "__nimbus_network_verifier_self_test__/cfg-test-followed-by-production.rs";
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 struct ScanOutput {
     authorities: Vec<Occurrence>,
     risks: Vec<Occurrence>,
@@ -67,11 +67,27 @@ fn main() {
         eprintln!("{error}");
         std::process::exit(2);
     });
+    let focused_fixture =
+        env::var("NIMBUS_NETWORK_VERIFY_FOCUSED_BIND_CHILD").as_deref() == Ok("1");
+    if focused_fixture
+        && (env::var("NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD").as_deref() != Ok("1")
+            || (env::var("NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE")
+                .map(|fixture| fixture.is_empty())
+                .unwrap_or(true)
+                && env::var("NIMBUS_NETWORK_VERIFY_TEST_UNCLASSIFIED")
+                    .map(|fixture| fixture.is_empty())
+                    .unwrap_or(true)))
+    {
+        eprintln!("focused bind census requires a self-test child with an injected bind fixture");
+        std::process::exit(2);
+    }
     let mut files = Vec::new();
-    walk_rust_sources(&args.root, &mut files).unwrap_or_else(|error| {
-        eprintln!("failed to walk {}: {error}", args.root.display());
-        std::process::exit(1);
-    });
+    if !focused_fixture {
+        walk_rust_sources(&args.root, &mut files).unwrap_or_else(|error| {
+            eprintln!("failed to walk {}: {error}", args.root.display());
+            std::process::exit(1);
+        });
+    }
     files.sort();
     let exempt_paths = files
         .iter()
@@ -79,12 +95,7 @@ fn main() {
         .filter(|file| args.excludes.contains(file) || is_convention_exempt(file))
         .collect::<BTreeSet<_>>();
 
-    let mut authorities = Vec::new();
-    let mut risks = Vec::new();
-    let mut composition = Vec::new();
-    let mut declarations = Vec::new();
-    let mut boundaries = Vec::new();
-    let mut errors = Vec::new();
+    let mut output = ScanOutput::default();
     for file in files {
         let display = normalized_path(&file);
         if exempt_paths.contains(&display) {
@@ -93,49 +104,31 @@ fn main() {
         let source = match fs::read_to_string(&file) {
             Ok(source) => source,
             Err(error) => {
-                errors.push(format!("Rust source unreadable: {display}: {error}"));
+                output
+                    .errors
+                    .push(format!("Rust source unreadable: {display}: {error}"));
                 continue;
             }
         };
-        scan_source(
-            &display,
-            &source,
-            &mut authorities,
-            &mut risks,
-            &mut composition,
-            &mut declarations,
-            &mut boundaries,
-            &mut errors,
-            &exempt_paths,
-        );
+        scan_source(&display, &source, &mut output, &exempt_paths);
     }
 
     if env::var("NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD").as_deref() == Ok("1")
         && let Ok(fixture) = env::var("NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE")
     {
-        scan_source(
-            FIXTURE_PATH,
-            &fixture,
-            &mut authorities,
-            &mut risks,
-            &mut composition,
-            &mut declarations,
-            &mut boundaries,
-            &mut errors,
-            &exempt_paths,
-        );
+        scan_source(FIXTURE_PATH, &fixture, &mut output, &exempt_paths);
     }
 
-    finish_ordinals(&mut authorities);
-    finish_ordinals(&mut risks);
-    finish_ordinals(&mut composition);
-    declarations.sort_by(|left, right| {
+    finish_ordinals(&mut output.authorities);
+    finish_ordinals(&mut output.risks);
+    finish_ordinals(&mut output.composition);
+    output.declarations.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
             .then(left.line.cmp(&right.line))
             .then(left.name.cmp(&right.name))
     });
-    boundaries.sort_by(|left, right| {
+    output.boundaries.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
             .then(left.line.cmp(&right.line))
@@ -143,14 +136,6 @@ fn main() {
             .then(left.kind.cmp(&right.kind))
             .then(left.detail.cmp(&right.detail))
     });
-    let output = ScanOutput {
-        authorities,
-        risks,
-        composition,
-        declarations,
-        boundaries,
-        errors,
-    };
     serde_json::to_writer(std::io::stdout(), &output).unwrap_or_else(|error| {
         eprintln!("failed to encode census output: {error}");
         std::process::exit(1);
@@ -220,18 +205,13 @@ fn is_convention_exempt(path: &str) -> bool {
 fn scan_source(
     path: &str,
     source: &str,
-    authorities: &mut Vec<Occurrence>,
-    risks: &mut Vec<Occurrence>,
-    composition: &mut Vec<Occurrence>,
-    declarations: &mut Vec<Declaration>,
-    boundaries: &mut Vec<Boundary>,
-    errors: &mut Vec<String>,
+    output: &mut ScanOutput,
     exempt_paths: &BTreeSet<String>,
 ) {
     let file = match syn::parse_file(source) {
         Ok(file) => file,
         Err(error) => {
-            errors.push(format!(
+            output.errors.push(format!(
                 "Rust source parse failed: {path}:{}:{}: {error}",
                 error.span().start().line,
                 error.span().start().column + 1
@@ -239,7 +219,7 @@ fn scan_source(
             return;
         }
     };
-    verify_exempt_references(path, &file, exempt_paths, errors);
+    verify_exempt_references(path, &file, exempt_paths, &mut output.errors);
     let source_path = PathBuf::from(path);
     let source_directory = source_path.parent().unwrap_or(Path::new(""));
     let module_directory = if source_path
@@ -262,12 +242,12 @@ fn scan_source(
         module_directories: vec![module_directory],
         symbols: Vec::new(),
         impl_types: Vec::new(),
-        authorities,
-        risks,
-        composition,
-        declarations,
-        boundaries,
-        errors,
+        authorities: &mut output.authorities,
+        risks: &mut output.risks,
+        composition: &mut output.composition,
+        declarations: &mut output.declarations,
+        boundaries: &mut output.boundaries,
+        errors: &mut output.errors,
     };
     scanner.visit_file(&file);
 }
