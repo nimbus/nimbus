@@ -615,8 +615,18 @@ const ledgerSet = new Set(rows.map(row => row.id));
 const missing = planned.filter(item => !ledgerSet.has(item));
 const extra = rows.map(row => row.id).filter(item => !plannedSet.has(item));
 if (missing.length || extra.length) errors.push("band/ledger mismatch: missing=" + (missing.join(",") || "<none>") + " extra=" + (extra.join(",") || "<none>"));
+const statusLine = text.split("\n").find(line => line.startsWith("Status: "));
+const planStatus = statusLine?.slice("Status: ".length).replaceAll(tick, "");
+const complete = planStatus?.startsWith("complete;") === true;
+if (!planStatus) errors.push("canonical plan status missing");
 const inProgress = rows.filter(row => row.status === "in_progress");
-if (inProgress.length !== 1) errors.push("expected exactly one in_progress row, found " + inProgress.length);
+if (complete) {
+  if (inProgress.length !== 0) errors.push("complete plan must have zero in_progress rows, found " + inProgress.length);
+  const incomplete = rows.filter(row => row.status !== "done").map(row => row.id);
+  if (incomplete.length) errors.push("complete plan has incomplete rows: " + incomplete.join(","));
+} else if (inProgress.length !== 1) {
+  errors.push("active plan expected exactly one in_progress row, found " + inProgress.length);
+}
 for (const row of rows) {
   if (!["done", "in_progress", "todo"].includes(row.status)) errors.push(row.id + " has invalid status " + row.status);
   if (row.status === "done" && (!row.evidence.trim() || row.evidence.trim() === "—")) errors.push(row.id + " done without evidence");
@@ -628,7 +638,9 @@ for (const row of rows) {
 }
 const currentItemLine = text.split("\n").find(line => line.startsWith("| Current item |"));
 const currentItem = currentItemLine?.split("|")[2]?.trim().replaceAll(tick, "");
-if (!currentItem || !inProgress[0] || !currentItem.startsWith(inProgress[0].id + " ")) {
+if (complete && (!currentItem || !currentItem.toLowerCase().startsWith("none"))) {
+  errors.push("complete plan Recovery Header current item must be none");
+} else if (!complete && (!currentItem || !inProgress[0] || !currentItem.startsWith(inProgress[0].id + " "))) {
   errors.push("Recovery Header current item does not match the in_progress ledger row");
 }
 const checkpointLine = text.split("\n").find(line => line.startsWith("| Last checkpoint commit |"));

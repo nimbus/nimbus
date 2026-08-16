@@ -321,6 +321,57 @@ NODE
     printf 'SELFTEST PASS nonexistent checkpoint fails closed as NNCV008\n'
   fi
 
+  checkpoint_complete_active="${temporary}/checkpoint-complete-active.md"
+  checkpoint_active_valid="${temporary}/checkpoint-active-valid.md"
+  if ! node - "${PLAN}" "${checkpoint_complete_active}" "${checkpoint_active_valid}" <<'NODE'
+const fs = require("fs");
+const [source, completeActiveTarget, activeValidTarget] = process.argv.slice(2);
+const text = fs.readFileSync(source, "utf8");
+const activeRow = "| NNC9.6 | `in_progress` | **Owned paths:** fixture. **Last green:** fixture. **Next:** fixture. **Blocker:** none. |";
+const doneRow = text.split("\n").find(line => line.startsWith("| NNC9.6 | `done` |"));
+if (!doneRow) process.exit(1);
+fs.writeFileSync(completeActiveTarget, text.replace(doneRow, activeRow));
+const active = text
+  .replace("Status: `complete; NNC0-NNC9 done`", "Status: `active; fixture in progress`")
+  .replace("| Plan status | `complete; NNC0-NNC9 done` |", "| Plan status | `active; fixture in progress` |")
+  .replace("| Current item | `none — plan complete` |", "| Current item | `NNC9.6 — fixture` |")
+  .replace(doneRow, activeRow);
+if (active === text) process.exit(1);
+fs.writeFileSync(activeValidTarget, active);
+NODE
+  then
+    printf 'SELFTEST FAIL checkpoint completion fixtures could not be built\n'
+    self_fail=$((self_fail + 1))
+  elif NIMBUS_NETWORK_VERIFY_PLAN="${checkpoint_complete_active}" \
+    NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    "${script}" >"${temporary}/checkpoint-complete-active.out" 2>&1; then
+    printf 'SELFTEST FAIL complete plan with active row unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV008 checkpoint-ledger-recoverable' \
+    "${temporary}/checkpoint-complete-active.out" ||
+    ! grep -q 'complete plan must have zero in_progress rows, found 1' \
+      "${temporary}/checkpoint-complete-active.out"; then
+    printf 'SELFTEST FAIL complete plan did not reject an active ledger row\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS complete plan rejects an active ledger row\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_PLAN="${checkpoint_active_valid}" \
+    NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    "${script}" >"${temporary}/checkpoint-active-valid.out" 2>&1; then
+    printf 'SELFTEST FAIL active fixture unexpectedly passed every unrelated status gate\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^PASS NNCV008 checkpoint-ledger-recoverable' \
+    "${temporary}/checkpoint-active-valid.out" ||
+    grep -q '^FAIL NNCV008 checkpoint-ledger-recoverable' \
+      "${temporary}/checkpoint-active-valid.out"; then
+    printf 'SELFTEST FAIL active plan with one current row did not pass NNCV008\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS active plan accepts exactly one matching current row\n'
+  fi
+
   if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
     NIMBUS_NETWORK_VERIFY_TEST_LEGACY_PORT_AUTHORITY='synthetic.rs:1:struct PortManager' \
     "${script}" >"${temporary}/legacy-port-authority.out" 2>&1; then
@@ -1199,7 +1250,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 607 passed, 0 failed\n'
+  printf 'self-test: 609 passed, 0 failed\n'
 }
 
 run_nnc81_affected_self_test() {

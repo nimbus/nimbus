@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC9.5 complete; NNC9.6 in progress`
+Status: `complete; NNC0-NNC9 done`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,14 +36,14 @@ linked proofs and git history.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC9.5 complete; NNC9.6 in progress` |
-| Current item | `NNC9.6 — close ledger and recovery header` |
-| Last checkpoint commit | The commit containing this transition completes NNC9.5; its parent `61da5905d1763b8fd46337c7fe3f8cf44602d5ba` completed NNC9.4. |
+| Plan status | `complete; NNC0-NNC9 done` |
+| Current item | `none — plan complete` |
+| Last checkpoint commit | The commit containing this transition completes NNC9.6; its parent `4a9590df93568e9cdbafa2358fa2acc42092e966` completed NNC9.5. |
 | Branch / worktree | `codex/nimbus-network-architecture-audit` / `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
-| Owned paths | NNC9.6 owns only the canonical plan, routing index if needed, final verification evidence, and worktree/commit truth. It changes no product code. |
-| Current acceptance | NNC9.5 K1-K10 pass. The complete item review accepted three executable defects; their affected proofs pass, and the one narrow review is clean at `0.99`. The ledger is `114/115` done. |
-| Next action | Commit the exact NNC9.5 checkpoint. Then audit every task, checklist, evidence link, final commit, and worktree state before closing NNC9.6. |
-| Review cadence | NNC9.5 review cadence is exhausted. NNC9.6 requires final static, docs, ledger, and worktree proof but no additional structured review. |
+| Owned paths | none; the plan is complete and the final commit contains only its ledger, routing, and closure proof. |
+| Current acceptance | All `10/10` bands, `115/115` tasks, and `38/38` linked seam checks are complete. Architecture passes `39/39`; docs pass `108`; the site passes `17/17`. |
+| Next action | No implementation remains. Preserve the no-push/no-PR boundary and report the exact final commit and clean worktree state. |
+| Review cadence | Exhausted. NNC9.5 used the final complete and narrow reviews; NNC9.6 changes no executable code and requires no structured review. |
 | Push / PR | Not authorized. |
 | Blocker | none |
 
@@ -746,60 +746,98 @@ instead of duplicating ownership.
 
 The plan cannot close until every answer is “yes” with linked evidence:
 
-- [ ] Is the canonical plan contained in the current branch `HEAD`, with its
+- [x] Is the canonical plan contained in the current branch `HEAD`, with its
       recovery checkpoint commit recorded?
-- [ ] Does `nimbus-network` sit below every consumer with no forbidden edge or
+      ([proof](proof/nimbus-network-control-plane/nnc9.1-static-verifier-closure.md))
+- [x] Does `nimbus-network` sit below every consumer with no forbidden edge or
       cycle?
-- [ ] Does it avoid socket/protocol/provider/cluster transport implementations?
-- [ ] Is `Cidr` pure and is portable segment intent free of Netavark realization?
-- [ ] Is there exactly one stable endpoint vocabulary?
-- [ ] Is there exactly one portable segment allocation authority?
-- [ ] Are segment IDs globally stable across node super-nets?
-- [ ] Can allocation adapters substitute without `SandboxId` or concrete
+      ([proof](proof/nimbus-network-control-plane/nnc9.1-static-verifier-closure.md))
+- [x] Does it avoid socket/protocol/provider/cluster transport implementations?
+      ([proof](proof/nimbus-network-control-plane/nnc1.1-low-dependency-crate.md))
+- [x] Is `Cidr` pure and is portable segment intent free of Netavark realization?
+      ([proof](proof/nimbus-network-control-plane/nnc1.4-portable-segment-allocation.md))
+- [x] Is there exactly one stable endpoint vocabulary?
+      ([proof](proof/nimbus-network-control-plane/nnc1.3-endpoint-vocabulary-migration.md))
+- [x] Is there exactly one portable segment allocation authority?
+      ([proof](proof/nimbus-network-control-plane/nnc2.2-portable-allocator-contract.md))
+- [x] Are segment IDs globally stable across node super-nets?
+      ([proof](proof/nimbus-network-control-plane/nnc2.4-stable-segment-identity-lease-epoch.md))
+- [x] Can allocation adapters substitute without `SandboxId` or concrete
       single-node accessors?
-- [ ] Does allocation reuse existing secondary blocks before growth?
-- [ ] Does expired create authority still permit safe cleanup of durable old
+      ([proof](proof/nimbus-network-control-plane/nnc2.2-portable-allocator-contract.md))
+- [x] Does allocation reuse existing secondary blocks before growth?
+      ([proof](proof/nimbus-network-control-plane/nnc2.3-atomic-existing-block-allocation.md))
+- [x] Does expired create authority still permit safe cleanup of durable old
       handles?
-- [ ] Is there exactly one cross-process host-port lease authority?
-- [ ] Do all production listeners reserve/adopt through it?
-- [ ] Does a source-derived census classify every production bind/probe and
+      ([proof](proof/nimbus-network-control-plane/nnc2.6-expired-lease-cleanup-authority.md))
+- [x] Is there exactly one cross-process host-port lease authority?
+      ([proof](proof/nimbus-network-control-plane/nnc3.1-atomic-port-lease-lifecycle.md))
+- [x] Do all production listeners reserve/adopt through it?
+      ([proof](proof/nimbus-network-control-plane/nnc3.9-single-port-authority-deletion.md))
+- [x] Does a source-derived census classify every production bind/probe and
       mechanically separate narrow test-only/command-local exemptions?
-- [ ] Are port allocation and tenant quota/admission distinct?
-- [ ] Are stable IDs/generations/epochs distinct from observed addresses?
-- [ ] Are desired plan, durable lease/provider handle, and observed status
+      ([proof](proof/nimbus-network-control-plane/nnc3.7b-bind-allocation-census.md))
+- [x] Are port allocation and tenant quota/admission distinct?
+      ([proof](proof/nimbus-network-control-plane/nnc3.2-port-conflict-model.md))
+- [x] Are stable IDs/generations/epochs distinct from observed addresses?
+      ([proof](proof/nimbus-network-control-plane/nnc1.2-stable-network-identities.md))
+- [x] Are desired plan, durable lease/provider handle, and observed status
       structurally separate?
-- [ ] Is cleanup-pending state durable and non-reusable?
-- [ ] Is the node store one network-owned implementation on a supported
+      ([proof](proof/nimbus-network-control-plane/nnc1.5-network-state-model.md))
+- [x] Is cleanup-pending state durable and non-reusable?
+      ([proof](proof/nimbus-network-control-plane/nnc3.8-restart-cleanup-pending-reconciliation.md))
+- [x] Is the node store one network-owned implementation on a supported
       same-host local filesystem, with unsupported detected mounts rejected?
-- [ ] Does compute own workload choreography and network own connectivity
+      ([proof](proof/nimbus-network-control-plane/nnc2.1-crash-safe-local-state.md))
+- [x] Does compute own workload choreography and network own connectivity
       choreography?
-- [ ] Is compute the only cross-domain saga coordinator, with durable intent
+      ([proof](proof/nimbus-network-control-plane/nnc6.1-compute-network-manager-injection.md))
+- [x] Is compute the only cross-domain saga coordinator, with durable intent
       sufficient for restart and existing node reconciliation preserved?
-- [ ] Is sandbox inspection side-effect-free, with restart and services lazy
+      ([proof](proof/nimbus-network-control-plane/nnc6.1d-durable-workload-saga-store.md))
+- [x] Is sandbox inspection side-effect-free, with restart and services lazy
       activation subordinate to the durable compute saga?
-- [ ] Does public `start` mean inert preparation, with no tenant instruction
+      ([proof](proof/nimbus-network-control-plane/nnc5.6-side-effect-free-sandbox-inspection.md))
+- [x] Does public `start` mean inert preparation, with no tenant instruction
       before attachment and required PEP readiness?
-- [ ] Is service resolution withdrawn/fenced before stop?
-- [ ] Does services retain logical naming/readiness authority?
-- [ ] Do sandbox/server/KV/machine/proxy retain their concrete effects?
-- [ ] Is sandbox attachment one deep implementation with complete readiness
+      ([proof](proof/nimbus-network-control-plane/nnc6.3b-pure-provision-decision.md))
+- [x] Is service resolution withdrawn/fenced before stop?
+      ([proof](proof/nimbus-network-control-plane/nnc6.6-service-resolution-fencing.md))
+- [x] Does services retain logical naming/readiness authority?
+      ([proof](proof/nimbus-network-control-plane/nnc7.2-service-endpoint-generation.md))
+- [x] Do sandbox/server/KV/machine/proxy retain their concrete effects?
+      ([proof](proof/nimbus-network-control-plane/nnc5.5-effect-ownership-locality.md))
+- [x] Is sandbox attachment one deep implementation with complete readiness
       inspection rather than duplicated caller knowledge?
-- [ ] Do egress PDP/PEP remain separate and fail closed?
-- [ ] Are ingress certificates and interception CA keys separate?
-- [ ] Is future cluster transport still solely cluster-owned?
-- [ ] Is routed-not-overlay preserved?
-- [ ] Can every crash/partial/ambiguous/stale state reconcile without duplicate
+      ([proof](proof/nimbus-network-control-plane/nnc5.3-complete-attachment-readiness.md))
+- [x] Do egress PDP/PEP remain separate and fail closed?
+      ([proof](proof/nimbus-network-control-plane/nnc4.5-egress-readiness-dependency.md))
+- [x] Are ingress certificates and interception CA keys separate?
+      ([proof](proof/nimbus-network-control-plane/nnc7.6-tls-telemetry-boundary.md))
+- [x] Is future cluster transport still solely cluster-owned?
+      ([proof](proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md))
+- [x] Is routed-not-overlay preserved?
+      ([proof](proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md))
+- [x] Can every crash/partial/ambiguous/stale state reconcile without duplicate
       effect or premature reuse?
-- [ ] Can system projections lag/rebuild without affecting authority?
-- [ ] Are HTTP route inventory and connectivity-route observation structurally
+      ([proof](proof/nimbus-network-control-plane/nnc8.6-failure-contract-closure.md))
+- [x] Can system projections lag/rebuild without affecting authority?
+      ([proof](proof/nimbus-network-control-plane/nnc7.5-projection-independence.md))
+- [x] Are HTTP route inventory and connectivity-route observation structurally
       distinct?
-- [ ] Does partial listener-group startup unwind/supervise all earlier tasks
+      ([proof](proof/nimbus-network-control-plane/nnc7.4-connectivity-projections.md))
+- [x] Does partial listener-group startup unwind/supervise all earlier tasks
       without releasing inherited sockets?
-- [ ] Does capability selection fail closed with no silent approximation?
-- [ ] Was every product interface justified by real substitution?
-- [ ] Is the local sovereign profile proven without external infrastructure?
-- [ ] Are all transitional aliases, scanners, duplicate authorities, and
+      ([proof](proof/nimbus-network-control-plane/nnc7.1a-structured-listener-group.md))
+- [x] Does capability selection fail closed with no silent approximation?
+      ([proof](proof/nimbus-network-control-plane/nnc4.3-capability-registration-selection.md))
+- [x] Was every product interface justified by real substitution?
+      ([proof](proof/nimbus-network-control-plane/nnc4.2-capability-interface-substitution.md))
+- [x] Is the local sovereign profile proven without external infrastructure?
+      ([proof](proof/nimbus-network-control-plane/nnc9.2-offline-sovereign-lifecycle.md))
+- [x] Are all transitional aliases, scanners, duplicate authorities, and
       caller-local ordering deleted?
+      ([proof](proof/nimbus-network-control-plane/nnc9.3-architecture-truth-and-transitional-deletion.md))
 
 ## Implementation Status Ledger
 
@@ -817,7 +855,7 @@ named dependency/owner decision and the next safe action.
 | NNC6 — compute choreography | `done` | Exact provision/teardown observers across every workload/retirement path. | NNC6.1-NNC6.6 and NNC6.1e1-NNC6.1e2 are complete. Fresh-process startup and tenant retirement reconstruct only from durable authority and converge exact fenced work. No completed item retains a temporary legacy authority. Provider effects remain with their named owners. |
 | NNC7 — integrations/projections | `done` | Protocol parity, stable service/machine handles, rebuild-safe projections, TLS guard. | NNC7.1-NNC7.6 are complete; exact behavior, quality, verifier, docs, and item-review evidence is recorded in their task proofs. |
 | NNC8 — recovery/fencing | `done` | Failure table and crash/stale/ambiguity model fully closed. | NNC8.1-NNC8.6 are complete. All `22/22` failure rows have current deterministic evidence. |
-| NNC9 — closeout | `in_progress` | Seam checklist, static verifier, sovereign proof, docs truth, repo gates. | NNC9.1-NNC9.5 are complete. NNC9.6 closes the plan. |
+| NNC9 — closeout | `done` | Seam checklist, static verifier, sovereign proof, docs truth, repo gates. | NNC9.1-NNC9.6 are complete; `proof/nimbus-network-control-plane/nnc9.6-final-closure.md` records the final ledger and recovery proof. |
 
 ## Item Checkpoint Ledger
 
@@ -945,7 +983,7 @@ checkpoint.
 | NNC9.3 | `done` | **Dependency:** NNC9.2 is complete at `bcb0a1b06758d78155787aaf98a2cc502e02c039`. **Evidence:** `proof/nimbus-network-control-plane/nnc9.3-architecture-truth-and-transitional-deletion.md`. **Result:** K1-K12 pass. Generated dependency, bind, composition, modularity, effect, and compiler evidence matches source; active architecture and routing describe landed authority; the plan/index are compressed to `991`/`237` lines. **Last green:** aggregate `39/39`; affected NNCV006/NNCV022 negative mutations; docs `108`; site `17/17`; Node/Bash/JSON syntax, Rustfmt, and diff. **Review:** one Sol/xhigh/fast review accepted one P2 lifecycle-wording defect. The documentation correction restores inert preparation, same-generation attachment, activation prerequisites, activation, readiness, and publication order. No executable code changed, so no narrow review ran. **Checkpoint:** the commit containing this row is the durable item commit. **Blocker:** none. |
 | NNC9.4 | `done` | **Dependency:** NNC9.3 is complete at `56e095b163c65111fc4452eb902c7bbdd6e1029d`. **Evidence:** `proof/nimbus-network-control-plane/nnc9.4-focused-behavior-evidence.md`. **Result:** K1-K10 pass. The exact fixed-seed portable output, final affected counts, two environments, seed policy, declared skips, and all `28/28` behavioral-matrix owner proofs are durable. **Last green:** network `276 + 1` child; matrix `28/28`; zero post-NNC9.2 product paths; aggregate `39/39`; docs `108`; site `17/17`; proof lint, Rustfmt, and diff. **Review:** one Sol/xhigh/fast review accepted one P2 stale candidate-state statement and one P3 invalid displayed Git range at `0.98`; both documentation corrections are proven. No executable code changed, so no narrow review ran. **Checkpoint:** the commit containing this row is the exact item commit. **Blocker:** none. |
 | NNC9.5 | `done` | **Evidence:** `docs/private/plans/proof/nimbus-network-control-plane/nnc9.5-repository-gates.md`. **Result:** K1-K10 pass. Dependency policy has no advisory error, final `make ci` exits `0`, and the complete source/test/doc proof is durable. **Last green:** runtime `517 + 134 ignored`; workspace `7,405/7,405 + 107 skipped`; LRU correction `53 + 44`; corrected contenders `2/2`; architecture `39/39`; Clippy, dependency, attribution, docs `108`, and site `17/17`. **Review:** the complete Sol/xhigh/fast review accepted one P2 lifetime and two P3 test-contract defects. All are corrected and proven. The one narrow review is clean at `0.99`; cadence is exhausted. **Checkpoint:** the commit containing this row is the exact item commit. **Blocker:** none. |
-| NNC9.6 | `in_progress` | **Owned paths:** canonical plan, routing index only if required, and final verification evidence. **Last green:** NNC9.5 K1-K10 and its exact staged checkpoint. **Next:** commit NNC9.5, then verify every task/checklist/evidence row plus final commit and worktree status. **Blocker:** none. |
+| NNC9.6 | `done` | **Evidence:** `proof/nimbus-network-control-plane/nnc9.6-final-closure.md`. **Result:** K1-K7 pass. All `10/10` bands, `115/115` tasks, and `38/38` seam checks are complete with linked evidence. **Last green:** architecture `39/39`; verifier mutations `609/609`; docs `108`; site `17/17`; Bash syntax, Rustfmt, diff, and proof prose. **Review:** none required because NNC9.6 changes no executable code. **Checkpoint:** the commit containing this row is the exact final item commit. **Blocker:** none. |
 
 ## Completion Gate
 
