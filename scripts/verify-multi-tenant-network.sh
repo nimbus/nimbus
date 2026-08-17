@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Aggregate completion-gate verifier for the multi-tenant network invariants
 # now preserved by the canonical Nimbus network control-plane plan
-# (`docs/private/plans/nimbus-network-control-plane-plan.md`).
+# (`docs/private/plans/archive/nimbus-network-control-plane-plan.md`).
 #
 # Exits 0 iff every landed-band structural condition holds. This verifier was
 # created in MTN4 and is retained as a regression guard through the

@@ -421,7 +421,9 @@ function validatePathOwnedTestModules(inventory) {
 
     const owner = maskNonCode(fs.readFileSync(evidence.cfg_owner, "utf8"));
     const cfgOwnerPattern = new RegExp(
-      `#\\s*\\[\\s*cfg\\s*\\(\\s*test\\s*\\)\\s*\\]\\s*` +
+      `#\\s*\\[\\s*cfg\\s*\\(\\s*` +
+        `(?:test|all\\s*\\(\\s*test(?:\\s*,[^()]*)*\\))` +
+        `\\s*\\)\\s*\\]\\s*` +
         `(?:#\\s*\\[[^\\]]+\\]\\s*)*` +
         `mod\\s+${escapeRegExp(evidence.owner_module)}\\s*;`,
     );

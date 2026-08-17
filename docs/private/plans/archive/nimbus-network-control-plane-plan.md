@@ -275,7 +275,7 @@ The result must provide:
 ## Landed Architecture
 
 The durable architecture is
-[`../architecture/network/control-plane.md`](../architecture/network/control-plane.md).
+[`../architecture/network/control-plane.md`](../../architecture/network/control-plane.md).
 The original audit, detailed state-model design, failure tables, and review
 dispositions remain recoverable from the NNC0-NNC8 proofs and item commits.
 This plan now keeps only the acceptance-bearing seams needed for closeout.
@@ -692,18 +692,18 @@ grep input, skipped lane, or unavailable provider cannot be reported as pass.
 
 ## Plan Coordination And Authority Boundaries
 
-- [`architecture-review-2026-07-plan.md`](architecture-review-2026-07-plan.md)
+- [`architecture-review-2026-07-plan.md`](../architecture-review-2026-07-plan.md)
   remains the workspace-wide review owner. Its current reconciliation records
   the landed compute, network, and workload-identity crates. This plan owns
   only network lifecycle and its composition integration.
 - No promoted sandbox backend-family plan exists in this checkout.
   `nimbus-sandbox` retains backend selection and every concrete network effect;
   this plan must not invent a parallel owner.
-- [`archive/multi-tenant-node-network-plan.md`](archive/multi-tenant-node-network-plan.md)
+- [`archive/multi-tenant-node-network-plan.md`](multi-tenant-node-network-plan.md)
   remains the completed authority for routed tenant bridges, disjoint segments,
   DNS-off posture, H1 pinning, growth, and fenced super-net lease behavior.
   NNC2 generalizes the seam without weakening its verifier/KVM evidence.
-- [`horizontal-scaling-plan.md`](horizontal-scaling-plan.md) solely owns future
+- [`horizontal-scaling-plan.md`](../horizontal-scaling-plan.md) solely owns future
   `nimbus-cluster`, `ClusterTransport`, Iroh/openraft, membership, node
   identity, routing, gossip, and replicated placement. It consumes the
   allocator/forwarding contracts only when those capabilities become real.
@@ -748,96 +748,96 @@ The plan cannot close until every answer is “yes” with linked evidence:
 
 - [x] Is the canonical plan contained in the current branch `HEAD`, with its
       recovery checkpoint commit recorded?
-      ([proof](proof/nimbus-network-control-plane/nnc9.1-static-verifier-closure.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc9.1-static-verifier-closure.md))
 - [x] Does `nimbus-network` sit below every consumer with no forbidden edge or
       cycle?
-      ([proof](proof/nimbus-network-control-plane/nnc9.1-static-verifier-closure.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc9.1-static-verifier-closure.md))
 - [x] Does it avoid socket/protocol/provider/cluster transport implementations?
-      ([proof](proof/nimbus-network-control-plane/nnc1.1-low-dependency-crate.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc1.1-low-dependency-crate.md))
 - [x] Is `Cidr` pure and is portable segment intent free of Netavark realization?
-      ([proof](proof/nimbus-network-control-plane/nnc1.4-portable-segment-allocation.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc1.4-portable-segment-allocation.md))
 - [x] Is there exactly one stable endpoint vocabulary?
-      ([proof](proof/nimbus-network-control-plane/nnc1.3-endpoint-vocabulary-migration.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc1.3-endpoint-vocabulary-migration.md))
 - [x] Is there exactly one portable segment allocation authority?
-      ([proof](proof/nimbus-network-control-plane/nnc2.2-portable-allocator-contract.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc2.2-portable-allocator-contract.md))
 - [x] Are segment IDs globally stable across node super-nets?
-      ([proof](proof/nimbus-network-control-plane/nnc2.4-stable-segment-identity-lease-epoch.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc2.4-stable-segment-identity-lease-epoch.md))
 - [x] Can allocation adapters substitute without `SandboxId` or concrete
       single-node accessors?
-      ([proof](proof/nimbus-network-control-plane/nnc2.2-portable-allocator-contract.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc2.2-portable-allocator-contract.md))
 - [x] Does allocation reuse existing secondary blocks before growth?
-      ([proof](proof/nimbus-network-control-plane/nnc2.3-atomic-existing-block-allocation.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc2.3-atomic-existing-block-allocation.md))
 - [x] Does expired create authority still permit safe cleanup of durable old
       handles?
-      ([proof](proof/nimbus-network-control-plane/nnc2.6-expired-lease-cleanup-authority.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc2.6-expired-lease-cleanup-authority.md))
 - [x] Is there exactly one cross-process host-port lease authority?
-      ([proof](proof/nimbus-network-control-plane/nnc3.1-atomic-port-lease-lifecycle.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc3.1-atomic-port-lease-lifecycle.md))
 - [x] Do all production listeners reserve/adopt through it?
-      ([proof](proof/nimbus-network-control-plane/nnc3.9-single-port-authority-deletion.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc3.9-single-port-authority-deletion.md))
 - [x] Does a source-derived census classify every production bind/probe and
       mechanically separate narrow test-only/command-local exemptions?
-      ([proof](proof/nimbus-network-control-plane/nnc3.7b-bind-allocation-census.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc3.7b-bind-allocation-census.md))
 - [x] Are port allocation and tenant quota/admission distinct?
-      ([proof](proof/nimbus-network-control-plane/nnc3.2-port-conflict-model.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc3.2-port-conflict-model.md))
 - [x] Are stable IDs/generations/epochs distinct from observed addresses?
-      ([proof](proof/nimbus-network-control-plane/nnc1.2-stable-network-identities.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc1.2-stable-network-identities.md))
 - [x] Are desired plan, durable lease/provider handle, and observed status
       structurally separate?
-      ([proof](proof/nimbus-network-control-plane/nnc1.5-network-state-model.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc1.5-network-state-model.md))
 - [x] Is cleanup-pending state durable and non-reusable?
-      ([proof](proof/nimbus-network-control-plane/nnc3.8-restart-cleanup-pending-reconciliation.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc3.8-restart-cleanup-pending-reconciliation.md))
 - [x] Is the node store one network-owned implementation on a supported
       same-host local filesystem, with unsupported detected mounts rejected?
-      ([proof](proof/nimbus-network-control-plane/nnc2.1-crash-safe-local-state.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc2.1-crash-safe-local-state.md))
 - [x] Does compute own workload choreography and network own connectivity
       choreography?
-      ([proof](proof/nimbus-network-control-plane/nnc6.1-compute-network-manager-injection.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc6.1-compute-network-manager-injection.md))
 - [x] Is compute the only cross-domain saga coordinator, with durable intent
       sufficient for restart and existing node reconciliation preserved?
-      ([proof](proof/nimbus-network-control-plane/nnc6.1d-durable-workload-saga-store.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc6.1d-durable-workload-saga-store.md))
 - [x] Is sandbox inspection side-effect-free, with restart and services lazy
       activation subordinate to the durable compute saga?
-      ([proof](proof/nimbus-network-control-plane/nnc5.6-side-effect-free-sandbox-inspection.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc5.6-side-effect-free-sandbox-inspection.md))
 - [x] Does public `start` mean inert preparation, with no tenant instruction
       before attachment and required PEP readiness?
-      ([proof](proof/nimbus-network-control-plane/nnc6.3b-pure-provision-decision.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc6.3b-pure-provision-decision.md))
 - [x] Is service resolution withdrawn/fenced before stop?
-      ([proof](proof/nimbus-network-control-plane/nnc6.6-service-resolution-fencing.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc6.6-service-resolution-fencing.md))
 - [x] Does services retain logical naming/readiness authority?
-      ([proof](proof/nimbus-network-control-plane/nnc7.2-service-endpoint-generation.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc7.2-service-endpoint-generation.md))
 - [x] Do sandbox/server/KV/machine/proxy retain their concrete effects?
-      ([proof](proof/nimbus-network-control-plane/nnc5.5-effect-ownership-locality.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc5.5-effect-ownership-locality.md))
 - [x] Is sandbox attachment one deep implementation with complete readiness
       inspection rather than duplicated caller knowledge?
-      ([proof](proof/nimbus-network-control-plane/nnc5.3-complete-attachment-readiness.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc5.3-complete-attachment-readiness.md))
 - [x] Do egress PDP/PEP remain separate and fail closed?
-      ([proof](proof/nimbus-network-control-plane/nnc4.5-egress-readiness-dependency.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc4.5-egress-readiness-dependency.md))
 - [x] Are ingress certificates and interception CA keys separate?
-      ([proof](proof/nimbus-network-control-plane/nnc7.6-tls-telemetry-boundary.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc7.6-tls-telemetry-boundary.md))
 - [x] Is future cluster transport still solely cluster-owned?
-      ([proof](proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md))
 - [x] Is routed-not-overlay preserved?
-      ([proof](proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md))
 - [x] Can every crash/partial/ambiguous/stale state reconcile without duplicate
       effect or premature reuse?
-      ([proof](proof/nimbus-network-control-plane/nnc8.6-failure-contract-closure.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc8.6-failure-contract-closure.md))
 - [x] Can system projections lag/rebuild without affecting authority?
-      ([proof](proof/nimbus-network-control-plane/nnc7.5-projection-independence.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc7.5-projection-independence.md))
 - [x] Are HTTP route inventory and connectivity-route observation structurally
       distinct?
-      ([proof](proof/nimbus-network-control-plane/nnc7.4-connectivity-projections.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc7.4-connectivity-projections.md))
 - [x] Does partial listener-group startup unwind/supervise all earlier tasks
       without releasing inherited sockets?
-      ([proof](proof/nimbus-network-control-plane/nnc7.1a-structured-listener-group.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc7.1a-structured-listener-group.md))
 - [x] Does capability selection fail closed with no silent approximation?
-      ([proof](proof/nimbus-network-control-plane/nnc4.3-capability-registration-selection.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc4.3-capability-registration-selection.md))
 - [x] Was every product interface justified by real substitution?
-      ([proof](proof/nimbus-network-control-plane/nnc4.2-capability-interface-substitution.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc4.2-capability-interface-substitution.md))
 - [x] Is the local sovereign profile proven without external infrastructure?
-      ([proof](proof/nimbus-network-control-plane/nnc9.2-offline-sovereign-lifecycle.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc9.2-offline-sovereign-lifecycle.md))
 - [x] Are all transitional aliases, scanners, duplicate authorities, and
       caller-local ordering deleted?
-      ([proof](proof/nimbus-network-control-plane/nnc9.3-architecture-truth-and-transitional-deletion.md))
+      ([proof](../proof/nimbus-network-control-plane/nnc9.3-architecture-truth-and-transitional-deletion.md))
 
 ## Implementation Status Ledger
 

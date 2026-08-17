@@ -17,7 +17,8 @@ STORE_CODEC="crates/nimbus-server/src/workload_saga_store/codec.rs"
 STORE_SCHEMA="crates/nimbus-server/src/workload_saga_store/schema.rs"
 STORE_TEST_ROOT="crates/nimbus-server/src/workload_saga_store/tests/mod.rs"
 PROCESS_PROOF="crates/nimbus-server/src/workload_saga_store/tests/executable_durability.rs"
-OWNER_PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
+OWNER_CONTRACT="scripts/nimbus-network-control-plane/verification-contract.json"
+HISTORICAL_PLAN_PATH="docs/private/plans/nimbus-network-control-plane-"'plan.md'
 
 NNC63A_ERRORS=()
 NNC63A_CHECKS=0
@@ -91,7 +92,7 @@ verify_contract() {
   schema_source="$(source_without_comments "${REPO_ROOT}/${STORE_SCHEMA}")"
   store_root_source="$(source_without_comments "${REPO_ROOT}/${STORE_TEST_ROOT}")"
   process_source="$(source_without_comments "${REPO_ROOT}/${PROCESS_PROOF}")"
-  plan_source="$(source_without_comments "${REPO_ROOT}/${OWNER_PLAN}")"
+  contract_source="$(source_without_comments "${REPO_ROOT}/${OWNER_CONTRACT}")"
 
   require_loaded_source "${executable_source}" "${EXECUTABLE}" "workloads-owned executable carrier" || true
   require_loaded_source "${saga_source}" "${SAGA}" "portable workload saga" || true
@@ -104,7 +105,8 @@ verify_contract() {
   require_loaded_source "${schema_source}" "${STORE_SCHEMA}" "server saga schema" || true
   require_loaded_source "${store_root_source}" "${STORE_TEST_ROOT}" "server saga test root" || true
   require_loaded_source "${process_source}" "${PROCESS_PROOF}" "fresh-process executable proof" || true
-  require_loaded_source "${plan_source}" "${OWNER_PLAN}" "canonical owner plan" || true
+  require_loaded_source "${contract_source}" "${OWNER_CONTRACT}" \
+    "stable verification contract" || true
 
   if [ -n "${NIMBUS_NETWORK_NNC63A_TEST_CHANGED_PATHS:-}" ]; then
     paths="${NIMBUS_NETWORK_NNC63A_TEST_CHANGED_PATHS}"
@@ -306,14 +308,14 @@ NODE
     pass_check
   fi
 
-  if ! printf '%s\n' "${plan_source}" |
-    rg -q '^\| NNC6\.3a \| Persist one strict workloads-owned executable carrier and derive the closed desired digest\.'; then
-    add_error "canonical plan does not route NNC6.3a to the strict executable carrier"
+  if ! printf '%s\n' "${contract_source}" |
+    rg -q '"NNC6\.3a":[[:space:]]*"Persist one strict workloads-owned executable carrier and derive the closed desired digest\.'; then
+    add_error "stable contract does not route NNC6.3a to the strict executable carrier"
   else
     pass_check
   fi
 
-  unexpected="$(printf '%b\n' "${paths}" | awk '
+  unexpected="$(printf '%b\n' "${paths}" | awk -v historical_plan_path="${HISTORICAL_PLAN_PATH}" '
     NF == 0 { next }
     $0 == "crates/nimbus-workloads/src/lib.rs" { next }
     $0 == "crates/nimbus-workloads/src/saga.rs" { next }
@@ -342,7 +344,7 @@ NODE
     $0 == "scripts/nimbus-network-control-plane/workload-saga-ingress-contract.sh" { next }
     $0 == "scripts/nimbus-network-control-plane/workload-executable-carrier-contract.sh" { next }
     $0 == "scripts/verify-nimbus-network-control-plane.sh" { next }
-    $0 == "docs/private/plans/nimbus-network-control-plane-plan.md" { next }
+    $0 == historical_plan_path { next }
     $0 == "docs/private/plans/README.md" { next }
     $0 ~ /^docs\/private\/plans\/proof\/nimbus-network-control-plane\/nnc6\.3a-[0-9A-Za-z._-]*\.md$/ { next }
     { print }

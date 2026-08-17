@@ -12,7 +12,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${REPO_ROOT}"
+cd "${REPO_ROOT}" || exit 1
 
 WEBSITE_PKG="website/package.json"
 ASTRO_CONFIG="website/astro.config.mjs"
@@ -156,13 +156,17 @@ else
 fi
 
 # --- 8. docs.yml pipeline ------------------------------------------------------
-C="8. docs.yml exists with paths filter, PR preview, main deploy, concurrency; actionlint clean"
+C="8. docs.yml has paths, resilient PR preview, main deploy, concurrency; actionlint clean"
 if [[ -f "${DOCS_WF}" ]] \
   && grep -q 'docs/get-started/\*\*' "${DOCS_WF}" \
   && grep -q 'website/\*\*' "${DOCS_WF}" \
   && ! grep -q 'docs/private' "${DOCS_WF}" \
   && grep -q 'concurrency' "${DOCS_WF}" \
   && grep -Eq 'versions upload|wrangler-action' "${DOCS_WF}" \
+  && grep -q 'GITHUB_STEP_SUMMARY' "${DOCS_WF}" \
+  && grep -q 'retries: 3' "${DOCS_WF}" \
+  && grep -q 'continue-on-error: true' "${DOCS_WF}" \
+  && grep -q 'steps.preview_comment.outcome' "${DOCS_WF}" \
   && grep -q 'wrangler deploy' "${DOCS_WF}"; then
   if command -v actionlint >/dev/null 2>&1; then
     if actionlint "${DOCS_WF}" >/dev/null 2>&1; then

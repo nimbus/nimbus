@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}" || exit 1
 
 MODE="${1:-decision}"
-PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
+CONTRACT="scripts/nimbus-network-control-plane/verification-contract.json"
 PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1b-workload-saga-vocabulary-store-durable-home.md"
 DURABLE_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1d-durable-workload-saga-store.md"
 RECOVERY_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1e-durable-discovery-recovery-decisions.md"
@@ -31,9 +31,9 @@ require_file() {
   fi
 }
 
-require_plan_text() {
-  if ! rg -q -F -- "$1" "${PLAN}"; then
-    add_error "plan lacks frozen contract text: $1"
+require_contract_text() {
+  if ! rg -q -F -- "$1" "${CONTRACT}"; then
+    add_error "stable verification contract lacks frozen text: $1"
   fi
 }
 
@@ -69,23 +69,23 @@ require_exact_count() {
 }
 
 verify_decision_contract() {
-  require_file "${PLAN}"
+  require_file "${CONTRACT}"
   require_file "${PROOF}"
 
-  if [ -f "${PLAN}" ]; then
-    require_plan_text '_nimbus._workload_sagas'
-    require_plan_text 'Engine::begin_mutation_execution_unit'
-    require_plan_text 'nimbus-workloads -> nimbus-network'
-    require_plan_text 'nimbus-compute -> nimbus-workloads'
-    require_plan_text 'WorkloadSagaStore'
-    require_plan_text 'WorkloadSagaId'
-    require_plan_text 'WorkloadSagaRevision'
-    require_plan_text 'WorkloadDesiredDigest'
-    require_plan_text 'WorkloadExecutionId'
-    require_plan_text 'successorIntent'
-    require_plan_text 'complete semantic transition payload'
-    require_plan_text 'canonical unsigned decimal'
-    require_plan_text 'cleanup_pending'
+  if [ -f "${CONTRACT}" ]; then
+    require_contract_text '_nimbus._workload_sagas'
+    require_contract_text 'Engine::begin_mutation_execution_unit'
+    require_contract_text 'nimbus-workloads -> nimbus-network'
+    require_contract_text 'nimbus-compute -> nimbus-workloads'
+    require_contract_text 'WorkloadSagaStore'
+    require_contract_text 'WorkloadSagaId'
+    require_contract_text 'WorkloadSagaRevision'
+    require_contract_text 'WorkloadDesiredDigest'
+    require_contract_text 'WorkloadExecutionId'
+    require_contract_text 'successorIntent'
+    require_contract_text 'complete semantic transition payload'
+    require_contract_text 'canonical unsigned decimal'
+    require_contract_text 'cleanup_pending'
   fi
 
   require_exact_count \

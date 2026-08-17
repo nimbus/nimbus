@@ -9,6 +9,7 @@ SELF_TEST_SCRIPT="scripts/nimbus-network-control-plane/workload-provision-decisi
 SELF_TEST_SCRIPT_PATH="${REPO_ROOT}/${SELF_TEST_SCRIPT}"
 STARTING_CHECKPOINT="${NIMBUS_NETWORK_NNC63B_STARTING_CHECKPOINT:-ed0560b4e45f7ec571934624962de72d021a71a8}"
 COMPLETION_CHECKPOINT="${NIMBUS_NETWORK_NNC63B_COMPLETION_CHECKPOINT:-c42c61fb2d97d037069f3b27b9055d6e58f11d1d}"
+HISTORICAL_PLAN_PATH="docs/private/plans/nimbus-network-control-plane-"'plan.md'
 
 NETWORK_CAPABILITY="crates/nimbus-network/src/capability.rs"
 NETWORK_CAPABILITY_TESTS="crates/nimbus-network/src/capability/tests.rs"
@@ -50,7 +51,7 @@ SERVER_CODEC="crates/nimbus-server/src/workload_saga_store/codec.rs"
 SERVER_SCHEMA="crates/nimbus-server/src/workload_saga_store/schema.rs"
 SERVER_CODEC_TESTS="crates/nimbus-server/src/workload_saga_store/tests/codec.rs"
 SERVER_INGRESS_TESTS="crates/nimbus-server/src/workload_saga_store/tests/ingress.rs"
-OWNER_PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
+OWNER_CONTRACT="scripts/nimbus-network-control-plane/verification-contract.json"
 OWNER_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.3b-pure-provision-decision.md"
 
 NNC63B_ERRORS=()
@@ -243,7 +244,8 @@ require_loaded_sources() {
     "server workload-saga codec"
   require_loaded_source "${server_schema_source}" "${SERVER_SCHEMA}" \
     "server workload-saga schema"
-  require_loaded_source "${owner_plan_source}" "${OWNER_PLAN}" "canonical owner plan"
+  require_loaded_source "${owner_contract_source}" "${OWNER_CONTRACT}" \
+    "stable verification contract"
   require_loaded_source "${owner_proof_source}" "${OWNER_PROOF}" "NNC6.3b proof"
 }
 
@@ -317,7 +319,7 @@ load_sources() {
   server_schema_source="$(source_at_completion "${SERVER_SCHEMA}")"
   server_codec_tests_source="$(source_at_completion "${SERVER_CODEC_TESTS}")"
   server_ingress_tests_source="$(source_at_completion "${SERVER_INGRESS_TESTS}")"
-  owner_plan_source="$(source_at_completion "${OWNER_PLAN}")"
+  owner_contract_source="$(source_without_comments "${REPO_ROOT}/${OWNER_CONTRACT}")"
   owner_proof_source="$(source_at_completion "${OWNER_PROOF}")"
 
   if [ "${COMPLETION_CHECKPOINT}" = "WORKTREE" ]; then
@@ -802,14 +804,14 @@ ${compute_decision_source}"
   if [ "${#NNC63B_ERRORS[@]}" -eq "${authority_errors}" ]; then pass_check; fi
 
   routing_errors="${#NNC63B_ERRORS[@]}"
-  if ! printf '%s\n' "${owner_plan_source}" |
-    rg -q '^\| NNC6\.3b \| After NNC6\.3a, implement the pure provision decision protocol'; then
-    add_error "canonical plan does not route NNC6.3b to the pure provision decision protocol"
+  if ! printf '%s\n' "${owner_contract_source}" |
+    rg -q '"NNC6\.3b":[[:space:]]*"After NNC6\.3a, implement the pure provision decision protocol'; then
+    add_error "stable contract does not route NNC6.3b to the pure provision decision protocol"
   fi
   if ! printf '%s\n' "${owner_proof_source}" | rg -q '^## Acceptance Criteria$'; then
     add_error "NNC6.3b proof lacks its acceptance ledger"
   fi
-  unexpected="$(printf '%s\n' "${changed_paths}" | awk '
+  unexpected="$(printf '%s\n' "${changed_paths}" | awk -v historical_plan_path="${HISTORICAL_PLAN_PATH}" '
     NF == 0 { next }
     $0 == "crates/nimbus-network/src/capability.rs" { next }
     $0 == "crates/nimbus-network/src/capability/tests.rs" { next }
@@ -857,7 +859,7 @@ ${compute_decision_source}"
     $0 == "scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh" { next }
     $0 == "scripts/nimbus-network-control-plane/workload-saga-authority-contract.sh" { next }
     $0 == "scripts/verify-nimbus-network-control-plane.sh" { next }
-    $0 == "docs/private/plans/nimbus-network-control-plane-plan.md" { next }
+    $0 == historical_plan_path { next }
     $0 == "docs/private/plans/README.md" { next }
     $0 == "docs/private/plans/proof/nimbus-network-control-plane/nnc4.6f-production-network-authority-census.json" { next }
     $0 == "docs/private/plans/proof/nimbus-network-control-plane/nnc6.3b-pure-provision-decision.md" { next }

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use nimbus_core::TenantEventRecord;
 use nimbus_engine::Engine;
 use nimbus_network::{
     LocalPortLeaseAuthority, NetworkResourceGeneration, PortBindingProvenance, PortLeasePhase,
@@ -120,7 +121,24 @@ struct ProjectionFault {
 }
 
 impl FaultInjector for ProjectionFault {
-    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+    fn check(&self, _point: FaultPoint) -> nimbus_core::Result<()> {
+        // This fault targets one listener-projection transaction. An
+        // unscoped storage check cannot prove that transaction identity and
+        // must not consume the arm.
+        Ok(())
+    }
+
+    fn check_for_tenant(
+        &self,
+        point: FaultPoint,
+        tenant_id: &nimbus_core::TenantId,
+        records: &[TenantEventRecord],
+    ) -> nimbus_core::Result<()> {
+        if !crate::system_tenant::is_system_tenant_id(tenant_id)
+            || !records.iter().any(is_port_listener_projection_record)
+        {
+            return Ok(());
+        }
         if self.armed.swap(false, Ordering::AcqRel) {
             self.failed.store(true, Ordering::Release);
             self.failure_observed.notify_waiters();
@@ -131,6 +149,18 @@ impl FaultInjector for ProjectionFault {
         }
         Ok(())
     }
+}
+
+fn is_port_listener_projection_record(record: &TenantEventRecord) -> bool {
+    let writes_listener = record
+        .writes
+        .iter()
+        .any(|write| write.table.as_str() == "listeners");
+    let writes_port = record
+        .writes
+        .iter()
+        .any(|write| write.table.as_str() == "ports");
+    writes_listener && writes_port
 }
 
 impl ProjectionFault {

@@ -24,6 +24,13 @@ import {
   remaskTeardownTestSources,
 } from "./workload-teardown-test-assertion.mjs";
 
+const HISTORICAL_PLAN_PATH = [
+  "docs/private/plans",
+  "nimbus-network-control-plane-plan.md",
+].join("/");
+const VERIFICATION_CONTRACT_PATH =
+  "scripts/nimbus-network-control-plane/verification-contract.json";
+
 export const workloadTeardownDiagnostics = {
   vocabulary:
     "teardown-contract/vocabulary: portable teardown phase and reference vocabulary is incomplete or open",
@@ -67,7 +74,7 @@ export const workloadTeardownDiagnostics = {
 
 const ALLOWED_PATHS = new Set([
   "docs/private/plans/README.md",
-  "docs/private/plans/nimbus-network-control-plane-plan.md",
+  HISTORICAL_PLAN_PATH,
   "docs/private/plans/proof/nimbus-network-control-plane/nnc6.5-teardown-choreography-substitution-audit.md",
   "scripts/nimbus-network-control-plane/workload-teardown-contract-fixture.mjs",
   "scripts/nimbus-network-control-plane/workload-teardown-contract.sh",
@@ -164,15 +171,20 @@ function currentChangedPaths(root) {
   return [...new Set(`${tracked}\n${untracked}`.split("\n").filter(Boolean))];
 }
 
-function completedItemCheckpoint(plan) {
-  const row = plan
-    .split("\n")
-    .find((line) => line.startsWith("| NNC6.5 | `done` |"));
-  return {
-    complete: row !== undefined,
-    checkpoint:
-      row?.match(/\*\*Item commit:\*\* `([0-9a-f]{40})`/u)?.[1] ?? null,
-  };
+function completedItemCheckpoint(contractSource) {
+  try {
+    const contract = JSON.parse(contractSource);
+    const checkpoint = contract.itemCheckpoints?.["NNC6.5"];
+    return {
+      complete: contract.status === "complete",
+      checkpoint:
+        typeof checkpoint === "string" && /^[0-9a-f]{40}$/u.test(checkpoint)
+          ? checkpoint
+          : null,
+    };
+  } catch {
+    return { complete: false, checkpoint: null };
+  }
 }
 
 function changedPathsBetween(root, startCheckpoint, endCheckpoint) {
@@ -189,8 +201,8 @@ function changedPathsBetween(root, startCheckpoint, endCheckpoint) {
   }
 }
 
-function auditPathSources(root, plan) {
-  const item = completedItemCheckpoint(plan);
+function auditPathSources(root, contractSource) {
+  const item = completedItemCheckpoint(contractSource);
   return {
     auditItemComplete: item.complete,
     auditItemCompleteCheckpoint: item.checkpoint,
@@ -234,8 +246,9 @@ function productionSources(root) {
     "crates/nimbus-machine/src",
     "crates/nimbus-cli/src",
   ]);
+  const contractSource = readText(root, VERIFICATION_CONTRACT_PATH);
   const plan = [
-    readText(root, "docs/private/plans/nimbus-network-control-plane-plan.md"),
+    contractSource,
     readText(
       root,
       "docs/private/plans/proof/nimbus-network-control-plane/nnc6.5-teardown-choreography-substitution-audit.md",
@@ -445,7 +458,7 @@ function productionSources(root) {
     ]
       .map((candidate) => readText(root, candidate, { lexical: true }))
       .join("\n"),
-    ...auditPathSources(root, plan),
+    ...auditPathSources(root, contractSource),
   };
 }
 

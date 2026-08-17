@@ -10,7 +10,7 @@ COMPUTE_COMPILER="crates/nimbus-compute/src/workload_network_plan.rs"
 PORTABLE_PAYLOAD="crates/nimbus-workloads/src/network_plan.rs"
 WORKLOAD_SAGA="crates/nimbus-workloads/src/saga.rs"
 NETWORK_IDENTITY="crates/nimbus-network/src/identity.rs"
-OWNER_PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
+OWNER_CONTRACT="scripts/nimbus-network-control-plane/verification-contract.json"
 
 add_error() {
   NNC62_ERRORS+=("$1")
@@ -355,13 +355,13 @@ verify_oci_compiler_caller_baseline() {
 }
 
 verify_later_owner_routing() {
-  if ! require_nonempty_file "${OWNER_PLAN}" "canonical network owner plan"; then
+  if ! require_nonempty_file "${OWNER_CONTRACT}" "stable network verification contract"; then
     return
   fi
-  if ! rg -q '^\| NNC6\.2a \| Persist the complete compiled network plan payload in workloads-owned saga intent\.' "${OWNER_PLAN}"; then
+  if ! rg -q '"NNC6\.2a":[[:space:]]*"Persist the complete compiled network plan payload in workloads-owned saga intent\.' "${OWNER_CONTRACT}"; then
     add_error "NNC6.2a is not the canonical durable compiled-plan embedding owner"
   fi
-  if ! rg -q '^\| NNC6\.1e1 \| Implement the bounded compute-owned durable workload-saga submission seam after NNC6\.2a\.' "${OWNER_PLAN}"; then
+  if ! rg -q '"NNC6\.1e1":[[:space:]]*"Implement the bounded compute-owned durable workload-saga submission seam after NNC6\.2a\.' "${OWNER_CONTRACT}"; then
     add_error "NNC6.1e1 is not the canonical durable workload-saga submission owner after NNC6.2a"
   fi
 }

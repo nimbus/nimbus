@@ -35,8 +35,9 @@ whether the developer is human or LLM.
 - **Compute** — a V8 runtime for queries, mutations, actions, and HTTP
   routes, plus crons and durable `runAfter`/`runAt` scheduling that survive
   restarts.
-- **Networking** — reactive WebSocket subscriptions and JWT/JWKS
-  authentication with any standards-compliant identity provider.
+- **Networking** — a transport-free control plane for attachments, endpoints,
+  durable port and segment leases, provider capability evidence, and recovery.
+  Concrete sockets and packet effects stay with their owning providers.
 - **No strings** — source-available, no telemetry, no metered pricing.
 
 **For documentation and examples, visit [nimbusdocs.com](https://nimbusdocs.com).**
@@ -62,9 +63,9 @@ whether the developer is human or LLM.
                    │   │          │                 │                  │           │   │
                    │   │          ▼                 ▼                  ▼           │   │
   (optional)       │   │  ┌─ Storage ────┐  ┌─ Compute ────┐  ┌─ Networking ────┐  │   │
-┌─ DB Conn ───┐    │   │  │ • SQLite     │  │ • V8 Runtime │  │ • HTTP / WS     │  │   │
-│ • Postgres  │◀─────────▶│ • libSQL     │  │ • Scheduling │  │ • Realtime Sync │  │   │
-│ • MySQL     │    │   │  │ • redb       │  │ • Crons      │  │ • Auth          │  │   │
+┌─ DB Conn ───┐    │   │  │ • SQLite     │  │ • V8 Runtime │  │ • Endpoints     │  │   │
+│ • Postgres  │◀─────────▶│ • libSQL     │  │ • Scheduling │  │ • Attachments   │  │   │
+│ • MySQL     │    │   │  │ • redb       │  │ • Crons      │  │ • Leases        │  │   │
 └─────────────┘    │   │  └──────────────┘  └───────┬──────┘  └─────────────────┘  │   │
                    │   └────────────────────────────┼──────────────────────────────┘   │
                    │                                │                                  │

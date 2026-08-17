@@ -11,7 +11,7 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}" || exit 1
 
-PLAN="${NIMBUS_NETWORK_VERIFY_PLAN:-docs/private/plans/nimbus-network-control-plane-plan.md}"
+CONTRACT="${NIMBUS_NETWORK_VERIFY_CONTRACT:-scripts/nimbus-network-control-plane/verification-contract.json}"
 PLAN_INDEX="docs/private/plans/README.md"
 INVENTORY="${NIMBUS_NETWORK_VERIFY_INVENTORY:-docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json}"
 DEPENDENCIES="${NIMBUS_NETWORK_VERIFY_DEPENDENCIES:-docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-dependency-graph.json}"
@@ -104,20 +104,22 @@ require_tools() {
   fi
 }
 
-verify_plan_in_head() {
-  if [ ! -f "${PLAN}" ]; then
-    fail "NNCV001" "plan-in-HEAD" "missing working-tree input: ${PLAN}"
+verify_contract_in_head() {
+  if [ ! -f "${CONTRACT}" ]; then
+    fail "NNCV001" "verification-contract-in-HEAD" "missing working-tree input: ${CONTRACT}"
     return
   fi
-  case "${PLAN}" in
+  case "${CONTRACT}" in
     /*)
-      fail "NNCV001" "plan-in-HEAD" "canonical plan override is not repository-relative: ${PLAN}"
+      fail "NNCV001" "verification-contract-in-HEAD" \
+        "verification contract override is not repository-relative: ${CONTRACT}"
       ;;
     *)
-      if git cat-file -e "HEAD:${PLAN}" 2>/dev/null; then
-        pass "NNCV001" "plan-in-HEAD"
+      if git cat-file -e "HEAD:${CONTRACT}" 2>/dev/null; then
+        pass "NNCV001" "verification-contract-in-HEAD"
       else
-        fail "NNCV001" "plan-in-HEAD" "${PLAN} exists only outside HEAD or is unreadable from HEAD"
+        fail "NNCV001" "verification-contract-in-HEAD" \
+          "${CONTRACT} exists only outside HEAD or is unreadable from HEAD"
       fi
       ;;
   esac
@@ -595,79 +597,79 @@ NODE
   fi
 }
 
-verify_checkpoint_ledger() {
+verify_completion_contract() {
   error="$(
-    node - "${PLAN}" <<'NODE'
+    node - "${CONTRACT}" <<'NODE'
 const fs = require("fs");
 const {spawnSync} = require("child_process");
 const input = process.argv[2];
 if (!fs.existsSync(input)) {
-  process.stdout.write("plan missing: " + input);
+  process.stdout.write("verification contract missing: " + input);
   process.exit(1);
 }
-const text = fs.readFileSync(input, "utf8");
-const marker = "## Item Checkpoint Ledger";
-const offset = text.indexOf(marker);
 const errors = [];
-if (offset < 0) {
-  process.stdout.write("Item Checkpoint Ledger heading missing");
+let contract;
+try {
+  contract = JSON.parse(fs.readFileSync(input, "utf8"));
+} catch (error) {
+  process.stdout.write("verification contract is not valid JSON: " + error.message);
   process.exit(1);
 }
-const itemPattern = /^\| (NNC\d+\.\d+(?:[a-z]\d*)?) \|/gm;
-const planned = [...text.slice(0, offset).matchAll(itemPattern)].map(match => match[1]);
-const tick = String.fromCharCode(96);
-const rows = text.slice(offset).split("\n")
-  .filter(line => /^\| NNC\d+\.\d+(?:[a-z]\d*)? \|/.test(line))
-  .map(line => line.split("|").slice(1, -1).map(cell => cell.trim()))
-  .map(cells => ({id: cells[0], status: cells[1].replaceAll(tick, ""), evidence: cells.slice(2).join("|").trim()}));
-const unique = values => new Set(values).size === values.length;
-if (!planned.length) errors.push("no implementation-band items found");
-if (!unique(planned)) errors.push("duplicate implementation-band item IDs");
-if (!unique(rows.map(row => row.id))) errors.push("duplicate checkpoint-ledger item IDs");
-const plannedSet = new Set(planned);
-const ledgerSet = new Set(rows.map(row => row.id));
-const missing = planned.filter(item => !ledgerSet.has(item));
-const extra = rows.map(row => row.id).filter(item => !plannedSet.has(item));
-if (missing.length || extra.length) errors.push("band/ledger mismatch: missing=" + (missing.join(",") || "<none>") + " extra=" + (extra.join(",") || "<none>"));
-const statusLine = text.split("\n").find(line => line.startsWith("Status: "));
-const planStatus = statusLine?.slice("Status: ".length).replaceAll(tick, "");
-const complete = planStatus?.startsWith("complete;") === true;
-if (!planStatus) errors.push("canonical plan status missing");
-const inProgress = rows.filter(row => row.status === "in_progress");
-if (complete) {
-  if (inProgress.length !== 0) errors.push("complete plan must have zero in_progress rows, found " + inProgress.length);
-  const incomplete = rows.filter(row => row.status !== "done").map(row => row.id);
-  if (incomplete.length) errors.push("complete plan has incomplete rows: " + incomplete.join(","));
-} else if (inProgress.length !== 1) {
-  errors.push("active plan expected exactly one in_progress row, found " + inProgress.length);
+if (contract.schemaVersion !== 1) errors.push("schemaVersion must equal 1");
+if (contract.status !== "complete") errors.push("status must equal complete");
+if (contract.archivedPlan !== "docs/private/plans/archive/nimbus-network-control-plane-plan.md") {
+  errors.push("archivedPlan is not the canonical archive path");
 }
-for (const row of rows) {
-  if (!["done", "in_progress", "todo"].includes(row.status)) errors.push(row.id + " has invalid status " + row.status);
-  if (row.status === "done" && (!row.evidence.trim() || row.evidence.trim() === "—")) errors.push(row.id + " done without evidence");
-  if (row.status === "in_progress") {
-    for (const field of ["Owned paths", "Last green", "Next", "Blocker"]) {
-      if (!row.evidence.toLowerCase().includes(field.toLowerCase())) errors.push(row.id + " recovery checkpoint lacks " + field);
-    }
-  }
+if (contract.planTaskCount !== 115) errors.push("planTaskCount must equal 115");
+if (contract.verifierConditionCount !== 39) {
+  errors.push("verifierConditionCount must equal 39");
 }
-const currentItemLine = text.split("\n").find(line => line.startsWith("| Current item |"));
-const currentItem = currentItemLine?.split("|")[2]?.trim().replaceAll(tick, "");
-if (complete && (!currentItem || !currentItem.toLowerCase().startsWith("none"))) {
-  errors.push("complete plan Recovery Header current item must be none");
-} else if (!complete && (!currentItem || !inProgress[0] || !currentItem.startsWith(inProgress[0].id + " "))) {
-  errors.push("Recovery Header current item does not match the in_progress ledger row");
-}
-const checkpointLine = text.split("\n").find(line => line.startsWith("| Last checkpoint commit |"));
-const checkpointHashes = checkpointLine?.match(/\b[0-9a-f]{40}\b/g) || [];
-if (checkpointHashes.length !== 1) {
-  errors.push("Recovery Header must contain exactly one full Last checkpoint commit hash");
+const checkpoint = contract.completionCheckpoint;
+if (typeof checkpoint !== "string" || !/^[0-9a-f]{40}$/u.test(checkpoint)) {
+  errors.push("completionCheckpoint must be one full commit hash");
 } else {
-  const checkpoint = checkpointHashes[0];
   const resolution = spawnSync("git", ["cat-file", "-e", checkpoint + "^{commit}"], {
     stdio: "ignore",
   });
   if (resolution.status !== 0) {
-    errors.push("Recovery Header Last checkpoint commit does not resolve: " + checkpoint);
+    errors.push("completionCheckpoint does not resolve: " + checkpoint);
+  }
+}
+const itemCheckpoint = contract.itemCheckpoints?.["NNC6.5"];
+if (typeof itemCheckpoint !== "string" || !/^[0-9a-f]{40}$/u.test(itemCheckpoint)) {
+  errors.push("itemCheckpoints.NNC6.5 must be one full commit hash");
+} else {
+  const resolution = spawnSync("git", ["cat-file", "-e", itemCheckpoint + "^{commit}"], {
+    stdio: "ignore",
+  });
+  if (resolution.status !== 0) {
+    errors.push("itemCheckpoints.NNC6.5 does not resolve: " + itemCheckpoint);
+  }
+}
+const routeIds = ["NNC6.1e1", "NNC6.2a", "NNC6.3a", "NNC6.3b", "NNC6.4", "NNC6.4a", "NNC6.5"];
+if (!contract.routes || typeof contract.routes !== "object") {
+  errors.push("routes object is missing");
+} else {
+  for (const id of routeIds) {
+    if (typeof contract.routes[id] !== "string" || contract.routes[id].trim() === "") {
+      errors.push("route is missing: " + id);
+    }
+  }
+  const unexpected = Object.keys(contract.routes).filter(id => !routeIds.includes(id));
+  if (unexpected.length) errors.push("unexpected route ids: " + unexpected.join(","));
+}
+const vocabulary = contract.vocabulary;
+if (!Array.isArray(vocabulary) || vocabulary.length !== new Set(vocabulary).size) {
+  errors.push("vocabulary must be a unique array");
+}
+const evidenceIds = ["NNC6.4", "NNC6.4a", "NNC6.5"];
+if (!contract.evidence || typeof contract.evidence !== "object") {
+  errors.push("evidence object is missing");
+} else {
+  for (const id of evidenceIds) {
+    if (!Array.isArray(contract.evidence[id]) || contract.evidence[id].length === 0) {
+      errors.push("evidence tokens are missing: " + id);
+    }
   }
 }
 process.stdout.write(errors.join("\n"));
@@ -676,34 +678,38 @@ NODE
   )"
   status=$?
   if [ "${status}" -eq 0 ]; then
-    pass "NNCV008" "checkpoint-ledger-recoverable"
+    pass "NNCV008" "completion-contract-valid"
   else
-    fail "NNCV008" "checkpoint-ledger-recoverable" "${error}"
+    fail "NNCV008" "completion-contract-valid" "${error}"
   fi
 }
 
-verify_routing_owner() {
+verify_archived_plan_routing() {
   error="$(
-    node - "${PLAN}" "${PLAN_INDEX}" <<'NODE'
+    node - "${CONTRACT}" "${PLAN_INDEX}" <<'NODE'
 const fs = require("fs");
-const [planPath, indexPath] = process.argv.slice(2);
+const [contractPath, indexPath] = process.argv.slice(2);
 const errors = [];
-if (!fs.existsSync(planPath)) errors.push("plan missing: " + planPath);
+if (!fs.existsSync(contractPath)) errors.push("verification contract missing: " + contractPath);
 if (!fs.existsSync(indexPath)) errors.push("plan index missing: " + indexPath);
 if (!errors.length) {
-  const plan = fs.readFileSync(planPath, "utf8");
-  const index = fs.readFileSync(indexPath, "utf8");
-  const normalizedIndex = index.replace(/\s+/g, " ");
-  const tick = String.fromCharCode(96);
-  const statusLine = plan.split("\n").find(line => line.startsWith("Status: "));
-  const status = statusLine?.slice("Status: ".length).replaceAll(tick, "");
-  if (!index.includes("nimbus-network-control-plane-plan.md")) errors.push("plan index does not route the canonical network owner");
-  const expectedRoute = "nimbus-network-control-plane-plan.md" + tick + " - " + tick + status + tick;
-  if (!status || !normalizedIndex.includes(expectedRoute)) {
-    errors.push("plan index status does not match canonical status: " + (status || "<missing>"));
+  let contract;
+  try {
+    contract = JSON.parse(fs.readFileSync(contractPath, "utf8"));
+  } catch (error) {
+    errors.push("verification contract is not valid JSON: " + error.message);
   }
-  const ownerClaims = (index.match(/nimbus-network-control-plane-plan\.md/g) || []).length;
-  if (ownerClaims !== 1) errors.push("plan index contains " + ownerClaims + " network-plan routes; expected exactly one");
+  const index = fs.readFileSync(indexPath, "utf8");
+  const archivePath = contract?.archivedPlan;
+  const activePath = "docs/private/plans/" + "nimbus-network-control-plane-plan.md";
+  if (typeof archivePath !== "string" || !fs.existsSync(archivePath)) {
+    errors.push("archived plan is missing: " + (archivePath || "<missing>"));
+  }
+  if (fs.existsSync(activePath)) errors.push("completed plan remains in the active plan root");
+  const route = "archive/nimbus-network-control-plane-plan.md";
+  const routeCount = index.split(route).length - 1;
+  if (routeCount !== 1) errors.push("plan index contains " + routeCount + " archive routes; expected exactly one");
+  if (!index.includes("complete; NNC0-NNC9 done")) errors.push("archive route lacks completed status");
 }
 process.stdout.write(errors.join("\n"));
 process.exit(errors.length === 0 ? 0 : 1);
@@ -711,9 +717,9 @@ NODE
   )"
   status=$?
   if [ "${status}" -eq 0 ]; then
-    pass "NNCV009" "sole-plan-routing-owner"
+    pass "NNCV009" "archived-plan-routing"
   else
-    fail "NNCV009" "sole-plan-routing-owner" "${error}"
+    fail "NNCV009" "archived-plan-routing" "${error}"
   fi
 }
 
@@ -1359,8 +1365,8 @@ self_test_check_selection() {
   if [ -n "${NIMBUS_NETWORK_VERIFY_DEPENDENCIES:-}" ]; then
     append_self_test_checks NNCV002,NNCV007
   fi
-  if [ -n "${NIMBUS_NETWORK_VERIFY_PLAN:-}" ]; then
-    if [ -f "${PLAN}" ]; then
+  if [ -n "${NIMBUS_NETWORK_VERIFY_CONTRACT:-}" ]; then
+    if [ -f "${CONTRACT}" ]; then
       append_self_test_checks NNCV001,NNCV008,NNCV009
     else
       append_self_test_checks NNCV001
@@ -1372,15 +1378,15 @@ self_test_check_selection() {
 verifier_function_for_id() {
   case "$1" in
     NNCV000) printf 'require_tools\n' ;;
-    NNCV001) printf 'verify_plan_in_head\n' ;;
+    NNCV001) printf 'verify_contract_in_head\n' ;;
     NNCV002) printf 'verify_baseline_inputs\n' ;;
     NNCV003) printf 'verify_network_crate\n' ;;
     NNCV004) printf 'verify_network_dependency_contract\n' ;;
     NNCV005) printf 'verify_single_port_authority\n' ;;
     NNCV006) printf 'verify_bind_census\n' ;;
     NNCV007) printf 'verify_dependency_baseline\n' ;;
-    NNCV008) printf 'verify_checkpoint_ledger\n' ;;
-    NNCV009) printf 'verify_routing_owner\n' ;;
+    NNCV008) printf 'verify_completion_contract\n' ;;
+    NNCV009) printf 'verify_archived_plan_routing\n' ;;
     NNCV010) printf 'verify_foundation_invariants\n' ;;
     NNCV011) printf 'verify_portable_vocabulary_owner\n' ;;
     NNCV012) printf 'verify_forbidden_network_dependencies_effects\n' ;;
@@ -1473,15 +1479,15 @@ if [ -n "${self_test_selection}" ]; then
 fi
 
 require_tools
-verify_plan_in_head
+verify_contract_in_head
 verify_baseline_inputs
 verify_network_crate
 verify_network_dependency_contract
 verify_single_port_authority
 verify_bind_census
 verify_dependency_baseline
-verify_checkpoint_ledger
-verify_routing_owner
+verify_completion_contract
+verify_archived_plan_routing
 verify_foundation_invariants
 verify_portable_vocabulary_owner
 verify_forbidden_network_dependencies_effects

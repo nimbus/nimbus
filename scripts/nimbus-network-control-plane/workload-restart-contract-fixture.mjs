@@ -527,7 +527,9 @@ pub struct MachineApiWorkloadRestartCommandEnvelope {
       "scripts/nimbus-network-control-plane/workload-restart-contract.sh",
       "scripts/nimbus-network-control-plane/workload-restart-source-contract.mjs",
       "scripts/verify-nimbus-network-control-plane.sh",
-      "docs/private/plans/nimbus-network-control-plane-plan.md",
+      ["docs/private/plans", "nimbus-network-control-plane-plan.md"].join(
+        "/",
+      ),
       "docs/private/plans/README.md",
       "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",
     ],

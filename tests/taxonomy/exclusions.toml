@@ -175,7 +175,7 @@ reason = "serial"
 evidence = "Network-control-plane crash, contention, and subprocess payloads are ignored internal entrypoints. Parent tests invoke them with an exact environment and handshake; they cannot run as independent nextest cases. Because scope=ignored, this row documents the family and does not remove tests from a run filter."
 measured_at = "2026-08-16"
 owner = "nimbus-network-control-plane"
-issue = "docs/private/plans/nimbus-network-control-plane-plan.md#execution-status-ledger"
+issue = "docs/private/plans/archive/nimbus-network-control-plane-plan.md#execution-status-ledger"
 
 [[exclusions]]
 pattern = "test(/(?:durable_segment_assignment_scale_baseline|manifest_count_does_not_affect_preview_port_selection)$/)"
@@ -184,7 +184,7 @@ reason = "duration-outlier"
 evidence = "These explicit allocation-scale characterization tests collect repeated samples over manifest populations through 1,024 entries. They remain opt-in measurements and are not part of the default PR frontier."
 measured_at = "2026-08-16"
 owner = "nimbus-network-control-plane"
-issue = "docs/private/plans/nimbus-network-control-plane-plan.md#execution-status-ledger"
+issue = "docs/private/plans/archive/nimbus-network-control-plane-plan.md#execution-status-ledger"
 
 [[exclusions]]
 pattern = "test(/nnc6_5d3_k14_mounted_namespace_removal_detaches_nsfs_and_deletes_mount_point$/)"
@@ -193,4 +193,4 @@ reason = "privileged"
 evidence = "This Linux-only regression creates and detaches a real NSFS network-namespace mount and therefore requires root plus mount and network-namespace capabilities. Both privileged PR workflows run the exact ignored test directly."
 measured_at = "2026-08-16"
 owner = "nimbus-network-control-plane"
-issue = "docs/private/plans/nimbus-network-control-plane-plan.md#execution-status-ledger"
+issue = "docs/private/plans/archive/nimbus-network-control-plane-plan.md#execution-status-ledger"

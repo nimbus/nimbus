@@ -1,6 +1,6 @@
 # Network Control Plane
 
-Status: landed architecture; NNC9 closeout is active.
+Status: landed architecture. NNC0-NNC9 are complete and merged.
 
 `nimbus-network` owns the transport-free lifecycle of connectivity resources.
 It is the network counterpart to `nimbus-compute` workload lifecycle and
@@ -86,5 +86,6 @@ The ingress certificate provider remains separate from the proxy's ephemeral
 interception CA.
 
 The offline sovereignty proof and all task evidence are under
-`docs/private/plans/proof/nimbus-network-control-plane/`. The active control
-plane is `docs/private/plans/nimbus-network-control-plane-plan.md`.
+`docs/private/plans/proof/nimbus-network-control-plane/`. The completed control
+plane is archived at
+`docs/private/plans/archive/nimbus-network-control-plane-plan.md`.

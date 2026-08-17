@@ -74,7 +74,20 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `complete; NNC0-NNC9 done`. Canonical record for the transport-free connectivity-resource lifecycle; final evidence stays in `proof/nimbus-network-control-plane/`. It preserves `nimbus-network -> nimbus-core` as the sole outgoing workspace edge; concrete effects stay with sandbox, server, KV, machine, proxy, and node; future cluster transport stays in the deferred horizontal-scaling lane.
+- `archive/nimbus-network-control-plane-plan.md` - `complete; NNC0-NNC9 done`.
+  This is the archived record for the transport-free connectivity-resource
+  lifecycle. Final evidence stays in `proof/nimbus-network-control-plane/`.
+  The only outgoing workspace edge remains `nimbus-network -> nimbus-core`.
+  Concrete effects stay with sandbox, server, KV, machine, proxy, and node.
+  Future cluster transport stays in the deferred horizontal-scaling lane.
+- `docs-and-app-verification-reliability-plan.md` - `active` owner for network
+  documentation, stable verifier contracts, plan archival, and fresh-checkout
+  application verification. It will keep source unchanged and use product-owned
+  ports. It will isolate temporary state and emit structured evidence. It will
+  run nine apps with bounded parallelism. It consumes completed network and
+  examples decisions without reopening them. The AVR0-AVR2 phase candidate is
+  open as PR #275. It must merge and reconcile before runner and performance
+  work starts.
 - `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
   architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
   `SandboxBackend` router/dispatch seam with backend families

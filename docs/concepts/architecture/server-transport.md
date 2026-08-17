@@ -17,6 +17,11 @@ not own protocol semantics (those live in the
 data semantics (those live in the engine — see
 [the engine and mutation path](/concepts/architecture/engine-mutation-path/)).
 
+Transport is distinct from connectivity-resource authority. The
+[network control plane](/concepts/architecture/network-control-plane/) owns
+portable endpoint, listener, route, and port-lease identity. Server code keeps
+the concrete socket, router, protocol, and listener-lifecycle effects.
+
 ## Router composition
 
 The public composition surface is two option bundles.
