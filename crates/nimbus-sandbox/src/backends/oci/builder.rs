@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use super::buildah::{ImageHealthcheck, OciImageConfig, resolve_image_user_from_rootfs};
+use ulid::Ulid;
+
+use super::buildah::{ImageHealthcheck, OciImageConfig};
 use super::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -11,6 +13,8 @@ use nimbus_core::TenantId;
 
 const SCRATCH_IMAGE_REFERENCE: &str = "scratch";
 const DEFAULT_SHELL: &[&str] = &["/bin/sh", "-c"];
+
+mod artifact;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OciDockerfileBuilder {
@@ -45,13 +49,47 @@ impl OciDockerfileBuilder {
         context_path: &Path,
         process: &SandboxProcessSpec,
     ) -> Result<PreparedMaterializedImageLaunch> {
-        let dockerfile = DockerfileRecipe::load(dockerfile_path)?;
-        let (artifact, mut image_config) = if dockerfile.base_image == SCRATCH_IMAGE_REFERENCE {
+        self.prepare_built_image_launch_with_snapshot_observer(
+            sandbox_id,
+            image_name,
+            dockerfile_path,
+            context_path,
+            process,
+            |_| Ok(()),
+        )
+    }
+
+    fn prepare_built_image_launch_with_snapshot_observer(
+        &self,
+        sandbox_id: &SandboxId,
+        image_name: &str,
+        dockerfile_path: &Path,
+        context_path: &Path,
+        process: &SandboxProcessSpec,
+        after_snapshot: impl FnOnce(&Path) -> Result<()>,
+    ) -> Result<PreparedMaterializedImageLaunch> {
+        let dockerfile_source =
+            fs::read(dockerfile_path).map_err(|error| SandboxError::InvalidSpec {
+                message: format!(
+                    "failed to read Dockerfile {}: {error}",
+                    dockerfile_path.display()
+                ),
+            })?;
+        let dockerfile = DockerfileRecipe::parse(&dockerfile_source, dockerfile_path)?;
+        let context_snapshot_owner = tempfile::Builder::new()
+            .prefix("nimbus-build-context-")
+            .tempdir()
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!("failed to allocate a private build-context snapshot: {error}"),
+            })?;
+        let context_snapshot = context_snapshot_owner.path().join("context");
+        let staging_id =
+            SandboxId::new(format!("{}.building-{}", sandbox_id.as_str(), Ulid::new()));
+        let built_image_reference = synthetic_built_image_reference(image_name);
+        let (staging_artifact, image_config) = if dockerfile.base_image == SCRATCH_IMAGE_REFERENCE {
             (
-                self.materializer.prepare_scratch_rootfs(
-                    sandbox_id,
-                    &synthetic_built_image_reference(image_name),
-                )?,
+                self.materializer
+                    .prepare_scratch_rootfs(&staging_id, &built_image_reference)?,
                 OciImageConfig {
                     entrypoint: Vec::new(),
                     cmd: Vec::new(),
@@ -68,23 +106,55 @@ impl OciDockerfileBuilder {
         } else {
             let prepared = self
                 .materializer
-                .prepare_image_rootfs_with_config(sandbox_id, &dockerfile.base_image)?;
+                .prepare_image_rootfs_with_config(&staging_id, &dockerfile.base_image)?;
             (prepared.artifact, prepared.image_config)
         };
 
-        dockerfile.apply(context_path, &artifact.rootfs_path, &mut image_config)?;
-
-        let resolved_user = resolve_image_user_from_rootfs(
-            &artifact.rootfs_path,
-            process.user.as_deref().or(image_config.user.as_deref()),
-        )?;
-        image_config.user = resolved_user;
-
-        Ok(PreparedMaterializedImageLaunch {
-            launch_defaults: image_config
-                .resolve_launch_defaults(&artifact.rootfs_path, process)?,
-            artifact,
-        })
+        let staging_dir = staging_artifact
+            .rootfs_path
+            .parent()
+            .expect("materialized rootfs should have an artifact parent")
+            .to_owned();
+        let result = (|| {
+            dockerfile.snapshot_context(context_path, &context_snapshot)?;
+            after_snapshot(&context_snapshot)?;
+            let context_sha256 = artifact::context_sha256(&dockerfile, &context_snapshot)?;
+            artifact::finish_build(
+                self,
+                sandbox_id,
+                image_name,
+                built_image_reference,
+                &dockerfile_source,
+                &dockerfile,
+                context_sha256,
+                &context_snapshot,
+                process,
+                staging_artifact,
+                image_config,
+            )
+        })();
+        let snapshot_cleanup =
+            context_snapshot_owner
+                .close()
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!("failed to remove private build-context snapshot: {error}"),
+                });
+        if result.is_ok() {
+            snapshot_cleanup?;
+        }
+        if staging_dir.exists() {
+            let cleanup =
+                fs::remove_dir_all(&staging_dir).map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to remove private build staging artifact {}: {error}",
+                        staging_dir.display()
+                    ),
+                });
+            if result.is_ok() {
+                cleanup?;
+            }
+        }
+        result
     }
 }
 
@@ -95,18 +165,17 @@ struct DockerfileRecipe {
 }
 
 impl DockerfileRecipe {
-    fn load(dockerfile_path: &Path) -> Result<Self> {
-        let raw =
-            fs::read_to_string(dockerfile_path).map_err(|error| SandboxError::InvalidSpec {
-                message: format!(
-                    "failed to read Dockerfile {}: {error}",
-                    dockerfile_path.display()
-                ),
-            })?;
+    fn parse(raw: &[u8], dockerfile_path: &Path) -> Result<Self> {
+        let raw = std::str::from_utf8(raw).map_err(|error| SandboxError::InvalidSpec {
+            message: format!(
+                "Dockerfile {} is not valid UTF-8: {error}",
+                dockerfile_path.display()
+            ),
+        })?;
 
         let mut base_image = None;
         let mut instructions = Vec::new();
-        for line in logical_dockerfile_lines(&raw)? {
+        for line in logical_dockerfile_lines(raw)? {
             let (keyword, body) = split_instruction(&line)?;
             match keyword.as_str() {
                 "FROM" => {
@@ -193,6 +262,49 @@ impl DockerfileRecipe {
     ) -> Result<()> {
         for instruction in &self.instructions {
             instruction.apply(context_path, rootfs_path, image_config)?;
+        }
+        Ok(())
+    }
+
+    fn snapshot_context(&self, context_path: &Path, snapshot_path: &Path) -> Result<()> {
+        let canonical_context =
+            fs::canonicalize(context_path).map_err(|error| SandboxError::InvalidSpec {
+                message: format!(
+                    "failed to resolve build context {}: {error}",
+                    context_path.display()
+                ),
+            })?;
+        fs::create_dir(snapshot_path).map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to create private build-context snapshot {}: {error}",
+                snapshot_path.display()
+            ),
+        })?;
+        for instruction in &self.instructions {
+            let DockerfileInstruction::Copy(copy) = instruction else {
+                continue;
+            };
+            for source in &copy.sources {
+                let source_path = resolve_context_source_path(context_path, source)?;
+                let canonical_source =
+                    fs::canonicalize(&source_path).map_err(|error| SandboxError::InvalidSpec {
+                        message: format!(
+                            "failed to resolve build context source {}: {error}",
+                            source_path.display()
+                        ),
+                    })?;
+                if !canonical_source.starts_with(&canonical_context) {
+                    return Err(SandboxError::InvalidSpec {
+                        message: format!(
+                            "build context source {} resolves outside declared context {}; refusing an unbound source",
+                            source_path.display(),
+                            context_path.display()
+                        ),
+                    });
+                }
+                let relative = sanitize_relative_path(Path::new(source))?;
+                copy_entry(&source_path, &snapshot_path.join(relative))?;
+            }
         }
         Ok(())
     }
@@ -791,12 +903,20 @@ fn copy_directory_contents(source_dir: &Path, destination_dir: &Path) -> Result<
 }
 
 fn copy_entry(source: &Path, destination: &Path) -> Result<()> {
-    let metadata = fs::metadata(source).map_err(|error| SandboxError::OperationFailed {
+    let metadata = fs::symlink_metadata(source).map_err(|error| SandboxError::OperationFailed {
         message: format!(
             "failed to stat build context path {}: {error}",
             source.display()
         ),
     })?;
+    if metadata.file_type().is_symlink() {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "build context source {} contains a symbolic link; exact context binding requires regular files and directories",
+                source.display()
+            ),
+        });
+    }
     if metadata.is_dir() {
         fs::create_dir_all(destination).map_err(|error| SandboxError::OperationFailed {
             message: format!(
@@ -880,331 +1000,4 @@ fn unsupported_instruction_error(instruction: &str, detail: &str) -> SandboxErro
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::io::{Cursor, Read, Write};
-    use std::net::TcpListener;
-    use std::path::PathBuf;
-    use std::thread;
-
-    use flate2::Compression;
-    use flate2::write::GzEncoder;
-    use sha2::{Digest, Sha256};
-    use tempfile::TempDir;
-
-    use super::OciDockerfileBuilder;
-    use crate::backends::oci::buildah::OciExposedPortProtocol;
-    use crate::instance::SandboxId;
-    use crate::spec::SandboxProcessSpec;
-
-    #[test]
-    fn builder_builds_from_scratch_with_copy_and_runtime_metadata() {
-        let temp_dir = TempDir::new().expect("tempdir should build");
-        let context_dir = temp_dir.path().join("context");
-        fs::create_dir_all(context_dir.join("bin")).expect("context dir should build");
-        fs::write(context_dir.join("bin/server"), b"#!/bin/sh\nexit 0\n")
-            .expect("server fixture should write");
-        let dockerfile_path = context_dir.join("Dockerfile");
-        fs::write(
-            &dockerfile_path,
-            r#"
-FROM scratch
-WORKDIR /app
-ENV APP_ENV=dev LOG_LEVEL=info
-COPY ./bin/server ./server
-ENTRYPOINT ["/app/server"]
-EXPOSE 8080
-USER 1000:1000
-STOPSIGNAL SIGQUIT
-LABEL com.example.role=edge
-HEALTHCHECK CMD ["/app/server", "--healthcheck"]
-"#,
-        )
-        .expect("dockerfile should write");
-
-        let builder = OciDockerfileBuilder::under_state_root(temp_dir.path());
-        let prepared = builder
-            .prepare_built_image_launch(
-                &SandboxId::new("build-01"),
-                "demo-build",
-                &dockerfile_path,
-                &context_dir,
-                &SandboxProcessSpec::new(Vec::<String>::new()),
-            )
-            .expect("scratch build should succeed");
-
-        assert!(prepared.artifact.rootfs_path.join("app/server").is_file());
-        assert_eq!(
-            prepared.launch_defaults.process.args,
-            vec!["/app/server".to_owned()]
-        );
-        assert_eq!(prepared.launch_defaults.process.cwd, PathBuf::from("/app"));
-        assert_eq!(
-            prepared.launch_defaults.process.env,
-            vec!["APP_ENV=dev".to_owned(), "LOG_LEVEL=info".to_owned()]
-        );
-        assert_eq!(prepared.launch_defaults.user.as_deref(), Some("1000:1000"));
-        assert_eq!(
-            prepared.launch_defaults.stop_signal.as_deref(),
-            Some("SIGQUIT")
-        );
-        assert_eq!(
-            prepared
-                .launch_defaults
-                .labels
-                .get("com.example.role")
-                .map(String::as_str),
-            Some("edge")
-        );
-        assert_eq!(prepared.launch_defaults.exposed_ports.len(), 1);
-        assert_eq!(prepared.launch_defaults.exposed_ports[0].raw, "8080/tcp");
-        assert_eq!(
-            prepared.launch_defaults.exposed_ports[0].protocol,
-            OciExposedPortProtocol::Tcp
-        );
-        assert_eq!(
-            prepared
-                .launch_defaults
-                .healthcheck
-                .as_ref()
-                .expect("healthcheck should exist")
-                .test,
-            vec![
-                "CMD".to_owned(),
-                "/app/server".to_owned(),
-                "--healthcheck".to_owned(),
-            ]
-        );
-    }
-
-    #[test]
-    fn builder_layers_runtime_metadata_over_a_registry_base_image() {
-        let temp_dir = TempDir::new().expect("tempdir should build");
-        let context_dir = temp_dir.path().join("context");
-        fs::create_dir_all(&context_dir).expect("context dir should build");
-        let registry = serve_fake_oci_registry(build_layer_archive());
-        let dockerfile_path = context_dir.join("Dockerfile");
-        fs::write(
-            &dockerfile_path,
-            format!(
-                "FROM {registry}\nENV PORT=9090 APP_MODE=dev\nCMD [\"--custom\"]\nEXPOSE 9090\n"
-            ),
-        )
-        .expect("dockerfile should write");
-
-        let builder = OciDockerfileBuilder::under_state_root(temp_dir.path());
-        let prepared = builder
-            .prepare_built_image_launch(
-                &SandboxId::new("build-02"),
-                "demo-base",
-                &dockerfile_path,
-                &context_dir,
-                &SandboxProcessSpec::new(Vec::<String>::new()),
-            )
-            .expect("registry-backed build should succeed");
-
-        assert!(prepared.artifact.rootfs_path.join("usr/bin/demo").is_file());
-        assert_eq!(
-            prepared.launch_defaults.process.args,
-            vec!["/usr/bin/demo".to_owned(), "--custom".to_owned()]
-        );
-        assert_eq!(
-            prepared.launch_defaults.process.env,
-            vec![
-                "PATH=/usr/bin".to_owned(),
-                "PORT=9090".to_owned(),
-                "APP_MODE=dev".to_owned(),
-            ]
-        );
-        assert_eq!(
-            prepared.launch_defaults.process.cwd,
-            PathBuf::from("/workspace")
-        );
-        assert_eq!(prepared.launch_defaults.user.as_deref(), Some("1000:1000"));
-        assert_eq!(
-            prepared
-                .launch_defaults
-                .labels
-                .get("app")
-                .map(String::as_str),
-            Some("demo")
-        );
-        assert_eq!(
-            prepared
-                .launch_defaults
-                .exposed_ports
-                .iter()
-                .map(|port| port.raw.as_str())
-                .collect::<Vec<_>>(),
-            vec!["8080/tcp", "9090/tcp"]
-        );
-    }
-
-    #[test]
-    fn builder_rejects_run_instructions_cleanly() {
-        let temp_dir = TempDir::new().expect("tempdir should build");
-        let context_dir = temp_dir.path().join("context");
-        fs::create_dir_all(&context_dir).expect("context dir should build");
-        let dockerfile_path = context_dir.join("Dockerfile");
-        fs::write(
-            &dockerfile_path,
-            "FROM scratch\nRUN echo nope\nCMD [\"/bin/true\"]\n",
-        )
-        .expect("dockerfile should write");
-
-        let builder = OciDockerfileBuilder::under_state_root(temp_dir.path());
-        let error = builder
-            .prepare_built_image_launch(
-                &SandboxId::new("build-03"),
-                "demo-run",
-                &dockerfile_path,
-                &context_dir,
-                &SandboxProcessSpec::new(Vec::<String>::new()),
-            )
-            .expect_err("RUN should be rejected");
-        assert!(
-            error
-                .to_string()
-                .contains("Dockerfile instruction \"RUN\" is not supported"),
-            "{error}"
-        );
-    }
-
-    fn build_layer_archive() -> Vec<u8> {
-        let encoder = GzEncoder::new(Vec::new(), Compression::default());
-        let mut builder = tar::Builder::new(encoder);
-
-        write_tar_file(
-            &mut builder,
-            "etc/passwd",
-            b"demo:x:1000:1000:demo:/home/demo:/bin/sh\n",
-            0o644,
-        );
-        write_tar_file(&mut builder, "etc/group", b"demo:x:1000:\n", 0o644);
-        write_tar_file(
-            &mut builder,
-            "usr/bin/demo",
-            b"#!/bin/sh\nexec sleep 60\n",
-            0o755,
-        );
-
-        let encoder = builder.into_inner().expect("tar encoder should finish");
-        encoder.finish().expect("gzip layer should finish")
-    }
-
-    fn write_tar_file(
-        builder: &mut tar::Builder<GzEncoder<Vec<u8>>>,
-        path: &str,
-        body: &[u8],
-        mode: u32,
-    ) {
-        let mut header = tar::Header::new_gnu();
-        header.set_mode(mode);
-        header.set_size(body.len() as u64);
-        header.set_cksum();
-        builder
-            .append_data(&mut header, path, Cursor::new(body))
-            .expect("layer entry should append");
-    }
-
-    fn serve_fake_oci_registry(layer_body: Vec<u8>) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("registry listener should bind");
-        let address = listener
-            .local_addr()
-            .expect("registry listener should report local addr");
-
-        let config = serde_json::json!({
-            "config": {
-                "Entrypoint": ["/usr/bin/demo"],
-                "Cmd": ["--serve"],
-                "Env": ["PATH=/usr/bin", "PORT=8080"],
-                "User": "demo",
-                "WorkingDir": "/workspace",
-                "ExposedPorts": {
-                    "8080/tcp": {}
-                },
-                "Labels": {
-                    "app": "demo"
-                }
-            }
-        });
-        let config_bytes = serde_json::to_vec(&config).expect("config should serialize");
-        let config_digest = format!("sha256:{:x}", Sha256::digest(&config_bytes));
-        let layer_digest = format!("sha256:{:x}", Sha256::digest(&layer_body));
-        let child_manifest = serde_json::json!({
-            "schemaVersion": 2,
-            "config": {
-                "mediaType": "application/vnd.oci.image.config.v1+json",
-                "size": config_bytes.len(),
-                "digest": config_digest
-            },
-            "layers": [{
-                "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-                "size": layer_body.len(),
-                "digest": layer_digest
-            }]
-        });
-        let child_manifest_bytes =
-            serde_json::to_vec(&child_manifest).expect("child manifest should serialize");
-        let child_manifest_digest = format!("sha256:{:x}", Sha256::digest(&child_manifest_bytes));
-        let index = serde_json::json!({
-            "schemaVersion": 2,
-            "manifests": [{
-                "mediaType": "application/vnd.oci.image.manifest.v1+json",
-                "digest": child_manifest_digest,
-                "platform": {
-                    "os": "linux",
-                    "architecture": std::env::consts::ARCH
-                }
-            }]
-        });
-        let index_bytes = serde_json::to_vec(&index).expect("index should serialize");
-
-        thread::spawn(move || {
-            for stream in listener.incoming() {
-                let mut stream = stream.expect("registry connection should succeed");
-                let mut request = [0_u8; 2048];
-                let bytes_read = stream
-                    .read(&mut request)
-                    .expect("registry request should read");
-                let request = String::from_utf8_lossy(&request[..bytes_read]);
-                let path = request
-                    .lines()
-                    .next()
-                    .and_then(|line| line.split_whitespace().nth(1))
-                    .unwrap_or("/");
-
-                let (status, body) = match path {
-                    "/v2/" => (200, Vec::new()),
-                    "/v2/library/demo/manifests/latest" => (200, index_bytes.clone()),
-                    path if path
-                        == format!("/v2/library/demo/manifests/{child_manifest_digest}") =>
-                    {
-                        (200, child_manifest_bytes.clone())
-                    }
-                    path if path == format!("/v2/library/demo/blobs/{config_digest}") => {
-                        (200, config_bytes.clone())
-                    }
-                    path if path == format!("/v2/library/demo/blobs/{layer_digest}") => {
-                        (200, layer_body.clone())
-                    }
-                    _ => (404, Vec::new()),
-                };
-
-                let response = format!(
-                    "HTTP/1.1 {status} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    if status == 200 { "OK" } else { "Not Found" },
-                    body.len()
-                );
-                stream
-                    .write_all(response.as_bytes())
-                    .expect("fake OCI registry response head should write");
-                stream
-                    .write_all(&body)
-                    .expect("fake OCI registry response body should write");
-            }
-        });
-
-        format!("docker://localhost:{}/library/demo:latest", address.port())
-    }
-}
+mod tests;

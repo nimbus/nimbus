@@ -38,6 +38,7 @@ pub(super) async fn handle_runtime_named_subscription(
             &registry,
             &ctx.state.runtime_service_registry(),
             &ctx.state.runtime_manager(),
+            ctx.state.resource_provisioner().ok(),
             &tenant_context_for_worker,
             &name_for_worker,
             &args_for_worker,

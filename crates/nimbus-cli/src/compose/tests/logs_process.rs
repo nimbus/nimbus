@@ -7,17 +7,19 @@ fn resolve_service_ctr_log_path_defaults_to_local_project_tenant_and_honors_over
     let control_data_dir = temp_dir.path().join("control");
     let context = load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
-    let krun_config = context.control_plane.krun_backend_config();
+    let krun_config = context
+        .control_plane
+        .reconstruct_direct_krun_backend_config();
 
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01aaa",
         context.control_plane.local_tenant_id.as_str(),
         "db",
         SandboxStatus::Ready,
     );
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01bbb",
         "tenant-other",
         "db",
@@ -124,17 +126,19 @@ fn render_compose_top_reads_pidfiles_from_persisted_state() {
     let control_data_dir = temp_dir.path().join("control");
     let context = load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
-    let krun_config = context.control_plane.krun_backend_config();
+    let krun_config = context
+        .control_plane
+        .reconstruct_direct_krun_backend_config();
 
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01aaa",
         context.control_plane.local_tenant_id.as_str(),
         "db",
         SandboxStatus::Ready,
     );
     let container_dir = krun_config
-        .state_root
+        .workload_state_root
         .join("tenants")
         .join(context.control_plane.local_tenant_id.as_str())
         .join("sandboxes")

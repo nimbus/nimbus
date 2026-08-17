@@ -1,4 +1,7 @@
 use super::*;
+use nimbus_machine::MachineNetworkAuthorityRecord;
+use nimbus_network::LocalNetworkStateStore;
+use nimbus_sandbox::backends::container::OciMachinePortForwarderConfig;
 
 #[derive(Debug, Parser)]
 pub(super) struct RootCli {
@@ -87,13 +90,44 @@ pub(super) fn expected_upgrade_target_version() -> String {
     }
 }
 
+pub(super) fn test_network_authority_record(
+    base_root: &Path,
+    machine_name: &str,
+) -> MachineNetworkAuthorityRecord {
+    let provider_instance = OciMachinePortForwarderConfig::gvproxy_provider_handle(format!(
+        "machine-test:{machine_name}"
+    ))
+    .expect("test gvproxy provider identity should validate");
+    MachineNetworkAuthorityRecord::new(
+        LocalNetworkStateStore::authority_path_for(base_root.join("network-authority")),
+        provider_instance,
+    )
+    .expect("test machine network authority should validate")
+}
+
 pub(super) fn run_machine_command_for_test(
     command: MachineCommand,
     layout: &MachineRootLayout,
 ) -> Result<(), Error> {
+    let network_state_root = layout
+        .config_root
+        .parent()
+        .unwrap_or(&layout.config_root)
+        .join("network-authority");
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime should build")
-        .block_on(run_machine_command_with_layout(command, layout))
+        .block_on(run_machine_command_with_layout_for_test(
+            command,
+            layout,
+            &network_state_root,
+            &nimbus::EnginePersistenceConfig::embedded_default(
+                layout
+                    .config_root
+                    .parent()
+                    .unwrap_or(&layout.config_root)
+                    .join("engine"),
+            ),
+        ))
 }

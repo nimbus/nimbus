@@ -7,14 +7,17 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use nimbus_core::TenantId;
-use nimbus_runtime::HostCallCancellation;
+use nimbus_core::{Error, TenantId, WorkloadId};
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_services::{
     ExternalAuthPolicy, HealthCheckPolicy, ServiceBackend, ServiceDefinition,
     ServiceDefinitionSource, ServiceManager,
 };
 use nimbus_tenant::TenantIsolationContext;
+use nimbus_workloads::{
+    WorkloadProvisionSourceGeneration, WorkloadProvisionSourceIdentity, WorkloadSagaKey,
+    WorkloadSagaStoreError,
+};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -22,6 +25,12 @@ use time::format_description::well_known::Rfc3339;
 use crate::pagination::{CollectionMetadataResponse, paginate_by_key};
 use crate::sandbox_spec::{SandboxSpecInput, SandboxSpecResponse};
 use crate::state::{ComputeError, ComputeState};
+use crate::workload_provisioner::WorkloadProvisionCancellation;
+use crate::workload_saga::{
+    ExplicitWorkloadRestartDisposition, ExplicitWorkloadRestartError,
+    ExplicitWorkloadRestartRequest, WorkloadRestartAdmissionError,
+    WorkloadRestartCancellationToken,
+};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +55,26 @@ pub struct ServiceEndpointResponse {
     pub protocol: String,
     pub host: String,
     pub port: u16,
+}
+
+/// Durable acceptance receipt for an asynchronous service restart.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceRestartResponse {
+    pub tenant_id: String,
+    pub name: String,
+    pub source_generation: u64,
+    pub request_id: String,
+    pub workload_restart_request_id: String,
+    pub restart_epoch: u64,
+    pub disposition: ServiceRestartDispositionResponse,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceRestartDispositionResponse {
+    Applied,
+    Replayed,
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,15 +313,46 @@ pub fn update_service_definition(
 /// called); this only performs the manager-side delete.
 pub async fn delete_service_definition(
     compute: &ComputeState,
-    tenant_id: &TenantId,
+    tenant_context: &TenantIsolationContext,
     service_name: &str,
     expected_generation: u64,
     force: bool,
 ) -> Result<(), ComputeError> {
     let manager = service_manager(compute)?;
-    manager
-        .delete_service_definition_async(tenant_id, service_name, expected_generation, force)
-        .await?;
+    let definition = manager
+        .service_definition_for_tenant(tenant_context.tenant_id(), service_name)
+        .ok_or_else(|| {
+            ComputeError::from(Error::NotFound(format!(
+                "service `{service_name}` was not found for tenant `{}`",
+                tenant_context.tenant_id()
+            )))
+        })?;
+    if definition.source != ServiceDefinitionSource::Dynamic {
+        return Err(ComputeError::from(Error::conflict(format!(
+            "service `{service_name}` for tenant `{}` is static and cannot be deleted through dynamic service definition routes",
+            tenant_context.tenant_id()
+        ))));
+    }
+    if definition.generation != expected_generation {
+        return Err(ComputeError::from(Error::PreconditionFailed(format!(
+            "service `{service_name}` has generation {}, but delete expected {expected_generation}",
+            definition.generation
+        ))));
+    }
+    if !matches!(definition.backend, ServiceBackend::Sandbox(_)) {
+        manager.finalize_unmanaged_service_definition_deletion(
+            tenant_context.tenant_id(),
+            service_name,
+            expected_generation,
+            force,
+        )?;
+        return Ok(());
+    }
+    compute
+        .resource_retirer()?
+        .submit_definition_teardown(tenant_context, service_name, expected_generation, force)
+        .await
+        .map_err(|error| error.into_compute_error())?;
     Ok(())
 }
 
@@ -304,7 +364,6 @@ pub enum ServiceLifecycleVerb {
     Get,
     Start,
     Stop,
-    Restart,
 }
 
 impl ServiceLifecycleVerb {
@@ -313,7 +372,6 @@ impl ServiceLifecycleVerb {
             Self::Get => "native_http.service.get",
             Self::Start => "native_http.service.start",
             Self::Stop => "native_http.service.stop",
-            Self::Restart => "native_http.service.restart",
         }
     }
 
@@ -324,7 +382,6 @@ impl ServiceLifecycleVerb {
             Self::Get => None,
             Self::Start => Some("start"),
             Self::Stop => Some("stop"),
-            Self::Restart => Some("restart"),
         }
     }
 }
@@ -336,41 +393,43 @@ pub async fn service_lifecycle(
     verb: ServiceLifecycleVerb,
 ) -> Result<ServiceResourceResponse, ComputeError> {
     let manager = service_manager(compute)?;
-    let handle = match verb {
+    let (definition, handle) = match verb {
         ServiceLifecycleVerb::Get => {
-            if !manager.service_declared_for_tenant(tenant_context.tenant_id(), service_name) {
-                return Err(service_not_found(tenant_context.tenant_id(), service_name));
-            }
-            manager
-                .inspect_service_for_context_async(tenant_context, service_name)
-                .await?
+            let definition = manager
+                .service_definition_for_tenant(tenant_context.tenant_id(), service_name)
+                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), service_name))?;
+            let observation = manager.service_definition_observation_for_tenant(
+                tenant_context.tenant_id(),
+                service_name,
+            );
+            (
+                definition,
+                observation.map(|observation| observation.handle),
+            )
         }
-        ServiceLifecycleVerb::Start => Some(
-            manager
-                .start_service_for_context_async(
-                    tenant_context,
-                    service_name,
-                    HostCallCancellation::default(),
-                )
-                .await?
-                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), service_name))?,
-        ),
-        ServiceLifecycleVerb::Stop => Some(
-            manager
-                .stop_service_for_context_async(tenant_context, service_name)
-                .await?
-                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), service_name))?,
-        ),
-        ServiceLifecycleVerb::Restart => Some(
-            manager
-                .restart_service_for_context_async(
-                    tenant_context,
-                    service_name,
-                    HostCallCancellation::default(),
-                )
-                .await?
-                .ok_or_else(|| service_not_found(tenant_context.tenant_id(), service_name))?,
-        ),
+        ServiceLifecycleVerb::Start => {
+            let provisioner = compute.resource_provisioner()?;
+            let cancellation = WorkloadProvisionCancellation::default();
+            let snapshot = Box::pin(provisioner.provision_sandbox_service(
+                tenant_context,
+                service_name,
+                &cancellation,
+            ))
+            .await
+            .map_err(|error| error.into_compute_error())?;
+            (
+                snapshot.definition,
+                snapshot.observation.map(|observation| observation.handle),
+            )
+        }
+        ServiceLifecycleVerb::Stop => {
+            let retirer = compute.resource_retirer()?;
+            let retirement =
+                Box::pin(retirer.submit_service_teardown(tenant_context, service_name))
+                    .await
+                    .map_err(|error| error.into_compute_error())?;
+            (retirement.definition, retirement.retired_handle)
+        }
     };
     if let (Some(action), Some(handle)) = (verb.event_action(), handle.as_ref()) {
         record_service_event(compute, tenant_context.tenant_id(), action, handle).await?;
@@ -378,10 +437,121 @@ pub async fn service_lifecycle(
 
     Ok(match handle {
         Some(handle) => ServiceResourceResponse::from_handle(tenant_context.tenant_id(), &handle),
-        None => {
-            ServiceResourceResponse::declared_inactive(tenant_context.tenant_id(), service_name)
-        }
+        None => ServiceResourceResponse::from_definition_without_observation(definition),
     })
+}
+
+/// Admit one explicit sandbox-backed service restart through the same durable
+/// compute saga and retained supervisor used by automatic restart.
+pub async fn submit_service_restart(
+    compute: &ComputeState,
+    tenant_context: &TenantIsolationContext,
+    service_name: &str,
+    source_generation: u64,
+    request_id: &str,
+) -> Result<ServiceRestartResponse, ComputeError> {
+    let manager = service_manager(compute)?;
+    let definition = manager
+        .service_definition_for_tenant(tenant_context.tenant_id(), service_name)
+        .ok_or_else(|| service_not_found(tenant_context.tenant_id(), service_name))?;
+    if definition.generation != source_generation {
+        return Err(ComputeError::from(Error::PreconditionFailed(format!(
+            "service `{service_name}` source generation {source_generation} does not match current generation {}",
+            definition.generation
+        ))));
+    }
+
+    let key = WorkloadSagaKey::new(
+        tenant_context.tenant_id().clone(),
+        WorkloadId::new(service_name)?,
+    );
+    let source_identity = WorkloadProvisionSourceIdentity::sandbox_backed_service(service_name)
+        .map_err(|error| ComputeError::from(Error::InvalidInput(error.to_string())))?;
+    let request = ExplicitWorkloadRestartRequest::new(
+        key,
+        source_identity,
+        WorkloadProvisionSourceGeneration::new(source_generation),
+        request_id,
+    );
+    let runtime = compute.workload_restart_runtime().ok_or_else(|| {
+        ComputeError::not_found("service restart requires managed compute workload lifecycle")
+    })?;
+    let cancellation = WorkloadRestartCancellationGuard::new();
+    let submitted = runtime
+        .submit_explicit(&request, cancellation.token())
+        .await
+        .map_err(map_explicit_restart_error)?;
+
+    Ok(ServiceRestartResponse {
+        tenant_id: tenant_context.tenant_id().as_str().to_owned(),
+        name: service_name.to_owned(),
+        source_generation,
+        request_id: request_id.to_owned(),
+        workload_restart_request_id: submitted.request_id().to_string(),
+        restart_epoch: submitted.restart_epoch().as_u64(),
+        disposition: match submitted.disposition() {
+            ExplicitWorkloadRestartDisposition::Applied => {
+                ServiceRestartDispositionResponse::Applied
+            }
+            ExplicitWorkloadRestartDisposition::Replayed => {
+                ServiceRestartDispositionResponse::Replayed
+            }
+        },
+    })
+}
+
+struct WorkloadRestartCancellationGuard {
+    token: WorkloadRestartCancellationToken,
+}
+
+impl WorkloadRestartCancellationGuard {
+    fn new() -> Self {
+        Self {
+            token: WorkloadRestartCancellationToken::new(),
+        }
+    }
+
+    fn token(&self) -> &WorkloadRestartCancellationToken {
+        &self.token
+    }
+}
+
+impl Drop for WorkloadRestartCancellationGuard {
+    fn drop(&mut self) {
+        self.token.cancel();
+    }
+}
+
+fn map_explicit_restart_error(error: ExplicitWorkloadRestartError) -> ComputeError {
+    match error {
+        ExplicitWorkloadRestartError::Cancelled => ComputeError::from(Error::Cancelled),
+        ExplicitWorkloadRestartError::WorkloadNotFound => {
+            ComputeError::not_found("service restart requires a running workload generation")
+        }
+        ExplicitWorkloadRestartError::SourceIdentityMismatch
+        | ExplicitWorkloadRestartError::SourceGenerationMismatch => {
+            ComputeError::from(Error::PreconditionFailed(error.to_string()))
+        }
+        ExplicitWorkloadRestartError::Admission(WorkloadRestartAdmissionError::Cancelled) => {
+            ComputeError::from(Error::Cancelled)
+        }
+        ExplicitWorkloadRestartError::Admission(WorkloadRestartAdmissionError::Saga(
+            WorkloadSagaStoreError::Conflict { .. },
+        )) => ComputeError::from(Error::Conflict {
+            message: error.to_string(),
+            conflicting_sequence: None,
+            retryable: true,
+            attempts: None,
+        }),
+        ExplicitWorkloadRestartError::Admission(WorkloadRestartAdmissionError::Saga(
+            WorkloadSagaStoreError::InvalidTransition(_),
+        )) => ComputeError::from(Error::PreconditionFailed(error.to_string())),
+        ExplicitWorkloadRestartError::Admission(_)
+        | ExplicitWorkloadRestartError::MissingDurableReceipt
+        | ExplicitWorkloadRestartError::Supervision(_) => {
+            ComputeError::from(Error::Internal(error.to_string()))
+        }
+    }
 }
 
 impl ServiceResourceResponse {
@@ -409,15 +579,25 @@ impl ServiceResourceResponse {
         }
     }
 
-    fn declared_inactive(tenant_id: &TenantId, service_name: &str) -> Self {
+    fn from_definition_without_observation(definition: ServiceDefinition) -> Self {
+        let (state, readiness, backend) = match definition.backend {
+            ServiceBackend::Sandbox(spec) => (
+                "pending",
+                "pending",
+                Some(nimbus_system::sandbox_backend(spec.backend).to_owned()),
+            ),
+            ServiceBackend::BuiltIn(_) | ServiceBackend::External(_) => {
+                ("declared", "unknown", None)
+            }
+        };
         Self {
-            tenant_id: tenant_id.as_str().to_owned(),
-            name: service_name.to_owned(),
+            tenant_id: definition.tenant_id.as_str().to_owned(),
+            name: definition.name,
             sandbox_id: None,
-            backend: None,
-            state: "stopped".to_owned(),
-            lifecycle_state: "stopped".to_owned(),
-            readiness: "stopped".to_owned(),
+            backend,
+            state: state.to_owned(),
+            lifecycle_state: state.to_owned(),
+            readiness: readiness.to_owned(),
             health: "unknown".to_owned(),
             endpoints: Vec::new(),
         }

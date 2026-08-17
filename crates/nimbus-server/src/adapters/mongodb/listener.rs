@@ -13,7 +13,7 @@ use nimbus_mongodb::error::MongoError;
 use nimbus_mongodb::wire::{self, WireError};
 use nimbus_mongodb::{CredentialRegistry, MongoAuth};
 
-/// The owned auth source a spawned MongoDB listener carries.
+/// The owned auth source a MongoDB listener task carries.
 ///
 /// Two modes, matching [`MongoAuth`]: [`Unbound`](MongoAuthSource::Unbound) wraps
 /// the single tenant-agnostic credential (`$db` decides the tenant, loopback-only)
@@ -88,7 +88,11 @@ pub(crate) fn guard_bind_address(addr: SocketAddr, tenant_bound: bool) -> std::i
     Ok(())
 }
 
-pub async fn run_listener(listener: TcpListener, engine: Arc<Engine>, auth: MongoAuthSource) {
+pub async fn run_listener(
+    listener: TcpListener,
+    engine: Arc<Engine>,
+    auth: MongoAuthSource,
+) -> std::io::Result<()> {
     let local_addr = listener.local_addr().ok();
     info!("MongoDB listener started on {:?}", local_addr);
 

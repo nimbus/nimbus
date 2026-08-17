@@ -5,11 +5,12 @@
 /// closes over its own per-PEP context, so a request handler cannot name
 /// another workload's state. The node-scoped `EgressEngine` keeps its
 /// `Map<WorkloadId, WorkloadPep>` off the request path by module discipline:
-/// within `nimbus-proxy`, only `engine.rs` (the definition) and `lib.rs` (the
-/// export) may name `EgressEngine` or `WorkloadId`. Every other module — the
-/// worker accept/handler path, the intercept path, the pingora adapter, and
-/// all request-processing modules — must be unable to reach the map even by
-/// name. A plain "hot path holds no `Map<SandboxId, …>`" grep would be vacuous
+/// within `nimbus-proxy`, only `engine.rs` (the definition), `lib.rs` (the
+/// export), and `engine/tests.rs` (the private `cfg(test)` child) may name
+/// `EgressEngine` or `WorkloadId`. Every other module — the worker
+/// accept/handler path, the intercept path, the pingora adapter, and all
+/// request-processing modules — must be unable to reach the map even by name.
+/// A plain "hot path holds no `Map<SandboxId, …>`" grep would be vacuous
 /// (`nimbus-proxy` has no `SandboxId` at all); scanning for the engine's own
 /// key/type names is the non-vacuous form.
 ///
@@ -22,10 +23,11 @@ fn ee1_reachability_lint_workload_map_unreachable_from_request_path() {
         .map(std::path::PathBuf::from)
         .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-proxy tests")
         .join("src");
-    // engine.rs defines the engine; lib.rs exports it; src/tests is test-only
-    // code, never part of the request path.
+    // engine.rs defines the engine; lib.rs exports it; src/tests and the exact
+    // engine/tests.rs private child are test-only code, never request paths.
     let allowed = ["engine.rs", "lib.rs"];
     let tests_dir = src_dir.join("tests");
+    let engine_tests = src_dir.join("engine/tests.rs");
     let needles = ["EgressEngine", "WorkloadId"];
 
     let mut violations = Vec::new();
@@ -44,6 +46,9 @@ fn ee1_reachability_lint_workload_map_unreachable_from_request_path() {
                 continue;
             }
             if path.starts_with(&tests_dir) {
+                continue;
+            }
+            if path == engine_tests {
                 continue;
             }
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {

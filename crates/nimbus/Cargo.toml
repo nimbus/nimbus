@@ -39,6 +39,7 @@ nimbus-core = { path = "../nimbus-core" }
 nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-engine = { path = "../nimbus-engine", default-features = false }
 nimbus-license = { path = "../nimbus-license" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-server = { path = "../nimbus-server", default-features = false }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-storage = { path = "../nimbus-storage", default-features = false }

@@ -1,8 +1,12 @@
 use super::*;
+use nimbus_network::NetworkManagementMode;
 
 #[test]
 fn krunkit_provider_capabilities_match_podman_aligned_contract() {
-    assert!(!MachineProvider::Krunkit.uses_provider_networking());
+    assert_eq!(
+        MachineProvider::Krunkit.network_management_mode(),
+        NetworkManagementMode::NimbusHostManaged
+    );
     assert!(MachineProvider::Krunkit.requires_exclusive_active());
     assert_eq!(
         MachineProvider::Krunkit.image_format(),
@@ -17,7 +21,10 @@ fn krunkit_provider_capabilities_match_podman_aligned_contract() {
     // vfkit is an applehv sibling of krunkit: it must report the identical
     // podman-aligned capability contract so the shared launch/bootstrap path
     // treats both managed applehv guests the same way.
-    assert!(!MachineProvider::Vfkit.uses_provider_networking());
+    assert_eq!(
+        MachineProvider::Vfkit.network_management_mode(),
+        NetworkManagementMode::NimbusHostManaged
+    );
     assert!(MachineProvider::Vfkit.requires_exclusive_active());
     assert_eq!(
         MachineProvider::Vfkit.image_format(),
@@ -32,7 +39,10 @@ fn krunkit_provider_capabilities_match_podman_aligned_contract() {
     assert!(MachineProvider::Krunkit.uses_managed_applehv_guest());
     assert!(!MachineProvider::Wsl2.uses_managed_applehv_guest());
 
-    assert!(MachineProvider::Wsl2.uses_provider_networking());
+    assert_eq!(
+        MachineProvider::Wsl2.network_management_mode(),
+        NetworkManagementMode::ProviderManaged
+    );
     assert!(!MachineProvider::Wsl2.requires_exclusive_active());
     assert_eq!(
         MachineProvider::Wsl2.image_format(),
@@ -49,8 +59,6 @@ fn krunkit_provider_capabilities_match_podman_aligned_contract() {
 fn krunkit_backend_pairs_gvproxy_unixgram_listen_mode() {
     let backend = KrunkitVmmBackend;
     assert_eq!(backend.provider(), MachineProvider::Krunkit);
-    // krunkit drives host networking through gvproxy.
-    assert!(backend.requires_gvproxy());
 
     // The host side listens on a unixgram socket and the krunkit
     // `virtio-net,type=unixgram` device dials it. gvproxy's `-listen-vfkit`
@@ -70,8 +78,6 @@ fn krunkit_backend_pairs_gvproxy_unixgram_listen_mode() {
 fn vfkit_backend_pairs_gvproxy_unixgram_listen_mode() {
     let backend = VfkitVmmBackend;
     assert_eq!(backend.provider(), MachineProvider::Vfkit);
-    // vfkit, like krunkit, drives host networking through gvproxy.
-    assert!(backend.requires_gvproxy());
 
     // vfkit's `virtio-net,unixSocketPath=` device dials gvproxy's `-listen-vfkit`
     // unixgram listener. The host listen contract is identical to krunkit (krunkit
@@ -389,6 +395,72 @@ fn vmm_backend_routes_managed_applehv_providers_and_rejects_wsl2() {
     assert!(
         error.to_string().contains("WSL2"),
         "WSL2 start error should name the unavailable provider: {error}"
+    );
+}
+
+#[test]
+fn provider_managed_backend_is_rejected_before_host_listener_authority() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.tar");
+    let mut config = sample_config(&image_path);
+    config.provider = MachineProvider::Wsl2;
+    let paths = config.roots.paths("default");
+    let port_authority = test_port_authority(temp_dir.path());
+
+    let error = MachineLaunchPlan::build(
+        &port_authority,
+        &paths,
+        &config,
+        &MachineStateRecord::initialized(),
+    )
+    .expect_err("provider-managed networking must not enter the host-managed launch/lease seam");
+
+    assert!(
+        matches!(error, Error::InvalidInput(_)),
+        "provider-managed mode must fail closed before launch planning: {error}"
+    );
+    assert!(
+        error.to_string().contains("WSL2"),
+        "the rejected provider should be named: {error}"
+    );
+    assert!(
+        port_authority
+            .list()
+            .expect("host listener authority should remain readable")
+            .is_empty(),
+        "rejection must happen before the host listener authority creates any lease"
+    );
+    assert!(
+        !paths.state_dir.exists() && !paths.runtime_dir.exists(),
+        "rejection must happen before machine state or runtime effects"
+    );
+}
+
+#[test]
+fn provider_managed_post_start_networking_does_not_silently_succeed() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.tar");
+    let mut config = sample_config(&image_path);
+    config.provider = MachineProvider::Wsl2;
+    let paths = config.roots.paths("default");
+    let mut api_forward_child = None;
+
+    let error = post_start_networking(
+        &paths,
+        &config,
+        22_222,
+        &mut api_forward_child,
+        &StartupSignalMonitor::inactive_for_test(),
+    )
+    .expect_err("an unavailable provider-managed path must fail closed");
+
+    assert!(
+        error.to_string().contains("WSL2"),
+        "the unavailable provider should be named: {error}"
+    );
+    assert!(
+        api_forward_child.is_none(),
+        "rejection must precede provider forwarding effects"
     );
 }
 

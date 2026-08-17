@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use nimbus_engine::Engine;
 
-use super::wire::WireProtocolAdapter;
+use super::wire::{WireProtocolAdapter, WireProtocolTasks};
 
 pub use listener::MongoAuthSource;
 pub use nimbus_mongodb::AuthConfig;
@@ -81,15 +81,11 @@ impl WireProtocolAdapter for MongoDbConfig {
         listener::guard_bind_address(addr, self.auth.is_tenant_bound())
     }
 
-    fn spawn(
-        self: Box<Self>,
-        listener: tokio::net::TcpListener,
-        engine: Arc<Engine>,
-    ) -> Vec<tokio::task::JoinHandle<()>> {
+    fn build_tasks(self: Box<Self>, engine: Arc<Engine>) -> std::io::Result<WireProtocolTasks> {
         let auth = self.auth;
-        vec![tokio::spawn(async move {
-            listener::run_listener(listener, engine, auth).await;
-        })]
+        Ok(WireProtocolTasks::new("listener", move |listener| {
+            Box::pin(listener::run_listener(listener, engine, auth))
+        }))
     }
 }
 

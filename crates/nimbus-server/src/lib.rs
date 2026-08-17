@@ -8,7 +8,11 @@ mod error_envelope;
 mod http;
 mod latency;
 mod license;
+mod listener_group;
+mod listener_lease;
 mod local_server;
+mod network_capabilities;
+mod network_composition;
 mod owned_tasks;
 mod protocol;
 mod router;
@@ -19,6 +23,9 @@ mod tenant;
 #[cfg(test)]
 mod tenant_isolation_drift;
 mod tls;
+mod workload_composition;
+mod workload_ingress;
+mod workload_saga_store;
 mod ws;
 
 // CP1: runtime execution, artifact/provenance admission, machine lifecycle,
@@ -30,8 +37,6 @@ mod ws;
 // it — so it is not re-imported here.)
 use nimbus_compute::execution;
 pub use nimbus_compute::machine_lifecycle;
-#[cfg(test)]
-use nimbus_compute::service_manager;
 
 pub use adapters::cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
 pub use adapters::cloudflare::{
@@ -60,15 +65,28 @@ pub fn enable_firebase_emulator_token_verification_bypass(
 pub use adapters::mongodb::{
     AuthConfig as MongoDbAuthConfig, CredentialRegistry as MongoDbCredentialRegistry, MongoDbConfig,
 };
-pub use construction::{ServeOptions, serve};
+pub use construction::{ServeOptions, serve, serve_leased};
+pub use listener_lease::{
+    ExternalServerListenerContext, LeasedServerListener, PreboundServerListener,
+    PreboundServerListeners, PreparedServerListener, RecordedListenerBindFailure,
+};
 pub use local_server::{
     SERVER_DISCOVERY_PROTOCOL_VERSIONS, ServerDiscoveryLease, ServerDiscoveryRecord,
     read_live_server_discovery,
+};
+pub use network_capabilities::{
+    nimbus_owned_local_ingress_provider_id, nimbus_owned_workload_ingress_registration,
 };
 pub use nimbus_dynamodb::AccessKeyRegistry as DynamoDbAccessKeyRegistry;
 pub use nimbus_s3::AccessKeyRegistry as S3AccessKeyRegistry;
 pub use router::{RouterOptions, build_router, normalize_cors_origin};
 pub use tls::TlsConfig;
+pub use workload_composition::{
+    ServerForegroundWorkloadRuntime, ServerWorkloadComposition, ServerWorkloadCompositionError,
+    ServerWorkloadProviders,
+};
+pub use workload_ingress::{LocalSandboxIngressTargetSource, ServerIngressPublicationAdapter};
+pub use workload_saga_store::EngineWorkloadSagaStore;
 
 #[cfg(test)]
 mod tests;

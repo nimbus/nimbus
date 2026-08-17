@@ -18,7 +18,98 @@ struct MetricsInner {
     durable_writes_completed: AtomicU64,
     durable_writes_in_flight: AtomicU64,
     durable_write_latency_us_total: AtomicU64,
-    commands: Mutex<BTreeMap<String, CommandMetrics>>,
+    commands: Mutex<BTreeMap<CommandMetricLabel, CommandMetrics>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CommandMetricLabel {
+    Auth,
+    Hello,
+    Quit,
+    Ping,
+    Echo,
+    Command,
+    Client,
+    Select,
+    Get,
+    Set,
+    Del,
+    FlushAll,
+    Function,
+    Expire,
+    Ttl,
+    Incr,
+    NimbusReady,
+    NimbusMetrics,
+    Unknown,
+}
+
+impl CommandMetricLabel {
+    fn classify(name: &str) -> Self {
+        if name.eq_ignore_ascii_case("AUTH") {
+            Self::Auth
+        } else if name.eq_ignore_ascii_case("HELLO") {
+            Self::Hello
+        } else if name.eq_ignore_ascii_case("QUIT") {
+            Self::Quit
+        } else if name.eq_ignore_ascii_case("PING") {
+            Self::Ping
+        } else if name.eq_ignore_ascii_case("ECHO") {
+            Self::Echo
+        } else if name.eq_ignore_ascii_case("COMMAND") {
+            Self::Command
+        } else if name.eq_ignore_ascii_case("CLIENT") {
+            Self::Client
+        } else if name.eq_ignore_ascii_case("SELECT") {
+            Self::Select
+        } else if name.eq_ignore_ascii_case("GET") {
+            Self::Get
+        } else if name.eq_ignore_ascii_case("SET") {
+            Self::Set
+        } else if name.eq_ignore_ascii_case("DEL") {
+            Self::Del
+        } else if name.eq_ignore_ascii_case("FLUSHALL") {
+            Self::FlushAll
+        } else if name.eq_ignore_ascii_case("FUNCTION") {
+            Self::Function
+        } else if name.eq_ignore_ascii_case("EXPIRE") {
+            Self::Expire
+        } else if name.eq_ignore_ascii_case("TTL") {
+            Self::Ttl
+        } else if name.eq_ignore_ascii_case("INCR") {
+            Self::Incr
+        } else if name.eq_ignore_ascii_case("NIMBUS.READY") {
+            Self::NimbusReady
+        } else if name.eq_ignore_ascii_case("NIMBUS.METRICS") {
+            Self::NimbusMetrics
+        } else {
+            Self::Unknown
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auth => "AUTH",
+            Self::Hello => "HELLO",
+            Self::Quit => "QUIT",
+            Self::Ping => "PING",
+            Self::Echo => "ECHO",
+            Self::Command => "COMMAND",
+            Self::Client => "CLIENT",
+            Self::Select => "SELECT",
+            Self::Get => "GET",
+            Self::Set => "SET",
+            Self::Del => "DEL",
+            Self::FlushAll => "FLUSHALL",
+            Self::Function => "FUNCTION",
+            Self::Expire => "EXPIRE",
+            Self::Ttl => "TTL",
+            Self::Incr => "INCR",
+            Self::NimbusReady => "NIMBUS.READY",
+            Self::NimbusMetrics => "NIMBUS.METRICS",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -67,9 +158,9 @@ impl NimbusKvMetrics {
             .map(|commands| {
                 commands
                     .iter()
-                    .map(|(name, metrics)| {
+                    .map(|(label, metrics)| {
                         (
-                            name.clone(),
+                            label.label().to_owned(),
                             CommandMetricsSnapshot {
                                 calls: metrics.calls,
                                 errors: metrics.errors,
@@ -131,10 +222,11 @@ impl NimbusKvMetrics {
     }
 
     pub(crate) fn record_command(&self, name: &str, elapsed: Duration, error: bool) {
+        let label = CommandMetricLabel::classify(name);
         let Ok(mut commands) = self.inner.commands.lock() else {
             return;
         };
-        let metrics = commands.entry(name.to_ascii_uppercase()).or_default();
+        let metrics = commands.entry(label).or_default();
         metrics.calls = metrics.calls.saturating_add(1);
         if error {
             metrics.errors = metrics.errors.saturating_add(1);
@@ -233,4 +325,96 @@ impl Drop for ClientConnectionGuard {
 
 fn duration_micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SUPPORTED_COMMANDS: [&str; 18] = [
+        "AUTH",
+        "HELLO",
+        "QUIT",
+        "PING",
+        "ECHO",
+        "COMMAND",
+        "CLIENT",
+        "SELECT",
+        "GET",
+        "SET",
+        "DEL",
+        "FLUSHALL",
+        "FUNCTION",
+        "EXPIRE",
+        "TTL",
+        "INCR",
+        "NIMBUS.READY",
+        "NIMBUS.METRICS",
+    ];
+
+    #[test]
+    fn supported_commands_keep_stable_case_insensitive_labels() {
+        let metrics = NimbusKvMetrics::default();
+        for name in SUPPORTED_COMMANDS {
+            metrics.record_command(&name.to_ascii_lowercase(), Duration::from_micros(2), false);
+        }
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.commands.len(), SUPPORTED_COMMANDS.len());
+        for name in SUPPORTED_COMMANDS {
+            let command = snapshot
+                .commands
+                .get(name)
+                .unwrap_or_else(|| panic!("missing stable metric label for {name}"));
+            assert_eq!(command.calls, 1, "wrong call count for {name}");
+            assert_eq!(command.errors, 0, "wrong error count for {name}");
+            assert_eq!(command.latency_us_total, 2, "wrong latency for {name}");
+        }
+        assert_eq!(snapshot.commands.len(), 18);
+        assert!(!snapshot.render_text().contains("command.unknown"));
+    }
+
+    #[test]
+    fn unknown_client_commands_share_one_bounded_metric_label() {
+        let metrics = NimbusKvMetrics::default();
+        for index in 0..128 {
+            metrics.record_command(
+                &format!("CLIENT-SUPPLIED-UNKNOWN-{index}"),
+                Duration::from_micros(1),
+                true,
+            );
+        }
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.commands.len(), 1);
+        let unknown = snapshot
+            .commands
+            .get("UNKNOWN")
+            .expect("unsupported commands must share one metric label");
+        assert_eq!(unknown.calls, 128);
+        assert_eq!(unknown.errors, 128);
+        assert_eq!(unknown.latency_us_total, 128);
+        assert!(
+            snapshot
+                .commands
+                .keys()
+                .all(|name| !name.starts_with("CLIENT-SUPPLIED")),
+            "untrusted command names must not become metric keys"
+        );
+    }
+
+    #[test]
+    fn command_metric_cardinality_never_exceeds_closed_label_set() {
+        let metrics = NimbusKvMetrics::default();
+        for name in SUPPORTED_COMMANDS {
+            metrics.record_command(name, Duration::ZERO, false);
+        }
+        for index in 0..128 {
+            metrics.record_command(&format!("unknown-{index}"), Duration::ZERO, true);
+        }
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.commands.len(), SUPPORTED_COMMANDS.len() + 1);
+        assert_eq!(snapshot.commands["UNKNOWN"].calls, 128);
+    }
 }

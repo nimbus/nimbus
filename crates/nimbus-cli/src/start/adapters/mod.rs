@@ -47,9 +47,8 @@ use super::StartCommand;
 const DEFAULT_WIRE_TENANT: &str = "default";
 
 /// Adapter configs resolved from the start command. `None` means the
-/// surface does not serve this boot — opted out, or its conventional
-/// port was busy with no explicit port requested.
-#[derive(Debug)]
+/// surface does not serve this boot because it was explicitly opted out.
+#[derive(Debug, Clone)]
 pub(crate) struct AdapterEnablement {
     pub(crate) firebase: Option<FirebaseConfig>,
     pub(crate) cloudflare: Option<CloudflareConfig>,
@@ -203,13 +202,9 @@ pub(super) fn resolve_adapter_enablement(
     control_data_dir: &Path,
     app_dir: Option<&Path>,
 ) -> Result<AdapterEnablement, Error> {
-    resolve_adapter_enablement_with_env_and_app_dir(
-        command,
-        control_data_dir,
-        app_dir,
-        |name| std::env::var(name).ok(),
-        |port| std::net::TcpListener::bind(("127.0.0.1", port)).is_ok(),
-    )
+    resolve_adapter_enablement_with_env_and_app_dir(command, control_data_dir, app_dir, |name| {
+        std::env::var(name).ok()
+    })
 }
 
 #[cfg(test)]
@@ -217,15 +212,8 @@ pub(crate) fn resolve_adapter_enablement_with_env(
     command: &StartCommand,
     control_data_dir: &Path,
     env_lookup: impl Fn(&str) -> Option<String>,
-    port_is_free: impl Fn(u16) -> bool,
 ) -> Result<AdapterEnablement, Error> {
-    resolve_adapter_enablement_with_env_and_app_dir(
-        command,
-        control_data_dir,
-        None,
-        env_lookup,
-        port_is_free,
-    )
+    resolve_adapter_enablement_with_env_and_app_dir(command, control_data_dir, None, env_lookup)
 }
 
 pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
@@ -233,12 +221,11 @@ pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
     control_data_dir: &Path,
     app_dir: Option<&Path>,
     env_lookup: impl Fn(&str) -> Option<String>,
-    port_is_free: impl Fn(u16) -> bool,
 ) -> Result<AdapterEnablement, Error> {
     let mut store = CredentialStore::new(control_data_dir);
-    let mongodb = mongodb::resolve_mongodb(command, &env_lookup, &port_is_free, &mut store)?;
-    let dynamodb = dynamodb::resolve_dynamodb(command, &env_lookup, &port_is_free, &mut store)?;
-    let s3 = s3::resolve_s3(command, &env_lookup, &port_is_free, &mut store)?;
+    let mongodb = mongodb::resolve_mongodb(command, &env_lookup, &mut store)?;
+    let dynamodb = dynamodb::resolve_dynamodb(command, &env_lookup, &mut store)?;
+    let s3 = s3::resolve_s3(command, &env_lookup, &mut store)?;
     let cloudflare = cloudflare::resolve_cloudflare(command, app_dir, &mut store)?;
     let (convex_tenancy, convex_tenancy_notice) =
         convex_tenancy::resolve_convex_tenancy(command, &env_lookup)?;
@@ -285,14 +272,14 @@ mod tests {
         StartCommand::default()
     }
 
-    /// Resolve with an always-free port probe so default-on tests stay
-    /// deterministic on machines running a real `mongod` or DynamoDB Local.
+    /// Resolve pure desired adapter state without consulting host socket
+    /// availability.
     fn resolve(
         command: &StartCommand,
         data_dir: &Path,
         env_lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<AdapterEnablement, Error> {
-        resolve_adapter_enablement_with_env(command, data_dir, env_lookup, |_| true)
+        resolve_adapter_enablement_with_env(command, data_dir, env_lookup)
     }
 
     #[test]
@@ -577,7 +564,6 @@ mod tests {
             data_dir.path(),
             Some(app_dir.path()),
             |_| None,
-            |_| true,
         )
         .expect("wrangler-backed Cloudflare config should resolve");
         let cloudflare = resolved
@@ -594,46 +580,68 @@ mod tests {
     }
 
     #[test]
-    fn busy_conventional_ports_fail_startup() {
+    fn default_and_explicit_ports_resolve_as_pure_desired_state() {
         let temp = tempfile::tempdir().expect("tempdir");
-        for (command, expected) in [
-            (base_command(), "MongoDB conventional port 27017 is busy"),
-            (
-                {
-                    let mut command = base_command();
-                    command.mongodb = false;
-                    command
-                },
-                "DynamoDB conventional port 8000 is busy",
-            ),
-            (
-                {
-                    let mut command = base_command();
-                    command.mongodb = false;
-                    command.dynamodb = false;
-                    command
-                },
-                "S3 conventional port 9000 is busy",
-            ),
-        ] {
-            let error =
-                resolve_adapter_enablement_with_env(&command, temp.path(), |_| None, |_| false)
-                    .expect_err("a busy default listener port must fail boot");
-            assert!(
-                error.to_string().contains(expected),
-                "unexpected error: {error}"
-            );
-        }
+        let defaults = resolve_adapter_enablement_with_env(&base_command(), temp.path(), |_| None)
+            .expect("default desired listeners should resolve without probing");
+        assert_eq!(
+            defaults
+                .mongodb
+                .expect("mongodb should resolve")
+                .bind_addr
+                .port(),
+            MONGODB_CONVENTIONAL_PORT
+        );
+        assert_eq!(
+            defaults
+                .dynamodb
+                .expect("dynamodb should resolve")
+                .bind_addr
+                .port(),
+            DYNAMODB_CONVENTIONAL_PORT
+        );
+        assert_eq!(
+            defaults.s3.expect("s3 should resolve").bind_addr.port(),
+            S3_CONVENTIONAL_PORT
+        );
 
-        // An explicit port never probes: the operator asked for it, so a
-        // conflict surfaces as a loud bind failure at serve time instead.
+        // Explicit ports remain desired exactly as requested. Both default and
+        // explicit conflicts surface through the shared lease/provider bind.
         let mut command = base_command();
-        command.mongodb_port = Some(27017);
-        command.dynamodb_port = Some(8000);
-        command.s3_port = Some(9000);
-        let resolved =
-            resolve_adapter_enablement_with_env(&command, temp.path(), |_| None, |_| false)
-                .expect("explicit ports must resolve regardless of the probe");
+        command.mongodb_port = Some(37017);
+        command.dynamodb_port = Some(38000);
+        command.s3_port = Some(39000);
+        let explicit = resolve_adapter_enablement_with_env(&command, temp.path(), |_| None)
+            .expect("explicit desired ports should resolve without probing");
+        assert_eq!(
+            explicit
+                .mongodb
+                .expect("mongodb should resolve")
+                .bind_addr
+                .port(),
+            37017
+        );
+        assert_eq!(
+            explicit
+                .dynamodb
+                .expect("dynamodb should resolve")
+                .bind_addr
+                .port(),
+            38000
+        );
+        assert_eq!(
+            explicit.s3.expect("s3 should resolve").bind_addr.port(),
+            39000
+        );
+    }
+
+    #[test]
+    fn start_adapter_resolution_does_not_consult_kernel_availability() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let resolved = resolve_adapter_enablement_with_env(&base_command(), temp.path(), |_| None)
+            .expect("pure desired-state resolution should succeed");
+
         assert!(resolved.mongodb.is_some());
         assert!(resolved.dynamodb.is_some());
         assert!(resolved.s3.is_some());

@@ -73,9 +73,7 @@ pub use mvcc::{
     HistoricalQueryShape, HistoricalReadSnapshot, HistoricalReadSupport,
     HistoricalVersionVisibility, HistoryWindow, PolicySnapshotId, ReadTimestamp, RetentionFloor,
 };
-pub use net::{
-    Cidr, CidrError, NetworkId, NetworkSegment, is_valid_dns_hostname, refuse_non_loopback_bind,
-};
+pub use net::{Cidr, CidrError, is_valid_dns_hostname, refuse_non_loopback_bind};
 pub use path_lexical::{
     LexicalPathError, has_parent_dir_component, normalize_absolute_lexical,
     reject_relative_traversal,

@@ -13,7 +13,6 @@ pub(crate) const DYNAMODB_CONVENTIONAL_PORT: u16 = 8000;
 pub(super) fn resolve_dynamodb(
     command: &StartCommand,
     env_lookup: &impl Fn(&str) -> Option<String>,
-    port_is_free: &impl Fn(u16) -> bool,
     store: &mut CredentialStore<'_>,
 ) -> Result<Option<DynamoDbConfig>, Error> {
     if !command.dynamodb {
@@ -28,19 +27,9 @@ pub(super) fn resolve_dynamodb(
     }
     ensure_host_opt_in(&command.dynamodb_host, command.allow_network)
         .map_err(|error| Error::InvalidInput(format!("--dynamodb-host: {error}")))?;
-    let port = match command.dynamodb_port {
-        Some(port) => port,
-        None => {
-            if !port_is_free(DYNAMODB_CONVENTIONAL_PORT) {
-                return Err(Error::InvalidInput(format!(
-                    "DynamoDB conventional port {DYNAMODB_CONVENTIONAL_PORT} is busy; \
-                     pass --dynamodb-port to serve on another port or --no-dynamodb \
-                     to disable the listener"
-                )));
-            }
-            DYNAMODB_CONVENTIONAL_PORT
-        }
-    };
+    // Availability is an effect result, not configuration state. The server's
+    // shared lease authority and real bind enforce this exact desired port.
+    let port = command.dynamodb_port.unwrap_or(DYNAMODB_CONVENTIONAL_PORT);
     let raw_bindings: Vec<String> = if command.dynamodb_access_key.is_empty() {
         env_lookup(DYNAMODB_ACCESS_KEYS_ENV)
             .map(|raw| {

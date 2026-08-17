@@ -26,6 +26,18 @@ use crate::spec::SandboxProcessSpec;
 use nimbus_core::TenantId;
 
 const OCI_IMAGE_OS: &str = "linux";
+const MATERIALIZED_ROOTFS_DIRECTORY: &str = "rootfs";
+const MATERIALIZATION_RECEIPT_FILE: &str = "materialization.json";
+const MATERIALIZATION_RECEIPT_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MaterializationReceipt {
+    version: u32,
+    image_reference: String,
+    config_sha256: String,
+    layer_sha256: Vec<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MaterializedImageRootfs {
@@ -105,8 +117,18 @@ impl OciImageMaterializer {
         self.ensure_storage_roots()?;
         let cached_image =
             pull_image_artifacts_to_cache(self.blob_cache_dir.clone(), image_reference.to_owned())?;
+        let receipt = MaterializationReceipt {
+            version: MATERIALIZATION_RECEIPT_VERSION,
+            image_reference: image_reference.to_owned(),
+            config_sha256: compute_sha256(&cached_image.config_path)?,
+            layer_sha256: cached_image
+                .layers
+                .iter()
+                .map(|layer| compute_sha256(layer))
+                .collect::<Result<Vec<_>>>()?,
+        };
         let artifact =
-            self.materialize_rootfs(sandbox_id, image_reference, &cached_image.layers)?;
+            self.materialize_rootfs(sandbox_id, image_reference, &cached_image.layers, &receipt)?;
 
         let config_bytes =
             fs::read(&cached_image.config_path).map_err(|error| SandboxError::OperationFailed {
@@ -129,40 +151,13 @@ impl OciImageMaterializer {
         image_reference: &str,
     ) -> Result<MaterializedImageRootfs> {
         self.ensure_storage_roots()?;
-        let final_rootfs = self.final_rootfs_path(sandbox_id);
-        let temp_rootfs = self.temp_rootfs_path(sandbox_id);
-        if temp_rootfs.exists() {
-            fs::remove_dir_all(&temp_rootfs).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to remove stale temporary rootfs {}: {error}",
-                    temp_rootfs.display()
-                ),
-            })?;
-        }
-        if final_rootfs.exists() {
-            fs::remove_dir_all(&final_rootfs).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to replace stale materialized rootfs {}: {error}",
-                    final_rootfs.display()
-                ),
-            })?;
-        }
-        fs::create_dir_all(&temp_rootfs).map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to create temporary rootfs {}: {error}",
-                temp_rootfs.display()
-            ),
-        })?;
-        fs::rename(&temp_rootfs, &final_rootfs).map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to persist materialized rootfs {}: {error}",
-                final_rootfs.display()
-            ),
-        })?;
-        Ok(MaterializedImageRootfs {
+        let receipt = MaterializationReceipt {
+            version: MATERIALIZATION_RECEIPT_VERSION,
             image_reference: image_reference.to_owned(),
-            rootfs_path: final_rootfs,
-        })
+            config_sha256: format!("{:x}", Sha256::digest([])),
+            layer_sha256: Vec::new(),
+        };
+        self.materialize_rootfs(sandbox_id, image_reference, &[], &receipt)
     }
 
     fn ensure_storage_roots(&self) -> Result<()> {
@@ -185,11 +180,57 @@ impl OciImageMaterializer {
         Ok(())
     }
 
-    fn final_rootfs_path(&self, sandbox_id: &SandboxId) -> PathBuf {
+    pub(crate) fn final_artifact_path(&self, sandbox_id: &SandboxId) -> PathBuf {
         self.rootfs_root_dir.join(sandbox_id.as_str())
     }
 
-    fn temp_rootfs_path(&self, sandbox_id: &SandboxId) -> PathBuf {
+    /// Remove the exact atomically published artifact owned by one manifest.
+    ///
+    /// `MaterializedImageRootfs::rootfs_path` names the inner runtime rootfs;
+    /// the sibling provenance receipt is part of the same publication and must
+    /// be retired with it. Re-derive the artifact directory from the owner
+    /// instead of trusting a serialized parent path.
+    pub(crate) fn remove_owned_artifact(
+        &self,
+        sandbox_id: &SandboxId,
+        artifact: &MaterializedImageRootfs,
+    ) -> Result<()> {
+        let expected_artifact = self.final_artifact_path(sandbox_id);
+        let expected_rootfs = expected_artifact.join(MATERIALIZED_ROOTFS_DIRECTORY);
+        if artifact.rootfs_path != expected_rootfs {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "refusing to remove materialized rootfs {} because this launch owns only {}",
+                    artifact.rootfs_path.display(),
+                    expected_rootfs.display()
+                ),
+            });
+        }
+        match fs::symlink_metadata(&expected_artifact) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to inspect materialized rootfs artifact {}: {error}",
+                    expected_artifact.display()
+                ),
+            }),
+            Ok(metadata) if metadata.file_type().is_dir() => fs::remove_dir_all(&expected_artifact)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to remove materialized rootfs artifact {}: {error}",
+                        expected_artifact.display()
+                    ),
+                }),
+            Ok(_) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "refusing to remove materialized rootfs artifact {} because its filesystem identity is no longer an owned directory",
+                    expected_artifact.display()
+                ),
+            }),
+        }
+    }
+
+    fn temp_artifact_path(&self, sandbox_id: &SandboxId) -> PathBuf {
         self.rootfs_root_dir.join(format!(
             "{}.extracting-{}",
             sandbox_id.as_str(),
@@ -202,22 +243,33 @@ impl OciImageMaterializer {
         sandbox_id: &SandboxId,
         image_reference: &str,
         layers: &[PathBuf],
+        receipt: &MaterializationReceipt,
     ) -> Result<MaterializedImageRootfs> {
-        let final_rootfs = self.final_rootfs_path(sandbox_id);
-        let temp_rootfs = self.temp_rootfs_path(sandbox_id);
-        if temp_rootfs.exists() {
-            fs::remove_dir_all(&temp_rootfs).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to remove stale temporary rootfs {}: {error}",
-                    temp_rootfs.display()
-                ),
-            })?;
+        let final_artifact = self.final_artifact_path(sandbox_id);
+        let final_rootfs = final_artifact.join(MATERIALIZED_ROOTFS_DIRECTORY);
+        if final_artifact.exists() {
+            let existing = read_materialization_receipt(&final_artifact)?;
+            if &existing != receipt || !final_rootfs.is_dir() {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "materialized rootfs artifact {} exists without the exact requested provenance; refusing to delete or replace ambiguous provider state",
+                        final_artifact.display()
+                    ),
+                });
+            }
+            return Ok(MaterializedImageRootfs {
+                image_reference: image_reference.to_owned(),
+                rootfs_path: final_rootfs,
+            });
         }
-        if final_rootfs.exists() {
-            fs::remove_dir_all(&final_rootfs).map_err(|error| SandboxError::OperationFailed {
+
+        let temp_artifact = self.temp_artifact_path(sandbox_id);
+        let temp_rootfs = temp_artifact.join(MATERIALIZED_ROOTFS_DIRECTORY);
+        if temp_artifact.exists() {
+            fs::remove_dir_all(&temp_artifact).map_err(|error| SandboxError::OperationFailed {
                 message: format!(
-                    "failed to replace stale materialized rootfs {}: {error}",
-                    final_rootfs.display()
+                    "failed to remove stale temporary rootfs artifact {}: {error}",
+                    temp_artifact.display()
                 ),
             })?;
         }
@@ -232,19 +284,20 @@ impl OciImageMaterializer {
             for layer in layers {
                 apply_layer_archive(layer, &temp_rootfs)?;
             }
-            fs::rename(&temp_rootfs, &final_rootfs).map_err(|error| {
+            write_materialization_receipt(&temp_artifact, receipt)?;
+            fs::rename(&temp_artifact, &final_artifact).map_err(|error| {
                 SandboxError::OperationFailed {
                     message: format!(
-                        "failed to persist materialized rootfs {}: {error}",
-                        final_rootfs.display()
+                        "failed to persist materialized rootfs artifact {}: {error}",
+                        final_artifact.display()
                     ),
                 }
             })?;
             Ok(())
         })();
 
-        if result.is_err() && temp_rootfs.exists() {
-            let _ = fs::remove_dir_all(&temp_rootfs);
+        if result.is_err() && temp_artifact.exists() {
+            let _ = fs::remove_dir_all(&temp_artifact);
         }
         result?;
 
@@ -253,6 +306,52 @@ impl OciImageMaterializer {
             rootfs_path: final_rootfs,
         })
     }
+}
+
+fn read_materialization_receipt(artifact_dir: &Path) -> Result<MaterializationReceipt> {
+    let path = artifact_dir.join(MATERIALIZATION_RECEIPT_FILE);
+    let bytes = fs::read(&path).map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "materialized rootfs artifact {} lacks a readable exact provenance receipt: {error}",
+            artifact_dir.display()
+        ),
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "materialized rootfs provenance receipt {} is invalid: {error}",
+            path.display()
+        ),
+    })
+}
+
+fn write_materialization_receipt(
+    artifact_dir: &Path,
+    receipt: &MaterializationReceipt,
+) -> Result<()> {
+    let path = artifact_dir.join(MATERIALIZATION_RECEIPT_FILE);
+    let bytes =
+        serde_json::to_vec_pretty(receipt).map_err(|error| SandboxError::OperationFailed {
+            message: format!("failed to serialize materialized rootfs provenance: {error}"),
+        })?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to create materialized rootfs provenance receipt {}: {error}",
+                path.display()
+            ),
+        })?;
+    use std::io::Write as _;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to persist materialized rootfs provenance receipt {}: {error}",
+                path.display()
+            ),
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -862,7 +961,10 @@ mod tests {
     use sha2::{Digest, Sha256};
     use tempfile::TempDir;
 
-    use super::{OciImageMaterializer, apply_layer_archive, current_oci_architectures};
+    use super::{
+        MATERIALIZATION_RECEIPT_FILE, MATERIALIZATION_RECEIPT_VERSION, MaterializationReceipt,
+        OciImageMaterializer, apply_layer_archive, current_oci_architectures,
+    };
     use crate::backends::oci::buildah::OciExposedPortProtocol;
     use crate::instance::SandboxId;
     use crate::spec::SandboxProcessSpec;
@@ -899,6 +1001,98 @@ mod tests {
         assert!(
             prepared.artifact.rootfs_path.join("usr/bin/demo").is_file(),
             "expected extracted image payload in the materialized rootfs"
+        );
+        fs::write(
+            prepared.artifact.rootfs_path.join("replay-sentinel"),
+            b"owned",
+        )
+        .expect("replay sentinel should write");
+        let replay = materializer
+            .prepare_image_launch(
+                &SandboxId::new("db-01"),
+                &registry,
+                &SandboxProcessSpec::new(Vec::<String>::new()),
+            )
+            .expect("exact materialization replay should adopt its receipt");
+        assert_eq!(replay.artifact, prepared.artifact);
+        assert_eq!(
+            fs::read(replay.artifact.rootfs_path.join("replay-sentinel"))
+                .expect("exact replay must preserve the existing rootfs"),
+            b"owned"
+        );
+        assert!(
+            replay
+                .artifact
+                .rootfs_path
+                .parent()
+                .expect("rootfs should have an artifact envelope")
+                .join(MATERIALIZATION_RECEIPT_FILE)
+                .is_file(),
+            "the atomic artifact envelope must carry exact provenance"
+        );
+    }
+
+    #[test]
+    fn crossed_or_missing_provenance_never_replaces_an_existing_rootfs() {
+        let temp_dir = TempDir::new().expect("tempdir should build");
+        let materializer = OciImageMaterializer::under_state_root(temp_dir.path());
+        materializer
+            .ensure_storage_roots()
+            .expect("materializer roots should exist");
+        let layer = write_layer_file(&temp_dir, "exact-layer.tar.gz", build_layer_archive());
+        let exact = MaterializationReceipt {
+            version: MATERIALIZATION_RECEIPT_VERSION,
+            image_reference: "registry.example/exact:1".to_owned(),
+            config_sha256: "config-a".to_owned(),
+            layer_sha256: vec!["layer-a".to_owned()],
+        };
+        let id = SandboxId::new("provenance-fence");
+        let artifact = materializer
+            .materialize_rootfs(
+                &id,
+                &exact.image_reference,
+                std::slice::from_ref(&layer),
+                &exact,
+            )
+            .expect("exact artifact should materialize");
+        let sentinel = artifact.rootfs_path.join("provider-owned-sentinel");
+        fs::write(&sentinel, b"preserve").expect("sentinel should write");
+
+        let mut crossed = exact.clone();
+        crossed.image_reference = "registry.example/crossed:2".to_owned();
+        let error = materializer
+            .materialize_rootfs(
+                &id,
+                &crossed.image_reference,
+                std::slice::from_ref(&layer),
+                &crossed,
+            )
+            .expect_err("crossed provenance must fail closed");
+        assert!(error.to_string().contains("refusing to delete or replace"));
+        assert_eq!(
+            fs::read(&sentinel).expect("sentinel must survive"),
+            b"preserve"
+        );
+
+        fs::remove_file(
+            artifact
+                .rootfs_path
+                .parent()
+                .expect("rootfs should have an artifact envelope")
+                .join(MATERIALIZATION_RECEIPT_FILE),
+        )
+        .expect("receipt removal should simulate an ambiguous crash cut");
+        let error = materializer
+            .materialize_rootfs(&id, &exact.image_reference, &[layer], &exact)
+            .expect_err("missing provenance must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("lacks a readable exact provenance")
+        );
+        assert_eq!(
+            fs::read(&sentinel).expect("sentinel must survive"),
+            b"preserve"
         );
     }
 

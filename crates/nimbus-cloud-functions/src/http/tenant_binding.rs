@@ -1,7 +1,5 @@
 use nimbus_core::{Error, Result, TenantId};
 
-const RESERVED_TENANT_PREFIX: &str = "_";
-
 /// Server-trusted tenant authority for an active Cloud Functions HTTP deployment.
 ///
 /// HTTP request paths select a function target, never a tenant. The host creates
@@ -17,7 +15,7 @@ pub struct CloudFunctionsHttpTenantBinding {
 impl CloudFunctionsHttpTenantBinding {
     /// Bind an active Cloud Functions HTTP deployment to one application tenant.
     pub fn new(tenant_id: TenantId) -> Result<Self> {
-        if tenant_id.as_str().starts_with(RESERVED_TENANT_PREFIX) {
+        if tenant_id.is_nimbus_reserved() {
             return Err(Error::InvalidInput(format!(
                 "cloud functions HTTP tenant binding cannot target reserved Nimbus tenant `{tenant_id}`"
             )));
@@ -47,11 +45,13 @@ mod tests {
 
     #[test]
     fn binding_rejects_reserved_tenant() {
-        let error = CloudFunctionsHttpTenantBinding::new(
-            TenantId::new("_nimbus").expect("reserved tenant id should parse"),
-        )
-        .expect_err("reserved tenant must be refused");
+        for tenant in ["_nimbus", "_reserved"] {
+            let error = CloudFunctionsHttpTenantBinding::new(
+                TenantId::new(tenant).expect("reserved tenant id should parse"),
+            )
+            .expect_err("reserved tenant must be refused");
 
-        assert!(error.to_string().contains("reserved Nimbus tenant"));
+            assert!(error.to_string().contains("reserved Nimbus tenant"));
+        }
     }
 }

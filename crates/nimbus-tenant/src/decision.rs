@@ -1,7 +1,7 @@
 use nimbus_core::{Error, Result, TenantId};
 use nimbus_runtime::RuntimeBundle;
 use nimbus_sandbox::{SandboxBackendKind, SandboxSpec};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
@@ -12,7 +12,8 @@ use super::{
     WorkloadAttributes, WorkloadIdentity, WorkloadLocation,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct TenantIsolationDecisionId(String);
 
 impl TenantIsolationDecisionId {
@@ -25,6 +26,35 @@ impl TenantIsolationDecisionId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for TenantIsolationDecisionId {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        let Some(digest) = value.strip_prefix("tid_") else {
+            return Err(Error::InvalidInput(
+                "tenant isolation decision id must use the `tid_<sha256>` form".to_string(),
+            ));
+        };
+        if digest.len() != 64
+            || digest
+                .bytes()
+                .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+        {
+            return Err(Error::InvalidInput(
+                "tenant isolation decision id must contain 64 lowercase hexadecimal digest characters"
+                    .to_string(),
+            ));
+        }
+        Ok(Self(value))
+    }
+}
+
+impl From<TenantIsolationDecisionId> for String {
+    fn from(value: TenantIsolationDecisionId) -> Self {
+        value.0
     }
 }
 
@@ -73,6 +103,7 @@ impl TenantIsolationDecision {
         input: TenantIsolationPolicyInput,
     ) -> Result<Self> {
         context.admit_if_principal_claim_absent_or_matching("tenant isolation decision")?;
+        input.network.validate_for_admission(&input.services)?;
         let authority = TenantIsolationAuthorityDecision::from_context(context)?;
         let fingerprint = TenantIsolationDecisionFingerprint {
             tenant_id: context.tenant_id.as_str(),

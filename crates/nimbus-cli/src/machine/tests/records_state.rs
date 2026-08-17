@@ -1,6 +1,91 @@
 use super::*;
 
 #[test]
+fn standalone_machine_stop_fails_closed_without_engine_drain_authority() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::test_sibling_roots(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+    let network_root = temp_dir.path().join("network");
+    let network = HostMachineNetworkAuthority::from_port_leases_for_test(
+        nimbus_network::LocalPortLeaseAuthority::open(&network_root)
+            .expect("isolated test port authority should open"),
+    )
+    .expect("isolated host network authority should open");
+    let before = fs::read_dir(temp_dir.path())
+        .expect("test root should inspect")
+        .map(|entry| entry.expect("directory entry should inspect").file_name())
+        .collect::<Vec<_>>();
+
+    let error = run_parent_machine_command(
+        MachineSubcommand::Stop(MachineStopCommand { name: None }),
+        &layout,
+        &network,
+    )
+    .expect_err("authority-less standalone stop must fail before machine state access");
+
+    assert!(
+        matches!(
+            error,
+            Error::RejectedBeforeExecution { ref message }
+                if message == "physical-machine stop requires canonical Engine workload authority"
+        ),
+        "standalone stop must return the exact typed authority error: {error}"
+    );
+    let after = fs::read_dir(temp_dir.path())
+        .expect("test root should inspect")
+        .map(|entry| entry.expect("directory entry should inspect").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(after, before, "standalone rejection must make zero effects");
+}
+
+#[test]
+fn production_machine_stop_fallback_never_invents_engine_persistence() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let layout = MachineRootLayout::test_sibling_roots(
+        temp_dir.path().join("config"),
+        temp_dir.path().join("state"),
+        temp_dir.path().join("runtime"),
+    );
+    let before = fs::read_dir(temp_dir.path())
+        .expect("test root should inspect")
+        .map(|entry| entry.expect("directory entry should inspect").file_name())
+        .collect::<Vec<_>>();
+
+    let error = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime should build")
+        .block_on(run_machine_command_with_layout(
+            MachineCommand {
+                command: MachineSubcommand::Stop(MachineStopCommand { name: None }),
+            },
+            &layout,
+            None,
+        ))
+        .expect_err("a direct fallback without the canonical server Engine must fail closed");
+
+    assert!(
+        matches!(
+            error,
+            Error::RejectedBeforeExecution { ref message }
+                if message == "physical-machine stop requires canonical Engine workload authority"
+        ),
+        "standalone fallback must return the exact typed authority error: {error}"
+    );
+    let after = fs::read_dir(temp_dir.path())
+        .expect("test root should inspect")
+        .map(|entry| entry.expect("directory entry should inspect").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        after, before,
+        "authority rejection must precede default Engine, provider, and network composition"
+    );
+}
+
+#[test]
 #[serial_test::serial]
 fn hidden_machine_api_subcommand_falls_back_without_home() {
     let original_home = std::env::var_os("HOME");
@@ -9,8 +94,7 @@ fn hidden_machine_api_subcommand_falls_back_without_home() {
 
     let roots = resolve_roots_for_command(&MachineCommand {
         command: MachineSubcommand::Api(MachineApiCommand {
-            socket_path: Some(PathBuf::from("/tmp/nimbus.sock")),
-            socket_activation: false,
+            socket_path: PathBuf::from("/tmp/nimbus.sock"),
             control_data_dir: Some(PathBuf::from("/tmp/nimbus-control")),
             guest_node_id: "machine-os-guest-node".to_owned(),
         }),
@@ -210,68 +294,6 @@ fn write_json_file_atomically_replaces_existing_state_record() {
 }
 
 #[test]
-fn machine_remove_releases_reserved_machine_port() {
-    let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::test_sibling_roots(
-        temp_dir.path().join("config"),
-        temp_dir.path().join("state"),
-        temp_dir.path().join("runtime"),
-    );
-    let paths = layout.paths(DEFAULT_MACHINE_NAME);
-    run_machine_command_for_test(
-        MachineCommand {
-            command: MachineSubcommand::Init(MachineInitCommand {
-                cpus: DEFAULT_MACHINE_CPUS,
-                memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
-                disk_gib: DEFAULT_MACHINE_DISK_GIB,
-                image: default_machine_image().to_owned(),
-                ssh_identity: None,
-                ignition_file: None,
-                bootc_native: false,
-                efi_store: None,
-                volumes: Vec::new(),
-                now: false,
-                name: None,
-            }),
-        },
-        &layout,
-    )
-    .expect("machine init should succeed");
-    fs::write(
-        layout.port_allocation_state_path(),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "machine_ports": {
-                DEFAULT_MACHINE_NAME: 20022
-            }
-        }))
-        .expect("port allocation state should serialize"),
-    )
-    .expect("port allocation state should write");
-
-    run_machine_command_for_test(
-        MachineCommand {
-            command: MachineSubcommand::Rm(MachineRmCommand { name: None }),
-        },
-        &layout,
-    )
-    .expect("machine rm should succeed");
-
-    let allocation_state = fs::read(layout.port_allocation_state_path())
-        .expect("port allocation state should still read after release");
-    let json: serde_json::Value =
-        serde_json::from_slice(&allocation_state).expect("port allocation state should parse");
-    assert_eq!(
-        json["machine_ports"]
-            .as_object()
-            .expect("machine ports should be an object")
-            .len(),
-        0
-    );
-    assert!(!paths.config_dir.exists());
-    assert!(!paths.state_dir.exists());
-}
-
-#[test]
 fn machine_remove_only_deletes_requested_machine() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let layout = MachineRootLayout::test_sibling_roots(
@@ -446,6 +468,7 @@ fn machine_set_rejects_running_machine() {
                 disk_gib: DEFAULT_MACHINE_DISK_GIB,
             },
             volumes: Vec::new(),
+            network_authority: test_network_authority_record(temp_dir.path(), "team-a"),
             roots: layout.clone(),
         },
     )

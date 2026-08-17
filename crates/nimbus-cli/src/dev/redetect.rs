@@ -682,6 +682,7 @@ mod tests {
             debug_node_apis: false,
             tail_logs: DevTailLogsMode::PauseOnSync,
             data_dir: None,
+            network_state_dir: None,
             no_open: true,
         };
         let plan = resolve_dev_plan(command, temp.path()).expect("dev plan should resolve");

@@ -5,10 +5,7 @@ async fn session_routes_open_service_sessions_with_target_snapshot_and_audit() {
     let (local_server_security, token) = local_server_security(temp.path());
     let audit_log_path = local_server_security.paths().audit_log_path.clone();
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let manager = service_manager(backend.clone());
     let tenant_id = TenantId::new("tenanta").expect("tenant id should parse");
     manager
@@ -20,8 +17,7 @@ async fn session_routes_open_service_sessions_with_target_snapshot_and_audit() {
         )
         .expect("browser service definition should create");
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(manager)
+        managed_router_config(engine.clone(), manager, backend.clone())
             .with_local_server_security(local_server_security)
             .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
             .without_deploy_admin_token()
@@ -363,10 +359,7 @@ async fn session_routes_open_service_sessions_with_target_snapshot_and_audit() {
 async fn session_routes_reject_service_sessions_without_exact_grants_and_unsupported_channels() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let manager = service_manager(backend.clone());
     let tenant_id = TenantId::new("tenanta").expect("tenant id should parse");
     manager
@@ -378,8 +371,7 @@ async fn session_routes_reject_service_sessions_without_exact_grants_and_unsuppo
         )
         .expect("browser service definition should create");
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(manager)
+        managed_router_config(engine.clone(), manager, backend.clone())
             .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
             .without_deploy_admin_token()
             .build(),
@@ -468,32 +460,31 @@ async fn session_routes_reject_service_sessions_without_exact_grants_and_unsuppo
 async fn session_routes_open_sandbox_sessions_by_id_and_expire_fail_closed() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let manager = service_manager(backend.clone());
-    let tenant_id = TenantId::new("tenanta").expect("tenant id should parse");
-    let sandbox = manager
-        .create_sandbox_resource_for_context_async(
-            &crate::tenant::TenantIsolationContext::system(
-                tenant_id.clone(),
-                "sandbox.resource.create",
-            ),
-            "worker",
-            standalone_sandbox_spec(&tenant_id, "task"),
-            BTreeMap::new(),
-        )
-        .await
-        .expect("sandbox resource should create");
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(manager)
+        managed_router_config(engine.clone(), manager, backend.clone())
             .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
             .without_deploy_admin_token()
             .build(),
     )
     .await;
+    let create = server
+        .client()
+        .post(server.http_url("/api/tenants/tenanta/sandboxes"))
+        .bearer_auth("tenant-a-sandbox")
+        .json(&sandbox_create_body("tenanta", "task"))
+        .send()
+        .await
+        .expect("sandbox resource create should send");
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let sandbox_id = create
+        .json::<Value>()
+        .await
+        .expect("sandbox resource create should parse")["metadata"]["id"]
+        .as_str()
+        .expect("sandbox id should be a string")
+        .to_owned();
 
     let by_name = server
         .client()
@@ -515,7 +506,7 @@ async fn session_routes_open_sandbox_sessions_by_id_and_expire_fail_closed() {
         .bearer_auth("tenant-a-sandbox-session")
         .json(&json!({
             "tenantId": "tenanta",
-            "target": { "sandbox": { "id": sandbox.id } },
+            "target": { "sandbox": { "id": sandbox_id } },
             "channels": ["stdio", "files"],
             "requestedTtlMs": 100,
         }))
@@ -530,7 +521,7 @@ async fn session_routes_open_sandbox_sessions_by_id_and_expire_fail_closed() {
         .to_owned();
     assert_eq!(
         open_body["spec"]["target"]["sandbox"]["id"],
-        json!(sandbox.id)
+        json!(sandbox_id)
     );
     assert_eq!(open_body["status"]["lifecycleState"], json!("open"));
 
@@ -588,10 +579,7 @@ async fn session_routes_open_sandbox_sessions_by_id_and_expire_fail_closed() {
 async fn service_definition_delete_refuses_live_sessions_unless_force_closes_them() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let manager = service_manager(backend.clone());
     let tenant_id = TenantId::new("tenanta").expect("tenant id should parse");
     manager
@@ -603,8 +591,7 @@ async fn service_definition_delete_refuses_live_sessions_unless_force_closes_the
         )
         .expect("browser service definition should create");
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(manager)
+        managed_router_config(engine.clone(), manager, backend.clone())
             .with_application_auth_verifier(Arc::new(StaticServiceRouteAuthVerifier))
             .without_deploy_admin_token()
             .build(),

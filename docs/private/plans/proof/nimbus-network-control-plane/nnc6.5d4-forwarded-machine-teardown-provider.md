@@ -1,0 +1,788 @@
+# NNC6.5d4 Forwarded-Machine Teardown Provider
+
+Status: `complete. K1-K35 green`
+
+Owner: `docs/private/plans/nimbus-network-control-plane-plan.md`
+
+## Scope
+
+NNC6.5d4 adds exact forwarded-machine teardown provider adapters and a strict
+private Machine API phase envelope. It proves real substitution for the five
+compute-owned teardown capabilities without changing a product caller. The
+parent host withdraws its publication before it asks the guest to drain or
+stop. The guest executes or inspects one exact phase in its own durable realm.
+The parent releases its complete port batch only after exact guest release and
+independent provider-absence evidence.
+
+This item does not change Compose down, native service or sandbox stop,
+physical-machine stop, tenant retirement, or definition deletion. It does not
+delete the coarse Machine API stop route. It does not add a public server
+route, a CLI-local saga store, a second port authority, or a second guest
+provider-command journal. It does not change tenant policy, service naming,
+proxy policy or forwarding ownership, cluster transport, or the dependency or
+effect boundary of `nimbus-network`.
+
+The read-only audit ran at `c1c7f1397` from a clean owner worktree. Three
+bounded audit packets covered the parent authority, guest and wire protocol,
+and compute substitution and recovery contract. Product source stayed
+unchanged. The audit corrects the stale path in the parent audit: the current
+backend is `crates/nimbus-cli/src/machine/backend.rs`, not a nonexistent
+`crates/nimbus-machine/src/machine/backend.rs`.
+
+## Written Acceptance Contract
+
+| ID | Verifiable success criterion |
+| --- | --- |
+| K1 | The read-only source audit names the current parent backend, source plan, exact provider identities, confirmed publication journal, port authority, Machine API vocabulary, client, private route, guest facade, Systemd lifecycle, Container runtime, provider journal, compute command, portable receipt, and five-capability registry authorities. |
+| K2 | `nimbus-compute` remains the sole saga coordinator. The parent and guest are effect sinks. Neither realm admits desired state, chooses phase order, advances a workload record, retries a later phase, or opens the other realm's durable state. No CLI-local saga store is added. |
+| K3 | `ConfirmedWorkloadTeardownCommand` retains the exact ordered prefix of already-committed `WorkloadTeardownReceipt` values from its durable context. Command result construction and callback authentication bind the same prefix. A stale or substituted prefix cannot publish a result. |
+| K4 | One portable receipt-prefix validator proves that every retained receipt is valid, ordered, older than the current claim, and from the same stable teardown lifecycle. It preserves valid gaps from resource-free phases and compute separately proves exact equality with durable context. The forwarded adapter must enforce the stronger full chain: no receipt before `WithdrawPublication`; `PublicationAbsent` before drain; plus `ExecutionDrained` before stop; plus `ExecutionStopped` before detach; plus `NetworkDetached` before release. |
+| K5 | The admitted forwarded attachment, execution, and ingress provider IDs are pairwise distinct, deterministic, bound into source evidence, and independent of every IP address, port, socket path, process ID, and provider handle. The parent adapter rejects any role or provider substitution without fallback. |
+| K6 | One real `ForwardedMachineTeardownAdapter` implements `IngressWithdrawalCapability`, `WorkloadExecutionDrainCapability`, `WorkloadExecutionStopCapability`, `NetworkDetachmentCapability`, and `NetworkReleaseCapability`. It registers only the exact admitted provider IDs and shares the already-composed source, client, parent publication, port, and live-lifetime authorities. |
+| K7 | The adapter uses one parent `ProviderCommandAttemptJournal` namespace for all five independent operation streams. Final teardown withdrawal has a teardown-family operation distinct from restart withdrawal. restart claims keep their source-attempt and restart-ordinal rules unchanged. Each step has its own exact claim, epoch, durable result, and compute result CAS. The confirmed publication journal records retained publication progress, not a second command result or saga. |
+| K8 | Parent command validation authenticates the complete tenant-qualified key, saga, command, issuing and confirmed revisions and transitions, generation, desired/source/plan digests, capability selection, execution locator and attempt, teardown attempt and epoch, step, mode, subjects, provider target, source plan, forwarder instance and generation, canonical plan, and complete publication member batch before journal mutation, Machine API bytes, port mutation, or provider effect. |
+| K9 | `WithdrawPublication` is parent-local. It authenticates the full publication batch, persists withdrawal intent before the first forwarding effect, removes or recovers the exact live lifetime guards, and proves every parent forwarding member absent while every port lease remains retained and non-bindable. Failure or ambiguity causes zero guest drain or stop request. |
+| K10 | The confirmed publication authority has an explicit strict progression that distinguishes active, withdrawal-may-exist, withdrawn-and-retained, release-may-exist, and released/retired. Missing, crossed, partial, or corrupt state is ambiguous. A Boolean `retired` value is not enough for the new path. |
+| K11 | `nimbus-machine` owns one strict private `MachineApiWorkloadTeardownCommandEnvelope`, request digest, request, response, mode-specific observation, and wire error in `api/teardown.rs`. The internal path is `/v1/machine-api/workload-teardown/phase`. no public `nimbus-server` route or product protocol is added. |
+| K12 | The request digest is domain-separated and covers the complete forwarder authority, complete parent command, exact prior receipt prefix, and a closed parent-to-guest provider translation. Strict deserialization rejects missing, null, unknown, noncanonical, stale, skipped, or crossed fields. |
+| K13 | The response echoes and validates the request digest, forwarder authority, command and transition IDs, attempt and epoch, parent provider target, step, subjects, mode, and exact observation. A missing, undecodable, oversized, or crossed response is ambiguous because the guest effect can already exist. |
+| K14 | The wire keeps closed mode-specific outcomes. Execute can return only `Succeeded`, `DefiniteFailure`, or `Ambiguous`. Inspect can return only `Satisfied`, `NotCompleted`, `DefiniteFailure`, `InProgress`, or `Ambiguous`. Stable `WorkloadFailureEvidence`, success evidence, and owner evidence survive the round trip. |
+| K15 | The typed parent-to-guest translation selects guest capabilities from the boot-composed provider bundle. It maps the parent execution role to the exact guest execution composition and the parent attachment role to the exact guest Container attachment owner. It rejects `WithdrawPublication` at the guest and never accepts a free-form caller-selected guest provider ID. |
+| K16 | Production guest composition creates Systemd with a deterministic durable teardown-state root and retains the same concrete backend behind `HostLifecycleBackend`, `HostExecutionDrainProvider`, and `HostExecutionStopProvider`. Capability reporting is unavailable when the store or required backend is unavailable. |
+| K17 | Guest drain is one explicit composite operation. One extracted teardown-phase journal seam claims the generic guest operation once, then closes new Systemd activation and every Container creator, activation, restart, and provider-dispatch producer. It reports `ExecutionDrained` only after both barriers are exact and every already-admitted operation is settled or conclusively absent. |
+| K18 | Guest stop is one explicit composite operation under the same one-time generic claim. It durably sequences the exact Systemd and Container execution owners without marking the generic journal terminal after only one subeffect. It reports `ExecutionStopped` only after exact Systemd-unit absence and exact Container runtime terminality for the same execution attempt. The Container owner inspects before any signal. an already-terminal runtime causes no second stop effect. All network authority remains retained. |
+| K19 | Guest detach and release use a forwarded-machine Container adapter that is distinct from the host-managed adapter only at composition authentication. An authenticated Systemd-to-Container terminal-evidence bridge records the exact matching Container stop fence only after runtime inspection proves terminality. it never fabricates evidence or repeats a terminal effect. The adapter reuses the existing Container manifest, `container-runtime` journal, guest machine-publication owner, shared OCI retained-detach/final-release mechanics, IPAM, segment, PEP, listener, and attachment authorities. It does not weaken or fake the host-managed manifest contract. |
+| K20 | The forwarded guest attachment adapter authenticates the exact prior `ExecutionStopped` receipt and exact guest machine-publication absence before detach. Release authenticates the prior `NetworkDetached` receipt and complete compound detached proof. NNC6.5d3 host-managed ordering and no-reuse guarantees remain unchanged. |
+| K21 | The guest uses the existing Container-rooted `ProviderCommandAttemptJournal` for drain, stop, detach, and release. Execute claims durably before effects. Inspect adopts the exact attempt and is read-only. The guest does not create a second generic journal, parent journal, publication authority, workload store, port authority, or result CAS. |
+| K22 | Before a remote Execute, the parent durably records the exact request and request-may-exist boundary. Response loss or either process death forces exact guest Inspect before a retry. A retransmitted Execute cannot overlap an older request that can still commit or publish. |
+| K23 | Parent `ReleaseNetwork` first proves exact guest detach, exact guest release, and independent guest provider and publication absence. It then atomically releases the complete parent port batch and marks the retained publication released. No earlier phase can release or rebind a parent port. |
+| K24 | Complete-batch fencing is strict. A fresh complete parent observation with one absent member and one present sibling authorizes only an adjacent fenced retry and projects `NotCompleted`; evidence that an older exact effect can still commit is `InProgress`. One unknown or crossed sibling is `Ambiguous` or definite crossed failure as applicable. A partial guest result, partial parent observation, partial lifetime recovery, or subset request releases no member and preserves the complete batch byte for byte. |
+| K25 | Zero-listener workloads still execute the five portable phases. Parent ingress withdrawal and final release use explicit empty-batch success, not a synthetic port, skipped guest phase, or inferred absence. |
+| K26 | Invalid, crossed, stale, skipped, ordering, and identity failures preserve the frozen stable codes. Provider-store corruption, journal corruption, response-correlation failure, unknown effect state, missing authority, and incomplete or unauthenticated partial evidence remain `Ambiguous`; they are never rewritten as definite absence. One fresh complete parent forwarding observation can instead authorize the exact adjacent retry required by K24. |
+| K27 | Exact duplicate commands replay with no new effect. Adjacent retry epochs require the prior exact durable absence or retry receipt. Two threads, two subprocesses, and an Inspect contender produce one effect/result winner per phase. Inspect never returns `NotCompleted` while an older exact effect can still start, commit, or publish. |
+| K28 | Fresh parent and guest processes recover every frozen two-realm cut from only their own durable roots. Parent-root bytes are unchanged by guest operations. Guest-root bytes are unchanged by parent-only withdrawal and final port release. Neither process receives an in-memory snapshot as authority. |
+| K29 | Real compute registry substitution executes and inspects all five phases through the forwarded adapter. Every provider result authenticates the complete confirmed command and receipt prefix before compute's existing result CAS. Registry selection has no fallback, no-op, or compatibility shim. |
+| K30 | The new route is available only when the exact guest capabilities, durable Systemd teardown store, Container provider journal, attachment owner, and installed forwarder authority are available. Capability status names precise blockers and never reports aspirational support. |
+| K31 | Concept-owned children keep composition roots thin: `machine/backend/teardown.rs`, `machine/client/teardown.rs`, `machine/api/service_workloads/teardown.rs`, `nimbus-machine/api/teardown.rs`, a confirmed-retirement progression child, and a forwarded Container attachment child. Any changed handwritten file at 1,500-1,999 lines gets an explicit owner reason. any file at 2,000 lines is decomposed or has a recorded strong exception. |
+| K32 | Coarse `stop_service_sandbox`, Compose, physical-machine stop, native callers, definition deletion, tenant retirement, and legacy cleanup remain unchanged for NNC6.5e-NNC6.5g. The new adapter never calls the coarse stop path. No public route, service-name resolver, tenant-policy seam, cluster transport, provider effect, or workspace dependency enters `nimbus-network`. |
+| K33 | Focused wire, parent, guest, node, sandbox, port-batch, compute-substitution, replay, contention, crash, stale/crossed, sibling-batch, zero-listener, and effect-order tests pass. Full affected crates, strict Clippy, warning-denied rustdoc, format, dependency/effect scans, modularity census, NNCV035 arithmetic, proof lint, docs, and site gates pass with exact counts. |
+| K34 | The source-derived teardown verifier names the real exact envelope, dispatch, authentication, parent-withdraw-before-guest-stop, and release-after-guest-absence seams. NNCV000-NNCV034 stay green. NNCV035 remains the sole expected red condition because caller cutover and coarse-stop deletion belong to NNC6.5f-NNC6.5g. |
+| K35 | Exactly one candidate-frozen GPT-5.6 Sol/xhigh/fast item review runs only after K1-K34 are green. Only an accepted material executable finding permits one narrow correction review. Internal wrapper chunking does not create another review unit. |
+
+## Current Ownership And Call Graph
+
+The current forwarded retirement path is coarse and ordered incorrectly:
+
+```text
+SandboxBackend::stop
+  -> ForwardedMachineApiSandboxBackend::retire
+     -> publication_journal.retirement_for(sandbox_id)
+     -> MachineApiClient::stop_service_sandbox
+        -> private coarse /service-sandboxes/{sandbox_id}/stop
+        -> GuestNodeWorkloadService::stop
+           -> HostLifecycleBackend::stop
+           -> ContainerSandboxBackend::stop
+              -> guest runtime + machine publication + network cleanup
+     -> retire_parent_publication
+        -> release complete parent port batch
+        -> mark one Boolean retired
+```
+
+The defects are observable:
+
+- guest execution stops before parent publication withdrawal.
+- one sandbox path ID selects the operation instead of a tenant-qualified
+  confirmed command.
+- the request carries only `MachineForwarderAuthority`.
+- one coarse guest call recombines drain, stop, detach, and release.
+- there is no exact teardown request digest, response correlation, parent
+  provider journal, or guest phase sink.
+- parent retirement has only active versus retired state.
+- the caller recovers response loss by issuing the coarse stop again.
+- production Systemd composition has no durable teardown store.
+- the guest erases the exact drain and stop traits behind
+  `Arc<dyn HostLifecycleBackend>`.
+- `ProviderCommandOperation::WithdrawPublication` belongs to the restart
+  family, so a final teardown claim cannot reuse it without violating restart
+  source-attempt and restart-ordinal invariants.
+
+The portable reducer and registry already own the correct order and five small
+capability ports:
+
+```text
+WithdrawPublication -> DrainExecution -> StopExecution
+  -> DetachNetwork -> ReleaseNetwork
+```
+
+The current confirmed command carries the current claim, source, compiled
+network plan, and execution locator. It does not carry
+`WorkloadTeardownDisposition::context().completed()`. This is sufficient for a
+single host-managed backend, where one local manifest proves execution stop
+before detach. It is not sufficient for the forwarded guest, where
+`nimbus-node` owns execution and `nimbus-sandbox` owns attachment state.
+
+## Target Ownership And Call Graph
+
+```text
+nimbus-compute: sole workload teardown saga + receipt sequence + result CAS
+  -> ForwardedMachineTeardownAdapter (parent provider sink)
+     -> WithdrawPublication
+        -> parent provider journal claim
+        -> confirmed parent publication progression
+        -> complete-batch forwarding withdrawal
+        -> retain every parent port lease
+     -> Drain / Stop / Detach / Release
+        -> parent provider journal claim + request-may-exist
+        -> private exact Machine API teardown envelope
+           -> guest facade validates installed authority and translation
+           -> guest container-runtime provider journal
+              -> exact Systemd + Container drain/stop composition
+              -> exact forwarded Container detach/release composition
+           -> durable guest observation -> correlated response
+        -> durable parent observation
+     -> ReleaseNetwork tail only
+        -> prove guest release + provider/publication absence
+        -> atomic complete parent port release
+        -> confirmed parent publication -> Released
+  -> existing compute result CAS
+```
+
+The two durable realms stay independent:
+
+| Authority | Canonical state | Must not own |
+| --- | --- | --- |
+| Compute | Desired workload teardown, ordered receipts, phase claim, result CAS | Provider effects or retry of unconfirmed work |
+| Parent provider journal | Exact forwarded command claim and result for each phase | Publication membership, port leases, guest progress, or saga order |
+| Parent confirmed publication authority | Exact member batch, forwarder fence, retained-withdrawn/released progression | Generic command result or guest execution state |
+| Parent port authority | Host-global port lease, lifetime, complete-batch retained/released state | Workload policy or guest state |
+| Guest provider journal | Exact guest-local claim/result for drain, stop, detach, release | Parent state, compute CAS, or a second saga |
+| Systemd teardown store | Exact guest unit drain/stop progress and receipts | Container runtime or network authority |
+| Container manifest | Exact Container runtime, machine publication, attachment detach/release progress | Systemd unit state or parent port authority |
+
+This separation permits deterministic tests. A process can reopen only its own
+realm, inspect the exact attempt, and prove that it cannot duplicate an effect
+or release another realm's authority.
+
+## Exact Provider And Phase Mapping
+
+The source plan already freezes three distinct parent identities:
+
+| Role | Provider identity source | Exact teardown use |
+| --- | --- | --- |
+| Attachment | `nimbus-machine.forwarded-container-attachment` | Parent attachment capability. translates to the guest Container attachment owner. |
+| Execution | `nimbus-machine.forwarded-container-execution` | Parent drain and stop capabilities. translates to the composed guest Systemd plus Container execution owner. |
+| Ingress | `MachineForwarderAuthority.provider_instance().provider_id()`. currently the gvproxy forwarder registration | Parent-only publication withdrawal. |
+
+The request binds a closed translation chosen by trusted composition. It does
+not make the guest provider ID a caller-controlled string.
+
+| Portable step | Required prior receipt prefix | Parent action | Guest action |
+| --- | --- | --- | --- |
+| `WithdrawPublication` | empty | Withdraw the exact complete parent publication batch and retain ports. | Reject before journal access. |
+| `DrainExecution` | `PublicationAbsent` | Send or inspect the exact remote command. | Close and prove the Systemd and Container admission barriers. |
+| `StopExecution` | `PublicationAbsent`, `ExecutionDrained` | Send or inspect the exact remote command. | Prove exact Systemd-unit absence and Container runtime terminality. |
+| `DetachNetwork` | preceding receipts plus `ExecutionStopped` | Send or inspect the exact remote command. | Prove guest machine publication absence and retained compound network detach. |
+| `ReleaseNetwork` | preceding receipts plus `NetworkDetached` | Send or inspect guest release. after success, prove absence and release the parent batch. | Final-release guest listener, PEP, IPAM, segment, and attachment authority. |
+
+An IP address, port, socket path, PID, systemd unit name, or provider handle can
+appear only as observed or provider-local evidence. It never selects workload
+authority.
+
+## Wire Contract
+
+`crates/nimbus-machine/src/api/teardown.rs` owns portable private transport
+vocabulary only. It has no socket, route, provider effect, workload store, or
+saga coordinator. The restart wire contract is the exemplar because it has a
+domain-separated request digest and strict response correlation.
+
+The command envelope and digest bind:
+
+- command ID, saga key and ID, issuing and confirmed revisions, and issuing
+  and confirmed transition IDs.
+- workload generation, desired digest, required node, admitted source and
+  source digest.
+- complete compiled network plan, plan digest, and capability selection.
+- execution locator and execution attempt.
+- teardown attempt, dispatch epoch, current claim, step, mode, typed subjects,
+  and parent provider target.
+- exact ordered prior receipt prefix.
+- complete forwarder authority and machine provider generation.
+- closed parent-to-guest provider translation.
+
+The response correlates every field that can select an effect or result. It
+uses separate Execute and Inspect outcome enums. Wire validation errors describe
+which fence is invalid. They do not invent a provider `DefiniteFailure` after
+the request might reach the guest.
+
+The internal Unix-socket route authenticates the boot-installed forwarder
+authority before facade lookup. It then passes exactly one validated envelope
+to the effect sink. It does not accept a path-derived sandbox identity and does
+not open the compute store.
+
+## Parent Publication And Port State
+
+The existing confirmed publication journal is exact retained authority, but
+its terminal marker is one `retired` Boolean. The new concept-owned retirement
+child must use a strict progression:
+
+```text
+Active
+  -> WithdrawalMayExist
+  -> WithdrawnRetained
+  -> ReleaseMayExist
+  -> Released
+```
+
+Each transition binds the exact command, forwarder, canonical plan, and member
+batch.
+
+- `WithdrawalMayExist` is durable before a lifetime or forwarding effect can
+  stop.
+- `WithdrawnRetained` requires an exact complete-batch observation.
+- `ReleaseMayExist` requires the exact guest `NetworkReleased` response and an
+  independent guest provider and publication absence check.
+- `Released` requires the atomic complete-batch port release.
+- Exact terminal port inspection recovers a crash after port release and
+  before the final journal write.
+
+The parent provider journal remains the command result authority. The
+confirmed publication progression records only publication and lease effect
+progress. These stores bind one another by exact command and member digest.
+they do not duplicate the same state.
+
+For an empty member batch, the same progression completes without a port
+effect. It cannot skip guest drain, stop, detach, or release.
+
+## Guest Execution And Attachment Composition
+
+The guest workload is Systemd-wrapped Container execution. Exact stop cannot
+declare success after only one owner is terminal. The guest teardown child
+therefore composes two existing narrow owners behind one guest-local state
+machine:
+
+```text
+DrainExecution
+  -> durable composite drain intent
+  -> Systemd exact admission barrier
+  -> Container exact admission barrier
+  -> both drained -> one guest result
+
+StopExecution
+  -> require exact composite drain proof
+  -> durable Systemd stop may-exist -> exact unit absence
+  -> durable Container stop may-exist -> exact runtime terminality
+  -> both terminal -> one guest result
+```
+
+The generic `container-runtime` journal has one claim and one terminal result
+for the portable guest operation. A concept-owned teardown-phase seam passes
+one authenticated execution claim to the composed substeps instead of trying
+to claim the same stream again. Provider-owned substep progress lives with the
+Systemd teardown store and Container manifest. A crash after the first
+subeffect reopens those stores and resumes the second subeffect.
+
+Container
+inspection can record an exact externally-stopped terminal fence after Systemd
+unit absence proves the parent process boundary is dead. If the runtime is
+still live, the state stays in progress or ambiguous until the one authorized
+Container stop path settles it. The composition does not publish a partial
+generic result and does not create another generic journal.
+
+The NNC6.5d3 host-managed attachment adapter correctly rejects machine-forwarded
+composition and requires its local execution state. The guest must not weaken
+that contract. A new forwarded composition child authenticates the prior
+portable receipt prefix and exact guest machine-publication absence. It also
+authenticates the same Container manifest before it calls the shared
+retained-detach/final-release mechanics. It reuses every existing effect and
+authority owner.
+
+Production guest composition must retain one concrete
+`SystemdTransientUnitBackend` behind the lifecycle, drain, and stop trait
+objects. The Linux factory must construct it with a deterministic teardown
+root below the guest control-data directory. Non-Linux and unavailable
+composition stay fail closed and report the exact blocker.
+
+## Frozen Failure Roster
+
+| Case | Required result and proof |
+| --- | --- |
+| Wrong step, subject kind, mode, or guest mapping | `DefiniteFailure(sandbox_teardown_command_invalid)` before path derivation, journal access, Machine API bytes, or effect. |
+| Parent versus guest provider substitution | `DefiniteFailure(machine_teardown_provider_crossed)` and both realms remain byte stable. |
+| Crossed tenant, saga, command, execution attempt, node, source, desired, plan, selection, member batch, or forwarder | Typed crossed or stale failure before effect. no fallback. |
+| Stale workload or machine generation | `DefiniteFailure(machine_teardown_forwarder_stale)` or the frozen sandbox stale code, with successor bytes unchanged. |
+| Stale/skipped dispatch epoch or crossed transition | Frozen stale/epoch-invalid failure. never start or adopt another attempt. |
+| Missing or substituted prior receipt | `DefiniteFailure(machine_teardown_order_invalid)` or `sandbox_teardown_order_invalid`. run no later-phase effect. |
+| Receipt prefix valid in shape but crossed in claim, subject, generation, or provider | Definite crossed failure. preserve every store and lease. |
+| Missing, corrupt, or partial parent publication authority | `Ambiguous`. release no port and send no guest request. |
+| Missing or corrupt guest manifest, node receipt, or journal | `Ambiguous` unless an exact terminal guest journal observation can be replayed. Missing files never prove absence. |
+| Exact duplicate Execute | Exact replay or adoption. no second parent request or guest effect. |
+| Exact Inspect with live older request | `InProgress` or `Ambiguous`, never `NotCompleted`. |
+| Lost or crossed guest response | `Ambiguous`. retain request-may-exist and every parent port. Inspect the exact guest command before retry. |
+| Parent withdrawal has a fresh complete partial, present, or absent observation after request-may-exist | Persist exact retry authority, project `NotCompleted`, and require one adjacent fenced idempotent Execute of the complete batch. Release no port. |
+| Parent withdrawal has an older exact effect that can still commit | `InProgress`. Do not authorize retry and preserve the complete batch. |
+| Parent withdrawal has an unknown, incomplete, or crossed sibling | `Ambiguous` or definite crossed failure as applicable. Preserve the complete batch. |
+| Guest drain incomplete | `InProgress` or `Ambiguous`. send no stop request. |
+| Systemd terminal but Container runtime live, or the inverse | `InProgress` or `Ambiguous`. do not publish `ExecutionStopped`. |
+| Detach before execution terminality or guest publication absence | `DefiniteFailure(sandbox_teardown_order_invalid)` and no network mutation. |
+| Release before compound detached proof | `DefiniteFailure(sandbox_teardown_order_invalid)` and no authority release. |
+| Parent release before exact guest release and independent absence | `DefiniteFailure(machine_teardown_order_invalid)` and all parent ports remain fenced. |
+| Stale callback after successor generation or provider replacement | Reject the callback. It cannot record a result, release a port, or mutate the successor. |
+| Address, port, socket path, PID, unit name, or provider handle offered as workload identity | `DefiniteFailure(sandbox_teardown_identity_invalid)` before lookup. |
+
+## Two-Realm Crash, Restart, And Concurrency Matrix
+
+Every capability has an independent compute claim, parent provider claim,
+parent progress record, parent observation, and compute result CAS. Each remote
+guest phase also has an exact request, guest claim, guest provider progress,
+guest observation, and correlated response.
+
+The outer matrix is:
+
+1. compute persists the exact phase claim and prior receipt prefix.
+2. the parent validates the complete command.
+3. the parent provider claim is durable.
+4. parent request ID and request-may-exist evidence are durable before send.
+5. the parent dies before send, after send, or after response loss.
+6. the guest validates the complete digest, authority, translation, and
+   receipt prefix before journal access.
+7. the guest claim is durable before any effect.
+8. provider substep progress is durable before each effect.
+9. the guest dies before, during, or after an effect.
+10. a fresh guest process inspects exact durable state before retry.
+11. the guest observation is durable before response construction.
+12. the transport delivers, loses, truncates, or crosses the response.
+13. a fresh parent process adopts the exact request and sends Inspect before
+    any new Execute.
+14. the parent persists the exact correlated observation.
+15. compute dies before or after the result CAS and a fresh process replays it.
+16. only the committed receipt can authorize the next phase.
+
+Parent withdrawal adds cuts after withdrawal intent, each member stop, complete
+batch observation, and retained-state publication. Parent final release adds
+cuts after guest response validation, independent guest-absence observation,
+release intent, atomic batch release, and the final released journal state.
+
+Guest drain adds cuts after each admission barrier and each already-admitted
+operation settlement. Guest stop adds cuts after each Systemd and Container
+may-exist boundary, effect, and terminal observation. Guest detach and release
+reuse all NNC6.5d3 provider, namespace, listener, PEP, IPAM, segment, and
+portable-attachment cuts with the forwarded composition prerequisites.
+
+For every phase, two synchronized Execute contenders, two process contenders,
+and one Inspect contender prove one result/effect winner. A second workload
+with the same local sandbox string in another tenant cannot observe, claim, or
+alter the first workload's attempt.
+
+## Complete-Batch Proof Matrix
+
+| Parent members | Guest evidence | Required classification | Port result |
+| --- | --- | --- | --- |
+| All withdrawn | Exact current phase | Continue. | Retain all until final release. |
+| One present sibling in a fresh complete observation | Exact current phase | `RetryAuthorized`, projected as `NotCompleted`; retry only the adjacent fenced complete batch. | Retain all. |
+| Older exact withdrawal can still commit | Exact current phase | `InProgress`. | Retain all. |
+| One unknown sibling | Exact current phase | `Ambiguous`. | Retain all. |
+| One crossed or missing member | Any | Definite crossed failure or `Ambiguous` for missing authority. | Byte-stable complete batch. |
+| All withdrawn | Partial guest receipt prefix | Definite order/crossed failure. | Retain all. |
+| All withdrawn | Lost guest response | `Ambiguous`. exact Inspect next. | Retain all. |
+| All withdrawn | Exact guest detach only | Continue to guest release, not parent release. | Retain all. |
+| All withdrawn | Exact guest release, absence unknown | `Ambiguous`. | Retain all. |
+| All withdrawn | Exact guest release and exact absence | Final release authorized. | Atomically release all. |
+| Empty canonical batch | Exact phase evidence | Explicit empty success. | No synthetic lease. complete remaining phases. |
+
+## Frozen Path Ownership
+
+Primary product ownership:
+
+- `crates/nimbus-workloads/src/saga/teardown.rs` and focused state/wire tests
+  for the validated ordered receipt-prefix contract.
+- `crates/nimbus-compute/src/workload_saga/teardown_command.rs`, callback
+  authentication, registry composition, and real substitution tests.
+- `crates/nimbus-machine/src/api/teardown.rs` and focused wire tests, with
+  narrow exports from `api.rs`.
+- `crates/nimbus-cli/src/machine/backend/teardown.rs` and concept-owned tests
+  for the parent five-capability adapter. Narrow shared-authority accessors may
+  stay beside `ForwardedMachineProvisionAdapter`. Put teardown behavior only
+  in the child.
+- `crates/nimbus-cli/src/machine/client/teardown.rs`,
+  `machine/api/service_workloads/teardown.rs`, and focused tests.
+- narrow private route, guest facade, capability reporting, and production
+  composition changes in `machine/api/routes.rs`, `machine/api.rs`, and
+  `machine/api/service_workloads.rs`.
+- a concept-owned confirmed-publication retirement progression child and
+  exact complete-batch port-lifetime tests.
+- one forwarded Container attachment teardown composition child. Put focused
+  tests beside this owner. Reuse existing machine-publication, exact
+  execution, attachment, and provider-journal owners.
+- a concept-owned shared confirmed-teardown-to-provider-journal seam and one
+  teardown-family final-withdraw operation. Restart withdrawal semantics and
+  its existing operation remain unchanged.
+- this proof, canonical plan and ledger, routing index, and only the
+  source-derived verifier coordinates required by real new paths.
+
+Forbidden paths and seams:
+
+- Compose down, native service or sandbox callers, definition deletion,
+  tenant retirement, physical-machine stop, and coarse stop deletion.
+- public `nimbus-server` routes or application protocol changes.
+- tenant admission, quota, service name, DNS, certificate, proxy policy, or
+  forwarding ownership.
+- a CLI-local saga store, second guest provider journal, or second parent port
+  authority. The parent cannot access guest files. The guest cannot access
+  parent files.
+- a god teardown provider, optional no-op, compatibility decoder, feature
+  flag, IP-address identity, or speculative abstraction.
+- any socket, Axum, Pingora, Netavark, nft, gvproxy, Iroh, cluster transport,
+  cloud SDK, provider effect, or new workspace dependency in `nimbus-network`.
+
+## Complexity And Pattern Decisions
+
+| File | Audit lines | Disposition |
+| --- | ---: | --- |
+| `crates/nimbus-cli/src/machine/backend/provision.rs` | 1,697 | Existing source-plan and exact provision composition root. Parent teardown is isolated in `backend/teardown.rs`; this root exposes only narrow shared-authority methods and remains below the mandatory split threshold. |
+| `crates/nimbus-cli/src/machine/client.rs` | 1,405 | Near the explicit-reason threshold. Put teardown transport in `client/teardown.rs`. |
+| `crates/nimbus-cli/src/machine/publication_authority/confirmed.rs` | 1,240 | Keep retained publication identity and storage here. put the new strict retirement progression and tests in concept children. |
+| `crates/nimbus-sandbox/src/provider_command.rs` | 1,561 | Existing deep provider-command journal. Reuse it without adding forwarded composition logic. |
+| `crates/nimbus-sandbox/src/backends/container/runtime.rs` | 1,601 | Existing composition root. Register a child. do not inline guest teardown. |
+| `crates/nimbus-sandbox/src/backends/container/runtime/machine_ports.rs` | 1,508 | Existing exact machine-publication adapter. Add only narrow visibility or composition seams. keep new teardown logic in a child. |
+| `crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication.rs` | 1,606 | Existing machine-publication state machine. Do not duplicate it. Add focused tests beside its owner. |
+| `crates/nimbus-node/src/systemd_transient.rs` | 1,369 | Add a narrow durable-root factory or builder. keep teardown behavior in its existing child. |
+| `crates/nimbus-node/src/host_lifecycle.rs` | 1,490 | At the threshold edge. Reuse the exact teardown traits. do not add guest composition logic. |
+| `crates/nimbus-machine/src/api.rs` | 1,033 | Export the child wire module only. |
+| `crates/nimbus-cli/src/machine/api/service_workloads.rs` | 521 | Keep this as facade and composition. Put exact guest state and dispatch in a child. |
+
+Small capability traits, ports-and-adapters, explicit state machines, durable
+command journals, request/response fencing, and inspect-before-retry are the
+canonical patterns. The implementation must not merge those seams into a
+`NetworkProvider` or `MachineTeardownProvider` god interface.
+
+## Fail-Before Baseline
+
+All checks ran at clean `c1c7f1397` before a product edit.
+
+| Check | Exit | Expected-red result |
+| --- | ---: | --- |
+| `test -f crates/nimbus-cli/src/machine/backend/teardown.rs` | 1 | No parent exact teardown adapter exists. |
+| `test -f crates/nimbus-cli/src/machine/api/service_workloads/teardown.rs` | 1 | No guest exact phase sink exists. |
+| `test -f crates/nimbus-machine/src/api/teardown.rs` | 1 | No strict teardown wire vocabulary exists. |
+| `rg -q ForwardedMachineTeardownAdapter crates/nimbus-cli/src crates/nimbus-compute/src` | 1 | No real five-capability substitution exists. |
+| `rg -q MachineApiWorkloadTeardownCommandEnvelope crates/nimbus-machine/src crates/nimbus-cli/src` | 1 | No exact remote command envelope exists. |
+| `rg -q MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH crates/nimbus-machine/src crates/nimbus-cli/src` | 1 | No private teardown phase path exists. |
+| `rg -q MACHINE_API_WORKLOAD_TEARDOWN_PHASE_OPERATION crates/nimbus-machine/src crates/nimbus-cli/src` | 1 | Capability reporting cannot name exact teardown. |
+| `rg -q stop_service_sandbox crates/nimbus-cli/src/machine/backend.rs` | 0 | The coarse product backend still calls the coarse guest stop as expected for later cutover. |
+
+Source inspection supplies the remaining fail-before evidence:
+
+- `ConfirmedWorkloadTeardownCommand` has no prior receipt prefix.
+- parent retirement calls guest stop before parent withdrawal.
+- the coarse request contains only forwarder authority.
+- guest stop recombines Systemd and Container stop plus network cleanup.
+- production Systemd composition has `teardown_store: None`.
+- the host-managed Container attachment adapter rejects forwarded composition.
+- confirmed parent retirement has only a Boolean terminal state.
+- final `WithdrawPublication` is currently classified as a restart-family
+  provider command and cannot accept a teardown-domain claim.
+- the static source contract lacks the exact d4 seams.
+
+Focused implementation tests must encode these red observable boundaries before
+the related behavior changes. A fail-before rejection must preserve durable
+bytes and make zero provider effect.
+
+## Implementation Bands
+
+These bands are dependency ordered inside one canonical item. They are not
+review units. The canonical ledger records no partial band completion.
+
+1. Add the validated portable receipt-prefix contract. Carry it through
+   confirmed command and result authentication. Add deterministic crossed,
+   missing, stale, and out-of-order tests.
+2. Add one teardown-family final-withdraw provider operation and extract the
+   narrow confirmed-teardown journal seam. Prove that restart withdrawal stays
+   unchanged. Prove that all five teardown streams use correct claim rules.
+3. Add strict Machine API teardown wire vocabulary, complete digest, closed
+   outcomes, response correlation, and pure wire tests.
+4. Add durable Systemd production composition and retain the exact lifecycle,
+   drain, and stop trait objects. Add capability and unavailable-mode tests.
+5. Add the guest composite execution drain/stop state machine and exact phase
+   sink. Reuse the Container journal and node/Container progress stores. Add
+   replay, contention, and fresh-process cuts.
+6. Add the forwarded Container attachment composition. Prove receipt-prefix
+   order, guest machine-publication absence, retained detach, final release,
+   and no regression to NNC6.5d3.
+7. Add the private route and client child. Prove strict fail-before request and
+   response correlation, one-shot ambiguity, and an explicit exact Inspect
+   after ambiguous Execute. Band 8 owns durable request-may-exist state and
+   enforced retry order.
+8. Add parent publication progression and `ForwardedMachineTeardownAdapter`.
+   Implement all five real capabilities and complete-batch port fencing.
+9. Add real compute registry substitution, two-realm crash/concurrency tests,
+   sibling and empty-batch matrices, and source-derived verifier cases.
+10. Run every item gate and freeze the complete candidate. Run one full item
+   review. Resolve accepted findings under the frozen cadence, update the
+   ledger, and commit the exact completed item.
+
+## Acceptance Commands
+
+The final evidence ledger records exact counts and declared platform or child
+process ignores.
+
+```sh
+cargo test -p nimbus-workloads teardown -- --test-threads=1
+cargo test -p nimbus-machine teardown_ -- --test-threads=1
+cargo test -p nimbus-node teardown -- --test-threads=1
+cargo test -p nimbus-sandbox provider_command -- --test-threads=1
+cargo test -p nimbus-sandbox container_teardown -- --test-threads=1
+cargo test -p nimbus-sandbox attachment_lifecycle -- --test-threads=1
+cargo test -p nimbus-cli machine_api_workload_teardown -- --test-threads=1
+cargo test -p nimbus-cli guest_workload_teardown -- --test-threads=1
+cargo test -p nimbus-cli forwarded_machine_teardown -- --test-threads=1
+cargo test -p nimbus-network port_lease::lifetime -- --test-threads=1
+cargo test -p nimbus-compute teardown_sandbox -- --test-threads=1
+cargo test -p nimbus-compute forwarded_machine_teardown -- --test-threads=1
+cargo test -p nimbus-workloads
+cargo test -p nimbus-machine
+cargo test -p nimbus-node
+cargo test -p nimbus-sandbox
+cargo test -p nimbus-cli
+cargo test -p nimbus-compute
+cargo clippy -p nimbus-workloads -p nimbus-machine -p nimbus-node -p nimbus-network -p nimbus-sandbox -p nimbus-cli -p nimbus-compute --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc -p nimbus-workloads -p nimbus-machine -p nimbus-node -p nimbus-network -p nimbus-sandbox -p nimbus-cli -p nimbus-compute --no-deps
+cargo fmt --all --check
+git diff --check
+bash scripts/nimbus-network-control-plane/workload-teardown-contract.sh --self-test
+bash scripts/nimbus-network-control-plane/workload-teardown-contract.sh --check
+bash scripts/verify-nimbus-network-control-plane.sh
+bash scripts/check-docs.sh
+bash scripts/verify-nimbus-docs-site.sh
+```
+
+Closeout also runs the network dependency/effect scan and changed-file
+modularity census. It runs source-derived inventories, ledger bijection,
+NNCV035 arithmetic, proof lint, and technical-writing lint. Structured
+autoreview is forbidden until K1-K34 are green and the whole item is candidate
+frozen.
+
+## Static Seam Checklist
+
+- [ ] `nimbus-network` still has only the `nimbus-core` workspace edge.
+- [ ] No socket, HTTP route, provider effect, machine DTO, or workload receipt
+      enters `nimbus-network`.
+- [ ] Compute is the only saga coordinator and result-CAS owner.
+- [ ] Exactly one parent provider journal exists for forwarded teardown.
+- [ ] Exactly one guest provider journal exists for Container guest effects.
+- [ ] Parent publication state and command-result state are not duplicated.
+- [ ] Parent and guest durable roots are independent and inaccessible across
+      the Machine API boundary.
+- [ ] Attachment, execution, and ingress provider IDs are pairwise distinct.
+- [ ] Every request and response binds stable tenant-qualified identity and
+      generation/epoch fences.
+- [ ] No IP address, port, path, PID, unit name, or provider handle selects a
+      workload.
+- [ ] Parent publication is absent before guest drain or stop.
+- [ ] The guest drains execution before stop and stops it before detach.
+- [ ] The guest detaches its attachment before guest and parent release.
+- [ ] Complete parent port authority stays retained through detach.
+- [ ] Partial or unknown sibling state releases no port.
+- [ ] Guest Execute persists claim and may-exist evidence before effects.
+- [ ] Parent ambiguity causes exact guest Inspect before retry.
+- [ ] Inspect cannot write, effect, repair, release, or claim a new Execute.
+- [ ] Coarse stop remains only for later callers and is not used by the new
+      adapter.
+- [ ] NNCV035 remains the only planned red aggregate condition.
+- [ ] The item has one review unit and one exact completion commit.
+
+## Retained Later Owners And Non-Goals
+
+- NNC6.5e owns native service, sandbox, and definition caller cutover.
+- NNC6.5f owns Compose, forwarded composition callers, and physical-machine
+  workload-stop boundaries.
+- NNC6.5g owns failed-provision compensation, tenant retirement, coarse-stop
+  deletion, and final NNCV035 convergence.
+- NNC6.6 owns service-resolution fencing during withdrawal.
+- NNC6.1e2 owns final startup recovery and tenant-retirement convergence.
+- NNC8.3 owns orphan-cleanup finalization and capacity reuse.
+
+Logical service names stay in `nimbus-services`. Tenant admission stays in
+`nimbus-tenant`. Proxy forwarding and policy stay in their current PDP/PEP
+owners. Machine provider capability semantics stay explicit. Cluster
+membership, transport, routing, and super-net fencing remain separate.
+
+## Evidence Ledger
+
+| Evidence | Current result |
+| --- | --- |
+| Source base and owner worktree | `c1c7f1397`. clean before the audit and fail-before capture. |
+| Parent audit | Current guest-first retirement order, exact provider identities, confirmed publication state, complete-batch port authority, and parent recovery gaps recorded. Zero changed paths and zero tests. |
+| Guest and wire audit | Missing envelope/route/client/facade, exact restart exemplar, unavailable Systemd teardown store, erased exact traits, and composite guest execution risks recorded. Zero changed paths and zero tests. |
+| Compute and shared audit | Receipt-prefix transport prerequisite, five-capability registry substitution, two-realm recovery, forwarded attachment composition, and static-verifier requirements recorded. Zero changed paths and zero tests. |
+| Complexity census | Audit line counts and concept-owned dispositions are frozen above. |
+| Fail-before | Seven absent seam checks exit `1`. the retained coarse-stop check exits `0`. product source unchanged. |
+| Audit checkpoint verification | Format and diff pass. Technical-writing lint reports zero diagnostics. NNCV008 passes. NNCV035 self-test is `55/55`; direct remains exact expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. Docs pass `108`; site passes `17/17`. |
+| Band 1 read-only audit | Three bounded packets changed zero paths. They proved that `WorkloadTeardownContext::completed()` remains the sole durable receipt authority, resource-free phases require valid receipt gaps, a standalone prefix needs semantic deserialization, compute must compare exact durable bytes, and provider observations must carry the same prefix before result construction. |
+| Band 1 deterministic fail-before | `cargo test -p nimbus-workloads teardown_receipt_prefix -- --test-threads=1` exited `101` because the portable type and record projection did not exist. `cargo test -p nimbus-compute confirmed_teardown_command_binds_exact_prior_receipt_prefix -- --test-threads=1` exited `101` because command, result, and observation fences did not exist. |
+| Band 1 portable contract | `nimbus-workloads` now owns one strict `WorkloadTeardownReceiptPrefix`. It validates each receipt, bounded strict step and revision order, stable tenant-qualified saga lineage, provider and plan identity, monotonic successor fencing, and current-claim precedence. `WorkloadSagaRecord::teardown_receipt_prefix_for_claim` projects the exact current durable history without adding durable state. |
+| Band 1 compute fence | Confirmed commands, provider observations, and command results carry the same immutable prefix. Command authentication reconstructs and compares the exact durable projection. Provider callbacks and results reject crossed prefixes before reducer application or result CAS. No provider effect, Machine API, caller, or `nimbus-network` path changed. |
+| Band 1 behavior | Focused receipt-prefix tests pass `2/2`; focused compute prefix tests pass `5/5`; the existing crossed-result matrix passes `1/1`. Full `nimbus-workloads` passes `218/218`. Full `nimbus-compute` passes `374/374` with one declared child-only ignore. |
+| Band 1 quality and modularity | Format, diff, strict affected Clippy, and warning-denied affected Rustdoc pass. NNCV008 passes. NNCV035 self-test passes `55/55`; direct remains expected red at `0/7`; the aggregate is `35/36` with only NNCV035 red. Proof lint has zero diagnostics. Docs pass `108`, and the site passes `17/17`. The new concept-owned receipt-prefix test child has `94` lines, and its parent remains below the `1,500`-line ownership threshold at `1,436` lines. |
+| Band 2 read-only audit | Three bounded packets inspected Container, Krun, and shared compute ownership and changed zero paths. They independently converged on a distinct `WithdrawFinalPublication` teardown stream, unchanged restart withdrawal, one existing provider journal, and one compute-owned seam that receives an already-open journal. Provider-specific effect subjects and target digests stay with the existing lowerers; `ProviderTeardownPhaseAdapter` stays private and sandbox-specific. |
+| Band 2 deterministic fail-before | `cargo test -p nimbus-sandbox --lib teardown_operation_tests -- --nocapture` exited `101` because `WithdrawFinalPublication` did not exist. `cargo test -p nimbus-compute --lib teardown_provider_command -- --nocapture` exited `101` because the confirmed-teardown command and injected-journal seam did not exist. An earlier multiple-filter Cargo invocation was invalid and is not acceptance evidence. |
+| Band 2 operation and journal seam | `nimbus-sandbox` now gives final withdrawal the stable `withdraw_final_publication` teardown-family operation. It cannot use live-absence reconciliation or mint explicit retry authority. Restart `WithdrawPublication` remains restart-family and retains its source-attempt and nonzero restart-ordinal rules. `nimbus-compute` owns `ConfirmedTeardownProviderCommand` and `ConfirmedTeardownProviderJournal`: the command derives the operation from the confirmed step and the journal wrapper accepts an existing provider journal without opening a store or choosing a namespace. |
+| Band 2 adapter reuse | Current Container and Krun execution and attachment lowerers construct the confirmed provider command, retain exact provider-local effect subjects and target digests, and use the injected journal seam through the existing private `ProviderTeardownPhaseAdapter`. No Machine API, provider composition, product caller, provider effect, or `nimbus-network` source changed. |
+| Band 2 behavior | Focused shared-seam tests pass `6/6`; real final-withdraw lowering passes `1/1`; sandbox teardown-operation classification passes `4/4`; restart/final stream separation passes `1/1`; final-domain rejection by restart passes `1/1`; network retry-authority regression passes `1/1`; full focused sandbox teardown passes `24/24`; unchanged compute and CLI restart mappings pass `1/1 + 1/1`. Full `nimbus-sandbox` passes `1,109/1,109` with `31` declared ignores. Full `nimbus-compute` passes `381/381` with one declared ignore. |
+| Band 2 quality and modularity | Format, diff, strict affected Clippy, and warning-denied affected Rustdoc pass. NNCV008 passes. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; the aggregate is `35/36` with only NNCV035 red. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The compute production seam is `168` lines with a `231`-line concept-owned test child. The existing deep sandbox provider journal is `1,568` lines; this band adds only the operation vocabulary and the existing concept-owned test modules hold the new behavior tests. |
+| Band 3 read-only audit | Three bounded packets inspected Container, Krun, shared compute, existing Machine API restart wire, and portable teardown vocabulary. They changed zero paths. They converged on one transport-only child, one closed translation without guest provider IDs, exact Execute and Inspect outcomes, full response echoes, strict forwarded receipt ordering, and no route, client, capability advertisement, composition, or effect in this band. |
+| Band 3 deterministic fail-before | `test -f crates/nimbus-machine/src/api/teardown.rs`, `rg -q MachineApiWorkloadTeardownCommandEnvelope crates/nimbus-machine/src`, `rg -q MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH crates/nimbus-machine/src`, and `rg -q MACHINE_API_WORKLOAD_TEARDOWN_PHASE_OPERATION crates/nimbus-machine/src` each exited `1`. The exact transport vocabulary did not exist. |
+| Band 3 strict wire contract | `nimbus-machine::api` owns the strict teardown command envelope, complete domain-separated request digest, request, response, provider translation, mode-tagged observations, and typed wire failures. It accepts only guest Drain, Stop, Detach, and Release. Parent withdrawal is rejected. The forwarded boundary requires the full prior phase chain and correlates every prior publication, execution, and network subject with the exact retained execution locator and compiled plan. The response echoes and validates the request digest, authority, command, issuing and confirmed transitions, attempt, epoch, parent provider target, translation, step, subjects, mode, and observation. No route or capability advertisement exists yet. |
+| Band 3 adjacent wire correction | `WorkloadTeardownAttempt` now requires explicit presence for its digest-bound `selectionEvidence` and `successorFence` fields. Explicit `null` remains canonical when the semantic value is absent. `WorkloadTeardownSuccessEvidence::matches_step_and_subjects` is the one public portable correlation seam used by receipts, inspections, and Machine API response validation. |
+| Band 3 behavior | Focused Machine API teardown wire tests pass `7/7`. They cover both modes across all four guest steps, unique complete digests, strict fields, crossed source/plan/translation/authority, parent withdrawal, incomplete and crossed prior history, eight closed outcomes, cross-mode rejection, success evidence, and every response fence. The focused workloads optional-field regression passes `1/1`. Full `nimbus-workloads` passes `219/219`. Full `nimbus-machine` passes `41/41` unit tests plus `5/5` integration tests. |
+| Band 3 quality and modularity | Format, diff, strict affected Clippy, and warning-denied affected Rustdoc pass. NNCV008 passes. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The production Machine API composition root remains `1,047` lines. The new transport-only child is `847` lines and its concept-owned pure-wire test child is `806` lines. No changed handwritten file crosses the `1,500`-line threshold. |
+| Band 4 read-only audit | Three bounded packets inspected the production guest composition, live Linux factory, Systemd store, lifecycle and teardown traits, capability response, routes, dependencies, tests, and file sizes. They changed zero paths. All three confirmed that production erased the drain and stop views and opened no teardown store. Two packets identified the important capability distinction: missing teardown state must not disable otherwise-healthy provision or restart lifecycle capability. |
+| Band 4 deterministic fail-before | `rg` checks for `machine_systemd_teardown_state_root`, retained `HostExecutionDrainProvider`, retained `HostExecutionStopProvider`, and a production `new_with_teardown_state_root` call each exited `1`. The guest had no durable composition or retained exact provider views. Separate audit checks confirmed that the zero-argument production factory and `teardown_store: None` existed. |
+| Band 4 production composition | Linux production now passes the deterministic `<control>/service-sandboxes/systemd/teardown` root into the live factory. The factory opens the existing locked and checksummed `SystemdTeardownStore`; construction failure prevents an available backend. `GuestNodeWorkloadService` allocates one concrete Systemd backend and coerces that same `Arc` behind lifecycle, drain, and stop traits. One construction invariant and one pointer-identity test prove that three backend instances cannot drift. |
+| Band 4 capability semantics | General Systemd lifecycle capability remains unchanged for provision and restart. Exact teardown capability separately requires D-Bus, transient units, service units, and `durable_teardown_state`; it keeps precise backend blockers and adds `durable systemd teardown state store is unavailable` only when the store is absent. The Machine API lists teardown readiness as unavailable while the strict sink is missing and includes provider blockers. It does not add teardown to `supported_operations` or the router. |
+| Band 4 behavior | Focused Systemd capability and store-open tests pass `3/3`; guest composition tests pass `4/4`; existing capability response tests pass `5/5`; restart capability passes `1/1`; Systemd pre-call and unknown-submission reopen proofs pass `2/2`. Full `nimbus-node` passes `108/108`. Full `nimbus-cli` passes `952/952` with one declared child-process ignore. Provision and restart capability behavior stays green. |
+| Band 4 quality and modularity | Format, diff, strict affected Clippy, warning-denied affected Rustdoc, NNCV008, proof lint with zero diagnostics, docs `108`, and site `17/17` pass. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. One shifted local-listener fingerprint and one new test-only backend construction are reconciled in the source-derived censuses; NNCV006 and NNCV015 pass. Linux cross-check stops before Nimbus compilation because the host lacks `aarch64-linux-gnu-gcc` and the target sysroot; this is an environment limitation, not passing Linux evidence. Product files are below threshold: Systemd root `1,407`, guest composition root `570`, API root `263`, state root `88`, and the concept-owned composition test child `142` lines. No dependency, route, client, provider effect, journal, caller, protocol-version, or `nimbus-network` path changed. |
+| Band 5 read-only audit | Three bounded packets inspected Systemd activation and teardown, the Container producer barrier and journal, host-claim lowering, Machine API guest composition, capability reporting, and current tests. They changed zero paths. Two independently found that Systemd drain is a receipt, not an activation barrier: exact initial and restart activation can inspect absence before drain, then submit `StartTransientUnit` after drain succeeds. Stop also lacks the exact prior drain receipt. Container drain already fences activation, restart, creator, launch, and runner publication, but reservation, preparation, network attachment, and machine-ingress publication do not hold the lifecycle lock or check the barrier. The guest needs one Container-rooted generic journal around both Systemd and Container subeffects; Container cannot publish the generic result after only its subeffect. |
+| Band 5 deterministic fail-before | `test -f crates/nimbus-cli/src/machine/api/service_workloads/teardown.rs`, `rg -q 'SystemdActivationAdmission\|activation_admission' crates/nimbus-node/src`, `rg -q 'execute_current_claim_async\|inspect_current_claim_async' crates/nimbus-sandbox/src/provider_command`, `rg -q prior_receipt_prefix crates/nimbus-node/src/host_lifecycle/teardown.rs`, and `rg -q 'execute_execution_teardown_substep\|inspect_execution_teardown_substep' crates/nimbus-sandbox/src/backends/container/runtime/teardown.rs` each exit `1`. The required barrier, receipt history, shared journal composition seam, Container substep, and guest sink do not exist. |
+| Band 5a host claim and Systemd barrier | The closed host claim now carries and validates the exact portable prior-receipt prefix. The operation fence and provider evidence bind its digest, so stop cannot accept substituted history. The Systemd store schema is directly replaced at version `2` with execution-scoped activation admission and an absorbing drain barrier. Exact initial and restart activation persist `Submitting` before inspection or `StartTransientUnit`, hold the host-global store lock across the provider boundary, and settle only after exact adoption or success. Drain holds the same lock, refuses unresolved absent activation as ambiguous, and checkpoints the closed barrier before success. Stop requires the matching exact prior drain receipt and closed barrier before provider inspection or effect. |
+| Band 5a recovery behavior | The activation-barrier module passes `7/7`, including deterministic activation-versus-drain contention, unknown-submission reopen, read-only drain inspection, a two-child real-process closer race, closed-barrier reopen fencing, and stop-order authentication. Host claim identity passes `4/4`. Exact restart activation, corruption fail-before, and prior-receipt reopen tests each pass `1/1`. The compute teardown-node regression passes after explicitly establishing its drain receipt. Full `nimbus-node` passes `118/118`; full `nimbus-compute` passes `381/381` with one declared child-only ignore. |
+| Band 5a quality and modularity | Strict affected Clippy, warning-denied affected Rustdoc, format, and diff checks pass. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. NNCV008 passes. Technical-writing proof lint has zero diagnostics. Docs pass `108`; the site passes `17/17`. The Systemd composition root is `1,451` lines, production teardown is `979`, the test parent is `1,349`, and its concept-owned activation-barrier child is `284`; no changed handwritten file reaches the ownership-exception threshold. No route, client, guest sink, shared async journal seam, Container producer, provider effect, dependency, or `nimbus-network` path changed. |
+| Band 5b Container producer fence | Reservation, preparation, private attachment, and machine-ingress publication now authenticate the canonical manifest, exact attempt, and open durable execution admission while holding the existing Container lifecycle OS lock. New reservation acquires the tenant-qualified lock before first manifest publication. Each producer retains that lock through its existing child effects and durable settlement. A closed barrier rejects initial or replayed work before attachment, IPAM, port, PEP, listener, forwarder, artifact, or manifest mutation. Deterministic producer-first races prove drain waits for admitted reservation and preparation. Drain-first rejection of all four producers preserves every non-lock durable byte. |
+| Band 5b asynchronous journal seam | `ProviderCommandAttemptJournal` has one asynchronous exact-current-claim execution seam. An internally retained Tokio task owns the exact OS lock, awaited child future, and durable result publication. Caller cancellation detaches the waiter and cannot release that authority early. Blocking journal reads and writes use blocking workers. Read-only asynchronous inspection holds the same stream lock. A `Claimed` record returns explicit `EffectCanStillStart` authority without polling the provider, so a delayed Execute cannot cross an Inspect result classified as `NotCompleted`. Only exact `InProgress` or `Ambiguous` evidence can invoke the read-only callback. |
+| Band 5b Container child composition | `ProviderCommandCurrentExecution` is a lock-scoped capability that only the journal can construct. The Container execution-teardown child authenticates that exact capability, reuses the existing drain/stop state machine, and never opens or publishes the generic journal. The existing direct Container wrapper delegates to this child and keeps its current compute contract. Tests hold publication after durable Container drain and prove the generic record remains exact `Claimed`; crossed claims fail before manifest mutation; exact child replay is byte-stable; and stop without the matching durable drain makes no runtime or network effect. No guest sink or second journal exists. |
+| Band 5b behavior | Async journal tests pass `7/7` with one declared child-only process entry point. They cover lock retention through await and publication, caller cancellation, current-thread runtime progress, stale inspection, read-only `InProgress` and `Ambiguous` evidence, explicit still-startable Execute authority, and two subprocess contenders with one effect/result winner. Provision barrier tests pass `3/3`; Container child execution passes `3/3`; exact child stop ordering passes `1/1`; provision phases pass `27/27`. Full `nimbus-sandbox` passes `1,133` executed with `48` declared platform or child-process ignores. Full `nimbus-compute` passes `381/381` with one declared child-only ignore. |
+| Band 5b recovery boundary | The async generic journal survives waiter cancellation and process contention through one existing durable root. The Container child remains independently replayable from its manifest. If an earlier provision producer process dies after admission and after an ambiguous child effect, NNC8.2 still owns the pre-existing provision/restart live-claim recovery debt. Band 5b adds no second journal or speculative compatibility path to hide that distinct debt. |
+| Band 5b quality and modularity | All-target Sandbox check, strict affected Clippy, warning-denied affected Rustdoc, format, and diff pass. NNCV008 passes. NNCV024 directly follows the moved lifecycle-lock source and its exact creating-lock mutation fails exclusively. NNCV035 self-test passes `55/55`; direct remains expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. `runner.rs` is reduced from `2,169` to `1,852` lines by moving the coherent `308`-line lifecycle-lock owner into `runner/lifecycle_lock.rs`. The remaining root owns runner handoff, effect recovery, result publication, and cleanup convergence. `provider_command.rs` is a `1,598`-line deep durable state-machine owner; the new async mechanics remain in its `295`-line current-claim child. The `1,754`-line source-contract verifier is the existing canonical multi-contract scanner; this band changes only the exact NNCV024 source and mutation coordinates. New concept-owned test children are `457`, `394`, `201`, and `67` lines. No changed handwritten file reaches `2,000` lines. No route, client, guest sink, parent adapter, caller, dependency, provider effect, or `nimbus-network` path changed. |
+| Band 5c guest composite sink | `GuestWorkloadTeardownPhaseSink` authenticates the installed forwarder, exact guest translation, local node, execution provider, source digest, tenant, and sandbox before journal mutation. It reuses only the existing Container-rooted `ProviderCommandAttemptJournal`. Drain and Stop execute Systemd first and Container second. One generic result becomes terminal only after both exact child results are terminal. The stop bridge binds the exact serialized Systemd success and current Container command with a domain-separated SHA-256 digest; Container independently inspects terminality and records one stop fence without sending a signal. |
+| Band 5c deterministic inspection and retry | Execute and Inspect serialize on the same generic stream. Inspect never polls a child while a claimed effect can still start. It joins Systemd first and Container second, maps missing generic state to `Ambiguous`, preserves child `InProgress` and `Ambiguous`, and publishes no result. One atomic adjacent-epoch transition requires an existing exact nonterminal predecessor; it cannot synthesize an unfenced absent epoch. Exact concurrent adoption reuses a durable result. Serialization failure is nonterminal `Ambiguous` and can never create fallback terminal evidence. |
+| Band 5c accepted audit corrections | The semantic audit found two P1 defects before closeout. First, no-record Inspect returned `NotCompleted` while epoch N still had execute authority; it now returns `Ambiguous`, rejects a forged adjacent epoch N+1, and leaves epoch N replayable. Second, fallible evidence serialization used fallback bytes that could close a terminal journal; encoding failure now remains `Ambiguous` with no failure code or terminal evidence. Focused regressions prove both corrections. No other semantic, static, or modularity finding remains. |
+| Band 5c behavior and recovery | Guest composite tests pass `12` with one declared child-only subprocess entry point. They cover authentication, ordering, exact replay, one generic publication, deterministic inspection, crossed evidence, adjacent retry, two-process contention, serializer failure, and a four-process crash/reopen sequence that recovers from durable Systemd, Container, and generic-journal roots without an in-memory snapshot. Provider-command tests pass `38` with two declared child-process entry points. Systemd teardown tests pass `33`; full node passes `121`. Container teardown passes `37` with two declared child-process entry points. Full Sandbox passes `1,134` with `32` declared platform or child-process ignores; full CLI passes `964` with two declared child-process ignores; full compute passes `381` with one declared child-process ignore. One earlier unrelated Container network subprocess timed out once; its exact rerun, the complete Container teardown rerun, and the full Sandbox rerun pass. |
+| Band 5c capability and failure boundary | Capability reporting remains unavailable through the exact missing-private-route blocker and retains the installed-forwarder and provider blockers. No route is installed. Child absence or retry authority remains nonterminal; uncertainty remains `Ambiguous`; crossed identity, digest, or fence is definite failure. Systemd or Container partial success cannot publish generic success. The sink does not detach or release network authority. |
+| Band 5c quality and modularity | Affected all-target checks, strict Clippy with all features, warning-denied Rustdoc, format, and diff pass. The exact `nimbus-network -> nimbus-core` workspace edge is unchanged. No route, client, parent adapter, attachment composition, caller, coarse-stop token, socket, provider effect, dependency manifest, or `nimbus-network` path changed. NNCV015 follows the shifted test-fixture constructor line. NNCV035 self-test passes `55/55`; direct remains expected red at `0/7`; aggregate is `35/36` with only NNCV035 red. NNCV008 and proof lint pass. Docs pass `108`; the site passes `17/17`. Of `19` Rust paths, `9` are product and `10` are tests. `provider_command.rs` is a `1,670`-line deep durable state-machine owner. `container/runtime.rs` is a `1,625`-line existing composition root and adds only one re-export. Every other changed handwritten file is below `1,500` lines, and no file reaches `2,000`. |
+| Band 6 read-only seam audit | Three bounded packets inspected guest dispatch, Container attachment teardown, machine-publication authority, the NNC6.5d3 shared OCI lifecycle, provider-journal reuse, tests, and modularity. They changed zero paths from clean checkpoint `62d21cb7a`. The host-managed retained detach/release state machine is reusable, but its sealed authentication correctly rejects PlanOnly machine-forwarded publication. The existing coarse machine-forwarded cleanup combines detach and release and is forbidden here. One narrow publication-mode strategy must keep host behavior unchanged while the forwarded path supplies exact publication retention, proof, and final release. |
+| Band 6 authority and recovery audit | The Container-rooted provider journal remains the sole guest command journal. The machine-publication journal is a distinct existing provider-effect authority. Its withdrawal, slot convergence, owner-death recovery, durable Absent evidence, and restart-retained lease transition are the required inputs. The forwarded child must reauthenticate exact prior guest Stop success, exact forwarder instance and generation, and exact publication absence under lifecycle authority. Release must also authenticate the exact prior Detach journal success and compound detached proof. Lock order remains provider stream, lifecycle, publication store, proxy and port authority, then OCI authority. |
+| Band 6 zero-listener correction | Public `MachinePortAbsenceEvidence` contains only tenant, sandbox, and per-listener receipts. An empty batch therefore cannot bind provider instance, provider generation, attachment, batch generation, bindings, or leases. Forwarded detach must derive an internal complete absence witness only after the durable machine-publication record is authenticated. The compound detached proof must bind that witness and publication mode. It must not infer absence from an empty public receipt list or create a synthetic listener. |
+| Band 6 deterministic fail-before | Checks for `ContainerForwardedAttachmentAuthority`, `execute_forwarded_network_teardown_substep`, guest `GuestContainerAttachment` dispatch, and `require_forwarded_machine_publication_absent` each exit `1`. The current host seam still contains the exact `retained host detach requires host-managed publication` and `Container forwarded-machine attachment composition` rejections. Product source is unchanged at the fail-before checkpoint. |
+| Band 6 forwarded composition | The strict guest attachment child validates the installed forwarder, provider generation, node, parent-to-guest translation, provider target, source digest, tenant, sandbox, and exact prior portable history before local mutation. It lowers Detach and Release independently into the current Container attachment identity. The existing Container-rooted provider journal remains the only guest command journal. No second guest store, free-form provider choice, route, client, parent adapter, or compute substitution exists. |
+| Band 6 retained detach and release | Forwarded Detach requires the exact prior composite Stop observation and durable machine-publication absence. It withdraws publication, retains every listener lease, and binds the provider, generation, attachment, batch, bindings, leases, and absence receipts into the version-2 compound detached proof. Release requires the exact prior local Detach journal success, the same proof and claim, continued publication absence, and exact attachment absence before the shared OCI final release. The machine port authority releases only exact plan-member leases at Release. The forwarded path never calls the Netavark classifier. |
+| Band 6 inspection and recovery | Execute holds the current Container journal claim once. Inspect uses read-only exact adoption and never creates a root, stream, record, lock, or stage. Missing, corrupt, crossed, partial, and unresolved-stage state fails closed without byte changes. Publication `Exposed` is present, `Exposing` or `Withdrawing` is partial, and `Absent` is absent. Early present state is `InProgress`; late present or partial state is `Ambiguous`. Release Inspect adopts the prior Detach result before lifecycle authority, then reauthenticates the same proof under the required lock order. |
+| Band 6 behavior | Forwarded attachment tests pass `9/9`; the complete Container network teardown module passes `13/13` with one declared subprocess entry point; the read-only provider-journal regression passes `1/1`; guest attachment dispatch passes `6/6`; and guest execution teardown remains green at `12/12` with one declared subprocess entry point. Full CLI passes `970/970` with two declared ignores. Full compute passes `381/381` with one declared ignore. Affected all-target and all-feature checking passes. |
+| Band 6 full Sandbox truth | Every NNC6.5d4 test passes. Two default-parallel full Sandbox runs report `1,142` pass, two fail, and `32` ignores, then `1,143` pass, one fail, and `32` ignores. The failures are inherited Krun process-fixture and Container/Krun contender timeouts; each exact focused rerun passes. A serialized full run reports `1,143` pass, one inherited Container contender timeout, and `32` ignores; its complete owning module passes `13/13` with one declared child ignore. This recovery checkpoint does not claim the final K33 full-suite criterion. The unrelated timing fixtures remain outside band 6. |
+| Band 6 quality and modularity | Strict affected all-feature Clippy, warning-denied Rustdoc, format, diff, dependency/effect, bind census, and machine-batch convergence gates pass. NNCV035 self-test passes `55/55`; direct remains exact expected red at `0/7`; the aggregate is `35/36` with only NNCV035 red. Proof lint has zero diagnostics. Docs pass `108`; the site passes `17/17`. The band changes `21` Rust paths: `15` product and `6` test paths. `machine_port_publication.rs` is a `1,732`-line durable publication and authentication state-machine owner; `machine_ports.rs` is a `1,526`-line machine proxy and port-lifecycle adapter whose teardown orchestration stays in children; `provider_command.rs` is a `1,739`-line durable command-journal state-machine owner. Every other changed handwritten file is below `1,500` lines, and no file reaches `2,000`. NNCV006 follows one shifted source coordinate, and NNCV021 follows the exact current ownership disposition. |
+| Band 7 private route and transport | The exact private POST route accepts only `MachineApiWorkloadTeardownPhaseRequest`, enforces a `1 MiB` body limit, authenticates the parent-issued forwarder before facade lookup or guest effects, dispatches one exact guest phase, and constructs only a request-correlated response. Missing, null, unknown, noncanonical, stale, crossed, oversized, wrong-method, and coarse-path requests fail before the facade. Capability advertisement now requires the real guest execution and attachment composition, durable Systemd and Container journals, an installed reachable forwarder, and matching forwarder instance and generation. |
+| Band 7 one-shot client | The concept-owned client child accepts an already-constructed strict request, authenticates it against the configured forwarder before socket I/O, sends exactly one POST, bounds the response at `1 MiB`, and validates every echoed fence. Connection loss, timeout, truncation, non-success status, malformed or oversized JSON, unknown fields, and crossed response fences return one explicit `Ambiguous` transport outcome. The client never retries and never manufactures Inspect. A test performs one ambiguous Execute followed by one caller-supplied exact Inspect and observes exactly those two requests. Band 8 remains the sole owner of durable request-may-exist state, the current execution token, and enforced Inspect-before-retry after parent restart. |
+| Band 7 behavior | Focused client transport tests pass `5/5`; private route tests pass `2/2`; real guest capability composition tests pass `5/5`; guest execution teardown remains `12/12` with one declared child entry point; and Machine API teardown wire tests pass `7/7`. Full `nimbus-machine` passes `41/41` library tests plus `5/5` provider-networking integration tests. Full `nimbus-cli` passes `978/978` with two declared child-process ignores. |
+| Band 7 quality and modularity | Affected all-target checking, strict all-feature Clippy, warning-denied Rustdoc, format, and diff pass; only unchanged vendored Brotli warnings remain. The aggregate source verifier self-test passes `469/469`; NNCV035 passes `55/55`. The live aggregate is exact `35/36` with only NNCV035 red, and direct NNCV035 remains `0/7`. NNCV006 and NNCV015 prove the new TCP capability probe is test-only, reject production inclusion of its path, and accept the reconciled bind and composition censuses. This band changes `13` Rust paths: `7` product and `6` test paths. The production roots are `267`, `261`, `366`, `644`, `1,164`, `1,441`, and `99` lines; no changed handwritten file reaches `1,500`. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. |
+| Band 8 parent authority | One `ForwardedMachineTeardownAdapter` implements all five exact compute capabilities. It uses one parent journal namespace with independent operation streams. It records the exact remote request before send and retains the current execution token. Ambiguity or restart requires exact Inspect before an adjacent retry. A fresh complete partial forwarding observation authorizes only the exact fenced retry. Evidence that an older effect can still commit remains `InProgress`. |
+| Band 8 publication and release | The confirmed-publication authority now has explicit active, withdrawal-may-exist, withdrawn-and-retained, release-may-exist, and released states. Parent withdrawal authenticates the complete publication batch and proves all forwarding members absent while all port leases remain retained. Final release requires exact guest detach and release, exact withdrawal linkage, independent provider absence, and the same durable binding and provider incarnation. Parent port and guest forwarding fences remain separate, so a zero-listener parent batch is valid. |
+| Band 8 wire and provider corrections | Successful Release responses require non-null exact release-absence evidence during deserialization. The Unix gvproxy provider uses an owned canonical services socket, bounded nonblocking connection, one parsed `/services/forwarder/all` request, strict HTTP and JSON validation, and exact batch retirement. Runtime directories and sockets reject symlinks and foreign ownership and use owner-only permissions. No socket or provider effect enters `nimbus-network`. |
+| Band 8 behavior and recovery | Parent-forwarder tests pass `2/2`; direct five-capability adapter and ordering tests pass `3/3`; sandbox forwarding tests pass `27/27`; provider-command tests pass `42` with two declared child-process ignores; and the Machine Release wire regression passes `1/1`. Full Machine passes `42` library plus `5` integration tests. Full Sandbox passes `1,164` with `48` declared platform or child-process ignores. Full Compute passes `381` with one declared child-process ignore. Full CLI passes `986` with two declared child-process ignores. |
+| Band 8 quality and modularity | Affected all-target checking, strict all-feature Clippy, warning-denied Rustdoc, format, diff, dependency, effect, bind, composition, attachment-readiness, and batch-convergence checks pass. The live aggregate remains exact `35/36` with only NNCV035 red. NNCV035 self-test passes `55/55`, and direct remains expected red at `0/7`. The aggregate verifier self-test passes `469/469`. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The `1,721`-line confirmed-publication file is the concept-owned durable authority; retirement progression is in a `110`-line child. The `1,669`-line provision test owner remains test-only. The `1,697`-line provision composition root retains its recorded exception and moves parent teardown to an `879`-line child with a `66`-line test child. Forwarding is `1,218` lines with a `110`-line retirement child. No changed handwritten file reaches `2,000`. |
+| Band 9 registry and order | One real substitution fixture installs all five forwarded capabilities through the exact compute registry. It proves parent-local withdrawal before guest Drain, Stop, Detach, and Release; every remote Execute is durably prepared before send; every ambiguous or recovered request is inspected before an adjacent retry; and every provider result traverses compute's existing exact result CAS. Missing or crossed registration fails closed without fallback. Product caller cutover remains out of scope. |
+| Band 9 batch and recovery | Provider-managed port retention accepts the exact recoverable `Active` or `Reserved` pre-checkpoint shapes after confirmed provider absence, preserves complete plan membership and binding or bind-claim evidence, and supports exact byte-stable retained replay. Terminal release supports adopted and unadopted batches, clears only active authority, preserves audit evidence, and replays exact terminal records. Partial recovery, equal-length subsets, mixed phases, crossed plan membership, and incomplete absence mutate no member. Reopen tests cover retained release, terminal replay, and crashes before the withdrawal checkpoint. |
+| Band 9 two-realm proof | One two-cut fresh-process matrix uses separate parent and guest durable roots. It covers loss of a durably committed guest response and guest death after the generic claim but before the first child effect. Recovery uses only each process's own root, forces exact Inspect before retry, invalidates delayed execution authority after proved absence, and produces one guest effect and one terminal result. Opposite-realm byte snapshots stay unchanged. |
+| Band 9 zero-listener and saga truth | Explicit empty `WorkloadPublicationReference` values preserve the zero-listener lifecycle through workload restart and teardown. The real forwarded registry still executes all five phases without a synthetic listener, port, forwarding receipt, or inferred absence. Resource-free withdrawal creates no provider observation or receipt, terminal publication absence is required only for provider-managed selection, and restart preserves the exact publication reference. |
+| Band 9 affected behavior | Full Workloads passes `219`; Network passes `274` with one declared child-process ignore; Compute passes `381` with one declared child-process ignore; Sandbox passes `1,164` with `48` declared platform or child-process ignores; Machine passes `47`; Node passes `121`; and corrected serialized CLI passes `995` with three declared child-process ignores. The default-parallel CLI run had one inherited process-global network-composition-root fixture collision; its exact serial rerun passes, and the complete serialized suite passes. Network remains fully green. The corrected focused forwarded CLI lane passes `27` with one declared child-process ignore, and the missing-call timeout regression passes `1/1` in `0.11` seconds. |
+| Band 9 source contract | NNCV035 has three new source-derived diagnostics for registry substitution, lifecycle order, and recovery. Its `67` sole-diagnostic mutations pass. Direct NNCV035 remains the intended `0/7`: service, definition deletion, Compose, machine, tenant, compensation, and behavior are later-owned. The live aggregate is exact `35/36`, with NNCV035 as the sole expected red condition. |
+| Band 9 modularity | The candidate changes `34` paths, including `26` Rust paths. The two new substitution and process-recovery test children are `1,044` and `980` lines. Changed files from `1,500` through `1,999` lines are concept-owned pure saga/reducer or durable journal state machines, or coherent test-only contract matrices. The `2,951`-line `port_lease/lifetime.rs` retains the recorded strong exception: one durable lifetime state machine owns lock order, exact lifetime authentication, owner-death recovery, and atomic transitions; complete-batch mechanics and tests already live in concept-owned children, and splitting a transition would duplicate invariants. No other changed handwritten file reaches `2,000`. |
+| Band 9 quality and static proof | Strict affected all-feature Clippy and warning-denied Rustdoc pass; only unchanged vendored Brotli warnings remain outside the warning-denied Nimbus crates. Format and diff pass. NNCV000-NNCV034 are green; the live aggregate is the exact planned `35/36` with only NNCV035 red. NNCV035 self-test passes `67/67`, and the complete aggregate mutation harness passes `481/481`. Proof lint reports zero diagnostics. Docs pass `108`; the site passes `17/17`. The dependency and effect scans preserve `nimbus-network -> nimbus-core` as the only initial workspace edge and find no new socket, provider, policy, naming, transport, or allocation effect in `nimbus-network`. |
+| Full structured review | The one GPT-5.6 Sol/xhigh/fast review used staged tree `7440423203e010ad6d42cc13d97b22ec7e0c5613`, patch SHA-256 `7e455251c72fb15af7c8ce75800deb62d7d09750de8f7c3f5f7c3bf2e1e254ad`, and thread `019feeef-9501-7772-bca7-ecfa538657d5`. It reported one P1 and one P2 at confidence `0.99`. The P1 is rejected: the unchanged two-cut fresh-process proof passes and shows Inspect epoch `0`, adjacent Drain Execute epoch `1`, one `drain_execute`, and zero `stop_execute`; the finding omitted the composite Systemd and Container inspection join. The P2 is accepted: both exact-call-count Unix test servers now use bounded accept, restore accepted streams to blocking reads, and fail deterministically on a missing call. The parent also kills and reaps a timed-out child. |
+| Narrow correction review | The sole narrow GPT-5.6 Sol/xhigh/fast review used staged tree `cddb5db89fe32db1743ca45e6c39ed926194b27c`, patch SHA-256 `085d9a6a6f9c89982982848743b6784db8c2dbbd4af291fbe79e2912d181b895`, and thread `019feeff-debb-7021-bc42-1733d2766e85`. It reported zero findings and confirmed both the P2 correction and the P1 rejection at confidence `0.99`. Review cadence is exhausted. No further review is authorized or needed. |
+| Durable audit checkpoint | The commit containing this proof, plan recovery header, and routing index is the exact NNC6.5d4 audit/fail-before checkpoint. It is not the item completion commit. |
+| Durable band 1 checkpoint | The next commit that contains this row, the band 1 product and test paths, and the recovery header is the exact band 1 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 2 checkpoint | The commit that contains this row, the band 2 product and test paths, and the recovery header is the exact band 2 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 3 checkpoint | The commit that contains this row, the band 3 product and test paths, and the recovery header is the exact band 3 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 4 checkpoint | `1100cbc04` is the exact band 4 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 5a checkpoint | The commit that contains this row, the band 5a product and test paths, and the recovery header is the exact band 5a recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 5b checkpoint | `824c2f6f0` is the exact band 5b recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 5c checkpoint | `62d21cb7a` is the exact band 5c recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 6 checkpoint | `a98841aaa` is the exact band 6 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 7 checkpoint | The commit that contains this row, the band 7 product and test paths, the source-derived census updates, and the recovery header is the exact band 7 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable band 8 checkpoint | The commit that contains this row, the band 8 product and test paths, the source-derived verifier updates, and the recovery header is the exact band 8 recovery checkpoint. It is not the item completion commit and has no structured review. |
+| Durable item checkpoint | The commit that contains this row, the `done` ledger row, and the routing closeout is the exact NNC6.5d4 item commit. |
+
+## Current Acceptance State
+
+K1-K4 are green at the audit, portable-prefix, compute-authentication, and
+forwarded-wire seams. Band 2 completes the operation-family,
+claim-derivation, and injected-journal prerequisites of K7. The future parent
+adapter must still prove one journal and five independent durable streams.
+Band 3 completes the transport-vocabulary portions of K11-K15. Band 4
+completes K16 with deterministic durable Systemd production composition. It
+also provides one shared concrete backend behind all three exact traits and
+nonaspirational capability reporting.
+
+Bands 5a-5c provide the two exact
+activation-admission barriers and the one asynchronous generic-journal seam.
+They also complete the nonpublishing Container child. The composite Systemd
+and Container sink completes the execution parts of K17-K18. Its deterministic
+inspection join completes the inspection parts. The sole guest journal
+completes part of K21.
+
+Band 6 has these results:
+
+- The guest attachment portions of K19-K21 are complete.
+- The guest zero-listener, replay, and inspection portions of K25-K27 are
+  complete.
+- The NNC6.5d3 retained-detach and proof-gated-release lifecycle stays sealed
+  for host-managed authentication.
+
+Band 7 completes the route and transport portions of K13 and K30. It proves
+strict pre-effect request rejection, complete response correlation, and
+bounded bodies. It also proves one-shot ambiguity and explicit manual
+Execute-to-Inspect ordering.
+
+Band 8 completes K5-K10. It also completes the direct parent portions of
+K22-K24. The parent adapter owns the durable request-may-exist boundary and
+current execution token. It enforces Inspect before retry after ambiguity or
+restart. It withdraws the complete forwarding batch before guest work and
+releases the complete parent port batch only after exact guest and provider
+absence.
+
+Band 9 completes real compute substitution and the end-to-end portions of
+K22-K29.
+
+Affected behavior and quality are green. Static, mutation, proof, and
+documentation gates are green. The full and narrow reviews complete K35. No
+review gate remains.
+
+Band 5 is prospectively split before implementation. These are dependency-
+ordered recovery slices, not separate plan items or review units. Bands
+5a-5c are green:
+
+1. Band 5a carries the exact prior receipt prefix into the closed host claim.
+   It adds one durable Systemd activation-admission barrier to the existing
+   teardown store. Drain closes admission before it records a receipt. The
+   barrier blocks initial and restart activation after closure, and stop
+   requires the matching closed barrier. Tests prove crossed history, response loss,
+   thread and process contention, reopen, and corrupt-store fail-closed
+   behavior. This slice is complete at the commit that contains the band 5a
+   ledger row.
+2. Band 5b closes the four remaining Container provision-dispatch producers
+   under the current lifecycle lock and durable drain barrier. It adds one
+   asynchronous exact-current-claim journal seam. A Container-authorized
+   substep cannot publish the generic result after only its effect. Tests prove
+   one cross-process claimant and no delayed Execute after Inspect reports
+   `NotCompleted`. They also prove exact replay and no second guest journal.
+   This slice is complete at the commit that contains the band 5b ledger row.
+3. Band 5c adds the concept-owned guest composite execution drain/stop sink,
+   which authenticates the installed forwarder and local node. It composes
+   Systemd and Container under the one guest journal. The sink requires both
+   exact child receipts and applies a deterministic inspection join. Tests add
+   replay, contention, and fresh-process cuts. Capability reporting keeps the
+   operation unavailable through a separate missing-private-route blocker.
+   This slice is complete at the commit that contains the band 5c ledger row.
+
+Band 5 excludes forwarded attachment composition, the private route, the
+client, and the parent adapter. It also excludes caller cutover and coarse-stop
+deletion. Band 6 is now green. It adds only the forwarded Container attachment
+composition. It proves retained detach and final release without a regression.
+
+Band 7 adds only the strict private route, truthful capability advertisement,
+and one-shot client transport.
+
+Band 8 adds the parent publication progression and
+`ForwardedMachineTeardownAdapter`, including durable remote-request ambiguity
+and enforced Inspect-before-retry. Band 9 implements the complete acceptance
+matrix. All K1-K35 gates are green.
+
+NNC6.5d4 is complete. NNC6.5e is now `in_progress`. There is no blocker.

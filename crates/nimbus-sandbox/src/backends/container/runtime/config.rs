@@ -10,7 +10,7 @@ use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_TENANT_PREFIX,
     OciMachinePortForwarderConfig,
 };
-use crate::backends::oci::port_manager::DEFAULT_MAX_PORTS_PER_TENANT;
+use crate::backends::oci::port_lifecycle::DEFAULT_MAX_PORTS_PER_TENANT;
 use crate::spec::SandboxResourceQuotaPolicy;
 
 const DEFAULT_RUNTIME_PATH: &str = "crun";
@@ -31,7 +31,10 @@ pub enum ContainerStartMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerSandboxBackendConfig {
     pub bundle_root: PathBuf,
-    pub state_root: PathBuf,
+    /// Backend-local manifests, runtime state, and provider artifacts.
+    pub workload_state_root: PathBuf,
+    /// Serialized node authority for segments, tenant IPAM, and host ports.
+    pub network_state_root: PathBuf,
     pub conmon_path: PathBuf,
     pub runtime_path: PathBuf,
     pub buildah_path: PathBuf,
@@ -65,17 +68,29 @@ impl ContainerSandboxBackendConfig {
         let mut config = Self::default();
         let root = root.into();
         config.bundle_root = root.join("bundles");
-        config.state_root = root.join("state");
+        config.workload_state_root = root.join("state");
+        config.network_state_root = config.workload_state_root.clone();
         config
     }
 
-    pub fn plan_only(bundle_root: impl Into<PathBuf>, state_root: impl Into<PathBuf>) -> Self {
+    pub fn plan_only(
+        bundle_root: impl Into<PathBuf>,
+        workload_state_root: impl Into<PathBuf>,
+    ) -> Self {
+        let workload_state_root = workload_state_root.into();
         Self {
             bundle_root: bundle_root.into(),
-            state_root: state_root.into(),
+            network_state_root: workload_state_root.clone(),
+            workload_state_root,
             start_mode: ContainerStartMode::PlanOnly,
             ..Self::default()
         }
+    }
+
+    /// Select the serialized node network authority explicitly.
+    pub fn with_network_state_root(mut self, network_state_root: impl Into<PathBuf>) -> Self {
+        self.network_state_root = network_state_root.into();
+        self
     }
 }
 
@@ -84,7 +99,8 @@ impl Default for ContainerSandboxBackendConfig {
         let temp_root = std::env::temp_dir().join("nimbus-container-sandbox");
         Self {
             bundle_root: temp_root.join("bundles"),
-            state_root: temp_root.join("state"),
+            workload_state_root: temp_root.join("state"),
+            network_state_root: temp_root.join("state"),
             conmon_path: PathBuf::from(DEFAULT_CONMON_PATH),
             runtime_path: PathBuf::from(DEFAULT_RUNTIME_PATH),
             buildah_path: PathBuf::from(DEFAULT_BUILDAH_PATH),
@@ -105,5 +121,25 @@ impl Default for ContainerSandboxBackendConfig {
             start_timeout: Duration::from_secs(DEFAULT_START_TIMEOUT_SECS),
             stop_timeout: Duration::from_secs(DEFAULT_STOP_TIMEOUT_SECS),
         }
+    }
+}
+
+#[cfg(test)]
+mod root_ownership {
+    use super::*;
+
+    #[test]
+    fn container_config_names_workload_and_network_roots_explicitly() {
+        let root = PathBuf::from("/tmp/nimbus-container-root-contract");
+        let defaulted = ContainerSandboxBackendConfig::under_root(&root);
+        assert_eq!(defaulted.workload_state_root, root.join("state"));
+        assert_eq!(defaulted.network_state_root, root.join("state"));
+
+        let workload = root.join("project-state");
+        let network = root.join("node-network-state");
+        let split = ContainerSandboxBackendConfig::plan_only(root.join("bundles"), &workload)
+            .with_network_state_root(&network);
+        assert_eq!(split.workload_state_root, workload);
+        assert_eq!(split.network_state_root, network);
     }
 }

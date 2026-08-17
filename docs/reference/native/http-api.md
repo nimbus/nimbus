@@ -232,7 +232,6 @@ through a typed client.
 | GET, PUT, DELETE | `/api/tenants/{tenant_id}/services/{service_name}` | Read, update, or delete a service |
 | POST | `/api/tenants/{tenant_id}/services/{service_name}/start` | Start a service |
 | POST | `/api/tenants/{tenant_id}/services/{service_name}/stop` | Stop a service |
-| POST | `/api/tenants/{tenant_id}/services/{service_name}/restart` | Restart a service |
 | GET, POST | `/api/tenants/{tenant_id}/sandboxes` | List or create sandboxes |
 | GET | `/api/tenants/{tenant_id}/sandboxes/{sandbox_id}` | Read a sandbox |
 | POST | `/api/tenants/{tenant_id}/sandboxes/{sandbox_id}/stop` | Stop a sandbox |

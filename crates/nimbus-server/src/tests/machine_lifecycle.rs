@@ -3,13 +3,16 @@ use crate::machine_lifecycle::{
     MachineLifecycleSnapshot, MachineUpdateRequest,
 };
 
+use super::managed_workload::effect_forbidden_managed_router_config;
 use super::*;
 use nimbus_core::DocumentId;
+use nimbus_storage::{FaultInjector, FaultPoint};
 
 #[derive(Clone)]
 struct StubMachineLifecycleManager {
     roots: nimbus_machine::MachineRootLayout,
     calls: Arc<Mutex<Vec<String>>>,
+    projection_fault: Option<Arc<MachineProjectionFault>>,
 }
 
 impl StubMachineLifecycleManager {
@@ -17,7 +20,13 @@ impl StubMachineLifecycleManager {
         Self {
             roots,
             calls: Arc::new(Mutex::new(Vec::new())),
+            projection_fault: None,
         }
+    }
+
+    fn with_projection_fault(mut self, fault: Arc<MachineProjectionFault>) -> Self {
+        self.projection_fault = Some(fault);
+        self
     }
 
     fn calls(&self) -> Vec<String> {
@@ -52,11 +61,17 @@ impl MachineLifecycleManager for StubMachineLifecycleManager {
         let roots = self.roots.clone();
         let calls = self.calls.clone();
         let name = name.to_owned();
+        let projection_fault = self.projection_fault.clone();
         Box::pin(async move {
             calls
                 .lock()
                 .expect("calls lock should not poison")
                 .push(format!("start:{name}"));
+            if let Some(fault) = projection_fault {
+                fault
+                    .armed
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
             Ok(snapshot_for(
                 &name,
                 roots,
@@ -136,6 +151,86 @@ impl MachineLifecycleManager for StubMachineLifecycleManager {
     }
 }
 
+#[derive(Default)]
+struct MachineProjectionFault {
+    armed: std::sync::atomic::AtomicBool,
+    snapshot_failures: std::sync::atomic::AtomicUsize,
+}
+
+impl FaultInjector for MachineProjectionFault {
+    fn check(&self, _point: FaultPoint) -> nimbus_core::Result<()> {
+        Ok(())
+    }
+
+    fn check_for_tenant(
+        &self,
+        point: FaultPoint,
+        _tenant_id: &nimbus_core::TenantId,
+        records: &[nimbus_core::TenantEventRecord],
+    ) -> nimbus_core::Result<()> {
+        let writes_machine_snapshot = records
+            .iter()
+            .flat_map(|record| &record.writes)
+            .any(|write| write.table.as_str() == "machines");
+        if point == FaultPoint::StorageCommitBeforeVisibility
+            && writes_machine_snapshot
+            && self.armed.swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            self.snapshot_failures
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            return Err(nimbus_core::Error::Internal(format!(
+                "injected machine projection failure at {}",
+                point.as_str()
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn machine_lifecycle_succeeds_while_projection_retries() {
+    let temp = tempdir().expect("tempdir should build");
+    let fault = Arc::new(MachineProjectionFault::default());
+    let engine_fault: Arc<dyn FaultInjector> = fault.clone();
+    let engine = Arc::new(
+        Engine::new_with_simulation(
+            temp.path(),
+            Arc::new(nimbus_core::SystemWallClock),
+            engine_fault,
+        )
+        .expect("engine should create"),
+    );
+    let roots = nimbus_machine::MachineRootLayout::test_sibling_roots(
+        temp.path().join("machine-config"),
+        temp.path().join("machine-state"),
+        temp.path().join("run"),
+    );
+    let manager = StubMachineLifecycleManager::new(roots).with_projection_fault(Arc::clone(&fault));
+    let server = ServerFixture::start(
+        effect_forbidden_managed_router_config(engine.clone())
+            .with_machine_lifecycle_manager(Arc::new(manager.clone()))
+            .build(),
+    )
+    .await;
+
+    let response = server
+        .client()
+        .post(server.http_url("/api/machines/demo/start"))
+        .send()
+        .await
+        .expect("machine start request should send");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(manager.calls(), vec!["start:demo"]);
+    assert_system_machine_state(&engine, "running", true).await;
+    assert_eq!(
+        fault
+            .snapshot_failures
+            .load(std::sync::atomic::Ordering::Acquire),
+        1,
+        "the machine snapshot projection must consume the injected failure"
+    );
+}
+
 #[tokio::test]
 async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     let temp = tempdir().expect("tempdir should build");
@@ -147,7 +242,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     );
     let manager = StubMachineLifecycleManager::new(roots);
     let server = ServerFixture::start(
-        RouterBuildConfig::core(engine.clone())
+        effect_forbidden_managed_router_config(engine.clone())
             .with_machine_lifecycle_manager(Arc::new(manager.clone()))
             .build(),
     )
@@ -202,7 +297,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     assert_eq!(start_body["runtime"]["sshPort"], json!(10022));
 
     assert_eq!(manager.calls(), vec!["start:demo"]);
-    assert_system_machine_state(&engine, "running", "listening", "running").await;
+    assert_system_machine_state(&engine, "running", true).await;
     wait_for_system_machine_state(
         &mut system_rx,
         "running machine subscription update",
@@ -226,7 +321,7 @@ async fn machine_lifecycle_routes_call_manager_and_project_system_state() {
     assert_eq!(stop_body["manager"], json!("helpers-resolved"));
 
     assert_eq!(manager.calls(), vec!["start:demo", "stop:demo"]);
-    assert_system_machine_state(&engine, "stopped", "stopped", "stopped").await;
+    assert_system_machine_state(&engine, "stopped", false).await;
     wait_for_system_machine_state(
         &mut system_rx,
         "stopped machine subscription update",
@@ -255,7 +350,7 @@ async fn machine_config_routes_create_update_delete_and_project_system_state() {
     );
     let manager = StubMachineLifecycleManager::new(roots);
     let server = ServerFixture::start(
-        RouterBuildConfig::core(engine.clone())
+        effect_forbidden_managed_router_config(engine.clone())
             .with_machine_lifecycle_manager(Arc::new(manager.clone()))
             .build(),
     )
@@ -368,6 +463,11 @@ fn snapshot_for_resources(
     memory_mib: u32,
     disk_gib: u32,
 ) -> MachineLifecycleSnapshot {
+    let provider_instance = nimbus_network::NetworkProviderHandle::new(
+        nimbus_network::NetworkProviderId::for_registration_key("server-test-machine-gvproxy"),
+        format!("server-machine-fixture:{name}"),
+    )
+    .expect("fixture provider handle should validate");
     let config = nimbus_machine::MachineConfigRecord {
         version: nimbus_machine::CURRENT_MACHINE_CONFIG_VERSION,
         name: name.to_owned(),
@@ -389,6 +489,11 @@ fn snapshot_for_resources(
         },
         volumes: Vec::new(),
         roots: roots.clone(),
+        network_authority: nimbus_machine::MachineNetworkAuthorityRecord::new(
+            roots.state_root.join("network-authority"),
+            provider_instance.clone(),
+        )
+        .expect("fixture network authority should validate"),
     };
     let paths = roots.paths(name);
     let state = nimbus_machine::MachineStateRecord {
@@ -407,6 +512,14 @@ fn snapshot_for_resources(
             image_path: paths.materialized_image_path,
             efi_variable_store_path: paths.efi_variable_store_path,
             machine_image_source: "docker://ghcr.io/nimbus/machine-os:v0.1.31".to_owned(),
+            ssh_listener_id: nimbus_network::ListenerId::for_workload_listener(
+                &format!("server-machine-fixture:{name}"),
+                "ssh-forward",
+            ),
+            forwarder_authority: nimbus_machine::MachineForwarderAuthority::new(
+                provider_instance,
+                nimbus_network::NetworkResourceGeneration::new(1),
+            ),
             ssh_port: 10022,
             rest_uri: format!("unix://{}", paths.api_socket_path.display()),
             ready_vsock_port: 1025,
@@ -419,10 +532,44 @@ fn snapshot_for_resources(
 async fn assert_system_machine_state(
     engine: &Arc<Engine>,
     machine_state: &str,
-    listener_state: &str,
-    port_state: &str,
+    connectivity_present: bool,
 ) {
     let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let machines = engine
+                .list_documents_async(
+                    tenant_id.clone(),
+                    TableName::new("machines").expect("table should parse"),
+                )
+                .await
+                .unwrap_or_default();
+            let listeners = engine
+                .list_documents_async(
+                    tenant_id.clone(),
+                    TableName::new("listeners").expect("table should parse"),
+                )
+                .await
+                .unwrap_or_default();
+            let ports = engine
+                .list_documents_async(
+                    tenant_id.clone(),
+                    TableName::new("ports").expect("table should parse"),
+                )
+                .await
+                .unwrap_or_default();
+            if machines.len() == 1
+                && machines[0].fields.get("state") == Some(&json!(machine_state))
+                && listeners.len() == if connectivity_present { 2 } else { 0 }
+                && ports.len() == usize::from(connectivity_present)
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("machine projection should converge");
     let machines = engine
         .list_documents_async(
             tenant_id.clone(),
@@ -441,12 +588,12 @@ async fn assert_system_machine_state(
         )
         .await
         .expect("listeners should list");
-    assert_eq!(listeners.len(), 1);
-    assert_eq!(listeners[0].fields.get("adapter"), Some(&json!("machine")));
-    assert_eq!(
-        listeners[0].fields.get("state"),
-        Some(&json!(listener_state))
-    );
+    assert_eq!(listeners.len(), if connectivity_present { 2 } else { 0 });
+    assert!(listeners.iter().all(|listener| {
+        listener.fields.get("adapter") == Some(&json!("machine"))
+            && listener.fields.get("observedPhase") == Some(&json!("ready"))
+            && listener.fields.get("cleanupState") == Some(&json!("clear"))
+    }));
 
     let ports = engine
         .list_documents_async(
@@ -455,10 +602,13 @@ async fn assert_system_machine_state(
         )
         .await
         .expect("ports should list");
-    assert_eq!(ports.len(), 1);
-    assert_eq!(ports[0].fields.get("machineId"), Some(&json!("demo")));
-    assert_eq!(ports[0].fields.get("hostPort"), Some(&json!(10022)));
-    assert_eq!(ports[0].fields.get("state"), Some(&json!(port_state)));
+    assert_eq!(ports.len(), usize::from(connectivity_present));
+    if let Some(port) = ports.first() {
+        assert_eq!(port.fields.get("machineId"), Some(&json!("demo")));
+        assert_eq!(port.fields.get("hostPort"), Some(&json!(10022)));
+        assert_eq!(port.fields.get("observedPhase"), Some(&json!("ready")));
+        assert_eq!(port.fields.get("cleanupState"), Some(&json!("clear")));
+    }
 }
 
 async fn assert_system_machine_document(
@@ -469,14 +619,27 @@ async fn assert_system_machine_document(
     memory_mib: u32,
     disk_gib: u32,
 ) {
-    let machine = engine
-        .get_document_async(
-            crate::system_tenant::system_tenant_id().expect("system id should parse"),
-            TableName::new("machines").expect("table should parse"),
-            DocumentId::from_key(system_machine_document_id(name)).expect("id should parse"),
-        )
-        .await
-        .expect("machine document should exist");
+    let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let table = TableName::new("machines").expect("table should parse");
+    let document_id =
+        DocumentId::from_key(system_machine_document_id(name)).expect("id should parse");
+    let machine = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(machine) = engine
+                .get_document_async(tenant_id.clone(), table.clone(), document_id.clone())
+                .await
+                && machine.fields.get("state") == Some(&json!(state))
+                && machine.fields["resources"]["cpus"] == json!(cpus)
+                && machine.fields["resources"]["memoryMiB"] == json!(memory_mib)
+                && machine.fields["resources"]["diskGiB"] == json!(disk_gib)
+            {
+                return machine;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("machine projection should converge");
     assert_eq!(machine.fields.get("name"), Some(&json!(name)));
     assert_eq!(machine.fields.get("state"), Some(&json!(state)));
     assert_eq!(machine.fields["resources"]["cpus"], json!(cpus));
@@ -486,11 +649,50 @@ async fn assert_system_machine_document(
 
 async fn assert_system_machine_deleted(engine: &Arc<Engine>, name: &str) {
     let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
-    for (table, document_id) in [
+    let machine_api_listener = nimbus_network::ListenerId::for_workload_listener(
+        &format!("managed-machine:{name}"),
+        "machine-api",
+    );
+    let ssh_listener = nimbus_network::ListenerId::for_workload_listener(
+        &format!("server-machine-fixture:{name}"),
+        "ssh-forward",
+    );
+    let ssh_port = nimbus_network::PortLeaseId::for_listener(&ssh_listener);
+    let documents = [
         ("machines", system_machine_document_id(name)),
-        ("listeners", system_machine_listener_document_id(name)),
-        ("ports", system_machine_port_document_id(name, "ssh")),
-    ] {
+        (
+            "listeners",
+            format!("listener:{}", machine_api_listener.as_str()),
+        ),
+        ("listeners", format!("listener:{}", ssh_listener.as_str())),
+        ("ports", format!("port:{}", ssh_port.as_str())),
+    ];
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let mut all_missing = true;
+            for (table, document_id) in &documents {
+                match engine
+                    .get_document_async(
+                        tenant_id.clone(),
+                        TableName::new(*table).expect("table should parse"),
+                        DocumentId::from_key(document_id.clone()).expect("id should parse"),
+                    )
+                    .await
+                {
+                    Err(nimbus_core::Error::DocumentNotFound(_)) => {}
+                    _ => all_missing = false,
+                }
+            }
+            if all_missing {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("machine deletion projection should converge");
+
+    for (table, document_id) in documents {
         let missing = engine
             .get_document_async(
                 tenant_id.clone(),
@@ -508,18 +710,6 @@ async fn assert_system_machine_deleted(engine: &Arc<Engine>, name: &str) {
 
 fn system_machine_document_id(name: &str) -> String {
     format!("machine:{}", system_key_segment(name))
-}
-
-fn system_machine_listener_document_id(name: &str) -> String {
-    format!("listener:machine-api:{}", system_key_segment(name))
-}
-
-fn system_machine_port_document_id(name: &str, port: &str) -> String {
-    format!(
-        "port:machine:{}:{}",
-        system_key_segment(name),
-        system_key_segment(port)
-    )
 }
 
 fn system_key_segment(value: &str) -> String {
@@ -547,13 +737,22 @@ async fn assert_system_events_for_machine(
     machine_name: &str,
     expected: &[(&str, &str, &str)],
 ) {
-    let events = engine
-        .list_documents_async(
-            crate::system_tenant::system_tenant_id().expect("system id should parse"),
-            TableName::new("events").expect("table should parse"),
-        )
-        .await
-        .expect("events should list");
+    let tenant_id = crate::system_tenant::system_tenant_id().expect("system id should parse");
+    let table = TableName::new("events").expect("table should parse");
+    let events = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(events) = engine
+                .list_documents_async(tenant_id.clone(), table.clone())
+                .await
+                && events.len() == expected.len()
+            {
+                return events;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("machine event projection should converge");
     assert_eq!(events.len(), expected.len());
     let mut actual = Vec::new();
     for event in &events {

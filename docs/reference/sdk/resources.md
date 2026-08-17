@@ -102,7 +102,6 @@ default; if neither is set, the call throws. `sessions.get` and
 | --- | --- | --- |
 | `start(input)` | `Promise<NimbusService>` | `POST .../services/{name}/start`. Optional `waitUntil: "ready" \| "healthy"` polls until the condition holds. |
 | `stop(input)` | `Promise<NimbusService>` | `POST .../services/{name}/stop`. Optional `waitUntil: "stopped"`. |
-| `restart(input)` | `Promise<NimbusService>` | `POST .../services/{name}/restart`. Optional `waitUntil: "ready" \| "healthy"`. |
 | `get(selector)` | `Promise<NimbusService>` | `GET .../services/{name}`. |
 | `create(input)` | `Promise<NimbusServiceDefinition>` | `POST .../services` with a backend spec and optional labels. |
 | `update(input)` | `Promise<NimbusServiceDefinition>` | `PUT .../services/{name}`; requires `ifMatchGeneration`. |

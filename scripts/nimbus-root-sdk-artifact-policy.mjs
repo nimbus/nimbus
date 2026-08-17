@@ -57,6 +57,7 @@ export const NIMBUS_ROOT_SDK_CONTROL_PLANE_ROUTE_FRAGMENTS = [
   "sessions.list",
   "sessions.close",
   "/api/tenants/{tenant_id}/services/{service_name}",
+  "/api/tenants/{tenant_id}/services/{service_name}/restart",
   "/api/tenants/{tenant_id}/services",
   "/api/tenants/{tenant_id}/sandboxes/{sandbox_id}",
   "/api/tenants/{tenant_id}/sandboxes",
@@ -76,7 +77,8 @@ export function assertNimbusRootSdkArtifactText(
   artifact,
   options = {},
 ) {
-  const runtime = options.runtime ?? isNimbusRootSdkRuntimeArtifact(artifactPath);
+  const runtime =
+    options.runtime ?? isNimbusRootSdkRuntimeArtifact(artifactPath);
   const errors = [];
 
   for (const fragment of NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS) {

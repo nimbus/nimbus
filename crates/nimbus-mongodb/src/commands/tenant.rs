@@ -44,9 +44,24 @@ pub const DEFAULT_TENANT: &str = "default";
 pub(crate) const AUTHENTICATED_TENANT_CLAIM: &str = "nimbus_authenticated_tenant";
 
 fn resolve_tenant_id(db_name: &str) -> Result<TenantId, MongoError> {
-    match db_name {
+    let tenant_id = match db_name {
         "admin" | "local" | "config" => TenantId::new(DEFAULT_TENANT).map_err(MongoError::from),
         other => TenantId::new(other).map_err(MongoError::from),
+    }?;
+    if tenant_id.is_nimbus_reserved() {
+        return Err(reserved_tenant_refused(&tenant_id));
+    }
+    Ok(tenant_id)
+}
+
+fn reserved_tenant_refused(referenced: &TenantId) -> MongoError {
+    MongoError::Command {
+        code: UNAUTHORIZED.code,
+        code_name: UNAUTHORIZED.code_name.into(),
+        message: format!(
+            "MongoDB database {referenced} names a reserved Nimbus tenant; application database \
+             selection is refused"
+        ),
     }
 }
 
@@ -203,6 +218,21 @@ mod tests {
                 .expect("context should resolve");
 
             assert_eq!(context.tenant_id().as_str(), DEFAULT_TENANT);
+        }
+    }
+
+    #[test]
+    fn unbound_principal_refuses_reserved_database_before_context_creation() {
+        for reserved in ["_nimbus", "_reserved"] {
+            let error = resolve_tenant_context(reserved, "mongodb test", &test_principal())
+                .expect_err("an unbound wire database must not select a reserved tenant");
+            match error {
+                MongoError::Command { code, message, .. } => {
+                    assert_eq!(code, UNAUTHORIZED.code);
+                    assert!(message.contains("reserved Nimbus tenant"));
+                }
+                other => panic!("expected command error, got {other:?}"),
+            }
         }
     }
 

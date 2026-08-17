@@ -1,31 +1,34 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use hyper::body::HttpBody as _;
 use hyper::{Body, Request, StatusCode};
-use nimbus::{Error, SandboxHandle, SandboxId, SandboxRootSpec, SandboxSpec, TenantId};
+use nimbus::{Error, SandboxId, TenantId};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UnixStream;
 
+use nimbus_machine::MachineForwarderAuthority;
 use nimbus_machine::api::{
     MACHINE_API_BOOTC_ROLLBACK_PATH, MACHINE_API_BOOTC_STATUS_PATH, MACHINE_API_BOOTC_SWITCH_PATH,
     MACHINE_API_BOOTC_UPGRADE_PATH, MACHINE_API_CAPABILITIES_PATH, MACHINE_API_HEALTH_PATH,
-    MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH, MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
+    MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH, MACHINE_API_WORKLOAD_RESTART_PHASE_PATH,
     MachineApiBootcOperationResponse, MachineApiBootcRollbackRequest,
     MachineApiBootcStatusResponse, MachineApiBootcSwitchRequest, MachineApiBootcUpgradeRequest,
     MachineApiCapabilityResponse, MachineApiErrorResponse, MachineApiHealthResponse,
     MachineApiServiceProcessSnapshot, MachineApiServiceProcessSnapshotResponse,
-    MachineApiServiceSandboxBuildStartRequest, MachineApiServiceSandboxImageStartRequest,
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
-    MachineApiServiceSandboxStartResponse, MachineApiServiceSandboxStopResponse,
-    MachineApiServiceSandboxSummary, PROTOCOL_VERSION, machine_api_current_service_sandbox_path,
-    machine_api_service_sandbox_list_path, machine_api_service_sandbox_logs_path,
-    machine_api_service_sandbox_path, machine_api_service_sandbox_process_snapshot_path,
-    machine_api_service_sandbox_stop_path,
+    MachineApiServiceSandboxSummary, MachineApiWorkloadProvisionCommandEnvelope,
+    MachineApiWorkloadProvisionPhaseRequest, MachineApiWorkloadProvisionPhaseResponse,
+    MachineApiWorkloadRestartCommandEnvelope, MachineApiWorkloadRestartPhaseRequest,
+    MachineApiWorkloadRestartPhaseResponse, PROTOCOL_VERSION,
+    machine_api_current_service_sandbox_path, machine_api_service_sandbox_list_path,
+    machine_api_service_sandbox_logs_path, machine_api_service_sandbox_path,
+    machine_api_service_sandbox_process_snapshot_path,
 };
+use nimbus_sandbox::SandboxInspection;
 
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(2);
 const SOCKET_MUTATION_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -34,11 +37,16 @@ const SOCKET_MUTATION_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const SOCKET_IO_TIMEOUT_TEST: Duration = Duration::from_secs(30);
 const LOCAL_GUEST_BINARY_HELP_TEXT: &str = "set `NIMBUS_MACHINE_GUEST_BINARY` only when you intentionally need a local Linux guest binary override";
 
+mod teardown;
+pub(crate) use teardown::MachineApiWorkloadTeardownTransportOutcome;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(crate) struct MachineApiClient {
     socket_path: PathBuf,
     io_timeout: Duration,
+    mutation_io_timeout: Duration,
+    forwarder_authority: Option<MachineForwarderAuthority>,
 }
 
 #[allow(dead_code)]
@@ -47,6 +55,8 @@ impl MachineApiClient {
         Self {
             socket_path: socket_path.into(),
             io_timeout: SOCKET_IO_TIMEOUT,
+            mutation_io_timeout: SOCKET_MUTATION_IO_TIMEOUT,
+            forwarder_authority: None,
         }
     }
 
@@ -55,7 +65,20 @@ impl MachineApiClient {
         Self {
             socket_path: socket_path.into(),
             io_timeout: SOCKET_IO_TIMEOUT_TEST,
+            mutation_io_timeout: SOCKET_MUTATION_IO_TIMEOUT,
+            forwarder_authority: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_mutation_io_timeout_for_test(mut self, timeout: Duration) -> Self {
+        self.mutation_io_timeout = timeout;
+        self
+    }
+
+    pub(crate) fn with_forwarder_authority(mut self, authority: MachineForwarderAuthority) -> Self {
+        self.forwarder_authority = Some(authority);
+        self
     }
 
     pub(crate) fn socket_path(&self) -> &Path {
@@ -90,70 +113,127 @@ impl MachineApiClient {
 
     pub(crate) fn bootc_switch(
         &self,
-        request: MachineApiBootcSwitchRequest,
+        image: String,
+        transport: Option<String>,
     ) -> Result<MachineApiBootcOperationResponse, Error> {
+        let request = MachineApiBootcSwitchRequest {
+            forwarder_authority: self.service_forwarder_authority()?.clone(),
+            image,
+            transport,
+        };
         self.post_json(MACHINE_API_BOOTC_SWITCH_PATH, &request)
     }
 
     pub(crate) fn bootc_upgrade(
         &self,
-        request: MachineApiBootcUpgradeRequest,
+        check: bool,
+        tag: Option<String>,
     ) -> Result<MachineApiBootcOperationResponse, Error> {
+        let request = MachineApiBootcUpgradeRequest {
+            forwarder_authority: self.service_forwarder_authority()?.clone(),
+            check,
+            tag,
+        };
         self.post_json(MACHINE_API_BOOTC_UPGRADE_PATH, &request)
     }
 
-    pub(crate) fn bootc_rollback(
-        &self,
-        request: MachineApiBootcRollbackRequest,
-    ) -> Result<MachineApiBootcOperationResponse, Error> {
+    pub(crate) fn bootc_rollback(&self) -> Result<MachineApiBootcOperationResponse, Error> {
+        let request = MachineApiBootcRollbackRequest {
+            forwarder_authority: self.service_forwarder_authority()?.clone(),
+        };
         self.post_json(MACHINE_API_BOOTC_ROLLBACK_PATH, &request)
     }
 
-    pub(crate) fn start_service_sandbox_from_image(
+    /// Dispatch one command that compute has already durably confirmed.
+    ///
+    /// This client adds only the current parent-issued machine authority. It
+    /// neither re-admits the workload nor reconstructs saga state.
+    pub(crate) fn provision_workload_phase(
         &self,
-        spec: SandboxSpec,
-    ) -> Result<SandboxHandle, Error> {
-        self.post_json(
-            MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
-            &MachineApiServiceSandboxImageStartRequest { spec },
+        command: MachineApiWorkloadProvisionCommandEnvelope,
+    ) -> Result<MachineApiWorkloadProvisionPhaseResponse, Error> {
+        let request = MachineApiWorkloadProvisionPhaseRequest::new(
+            self.service_forwarder_authority()?.clone(),
+            command,
         )
-        .map(|response: MachineApiServiceSandboxStartResponse| response.handle)
+        .map_err(|error| {
+            Error::InvalidInput(format!(
+                "machine API workload provision request is crossed: {error}"
+            ))
+        })?;
+        let response: MachineApiWorkloadProvisionPhaseResponse =
+            self.post_json(MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH, &request)?;
+        response.validate_for_request(&request).map_err(|error| {
+            Error::Internal(format!(
+                "machine API workload provision response did not authenticate the exact command fences; the outcome remains ambiguous: {error}"
+            ))
+        })?;
+        Ok(response)
     }
 
-    pub(crate) fn start_service_sandbox_from_build(
+    /// Dispatch one restart phase that compute has already durably confirmed.
+    ///
+    /// The client authenticates the complete command with the current
+    /// parent-issued machine authority and rejects a crossed response as an
+    /// ambiguous outcome. It owns no restart policy, order, or retry loop.
+    pub(crate) fn restart_workload_phase(
         &self,
-        spec: SandboxSpec,
-    ) -> Result<SandboxHandle, Error> {
-        let spec = normalize_guest_visible_build_spec(spec);
-        self.post_json(
-            MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH,
-            &MachineApiServiceSandboxBuildStartRequest { spec },
+        command: MachineApiWorkloadRestartCommandEnvelope,
+    ) -> Result<MachineApiWorkloadRestartPhaseResponse, Error> {
+        let request = MachineApiWorkloadRestartPhaseRequest::new(
+            self.service_forwarder_authority()?.clone(),
+            command,
         )
-        .map(|response: MachineApiServiceSandboxStartResponse| response.handle)
+        .map_err(|error| {
+            Error::InvalidInput(format!(
+                "machine API workload restart request is crossed: {error}"
+            ))
+        })?;
+        let response: MachineApiWorkloadRestartPhaseResponse =
+            self.post_json(MACHINE_API_WORKLOAD_RESTART_PHASE_PATH, &request)?;
+        response.validate_for_request(&request).map_err(|error| {
+            Error::Internal(format!(
+                "machine API workload restart response did not authenticate the exact command fences; the outcome remains ambiguous: {error}"
+            ))
+        })?;
+        Ok(response)
     }
 
     pub(crate) fn inspect_service_sandbox(
         &self,
         sandbox_id: &SandboxId,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        self.get_json::<MachineApiServiceSandboxInspectResponse>(&machine_api_service_sandbox_path(
-            sandbox_id.as_str(),
-        ))
-        .map(|response| response.handle)
+    ) -> Result<Option<SandboxInspection>, Error> {
+        let response = self.get_json::<MachineApiServiceSandboxInspectResponse>(
+            &machine_api_service_sandbox_path(sandbox_id.as_str()),
+        )?;
+        if response.sandbox_id != *sandbox_id {
+            return Err(Error::InvalidInput(format!(
+                "machine API inspection response sandbox {} does not match requested sandbox {}",
+                response.sandbox_id, sandbox_id
+            )));
+        }
+        if let Some(inspection) = response.inspection.as_ref()
+            && inspection.handle.id != *sandbox_id
+        {
+            return Err(Error::InvalidInput(format!(
+                "machine API inspection evidence sandbox {} does not match requested sandbox {}",
+                inspection.handle.id, sandbox_id
+            )));
+        }
+        Ok(response.inspection)
     }
 
-    pub(crate) fn stop_service_sandbox(&self, sandbox_id: &SandboxId) -> Result<(), Error> {
-        let response = self.post_empty::<MachineApiServiceSandboxStopResponse>(
-            &machine_api_service_sandbox_stop_path(sandbox_id.as_str()),
-        )?;
-        if response.stopped {
-            Ok(())
-        } else {
-            Err(Error::Internal(format!(
-                "machine API stop acknowledged false for sandbox {}",
-                sandbox_id
-            )))
-        }
+    fn service_forwarder_authority(&self) -> Result<&MachineForwarderAuthority, Error> {
+        self.forwarder_authority.as_ref().ok_or_else(|| {
+            Error::PreconditionFailed(format!(
+                "machine API client for {} has no parent-issued forwarder authority",
+                self.socket_path.display()
+            ))
+        })
+    }
+
+    pub(super) fn forwarder_authority(&self) -> Result<&MachineForwarderAuthority, Error> {
+        self.service_forwarder_authority()
     }
 
     pub(crate) fn list_service_sandboxes(
@@ -230,7 +310,7 @@ impl MachineApiClient {
             "POST",
             path,
             Some(&encoded),
-            SOCKET_MUTATION_IO_TIMEOUT,
+            self.mutation_io_timeout,
         )?;
         let body = extract_machine_api_json_body(status, &response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
@@ -251,7 +331,7 @@ impl MachineApiClient {
             "POST",
             path,
             None,
-            SOCKET_MUTATION_IO_TIMEOUT,
+            self.mutation_io_timeout,
         )?;
         let body = extract_machine_api_json_body(status, &response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
@@ -262,36 +342,6 @@ impl MachineApiClient {
             ))
         })
     }
-}
-
-fn normalize_guest_visible_build_spec(mut spec: SandboxSpec) -> SandboxSpec {
-    if let SandboxRootSpec::OciImage(image) = &mut spec.root
-        && let nimbus::SandboxOciImageSource::Build(build) = &mut image.source
-    {
-        build.dockerfile_path = normalize_guest_visible_host_path(&build.dockerfile_path);
-        build.context_path = normalize_guest_visible_host_path(&build.context_path);
-    }
-    spec
-}
-
-fn normalize_guest_visible_host_path(path: &Path) -> PathBuf {
-    if !cfg!(target_os = "macos") || !path.is_absolute() {
-        return path.to_path_buf();
-    }
-
-    if let Ok(canonical) = fs::canonicalize(path) {
-        return canonical;
-    }
-
-    if path == Path::new("/tmp") {
-        return PathBuf::from("/private/tmp");
-    }
-
-    if let Ok(relative) = path.strip_prefix("/tmp/") {
-        return PathBuf::from("/private/tmp").join(relative);
-    }
-
-    path.to_path_buf()
 }
 
 fn describe_capability_decode_error(
@@ -349,6 +399,7 @@ async fn send_machine_api_request<T>(
     path: &str,
     body: Option<&[u8]>,
     io_timeout: Duration,
+    max_response_body_bytes: Option<usize>,
 ) -> Result<(StatusCode, Vec<u8>), Error>
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -412,7 +463,34 @@ where
         })?;
     let status = response.status();
 
-    let body_bytes = tokio::time::timeout(io_timeout, hyper::body::to_bytes(response.into_body()))
+    let body_bytes = tokio::time::timeout(io_timeout, async {
+        let mut body = response.into_body();
+        let mut body_bytes = Vec::new();
+        while let Some(chunk) = body.data().await {
+            let chunk = chunk.map_err(|error| {
+                Error::Internal(format!(
+                    "machine API response from {}{} closed after the connection ended before the declared response body completed: {error}",
+                    socket_path.display(),
+                    path
+                ))
+            })?;
+            if max_response_body_bytes.is_some_and(|limit| {
+                chunk
+                    .len()
+                    .checked_add(body_bytes.len())
+                    .is_none_or(|next| next > limit)
+            }) {
+                return Err(Error::Internal(format!(
+                    "machine API response from {}{} exceeded the {} byte limit",
+                    socket_path.display(),
+                    path,
+                    max_response_body_bytes.expect("response limit was just matched")
+                )));
+            }
+            body_bytes.extend_from_slice(&chunk);
+        }
+        Ok(body_bytes)
+    })
         .await
         .map_err(|_| {
             Error::Internal(format!(
@@ -420,16 +498,9 @@ where
                 socket_path.display(),
                 path
             ))
-        })?
-        .map_err(|error| {
-            Error::Internal(format!(
-                "machine API response from {}{} closed after the connection ended before the declared response body completed: {error}",
-                socket_path.display(),
-                path
-            ))
-        })?;
+        })??;
 
-    Ok((status, body_bytes.to_vec()))
+    Ok((status, body_bytes))
 }
 
 /// Run one machine API request to completion on a dedicated current-thread
@@ -443,6 +514,17 @@ fn machine_api_request(
     path: &str,
     body: Option<&[u8]>,
     io_timeout: Duration,
+) -> Result<(StatusCode, Vec<u8>), Error> {
+    machine_api_request_with_response_limit(socket_path, method, path, body, io_timeout, None)
+}
+
+fn machine_api_request_with_response_limit(
+    socket_path: &Path,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+    io_timeout: Duration,
+    max_response_body_bytes: Option<usize>,
 ) -> Result<(StatusCode, Vec<u8>), Error> {
     let socket_path = socket_path.to_path_buf();
     let method = method.to_owned();
@@ -467,6 +549,7 @@ fn machine_api_request(
                     &path,
                     body.as_deref(),
                     io_timeout,
+                    max_response_body_bytes,
                 )
                 .await
             })
@@ -519,34 +602,18 @@ fn machine_api_status_error(status_code: Option<u16>, message: String) -> Error 
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::fs;
     use std::io::{Read, Write};
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::os::unix::net::UnixListener as StdUnixListener;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use nimbus::{
-        Error, PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
-        SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
-        SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
-    };
-    use nimbus_sandbox::SandboxFuture;
-    use nimbus_sandbox::backends::container::{
-        ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
-    };
+    use nimbus::{Error, SandboxBackendKind, SandboxHandle, SandboxId, SandboxStatus, TenantId};
+    use nimbus_sandbox::SandboxInspection;
     use tempfile::{Builder, TempDir};
 
-    use super::{
-        MachineApiClient, normalize_guest_visible_build_spec, normalize_guest_visible_host_path,
-    };
+    use super::MachineApiClient;
     use crate::machine::api::{
         MachineApiListenMode, MachineApiState, bind_direct_listener,
-        default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_sandbox_backend,
-        serve_machine_api,
+        default_guest_helper_binary_dirs, serve_machine_api,
     };
     use nimbus_machine::api::{
         MachineApiHealthResponse, MachineApiServiceExecutionDriver, MachineApiServiceExecutionMode,
@@ -565,6 +632,7 @@ mod tests {
             helper_binary_dirs: default_guest_helper_binary_dirs(),
             service_workloads: None,
             machine_port_forwarder: None,
+            forwarder_authority: None,
         };
         write_fake_runtime_binaries(temp_dir.path());
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -615,7 +683,14 @@ mod tests {
                 .iter()
                 .map(|status| status.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["bootc", "conmon", "crun", "netavark", "aardvark-dns"]
+            vec![
+                "bootc",
+                "buildah",
+                "conmon",
+                "crun",
+                "netavark",
+                "aardvark-dns"
+            ]
         );
         assert!(
             capabilities
@@ -631,7 +706,7 @@ mod tests {
             capabilities
                 .operation_statuses
                 .iter()
-                .any(|status| status.name == "service-sandboxes.build-start" && !status.available)
+                .any(|status| status.name == "workload-provision.phase" && !status.available)
         );
 
         let _ = shutdown_tx.send(());
@@ -701,7 +776,7 @@ mod tests {
             let mut request = [0_u8; 1024];
             let _ = stream.read(&mut request);
             let body = serde_json::json!({
-                "error": "service-sandboxes.image-start requires OCI image reference",
+                "error": "workload-provision.phase rejects a crossed confirmed command",
             })
             .to_string();
             let response = format!(
@@ -724,248 +799,11 @@ mod tests {
                 &error,
                 Error::InvalidInput(message)
                     if message.contains("machine API request")
-                        && message.contains("requires OCI image reference")
+                        && message.contains("crossed confirmed command")
             ),
             "400 machine API errors should remain InvalidInput: {error}"
         );
         server.join().expect("server should join");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn client_round_trips_service_sandbox_operations_when_backend_is_available() {
-        let temp_dir = short_socket_tempdir();
-        let socket_path = temp_dir.path().join("nimbus.sock");
-        let listener = bind_direct_listener(&socket_path).expect("listener should bind");
-        let state = MachineApiState {
-            control_data_dir: temp_dir.path().join("control"),
-            listen_mode: MachineApiListenMode::DirectSocket,
-            binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
-            helper_binary_dirs: default_guest_helper_binary_dirs(),
-            service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
-                Arc::new(StubMachineApiSandboxBackend::default()),
-            )),
-            machine_port_forwarder: None,
-        };
-        write_fake_runtime_binaries(temp_dir.path());
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-        let server = tokio::spawn(serve_machine_api(listener, state, async move {
-            let _ = shutdown_rx.await;
-        }));
-        let client = MachineApiClient::new_for_test(socket_path);
-        let _ = wait_for_health(&client);
-
-        let capabilities = client
-            .capabilities()
-            .expect("capabilities should decode cleanly");
-        assert!(capabilities.service_execution_ready);
-        assert_eq!(
-            capabilities.service_execution_driver,
-            MachineApiServiceExecutionDriver::GuestNodeAgentSystemdTransientUnit
-        );
-        assert_eq!(
-            capabilities.supported_service_backends,
-            vec![SandboxBackendKind::Container]
-        );
-        assert!(
-            capabilities
-                .supported_operations
-                .contains(&"service-sandboxes.image-start".to_owned())
-        );
-        assert!(capabilities.service_execution_blockers.is_empty());
-        assert!(
-            capabilities
-                .operation_statuses
-                .iter()
-                .any(|status| status.name == "service-sandboxes.build-start" && status.available)
-        );
-
-        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let image_handle = client
-            .start_service_sandbox_from_image(image_spec(
-                &tenant_id,
-                "db",
-                "docker://busybox:latest",
-            ))
-            .expect("image-backed sandbox should start");
-        assert_eq!(image_handle.name, "db");
-        assert_eq!(image_handle.backend, SandboxBackendKind::Container);
-        assert_eq!(image_handle.status, SandboxStatus::Ready);
-        assert_eq!(image_handle.published_endpoints.len(), 1);
-
-        let inspected = client
-            .inspect_service_sandbox(&image_handle.id)
-            .expect("inspect should succeed")
-            .expect("started sandbox should inspect");
-        assert_eq!(inspected, image_handle);
-
-        client
-            .stop_service_sandbox(&image_handle.id)
-            .expect("stop should succeed");
-        assert!(
-            client
-                .inspect_service_sandbox(&image_handle.id)
-                .expect("inspect after stop should succeed")
-                .is_none(),
-            "stopped sandbox should disappear from inspect"
-        );
-
-        let build_handle = client
-            .start_service_sandbox_from_build(build_spec(
-                &tenant_id,
-                "api",
-                "api-image",
-                "/Users/jack/src/github.com/nimbus/nimbus/Dockerfile",
-                "/Users/jack/src/github.com/nimbus/nimbus",
-            ))
-            .expect("build-backed sandbox should start");
-        assert_eq!(build_handle.name, "api");
-
-        let _ = shutdown_tx.send(());
-        server
-            .await
-            .expect("machine API server task should join")
-            .expect("machine API server should shut down cleanly");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn client_reads_list_current_logs_and_process_snapshot_from_machine_api() {
-        let temp_dir = short_socket_tempdir();
-        let control_data_dir = temp_dir.path().join("control");
-        let manifest_state_root = control_data_dir
-            .join("service-sandboxes")
-            .join("container")
-            .join("state");
-        let socket_path = temp_dir.path().join("nimbus.sock");
-        let listener = bind_direct_listener(&socket_path).expect("listener should bind");
-        let mut backend_config = ContainerSandboxBackendConfig::under_root(
-            control_data_dir.join("service-sandboxes").join("container"),
-        );
-        backend_config.start_mode = ContainerStartMode::PlanOnly;
-        let state = MachineApiState {
-            control_data_dir,
-            listen_mode: MachineApiListenMode::DirectSocket,
-            binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
-            helper_binary_dirs: default_guest_helper_binary_dirs(),
-            service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
-                Arc::new(ContainerSandboxBackend::new(backend_config)),
-            )),
-            machine_port_forwarder: None,
-        };
-        write_fake_runtime_binaries(temp_dir.path());
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-        let server = tokio::spawn(serve_machine_api(listener, state, async move {
-            let _ = shutdown_rx.await;
-        }));
-        let client = MachineApiClient::new_for_test(socket_path);
-        let _ = wait_for_health(&client);
-
-        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let sandbox_id = SandboxId::new("db-01aaa");
-        let container_dir = write_container_manifest(
-            manifest_state_root.as_path(),
-            sandbox_id.as_str(),
-            tenant_id.as_str(),
-            "db",
-            SandboxStatus::Ready,
-        );
-        fs::write(container_dir.join("ctr.log"), "guest log line\n")
-            .expect("guest ctr.log should write");
-        fs::write(container_dir.join("pidfile"), "2002\n").expect("pidfile should write");
-        fs::write(container_dir.join("conmon.pid"), "1001\n").expect("conmon pidfile should write");
-
-        let summaries = client
-            .list_service_sandboxes(Some(&tenant_id))
-            .expect("sandbox list should succeed");
-        assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].service_name, "db");
-        assert_eq!(summaries[0].sandbox_id, sandbox_id);
-
-        let current = client
-            .inspect_current_service_sandbox(&tenant_id, "db")
-            .expect("current sandbox lookup should succeed")
-            .details
-            .expect("current sandbox should resolve");
-        assert_eq!(current.summary.sandbox_id, sandbox_id);
-        assert!(current.log_paths.ctr_log.ends_with("ctr.log"));
-
-        let logs = client
-            .read_service_sandbox_log_chunk(&sandbox_id, 0)
-            .expect("log chunk should read");
-        assert_eq!(logs.chunk, "guest log line\n");
-        assert_eq!(logs.next_offset, 15);
-
-        let snapshot = client
-            .service_sandbox_process_snapshot(&sandbox_id)
-            .expect("process snapshot should read");
-        assert_eq!(snapshot.runtime_pid, Some(2002));
-        assert_eq!(snapshot.conmon_pid, Some(1001));
-
-        let _ = shutdown_tx.send(());
-        server
-            .await
-            .expect("machine API server task should join")
-            .expect("machine API server should shut down cleanly");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn client_encodes_current_service_lookup_query_values() {
-        let temp_dir = short_socket_tempdir();
-        let control_data_dir = temp_dir.path().join("control");
-        let manifest_state_root = control_data_dir
-            .join("service-sandboxes")
-            .join("container")
-            .join("state");
-        let socket_path = temp_dir.path().join("nimbus.sock");
-        let listener = bind_direct_listener(&socket_path).expect("listener should bind");
-        let mut backend_config = ContainerSandboxBackendConfig::under_root(
-            control_data_dir.join("service-sandboxes").join("container"),
-        );
-        backend_config.start_mode = ContainerStartMode::PlanOnly;
-        let state = MachineApiState {
-            control_data_dir,
-            listen_mode: MachineApiListenMode::DirectSocket,
-            binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
-            helper_binary_dirs: default_guest_helper_binary_dirs(),
-            service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
-                Arc::new(ContainerSandboxBackend::new(backend_config)),
-            )),
-            machine_port_forwarder: None,
-        };
-        write_fake_runtime_binaries(temp_dir.path());
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-        let server = tokio::spawn(serve_machine_api(listener, state, async move {
-            let _ = shutdown_rx.await;
-        }));
-        let client = MachineApiClient::new_for_test(socket_path);
-        let _ = wait_for_health(&client);
-
-        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let sandbox_id = SandboxId::new("db-special-01aaa");
-        let service_name = "db & cache=1/path";
-        write_container_manifest(
-            manifest_state_root.as_path(),
-            sandbox_id.as_str(),
-            tenant_id.as_str(),
-            service_name,
-            SandboxStatus::Ready,
-        );
-
-        let current = client
-            .inspect_current_service_sandbox(&tenant_id, service_name)
-            .expect("encoded current sandbox lookup should succeed")
-            .details
-            .expect("encoded current sandbox should resolve");
-        assert_eq!(current.summary.sandbox_id, sandbox_id);
-        assert_eq!(current.summary.service_name, service_name);
-
-        let _ = shutdown_tx.send(());
-        server
-            .await
-            .expect("machine API server task should join")
-            .expect("machine API server should shut down cleanly");
     }
 
     #[test]
@@ -1025,6 +863,8 @@ mod tests {
         let client = MachineApiClient {
             socket_path,
             io_timeout: Duration::from_millis(50),
+            mutation_io_timeout: Duration::from_millis(50),
+            forwarder_authority: None,
         };
 
         let health = client
@@ -1055,6 +895,8 @@ mod tests {
         let client = MachineApiClient {
             socket_path,
             io_timeout: Duration::from_millis(50),
+            mutation_io_timeout: Duration::from_millis(50),
+            forwarder_authority: None,
         };
 
         let error = client
@@ -1091,6 +933,8 @@ mod tests {
         let client = MachineApiClient {
             socket_path,
             io_timeout: Duration::from_secs(2),
+            mutation_io_timeout: Duration::from_secs(2),
+            forwarder_authority: None,
         };
 
         let error = client
@@ -1103,131 +947,6 @@ mod tests {
             "{message}"
         );
         server.join().expect("server should join");
-    }
-
-    #[test]
-    fn guest_visible_path_normalization_preserves_non_absolute_paths() {
-        assert_eq!(
-            normalize_guest_visible_host_path(Path::new("Dockerfile")),
-            PathBuf::from("Dockerfile")
-        );
-    }
-
-    #[test]
-    fn guest_visible_path_normalization_rewrites_tmp_prefix_when_needed() {
-        let path = Path::new("/tmp/nimbus-build-context/Dockerfile");
-        if cfg!(target_os = "macos") {
-            assert_eq!(
-                normalize_guest_visible_host_path(path),
-                PathBuf::from("/private/tmp/nimbus-build-context/Dockerfile")
-            );
-        } else {
-            assert_eq!(normalize_guest_visible_host_path(path), path);
-        }
-    }
-
-    #[test]
-    fn guest_visible_build_spec_normalization_updates_both_paths() {
-        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let spec = normalize_guest_visible_build_spec(build_spec(
-            &tenant_id,
-            "api",
-            "api-image",
-            "/tmp/nimbus-build-context/Dockerfile",
-            "/tmp/nimbus-build-context",
-        ));
-        let SandboxRootSpec::OciImage(image) = spec.root else {
-            panic!("build spec should stay OCI-image rooted");
-        };
-        let nimbus::SandboxOciImageSource::Build(build) = image.source else {
-            panic!("build spec should stay build-backed");
-        };
-        if cfg!(target_os = "macos") {
-            assert_eq!(
-                build.dockerfile_path,
-                PathBuf::from("/private/tmp/nimbus-build-context/Dockerfile")
-            );
-            assert_eq!(
-                build.context_path,
-                PathBuf::from("/private/tmp/nimbus-build-context")
-            );
-        } else {
-            assert_eq!(
-                build.dockerfile_path,
-                PathBuf::from("/tmp/nimbus-build-context/Dockerfile")
-            );
-            assert_eq!(
-                build.context_path,
-                PathBuf::from("/tmp/nimbus-build-context")
-            );
-        }
-    }
-
-    #[test]
-    fn stop_service_sandbox_sends_a_content_length_zero_post_request() {
-        let temp_dir = short_socket_tempdir();
-        let socket_path = temp_dir.path().join("nimbus.sock");
-        let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
-        let expected_path = "/v1/machine-api/service-sandboxes/db-1/stop";
-        let response_body = "{\"sandbox_id\":\"db-1\",\"stopped\":true}".to_string();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("request should connect");
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .expect("read timeout should set");
-
-            let mut request = Vec::new();
-            let mut chunk = [0_u8; 1024];
-            loop {
-                match stream.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(read) => {
-                        request.extend_from_slice(&chunk[..read]);
-                        if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                            break;
-                        }
-                    }
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                        ) =>
-                    {
-                        break;
-                    }
-                    Err(error) => panic!("request should read: {error}"),
-                }
-            }
-
-            write!(
-                stream,
-                "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                response_body.len(),
-                response_body
-            )
-            .expect("response should write");
-
-            String::from_utf8(request).expect("request should be valid utf-8")
-        });
-
-        let client = MachineApiClient::new_for_test(socket_path);
-        client
-            .stop_service_sandbox(&SandboxId::new("db-1"))
-            .expect("stop should succeed");
-
-        let request = server.join().expect("server should join");
-        assert!(
-            request.starts_with(&format!("POST {expected_path} HTTP/1.1\r\n")),
-            "{request}"
-        );
-        assert!(
-            request.contains("content-length: 0\r\n"),
-            "bodyless stop request should advertise content-length: 0: {request}"
-        );
-        assert!(
-            !request.contains("{}"),
-            "bodyless stop request should not send a JSON stub body: {request}"
-        );
     }
 
     #[test]
@@ -1307,9 +1026,9 @@ mod tests {
 
     #[test]
     fn inspect_service_sandbox_encodes_hostile_id_into_request_path() {
-        // `handle: null` keeps the body minimal while staying a valid
+        // `inspection: null` keeps the body minimal while staying a valid
         // MachineApiServiceSandboxInspectResponse so the client returns Ok.
-        let response_body = "{\"sandbox_id\":\"../../etc/passwd\",\"handle\":null}".to_string();
+        let response_body = "{\"sandbox_id\":\"../../etc/passwd\",\"inspection\":null}".to_string();
         let request = capture_machine_api_request_line(&response_body, |client| {
             client
                 .inspect_service_sandbox(&SandboxId::new("../../etc/passwd"))
@@ -1325,22 +1044,58 @@ mod tests {
     }
 
     #[test]
-    fn stop_log_and_ps_paths_encode_hostile_id_segment() {
-        // stop: reserved space + percent literal in the id.
-        let stop_request = capture_machine_api_request_line(
-            "{\"sandbox_id\":\"a b%c\",\"stopped\":true}",
-            |client| {
-                client
-                    .stop_service_sandbox(&SandboxId::new("a b%c"))
-                    .expect("stop should succeed");
-            },
-        );
-        assert!(
-            stop_request
-                .starts_with("POST /v1/machine-api/service-sandboxes/a%20b%25c/stop HTTP/1.1\r\n"),
-            "{stop_request}"
-        );
+    fn inspect_service_sandbox_rejects_crossed_outer_response_identity() {
+        let requested = SandboxId::new("expected-sandbox");
+        let response_body = "{\"sandbox_id\":\"crossed-sandbox\",\"inspection\":null}".to_owned();
+        capture_machine_api_request_line(&response_body, |client| {
+            let error = client
+                .inspect_service_sandbox(&requested)
+                .expect_err("crossed response identity must fail closed");
+            assert!(
+                error.to_string().contains("crossed-sandbox")
+                    && error.to_string().contains("expected-sandbox")
+                    && error
+                        .to_string()
+                        .contains("does not match requested sandbox"),
+                "the crossed outer identity must remain explicit: {error}"
+            );
+        });
+    }
 
+    #[test]
+    fn inspect_service_sandbox_rejects_crossed_inner_evidence_identity() {
+        let requested = SandboxId::new("expected-sandbox");
+        let crossed_handle = SandboxHandle::new(
+            TenantId::new("tenant").expect("tenant should validate"),
+            SandboxId::new("crossed-sandbox"),
+            "api",
+            SandboxBackendKind::Container,
+            SandboxStatus::Stopping,
+            Vec::new(),
+        );
+        let inspection = SandboxInspection::provider_reported(crossed_handle);
+        let response_body = serde_json::json!({
+            "sandbox_id": requested,
+            "inspection": inspection,
+        })
+        .to_string();
+        capture_machine_api_request_line(&response_body, |client| {
+            let error = client
+                .inspect_service_sandbox(&SandboxId::new("expected-sandbox"))
+                .expect_err("crossed inspection evidence must fail closed");
+            assert!(
+                error.to_string().contains("crossed-sandbox")
+                    && error.to_string().contains("expected-sandbox")
+                    && error
+                        .to_string()
+                        .contains("does not match requested sandbox"),
+                "the crossed inner identity must remain explicit: {error}"
+            );
+        });
+    }
+
+    #[test]
+    fn log_and_ps_paths_encode_hostile_id_segment() {
         // logs: structural `/` in the id; the literal `?offset=7` delimiter and
         // numeric offset must stay raw after the encoded segment.
         let log_request = capture_machine_api_request_line(
@@ -1412,240 +1167,10 @@ mod tests {
         }
     }
 
-    fn sample_spec(tenant_id: &TenantId, name: &str) -> SandboxSpec {
-        SandboxSpec::new(
-            tenant_id.clone(),
-            SandboxOwnerSpec::service(name),
-            SandboxBackendKind::Container,
-            SandboxRootSpec::rootfs("/"),
-            SandboxProcessSpec::new(["sleep", "60"]),
-        )
-        .with_port_binding(SandboxPortBinding::new(
-            "http",
-            PublishedEndpointProtocol::Http,
-            18080,
-            8080,
-        ))
-    }
-
-    fn image_spec(tenant_id: &TenantId, name: &str, image_reference: &str) -> SandboxSpec {
-        let mut spec = sample_spec(tenant_id, name);
-        spec.root = SandboxRootSpec::oci_image_reference(image_reference);
-        spec
-    }
-
-    fn build_spec(
-        tenant_id: &TenantId,
-        name: &str,
-        image_name: &str,
-        dockerfile_path: impl Into<PathBuf>,
-        context_path: impl Into<PathBuf>,
-    ) -> SandboxSpec {
-        let mut spec = sample_spec(tenant_id, name);
-        spec.root = SandboxRootSpec::oci_image_build(image_name, dockerfile_path, context_path);
-        spec
-    }
-
     fn short_socket_tempdir() -> TempDir {
         Builder::new()
             .prefix("nimbus-mac-")
             .tempdir_in("/tmp")
             .expect("short temp dir should exist")
-    }
-
-    fn write_container_manifest(
-        state_root: &Path,
-        sandbox_id: &str,
-        tenant_id: &str,
-        service_name: &str,
-        status: SandboxStatus,
-    ) -> std::path::PathBuf {
-        let sandbox_state_root = state_root
-            .join("tenants")
-            .join(tenant_id)
-            .join("sandboxes")
-            .join(sandbox_id)
-            .join("state");
-        let container_dir = sandbox_state_root.join("containers").join(sandbox_id);
-        let exit_dir = state_root.join("exits");
-        let persist_dir = state_root.join("persist").join(sandbox_id);
-        let bundle_dir = state_root.join("bundles").join(sandbox_id);
-        let network_root = state_root.join("networks");
-        let run_root = network_root.join("run");
-        let netns_root = network_root.join("netns");
-        let container_network_dir = network_root.join("containers").join(sandbox_id);
-        fs::create_dir_all(&container_dir).expect("container manifest directory should exist");
-        fs::create_dir_all(&exit_dir).expect("exit directory should exist");
-        fs::create_dir_all(&persist_dir).expect("persist directory should exist");
-        fs::create_dir_all(&bundle_dir).expect("bundle directory should exist");
-        fs::create_dir_all(&run_root).expect("network run directory should exist");
-        fs::create_dir_all(&netns_root).expect("network netns directory should exist");
-        fs::create_dir_all(&container_network_dir)
-            .expect("container network directory should exist");
-        let handle = SandboxHandle::new(
-            nimbus::TenantId::new(tenant_id).expect("tenant id should parse"),
-            SandboxId::new(sandbox_id),
-            service_name,
-            SandboxBackendKind::Container,
-            status,
-            vec![PublishedEndpoint::new(
-                "http",
-                PublishedEndpointProtocol::Tcp,
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
-            )],
-        );
-        let manifest = serde_json::json!({
-            "handle": handle,
-            "spec": {
-                "tenant_id": tenant_id,
-                "owner": {
-                    "kind": "service",
-                    "name": service_name
-                },
-                "backend": "container",
-                "root": {
-                    "kind": "rootfs",
-                    "rootfs": "/tmp/rootfs",
-                    "readonly": true
-                },
-                "process": {
-                    "args": ["/bin/server"],
-                    "env": ["PATH=/usr/bin"],
-                    "cwd": "/",
-                    "terminal": false
-                },
-                "resources": nimbus::SandboxResourceLimits::default(),
-                "lifecycle": {
-                    "restart_policy": "never"
-                },
-                "port_bindings": [SandboxPortBinding::tcp("http", 18080, 8080)]
-            },
-            "image_metadata": {},
-            "launch_artifact": null,
-            "bundle_layout": {
-                "bundle_dir": bundle_dir,
-                "config_path": bundle_dir.join("config.json")
-            },
-            "conmon_layout": {
-                "state_root": state_root,
-                "container_state_dir": container_dir,
-                "exit_dir": exit_dir,
-                "persist_dir": persist_dir,
-                "ctr_log": container_dir.join("ctr.log"),
-                "oci_log": container_dir.join("oci.log"),
-                "pidfile": container_dir.join("pidfile"),
-                "conmon_pidfile": container_dir.join("conmon.pid"),
-                "exit_status_file": exit_dir.join(sandbox_id),
-                "manifest_path": container_dir.join("manifest.json")
-            },
-            "network_layout": {
-                "network_root": network_root,
-                "run_root": run_root,
-                "netns_root": netns_root,
-                "container_network_dir": container_network_dir,
-                "netns_path": netns_root.join(sandbox_id),
-                "status_path": container_network_dir.join("status.json"),
-                "ipam_state_path": run_root.join("ipam-state.json"),
-                "ipam_lock_path": run_root.join("ipam.lock")
-            },
-            "conmon_launch": {
-                "create_command": {
-                    "program": "/bin/true",
-                    "args": []
-                },
-                "state_command": {
-                    "program": "/bin/true",
-                    "args": []
-                },
-                "start_command": {
-                    "program": "/bin/true",
-                    "args": []
-                },
-                "delete_command": {
-                    "program": "/bin/true",
-                    "args": []
-                }
-            },
-            "last_exit_code": null,
-            "start_mode": "plan_only",
-            "shutdown_requested": matches!(status, SandboxStatus::Stopped),
-            "status": status
-        });
-        fs::write(
-            container_dir.join("manifest.json"),
-            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
-        )
-        .expect("manifest should write");
-        container_dir
-    }
-
-    #[derive(Default)]
-    struct StubMachineApiSandboxBackend {
-        next_id: AtomicUsize,
-        handles: Mutex<BTreeMap<String, SandboxHandle>>,
-    }
-
-    impl StubMachineApiSandboxBackend {
-        fn start_with_spec(&self, spec: &SandboxSpec) -> SandboxHandle {
-            let sequence = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-            let service_name = spec.display_name().to_owned();
-            let sandbox_id = SandboxId::new(format!("{service_name}-{sequence}"));
-            let endpoints = spec
-                .port_bindings
-                .iter()
-                .map(|binding| {
-                    PublishedEndpoint::new(
-                        binding.name.clone(),
-                        binding.protocol,
-                        SocketAddr::new(
-                            IpAddr::V4(Ipv4Addr::LOCALHOST),
-                            binding.host_socket_addr().port(),
-                        ),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let handle = SandboxHandle::new(
-                spec.tenant_id.clone(),
-                sandbox_id.clone(),
-                service_name,
-                SandboxBackendKind::Container,
-                SandboxStatus::Ready,
-                endpoints,
-            );
-            self.handles
-                .lock()
-                .expect("stub backend lock should not be poisoned")
-                .insert(sandbox_id.as_str().to_owned(), handle.clone());
-            handle
-        }
-    }
-
-    impl SandboxBackend for StubMachineApiSandboxBackend {
-        fn kind(&self) -> SandboxBackendKind {
-            SandboxBackendKind::Container
-        }
-
-        fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-            let handle = self.start_with_spec(&spec);
-            Box::pin(async move { Ok(handle) })
-        }
-
-        fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
-            let handle = self
-                .handles
-                .lock()
-                .expect("stub backend lock should not be poisoned")
-                .get(id.as_str())
-                .cloned();
-            Box::pin(async move { Ok(handle) })
-        }
-
-        fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-            self.handles
-                .lock()
-                .expect("stub backend lock should not be poisoned")
-                .remove(id.as_str());
-            Box::pin(async move { Ok(()) })
-        }
     }
 }

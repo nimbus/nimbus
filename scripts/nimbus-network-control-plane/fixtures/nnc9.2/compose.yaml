@@ -1,0 +1,12 @@
+name: nnc92-sovereign-lifecycle
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:15992:8080"
+    restart: on-failure:1
+    stop_grace_period: 3s
+    x-nimbus:
+      backend: krun

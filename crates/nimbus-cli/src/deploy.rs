@@ -1543,7 +1543,8 @@ mod tests {
             .expect("listener address should resolve");
         let server_task = tokio::spawn(nimbus_server::serve(
             listener,
-            nimbus_server::ServeOptions::new(engine.clone())
+            nimbus_server::ServeOptions::reconstruct_direct(engine.clone())
+                .expect("deploy test server authority should open")
                 .with_deploy_admin_token(deploy_token.to_string())
                 .with_local_server_security(security),
         ));

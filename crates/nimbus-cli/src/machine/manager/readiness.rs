@@ -1,5 +1,8 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read as _};
+use std::os::unix::fs::{
+    FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
+};
 use std::os::unix::net::UnixListener;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -13,6 +16,7 @@ use axum::Router;
 use axum::extract::State as AxumState;
 use axum::routing::get;
 use nimbus::Error;
+use nimbus_network::NetworkManagementMode;
 
 use super::super::client::MachineApiClient;
 use super::super::{
@@ -23,6 +27,97 @@ use super::ssh::run_silent_ssh_probe;
 use super::{
     GVPROXY_SOCKET_WAIT_TIMEOUT, MACHINE_API_FORWARD_USER, POLL_INTERVAL, StartupSignalMonitor,
 };
+
+const MACHINE_RUNTIME_DIRECTORY_MODE: u32 = 0o700;
+const MACHINE_FORWARDER_SOCKET_MODE: u32 = 0o600;
+
+pub(super) fn secure_machine_runtime_root(paths: &MachinePaths) -> Result<(), Error> {
+    secure_machine_runtime_root_for_owner(&paths.runtime_dir, unsafe { libc::geteuid() })
+}
+
+pub(super) fn secure_machine_runtime_root_for_owner(
+    path: &Path,
+    expected_uid: u32,
+) -> Result<(), Error> {
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|error| {
+            Error::PreconditionFailed(format!(
+                "machine runtime root {} must be an existing non-symlink directory: {error}",
+                path.display()
+            ))
+        })?;
+    let metadata = directory.metadata().map_err(|error| {
+        Error::Internal(format!(
+            "failed to inspect machine runtime root {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.is_dir() || metadata.uid() != expected_uid {
+        return Err(Error::PreconditionFailed(format!(
+            "machine runtime root {} must be owned by effective uid {expected_uid}",
+            path.display()
+        )));
+    }
+    directory
+        .set_permissions(fs::Permissions::from_mode(MACHINE_RUNTIME_DIRECTORY_MODE))
+        .map_err(|error| {
+            Error::Internal(format!(
+                "failed to restrict machine runtime root {} to its owner: {error}",
+                path.display()
+            ))
+        })
+}
+
+fn secure_machine_forwarder_services_socket(path: &Path) -> Result<(), Error> {
+    secure_machine_forwarder_services_socket_for_owner(path, unsafe { libc::geteuid() })
+}
+
+pub(super) fn secure_machine_forwarder_services_socket_for_owner(
+    path: &Path,
+    expected_uid: u32,
+) -> Result<(), Error> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        Error::Internal(format!(
+            "failed to inspect machine forwarder services socket {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.file_type().is_socket() || metadata.uid() != expected_uid {
+        return Err(Error::PreconditionFailed(format!(
+            "machine forwarder services endpoint {} must be an owner-controlled Unix socket",
+            path.display()
+        )));
+    }
+    fs::set_permissions(
+        path,
+        fs::Permissions::from_mode(MACHINE_FORWARDER_SOCKET_MODE),
+    )
+    .map_err(|error| {
+        Error::Internal(format!(
+            "failed to restrict machine forwarder services socket {} to its owner: {error}",
+            path.display()
+        ))
+    })?;
+    let secured = fs::symlink_metadata(path).map_err(|error| {
+        Error::Internal(format!(
+            "failed to re-inspect machine forwarder services socket {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !secured.file_type().is_socket()
+        || secured.uid() != expected_uid
+        || secured.mode() & 0o777 != MACHINE_FORWARDER_SOCKET_MODE
+    {
+        return Err(Error::PreconditionFailed(format!(
+            "machine forwarder services endpoint {} changed while it was secured",
+            path.display()
+        )));
+    }
+    Ok(())
+}
 
 pub(super) fn wait_for_machine_api_ready(
     paths: &MachinePaths,
@@ -116,23 +211,28 @@ pub(super) fn pre_start_networking(
     gvproxy_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
-    // The launch plan only carries a gvproxy command when the resolved backend
-    // requires it; provider-managed networking backends leave it `None` and have
-    // nothing to pre-start here.
-    let Some(gvproxy_command) = launch_plan.gvproxy_command.as_ref() else {
-        return Ok(());
-    };
-
     // Store the child in the caller's slot before awaiting readiness so a
     // `wait_for_path` failure still hands the spawned gvproxy back through the
     // start-error cleanup path to be reaped, rather than dropping it un-waited.
-    let child = gvproxy_child.insert(gvproxy_command.spawn()?);
+    let child = gvproxy_child.insert(launch_plan.gvproxy_command.spawn()?);
+    let receipt = super::process_identity::GvproxyProcessReceipt::capture(
+        child.id(),
+        &launch_plan.runtime().forwarder_authority,
+    )?;
+    super::write_json_file(&paths.gvproxy_process_identity_path, &receipt)?;
     wait_for_path(
         &paths.gvproxy_socket_path,
         GVPROXY_SOCKET_WAIT_TIMEOUT,
         child,
         startup_signals,
     )?;
+    wait_for_path(
+        &paths.gvproxy_services_socket_path(),
+        GVPROXY_SOCKET_WAIT_TIMEOUT,
+        child,
+        startup_signals,
+    )?;
+    secure_machine_forwarder_services_socket(&paths.gvproxy_services_socket_path())?;
     Ok(())
 }
 
@@ -175,13 +275,12 @@ pub(super) fn post_start_networking(
     api_forward_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
-    if config.provider.uses_provider_networking() {
-        // Future providers such as WSL own their own host networking startup
-        // and will wire their post-start verification here.
-        return Ok(());
+    match config.provider.network_management_mode() {
+        NetworkManagementMode::NimbusHostManaged => {
+            start_machine_api_forward(paths, config, ssh_port, api_forward_child, startup_signals)
+        }
+        NetworkManagementMode::ProviderManaged => Err(config.provider.unavailable_error()),
     }
-
-    start_machine_api_forward(paths, config, ssh_port, api_forward_child, startup_signals)
 }
 
 pub(super) fn conduct_readiness_check(

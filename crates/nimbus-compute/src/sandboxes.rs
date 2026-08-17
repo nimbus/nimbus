@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use nimbus_core::TenantId;
 use nimbus_sandbox::{SandboxHandle, SandboxStatus};
-use nimbus_services::{SandboxResource, ServiceManager};
+use nimbus_services::{SandboxResourceSnapshot, ServiceManager};
+use nimbus_tenant::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -17,10 +18,12 @@ use time::format_description::well_known::Rfc3339;
 use crate::pagination::{CollectionMetadataResponse, paginate_by_key};
 use crate::sandbox_spec::{SandboxSpecInput, SandboxSpecResponse};
 use crate::state::{ComputeError, ComputeState};
+use crate::workload_provisioner::WorkloadProvisionCancellation;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SandboxCreateRequest {
+    pub id: String,
     pub profile: SandboxProfile,
     pub spec: SandboxSpecInput,
     pub labels: Option<BTreeMap<String, String>>,
@@ -122,17 +125,20 @@ pub async fn create_sandbox(
     tenant_context: &nimbus_tenant::TenantIsolationContext,
     request: SandboxCreateRequest,
 ) -> Result<SandboxResourceResponse, ComputeError> {
-    let manager = service_manager(compute)?;
     let spec = request.spec.into_spec(tenant_context.tenant_id(), None)?;
-    let resource = manager
-        .create_sandbox_resource_for_context_async(
+    let snapshot = compute
+        .resource_provisioner()?
+        .provision_standalone_sandbox(
             tenant_context,
+            &request.id,
             request.profile.as_str(),
             spec,
             request.labels.unwrap_or_default(),
+            &WorkloadProvisionCancellation::default(),
         )
-        .await?;
-    Ok(SandboxResourceResponse::from_resource(resource))
+        .await
+        .map_err(|error| error.into_compute_error())?;
+    Ok(SandboxResourceResponse::from_snapshot(snapshot))
 }
 
 /// Lists sandbox resources for `tenant_id`, applying the pure query filters
@@ -148,14 +154,14 @@ pub fn list_sandboxes(
     filter: SandboxListFilter,
 ) -> Result<SandboxCollectionResponse, ComputeError> {
     let manager = service_manager(compute)?;
-    let mut resources = manager.list_sandbox_resources_for_tenant(tenant_id);
-    resources.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut resources = manager.list_sandbox_resource_snapshots_for_tenant(tenant_id);
+    resources.sort_by(|left, right| left.source.id.cmp(&right.source.id));
     if let Some(status) = filter.status.as_deref() {
-        resources.retain(|resource| sandbox_status(&resource.handle) == status);
+        resources.retain(|resource| sandbox_snapshot_status(resource) == status);
     }
     if let Some(label_key) = filter.label_key.as_deref() {
         resources.retain(|resource| {
-            resource.labels.get(label_key).is_some_and(|value| {
+            resource.source.labels.get(label_key).is_some_and(|value| {
                 filter
                     .label_value
                     .as_deref()
@@ -164,13 +170,13 @@ pub fn list_sandboxes(
         });
     }
     if !is_operator {
-        resources.retain(|resource| allows(&resource.id));
+        resources.retain(|resource| allows(&resource.source.id));
     }
     let (resources, page) = paginate_by_key(
         resources,
         filter.page_token.as_deref(),
         filter.limit,
-        |resource| resource.id.as_str(),
+        |resource| resource.source.id.as_str(),
     );
     Ok(SandboxCollectionResponse {
         metadata: CollectionMetadataResponse {
@@ -186,7 +192,7 @@ pub fn list_sandboxes(
         },
         items: resources
             .into_iter()
-            .map(SandboxResourceResponse::from_resource)
+            .map(SandboxResourceResponse::from_snapshot)
             .collect(),
     })
 }
@@ -197,60 +203,91 @@ pub async fn get_sandbox(
     sandbox_id: &str,
 ) -> Result<SandboxResourceResponse, ComputeError> {
     let manager = service_manager(compute)?;
-    let resource = manager
-        .get_sandbox_resource_async(tenant_id, sandbox_id)
-        .await?
+    let snapshot = manager
+        .sandbox_resource_snapshot_for_tenant(tenant_id, sandbox_id)?
         .ok_or_else(|| sandbox_not_found(tenant_id, sandbox_id))?;
-    Ok(SandboxResourceResponse::from_resource(resource))
+    Ok(SandboxResourceResponse::from_snapshot(snapshot))
 }
 
 pub async fn stop_sandbox(
     compute: &ComputeState,
-    tenant_id: &TenantId,
+    tenant_context: &TenantIsolationContext,
     sandbox_id: &str,
 ) -> Result<SandboxResourceResponse, ComputeError> {
-    let manager = service_manager(compute)?;
-    let resource = manager
-        .stop_sandbox_resource_async(tenant_id, sandbox_id)
-        .await?
-        .ok_or_else(|| sandbox_not_found(tenant_id, sandbox_id))?;
-    Ok(SandboxResourceResponse::from_resource(resource))
+    let snapshot = compute
+        .resource_retirer()?
+        .submit_sandbox_teardown(tenant_context, sandbox_id)
+        .await
+        .map_err(|error| error.into_compute_error())?;
+    Ok(SandboxResourceResponse::from_snapshot(snapshot))
 }
 
 impl SandboxResourceResponse {
-    fn from_resource(resource: SandboxResource) -> Self {
-        let updated_at = format_millis_rfc3339(resource.updated_at_millis);
-        let state = sandbox_status(&resource.handle).to_owned();
+    fn from_snapshot(snapshot: SandboxResourceSnapshot) -> Self {
+        let source = snapshot.source;
+        let observed = snapshot.observation;
+        let updated_at_millis = observed
+            .as_ref()
+            .map_or(source.updated_at_millis, |observation| {
+                observation.observed_at_millis
+            });
+        let updated_at = format_millis_rfc3339(updated_at_millis);
+        let state = observed
+            .as_ref()
+            .map_or("pending", |observation| sandbox_status(&observation.handle))
+            .to_owned();
+        let readiness = observed
+            .as_ref()
+            .map_or("pending", |observation| {
+                sandbox_readiness(observation.handle.status)
+            })
+            .to_owned();
+        let health = observed
+            .as_ref()
+            .map_or("unknown", |observation| {
+                sandbox_health(observation.handle.status)
+            })
+            .to_owned();
+        let endpoints = observed.as_ref().map_or_else(Vec::new, |observation| {
+            sandbox_endpoints(&observation.handle)
+        });
+        let ready = observed
+            .as_ref()
+            .is_some_and(|observation| observation.handle.status == SandboxStatus::Ready);
         Self {
             metadata: SandboxMetadataResponse {
-                tenant_id: resource.tenant_id.as_str().to_owned(),
-                id: resource.id.clone(),
-                generation: resource.generation,
-                resource_version: resource.resource_version,
-                created_at: format_millis_rfc3339(resource.created_at_millis),
+                tenant_id: source.tenant_id.as_str().to_owned(),
+                id: source.id.clone(),
+                generation: source.generation,
+                resource_version: source.resource_version,
+                created_at: format_millis_rfc3339(source.created_at_millis),
                 updated_at: updated_at.clone(),
-                labels: resource.labels,
+                labels: source.labels,
             },
             spec: SandboxResourceSpecResponse {
-                profile: resource.profile,
-                sandbox: SandboxSpecResponse::from_spec(resource.spec),
+                profile: source.profile,
+                sandbox: SandboxSpecResponse::from_spec(source.spec.clone()),
             },
             status: SandboxStatusResponse {
                 lifecycle_state: state.clone(),
-                readiness: sandbox_readiness(resource.handle.status).to_owned(),
-                health: sandbox_health(resource.handle.status).to_owned(),
-                backend: sandbox_backend(resource.handle.backend),
-                endpoints: sandbox_endpoints(&resource.handle),
+                readiness,
+                health,
+                backend: sandbox_backend(source.spec.backend),
+                endpoints,
                 conditions: vec![SandboxConditionResponse {
                     condition_type: "Ready",
-                    status: if resource.handle.status == SandboxStatus::Ready {
-                        "True"
+                    status: if ready { "True" } else { "False" },
+                    reason: if observed.is_some() {
+                        "BackendState"
                     } else {
-                        "False"
+                        "DesiredSourceAccepted"
                     },
-                    reason: "BackendState",
-                    message: format!("sandbox `{}` is {state}", resource.id),
-                    observed_generation: resource.generation,
+                    message: format!("sandbox `{}` is {state}", source.id),
+                    observed_generation: observed
+                        .as_ref()
+                        .map_or(source.generation, |observation| {
+                            observation.observed_execution_generation
+                        }),
                     last_transition_time: updated_at,
                 }],
             },
@@ -279,6 +316,13 @@ fn sandbox_endpoints(handle: &SandboxHandle) -> Vec<SandboxEndpointResponse> {
 
 fn sandbox_status(handle: &SandboxHandle) -> &'static str {
     nimbus_system::sandbox_status(handle.status)
+}
+
+fn sandbox_snapshot_status(snapshot: &SandboxResourceSnapshot) -> &'static str {
+    snapshot
+        .observation
+        .as_ref()
+        .map_or("pending", |observation| sandbox_status(&observation.handle))
 }
 
 fn sandbox_backend(backend: nimbus_sandbox::SandboxBackendKind) -> String {
@@ -327,6 +371,10 @@ fn format_millis_rfc3339(millis: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use nimbus_sandbox::{
+        SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
+    };
+    use nimbus_services::{SandboxResourceSnapshot, SandboxResourceSource};
     use serde_json::json;
 
     use super::*;
@@ -334,6 +382,7 @@ mod tests {
     #[test]
     fn wasm_sandbox_requests_fail_closed() {
         let request = json!({
+            "id": "unsupported-wasm",
             "profile": "wasm",
             "spec": {
                 "owner": {
@@ -365,5 +414,41 @@ mod tests {
             error.to_string().contains("worker") && error.to_string().contains("desktop"),
             "error should list the currently supported sandbox profiles: {error}"
         );
+    }
+
+    #[test]
+    fn pending_response_uses_accepted_source_generation_without_provider_facts() {
+        let tenant_id = TenantId::new("pending-tenant").expect("tenant should validate");
+        let spec = SandboxSpec::new(
+            tenant_id.clone(),
+            SandboxOwnerSpec::standalone_named("pending-worker"),
+            SandboxBackendKind::Krun,
+            SandboxRootSpec::rootfs("/fixture/rootfs"),
+            SandboxProcessSpec::new(["/bin/true"]),
+        );
+        let source = SandboxResourceSource::new(
+            tenant_id,
+            "stable-pending-id",
+            "worker",
+            spec,
+            1,
+            17,
+            BTreeMap::new(),
+        );
+
+        let response = SandboxResourceResponse::from_snapshot(SandboxResourceSnapshot {
+            source,
+            observation: None,
+        });
+
+        assert_eq!(response.metadata.generation, 1);
+        assert_eq!(response.status.lifecycle_state, "pending");
+        assert_eq!(response.status.readiness, "pending");
+        assert!(response.status.endpoints.is_empty());
+        assert_eq!(
+            response.status.conditions[0].reason,
+            "DesiredSourceAccepted"
+        );
+        assert_eq!(response.status.conditions[0].observed_generation, 1);
     }
 }

@@ -1,31 +1,28 @@
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
+use super::managed_workload::{TestSandboxActivation, managed_router_config};
 use super::*;
 use crate::local_server::{
     LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
 };
-use crate::router::RouterBuildConfig;
-use nimbus_runtime::{
-    HostCallCancellation, InvocationServiceBinding, InvocationServiceProtocol, RuntimeLimits,
-};
+use nimbus_network::EndpointProtocol;
+use nimbus_runtime::{InvocationServiceBinding, InvocationServiceProtocol, RuntimeLimits};
 use nimbus_sandbox::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
-    SandboxFuture, SandboxHandle, SandboxId, SandboxMountSpec, SandboxOciImageSource,
-    SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
+    SandboxBackend, SandboxBackendKind, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
+    SandboxInspection, SandboxMountSpec, SandboxOciImageSource, SandboxOwnerSpec,
+    SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
-use nimbus_services::ServiceManager;
-use nimbus_services::{RuntimeServiceRegistry, ServiceBackend};
+use nimbus_services::{RuntimeServiceRegistry, ServiceBackend, ServiceDefinition, ServiceManager};
 
 struct HarnessServiceDefinitionCatalog;
 
 impl nimbus_services::ServiceDefinitionCatalog for HarnessServiceDefinitionCatalog {
-    fn service_backend_for_tenant(
+    fn service_definition_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<ServiceBackend> {
+    ) -> Option<ServiceDefinition> {
         if service_name != "db" {
             return None;
         }
@@ -38,8 +35,27 @@ impl nimbus_services::ServiceDefinitionCatalog for HarnessServiceDefinitionCatal
             ),
             SandboxProcessSpec::new(Vec::<String>::new()),
         )
-        .with_mount(SandboxMountSpec::tenant_volume("data", "/var/lib/db"));
-        Some(ServiceBackend::sandbox(spec))
+        .with_mount(SandboxMountSpec::tenant_volume("data", "/var/lib/db"))
+        .with_port_binding(nimbus_sandbox::SandboxPortBinding::new(
+            "postgres",
+            EndpointProtocol::Tcp,
+            tenant_service_port(tenant_id.as_str()),
+            5432,
+        ));
+        Some(ServiceDefinition::static_catalog(
+            tenant_id.clone(),
+            service_name,
+            ServiceBackend::sandbox(spec),
+        ))
+    }
+
+    fn service_definitions_for_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> BTreeMap<String, ServiceDefinition> {
+        self.service_definition_for_tenant(tenant_id, "db")
+            .map(|definition| BTreeMap::from([("db".to_owned(), definition)]))
+            .unwrap_or_default()
     }
 
     fn service_volume_policy_for_tenant(
@@ -98,9 +114,65 @@ impl HarnessSandboxBackend {
         self.root.join(kind).join("tenants").join(tenant_id)
     }
 
+    fn release_exact_artifacts(&self, execution_id: &SandboxId) -> Result<(), SandboxError> {
+        let record = self
+            .records
+            .lock()
+            .expect("sandbox records lock should not be poisoned")
+            .values()
+            .find(|record| record.handle.id == *execution_id)
+            .cloned()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!("missing sandbox record for exact release {execution_id}"),
+            })?;
+        let bundle_root = record
+            .bundle_path
+            .parent()
+            .and_then(Path::parent)
+            .expect("harness bundle path should retain its sandbox root");
+        let state_root = record
+            .state_dir
+            .parent()
+            .expect("harness state path should retain its sandbox root");
+        for root in [bundle_root, state_root, record.volume_path.as_path()] {
+            if root.exists() {
+                std::fs::remove_dir_all(root).map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to release harness sandbox artifact root {}: {error}",
+                        root.display()
+                    ),
+                })?;
+            }
+        }
+        let tenant = record.handle.tenant_id.as_str();
+        for root in [
+            self.tenant_artifact_root("bundles", tenant),
+            self.tenant_artifact_root("state", tenant),
+        ] {
+            for candidate in [root.join("sandboxes"), root.join("volumes"), root] {
+                match std::fs::remove_dir(&candidate) {
+                    Ok(()) => {}
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::NotFound
+                            || error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {}
+                    Err(error) => {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "failed to prune harness sandbox artifact root {}: {error}",
+                                candidate.display()
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn materialize_record(
         &self,
         spec: &SandboxSpec,
+        sandbox_id: SandboxId,
         image_reference: &str,
     ) -> Result<SandboxHandle, SandboxError> {
         let tenant = spec.tenant_id.as_str();
@@ -109,7 +181,6 @@ impl HarnessSandboxBackend {
             .ok_or_else(|| SandboxError::InvalidSpec {
                 message: "harness service sandbox spec must be service-owned".to_owned(),
             })?;
-        let sandbox_id = SandboxId::new(format!("sandbox-{tenant}-{service}"));
         let sandbox_root = |kind: &str| {
             self.tenant_artifact_root(kind, tenant)
                 .join("sandboxes")
@@ -162,17 +233,25 @@ impl HarnessSandboxBackend {
             ),
         })?;
 
+        let endpoints = spec
+            .port_bindings
+            .iter()
+            .map(|binding| {
+                nimbus_network::PublishedEndpoint::new(
+                    binding.name.clone(),
+                    binding.protocol,
+                    std::net::SocketAddr::new(binding.host_address, binding.host_port),
+                )
+                .with_guest_port(binding.guest_port)
+            })
+            .collect();
         let handle = SandboxHandle::new(
             spec.tenant_id.clone(),
             sandbox_id,
             service,
             SandboxBackendKind::Krun,
             SandboxStatus::Ready,
-            vec![PublishedEndpoint::new(
-                "postgres",
-                PublishedEndpointProtocol::Tcp,
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), tenant_service_port(tenant)),
-            )],
+            endpoints,
         );
         self.handles
             .lock()
@@ -202,47 +281,14 @@ impl SandboxBackend for HarnessSandboxBackend {
         SandboxBackendKind::Krun
     }
 
-    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-        self.start_calls.fetch_add(1, Ordering::SeqCst);
-        let image_reference = match &spec.root {
-            SandboxRootSpec::OciImage(image) => match &image.source {
-                SandboxOciImageSource::Reference(reference) => Ok(reference.reference.as_str()),
-                SandboxOciImageSource::Build(_) => Err(SandboxError::InvalidSpec {
-                    message: format!(
-                        "harness service sandbox {} must use an image reference",
-                        spec.display_name()
-                    ),
-                }),
-            },
-            SandboxRootSpec::Rootfs(_) => Err(SandboxError::InvalidSpec {
-                message: format!(
-                    "harness service sandbox {} must use an OCI image root",
-                    spec.display_name()
-                ),
-            }),
-        };
-        let result =
-            image_reference.and_then(|reference| self.materialize_record(&spec, reference));
-        Box::pin(async move { result })
-    }
-
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         let handle = self
             .handles
             .lock()
             .expect("sandbox handles lock should not be poisoned")
             .get(id.as_str())
             .cloned();
-        Box::pin(async move { Ok(handle) })
-    }
-
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        self.stop_calls.fetch_add(1, Ordering::SeqCst);
-        self.handles
-            .lock()
-            .expect("sandbox handles lock should not be poisoned")
-            .remove(id.as_str());
-        Box::pin(async { Ok(()) })
+        Box::pin(async move { Ok(handle.map(SandboxInspection::provider_reported)) })
     }
 
     fn remove_tenant_artifacts(&self, tenant_id: TenantId) -> SandboxFuture<()> {
@@ -267,6 +313,63 @@ impl SandboxBackend for HarnessSandboxBackend {
             .expect("sandbox records lock should not be poisoned")
             .retain(|(record_tenant, _), _| record_tenant != &tenant);
         Box::pin(async { Ok(()) })
+    }
+}
+
+impl TestSandboxActivation for HarnessSandboxBackend {
+    fn activate_for_test(
+        &self,
+        spec: SandboxSpec,
+        execution_id: SandboxId,
+    ) -> Result<SandboxHandle, SandboxError> {
+        self.start_calls.fetch_add(1, Ordering::SeqCst);
+        let image_reference = match &spec.root {
+            SandboxRootSpec::OciImage(image) => match &image.source {
+                SandboxOciImageSource::Reference(reference) => Ok(reference.reference.as_str()),
+                SandboxOciImageSource::Build(_) => Err(SandboxError::InvalidSpec {
+                    message: format!(
+                        "harness service sandbox {} must use an image reference",
+                        spec.display_name()
+                    ),
+                }),
+            },
+            SandboxRootSpec::Rootfs(_) => Err(SandboxError::InvalidSpec {
+                message: format!(
+                    "harness service sandbox {} must use an OCI image root",
+                    spec.display_name()
+                ),
+            }),
+        };
+        image_reference
+            .and_then(|reference| self.materialize_record(&spec, execution_id, reference))
+    }
+
+    fn activated_handle_for_test(&self, execution_id: &SandboxId) -> Option<SandboxHandle> {
+        self.handles
+            .lock()
+            .expect("sandbox handles lock should not be poisoned")
+            .get(execution_id.as_str())
+            .cloned()
+    }
+
+    fn teardown_for_test(
+        &self,
+        step: nimbus_workloads::WorkloadTeardownStep,
+        execution_id: &SandboxId,
+    ) -> SandboxFuture<()> {
+        if step == nimbus_workloads::WorkloadTeardownStep::StopExecution {
+            self.stop_calls.fetch_add(1, Ordering::SeqCst);
+            self.handles
+                .lock()
+                .expect("sandbox handles lock should not be poisoned")
+                .remove(execution_id.as_str());
+        }
+        let result = if step == nimbus_workloads::WorkloadTeardownStep::ReleaseNetwork {
+            self.release_exact_artifacts(execution_id)
+        } else {
+            Ok(())
+        };
+        Box::pin(async move { result })
     }
 }
 
@@ -348,8 +451,17 @@ impl TenantIsolationConformanceReport {
     }
 }
 
-#[tokio::test]
-async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_system_control() {
+#[test]
+fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_system_control() {
+    std::thread::Builder::new()
+        .name("tenant-isolation-conformance".to_owned())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tenant-isolation conformance runtime should build")
+                .block_on(async {
     let mut conformance = TenantIsolationConformanceReport::default();
     let _guard = auth::auth_test_guard().await;
     let temp = tempdir().expect("tempdir should build");
@@ -448,14 +560,10 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
     .with_runtime_limits(runtime_limits_with_db_service_grant());
     let system_registry = convex_registry(json!([query_function("routes:list", "routes")]));
     let sandbox_backend = Arc::new(HarnessSandboxBackend::new(temp.path().join("sandbox")));
-    let service_manager = Arc::new(
-        ServiceManager::new(
-            Arc::new(HarnessServiceDefinitionCatalog),
-            sandbox_backend.clone(),
-        )
-        .with_activation_poll_interval(Duration::from_millis(1))
-        .with_activation_timeout(Duration::from_secs(1)),
-    );
+    let service_manager = Arc::new(ServiceManager::new(
+        Arc::new(HarnessServiceDefinitionCatalog),
+        sandbox_backend.kind(),
+    ));
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();
     crate::system_tenant::prepare_system_tenant_async(&service, None)
@@ -474,7 +582,7 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
         nimbus_convex::ConvexTenancyConfig::new().with_silo_teams(silos)
     };
     let server = ServerFixture::start(
-        RouterBuildConfig::core(service)
+        managed_router_config(service, service_manager.clone(), sandbox_backend.clone())
             .with_convex_silo_auth_verifier(
                 &TenantId::new("tenant-a").expect("tenant id"),
                 crate::router::convex_application_auth_verifier(&tenant_a_auth_registry),
@@ -486,7 +594,6 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
             .with_convex(registry)
             .with_convex_tenancy(tenant_isolation_tenancy)
             .with_system_convex_registry(system_registry)
-            .with_service_manager(service_manager.clone())
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -563,14 +670,25 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
 
     let tenant_a_id = TenantId::new("tenant-a").expect("tenant id should parse");
     let tenant_b_id = TenantId::new("tenant-b").expect("tenant id should parse");
+    for tenant_id in [&tenant_a_id, &tenant_b_id] {
+        let start = server
+            .client()
+            .post(server.http_url(&format!(
+                "/api/tenants/{}/services/db/start",
+                tenant_id.as_str()
+            )))
+            .bearer_auth(&local_admin_token.token)
+            .send()
+            .await
+            .expect("service start request should send");
+        assert_eq!(start.status(), StatusCode::OK);
+    }
     let tenant_a_binding = service_manager
-        .ensure_service_binding_async(&tenant_a_id, "db", HostCallCancellation::default())
-        .await
+        .resolve_service_binding(&tenant_a_id, "db")
         .expect("tenant-a service binding should resolve")
         .expect("tenant-a db service should exist");
     let tenant_b_binding = service_manager
-        .ensure_service_binding_async(&tenant_b_id, "db", HostCallCancellation::default())
-        .await
+        .resolve_service_binding(&tenant_b_id, "db")
         .expect("tenant-b service binding should resolve")
         .expect("tenant-b db service should exist");
     assert_service_manager_binding(&tenant_a_binding, tenant_service_port("tenant-a"));
@@ -809,7 +927,12 @@ async fn tenant_isolation_conformance_suite_covers_runtime_services_storage_and_
         "tenant-b runtime storage remains readable after tenant-a cleanup",
     );
 
-    conformance.assert_counts(12, 9);
+                    conformance.assert_counts(12, 9);
+                });
+        })
+        .expect("tenant-isolation conformance thread should start")
+        .join()
+        .expect("tenant-isolation conformance thread should complete");
 }
 
 const HARNESS_RUNTIME_BUNDLE: &str = r#"

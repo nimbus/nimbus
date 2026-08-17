@@ -72,8 +72,9 @@ Phase 2 coordination: if future filesystem work, Wasmtime, or WAC need runtime
 bootstrap changes in the same window, create or reuse a shared
 extension-registry seam before the second concern edits `extensions.rs`.
 
-### Phase 3 - Sandbox And Machine Execution
+### Phase 3 - Network, Sandbox, And Machine Execution
 
+- `nimbus-network-control-plane-plan.md` - `complete; NNC0-NNC9 done`. Canonical record for the transport-free connectivity-resource lifecycle; final evidence stays in `proof/nimbus-network-control-plane/`. It preserves `nimbus-network -> nimbus-core` as the sole outgoing workspace edge; concrete effects stay with sandbox, server, KV, machine, proxy, and node; future cluster transport stays in the deferred horizontal-scaling lane.
 - `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
   architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
   `SandboxBackend` router/dispatch seam with backend families
@@ -119,7 +120,10 @@ extension-registry seam before the second concern edits `extensions.rs`.
   identity, discovery, membership, placement replication, gossip invalidation,
   isolate placement, microVM placement, content distribution, and the
   cluster-mode integration layer, including HS5's per-Durable-Object placement,
-  shared lease authority, and epoch-fenced protected writes.
+  shared lease authority, and epoch-fenced protected writes. It supplies
+  raft-committed fenced node super-net leases to the canonical
+  `nimbus-network` allocation contract; it does not own a second segment
+  allocator, provider effects, or local network state store.
 - `nimbus-fips-iroh-ed25519-retrofit-plan.md` - `draft`. Owns a future
   aws-lc-rs/PQ TLS posture, NodeSigner seam, and CMVP-triggered identity-key
   retrofit. Promote only after the current FIPS and iroh identity facts are

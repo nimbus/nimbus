@@ -1,5 +1,3 @@
-#![cfg(target_os = "linux")]
-
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -17,9 +15,13 @@ use nimbus_sandbox::backends::container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
 };
 use nimbus_sandbox::{
-    SandboxBackend, SandboxBackendKind, SandboxId, SandboxMountSpec, SandboxOwnerSpec,
-    SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
+    SandboxBackend, SandboxBackendKind, SandboxMountSpec, SandboxOwnerSpec, SandboxProcessSpec,
+    SandboxRootSpec, SandboxSpec,
 };
+
+#[path = "support/provision.rs"]
+mod provision_support;
+use provision_support::{ExactTeardownFixture, provision_container, retire_container};
 
 const RESULT_VOLUME: &str = "egress-proof";
 const RESULT_PATH_IN_GUEST: &str = "/nimbus-egress/result";
@@ -56,8 +58,11 @@ fn container_execute_mode_denies_direct_external_egress() {
         RESULT_VOLUME,
         "/nimbus-egress",
     ));
-    let handle = block_on(backend.start(spec)).expect("container should start");
-    let cleanup = CleanupGuard::new(backend.clone(), handle.id.clone(), tenant_id.clone());
+    let provisioned = provision_container(&backend, &workdir.join("state"), spec, false)
+        .expect("container provision phases should activate the workload");
+    assert!(provisioned.ingress.is_empty());
+    let teardown = provisioned.teardown;
+    let cleanup = CleanupGuard::new(backend.clone(), teardown.clone(), tenant_id.clone());
 
     let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
     let result = wait_for_result(
@@ -66,8 +71,8 @@ fn container_execute_mode_denies_direct_external_egress() {
         "direct-egress proof result",
     );
 
-    block_on(backend.stop(&handle.id))
-        .expect("container should stop and release network artifacts");
+    retire_container(&backend, &teardown)
+        .expect("container exact teardown should release network artifacts");
     block_on(backend.remove_tenant_artifacts(tenant_id))
         .expect("tenant artifacts should clean up after proof");
     cleanup.disarm();
@@ -114,8 +119,12 @@ fn container_execute_mode_enforces_proxy_policy_and_live_reload() {
         "/nimbus-egress",
     ))
     .with_egress_policy(phase_one_policy(phase_one_upstream.addr.port()));
-    let handle = block_on(backend.start(spec)).expect("container should start");
-    let cleanup = CleanupGuard::new(backend.clone(), handle.id.clone(), tenant_id.clone());
+    let provisioned = provision_container(&backend, &workdir.join("state"), spec, false)
+        .expect("container provision phases should activate the workload");
+    assert!(provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let teardown = provisioned.teardown;
+    let cleanup = CleanupGuard::new(backend.clone(), teardown.clone(), tenant_id.clone());
     let volume = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME);
 
     let phase1 = wait_for_result(
@@ -148,8 +157,8 @@ fn container_execute_mode_enforces_proxy_policy_and_live_reload() {
     assert_result_line(&phase2, "new_endpoint_after_reload=allowed");
     assert_result_line(&phase2, "dns_internal_denied=denied");
 
-    block_on(backend.stop(&handle.id))
-        .expect("container should stop and release network artifacts");
+    retire_container(&backend, &teardown)
+        .expect("container exact teardown should release network artifacts");
     block_on(backend.remove_tenant_artifacts(tenant_id))
         .expect("tenant artifacts should clean up after proof");
     cleanup.disarm();
@@ -285,15 +294,19 @@ fn assert_root() {
 
 struct CleanupGuard {
     backend: ContainerSandboxBackend,
-    sandbox_id: SandboxId,
+    teardown: ExactTeardownFixture,
     tenant_id: Option<TenantId>,
 }
 
 impl CleanupGuard {
-    fn new(backend: ContainerSandboxBackend, sandbox_id: SandboxId, tenant_id: TenantId) -> Self {
+    fn new(
+        backend: ContainerSandboxBackend,
+        teardown: ExactTeardownFixture,
+        tenant_id: TenantId,
+    ) -> Self {
         Self {
             backend,
-            sandbox_id,
+            teardown,
             tenant_id: Some(tenant_id),
         }
     }
@@ -308,7 +321,7 @@ impl Drop for CleanupGuard {
         let Some(tenant_id) = self.tenant_id.take() else {
             return;
         };
-        let _ = block_on(self.backend.stop(&self.sandbox_id));
+        let _ = retire_container(&self.backend, &self.teardown);
         let _ = block_on(self.backend.remove_tenant_artifacts(tenant_id));
     }
 }

@@ -31,20 +31,6 @@ use ring::rand::{SecureRandom, SystemRandom};
 use crate::AuthConfig;
 use crate::error::{AUTHENTICATION_FAILED, MongoError};
 
-/// Tenants whose id begins with this prefix are Nimbus-internal. A SCRAM
-/// credential must never bind or resolve to one, or an authenticated request
-/// could reach an internal store. nimbus-core exposes no shared reserved-tenant
-/// check today, so the prefix is defined locally per adapter, mirroring the
-/// DynamoDB `AccessKeyRegistry` (`RESERVED_TENANT_PREFIX`).
-pub(crate) const RESERVED_TENANT_PREFIX: &str = "_nimbus";
-
-/// Whether `tenant` is a reserved Nimbus-internal tenant (see
-/// [`RESERVED_TENANT_PREFIX`]).
-#[must_use]
-pub(crate) fn is_reserved_tenant(tenant: &TenantId) -> bool {
-    tenant.as_str().starts_with(RESERVED_TENANT_PREFIX)
-}
-
 /// One SCRAM credential's binding: the tenant it authenticates, plus the
 /// per-credential SCRAM-SHA-256 material (password + salt + iterations).
 #[derive(Debug, Clone)]
@@ -118,7 +104,7 @@ impl CredentialRegistry {
             .bindings
             .get(username)
             .ok_or_else(authentication_failed)?;
-        if is_reserved_tenant(&binding.tenant) {
+        if binding.tenant.is_nimbus_reserved() {
             return Err(authentication_failed());
         }
         Ok(binding)
@@ -181,7 +167,7 @@ impl CredentialRegistry {
                     "invalid MongoDB credential binding `{entry}`: {error}"
                 ))
             })?;
-            if is_reserved_tenant(&tenant_id) {
+            if tenant_id.is_nimbus_reserved() {
                 return Err(spec_error(format!(
                     "invalid MongoDB credential binding `{entry}`: tenant `{tenant}` is reserved \
                      for Nimbus-internal use"
@@ -312,16 +298,11 @@ mod tests {
 
     #[test]
     fn binding_to_a_reserved_tenant_is_refused() {
-        let registry =
-            CredentialRegistry::new().bind("user-evil", tenant("_nimbus_internal"), "secret");
-        let error = registry.resolve("user-evil").unwrap_err();
-        assert_eq!(auth_code(&error), AUTHENTICATION_FAILED.code);
-    }
-
-    #[test]
-    fn is_reserved_tenant_flags_the_internal_prefix() {
-        assert!(is_reserved_tenant(&tenant("_nimbus_internal")));
-        assert!(!is_reserved_tenant(&tenant("tenant-a")));
+        for reserved in ["_nimbus_internal", "_reserved"] {
+            let registry = CredentialRegistry::new().bind("user-evil", tenant(reserved), "secret");
+            let error = registry.resolve("user-evil").unwrap_err();
+            assert_eq!(auth_code(&error), AUTHENTICATION_FAILED.code);
+        }
     }
 
     #[test]
@@ -405,6 +386,10 @@ mod tests {
             error.to_string().contains("reserved"),
             "reserved-tenant error must explain the refusal: {error}"
         );
+
+        let error = CredentialRegistry::from_operator_spec("user-evil:_reserved:secret")
+            .expect_err("every reserved-prefix tenant must be refused");
+        assert!(error.to_string().contains("reserved"));
     }
 
     #[test]

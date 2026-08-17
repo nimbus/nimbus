@@ -18,8 +18,8 @@ compose. The full flag-by-flag reference lives in
 `crates/nimbus-cli/src/lib.rs` declares the clap command tree — `start`,
 `dev`, `deploy`, `run`, `codegen`, `init`, `token`, `auth`, `ui`,
 `machine`, `node`, `compose`, `policy`, `encryption`, `packages`, `kv`,
-and `object-storage` among others — plus a few hidden internal
-subcommands used for sandbox supervision and workload execution. Each
+and `object-storage` among others — plus hidden internal entrypoints for
+the validated container runner and sandbox-local supervisor. Each
 subcommand owns a module under `crates/nimbus-cli/src/`; the top-level
 `run_from_env` entry point stays a thin dispatcher, and the binary itself
 (`crates/nimbus-bin/src/main.rs`) is a small shim that initializes tracing

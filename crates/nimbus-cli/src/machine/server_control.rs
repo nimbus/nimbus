@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use nimbus::Error;
+use nimbus::{Engine, Error};
 use nimbus_machine::MachineRootLayout;
+use nimbus_network::LocalNetworkAuthority;
 use nimbus_server::machine_lifecycle::{
     MachineCreateRequest, MachineLifecycleFuture, MachineLifecycleManager,
     MachineLifecycleSnapshot, MachineUpdateRequest,
@@ -9,23 +10,35 @@ use nimbus_server::machine_lifecycle::{
 
 use super::command::{MachineInitCommand, MachineSetCommand};
 use super::handlers::{
-    create_machine_with_layout, delete_machine_with_layout, restart_machine_with_layout,
-    start_machine_with_layout, stop_machine_with_layout, update_machine_with_layout,
+    create_machine_with_layout, delete_machine_with_layout,
+    machine_stop_forwarder_authority_with_layout, restart_machine_with_layout_authorized,
+    start_machine_with_layout, stop_machine_with_layout_authorized, update_machine_with_layout,
 };
+use super::network_composition::HostMachineNetworkAuthority;
+use super::stop_authority::HostMachineStopAuthority;
 
-pub(crate) fn host_machine_lifecycle_manager() -> Result<Arc<dyn MachineLifecycleManager>, Error> {
+pub(crate) fn host_machine_lifecycle_manager(
+    network_authority: LocalNetworkAuthority,
+    engine: Arc<Engine>,
+) -> Result<Arc<dyn MachineLifecycleManager>, Error> {
+    let network = HostMachineNetworkAuthority::injected(network_authority);
     Ok(Arc::new(HostMachineLifecycleManager {
         roots: MachineRootLayout::resolve()?,
+        stop_authority: HostMachineStopAuthority::new(&network, engine)?,
+        network,
     }))
 }
 
 struct HostMachineLifecycleManager {
     roots: MachineRootLayout,
+    network: HostMachineNetworkAuthority,
+    stop_authority: HostMachineStopAuthority,
 }
 
 impl MachineLifecycleManager for HostMachineLifecycleManager {
     fn create_machine<'a>(&'a self, request: MachineCreateRequest) -> MachineLifecycleFuture<'a> {
         let roots = self.roots.clone();
+        let network = self.network.clone();
         Box::pin(async move {
             run_machine_lifecycle_blocking(move || {
                 create_machine_with_layout(
@@ -45,6 +58,7 @@ impl MachineLifecycleManager for HostMachineLifecycleManager {
                         name: Some(request.name),
                     },
                     &roots,
+                    &network,
                 )
             })
             .await
@@ -53,19 +67,48 @@ impl MachineLifecycleManager for HostMachineLifecycleManager {
 
     fn start_machine<'a>(&'a self, name: &'a str) -> MachineLifecycleFuture<'a> {
         let roots = self.roots.clone();
+        let network = self.network.clone();
         let name = name.to_owned();
         Box::pin(async move {
-            run_machine_lifecycle_blocking(move || start_machine_with_layout(&name, &roots)).await
+            run_machine_lifecycle_blocking(move || {
+                start_machine_with_layout(&name, &roots, &network)
+            })
+            .await
         })
     }
 
     fn stop_machine<'a>(&'a self, name: &'a str) -> MachineLifecycleFuture<'a> {
         let roots = self.roots.clone();
+        let network = self.network.clone();
+        let stop_authority = self.stop_authority.clone();
         let name = name.to_owned();
         Box::pin(async move {
+            let source_roots = roots.clone();
+            let source_network = network.clone();
+            let source_name = name.clone();
+            let forwarder_authority = tokio::task::spawn_blocking(move || {
+                machine_stop_forwarder_authority_with_layout(
+                    &source_name,
+                    &source_roots,
+                    &source_network,
+                )
+            })
+            .await
+            .map_err(|error| {
+                Error::Internal(format!("machine stop preflight worker failed: {error}"))
+            })??;
+            let authorization = stop_authority
+                .authorize(&name, &forwarder_authority)
+                .await?;
             run_machine_lifecycle_blocking(move || {
-                stop_machine_with_layout(&name, &roots)
-                    .map(|(_paths, config, state)| (config, state))
+                stop_machine_with_layout_authorized(
+                    &name,
+                    &roots,
+                    &network,
+                    &stop_authority,
+                    authorization,
+                )
+                .map(|(_paths, config, state)| (config, state))
             })
             .await
         })
@@ -73,14 +116,43 @@ impl MachineLifecycleManager for HostMachineLifecycleManager {
 
     fn restart_machine<'a>(&'a self, name: &'a str) -> MachineLifecycleFuture<'a> {
         let roots = self.roots.clone();
+        let network = self.network.clone();
+        let stop_authority = self.stop_authority.clone();
         let name = name.to_owned();
         Box::pin(async move {
-            run_machine_lifecycle_blocking(move || restart_machine_with_layout(&name, &roots)).await
+            let source_roots = roots.clone();
+            let source_network = network.clone();
+            let source_name = name.clone();
+            let forwarder_authority = tokio::task::spawn_blocking(move || {
+                machine_stop_forwarder_authority_with_layout(
+                    &source_name,
+                    &source_roots,
+                    &source_network,
+                )
+            })
+            .await
+            .map_err(|error| {
+                Error::Internal(format!("machine restart preflight worker failed: {error}"))
+            })??;
+            let authorization = stop_authority
+                .authorize(&name, &forwarder_authority)
+                .await?;
+            run_machine_lifecycle_blocking(move || {
+                restart_machine_with_layout_authorized(
+                    &name,
+                    &roots,
+                    &network,
+                    &stop_authority,
+                    authorization,
+                )
+            })
+            .await
         })
     }
 
     fn update_machine<'a>(&'a self, request: MachineUpdateRequest) -> MachineLifecycleFuture<'a> {
         let roots = self.roots.clone();
+        let network = self.network.clone();
         Box::pin(async move {
             run_machine_lifecycle_blocking(move || {
                 update_machine_with_layout(
@@ -91,6 +163,7 @@ impl MachineLifecycleManager for HostMachineLifecycleManager {
                         name: Some(request.name),
                     },
                     &roots,
+                    &network,
                 )
             })
             .await
@@ -99,9 +172,13 @@ impl MachineLifecycleManager for HostMachineLifecycleManager {
 
     fn delete_machine<'a>(&'a self, name: &'a str) -> MachineLifecycleFuture<'a> {
         let roots = self.roots.clone();
+        let network = self.network.clone();
         let name = name.to_owned();
         Box::pin(async move {
-            run_machine_lifecycle_blocking(move || delete_machine_with_layout(&name, &roots)).await
+            run_machine_lifecycle_blocking(move || {
+                delete_machine_with_layout(&name, &roots, &network)
+            })
+            .await
         })
     }
 }

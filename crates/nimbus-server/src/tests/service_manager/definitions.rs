@@ -6,16 +6,16 @@ async fn principal_class_service_definition_route_policy_allows_operator_cross_t
     let (local_server_security, token) = local_server_security(temp.path());
     let audit_log_path = local_server_security.paths().audit_log_path.clone();
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_local_server_security(local_server_security)
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_local_server_security(local_server_security)
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 
@@ -43,16 +43,16 @@ async fn service_definition_routes_reject_body_conflicts_and_inline_credentials(
     let temp = tempfile::tempdir().expect("tempdir should create");
     let (local_server_security, token) = local_server_security(temp.path());
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager(backend.clone()))
-            .with_local_server_security(local_server_security)
-            .without_deploy_admin_token()
-            .build(),
+        managed_router_config(
+            engine.clone(),
+            service_manager(backend.clone()),
+            backend.clone(),
+        )
+        .with_local_server_security(local_server_security)
+        .without_deploy_admin_token()
+        .build(),
     )
     .await;
 

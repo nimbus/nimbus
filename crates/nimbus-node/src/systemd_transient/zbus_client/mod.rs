@@ -17,14 +17,19 @@ use std::time::Duration;
 
 use nimbus_core::{Error, Result};
 use zbus::Connection;
-use zbus_systemd::systemd1::{ManagerProxy, ServiceProxy, UnitProxy};
+use zbus::fdo::PropertiesProxy;
+use zbus::names::InterfaceName;
+use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+use zbus_systemd::systemd1::{JobProxy, ManagerProxy, ServiceProxy};
 
 use super::{
     SystemdDbusClient, SystemdInspectUnitRequest, SystemdStartTransientUnitRequest,
     SystemdStartTransientUnitResponse, SystemdStopUnitRequest, SystemdStopUnitResponse,
-    SystemdTransientCapabilities, SystemdUnitStatus,
+    SystemdStopUnitSubmission, SystemdTransientCapabilities, SystemdUnitJobStatus,
+    SystemdUnitStatus,
 };
 use crate::HostLifecycleFuture;
+use crate::host_lifecycle::HostActivationFence;
 
 mod error;
 mod properties;
@@ -32,6 +37,53 @@ mod signals;
 
 use error::map_zbus;
 use signals::{DEFAULT_SYSTEMD_JOB_COMPLETION_TIMEOUT, JobOutcome};
+
+const SYSTEMD_UNIT_INTERFACE: &str = "org.freedesktop.systemd1.Unit";
+
+#[derive(Debug, PartialEq, Eq)]
+struct UnitLifecycleSnapshot {
+    active_state: String,
+    sub_state: String,
+    job_id: u32,
+    job_path: OwnedObjectPath,
+}
+
+impl UnitLifecycleSnapshot {
+    fn from_properties(
+        mut properties: std::collections::HashMap<String, OwnedValue>,
+    ) -> Result<Self> {
+        let active_state = String::try_from(required_property(&mut properties, "ActiveState")?)
+            .map_err(|error| invalid_unit_property("ActiveState", error))?;
+        let sub_state = String::try_from(required_property(&mut properties, "SubState")?)
+            .map_err(|error| invalid_unit_property("SubState", error))?;
+        let (job_id, job_path) =
+            <(u32, OwnedObjectPath)>::try_from(required_property(&mut properties, "Job")?)
+                .map_err(|error| invalid_unit_property("Job", error))?;
+        Ok(Self {
+            active_state,
+            sub_state,
+            job_id,
+            job_path,
+        })
+    }
+}
+
+fn required_property(
+    properties: &mut std::collections::HashMap<String, OwnedValue>,
+    name: &'static str,
+) -> Result<OwnedValue> {
+    properties.remove(name).ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "systemd Unit property snapshot omitted required property `{name}`"
+        ))
+    })
+}
+
+fn invalid_unit_property(name: &'static str, error: zbus::zvariant::Error) -> Error {
+    Error::InvalidInput(format!(
+        "systemd Unit property `{name}` has an invalid value: {error}"
+    ))
+}
 
 /// Which systemd D-Bus instance the client speaks to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +180,80 @@ impl ZbusSystemdClient {
     #[cfg(feature = "systemd-dbus-test-bus")]
     pub async fn from_connection_for_test(connection: Connection) -> Result<Self> {
         Self::from_connection(connection).await
+    }
+
+    async fn submit_stop_unit(
+        &self,
+        request: SystemdStopUnitRequest,
+    ) -> Result<SystemdStopUnitSubmission> {
+        let name = request.unit_name().as_str().to_string();
+        let mode = request.mode().as_dbus_str().to_string();
+        Ok(
+            match signals::stop_unit_and_wait(
+                &self.manager,
+                name,
+                mode,
+                self.job_completion_timeout,
+            )
+            .await
+            {
+                signals::StopUnitSubmission::PreCallFailure(error) => {
+                    SystemdStopUnitSubmission::pre_call_failure(error.to_string())
+                }
+                signals::StopUnitSubmission::UnknownSubmission(error) => {
+                    SystemdStopUnitSubmission::unknown_submission(error.to_string())
+                }
+                signals::StopUnitSubmission::AcceptedJobIncomplete { job_path, error } => {
+                    SystemdStopUnitSubmission::accepted_job_incomplete(
+                        job_path.as_str().to_string(),
+                        error.to_string(),
+                    )?
+                }
+                signals::StopUnitSubmission::Terminal { job_path, outcome }
+                    if outcome.succeeded() =>
+                {
+                    let status = SystemdUnitStatus::new(
+                        request.execution_id().clone(),
+                        request.unit_name().clone(),
+                        "inactive",
+                        "dead",
+                    )?
+                    .with_job_path(job_path.as_str().to_string())?;
+                    SystemdStopUnitSubmission::Terminal(Box::new(SystemdStopUnitResponse::new(
+                        job_path.as_str().to_string(),
+                        status,
+                    )?))
+                }
+                signals::StopUnitSubmission::Terminal { job_path, outcome } => {
+                    SystemdStopUnitSubmission::terminal_failure(
+                        job_path.as_str().to_string(),
+                        outcome.label(),
+                    )?
+                }
+            },
+        )
+    }
+
+    async fn unit_lifecycle_snapshot(
+        &self,
+        unit_path: &OwnedObjectPath,
+    ) -> Result<UnitLifecycleSnapshot> {
+        let properties = PropertiesProxy::builder(&self.connection)
+            .destination("org.freedesktop.systemd1")
+            .map_err(map_zbus)?
+            .path(unit_path.clone())
+            .map_err(map_zbus)?
+            .build()
+            .await
+            .map_err(map_zbus)?;
+        let interface = InterfaceName::try_from(SYSTEMD_UNIT_INTERFACE)
+            .expect("the static systemd Unit interface name must be valid");
+        let properties = properties
+            .get_all(interface)
+            .await
+            .map_err(zbus::Error::from)
+            .map_err(map_zbus)?;
+        UnitLifecycleSnapshot::from_properties(properties)
     }
 }
 
@@ -239,29 +365,27 @@ impl SystemdDbusClient for ZbusSystemdClient {
         request: SystemdStopUnitRequest,
     ) -> HostLifecycleFuture<'a, SystemdStopUnitResponse> {
         Box::pin(async move {
-            let name = request.unit_name().as_str().to_string();
-            let mode = request.mode().as_dbus_str().to_string();
-            let (job_path, outcome) =
-                signals::stop_unit_and_wait(&self.manager, name, mode, self.job_completion_timeout)
-                    .await?;
-            if !outcome.succeeded() {
-                return Err(job_failed_error(
-                    "StopUnit",
-                    request.unit_name().as_str(),
-                    &outcome,
-                ));
+            match self.submit_stop_unit(request).await? {
+                SystemdStopUnitSubmission::Terminal(response) => Ok(*response),
+                SystemdStopUnitSubmission::PreCallFailure { error }
+                | SystemdStopUnitSubmission::UnknownSubmission { error }
+                | SystemdStopUnitSubmission::AcceptedJobIncomplete { error, .. } => {
+                    Err(Error::Internal(error))
+                }
+                SystemdStopUnitSubmission::TerminalFailure { job_path, result } => {
+                    Err(Error::Internal(format!(
+                        "systemd StopUnit job {job_path} did not complete: job result `{result}`"
+                    )))
+                }
             }
-            // After a successful stop the transient unit is inactive/dead (and
-            // typically garbage-collected). Report that terminal status.
-            let status = SystemdUnitStatus::new(
-                request.workload_id().clone(),
-                request.unit_name().clone(),
-                "inactive",
-                "dead",
-            )?
-            .with_job_path(job_path.as_str().to_string())?;
-            SystemdStopUnitResponse::new(job_path.as_str().to_string(), status)
         })
+    }
+
+    fn stop_unit_exact<'a>(
+        &'a self,
+        request: SystemdStopUnitRequest,
+    ) -> HostLifecycleFuture<'a, SystemdStopUnitSubmission> {
+        Box::pin(async move { self.submit_stop_unit(request).await })
     }
 
     fn inspect_unit<'a>(
@@ -269,36 +393,63 @@ impl SystemdDbusClient for ZbusSystemdClient {
         request: SystemdInspectUnitRequest,
     ) -> HostLifecycleFuture<'a, SystemdUnitStatus> {
         Box::pin(async move {
+            let execution_id = request.execution_id().clone();
             let unit_name = request.unit_name().clone();
-            let workload_id = request.workload_id().clone();
             let unit_path = match self.manager.get_unit(unit_name.as_str().to_string()).await {
                 Ok(path) => path,
                 // An unloaded unit (never started, or already GC'd after stop)
                 // is reported as inactive/dead rather than an error.
                 Err(err) if is_no_such_unit(&err) => {
-                    return SystemdUnitStatus::new(workload_id, unit_name, "inactive", "dead");
+                    return SystemdUnitStatus::absent_for_inspect_request(&request);
                 }
                 Err(err) => return Err(map_zbus(err)),
             };
-            let unit = UnitProxy::builder(&self.connection)
+            // `ActiveState`, `SubState`, and `Job` form one lifecycle
+            // decision. Read them through one Properties.GetAll reply so a
+            // completed job cannot be paired with stale terminal state.
+            let initial_snapshot = self.unit_lifecycle_snapshot(&unit_path).await?;
+            let service = ServiceProxy::builder(&self.connection)
                 .path(unit_path.clone())
                 .map_err(map_zbus)?
                 .build()
                 .await
                 .map_err(map_zbus)?;
-            let active_state = unit.active_state().await.map_err(map_zbus)?;
-            let sub_state = unit.sub_state().await.map_err(map_zbus)?;
-            let service = ServiceProxy::builder(&self.connection)
-                .path(unit_path)
-                .map_err(map_zbus)?
-                .build()
-                .await
-                .map_err(map_zbus)?;
             let main_pid = service.main_pid().await.map_err(map_zbus)?;
-            let mut status =
-                SystemdUnitStatus::new(workload_id, unit_name, active_state, sub_state)?;
+            let activation_fence = HostActivationFence::from_log_extra_fields(
+                &service.log_extra_fields().await.map_err(map_zbus)?,
+            )?;
+            let snapshot = self.unit_lifecycle_snapshot(&unit_path).await?;
+            if snapshot != initial_snapshot {
+                return Err(Error::Internal(
+                    "systemd Unit lifecycle changed during inspection; retry the observation"
+                        .to_owned(),
+                ));
+            }
+            let mut status = SystemdUnitStatus::new(
+                execution_id,
+                unit_name,
+                snapshot.active_state,
+                snapshot.sub_state,
+            )?;
             if main_pid != 0 {
                 status = status.with_main_pid(main_pid);
+            }
+            if snapshot.job_id != 0 && snapshot.job_path.as_str() != "/" {
+                let job = JobProxy::builder(&self.connection)
+                    .path(snapshot.job_path.clone())
+                    .map_err(map_zbus)?
+                    .build()
+                    .await
+                    .map_err(map_zbus)?;
+                status = status.with_current_job(SystemdUnitJobStatus::new(
+                    snapshot.job_id,
+                    snapshot.job_path.as_str().to_string(),
+                    job.job_type().await.map_err(map_zbus)?,
+                    job.state().await.map_err(map_zbus)?,
+                )?);
+            }
+            if let Some(activation_fence) = activation_fence {
+                status = status.with_activation_fence(activation_fence);
             }
             Ok(status)
         })

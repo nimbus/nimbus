@@ -35,6 +35,10 @@ pub struct MachinePaths {
     pub efi_variable_store_path: PathBuf,
     pub api_forward_pid_path: PathBuf,
     pub gvproxy_pid_path: PathBuf,
+    /// Durable parent-authenticated process birth receipt for the exact
+    /// gvproxy incarnation. The numeric pidfile remains provider output, not
+    /// signaling authority.
+    pub gvproxy_process_identity_path: PathBuf,
     /// Pidfile for the active VMM process (krunkit/vfkit `--pidfile`). The
     /// readiness/stop lifecycle reads this slot regardless of provider.
     pub vmm_pid_path: PathBuf,
@@ -107,6 +111,12 @@ impl MachinePaths {
 
     pub fn krunkit_gvproxy_socket_path(&self) -> PathBuf {
         PathBuf::from(format!("{}-krun.sock", self.gvproxy_socket_path.display()))
+    }
+
+    /// Parent-reachable gvproxy HTTP services endpoint for exact forwarding control.
+    pub fn gvproxy_services_socket_path(&self) -> PathBuf {
+        self.runtime_dir
+            .join(format!("{}-gvproxy-services.sock", self.name))
     }
 }
 

@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use nimbus_core::TenantId;
 
 use crate::error::Result;
-use crate::instance::{SandboxHandle, SandboxId};
-use crate::spec::SandboxSpec;
+use crate::inspection::SandboxInspection;
+use crate::instance::SandboxId;
 use nimbus_egress::EgressPolicy;
 
 pub type SandboxFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'static>>;
@@ -22,11 +22,7 @@ pub enum SandboxBackendKind {
 pub trait SandboxBackend: Send + Sync + 'static {
     fn kind(&self) -> SandboxBackendKind;
 
-    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle>;
-
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>>;
-
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()>;
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>>;
 
     fn reload_egress_policy(&self, id: &SandboxId, _egress: EgressPolicy) -> SandboxFuture<()> {
         let backend = self.kind();

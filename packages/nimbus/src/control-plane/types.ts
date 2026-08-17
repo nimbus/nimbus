@@ -44,6 +44,21 @@ export interface NimbusServiceStopRequest extends NimbusServiceSelector {
   waitUntil?: NimbusServiceStopWaitCondition;
 }
 
+export interface NimbusServiceRestartRequest extends NimbusServiceSelector {
+  sourceGeneration: number;
+  requestId: string;
+}
+
+export interface NimbusServiceRestartSubmission {
+  tenantId: string;
+  name: string;
+  sourceGeneration: number;
+  requestId: string;
+  workloadRestartRequestId: string;
+  restartEpoch: number;
+  disposition: "applied" | "replayed";
+}
+
 export type NimbusServiceLifecycleRequest =
   | NimbusServiceStartRequest
   | NimbusServiceStopRequest;

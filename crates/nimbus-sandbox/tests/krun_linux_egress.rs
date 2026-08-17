@@ -1,5 +1,3 @@
-#![cfg(target_os = "linux")]
-
 //! KME2 runtime deny proof for the krun (libkrun/TSI microVM) backend.
 //!
 //! The krun execute path runs its VMM inside a deny-by-default network
@@ -9,11 +7,11 @@
 //! bound on the bridge gateway. This test proves that a guest attempting direct
 //! external egress with no reachable proxy gets a route failure.
 //!
-//! It is gated behind both `#[ignore]` and a `/dev/kvm` precondition. The krun
-//! execute path is still fail-closed before launch planning (lifted by KME4),
-//! so until KME4 lands this proof cannot boot a guest; it exists now as the
-//! pinned runtime harness and runs once execute mode is enabled on real KVM
-//! hardware as root.
+//! It is gated behind both `#[ignore]` and an asserted `/dev/kvm` precondition.
+//! The krun execute path is admitted only through the KME4 readiness gate. The
+//! pinned runtime harness runs explicitly on real KVM hardware as root; a host
+//! that cannot enter that lane fails instead of reporting a skipped proof as
+//! passed.
 //!
 //! Teardown never relies on guest exit: a one-shot TSI guest that holds an
 //! ESTABLISHED connection hangs VM teardown, so the harness kills the VMM and
@@ -42,6 +40,12 @@ use nimbus_sandbox::{
     SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
 };
 
+#[path = "support/provision.rs"]
+mod provision_support;
+use provision_support::{
+    ExactTeardownFixture, provision_container, provision_krun, retire_container, retire_krun,
+};
+
 const RESULT_VOLUME: &str = "krun-egress-proof";
 const RESULT_PATH_IN_GUEST: &str = "/nimbus-egress/result";
 const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -50,9 +54,7 @@ const FORCE_CMD_TIMEOUT_SECS: u64 = 10;
 #[test]
 #[ignore = "requires a Linux root host with /dev/kvm, crun(krun), conmon, buildah, netavark, aardvark-dns, and OCI image pull; the runtime deny proof is gated behind the KME4 execute fail-close lift"]
 fn krun_execute_mode_denies_direct_external_egress() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     let (temp_dir, workdir) = test_workdir("krun-direct-egress");
 
@@ -79,14 +81,17 @@ fn krun_execute_mode_denies_direct_external_egress() {
         "/nimbus-egress",
     ));
 
-    let handle = block_on(backend.start(spec))
-        .expect("krun guest should start once execute mode is enabled (KME4)");
+    let provisioned = provision_krun(&backend, &workdir.join("state"), spec, false)
+        .expect("krun phases should activate once execute mode is enabled (KME4)");
+    assert!(provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let teardown_fixture = provisioned.teardown;
 
     // The guard force-tears-down on scope exit AND on panic: it never blocks on
     // guest exit, killing the VMM and releasing the netns under hard timeouts.
     let _teardown = ForceTeardownGuard::new(
         backend.clone(),
-        handle.id.clone(),
+        teardown_fixture,
         sandbox_netns_path(&workdir, &tenant_id, &handle.id),
     );
 
@@ -122,9 +127,7 @@ fn krun_execute_mode_denies_direct_external_egress() {
 #[test]
 #[ignore = "requires a Linux root host with /dev/kvm plus the full krun + container OCI runtime stack; boots a real guest and container to prove PEP allow/deny parity"]
 fn krun_and_container_pep_enforce_identical_allow_deny() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     // One allowed internal upstream plus one unlisted upstream (a second host
     // port the policy does not allow) that also stands in for `evil.example`.
@@ -172,11 +175,14 @@ fn run_krun_parity_probe(policy: &EgressPolicy, allowed_port: u16, unlisted_port
     ))
     .with_egress_policy(policy.clone());
 
-    let handle = block_on(backend.start(spec))
-        .expect("krun guest should start once execute mode is enabled (KME4)");
+    let provisioned = provision_krun(&backend, &workdir.join("state"), spec, false)
+        .expect("krun phases should activate once execute mode is enabled (KME4)");
+    assert!(provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let teardown_fixture = provisioned.teardown;
     let teardown = ForceTeardownGuard::new(
         backend.clone(),
-        handle.id.clone(),
+        teardown_fixture,
         sandbox_netns_path(&workdir, &tenant_id, &handle.id),
     );
 
@@ -216,14 +222,17 @@ fn run_container_parity_probe(
     ))
     .with_egress_policy(policy.clone());
 
-    let handle = block_on(backend.start(spec)).expect("container should start");
+    let provisioned = provision_container(&backend, &workdir.join("state"), spec, false)
+        .expect("container phases should activate the parity workload");
+    assert!(provisioned.ingress.is_empty());
+    let teardown = provisioned.teardown;
     let result_path = tenant_volume_path(&workdir, &tenant_id, RESULT_VOLUME).join("result");
     let result = wait_for_result(
         &result_path,
         Duration::from_secs(40),
         "container parity probe result",
     );
-    let _ = block_on(backend.stop(&handle.id));
+    let _ = retire_container(&backend, &teardown);
     let _ = block_on(backend.remove_tenant_artifacts(tenant_id));
     normalize_result(&result)
 }
@@ -314,20 +323,59 @@ impl TestHttpServer {
     }
 }
 
-fn egress_proof_preconditions_met() -> bool {
+fn assert_egress_proof_preconditions() {
     // SAFETY: geteuid has no preconditions and does not dereference pointers.
     let is_root = unsafe { libc::geteuid() } == 0;
+    let kvm_access = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/kvm")
+        .map(drop);
+    validate_egress_proof_preconditions(is_root, kvm_access)
+        .unwrap_or_else(|message| panic!("{message}"));
+}
+
+fn validate_egress_proof_preconditions(
+    is_root: bool,
+    kvm_access: std::io::Result<()>,
+) -> Result<(), String> {
     if !is_root {
-        eprintln!(
-            "skipping krun egress proof: must run as root to create persistent network namespaces"
+        return Err(
+            "KVM proof precondition failed: run as root to create persistent network namespaces; \
+             an explicitly selected ignored provider test must fail, never report a skipped lane \
+             as passed"
+                .to_owned(),
         );
-        return false;
     }
-    if !Path::new("/dev/kvm").exists() {
-        eprintln!("skipping krun egress proof: /dev/kvm is required to boot a libkrun microVM");
-        return false;
-    }
-    true
+    kvm_access.map_err(|error| {
+        format!(
+            "KVM proof precondition failed: /dev/kvm must exist and be readable/writable to boot \
+             a libkrun microVM ({error}); an explicitly selected ignored provider test must fail, \
+             never report a skipped lane as passed"
+        )
+    })
+}
+
+#[test]
+fn explicit_kvm_proof_preconditions_fail_instead_of_skipping() {
+    let not_root = validate_egress_proof_preconditions(false, Ok(()))
+        .expect_err("a non-root proof host must fail");
+    assert!(not_root.contains("run as root"));
+    assert!(not_root.contains("must fail, never report a skipped lane as passed"));
+
+    let no_kvm = validate_egress_proof_preconditions(
+        true,
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "synthetic missing KVM",
+        )),
+    )
+    .expect_err("a host without usable KVM must fail");
+    assert!(no_kvm.contains("/dev/kvm must exist and be readable/writable"));
+    assert!(no_kvm.contains("synthetic missing KVM"));
+
+    validate_egress_proof_preconditions(true, Ok(()))
+        .expect("a root host with usable KVM may enter the live proof");
 }
 
 fn egress_backend_config(workdir: &Path, first_port: u16) -> KrunSandboxBackendConfig {
@@ -408,14 +456,21 @@ fn wait_for_result(path: &Path, timeout: Duration, label: &str) -> String {
 /// timeouts. Runs on both the happy path (scope exit) and the panic path.
 struct ForceTeardownGuard {
     backend: KrunSandboxBackend,
+    teardown: ExactTeardownFixture,
     sandbox_id: SandboxId,
     netns_path: PathBuf,
 }
 
 impl ForceTeardownGuard {
-    fn new(backend: KrunSandboxBackend, sandbox_id: SandboxId, netns_path: PathBuf) -> Self {
+    fn new(
+        backend: KrunSandboxBackend,
+        teardown: ExactTeardownFixture,
+        netns_path: PathBuf,
+    ) -> Self {
+        let sandbox_id = teardown.sandbox_id().clone();
         Self {
             backend,
+            teardown,
             sandbox_id,
             netns_path,
         }
@@ -426,9 +481,9 @@ impl Drop for ForceTeardownGuard {
     fn drop(&mut self) {
         let stop_handle = {
             let backend = self.backend.clone();
-            let sandbox_id = self.sandbox_id.clone();
+            let teardown = self.teardown.clone();
             thread::spawn(move || {
-                let _ = block_on(backend.stop(&sandbox_id));
+                let _ = retire_krun(&backend, &teardown);
             })
         };
 
@@ -494,9 +549,7 @@ const BYPASS_VECTORS: &[&str] = &[
 #[test]
 #[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; boots a real libkrun guest to prove every direct-egress bypass vector is denied"]
 fn krun_execute_mode_denies_all_known_bypass_vectors() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     // Host loopback sentinel: if the guest's TSI 127.0.0.1 / ::1 ever leaked to
     // the host loopback it would fetch this body. Containment means it cannot.
@@ -540,10 +593,14 @@ fn krun_execute_mode_denies_all_known_bypass_vectors() {
     ))
     .with_egress_policy(policy);
 
-    let handle = block_on(backend.start(spec)).expect("krun bypass-vectors guest should start");
+    let provisioned = provision_krun(&backend, &workdir.join("state"), spec, false)
+        .expect("krun phases should activate the bypass-vectors guest");
+    assert!(provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let teardown_fixture = provisioned.teardown;
     let _teardown = ForceTeardownGuard::new(
         backend.clone(),
-        handle.id.clone(),
+        teardown_fixture,
         sandbox_netns_path(&workdir, &tenant_id, &handle.id),
     );
 
@@ -603,9 +660,7 @@ fn bypass_vectors_probe_command(
 #[test]
 #[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; boots two libkrun guests to prove sibling-PEP isolation"]
 fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     // One shared upstream both tenants' policies permit. The pin — not policy —
     // is what must make A's reach through B's PEP fail, so B would happily
@@ -647,10 +702,14 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
     .with_mount(SandboxMountSpec::tenant_volume(b_volume, "/nimbus-egress"))
     .with_egress_policy(policy.clone());
 
-    let b_handle = block_on(backend.start(b_spec)).expect("sibling B should start");
+    let b_provisioned = provision_krun(&backend, &workdir.join("state"), b_spec, false)
+        .expect("sibling B provision phases should activate");
+    assert!(b_provisioned.ingress.is_empty());
+    let b_handle = b_provisioned.handle;
+    let b_teardown_fixture = b_provisioned.teardown;
     let _b_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        b_handle.id.clone(),
+        b_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant, &b_handle.id),
     );
 
@@ -680,10 +739,14 @@ fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
     .with_mount(SandboxMountSpec::tenant_volume(a_volume, "/nimbus-egress"))
     .with_egress_policy(policy);
 
-    let a_handle = block_on(backend.start(a_spec)).expect("sandbox A should start");
+    let a_provisioned = provision_krun(&backend, &workdir.join("state"), a_spec, false)
+        .expect("sandbox A provision phases should activate");
+    assert!(a_provisioned.ingress.is_empty());
+    let a_handle = a_provisioned.handle;
+    let a_teardown_fixture = a_provisioned.teardown;
     let _a_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        a_handle.id.clone(),
+        a_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant, &a_handle.id),
     );
 
@@ -726,9 +789,7 @@ fn sibling_reach_probe_command(sibling_proxy_url: &str, upstream_port: u16) -> S
 #[test]
 #[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; boots two tenants to prove cross-tenant bridge isolation"]
 fn krun_two_tenants_cannot_reach_each_others_sandbox() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     let upstream = TestHttpServer::start("shared-upstream-body");
     let upstream_port = upstream.addr.port();
@@ -752,10 +813,14 @@ fn krun_two_tenants_cannot_reach_each_others_sandbox() {
             .with_command([a_command]),
     )
     .with_egress_policy(policy.clone());
-    let a_handle = block_on(backend.start(a_spec)).expect("tenant A should start");
+    let a_provisioned = provision_krun(&backend, &workdir.join("state"), a_spec, false)
+        .expect("tenant A provision phases should activate");
+    assert!(a_provisioned.ingress.is_empty());
+    let a_handle = a_provisioned.handle;
+    let a_teardown_fixture = a_provisioned.teardown;
     let _a_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        a_handle.id.clone(),
+        a_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant_a, &a_handle.id),
     );
 
@@ -779,10 +844,14 @@ fn krun_two_tenants_cannot_reach_each_others_sandbox() {
         "/nimbus-egress",
     ))
     .with_egress_policy(policy);
-    let b_handle = block_on(backend.start(b_spec)).expect("tenant B should start");
+    let b_provisioned = provision_krun(&backend, &workdir.join("state"), b_spec, false)
+        .expect("tenant B provision phases should activate");
+    assert!(b_provisioned.ingress.is_empty());
+    let b_handle = b_provisioned.handle;
+    let b_teardown_fixture = b_provisioned.teardown;
     let _b_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        b_handle.id.clone(),
+        b_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant_b, &b_handle.id),
     );
 
@@ -817,9 +886,7 @@ fn host_bridge_exists(interface: &str) -> bool {
 #[test]
 #[ignore = "requires /dev/kvm + root; run explicitly on the Linux KVM proof box"]
 fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     let upstream = TestHttpServer::start("grow-upstream-body");
     let upstream_port = upstream.addr.port();
@@ -846,10 +913,14 @@ fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
             .with_command(["sleep 120".to_owned()]),
     )
     .with_egress_policy(policy.clone());
-    let s1_handle = block_on(backend.start(s1_spec)).expect("sandbox 1 should start");
+    let s1_provisioned = provision_krun(&backend, &workdir.join("state"), s1_spec, false)
+        .expect("sandbox 1 provision phases should activate");
+    assert!(s1_provisioned.ingress.is_empty());
+    let s1_handle = s1_provisioned.handle;
+    let s1_teardown_fixture = s1_provisioned.teardown;
     let _s1_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        s1_handle.id.clone(),
+        s1_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant, &s1_handle.id),
     );
 
@@ -873,11 +944,14 @@ fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
         "/nimbus-egress",
     ))
     .with_egress_policy(policy);
-    let s2_handle =
-        block_on(backend.start(s2_spec)).expect("sandbox 2 should start by growing a block");
+    let s2_provisioned = provision_krun(&backend, &workdir.join("state"), s2_spec, false)
+        .expect("sandbox 2 provision phases should grow a block and activate");
+    assert!(s2_provisioned.ingress.is_empty());
+    let s2_handle = s2_provisioned.handle;
+    let s2_teardown_fixture = s2_provisioned.teardown;
     let _s2_teardown = ForceTeardownGuard::new(
         backend.clone(),
-        s2_handle.id.clone(),
+        s2_teardown_fixture,
         sandbox_netns_path(&workdir, &tenant, &s2_handle.id),
     );
 

@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 hex.workspace = true
 nimbus-core = { path = "../nimbus-core" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-storage = { path = "../nimbus-storage" }
 rand.workspace = true
 redis-protocol.workspace = true
@@ -19,8 +20,11 @@ subtle.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+ulid.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+nimbus-process-harness = { path = "../nimbus-process-harness" }
+nimbus-testing = { path = "../nimbus-testing" }
 redis.workspace = true
 tempfile.workspace = true

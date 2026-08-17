@@ -117,7 +117,9 @@ async fn fixture_with_keys(bindings: &[(&str, &str)]) -> Fixture {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let handle = tokio::spawn(serve(
         listener,
-        ServeOptions::new(Arc::clone(&engine)).with_dynamodb(config),
+        ServeOptions::reconstruct_direct(Arc::clone(&engine))
+            .expect("test server network authority should reconstruct once")
+            .with_dynamodb(config),
     ));
     wait_for_tcp_port(addr, &handle).await;
     Fixture {
@@ -151,7 +153,9 @@ async fn fixture_strict(secret: &str) -> Fixture {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let handle = tokio::spawn(serve(
         listener,
-        ServeOptions::new(Arc::clone(&engine)).with_dynamodb(config),
+        ServeOptions::reconstruct_direct(Arc::clone(&engine))
+            .expect("test server network authority should reconstruct once")
+            .with_dynamodb(config),
     ));
     wait_for_tcp_port(addr, &handle).await;
     Fixture {
@@ -175,7 +179,9 @@ async fn fixture_strict_store_only() -> Fixture {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let handle = tokio::spawn(serve(
         listener,
-        ServeOptions::new(Arc::clone(&engine)).with_dynamodb(config),
+        ServeOptions::reconstruct_direct(Arc::clone(&engine))
+            .expect("test server network authority should reconstruct once")
+            .with_dynamodb(config),
     ));
     wait_for_tcp_port(addr, &handle).await;
     Fixture {

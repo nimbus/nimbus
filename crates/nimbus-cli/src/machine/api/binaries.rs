@@ -1,4 +1,5 @@
 use super::*;
+use crate::provider_binaries::resolve_binary;
 
 #[derive(Clone, Copy)]
 pub(super) struct MachineApiBinaryRequirement {
@@ -6,13 +7,8 @@ pub(super) struct MachineApiBinaryRequirement {
     required_for_operations: &'static [&'static str],
 }
 
-const DEFAULT_GUEST_HELPER_BINARY_DIRS: &[&str] = &[
-    "/usr/local/libexec/podman",
-    "/usr/local/lib/podman",
-    "/usr/libexec/podman",
-    "/usr/lib/podman",
-];
-
+/// Canonical operator-facing order: OS lifecycle, image materialization,
+/// process monitor/runtime, then network helpers.
 pub(super) const STANDARD_CONTAINER_BINARY_REQUIREMENTS: &[MachineApiBinaryRequirement] = &[
     MachineApiBinaryRequirement {
         name: "bootc",
@@ -24,41 +20,26 @@ pub(super) const STANDARD_CONTAINER_BINARY_REQUIREMENTS: &[MachineApiBinaryRequi
         ],
     },
     MachineApiBinaryRequirement {
+        name: "buildah",
+        required_for_operations: &[MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION],
+    },
+    MachineApiBinaryRequirement {
         name: "conmon",
-        required_for_operations: &[
-            MACHINE_API_IMAGE_START_OPERATION,
-            MACHINE_API_BUILD_START_OPERATION,
-        ],
+        required_for_operations: &[MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION],
     },
     MachineApiBinaryRequirement {
         name: "crun",
-        required_for_operations: &[
-            MACHINE_API_IMAGE_START_OPERATION,
-            MACHINE_API_BUILD_START_OPERATION,
-        ],
+        required_for_operations: &[MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION],
     },
     MachineApiBinaryRequirement {
         name: "netavark",
-        required_for_operations: &[
-            MACHINE_API_IMAGE_START_OPERATION,
-            MACHINE_API_BUILD_START_OPERATION,
-        ],
+        required_for_operations: &[MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION],
     },
     MachineApiBinaryRequirement {
         name: "aardvark-dns",
-        required_for_operations: &[
-            MACHINE_API_IMAGE_START_OPERATION,
-            MACHINE_API_BUILD_START_OPERATION,
-        ],
+        required_for_operations: &[MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION],
     },
 ];
-
-pub(crate) fn default_guest_helper_binary_dirs() -> Vec<PathBuf> {
-    DEFAULT_GUEST_HELPER_BINARY_DIRS
-        .iter()
-        .map(PathBuf::from)
-        .collect()
-}
 
 pub(super) fn apply_resolved_runtime_paths(
     config: &mut ContainerSandboxBackendConfig,
@@ -102,43 +83,4 @@ pub(super) fn resolve_binary_statuses(
             }
         })
         .collect()
-}
-
-pub(super) fn resolve_binary(
-    name: &str,
-    path_env: Option<&OsStr>,
-    helper_binary_dirs: &[PathBuf],
-) -> Option<PathBuf> {
-    let binary_name = Path::new(name);
-    if binary_name.components().count() > 1 {
-        return is_executable_file(binary_name).then(|| binary_name.to_path_buf());
-    }
-
-    for directory in helper_binary_dirs {
-        let candidate = directory.join(name);
-        if is_executable_file(&candidate) {
-            return Some(candidate);
-        }
-    }
-
-    let path_env = path_env?;
-    std::env::split_paths(path_env)
-        .map(|directory| directory.join(name))
-        .find(|candidate| is_executable_file(candidate))
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        std::fs::metadata(path)
-            .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(unix))]
-    {
-        path.is_file()
-    }
 }

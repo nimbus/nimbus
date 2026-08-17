@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use nimbus_core::TenantId;
 
 use crate::backend::SandboxBackendKind;
-use crate::endpoint::PublishedEndpointProtocol;
 use crate::error::{Result, SandboxError};
 use nimbus_egress::EgressPolicy;
+use nimbus_network::EndpointProtocol;
 
 const DEFAULT_SANDBOX_PATH: &str =
     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -290,7 +290,7 @@ pub(crate) fn resolve_process_without_image_defaults(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxPortBinding {
     pub name: String,
-    pub protocol: PublishedEndpointProtocol,
+    pub protocol: EndpointProtocol,
     pub host_address: IpAddr,
     pub host_port: u16,
     pub guest_port: u16,
@@ -299,7 +299,7 @@ pub struct SandboxPortBinding {
 impl SandboxPortBinding {
     pub fn new(
         name: impl Into<String>,
-        protocol: PublishedEndpointProtocol,
+        protocol: EndpointProtocol,
         host_port: u16,
         guest_port: u16,
     ) -> Self {
@@ -313,7 +313,7 @@ impl SandboxPortBinding {
     }
 
     pub fn tcp(name: impl Into<String>, host_port: u16, guest_port: u16) -> Self {
-        Self::new(name, PublishedEndpointProtocol::Tcp, host_port, guest_port)
+        Self::new(name, EndpointProtocol::Tcp, host_port, guest_port)
     }
 
     pub fn with_host_address(mut self, host_address: IpAddr) -> Self {

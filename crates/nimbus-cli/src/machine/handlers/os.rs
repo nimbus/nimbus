@@ -5,19 +5,38 @@ use crate::machine::record::MachineProvider;
 pub(in crate::machine) fn run_machine_os(
     command: MachineOsCommand,
     roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     match command.command {
-        MachineOsSubcommand::Apply(apply) => run_machine_os_apply(apply, roots),
-        MachineOsSubcommand::Upgrade(upgrade) => run_machine_os_upgrade(upgrade, roots),
-        MachineOsSubcommand::Rollback(rollback) => run_machine_os_rollback(rollback, roots),
+        MachineOsSubcommand::Apply(apply) => {
+            run_machine_os_apply(apply, roots, network, authorized)
+        }
+        MachineOsSubcommand::Upgrade(upgrade) => {
+            run_machine_os_upgrade(upgrade, roots, network, authorized)
+        }
+        MachineOsSubcommand::Rollback(rollback) => {
+            run_machine_os_rollback(rollback, roots, network, authorized)
+        }
+    }
+}
+
+pub(super) const fn machine_os_requests_restart(command: &MachineOsCommand) -> bool {
+    match &command.command {
+        MachineOsSubcommand::Apply(command) => command.restart,
+        MachineOsSubcommand::Upgrade(command) => command.restart && !command.dry_run,
+        MachineOsSubcommand::Rollback(command) => command.restart,
     }
 }
 
 fn run_machine_os_apply(
     command: MachineOsApplyCommand,
     roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
-    let (paths, mut config, mut state) = load_initialized_machine(roots, DEFAULT_MACHINE_NAME)?;
+    let (paths, mut config, mut state) =
+        load_initialized_machine(roots, network, DEFAULT_MACHINE_NAME)?;
     let target_source = parse_machine_os_apply_source(&command.image)?;
     if uses_bootc_native_os_lifecycle(&config) {
         let outcome = apply_bootc_machine_os_change(
@@ -26,6 +45,8 @@ fn run_machine_os_apply(
             &mut state,
             target_source,
             command.restart,
+            network,
+            authorized,
         )?;
         let result = if outcome.changed {
             MachineOsCommandResult::Applied
@@ -46,6 +67,8 @@ fn run_machine_os_apply(
         &mut state,
         target_source,
         command.restart,
+        network,
+        authorized,
     )?;
 
     let result = if outcome.changed {
@@ -65,10 +88,20 @@ fn run_machine_os_apply(
 fn run_machine_os_upgrade(
     command: MachineOsUpgradeCommand,
     roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
-    let (paths, mut config, mut state) = load_initialized_machine(roots, DEFAULT_MACHINE_NAME)?;
+    let (paths, mut config, mut state) =
+        load_initialized_machine(roots, network, DEFAULT_MACHINE_NAME)?;
     if uses_bootc_native_os_lifecycle(&config) {
-        return run_bootc_machine_os_upgrade(command, &paths, &mut config, &mut state);
+        return run_bootc_machine_os_upgrade(
+            command,
+            &paths,
+            &mut config,
+            &mut state,
+            network,
+            authorized,
+        );
     }
     let plan = plan_machine_os_upgrade(&config)?;
     if command.dry_run || !plan.update_available {
@@ -96,6 +129,8 @@ fn run_machine_os_upgrade(
             reference: plan.target_image.clone(),
         },
         command.restart,
+        network,
+        authorized,
     )?;
     emit_machine_stdout(&render_machine_os_upgrade_view(
         MachineOsCommandResult::Upgraded,
@@ -112,8 +147,11 @@ fn run_machine_os_upgrade(
 fn run_machine_os_rollback(
     command: MachineOsRollbackCommand,
     roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
-    let (paths, mut config, mut state) = load_initialized_machine(roots, DEFAULT_MACHINE_NAME)?;
+    let (paths, mut config, mut state) =
+        load_initialized_machine(roots, network, DEFAULT_MACHINE_NAME)?;
     if !uses_bootc_native_os_lifecycle(&config) {
         return Err(Error::InvalidInput(
             "machine os rollback is only supported for bootc-native machines".to_owned(),
@@ -125,9 +163,9 @@ fn run_machine_os_rollback(
         .rollback_image
         .clone()
         .ok_or_else(|| Error::conflict("bootc status does not report a rollback deployment"))?;
-    let operation = client.bootc_rollback(MachineApiBootcRollbackRequest {})?;
+    let operation = client.bootc_rollback()?;
     if command.restart {
-        restart_bootc_machine(&paths, &mut config, &mut state)?;
+        restart_bootc_machine(&paths, &mut config, &mut state, network, authorized)?;
     }
     let summary = if command.restart {
         format!(
@@ -151,6 +189,8 @@ fn run_machine_os_rollback(
 fn run_machine_os_rollback(
     _command: MachineOsRollbackCommand,
     _roots: &MachineRootLayout,
+    _network: &HostMachineNetworkAuthority,
+    _authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     Err(unsupported_bootc_machine_os_error())
 }
@@ -196,6 +236,8 @@ fn apply_bootc_machine_os_change(
     state: &mut MachineStateRecord,
     target_source: MachineImageSource,
     restart: bool,
+    network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<MachineOsApplyOutcome, Error> {
     let target_reference = bootc_target_reference_from_source(&target_source)?;
     let client = require_running_bootc_machine_api_client(paths, state)?;
@@ -212,13 +254,10 @@ fn apply_bootc_machine_os_change(
     }
 
     let (transport, image) = bootc_switch_target(&target_reference);
-    let _operation = client.bootc_switch(MachineApiBootcSwitchRequest {
-        image,
-        transport: Some(transport),
-    })?;
+    let _operation = client.bootc_switch(image, Some(transport))?;
 
     let restarted = if restart {
-        restart_bootc_machine(paths, config, state)?;
+        restart_bootc_machine(paths, config, state, network, authorized)?;
         true
     } else {
         false
@@ -240,6 +279,8 @@ fn apply_bootc_machine_os_change(
     _state: &mut MachineStateRecord,
     _target_source: MachineImageSource,
     _restart: bool,
+    _network: &HostMachineNetworkAuthority,
+    _authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<MachineOsApplyOutcome, Error> {
     Err(unsupported_bootc_machine_os_error())
 }
@@ -250,6 +291,8 @@ fn run_bootc_machine_os_upgrade(
     paths: &MachinePaths,
     config: &mut MachineConfigRecord,
     state: &mut MachineStateRecord,
+    network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     let client = require_running_bootc_machine_api_client(paths, state)?;
     let before = client.bootc_status()?;
@@ -284,14 +327,10 @@ fn run_bootc_machine_os_upgrade(
         )?)?;
         return Ok(());
     }
-
     let (transport, image) = bootc_switch_target(&stream.target_image);
-    let _operation = client.bootc_switch(MachineApiBootcSwitchRequest {
-        image,
-        transport: Some(transport),
-    })?;
+    let _operation = client.bootc_switch(image, Some(transport))?;
     let restarted = if command.restart {
-        restart_bootc_machine(paths, config, state)?;
+        restart_bootc_machine(paths, config, state, network, authorized)?;
         true
     } else {
         false
@@ -300,9 +339,9 @@ fn run_bootc_machine_os_upgrade(
         MachineOsCommandResult::Upgraded,
         paths,
         &plan,
-        false,
-        command.restart,
         restarted,
+        command.restart,
+        false,
     )?)?;
     Ok(())
 }
@@ -313,6 +352,8 @@ fn run_bootc_machine_os_upgrade(
     _paths: &MachinePaths,
     _config: &mut MachineConfigRecord,
     _state: &mut MachineStateRecord,
+    _network: &HostMachineNetworkAuthority,
+    _authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
     Err(unsupported_bootc_machine_os_error())
 }
@@ -342,7 +383,14 @@ fn require_running_bootc_machine_api_client(
             state.lifecycle.as_str()
         )));
     }
-    let client = MachineApiClient::new(paths.api_socket_path.clone());
+    let runtime = state.runtime.as_ref().ok_or_else(|| {
+        Error::conflict(format!(
+            "machine '{}' is running without parent-issued provider authority",
+            paths.name
+        ))
+    })?;
+    let client = MachineApiClient::new(paths.api_socket_path.clone())
+        .with_forwarder_authority(runtime.forwarder_authority.clone());
     client.health().map_err(|error| {
         Error::InvalidInput(format!(
             "machine '{}' guest machine API is not reachable at {}: {error}",
@@ -358,9 +406,14 @@ fn restart_bootc_machine(
     paths: &MachinePaths,
     config: &mut MachineConfigRecord,
     state: &mut MachineStateRecord,
+    network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<(), Error> {
-    stop_machine(paths, config, state)?;
-    start_machine(paths, config, state)
+    let authorization = authorized
+        .take()
+        .ok_or_else(super::missing_machine_stop_authority)?;
+    authorization.stop(network, paths, config, state)?;
+    start_machine(network, paths, config, state)
 }
 
 #[cfg(unix)]
@@ -419,6 +472,8 @@ fn apply_machine_os_change(
     state: &mut MachineStateRecord,
     target_source: MachineImageSource,
     restart: bool,
+    network: &HostMachineNetworkAuthority,
+    authorized: &mut Option<super::AuthorizedMachineStop>,
 ) -> Result<MachineOsApplyOutcome, Error> {
     let previous_image = describe_machine_image_source(&config.guest.image_source);
     let current_image = describe_machine_image_source(&target_source);
@@ -451,7 +506,10 @@ fn apply_machine_os_change(
         )));
     }
     if was_running {
-        stop_machine(paths, config, state)?;
+        authorized
+            .take()
+            .ok_or_else(super::missing_machine_stop_authority)?
+            .stop(network, paths, config, state)?;
     }
 
     let target_uses_bootc_native = uses_nimbus_bootc_machine_image_source(&target_source);
@@ -471,7 +529,7 @@ fn apply_machine_os_change(
     write_json_file(&paths.state_path, state)?;
 
     let restarted = if restart {
-        start_machine(paths, config, state)?;
+        start_machine(network, paths, config, state)?;
         true
     } else {
         false
@@ -635,4 +693,107 @@ pub(in crate::machine) fn parse_machine_release_version(tag: &str) -> Result<Ver
             tag
         ))
     })
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use std::fs;
+    use std::io::{Read as _, Write as _};
+    use std::os::unix::net::UnixListener;
+    use std::path::PathBuf;
+    use std::thread;
+
+    use nimbus_machine::api::{MachineApiHealthResponse, PROTOCOL_VERSION};
+    use nimbus_machine::{
+        MachineForwarderAuthority, MachineHelperBinaryPaths, MachineRuntimeState,
+    };
+    use nimbus_network::{
+        ListenerId, NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration,
+    };
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn bootc_mutation_client_retains_running_parent_forwarder_authority() {
+        let temp_dir = TempDir::new().expect("temporary machine root should exist");
+        let roots = MachineRootLayout::test_sibling_roots(
+            temp_dir.path().join("config"),
+            temp_dir.path().join("state"),
+            temp_dir.path().join("runtime"),
+        );
+        let paths = roots.paths("bootc-authority");
+        fs::create_dir_all(
+            paths
+                .api_socket_path
+                .parent()
+                .expect("machine API socket should have a parent"),
+        )
+        .expect("machine API runtime directory should exist");
+        let listener =
+            UnixListener::bind(&paths.api_socket_path).expect("machine API socket should bind");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("health request should arrive");
+            let mut request = [0_u8; 1024];
+            let read = stream
+                .read(&mut request)
+                .expect("health request should read");
+            assert!(
+                String::from_utf8_lossy(&request[..read]).contains("GET /health"),
+                "bootc client must prove the guest API before mutation"
+            );
+            let body = serde_json::to_vec(&MachineApiHealthResponse {
+                status: "ok".to_owned(),
+                role: "guest-machine-api".to_owned(),
+                protocol_version: PROTOCOL_VERSION.to_owned(),
+                listen_mode: "direct-socket".to_owned(),
+                control_data_dir: "/var/lib/nimbus/control".to_owned(),
+            })
+            .expect("health response should encode");
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .expect("health response header should write");
+            stream
+                .write_all(&body)
+                .expect("health response body should write");
+        });
+
+        let provider_instance = NetworkProviderHandle::new(
+            NetworkProviderId::for_registration_key("bootc-parent-authority"),
+            "machine:bootc-authority",
+        )
+        .expect("provider identity should validate");
+        let authority =
+            MachineForwarderAuthority::new(provider_instance, NetworkResourceGeneration::new(7));
+        let mut state = MachineStateRecord::initialized();
+        state.lifecycle = MachineLifecycle::Running;
+        state.runtime = Some(MachineRuntimeState {
+            helper_binaries: MachineHelperBinaryPaths {
+                vmm: PathBuf::from("/opt/nimbus/bin/vmm"),
+                gvproxy: PathBuf::from("/opt/nimbus/bin/gvproxy"),
+            },
+            image_path: temp_dir.path().join("disk.raw"),
+            efi_variable_store_path: temp_dir.path().join("efi.fd"),
+            machine_image_source: "test".to_owned(),
+            ssh_listener_id: ListenerId::generate(),
+            forwarder_authority: authority.clone(),
+            ssh_port: 22022,
+            rest_uri: "unix:///tmp/bootc-vmm.sock".to_owned(),
+            ready_vsock_port: 1025,
+        });
+
+        let client = require_running_bootc_machine_api_client(&paths, &state)
+            .expect("running bootc client should resolve");
+        server.join().expect("health server should finish");
+        assert_eq!(
+            client
+                .forwarder_authority()
+                .expect("bootc mutation client must retain parent authority"),
+            &authority
+        );
+    }
 }

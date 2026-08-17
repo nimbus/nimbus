@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
-use std::net::IpAddr;
 
-use nimbus_core::{Error, Result, TenantId, is_valid_dns_hostname};
+use nimbus_core::{Error, Result, TenantId};
 use nimbus_sandbox::validate_tenant_volume_name;
 
 use super::super::image_admission::{has_sha256_digest, parse_oci_image_reference};
@@ -9,11 +8,11 @@ use super::prove::validate_accepted_risks;
 use super::{
     DEFAULT_REDACTED_FIELDS, OPERATOR_POLICY_SCHEMA_VERSION, OperatorAuditPolicy,
     OperatorImagePolicy, OperatorImageProvenancePolicy, OperatorImageSignaturePolicy,
-    OperatorNetworkEndpointPolicy, OperatorNetworkPolicy, OperatorPolicyDocument,
-    OperatorPolicyWorkload, OperatorQuotaPolicy, OperatorRuntimeScalingQuota,
-    OperatorSandboxPolicy, OperatorSecretPolicy, OperatorServicePolicy, OperatorStoragePolicy,
-    OperatorVolumePolicy,
+    OperatorNetworkPolicy, OperatorPolicyDocument, OperatorPolicyWorkload, OperatorQuotaPolicy,
+    OperatorRuntimeScalingQuota, OperatorSandboxPolicy, OperatorSecretPolicy,
+    OperatorServicePolicy, OperatorStoragePolicy, OperatorVolumePolicy,
 };
+use crate::policy_input::{NetworkEndpointValidationInput, validate_network_endpoints};
 use crate::{TenantIsolationMode, WorkloadKind};
 
 impl OperatorPolicyDocument {
@@ -101,37 +100,24 @@ impl OperatorServicePolicy {
 
 impl OperatorNetworkPolicy {
     fn validate(&self, workload_key: &str, services: &OperatorServicePolicy) -> Result<()> {
-        let allowed_services: BTreeSet<_> = services.allow.iter().map(String::as_str).collect();
-        let mut seen = BTreeSet::new();
-        for endpoint in &self.endpoints {
-            endpoint.validate(workload_key)?;
-            if !allowed_services.contains(endpoint.service.as_str()) {
-                return invalid_policy(format!(
-                    "workload `{workload_key}` network endpoint `{}` references service `{}` that is not in services.allow",
-                    endpoint.name, endpoint.service
-                ));
-            }
-            let key = format!("{}/{}", endpoint.service, endpoint.name);
-            if !seen.insert(key.clone()) {
-                return invalid_policy(format!(
-                    "workload `{workload_key}` network endpoint `{key}` is declared more than once"
-                ));
-            }
-        }
+        validate_network_endpoints(
+            self.endpoints.iter().map(|endpoint| {
+                NetworkEndpointValidationInput::new(
+                    &endpoint.service,
+                    &endpoint.name,
+                    &endpoint.host,
+                    endpoint.host_port,
+                    endpoint.guest_port,
+                )
+            }),
+            services.allow.iter().map(String::as_str),
+        )
+        .map_err(|message| {
+            Error::InvalidInput(format!(
+                "operator policy invalid: workload `{workload_key}` {message}"
+            ))
+        })?;
         self.egress.validate(workload_key)?;
-        Ok(())
-    }
-}
-
-impl OperatorNetworkEndpointPolicy {
-    fn validate(&self, workload_key: &str) -> Result<()> {
-        validate_required_name(&self.service, "service", workload_key)?;
-        validate_required_name(&self.name, "network endpoint", workload_key)?;
-        validate_host(&self.host, workload_key)?;
-        validate_port(self.host_port, "host_port", workload_key)?;
-        if let Some(guest_port) = self.guest_port {
-            validate_port(guest_port, "guest_port", workload_key)?;
-        }
         Ok(())
     }
 }
@@ -397,65 +383,6 @@ fn validate_redactions(fields: &[String], field: &str) -> Result<()> {
         if !fields.iter().any(|field| field == required) {
             return invalid_policy(format!("{field} must include `{required}`"));
         }
-    }
-    Ok(())
-}
-
-fn validate_host(host: &str, workload_key: &str) -> Result<()> {
-    if host.trim().is_empty() {
-        return invalid_policy(format!(
-            "workload `{workload_key}` network host must be a concrete non-empty value"
-        ));
-    }
-    if host != host.trim() || host.contains(char::is_whitespace) {
-        return invalid_policy(format!(
-            "workload `{workload_key}` network host `{host}` must not contain whitespace"
-        ));
-    }
-    if host == "*" || host.contains('*') {
-        return invalid_policy(format!(
-            "workload `{workload_key}` network host `{host}` is a wildcard bind, not an admitted egress endpoint"
-        ));
-    }
-    if host.contains("://")
-        || host.contains('/')
-        || host.contains('\\')
-        || host.contains('@')
-        || host.starts_with('[')
-        || host.ends_with(']')
-    {
-        return invalid_policy(format!(
-            "workload `{workload_key}` network host `{host}` must be a bare DNS name or IP literal, not a URL or authority"
-        ));
-    }
-    if let Ok(ip) = host.parse::<IpAddr>()
-        && ip.is_unspecified()
-    {
-        return invalid_policy(format!(
-            "workload `{workload_key}` network host `{host}` is unspecified"
-        ));
-    }
-    if host.parse::<IpAddr>().is_ok() {
-        return Ok(());
-    }
-    if host.contains(':') {
-        return invalid_policy(format!(
-            "workload `{workload_key}` network host `{host}` must not include a port or brackets"
-        ));
-    }
-    if !is_valid_dns_hostname(host) {
-        return invalid_policy(format!(
-            "workload `{workload_key}` network host `{host}` must be a valid DNS hostname or IP literal"
-        ));
-    }
-    Ok(())
-}
-
-fn validate_port(port: u16, field: &str, workload_key: &str) -> Result<()> {
-    if port == 0 {
-        return invalid_policy(format!(
-            "workload `{workload_key}` network {field} must not be 0"
-        ));
     }
     Ok(())
 }

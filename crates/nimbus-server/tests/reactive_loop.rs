@@ -152,13 +152,13 @@ fn convex_registry(functions: serde_json::Value) -> ConvexRegistry {
 }
 
 fn router_for_engine(engine: Arc<Engine>) -> axum::Router {
-    build_router(RouterOptions::new(engine))
+    build_router(RouterOptions::protocol_only(engine))
 }
 
 fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> axum::Router {
     let runtime_limits = convex_registry.runtime_limits();
     build_router(
-        RouterOptions::new(engine)
+        RouterOptions::protocol_only(engine)
             .with_runtime_limits(runtime_limits)
             .with_convex_registry_for_silo(
                 &nimbus_core::TenantId::new(CONVEX_TEAM_TENANT).expect("silo tenant id"),

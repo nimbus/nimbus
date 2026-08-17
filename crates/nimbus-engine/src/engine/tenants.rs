@@ -384,6 +384,29 @@ impl Engine {
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<TenantDeletionLease<'_>> {
+        self.begin_tenant_delete_with_incarnation_async(tenant_id, None)
+            .await
+    }
+
+    /// Fences one exact tenant incarnation for deletion.
+    ///
+    /// The incarnation check occurs while the tenant load gate is held and
+    /// before the runtime is marked delete-fenced. A stale recovery record
+    /// therefore cannot fence a replacement tenant with the same ID.
+    pub async fn begin_tenant_incarnation_delete_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        expected_incarnation: NonZeroU64,
+    ) -> Result<TenantDeletionLease<'_>> {
+        self.begin_tenant_delete_with_incarnation_async(tenant_id, Some(expected_incarnation))
+            .await
+    }
+
+    async fn begin_tenant_delete_with_incarnation_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        expected_incarnation: Option<NonZeroU64>,
+    ) -> Result<TenantDeletionLease<'_>> {
         self.ensure_provider_background_tasks_started();
         loop {
             let runtime = self.get_existing_tenant_async(&tenant_id).await?;
@@ -398,6 +421,13 @@ impl Engine {
                         "tenant {tenant_id} has invalid zero runtime incarnation"
                     ))
                 })?;
+            if let Some(expected_incarnation) = expected_incarnation
+                && expected_incarnation != tenant_incarnation
+            {
+                return Err(Error::PreconditionFailed(format!(
+                    "tenant {tenant_id} incarnation {tenant_incarnation} does not match the expected deletion incarnation {expected_incarnation}"
+                )));
+            }
             runtime.mark_delete_fenced();
             runtime.begin_explicit_delete_shutdown();
             return Ok(TenantDeletionLease {

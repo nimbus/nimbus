@@ -122,7 +122,7 @@ pub(crate) async fn stop_sandbox(
     )
     .await?;
     let response =
-        nimbus_compute::sandboxes::stop_sandbox(&state, &authorization.tenant_id, &sandbox_id)
+        nimbus_compute::sandboxes::stop_sandbox(&state, &authorization.tenant_context, &sandbox_id)
             .await?;
     Ok(Json(response))
 }

@@ -2,10 +2,10 @@
 //!
 //! A [`MachineVmmBackend`] owns everything that differs between the macOS
 //! micro-VM monitors Nimbus can drive: which VMM binary to resolve, how to
-//! construct its launch command line, whether it needs the external gvproxy
-//! user-mode network stack, and the gvproxy listen-mode ↔ on-VMM net-device
-//! pairing. The lifecycle in `manager.rs`/`readiness.rs`/`stop.rs` stays
-//! provider-agnostic and talks to the resolved backend through this trait.
+//! construct its launch command line, and the gvproxy listen-mode ↔ on-VMM
+//! net-device pairing. The lifecycle in
+//! `manager.rs`/`readiness.rs`/`stop.rs` stays provider-agnostic and talks to
+//! the resolved backend through this trait.
 //!
 //! krunkit (libkrun) and vfkit (Apple Virtualization.framework) are the two
 //! implemented macOS backends. Both drive the same Nimbus-managed `applehv`
@@ -61,13 +61,6 @@ pub(super) trait MachineVmmBackend {
     /// bundled/known helper directories.
     fn resolve_vmm_binary(&self) -> Result<PathBuf, Error>;
 
-    /// Whether this VMM relies on the external gvproxy user-mode network stack.
-    /// Provider-managed networking (e.g. WSL2) owns its own host networking and
-    /// does not need gvproxy.
-    fn requires_gvproxy(&self) -> bool {
-        !self.provider().uses_provider_networking()
-    }
-
     /// The gvproxy listen-mode arguments that pair with this VMM's net device.
     /// Both macOS micro-VM monitors share the unixgram listen contract (gvproxy
     /// `-listen-vfkit unixgram://…`); only the on-VMM net-device syntax in
@@ -86,11 +79,12 @@ pub(super) trait MachineVmmBackend {
     ) -> Result<MachineCommandLine, Error>;
 }
 
-/// Resolve the VMM backend for a provider. krunkit and vfkit are implemented;
-/// wsl2 fails closed with an explicit message until its backend lands. This is
-/// the single provider gate on the start path — `MachineLaunchPlan::build` calls
-/// it before any VMM or gvproxy process is spawned, so an unsupported provider
-/// never partially starts a machine.
+/// Resolve the host-managed VMM backend for a provider. krunkit and vfkit are
+/// implemented and both require gvproxy; provider-managed WSL2 fails closed
+/// with an explicit message until its distinct lifecycle seam lands. This is
+/// the single provider gate on the start path — `MachineLaunchPlan::build`
+/// calls it before resolving helpers, touching machine state, or reserving a
+/// host listener, so an unsupported provider never partially starts a machine.
 pub(super) fn vmm_backend(provider: MachineProvider) -> Result<Box<dyn MachineVmmBackend>, Error> {
     match provider {
         MachineProvider::Krunkit => Ok(Box::new(KrunkitVmmBackend)),

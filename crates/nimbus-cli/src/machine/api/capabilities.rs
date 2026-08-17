@@ -22,14 +22,57 @@ pub(super) fn machine_api_capability_response(
         shared_blockers.push(error);
     }
 
-    let image_start_blockers = merge_operation_blockers(
+    let provision_blockers = merge_operation_blockers(
         &shared_blockers,
-        missing_binary_blockers(&binary_statuses, MACHINE_API_IMAGE_START_OPERATION),
+        missing_binary_blockers(
+            &binary_statuses,
+            MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION,
+        ),
     );
-    let build_start_blockers = merge_operation_blockers(
-        &image_start_blockers,
-        missing_binary_blockers(&binary_statuses, MACHINE_API_BUILD_START_OPERATION),
+    let mut restart_blockers = merge_operation_blockers(
+        &shared_blockers,
+        missing_restart_binary_blockers(&binary_statuses),
     );
+    if state.forwarder_authority.is_none() {
+        restart_blockers.push(
+            "workload-restart.phase requires parent-issued machine forwarder authority".to_owned(),
+        );
+    }
+    if let Some(workloads) = state.service_workloads.as_ref() {
+        restart_blockers.extend(workloads.restart_execution_blockers());
+    }
+    let mut teardown_blockers = shared_blockers.clone();
+    if state.forwarder_authority.is_none() {
+        teardown_blockers.push(
+            "workload-teardown.phase requires parent-issued machine forwarder authority".to_owned(),
+        );
+    }
+    match (
+        state.machine_port_forwarder.as_ref(),
+        state.forwarder_authority.as_ref(),
+    ) {
+        (None, _) => teardown_blockers.push(
+            "workload-teardown.phase requires installed machine port forwarder configuration"
+                .to_owned(),
+        ),
+        (Some(config), Some(authority))
+            if config.provider_instance() != authority.provider_instance()
+                || config.provider_generation() != authority.generation() =>
+        {
+            teardown_blockers.push(
+                "workload-teardown.phase machine port forwarder configuration is crossed with parent-issued authority"
+                    .to_owned(),
+            );
+        }
+        (Some(_), Some(_)) | (Some(_), None) => {}
+    }
+    if let Some(workloads) = state.service_workloads.as_ref() {
+        teardown_blockers.extend(workloads.teardown_execution_blockers());
+        teardown_blockers.extend(workloads.teardown_provider_blockers());
+    } else {
+        teardown_blockers
+            .push("machine API workload facade has no strict teardown-phase sink".to_owned());
+    }
     let bootc_status_blockers =
         missing_binary_blockers(&binary_statuses, MACHINE_API_BOOTC_STATUS_OPERATION);
     let bootc_switch_blockers =
@@ -67,15 +110,21 @@ pub(super) fn machine_api_capability_response(
             shared_operation_blockers(state_operations_available, &shared_blockers),
         ),
         machine_api_operation_status(
-            MACHINE_API_IMAGE_START_OPERATION,
-            image_start_blockers.clone(),
+            MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION,
+            provision_blockers.clone(),
         ),
-        machine_api_operation_status(MACHINE_API_STOP_OPERATION, image_start_blockers.clone()),
-        machine_api_operation_status(MACHINE_API_BUILD_START_OPERATION, build_start_blockers),
+        machine_api_operation_status(
+            MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION,
+            restart_blockers,
+        ),
+        machine_api_operation_status(
+            MACHINE_API_WORKLOAD_TEARDOWN_PHASE_OPERATION,
+            teardown_blockers,
+        ),
     ];
     let service_execution_blockers = operation_statuses
         .iter()
-        .find(|status| status.name == MACHINE_API_IMAGE_START_OPERATION)
+        .find(|status| status.name == MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION)
         .map(|status| status.blockers.clone())
         .unwrap_or_default();
     let service_execution_ready = service_execution_blockers.is_empty();
@@ -159,6 +208,25 @@ fn missing_binary_blockers(
             format!(
                 "missing guest binary required for {}: {}",
                 operation_name, binary.name
+            )
+        })
+        .collect()
+}
+
+fn missing_restart_binary_blockers(binary_statuses: &[MachineApiBinaryStatus]) -> Vec<String> {
+    binary_statuses
+        .iter()
+        .filter(|binary| {
+            !binary.present
+                && binary
+                    .required_for_operations
+                    .iter()
+                    .any(|required| required == MACHINE_API_WORKLOAD_PROVISION_PHASE_OPERATION)
+        })
+        .map(|binary| {
+            format!(
+                "missing guest binary required for {}: {}",
+                MACHINE_API_WORKLOAD_RESTART_PHASE_OPERATION, binary.name
             )
         })
         .collect()

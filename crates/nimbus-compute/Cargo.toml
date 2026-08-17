@@ -33,6 +33,7 @@ nimbus-firebase = { path = "../nimbus-firebase" }
 nimbus-fs = { path = "../nimbus-fs" }
 nimbus-license = { path = "../nimbus-license" }
 nimbus-machine = { path = "../nimbus-machine" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-node = { path = "../nimbus-node" }
 nimbus-operator = { path = "../nimbus-operator" }
 nimbus-provenance = { path = "../nimbus-provenance" }
@@ -41,6 +42,7 @@ nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-system = { path = "../nimbus-system" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-workloads = { path = "../nimbus-workloads" }
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
@@ -50,3 +52,6 @@ tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]
+nimbus-sandbox = { path = "../nimbus-sandbox", features = ["test-hooks"] }

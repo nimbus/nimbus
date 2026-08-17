@@ -17,7 +17,7 @@ import {
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 const packageContracts = {
-  "convex": {
+  convex: {
     path: "packages/convex/package.json",
     exports: {
       "./react": "./src/react.ts",
@@ -215,6 +215,8 @@ const entryContracts = {
       "NimbusServiceEndpoint",
       "NimbusServiceLifecycleRequest",
       "NimbusServiceListRequest",
+      "NimbusServiceRestartRequest",
+      "NimbusServiceRestartSubmission",
       "NimbusServiceSelector",
       "NimbusServiceStartRequest",
       "NimbusServiceStopRequest",
@@ -273,6 +275,8 @@ const entryContracts = {
       "NimbusServiceEndpoint",
       "NimbusServiceLifecycleRequest",
       "NimbusServiceListRequest",
+      "NimbusServiceRestartRequest",
+      "NimbusServiceRestartSubmission",
       "NimbusServiceSelector",
       "NimbusServiceStartRequest",
       "NimbusServiceStopRequest",
@@ -652,7 +656,11 @@ async function assertPackageExportMaps() {
     const packageJson = JSON.parse(
       await fs.readFile(repoPath(contract.path), "utf8"),
     );
-    assert.equal(packageJson.name, packageName, `${contract.path} name drifted`);
+    assert.equal(
+      packageJson.name,
+      packageName,
+      `${contract.path} name drifted`,
+    );
     assert.deepEqual(
       packageJson.exports,
       contract.exports,
@@ -685,10 +693,19 @@ async function assertNimbusRootSdkBoundary() {
   // machinery) and `discovery.ts` (credential/endpoint discovery, including
   // the default `NimbusRestClient` construction). Boundary fragments are
   // checked against the concatenation of both.
-  const clientSource = await fs.readFile(repoPath("packages/nimbus/src/control-plane/client.ts"), "utf8");
-  const discoverySource = await fs.readFile(repoPath("packages/nimbus/src/control-plane/discovery.ts"), "utf8");
+  const clientSource = await fs.readFile(
+    repoPath("packages/nimbus/src/control-plane/client.ts"),
+    "utf8",
+  );
+  const discoverySource = await fs.readFile(
+    repoPath("packages/nimbus/src/control-plane/discovery.ts"),
+    "utf8",
+  );
   const source = `${clientSource}\n${discoverySource}`;
-  const routes = await fs.readFile(repoPath("packages/nimbus/src/control_plane_routes.ts"), "utf8");
+  const routes = await fs.readFile(
+    repoPath("packages/nimbus/src/control_plane_routes.ts"),
+    "utf8",
+  );
   for (const fragment of NIMBUS_ROOT_SDK_FORBIDDEN_FRAGMENTS) {
     assert.equal(
       source.includes(fragment),
@@ -847,7 +864,10 @@ async function collectExportDeclarationNames(node, filePath, seen, names) {
       ? node.moduleSpecifier.text
       : null;
   if (!exportClause && moduleSpecifier?.startsWith(".")) {
-    const reexportPath = resolveLocalTypeScriptModule(filePath, moduleSpecifier);
+    const reexportPath = resolveLocalTypeScriptModule(
+      filePath,
+      moduleSpecifier,
+    );
     for (const name of await collectExportNames(reexportPath, seen)) {
       names.add(name);
     }

@@ -139,6 +139,7 @@ async fn invoke_named_convex_function_with_trace_async(
         registry,
         &runtime_service_registry,
         &runtime_manager,
+        None,
         TenantIsolationContext::application(
             tenant_id.clone(),
             normalize_principal_context(auth.as_ref()),

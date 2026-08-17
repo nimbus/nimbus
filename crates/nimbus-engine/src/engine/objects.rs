@@ -58,7 +58,7 @@ impl Engine {
 
 /// One tenant's object-metadata plane, resolved once via
 /// [`Engine::tenant_object_meta`]. Each method still enters a fresh
-/// [`TenantRuntime::enter_operation`] guard per call: resolution is hoisted,
+/// `TenantRuntime::enter_operation` guard per call: resolution is hoisted,
 /// but the deletion-blocking guard remains scoped to the individual
 /// operation, matching every other tenant-scoped call in the engine.
 ///

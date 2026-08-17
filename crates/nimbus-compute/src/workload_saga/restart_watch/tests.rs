@@ -1,0 +1,716 @@
+use std::collections::{BTreeSet, VecDeque};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::time::Duration;
+
+use nimbus_core::TenantId;
+use nimbus_workloads::{
+    WorkloadRestartCandidatePageRequest, WorkloadSagaCommit, WorkloadSagaExpected,
+    WorkloadSagaFuture, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
+    WorkloadSagaStore, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+};
+use tokio::sync::Semaphore;
+
+use super::*;
+use crate::workload_saga::test_support;
+
+struct FakeClock {
+    now: AtomicU64,
+    waits: Mutex<Vec<u64>>,
+    wake: Notify,
+    wait_registered: Semaphore,
+    wake_observed: Semaphore,
+}
+
+impl FakeClock {
+    fn new(now: u64) -> Arc<Self> {
+        Arc::new(Self {
+            now: AtomicU64::new(now),
+            waits: Mutex::new(Vec::new()),
+            wake: Notify::new(),
+            wait_registered: Semaphore::new(0),
+            wake_observed: Semaphore::new(0),
+        })
+    }
+
+    fn advance_to(&self, now: u64) {
+        self.now.store(now, Ordering::Release);
+        self.wake.notify_one();
+    }
+
+    fn waits(&self) -> Vec<u64> {
+        self.waits
+            .lock()
+            .expect("fake clock wait log should be healthy")
+            .clone()
+    }
+
+    async fn wait_until_registered(&self) {
+        self.wait_registered
+            .acquire()
+            .await
+            .expect("fake clock registration signal remains open")
+            .forget();
+    }
+
+    async fn wait_until_wake_observed(&self) {
+        self.wake_observed
+            .acquire()
+            .await
+            .expect("fake clock wake signal remains open")
+            .forget();
+    }
+}
+
+impl RestartClock for FakeClock {
+    fn now_unix_millis(&self) -> WorkloadRestartNotBeforeUnixMillis {
+        WorkloadRestartNotBeforeUnixMillis::new(self.now.load(Ordering::Acquire))
+    }
+
+    fn wait_until(
+        &self,
+        deadline: WorkloadRestartNotBeforeUnixMillis,
+        cancellation: &WorkloadRestartCancellationToken,
+    ) -> RestartWaitFuture<'_> {
+        self.waits
+            .lock()
+            .expect("fake clock wait log should be healthy")
+            .push(deadline.as_u64());
+        self.wait_registered.add_permits(1);
+        let mut cancellation = cancellation.subscribe();
+        Box::pin(async move {
+            loop {
+                if *cancellation.borrow() {
+                    return RestartWait::Cancelled;
+                }
+                if self.now.load(Ordering::Acquire) >= deadline.as_u64() {
+                    return RestartWait::DeadlineReached;
+                }
+                tokio::select! {
+                    changed = cancellation.changed() => {
+                        if changed.is_err() || *cancellation.borrow() {
+                            return RestartWait::Cancelled;
+                        }
+                    }
+                    () = self.wake.notified() => {
+                        self.wake_observed.add_permits(1);
+                    }
+                }
+            }
+        })
+    }
+}
+
+#[derive(Clone)]
+struct PageSpec {
+    records: Vec<WorkloadSagaRecord>,
+    has_more: bool,
+}
+
+struct WatchStore {
+    pages: Mutex<VecDeque<Result<PageSpec, WorkloadSagaStoreError>>>,
+    page_calls: AtomicUsize,
+    page_called: Notify,
+    load_calls: AtomicUsize,
+    cas_calls: AtomicUsize,
+    limits: Mutex<Vec<u16>>,
+    cursors: Mutex<Vec<Option<nimbus_workloads::WorkloadSagaId>>>,
+}
+
+impl WatchStore {
+    fn repeating(spec: PageSpec) -> Arc<Self> {
+        Self::from_pages([spec])
+    }
+
+    fn from_pages(pages: impl IntoIterator<Item = PageSpec>) -> Arc<Self> {
+        Self::from_results(pages.into_iter().map(Ok))
+    }
+
+    fn from_results(
+        pages: impl IntoIterator<Item = Result<PageSpec, WorkloadSagaStoreError>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            pages: Mutex::new(pages.into_iter().collect()),
+            page_calls: AtomicUsize::new(0),
+            page_called: Notify::new(),
+            load_calls: AtomicUsize::new(0),
+            cas_calls: AtomicUsize::new(0),
+            limits: Mutex::new(Vec::new()),
+            cursors: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn next_page(&self) -> Result<PageSpec, WorkloadSagaStoreError> {
+        let mut pages = self
+            .pages
+            .lock()
+            .expect("watch page queue should be healthy");
+        if pages.len() > 1 {
+            pages.pop_front().expect("watch page queue is non-empty")
+        } else {
+            pages
+                .front()
+                .expect("watch page queue is non-empty")
+                .clone()
+        }
+    }
+
+    async fn wait_for_page_calls(&self, expected: usize) {
+        loop {
+            let called = self.page_called.notified();
+            tokio::pin!(called);
+            called.as_mut().enable();
+            if self.page_calls.load(Ordering::Acquire) >= expected {
+                return;
+            }
+            called.await;
+        }
+    }
+}
+
+impl WorkloadSagaStore for WatchStore {
+    fn load<'a>(
+        &'a self,
+        _key: &'a WorkloadSagaKey,
+    ) -> WorkloadSagaFuture<'a, Option<WorkloadSagaRecord>> {
+        Box::pin(async move {
+            self.load_calls.fetch_add(1, Ordering::AcqRel);
+            Err(WorkloadSagaStoreError::Unavailable)
+        })
+    }
+
+    fn compare_and_swap<'a>(
+        &'a self,
+        _expected: WorkloadSagaExpected,
+        _next: WorkloadSagaRecord,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaCommit> {
+        Box::pin(async move {
+            self.cas_calls.fetch_add(1, Ordering::AcqRel);
+            Err(WorkloadSagaStoreError::Unavailable)
+        })
+    }
+
+    fn list_recoverable<'a>(
+        &'a self,
+        request: WorkloadSagaPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaPage> {
+        Box::pin(async move { WorkloadSagaPage::new(&request, Vec::new(), false) })
+    }
+
+    fn list_restart_candidates<'a>(
+        &'a self,
+        request: WorkloadRestartCandidatePageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadRestartCandidatePage> {
+        Box::pin(async move {
+            self.page_calls.fetch_add(1, Ordering::AcqRel);
+            self.page_called.notify_waiters();
+            self.limits
+                .lock()
+                .expect("watch limit log should be healthy")
+                .push(request.limit());
+            self.cursors
+                .lock()
+                .expect("watch cursor log should be healthy")
+                .push(request.after().map(|cursor| cursor.saga_id().clone()));
+            let spec = self.next_page()?;
+            WorkloadRestartCandidatePage::new(&request, spec.records, spec.has_more)
+        })
+    }
+
+    fn list_for_tenant<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+        request: WorkloadSagaTenantPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
+        Box::pin(async move { WorkloadSagaTenantPage::new(tenant_id, &request, Vec::new(), false) })
+    }
+}
+
+#[derive(Default)]
+struct KeyedSupervisor {
+    calls: AtomicUsize,
+    started: AtomicUsize,
+    keys: Mutex<BTreeSet<String>>,
+}
+
+struct IsolatedFailureSupervisor {
+    failure: RestartCandidateFailure,
+    acknowledged: AtomicBool,
+    retry_active: AtomicBool,
+    sibling_active: AtomicBool,
+    failed_tracks: AtomicUsize,
+    acknowledgements: AtomicUsize,
+    retry_starts: AtomicUsize,
+    sibling_starts: AtomicUsize,
+}
+
+impl IsolatedFailureSupervisor {
+    fn new(failed: &WorkloadSagaRecord) -> Arc<Self> {
+        Arc::new(Self {
+            failure: RestartCandidateFailure::retained(
+                failed.key().clone(),
+                1,
+                "one candidate failed",
+            ),
+            acknowledged: AtomicBool::new(false),
+            retry_active: AtomicBool::new(false),
+            sibling_active: AtomicBool::new(false),
+            failed_tracks: AtomicUsize::new(0),
+            acknowledgements: AtomicUsize::new(0),
+            retry_starts: AtomicUsize::new(0),
+            sibling_starts: AtomicUsize::new(0),
+        })
+    }
+}
+
+impl RestartSupervisor for IsolatedFailureSupervisor {
+    fn track(&self, record: WorkloadSagaRecord) -> Result<RestartTrack, String> {
+        if record.key() == self.failure.key() {
+            if !self.acknowledged.load(Ordering::Acquire) {
+                self.failed_tracks.fetch_add(1, Ordering::AcqRel);
+                return Ok(RestartTrack::Failed(self.failure.clone()));
+            }
+            if self.retry_active.swap(true, Ordering::AcqRel) {
+                Ok(RestartTrack::Joined)
+            } else {
+                self.retry_starts.fetch_add(1, Ordering::AcqRel);
+                Ok(RestartTrack::Started)
+            }
+        } else if self.sibling_active.swap(true, Ordering::AcqRel) {
+            Ok(RestartTrack::Joined)
+        } else {
+            self.sibling_starts.fetch_add(1, Ordering::AcqRel);
+            Ok(RestartTrack::Started)
+        }
+    }
+
+    fn acknowledge_failure(&self, failure: &RestartCandidateFailure) -> Result<bool, String> {
+        if failure != &self.failure {
+            return Ok(false);
+        }
+        let acknowledged = self
+            .acknowledged
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
+        if acknowledged {
+            self.acknowledgements.fetch_add(1, Ordering::AcqRel);
+        }
+        Ok(acknowledged)
+    }
+}
+
+impl RestartSupervisor for KeyedSupervisor {
+    fn track(&self, record: WorkloadSagaRecord) -> Result<RestartTrack, String> {
+        self.calls.fetch_add(1, Ordering::AcqRel);
+        let epoch = record
+            .restart_state()
+            .active()
+            .map_or(0, |active| active.admission().restart_epoch().as_u64());
+        let key = format!("{}:{epoch}", record.saga_id());
+        if self
+            .keys
+            .lock()
+            .expect("supervisor key set should be healthy")
+            .insert(key)
+        {
+            self.started.fetch_add(1, Ordering::AcqRel);
+            Ok(RestartTrack::Started)
+        } else {
+            Ok(RestartTrack::Joined)
+        }
+    }
+
+    fn acknowledge_failure(&self, _failure: &RestartCandidateFailure) -> Result<bool, String> {
+        Ok(false)
+    }
+}
+
+fn watch(
+    store: Arc<WatchStore>,
+    supervisor: Arc<KeyedSupervisor>,
+    clock: Arc<FakeClock>,
+    cancellation: WorkloadRestartCancellationToken,
+    page_size: usize,
+) -> Arc<DurableRestartWatch> {
+    Arc::new(
+        DurableRestartWatch::new(
+            NonZeroUsize::new(page_size).expect("test page size is nonzero"),
+            NonZeroU64::new(1_000).expect("test rescan interval is nonzero"),
+            clock,
+            cancellation,
+            Arc::new(WorkloadSagaCoordinator::new(store)),
+            supervisor,
+        )
+        .expect("test restart watch should validate"),
+    )
+}
+
+#[tokio::test]
+async fn automatic_watch_loads_one_bounded_durable_page() {
+    let store = WatchStore::repeating(PageSpec {
+        records: Vec::new(),
+        has_more: false,
+    });
+    let supervisor = Arc::new(KeyedSupervisor::default());
+    let watch = watch(
+        store.clone(),
+        supervisor.clone(),
+        FakeClock::new(0),
+        WorkloadRestartCancellationToken::new(),
+        7,
+    );
+
+    let page = watch
+        .load_durable_restart_page(None)
+        .await
+        .expect("one bounded page should load");
+
+    assert!(page.records().is_empty());
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 1);
+    assert_eq!(*store.limits.lock().unwrap(), vec![7]);
+    assert_eq!(*store.cursors.lock().unwrap(), vec![None]);
+    assert_eq!(store.load_calls.load(Ordering::Acquire), 0);
+    assert_eq!(store.cas_calls.load(Ordering::Acquire), 0);
+    assert_eq!(supervisor.calls.load(Ordering::Acquire), 0);
+}
+
+#[tokio::test]
+async fn automatic_watch_does_not_busy_spin_before_deadline() {
+    let candidate = test_support::scheduled_restart_record("watch-deadline", 500);
+    let store = WatchStore::repeating(PageSpec {
+        records: vec![candidate],
+        has_more: false,
+    });
+    let supervisor = Arc::new(KeyedSupervisor::default());
+    let clock = FakeClock::new(499);
+    let cancellation = WorkloadRestartCancellationToken::new();
+    let watch = watch(
+        store.clone(),
+        supervisor.clone(),
+        clock.clone(),
+        cancellation.clone(),
+        8,
+    );
+    let task = tokio::spawn({
+        let watch = watch.clone();
+        async move { watch.bounded_restart_watch().await }
+    });
+    clock.wait_until_registered().await;
+    assert_eq!(clock.waits(), vec![500]);
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.calls.load(Ordering::Acquire), 0);
+
+    cancellation.cancel();
+    assert_eq!(
+        task.await.unwrap().unwrap(),
+        RestartWait::Cancelled,
+        "cancellation should wake the clock wait"
+    );
+}
+
+#[tokio::test]
+async fn permanent_store_failure_backoff_rejects_hint_bypass_and_cancels() {
+    let store = WatchStore::from_results([Err(WorkloadSagaStoreError::Unavailable)]);
+    let supervisor = Arc::new(KeyedSupervisor::default());
+    let clock = FakeClock::new(0);
+    let cancellation = WorkloadRestartCancellationToken::new();
+    let watch = watch(
+        store.clone(),
+        supervisor.clone(),
+        clock.clone(),
+        cancellation.clone(),
+        8,
+    );
+    let hints = watch.hint_handle();
+    let task = tokio::spawn({
+        let watch = watch.clone();
+        async move { watch.bounded_restart_watch().await }
+    });
+
+    clock.wait_until_registered().await;
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 1);
+    assert_eq!(clock.waits(), vec![1_000]);
+
+    hints.notify(read_only_exit_hint());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), store.wait_for_page_calls(2))
+            .await
+            .is_err(),
+        "advisory hint bypassed durable-store failure backoff; observed {} page calls",
+        store.page_calls.load(Ordering::Acquire),
+    );
+
+    clock.advance_to(1_000);
+    clock.wait_until_registered().await;
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 2);
+    assert_eq!(clock.waits(), vec![1_000, 3_000]);
+
+    hints.notify(read_only_exit_hint());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), store.wait_for_page_calls(3))
+            .await
+            .is_err(),
+        "advisory hint bypassed the second store backoff; observed {} page calls",
+        store.page_calls.load(Ordering::Acquire),
+    );
+
+    clock.advance_to(3_000);
+    clock.wait_until_registered().await;
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 3);
+    assert_eq!(clock.waits(), vec![1_000, 3_000, 7_000]);
+
+    cancellation.cancel();
+    assert_eq!(task.await.unwrap().unwrap(), RestartWait::Cancelled);
+    assert_eq!(store.load_calls.load(Ordering::Acquire), 0);
+    assert_eq!(store.cas_calls.load(Ordering::Acquire), 0);
+    assert_eq!(supervisor.calls.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn store_failure_backoff_caps_at_sixty_four_rescan_periods() {
+    let base = NonZeroU64::new(1_000).unwrap();
+    assert_eq!(restart_store_backoff_millis(base, 0), 1_000);
+    assert_eq!(restart_store_backoff_millis(base, 1), 1_000);
+    assert_eq!(restart_store_backoff_millis(base, 2), 2_000);
+    assert_eq!(restart_store_backoff_millis(base, 7), 64_000);
+    assert_eq!(restart_store_backoff_millis(base, u32::MAX), 64_000);
+}
+
+#[tokio::test]
+async fn successful_store_sweep_resets_failure_backoff() {
+    let store = WatchStore::from_results([
+        Err(WorkloadSagaStoreError::Unavailable),
+        Ok(PageSpec {
+            records: Vec::new(),
+            has_more: false,
+        }),
+        Err(WorkloadSagaStoreError::Unavailable),
+    ]);
+    let supervisor = Arc::new(KeyedSupervisor::default());
+    let clock = FakeClock::new(0);
+    let cancellation = WorkloadRestartCancellationToken::new();
+    let watch = watch(
+        store.clone(),
+        supervisor,
+        clock.clone(),
+        cancellation.clone(),
+        8,
+    );
+    let task = tokio::spawn({
+        let watch = watch.clone();
+        async move { watch.bounded_restart_watch().await }
+    });
+
+    clock.wait_until_registered().await;
+    clock.advance_to(1_000);
+    clock.wait_until_registered().await;
+    clock.advance_to(2_000);
+    clock.wait_until_registered().await;
+
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 3);
+    assert_eq!(
+        clock.waits(),
+        vec![1_000, 2_000, 3_000],
+        "one successful sweep must reset the next store failure to base backoff"
+    );
+
+    cancellation.cancel();
+    assert_eq!(task.await.unwrap().unwrap(), RestartWait::Cancelled);
+}
+
+#[tokio::test]
+async fn automatic_watch_dispatches_each_due_epoch_once() {
+    let candidate = test_support::scheduled_restart_record("watch-once", 0);
+    let store = WatchStore::repeating(PageSpec {
+        records: vec![candidate],
+        has_more: false,
+    });
+    let supervisor = Arc::new(KeyedSupervisor::default());
+    let watch = watch(
+        store,
+        supervisor.clone(),
+        FakeClock::new(0),
+        WorkloadRestartCancellationToken::new(),
+        8,
+    );
+
+    watch.dispatch_each_due_epoch_once().await.unwrap();
+    watch.dispatch_each_due_epoch_once().await.unwrap();
+
+    assert_eq!(supervisor.calls.load(Ordering::Acquire), 2);
+    assert_eq!(supervisor.started.load(Ordering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn one_candidate_failure_does_not_starve_sibling_candidates() {
+    let first = test_support::scheduled_restart_record("watch-failed-candidate", 0);
+    let second = test_support::scheduled_restart_record("watch-healthy-candidate", 0);
+    let store = WatchStore::repeating(PageSpec {
+        records: vec![first.clone(), second],
+        has_more: false,
+    });
+    let supervisor = IsolatedFailureSupervisor::new(&first);
+    let watch = DurableRestartWatch::new(
+        NonZeroUsize::new(8).unwrap(),
+        NonZeroU64::new(1_000).unwrap(),
+        FakeClock::new(0),
+        WorkloadRestartCancellationToken::new(),
+        Arc::new(WorkloadSagaCoordinator::new(store)),
+        supervisor.clone(),
+    )
+    .expect("watch should validate");
+
+    let first_sweep = watch
+        .dispatch_each_due_epoch_once()
+        .await
+        .expect("retained candidate failure must stay local");
+
+    assert_eq!(first_sweep.candidates, 2);
+    assert_eq!(supervisor.failed_tracks.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.retry_starts.load(Ordering::Acquire), 0);
+    assert_eq!(supervisor.sibling_starts.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.acknowledgements.load(Ordering::Acquire), 1);
+
+    let second_sweep = watch
+        .dispatch_each_due_epoch_once()
+        .await
+        .expect("a later sweep may retry the acknowledged candidate");
+
+    assert_eq!(second_sweep.candidates, 2);
+    assert_eq!(supervisor.failed_tracks.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.retry_starts.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.sibling_starts.load(Ordering::Acquire), 1);
+    assert_eq!(supervisor.acknowledgements.load(Ordering::Acquire), 1);
+}
+
+#[tokio::test]
+async fn automatic_watch_caps_each_sweep_and_rotates_cursor() {
+    let mut records = (0..=MAX_RESTART_PAGES_PER_SWEEP)
+        .map(|index| test_support::scheduled_restart_record(&format!("watch-budget-{index:03}"), 0))
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| left.saga_id().cmp(right.saga_id()));
+    let pages = records
+        .into_iter()
+        .enumerate()
+        .map(|(index, record)| PageSpec {
+            records: vec![record],
+            has_more: index < MAX_RESTART_PAGES_PER_SWEEP,
+        })
+        .collect::<Vec<_>>();
+    let expected_resume_after = pages[MAX_RESTART_PAGES_PER_SWEEP - 1].records[0]
+        .saga_id()
+        .clone();
+    let store = WatchStore::from_pages(pages);
+    let supervisor = Arc::new(KeyedSupervisor::default());
+    let watch = watch(
+        store.clone(),
+        supervisor.clone(),
+        FakeClock::new(0),
+        WorkloadRestartCancellationToken::new(),
+        1,
+    );
+
+    let first = watch.dispatch_each_due_epoch_once().await.unwrap();
+    assert_eq!(first.pages, MAX_RESTART_PAGES_PER_SWEEP);
+    assert_eq!(first.candidates, MAX_RESTART_PAGES_PER_SWEEP);
+    assert_eq!(
+        store.page_calls.load(Ordering::Acquire),
+        MAX_RESTART_PAGES_PER_SWEEP
+    );
+    assert_eq!(
+        supervisor.started.load(Ordering::Acquire),
+        MAX_RESTART_PAGES_PER_SWEEP
+    );
+
+    let second = watch.dispatch_each_due_epoch_once().await.unwrap();
+    assert_eq!(second.pages, 1);
+    assert_eq!(second.candidates, 1);
+    assert_eq!(
+        store.page_calls.load(Ordering::Acquire),
+        MAX_RESTART_PAGES_PER_SWEEP + 1
+    );
+    assert_eq!(
+        supervisor.started.load(Ordering::Acquire),
+        MAX_RESTART_PAGES_PER_SWEEP + 1
+    );
+    assert_eq!(
+        store.cursors.lock().unwrap().last(),
+        Some(&Some(expected_resume_after)),
+        "the second sweep must continue after the exact retained page cursor"
+    );
+}
+
+#[test]
+fn read_only_exit_hint_cannot_submit_or_execute_restart() {
+    let store = WatchStore::repeating(PageSpec {
+        records: Vec::new(),
+        has_more: false,
+    });
+    let supervisor = Arc::new(KeyedSupervisor::default());
+    let watch = watch(
+        store.clone(),
+        supervisor.clone(),
+        FakeClock::new(0),
+        WorkloadRestartCancellationToken::new(),
+        8,
+    );
+
+    watch.hint_handle().notify(read_only_exit_hint());
+
+    assert_eq!(store.page_calls.load(Ordering::Acquire), 0);
+    assert_eq!(store.load_calls.load(Ordering::Acquire), 0);
+    assert_eq!(store.cas_calls.load(Ordering::Acquire), 0);
+    assert_eq!(supervisor.calls.load(Ordering::Acquire), 0);
+}
+
+#[tokio::test]
+async fn watch_cancellation_cancels_waiter_not_durable_work() {
+    let candidate = test_support::scheduled_restart_record("watch-cancel", 0);
+    let durable = candidate.clone();
+    let store = WatchStore::repeating(PageSpec {
+        records: vec![candidate],
+        has_more: false,
+    });
+    let supervisor = Arc::new(KeyedSupervisor::default());
+    let clock = FakeClock::new(0);
+    let cancellation = WorkloadRestartCancellationToken::new();
+    let watch = watch(
+        store.clone(),
+        supervisor.clone(),
+        clock.clone(),
+        cancellation.clone(),
+        8,
+    );
+    let task = tokio::spawn({
+        let watch = watch.clone();
+        async move { watch.bounded_restart_watch().await }
+    });
+    clock.wait_until_registered().await;
+    assert_eq!(supervisor.started.load(Ordering::Acquire), 1);
+
+    cancellation.cancel();
+    assert_eq!(task.await.unwrap().unwrap(), RestartWait::Cancelled);
+    assert_eq!(store.cas_calls.load(Ordering::Acquire), 0);
+    assert!(durable.restart_state().active().is_some());
+}
+
+#[tokio::test]
+async fn clock_rollback_delays_existing_deadline() {
+    let clock = FakeClock::new(499);
+    let cancellation = WorkloadRestartCancellationToken::new();
+    let wait = tokio::spawn({
+        let clock = clock.clone();
+        let cancellation = cancellation.clone();
+        async move {
+            clock
+                .wait_until(WorkloadRestartNotBeforeUnixMillis::new(500), &cancellation)
+                .await
+        }
+    });
+    clock.wait_until_registered().await;
+    clock.advance_to(400);
+    clock.wait_until_wake_observed().await;
+    assert!(!wait.is_finished());
+    clock.advance_to(500);
+    assert_eq!(wait.await.unwrap(), RestartWait::DeadlineReached);
+}

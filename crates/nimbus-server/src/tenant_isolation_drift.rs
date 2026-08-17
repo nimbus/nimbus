@@ -5,8 +5,12 @@ use std::sync::Arc;
 
 use nimbus_core::{Document, Error, Result, TableName, TenantId};
 use nimbus_engine::Engine;
+use nimbus_network::{
+    ListenerId, NetworkProviderId, PortLeaseId, PortProtocol, PublishedEndpointId,
+};
 use nimbus_sandbox::{
-    SandboxHandle, SandboxSpec, SandboxStatus, validate_sandbox_mounts, validate_tenant_volume_name,
+    SandboxHandle, SandboxProvisionNetworkPlan, SandboxSpec, SandboxStatus,
+    validate_sandbox_mounts, validate_tenant_volume_name,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -154,6 +158,46 @@ fn scan_sandbox_state_roots(
             match read_sandbox_manifest(&pointer) {
                 Ok(manifest) => {
                     validate_manifest_shape(&pointer, &manifest, report);
+                    let attachment_id = manifest
+                        .provision_network_plan
+                        .as_ref()
+                        .map(|plan| plan.attachment_id().as_str().to_owned());
+                    let plan_generation = manifest
+                        .provision_network_plan
+                        .as_ref()
+                        .map(|plan| plan.generation().as_u64());
+                    let planned_endpoints = manifest
+                        .provision_network_plan
+                        .as_ref()
+                        .map(|plan| {
+                            plan.listeners()
+                                .iter()
+                                .map(|listener| {
+                                    (
+                                        listener.binding().name.clone(),
+                                        PlannedEndpointRecord {
+                                            endpoint_id: listener.endpoint_id().as_str().to_owned(),
+                                            listener_id: listener.listener_id().as_str().to_owned(),
+                                            port_lease_id: listener
+                                                .port_lease()
+                                                .lease_id()
+                                                .as_str()
+                                                .to_owned(),
+                                            generation: listener.port_lease().generation().as_u64(),
+                                            lease_epoch: listener
+                                                .port_lease()
+                                                .lease_epoch()
+                                                .as_u64(),
+                                            transport_protocol: port_protocol_label(
+                                                listener.port_lease().binding().protocol(),
+                                            )
+                                            .to_owned(),
+                                        },
+                                    )
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     observed.push(ObservedSandboxManifest {
                         pointer,
                         tenant_id: manifest.spec.tenant_id.as_str().to_owned(),
@@ -161,6 +205,9 @@ fn scan_sandbox_state_roots(
                         sandbox_id: manifest.handle.id.as_str().to_owned(),
                         status: manifest.status,
                         handle: manifest.handle,
+                        attachment_id,
+                        plan_generation,
+                        planned_endpoints,
                     });
                 }
                 Err(message) => report.push(
@@ -356,6 +403,25 @@ fn validate_manifest_shape(
             "manifest status does not match handle status",
         );
     }
+    match manifest.provision_network_plan.as_ref() {
+        Some(plan) if plan.tenant_id() != &manifest.spec.tenant_id => report.push(
+            SandboxManifest,
+            "sandbox_manifest_network_plan_tenant_mismatch",
+            &location,
+            "compiled network plan tenant does not match the sandbox spec tenant",
+        ),
+        None if manifest.spec.service_name().is_some()
+            && active_sandbox_status(manifest.status) =>
+        {
+            report.push(
+                SandboxManifest,
+                "sandbox_manifest_network_plan_missing",
+                &location,
+                "active service manifest has no compiled network plan with stable attachment and endpoint identities",
+            );
+        }
+        _ => {}
+    }
     if let Err(error) = validate_sandbox_mounts(&manifest.spec.mounts) {
         report.push(
             SandboxManifest,
@@ -426,7 +492,7 @@ fn parse_service_records(
             );
             continue;
         };
-        let state = string_field(document, "state")
+        let observed_phase = string_field(document, "observedPhase")
             .unwrap_or("unknown")
             .to_owned();
         if TenantId::new(tenant_id.to_owned()).is_err() || tenant_id.starts_with('_') {
@@ -438,18 +504,22 @@ fn parse_service_records(
             );
         }
 
-        let sandbox_id = document
-            .fields
-            .get("health")
-            .and_then(|health| health.get("sandboxId"))
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned);
-        if active_state(&state) && sandbox_id.is_none() {
+        let attachment_id = string_field(document, "attachmentId").map(ToOwned::to_owned);
+        if nonterminal_observation_phase(&observed_phase) && attachment_id.is_none() {
             report.push(
                 ServiceHandle,
-                "system_service_handle_missing_sandbox_id",
+                "system_service_handle_missing_attachment_id",
                 &location,
-                "active service document is missing health.sandboxId",
+                "nonterminal service document is missing stable attachmentId",
+            );
+        }
+        let generation = decimal_string_u64_field(document, "generation");
+        if nonterminal_observation_phase(&observed_phase) && generation.is_none() {
+            report.push(
+                ServiceHandle,
+                "system_service_handle_malformed",
+                &location,
+                "nonterminal service document is missing a positive decimal-string `generation`",
             );
         }
         let decision_id = document
@@ -458,12 +528,15 @@ fn parse_service_records(
             .and_then(|health| health.get("decisionId"))
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
-        if active_state(&state) && config.require_decision_audit_records && decision_id.is_none() {
+        if nonterminal_observation_phase(&observed_phase)
+            && config.require_decision_audit_records
+            && decision_id.is_none()
+        {
             report.push(
                 DecisionAudit,
                 "tenant_isolation_decision_audit_missing",
                 &location,
-                "active service document has no tenant isolation decision/audit anchor",
+                "nonterminal service document has no tenant isolation decision/audit anchor",
             );
         }
 
@@ -473,8 +546,10 @@ fn parse_service_records(
                 key,
                 ServiceRecord {
                     document_id: document.id.to_string(),
-                    state,
-                    sandbox_id,
+                    observed_phase,
+                    attachment_id,
+                    generation,
+                    endpoints_by_lease: parse_service_endpoint_records(document, report),
                 },
             )
             .is_some()
@@ -486,6 +561,156 @@ fn parse_service_records(
                 format!(
                     "duplicate service document for tenant `{tenant_id}` service `{service_name}`"
                 ),
+            );
+        }
+    }
+    records
+}
+
+fn parse_service_endpoint_records(
+    document: &Document,
+    report: &mut TenantIsolationDriftReport,
+) -> BTreeMap<String, ServiceEndpointRecord> {
+    let location = format!("_nimbus/services/{}", document.id);
+    let Some(endpoints) = document.fields.get("endpoints").and_then(Value::as_array) else {
+        report.push(
+            ServiceHandle,
+            "system_service_handle_malformed",
+            location,
+            "service document is missing array field `endpoints`",
+        );
+        return BTreeMap::new();
+    };
+    let mut records = BTreeMap::new();
+    for endpoint in endpoints {
+        let Some(endpoint) = endpoint.as_object() else {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint is not an object",
+            );
+            continue;
+        };
+        let Some(name) = endpoint.get("name").and_then(Value::as_str) else {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint is missing string field `name`",
+            );
+            continue;
+        };
+        let Some(endpoint_id) = endpoint.get("endpointId").and_then(Value::as_str) else {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint is missing stable string field `endpointId`",
+            );
+            continue;
+        };
+        if PublishedEndpointId::try_from(endpoint_id).is_err() {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint contains a non-canonical `endpointId`",
+            );
+            continue;
+        }
+        let Some(listener_id) = endpoint.get("listenerId").and_then(Value::as_str) else {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint is missing stable string field `listenerId`",
+            );
+            continue;
+        };
+        if ListenerId::try_from(listener_id).is_err() {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint contains a non-canonical `listenerId`",
+            );
+            continue;
+        }
+        let Some(port_lease_id) = endpoint.get("portLeaseId").and_then(Value::as_str) else {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint is missing stable string field `portLeaseId`",
+            );
+            continue;
+        };
+        if PortLeaseId::try_from(port_lease_id).is_err() {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint contains a non-canonical `portLeaseId`",
+            );
+            continue;
+        }
+        let Some(generation) = endpoint
+            .get("generation")
+            .and_then(Value::as_str)
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+        else {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint is missing a positive decimal-string `generation`",
+            );
+            continue;
+        };
+        let Some(provider_id) = endpoint.get("providerId").and_then(Value::as_str) else {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint is missing stable string field `providerId`",
+            );
+            continue;
+        };
+        if NetworkProviderId::try_from(provider_id).is_err() {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint contains a non-canonical `providerId`",
+            );
+            continue;
+        }
+        let Some(actual_address) = endpoint.get("actualAddress").and_then(Value::as_str) else {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_malformed",
+                &location,
+                "service endpoint is missing observed string field `actualAddress`",
+            );
+            continue;
+        };
+        let record = ServiceEndpointRecord {
+            name: name.to_owned(),
+            endpoint_id: endpoint_id.to_owned(),
+            listener_id: listener_id.to_owned(),
+            port_lease_id: port_lease_id.to_owned(),
+            generation,
+            provider_id: provider_id.to_owned(),
+            actual_address: actual_address.to_owned(),
+        };
+        if records.insert(port_lease_id.to_owned(), record).is_some() {
+            report.push(
+                ServiceHandle,
+                "system_service_endpoint_duplicate_lease",
+                &location,
+                format!("multiple service endpoints reference port lease `{port_lease_id}`"),
             );
         }
     }
@@ -513,24 +738,117 @@ fn parse_port_records(
             );
             continue;
         };
-        let Some(service_name) = string_field(document, "serviceName") else {
+        let mut matching_services = service_records
+            .iter()
+            .filter(|(_, service)| service.document_id == service_id);
+        let Some((service_key, service_record)) = matching_services.next() else {
+            report.push(
+                SystemPort,
+                "system_port_record_service_mismatch",
+                &location,
+                format!("service port references unknown serviceId `{service_id}`"),
+            );
+            continue;
+        };
+        if matching_services.next().is_some() || service_key.tenant_id != tenant_id {
+            report.push(
+                SystemPort,
+                "system_port_record_service_mismatch",
+                &location,
+                format!(
+                    "service port tenant `{tenant_id}` does not match stable serviceId `{service_id}`"
+                ),
+            );
+            continue;
+        }
+        let Some(port_lease_id) = string_field(document, "portLeaseId") else {
             report.push(
                 SystemPort,
                 "system_port_record_malformed",
                 &location,
-                "service port document is missing string field `serviceName`",
+                "service port document is missing stable string field `portLeaseId`",
             );
             continue;
         };
-        let Some(endpoint_name) = string_field(document, "endpointName") else {
+        if PortLeaseId::try_from(port_lease_id).is_err() {
             report.push(
                 SystemPort,
                 "system_port_record_malformed",
                 &location,
-                "service port document is missing string field `endpointName`",
+                "service port document contains a non-canonical `portLeaseId`",
+            );
+            continue;
+        }
+        let Some(endpoint) = service_record.endpoints_by_lease.get(port_lease_id) else {
+            report.push(
+                SystemPort,
+                "system_port_record_endpoint_mismatch",
+                &location,
+                format!(
+                    "service port lease `{port_lease_id}` has no matching stable endpoint in serviceId `{service_id}`"
+                ),
             );
             continue;
         };
+        let Some(listener_id) = string_field(document, "listenerId") else {
+            report.push(
+                SystemPort,
+                "system_port_record_malformed",
+                &location,
+                "service port document is missing stable string field `listenerId`",
+            );
+            continue;
+        };
+        let Some(generation) = decimal_string_u64_field(document, "generation") else {
+            report.push(
+                SystemPort,
+                "system_port_record_malformed",
+                &location,
+                "service port document is missing a positive decimal-string `generation`",
+            );
+            continue;
+        };
+        let Some(lease_epoch) = decimal_string_u64_field(document, "leaseEpoch") else {
+            report.push(
+                SystemPort,
+                "system_port_record_malformed",
+                &location,
+                "service port document is missing a positive decimal-string `leaseEpoch`",
+            );
+            continue;
+        };
+        let Some(provider_id) = string_field(document, "providerId") else {
+            report.push(
+                SystemPort,
+                "system_port_record_malformed",
+                &location,
+                "service port document is missing stable string field `providerId`",
+            );
+            continue;
+        };
+        if ListenerId::try_from(listener_id).is_err()
+            || NetworkProviderId::try_from(provider_id).is_err()
+        {
+            report.push(
+                SystemPort,
+                "system_port_record_malformed",
+                &location,
+                "service port document contains a non-canonical listener or provider identity",
+            );
+            continue;
+        }
+        if endpoint.listener_id != listener_id
+            || endpoint.port_lease_id != port_lease_id
+            || endpoint.generation != generation
+            || endpoint.provider_id != provider_id
+        {
+            report.push(
+                SystemPort,
+                "system_port_record_endpoint_mismatch",
+                &location,
+                "service port lease, listener, generation, or provider does not equal its service endpoint evidence",
+            );
+        }
         let Some(host_port) = u16_field(document, "hostPort") else {
             report.push(
                 SystemPort,
@@ -540,46 +858,70 @@ fn parse_port_records(
             );
             continue;
         };
-        let protocol = string_field(document, "protocol")
-            .unwrap_or("unknown")
-            .to_owned();
-        let state = string_field(document, "state")
-            .unwrap_or("unknown")
-            .to_owned();
-        let service_key = ServiceKey::new(tenant_id, service_name);
-        if service_records
-            .get(&service_key)
-            .is_none_or(|service| service.document_id != service_id)
+        let Some(actual_address) = string_field(document, "actualAddress")
+            .and_then(|value| value.parse::<std::net::SocketAddr>().ok())
+        else {
+            report.push(
+                SystemPort,
+                "system_port_record_malformed",
+                &location,
+                "service port document is missing valid observed actualAddress",
+            );
+            continue;
+        };
+        if actual_address.port() != host_port
+            || endpoint.actual_address != actual_address.to_string()
         {
             report.push(
                 SystemPort,
-                "system_port_record_service_mismatch",
+                "system_port_record_endpoint_mismatch",
                 &location,
-                format!(
-                    "service port references serviceId `{service_id}` that does not match tenant `{tenant_id}` service `{service_name}`",
-                ),
+                "service port actual address does not match its hostPort and stable service endpoint",
             );
         }
-        if active_state(&state) && !manifest_has_endpoint(observed, &service_key, endpoint_name) {
-            report.push(
-                SystemPort,
-                "system_port_record_orphaned",
-                &location,
-                format!(
-                    "active port record `{endpoint_name}` has no active sandbox manifest endpoint for tenant `{tenant_id}` service `{service_name}`",
+        let protocol = string_field(document, "protocol")
+            .unwrap_or("unknown")
+            .to_owned();
+        let observed_phase = string_field(document, "observedPhase")
+            .unwrap_or("unknown")
+            .to_owned();
+        if nonterminal_observation_phase(&observed_phase) {
+            match planned_endpoint_for_service(observed, service_key, &endpoint.name) {
+                Some(planned)
+                    if planned.endpoint_id == endpoint.endpoint_id
+                        && planned.listener_id == listener_id
+                        && planned.port_lease_id == port_lease_id
+                        && planned.generation == generation
+                        && planned.lease_epoch == lease_epoch
+                        && planned.transport_protocol == protocol => {}
+                Some(_) => report.push(
+                    SystemPort,
+                    "system_port_record_plan_mismatch",
+                    &location,
+                    "nonterminal port identity, fence, or transport does not equal its durable sandbox network plan",
                 ),
-            );
+                None => report.push(
+                    SystemPort,
+                    "system_port_record_orphaned",
+                    &location,
+                    format!(
+                        "nonterminal port record `{}` has no active sandbox manifest endpoint for tenant `{tenant_id}` service `{}`",
+                        endpoint.name, service_key.service_name,
+                    ),
+                ),
+            }
         }
         records.insert(
             PortKey {
                 tenant_id: tenant_id.to_owned(),
-                service_name: service_name.to_owned(),
-                endpoint_name: endpoint_name.to_owned(),
+                service_name: service_key.service_name.clone(),
+                endpoint_name: endpoint.name.clone(),
             },
             PortRecord {
                 document_id: document.id.to_string(),
                 host_port,
                 protocol,
+                endpoint_id: endpoint.endpoint_id.clone(),
             },
         );
     }
@@ -631,16 +973,45 @@ fn validate_observed_manifests(
             match service_records.get(service_key) {
                 Some(service_record)
                     if service_record
-                        .sandbox_id
+                        .attachment_id
                         .as_ref()
-                        .is_some_and(|sandbox_id| sandbox_id == &manifest.sandbox_id) => {}
+                        .is_some_and(|attachment_id| {
+                            manifest.attachment_id.as_ref() == Some(attachment_id)
+                        })
+                        && service_record.generation == manifest.plan_generation => {
+                    for endpoint in service_record.endpoints_by_lease.values() {
+                        let matches_plan = manifest
+                            .planned_endpoints
+                            .get(&endpoint.name)
+                            .is_some_and(|planned| {
+                                planned.endpoint_id == endpoint.endpoint_id
+                                    && planned.listener_id == endpoint.listener_id
+                                    && planned.port_lease_id == endpoint.port_lease_id
+                                    && planned.generation == endpoint.generation
+                            });
+                        if !matches_plan {
+                            report.push(
+                                ServiceHandle,
+                                "system_service_endpoint_plan_mismatch",
+                                format!("_nimbus/services/{}", service_record.document_id),
+                                format!(
+                                    "service endpoint `{}` does not equal its durable sandbox network plan",
+                                    endpoint.name
+                                ),
+                            );
+                        }
+                    }
+                }
                 Some(service_record) => report.push(
                     ServiceHandle,
-                    "system_service_handle_sandbox_mismatch",
+                    "system_service_handle_attachment_mismatch",
                     format!("_nimbus/services/{}", service_record.document_id),
                     format!(
-                        "service document sandbox {:?} does not match active manifest sandbox `{}`",
-                        service_record.sandbox_id, manifest.sandbox_id
+                        "service document attachment/generation {:?}/{:?} does not match active manifest attachment/generation {:?}/{:?}",
+                        service_record.attachment_id,
+                        service_record.generation,
+                        manifest.attachment_id,
+                        manifest.plan_generation,
                     ),
                 ),
                 None => report.push(
@@ -669,9 +1040,13 @@ fn validate_observed_manifests(
             };
             match port_records.get(&port_key) {
                 Some(port_record) => {
-                    let expected_protocol = crate::system_tenant::endpoint_protocol(endpoint.protocol);
                     if port_record.host_port != endpoint.address.port()
-                        || port_record.protocol != expected_protocol
+                        || manifest.planned_endpoints.get(&endpoint.name).is_none_or(
+                            |planned| {
+                                planned.transport_protocol != port_record.protocol
+                                    || planned.endpoint_id != port_record.endpoint_id
+                            },
+                        )
                     {
                         report.push(
                             SystemPort,
@@ -698,7 +1073,7 @@ fn validate_observed_manifests(
     }
 
     for (service_key, service_record) in service_records {
-        if !active_state(&service_record.state) {
+        if !nonterminal_observation_phase(&service_record.observed_phase) {
             continue;
         }
         let has_manifest = observed.iter().any(|manifest| {
@@ -707,9 +1082,11 @@ fn validate_observed_manifests(
                     .service_key()
                     .is_some_and(|manifest_key| manifest_key == *service_key)
                 && service_record
-                    .sandbox_id
+                    .attachment_id
                     .as_ref()
-                    .is_some_and(|sandbox_id| sandbox_id == &manifest.sandbox_id)
+                    .is_some_and(|attachment_id| {
+                        manifest.attachment_id.as_ref() == Some(attachment_id)
+                    })
         });
         if !has_manifest {
             report.push(
@@ -717,7 +1094,7 @@ fn validate_observed_manifests(
                 "system_service_handle_manifest_missing",
                 format!("_nimbus/services/{}", service_record.document_id),
                 format!(
-                    "active service document for tenant `{}` service `{}` has no matching active manifest",
+                    "nonterminal service document for tenant `{}` service `{}` has no matching active manifest",
                     service_key.tenant_id, service_key.service_name
                 ),
             );
@@ -780,21 +1157,19 @@ fn validate_route_metadata(route_documents: &[Document], report: &mut TenantIsol
     }
 }
 
-fn manifest_has_endpoint(
-    observed: &[ObservedSandboxManifest],
+fn planned_endpoint_for_service<'a>(
+    observed: &'a [ObservedSandboxManifest],
     service_key: &ServiceKey,
     endpoint_name: &str,
-) -> bool {
-    observed.iter().any(|manifest| {
-        active_sandbox_status(manifest.status)
+) -> Option<&'a PlannedEndpointRecord> {
+    observed.iter().find_map(|manifest| {
+        let matches = active_sandbox_status(manifest.status)
             && manifest
                 .service_key()
-                .is_some_and(|manifest_key| manifest_key == *service_key)
-            && manifest
-                .handle
-                .published_endpoints
-                .iter()
-                .any(|endpoint| endpoint.name == endpoint_name)
+                .is_some_and(|manifest_key| manifest_key == *service_key);
+        matches
+            .then(|| manifest.planned_endpoints.get(endpoint_name))
+            .flatten()
     })
 }
 
@@ -811,8 +1186,32 @@ fn u16_field(document: &Document, name: &str) -> Option<u16> {
         .filter(|value| *value > 0)
 }
 
-fn active_state(state: &str) -> bool {
-    !matches!(state, "stopped" | "failed")
+fn decimal_string_u64_field(document: &Document, name: &str) -> Option<u64> {
+    string_field(document, name)
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn port_protocol_label(protocol: PortProtocol) -> &'static str {
+    match protocol {
+        PortProtocol::Tcp => "tcp",
+        PortProtocol::Udp => "udp",
+    }
+}
+
+fn nonterminal_observation_phase(phase: &str) -> bool {
+    matches!(
+        phase,
+        "reserved"
+            | "provisioning"
+            | "ready"
+            | "publishing"
+            | "active"
+            | "withdrawing"
+            | "draining"
+            | "deleting"
+            | "cleanup_pending"
+    )
 }
 
 fn active_sandbox_status(status: SandboxStatus) -> bool {
@@ -833,6 +1232,8 @@ struct PersistedSandboxManifest {
     handle: SandboxHandle,
     spec: SandboxSpec,
     status: SandboxStatus,
+    #[serde(default)]
+    provision_network_plan: Option<SandboxProvisionNetworkPlan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -843,6 +1244,19 @@ struct ObservedSandboxManifest {
     sandbox_id: String,
     status: SandboxStatus,
     handle: SandboxHandle,
+    attachment_id: Option<String>,
+    plan_generation: Option<u64>,
+    planned_endpoints: BTreeMap<String, PlannedEndpointRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlannedEndpointRecord {
+    endpoint_id: String,
+    listener_id: String,
+    port_lease_id: String,
+    generation: u64,
+    lease_epoch: u64,
+    transport_protocol: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -872,8 +1286,21 @@ impl ObservedSandboxManifest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ServiceRecord {
     document_id: String,
-    state: String,
-    sandbox_id: Option<String>,
+    observed_phase: String,
+    attachment_id: Option<String>,
+    generation: Option<u64>,
+    endpoints_by_lease: BTreeMap<String, ServiceEndpointRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServiceEndpointRecord {
+    name: String,
+    endpoint_id: String,
+    listener_id: String,
+    port_lease_id: String,
+    generation: u64,
+    provider_id: String,
+    actual_address: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -888,22 +1315,176 @@ struct PortRecord {
     document_id: String,
     host_port: u16,
     protocol: String,
+    endpoint_id: String,
 }
 
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::num::NonZeroU16;
 
     use nimbus_core::{DocumentId, TableName};
+    use nimbus_network::{
+        EndpointProtocol, IngressRouteId, ListenerId, NetworkAttachmentHandle, NetworkAttachmentId,
+        NetworkCondition, NetworkConditionKind, NetworkConditionState, NetworkLeaseEpoch,
+        NetworkPlan, NetworkPlanContentDigest, NetworkPlanId, NetworkProviderId,
+        NetworkResourceGeneration, NetworkResourcePhase, PortBindRealm, PortBindTarget,
+        PortBindingSpec, PortBoundEndpoint, PortExposure, PortLeaseAccounting, PortLeaseFence,
+        PortLeaseId, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+        PublishedEndpoint, PublishedEndpointHandle, PublishedEndpointId,
+    };
     use nimbus_sandbox::{
-        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackendKind, SandboxId,
-        SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
-        SandboxRootSpec,
+        SandboxBackendKind, SandboxId, SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding,
+        SandboxProcessSpec, SandboxProvisionEndpointIdentity, SandboxProvisionListener,
+        SandboxRootSpec, SandboxSpec,
     };
     use serde_json::json;
     use tempfile::tempdir;
 
     use super::*;
+
+    fn ready_conditions() -> Vec<NetworkCondition> {
+        vec![
+            NetworkCondition::new(NetworkConditionKind::Ready, NetworkConditionState::True),
+            NetworkCondition::new(NetworkConditionKind::Published, NetworkConditionState::True),
+            NetworkCondition::new(
+                NetworkConditionKind::CleanupPending,
+                NetworkConditionState::False,
+            ),
+        ]
+    }
+
+    fn fixture_network_plan(
+        tenant_id: &TenantId,
+        spec: &SandboxSpec,
+    ) -> SandboxProvisionNetworkPlan {
+        let generation = NetworkResourceGeneration::new(1);
+        let plan = NetworkPlan::new(
+            NetworkPlanId::for_tenant_workload_plan(tenant_id, "drift-scan-db"),
+            generation,
+            NetworkPlanContentDigest::sha256(b"tenant-isolation-drift-fixture"),
+            nimbus_sandbox::sandbox_network_plan_requirements(spec.backend)
+                .capability_requirements()
+                .clone(),
+        );
+        let listener_id =
+            ListenerId::for_tenant_workload_listener(tenant_id, "drift-scan-db", "postgres");
+        let endpoint_id = PublishedEndpointId::for_workload_endpoint("drift-scan-db", "postgres");
+        let request = PortLeaseRequest::new(
+            PortLeaseId::for_listener(&listener_id),
+            listener_id.clone().into(),
+            Some(tenant_id.clone()),
+            PortLeaseFence::new(generation, NetworkLeaseEpoch::new(1)),
+            PortLeaseAccounting::TenantPublished,
+            PortPublicationIntent::host(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            PortBindingSpec::new(
+                PortProtocol::Tcp,
+                PortBindRealm::Host,
+                PortBindTarget::ipv4_specific(Ipv4Addr::LOCALHOST),
+                PortExposure::Loopback,
+                PortRequestMode::Exact(NonZeroU16::new(15_432).expect("non-zero port")),
+            ),
+        )
+        .with_plan_id(plan.plan_id().clone());
+        SandboxProvisionNetworkPlan::new(
+            plan,
+            tenant_id.clone(),
+            generation,
+            NetworkAttachmentId::for_workload_attachment("drift-scan-db", "primary"),
+            [SandboxProvisionEndpointIdentity::new(
+                listener_id.clone(),
+                endpoint_id.clone(),
+            )],
+            [SandboxProvisionListener::new(
+                endpoint_id,
+                listener_id,
+                spec.port_bindings[0].clone(),
+                request,
+            )],
+            [],
+        )
+        .expect("drift fixture network plan should validate")
+    }
+
+    async fn record_fixture_service_projection(
+        engine: &Arc<Engine>,
+        tenant_id: &TenantId,
+        plan: &SandboxProvisionNetworkPlan,
+        endpoint: &PublishedEndpoint,
+    ) {
+        let planned_listener = &plan.listeners()[0];
+        let provider_id = NetworkProviderId::for_registration_key("drift-scan-provider");
+        let bound_endpoint = PortBoundEndpoint::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            PortBindTarget::ipv4_specific(Ipv4Addr::LOCALHOST),
+            NonZeroU16::new(endpoint.address.port()).expect("non-zero port"),
+        )
+        .expect("bound endpoint should validate");
+        let listener = crate::system_tenant::SystemPortListenerObservation::new(
+            "sandbox-ingress",
+            crate::system_tenant::endpoint_protocol(planned_listener.binding().protocol),
+            planned_listener.listener_id().clone(),
+            planned_listener.port_lease().clone(),
+            bound_endpoint,
+            provider_id.clone(),
+            NetworkResourcePhase::Ready,
+            ready_conditions(),
+        )
+        .expect("listener observation should validate");
+        let endpoint_handle = PublishedEndpointHandle::new(
+            planned_listener.endpoint_id().clone(),
+            plan.generation(),
+            endpoint.clone(),
+        );
+        let route = crate::system_tenant::SystemPublishedEndpointObservation::new(
+            IngressRouteId::for_published_endpoint(endpoint_handle.endpoint_id()),
+            endpoint_handle,
+            listener,
+        )
+        .expect("endpoint observation should validate");
+        let service = crate::system_tenant::SystemServiceConnectivityObservation::new(
+            &SandboxSpec::new(
+                tenant_id.clone(),
+                SandboxOwnerSpec::service("db"),
+                SandboxBackendKind::Krun,
+                SandboxRootSpec::rootfs("/rootfs"),
+                SandboxProcessSpec::new(["postgres"]),
+            )
+            .with_port_binding(planned_listener.binding().clone()),
+            plan,
+            1,
+            NetworkAttachmentHandle::new(plan.attachment_id().clone(), plan.generation()),
+            provider_id,
+            NetworkResourcePhase::Ready,
+            ready_conditions(),
+            [route],
+        )
+        .expect("service observation should validate");
+        crate::system_tenant::record_service_connectivity_observation_async(engine, &service)
+            .await
+            .expect("typed service connectivity should record");
+    }
+
+    async fn scan_fixture(engine: &Arc<Engine>, state_root: &Path) -> TenantIsolationDriftReport {
+        scan_tenant_isolation_drift_async(
+            engine,
+            &TenantIsolationDriftScanConfig::new().with_sandbox_state_root(state_root),
+        )
+        .await
+        .expect("drift scan should complete")
+    }
+
+    fn assert_violation(report: &TenantIsolationDriftReport, code: &str) {
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.code == code),
+            "expected drift code {code}; got {:?}",
+            report.violations()
+        );
+    }
 
     #[tokio::test]
     async fn tenant_isolation_drift_scanner_accepts_clean_projection() {
@@ -917,7 +1498,7 @@ mod tests {
         let sandbox_id = SandboxId::new("sandbox-tenant-a-db");
         let endpoint = PublishedEndpoint::new(
             "postgres",
-            PublishedEndpointProtocol::Tcp,
+            EndpointProtocol::Http,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15_432),
         )
         .with_guest_port(5432);
@@ -936,11 +1517,17 @@ mod tests {
             SandboxRootSpec::rootfs("/rootfs"),
             SandboxProcessSpec::new(["postgres"]),
         )
-        .with_port_binding(SandboxPortBinding::tcp("postgres", 15_432, 5432))
+        .with_port_binding(SandboxPortBinding::new(
+            "postgres",
+            EndpointProtocol::Http,
+            15_432,
+            5432,
+        ))
         .with_mount(SandboxMountSpec::tenant_volume(
             "data",
             "/var/lib/postgresql/data",
         ));
+        let network_plan = fixture_network_plan(&tenant_id, &spec);
         create_tenant_volume_root(&state_root, "tenant-a", "data");
         write_manifest(
             &state_root,
@@ -948,22 +1535,130 @@ mod tests {
             "sandbox-tenant-a-db",
             &handle,
             &spec,
+            Some(&network_plan),
         );
-        crate::system_tenant::record_service_handle_async(&engine, &tenant_id, &handle)
-            .await
-            .expect("service handle should record");
-
-        let report = scan_tenant_isolation_drift_async(
+        record_fixture_service_projection(
             &engine,
-            &TenantIsolationDriftScanConfig::new().with_sandbox_state_root(&state_root),
+            &tenant_id,
+            &network_plan,
+            &handle.published_endpoints[0],
         )
-        .await
-        .expect("drift scan should complete");
+        .await;
+
+        let report = scan_fixture(&engine, &state_root).await;
 
         assert!(
             report.is_clean(),
             "clean state should not produce drift violations: {:?}",
             report.violations()
+        );
+
+        let system_tenant =
+            crate::system_tenant::system_tenant_id().expect("system tenant identity should parse");
+        let port_table = TableName::new("ports").expect("ports table should parse");
+        let mut ports = engine
+            .list_documents_async(system_tenant.clone(), port_table.clone())
+            .await
+            .expect("port projection should list");
+        let mut port = ports.pop().expect("one service port should exist");
+        let port_id = port.id.clone();
+        let clean_port_fields = port.fields.clone();
+        port.fields.insert("leaseEpoch".to_owned(), json!("99"));
+        engine
+            .update_document_async(
+                system_tenant.clone(),
+                port_table.clone(),
+                port_id.clone(),
+                port.fields,
+            )
+            .await
+            .expect("crossed lease epoch should write for drift proof");
+
+        assert_violation(
+            &scan_fixture(&engine, &state_root).await,
+            "system_port_record_plan_mismatch",
+        );
+
+        let mut provisioning_port_fields = clean_port_fields.clone();
+        provisioning_port_fields.insert("observedPhase".to_owned(), json!("provisioning"));
+        provisioning_port_fields.insert("leaseEpoch".to_owned(), json!("99"));
+        engine
+            .update_document_async(
+                system_tenant.clone(),
+                port_table.clone(),
+                port_id.clone(),
+                provisioning_port_fields,
+            )
+            .await
+            .expect("crossed provisioning evidence should write for drift proof");
+        assert_violation(
+            &scan_fixture(&engine, &state_root).await,
+            "system_port_record_plan_mismatch",
+        );
+        engine
+            .update_document_async(
+                system_tenant.clone(),
+                port_table,
+                port_id,
+                clean_port_fields,
+            )
+            .await
+            .expect("clean port evidence should restore");
+
+        let service_table = TableName::new("services").expect("services table should parse");
+        let mut services = engine
+            .list_documents_async(system_tenant.clone(), service_table.clone())
+            .await
+            .expect("service projection should list");
+        let mut service = services.pop().expect("one service projection should exist");
+        let service_id = service.id.clone();
+        let clean_service_fields = service.fields.clone();
+        service.fields.insert("generation".to_owned(), json!("99"));
+        engine
+            .update_document_async(
+                system_tenant.clone(),
+                service_table.clone(),
+                service_id.clone(),
+                service.fields,
+            )
+            .await
+            .expect("crossed service generation should write for drift proof");
+        assert_violation(
+            &scan_fixture(&engine, &state_root).await,
+            "system_service_handle_attachment_mismatch",
+        );
+
+        let mut fabricated_service_fields = clean_service_fields;
+        let fabricated_listener =
+            ListenerId::for_tenant_workload_listener(&tenant_id, "drift-scan-db", "fabricated");
+        let fabricated_lease = PortLeaseId::for_listener(&fabricated_listener);
+        fabricated_service_fields["endpoints"]
+            .as_array_mut()
+            .expect("service endpoints should be an array")
+            .push(json!({
+                "name": "fabricated",
+                "endpointId": PublishedEndpointId::for_workload_endpoint(
+                    "drift-scan-db",
+                    "fabricated",
+                ),
+                "listenerId": fabricated_listener,
+                "portLeaseId": fabricated_lease,
+                "generation": "1",
+                "providerId": NetworkProviderId::for_registration_key("drift-scan-provider"),
+                "actualAddress": "127.0.0.1:15433",
+            }));
+        engine
+            .update_document_async(
+                system_tenant,
+                service_table,
+                service_id,
+                fabricated_service_fields,
+            )
+            .await
+            .expect("unexpected service endpoint should write for drift proof");
+        assert_violation(
+            &scan_fixture(&engine, &state_root).await,
+            "system_service_endpoint_plan_mismatch",
         );
     }
 
@@ -987,7 +1682,7 @@ mod tests {
                 SandboxStatus::Ready,
                 vec![PublishedEndpoint::new(
                     "vnc",
-                    PublishedEndpointProtocol::Tcp,
+                    EndpointProtocol::Tcp,
                     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 16_000),
                 )],
             );
@@ -998,7 +1693,14 @@ mod tests {
                 SandboxRootSpec::rootfs("/rootfs"),
                 SandboxProcessSpec::new(["sleep", "60"]),
             );
-            write_manifest(&state_root, "tenant-a", sandbox_id.as_str(), &handle, &spec);
+            write_manifest(
+                &state_root,
+                "tenant-a",
+                sandbox_id.as_str(),
+                &handle,
+                &spec,
+                None,
+            );
         }
 
         let report = scan_tenant_isolation_drift_async(
@@ -1091,6 +1793,7 @@ mod tests {
         sandbox: &str,
         handle: &SandboxHandle,
         spec: &SandboxSpec,
+        network_plan: Option<&SandboxProvisionNetworkPlan>,
     ) {
         let manifest_path = state_root
             .join("tenants")
@@ -1109,6 +1812,7 @@ mod tests {
                 "handle": handle,
                 "spec": spec,
                 "status": handle.status,
+                "provision_network_plan": network_plan,
             }))
             .expect("manifest should serialize"),
         )
@@ -1144,6 +1848,7 @@ mod tests {
             "sandbox-tenant-a-db",
             &handle,
             &spec,
+            None,
         );
     }
 
@@ -1167,6 +1872,12 @@ mod tests {
     }
 
     async fn insert_bad_service_document(engine: &Arc<Engine>) {
+        let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
+        let listener_id =
+            ListenerId::for_tenant_workload_listener(&tenant_id, "orphan-db", "postgres");
+        let endpoint_id = PublishedEndpointId::for_workload_endpoint("orphan-db", "postgres");
+        let lease_id = PortLeaseId::for_listener(&listener_id);
+        let provider_id = NetworkProviderId::for_registration_key("orphan-provider");
         engine
             .insert_document_async_with_id(
                 crate::system_tenant::system_tenant_id().expect("system id should parse"),
@@ -1176,13 +1887,23 @@ mod tests {
                     "tenantId": "tenant-a",
                     "name": "db",
                     "kind": "sandbox",
-                    "state": "ready",
-                    "endpoints": [],
-                    "health": {
-                        "sandboxId": "missing-sandbox",
-                        "backend": "krun",
-                        "status": "ready"
-                    }
+                    "sourceGeneration": "1",
+                    "attachmentId": "attachment-missing-from-manifest",
+                    "generation": "1",
+                    "attachmentProviderId": "provider-fixture",
+                    "observedPhase": "ready",
+                    "endpoints": [{
+                        "name": "postgres",
+                        "endpointId": endpoint_id,
+                        "listenerId": listener_id,
+                        "portLeaseId": lease_id,
+                        "generation": "1",
+                        "providerId": provider_id,
+                        "actualAddress": "127.0.0.1:15432"
+                    }],
+                    "conditions": [],
+                    "cleanupState": "clear",
+                    "health": {}
                 }))
                 .expect("service fields should be object"),
             )
@@ -1191,25 +1912,53 @@ mod tests {
     }
 
     async fn insert_bad_port_document(engine: &Arc<Engine>) {
-        engine
-            .insert_document_async_with_id(
-                crate::system_tenant::system_tenant_id().expect("system id should parse"),
-                TableName::new("ports").expect("table should parse"),
-                DocumentId::from_key("port:service:tenant-a:db:postgres")
-                    .expect("document id should parse"),
-                serde_json::from_value(json!({
-                    "serviceId": "service:tenant-b:db",
-                    "tenantId": "tenant-a",
-                    "serviceName": "db",
-                    "endpointName": "postgres",
-                    "hostPort": 15432,
-                    "protocol": "tcp",
-                    "state": "ready"
-                }))
-                .expect("port fields should be object"),
-            )
-            .await
-            .expect("bad port document should insert");
+        let system_tenant =
+            crate::system_tenant::system_tenant_id().expect("system id should parse");
+        let table = TableName::new("ports").expect("table should parse");
+        let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
+        let orphan_listener =
+            ListenerId::for_tenant_workload_listener(&tenant_id, "orphan-db", "postgres");
+        let unknown_listener =
+            ListenerId::for_tenant_workload_listener(&tenant_id, "unknown-db", "postgres");
+        let provider_id = NetworkProviderId::for_registration_key("orphan-provider");
+        for (document_id, service_id, listener_id) in [
+            (
+                "port:unknown-service",
+                "service:tenant-b:db",
+                unknown_listener,
+            ),
+            (
+                "port:orphan-endpoint",
+                "service:tenant-a:db",
+                orphan_listener,
+            ),
+        ] {
+            let lease_id = PortLeaseId::for_listener(&listener_id);
+            engine
+                .insert_document_async_with_id(
+                    system_tenant.clone(),
+                    table.clone(),
+                    DocumentId::from_key(document_id).expect("document id should parse"),
+                    serde_json::from_value(json!({
+                        "serviceId": service_id,
+                        "tenantId": "tenant-a",
+                        "portLeaseId": lease_id,
+                        "listenerId": listener_id,
+                        "generation": "1",
+                        "leaseEpoch": "1",
+                        "providerId": provider_id,
+                        "actualAddress": "127.0.0.1:15432",
+                        "hostPort": 15432,
+                        "protocol": "tcp",
+                        "observedPhase": "ready",
+                        "conditions": [],
+                        "cleanupState": "clear"
+                    }))
+                    .expect("port fields should be object"),
+                )
+                .await
+                .expect("bad port document should insert");
+        }
     }
 
     async fn corrupt_health_route(engine: &Arc<Engine>) {

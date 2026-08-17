@@ -302,8 +302,9 @@ services:
         .expect("compose project should lower into a service catalog");
     let spec = sandbox_spec_from_backend(
         catalog
-            .service_backend_for_tenant(&tenant_id, "db")
-            .expect("db backend should exist"),
+            .service_definition_for_tenant(&tenant_id, "db")
+            .expect("db definition should exist")
+            .backend,
     );
     assert_eq!(image_reference_from_spec(&spec), "postgres:16");
 
@@ -728,8 +729,9 @@ volumes:
         .expect("compose project should lower into a service catalog");
     let spec = sandbox_spec_from_backend(
         catalog
-            .service_backend_for_tenant(&tenant_id, "db")
-            .expect("db backend should exist"),
+            .service_definition_for_tenant(&tenant_id, "db")
+            .expect("db definition should exist")
+            .backend,
     );
     let volume_policy = catalog.service_volume_policy_for_tenant(&tenant_id, "db");
     assert_eq!(image_reference_from_spec(&spec), "postgres:16");
@@ -940,8 +942,9 @@ services:
         .expect("compose project should lower into a service catalog");
     let spec = sandbox_spec_from_backend(
         catalog
-            .service_backend_for_tenant(&tenant_id, "api")
-            .expect("api backend should exist"),
+            .service_definition_for_tenant(&tenant_id, "api")
+            .expect("api definition should exist")
+            .backend,
     );
     assert_eq!(
         image_reference_from_spec(&spec),
@@ -1135,8 +1138,9 @@ services:
 
     let db = sandbox_spec_from_backend(
         catalog
-            .service_backend_for_tenant(&tenant_id, "db")
-            .expect("db backend should exist"),
+            .service_definition_for_tenant(&tenant_id, "db")
+            .expect("db definition should exist")
+            .backend,
     );
     assert_eq!(image_reference_from_spec(&db), "postgres:16");
     assert_eq!(db.tenant_id, tenant_id);
@@ -1154,8 +1158,9 @@ services:
 
     let api = sandbox_spec_from_backend(
         catalog
-            .service_backend_for_tenant(&tenant_id, "api")
-            .expect("api backend should exist"),
+            .service_definition_for_tenant(&tenant_id, "api")
+            .expect("api definition should exist")
+            .backend,
     );
     let api_build = build_source_from_spec(&api);
     assert_eq!(api_build.image_name, "nimbus-demo-app-api");
@@ -1175,8 +1180,9 @@ services:
     let other_tenant = TenantId::new("other").expect("tenant id should be valid");
     let other_db = sandbox_spec_from_backend(
         catalog
-            .service_backend_for_tenant(&other_tenant, "db")
-            .expect("catalog should lower the same service plan for another tenant"),
+            .service_definition_for_tenant(&other_tenant, "db")
+            .expect("catalog should lower the same service plan for another tenant")
+            .backend,
     );
     assert_eq!(image_reference_from_spec(&other_db), "postgres:16");
     assert_eq!(other_db.tenant_id, other_tenant);
@@ -1205,28 +1211,30 @@ services:
 
     let tenant_a = TenantId::new("tenant-a").expect("tenant id should be valid");
     let tenant_b = TenantId::new("tenant-b").expect("tenant id should be valid");
-    let tenant_a_backends = catalog.service_backends_for_tenant(&tenant_a);
-    let tenant_b_backends = catalog.service_backends_for_tenant(&tenant_b);
+    let tenant_a_definitions = catalog.service_definitions_for_tenant(&tenant_a);
+    let tenant_b_definitions = catalog.service_definitions_for_tenant(&tenant_b);
 
     assert_eq!(
-        tenant_a_backends.keys().cloned().collect::<Vec<_>>(),
+        tenant_a_definitions.keys().cloned().collect::<Vec<_>>(),
         vec!["api".to_owned(), "db".to_owned()]
     );
     assert_eq!(
-        tenant_b_backends.keys().cloned().collect::<Vec<_>>(),
+        tenant_b_definitions.keys().cloned().collect::<Vec<_>>(),
         vec!["api".to_owned(), "db".to_owned()]
     );
 
     let tenant_a_db = sandbox_spec_from_backend(
-        tenant_a_backends
+        tenant_a_definitions
             .get("db")
-            .expect("db backend should exist")
+            .expect("db definition should exist")
+            .backend
             .clone(),
     );
     let tenant_b_db = sandbox_spec_from_backend(
-        tenant_b_backends
+        tenant_b_definitions
             .get("db")
-            .expect("db backend should exist")
+            .expect("db definition should exist")
+            .backend
             .clone(),
     );
 
@@ -1236,4 +1244,64 @@ services:
     assert_eq!(tenant_b_db.service_name(), Some("db"));
     assert_eq!(image_reference_from_spec(&tenant_a_db), "postgres:16");
     assert_eq!(image_reference_from_spec(&tenant_b_db), "postgres:16");
+}
+
+#[test]
+fn compose_catalog_reload_preserves_complete_definition_and_executable_digest() {
+    let tempdir = tempfile::tempdir().expect("tempdir should build");
+    let compose = write_compose_fixture(
+        &tempdir,
+        "compose.yaml",
+        r#"
+name: Stable App
+services:
+  api:
+    image: ghcr.io/example/api@sha256:8b7c8f245b3a78327cf14a44aeeea7e69f2cccf13d1f338f4132c3ee445758b8
+    command: ["./server", "--port", "8080"]
+    labels:
+      nimbus.test.role: api
+"#,
+    );
+    let tenant_id = TenantId::new("tenant-stable").expect("tenant id should be valid");
+
+    let load = || {
+        ComposeProjectPlan::load(&compose)
+            .expect("compose file should resolve")
+            .into_service_catalog()
+            .expect("compose project should lower into a service catalog")
+            .service_definition_for_tenant(&tenant_id, "api")
+            .expect("api definition should exist")
+    };
+    let first = load();
+    let reloaded = load();
+
+    assert_eq!(first.generation, 1);
+    assert_eq!(first, reloaded);
+    assert!(first.resource_version.starts_with("sha256:"));
+    assert_eq!(
+        first.labels.get("nimbus.test.role").map(String::as_str),
+        Some("api")
+    );
+
+    let first_spec = first
+        .backend
+        .sandbox_spec()
+        .expect("api definition should remain sandbox-backed");
+    let reloaded_spec = reloaded
+        .backend
+        .sandbox_spec()
+        .expect("reloaded api definition should remain sandbox-backed");
+    let first_executable = nimbus_compute::workload_executable::encode_sandbox_spec(first_spec)
+        .expect("first sandbox spec should encode canonically");
+    let reloaded_executable =
+        nimbus_compute::workload_executable::encode_sandbox_spec(reloaded_spec)
+            .expect("reloaded sandbox spec should encode canonically");
+    assert_eq!(
+        first_executable.content_digest(),
+        reloaded_executable.content_digest()
+    );
+    assert_eq!(
+        first_executable.canonical_content(),
+        reloaded_executable.canonical_content()
+    );
 }

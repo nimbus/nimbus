@@ -15,11 +15,18 @@ use nimbus_machine::api::{
     MACHINE_API_BOOTC_ROLLBACK_PATH, MACHINE_API_BOOTC_STATUS_PATH, MACHINE_API_BOOTC_SWITCH_PATH,
     MACHINE_API_BOOTC_UPGRADE_PATH, MACHINE_API_CAPABILITIES_PATH,
     MACHINE_API_CURRENT_SERVICE_SANDBOX_PATH, MACHINE_API_HEALTH_PATH,
-    MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH, MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
     MACHINE_API_SERVICE_SANDBOX_LOGS_PATH, MACHINE_API_SERVICE_SANDBOX_PATH,
-    MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH, MACHINE_API_SERVICE_SANDBOX_STOP_PATH,
-    MACHINE_API_SERVICE_SANDBOXES_PATH,
+    MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH, MACHINE_API_SERVICE_SANDBOXES_PATH,
+    MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH, MACHINE_API_WORKLOAD_RESTART_PHASE_PATH,
+    MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH, MachineApiWorkloadProvisionPhaseRequest,
+    MachineApiWorkloadProvisionPhaseResponse, MachineApiWorkloadRestartPhaseRequest,
+    MachineApiWorkloadRestartPhaseResponse, MachineApiWorkloadTeardownPhaseRequest,
+    MachineApiWorkloadTeardownPhaseResponse,
 };
+
+/// Bounded well above the closed JSON envelope while preventing unbounded
+/// allocation before strict request decoding and authority authentication.
+pub(super) const MAX_WORKLOAD_TEARDOWN_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
 pub(super) fn machine_api_router(state: MachineApiState) -> Router {
     Router::new()
@@ -39,12 +46,18 @@ pub(super) fn machine_api_router(state: MachineApiState) -> Router {
             post(machine_api_bootc_rollback),
         )
         .route(
-            MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
-            post(machine_api_start_image_service_sandbox),
+            MACHINE_API_WORKLOAD_PROVISION_PHASE_PATH,
+            post(machine_api_workload_provision_phase),
         )
         .route(
-            MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH,
-            post(machine_api_start_build_service_sandbox),
+            MACHINE_API_WORKLOAD_RESTART_PHASE_PATH,
+            post(machine_api_workload_restart_phase),
+        )
+        .route(
+            MACHINE_API_WORKLOAD_TEARDOWN_PHASE_PATH,
+            post(machine_api_workload_teardown_phase).layer(DefaultBodyLimit::max(
+                MAX_WORKLOAD_TEARDOWN_REQUEST_BODY_BYTES,
+            )),
         )
         .route(
             MACHINE_API_SERVICE_SANDBOXES_PATH,
@@ -66,11 +79,71 @@ pub(super) fn machine_api_router(state: MachineApiState) -> Router {
             MACHINE_API_SERVICE_SANDBOX_PROCESS_SNAPSHOT_PATH,
             get(machine_api_service_sandbox_process_snapshot),
         )
-        .route(
-            MACHINE_API_SERVICE_SANDBOX_STOP_PATH,
-            post(machine_api_stop_service_sandbox),
-        )
         .with_state(state)
+}
+
+async fn machine_api_workload_provision_phase(
+    State(state): State<MachineApiState>,
+    Json(request): Json<MachineApiWorkloadProvisionPhaseRequest>,
+) -> Result<Json<MachineApiWorkloadProvisionPhaseResponse>, MachineApiHttpError> {
+    // Authentication deliberately precedes facade lookup and every guest
+    // provider call. A stale or foreign parent cannot probe or mutate guest
+    // workload state merely by presenting an internally consistent command.
+    require_forwarder_authority(&state, request.forwarder_authority())?;
+    let workloads = require_service_workloads(&state)?;
+    let observation = workloads
+        .provision_phase(request.command(), request.forwarder_authority())
+        .await?;
+    let response = MachineApiWorkloadProvisionPhaseResponse::for_request(&request, observation)
+        .map_err(|error| MachineApiHttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!(
+                "machine API workload provision response violated its exact wire contract: {error}"
+            ),
+        })?;
+    Ok(Json(response))
+}
+
+async fn machine_api_workload_restart_phase(
+    State(state): State<MachineApiState>,
+    Json(request): Json<MachineApiWorkloadRestartPhaseRequest>,
+) -> Result<Json<MachineApiWorkloadRestartPhaseResponse>, MachineApiHttpError> {
+    // Authentication precedes facade lookup, journal access, inspection, and
+    // every provider effect. The request digest already binds this authority
+    // to the complete compute-confirmed command.
+    require_forwarder_authority(&state, request.forwarder_authority())?;
+    let workloads = require_service_workloads(&state)?;
+    let observation = workloads.restart_phase(request.command()).await?;
+    let response = MachineApiWorkloadRestartPhaseResponse::for_request(&request, observation)
+        .map_err(|error| MachineApiHttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!(
+                "machine API workload restart response violated its exact wire contract: {error}"
+            ),
+        })?;
+    Ok(Json(response))
+}
+
+async fn machine_api_workload_teardown_phase(
+    State(state): State<MachineApiState>,
+    Json(request): Json<MachineApiWorkloadTeardownPhaseRequest>,
+) -> Result<Json<MachineApiWorkloadTeardownPhaseResponse>, MachineApiHttpError> {
+    // Strict wire decoding and parent authority authentication precede facade
+    // lookup, journal inspection, and every guest provider operation.
+    require_forwarder_authority(&state, request.forwarder_authority())?;
+    let workloads = require_service_workloads(&state)?;
+    let result = workloads
+        .teardown_phase(request.command(), request.forwarder_authority())
+        .await?;
+    let response = MachineApiWorkloadTeardownPhaseResponse::for_request(&request, result).map_err(
+        |error| MachineApiHttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!(
+                "machine API workload teardown response violated its exact wire contract: {error}"
+            ),
+        },
+    )?;
+    Ok(Json(response))
 }
 
 async fn machine_api_healthz(
@@ -91,36 +164,16 @@ async fn machine_api_capabilities(
     axum::Json(machine_api_capability_response(&state))
 }
 
-async fn machine_api_start_image_service_sandbox(
-    State(state): State<MachineApiState>,
-    Json(request): Json<MachineApiServiceSandboxImageStartRequest>,
-) -> Result<Json<MachineApiServiceSandboxStartResponse>, MachineApiHttpError> {
-    require_image_start_root(&request.spec)?;
-    let workloads = require_service_workloads(&state)?;
-    let handle = workloads.start(request.spec).await?;
-    Ok(Json(MachineApiServiceSandboxStartResponse { handle }))
-}
-
-async fn machine_api_start_build_service_sandbox(
-    State(state): State<MachineApiState>,
-    Json(request): Json<MachineApiServiceSandboxBuildStartRequest>,
-) -> Result<Json<MachineApiServiceSandboxStartResponse>, MachineApiHttpError> {
-    require_build_start_root(&request.spec)?;
-    let workloads = require_service_workloads(&state)?;
-    let handle = workloads.start(request.spec).await?;
-    Ok(Json(MachineApiServiceSandboxStartResponse { handle }))
-}
-
 async fn machine_api_inspect_service_sandbox(
     State(state): State<MachineApiState>,
     AxumPath(sandbox_id): AxumPath<String>,
 ) -> Result<Json<MachineApiServiceSandboxInspectResponse>, MachineApiHttpError> {
     let workloads = require_service_workloads(&state)?;
     let sandbox_id = nimbus::SandboxId::new(sandbox_id);
-    let handle = workloads.inspect(&sandbox_id).await?;
+    let inspection = workloads.inspect(&sandbox_id).await?;
     Ok(Json(MachineApiServiceSandboxInspectResponse {
         sandbox_id,
-        handle,
+        inspection,
     }))
 }
 
@@ -271,24 +324,5 @@ async fn machine_api_service_sandbox_process_snapshot(
             conmon_pid,
             process_rows,
         },
-    }))
-}
-
-async fn machine_api_stop_service_sandbox(
-    State(state): State<MachineApiState>,
-    AxumPath(sandbox_id): AxumPath<String>,
-) -> Result<Json<MachineApiServiceSandboxStopResponse>, MachineApiHttpError> {
-    let workloads = require_service_workloads(&state)?;
-    let sandbox_id = nimbus::SandboxId::new(sandbox_id);
-    let Some(_) = workloads.inspect(&sandbox_id).await? else {
-        return Err(MachineApiHttpError {
-            status: StatusCode::NOT_FOUND,
-            message: format!("sandbox instance was not found: {sandbox_id}"),
-        });
-    };
-    workloads.stop(&sandbox_id).await?;
-    Ok(Json(MachineApiServiceSandboxStopResponse {
-        sandbox_id,
-        stopped: true,
     }))
 }

@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::StatusCode;
 use tempfile::tempdir;
@@ -79,6 +79,7 @@ async fn system_shutdown_endpoint_stops_live_server() {
     let service = Arc::new(
         nimbus_engine::Engine::new(temp.path().join("data")).expect("service should initialize"),
     );
+    let baseline_started = Instant::now();
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .expect("listener should bind");
@@ -87,7 +88,9 @@ async fn system_shutdown_endpoint_stops_live_server() {
         .expect("listener address should resolve");
     let server_task = tokio::spawn(serve(
         listener,
-        ServeOptions::new(service.clone()).with_local_server_security(local_server_security),
+        ServeOptions::reconstruct_direct(service.clone())
+            .expect("test server network authority should reconstruct once")
+            .with_local_server_security(local_server_security),
     ));
     let client = reqwest::Client::new();
     wait_for_condition(
@@ -104,7 +107,9 @@ async fn system_shutdown_endpoint_stops_live_server() {
         },
     )
     .await;
+    let ready_elapsed = baseline_started.elapsed();
 
+    let shutdown_started = Instant::now();
     let response = client
         .post(format!("http://{address}/api/system/shutdown"))
         .bearer_auth(&token.token)
@@ -123,6 +128,13 @@ async fn system_shutdown_endpoint_stops_live_server() {
         .expect("server should exit after shutdown request")
         .expect("server task should join")
         .expect("server shutdown should be graceful");
+    let shutdown_elapsed = shutdown_started.elapsed();
+    eprintln!(
+        "NNC0.9 listener-lifecycle-baseline ready_ns={} shutdown_ns={} total_ns={}",
+        ready_elapsed.as_nanos(),
+        shutdown_elapsed.as_nanos(),
+        baseline_started.elapsed().as_nanos()
+    );
     service.quiesce().await;
 }
 

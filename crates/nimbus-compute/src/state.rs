@@ -19,6 +19,9 @@ use nimbus_convex::{ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig}
 use nimbus_engine::Engine;
 use nimbus_firebase::FirebaseConfig;
 use nimbus_license::LicenseState;
+use nimbus_network::{
+    LocalNetworkManager, NetworkCapabilitySelection, NetworkSovereigntyRequirements,
+};
 use nimbus_operator::{LocalServerAuditEvent, LocalServerSecurityState};
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, HostCallCancellation, RuntimeAdaptiveControllerSettings,
@@ -26,6 +29,7 @@ use nimbus_runtime::{
 };
 use nimbus_services::{RuntimeServiceRegistry, ServiceManager};
 use nimbus_tenant::TenantIsolationMode;
+use nimbus_workloads::{NodeIdentity, TenantRetirementStore, WorkloadSagaStore};
 use tempfile::TempDir;
 use tracing::warn;
 
@@ -35,10 +39,74 @@ use crate::config::deployment::DeploymentConfig;
 use crate::config::node_services::NodeServicesConfig;
 use crate::config::runtime::RuntimeGovernorConfig;
 use crate::machine_lifecycle::MachineLifecycleManager;
+use crate::node_workloads::NodeWorkloadCoordinator;
 use crate::runtime_manager::RuntimeManager;
+use crate::tenant_retirement::{TenantRetirementDriver, TenantRetirementRuntime};
+use crate::workload_projection::{WorkloadProjectionOrchestrator, WorkloadProjectionSink};
+use crate::workload_provisioner::WorkloadProvisioner;
+use crate::workload_saga::WorkloadTeardownRuntime;
+use crate::workload_saga::restart_resolution::ServiceManagerWorkloadRestartResolutionFence;
+use crate::workload_saga::restart_runtime::WorkloadRestartRuntime;
+use crate::workload_saga::{
+    ExactWorkloadTeardownCapabilityRealm, WorkloadDesireAdmissionGuard,
+    WorkloadProvisionCapabilityRegistry, WorkloadProvisionSourceAuthority,
+    WorkloadRestartCapabilityRegistry, WorkloadSagaCoordinator, WorkloadStartupRecovery,
+    WorkloadStartupRecoveryReport,
+};
+
+/// One shared durable authority for workload and tenant lifecycle records.
+pub struct WorkloadLifecycleStores {
+    saga: Arc<dyn WorkloadSagaStore>,
+    tenant_retirement: Arc<dyn TenantRetirementStore>,
+}
+
+impl WorkloadLifecycleStores {
+    /// Bind both portable store ports to one backing adapter.
+    pub fn shared<S>(store: Arc<S>) -> Self
+    where
+        S: WorkloadSagaStore + TenantRetirementStore,
+    {
+        let saga: Arc<dyn WorkloadSagaStore> = store.clone();
+        let tenant_retirement: Arc<dyn TenantRetirementStore> = store;
+        Self {
+            saga,
+            tenant_retirement,
+        }
+    }
+
+    fn saga(&self) -> Arc<dyn WorkloadSagaStore> {
+        Arc::clone(&self.saga)
+    }
+
+    fn tenant_retirement(&self) -> Arc<dyn TenantRetirementStore> {
+        Arc::clone(&self.tenant_retirement)
+    }
+}
+
+/// Explicit workload-lifecycle capabilities available to a compute state.
+pub enum ComputeWorkloadComposition {
+    /// Protocol serving without workload lifecycle authority.
+    ProtocolOnly,
+    /// Workload-capable serving over one network manager and durable saga store.
+    Managed {
+        network_manager: Arc<LocalNetworkManager>,
+        local_node: NodeIdentity,
+        capability_selection: Box<NetworkCapabilitySelection>,
+        execution_provider_id: nimbus_workloads::WorkloadExecutionProviderId,
+        sovereignty: NetworkSovereigntyRequirements,
+        lifecycle_stores: WorkloadLifecycleStores,
+        source_authority: Arc<dyn WorkloadProvisionSourceAuthority>,
+        provision_capabilities: Box<WorkloadProvisionCapabilityRegistry>,
+        restart_capabilities: Box<WorkloadRestartCapabilityRegistry>,
+        teardown_capabilities: Option<Box<ExactWorkloadTeardownCapabilityRealm>>,
+        desire_admission_guard: Option<Arc<dyn WorkloadDesireAdmissionGuard>>,
+        projection_sink: Arc<dyn WorkloadProjectionSink>,
+    },
+}
 
 pub struct ComputeStateConfig {
     pub engine: Arc<Engine>,
+    pub workload_composition: ComputeWorkloadComposition,
     pub deployment: DeploymentConfig,
     pub control_plane: ControlPlaneConfig,
     pub node_services: NodeServicesConfig,
@@ -49,6 +117,14 @@ pub struct ComputeStateConfig {
 pub struct ComputeState {
     pub engine: Arc<Engine>,
     pub active_deployment: Arc<ActiveDeployment>,
+    system_connectivity_projection: nimbus_system::SystemConnectivityProjectionRuntime,
+    network_manager: Option<Arc<LocalNetworkManager>>,
+    workload_saga_coordinator: Option<Arc<WorkloadSagaCoordinator>>,
+    tenant_retirement_store: Option<Arc<dyn TenantRetirementStore>>,
+    workload_provisioner: Option<Arc<WorkloadProvisioner>>,
+    workload_restart_runtime: Option<Arc<WorkloadRestartRuntime>>,
+    workload_teardown_runtime: Option<Arc<WorkloadTeardownRuntime>>,
+    workload_startup_report: tokio::sync::OnceCell<WorkloadStartupRecoveryReport>,
     system_convex_registry: Option<Arc<ConvexRegistry>>,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -60,12 +136,115 @@ impl ComputeState {
     pub fn from_config(config: ComputeStateConfig) -> Self {
         let ComputeStateConfig {
             engine,
+            workload_composition,
             deployment,
             control_plane,
             node_services,
             runtime,
         } = config;
-        let node_services = node_services.resolve(engine.clone());
+        let system_connectivity_projection =
+            nimbus_system::SystemConnectivityProjectionRuntime::new(&engine);
+        let (
+            network_manager,
+            workload_saga_coordinator,
+            tenant_retirement_store,
+            workload_provisioner,
+            workload_restart_runtime,
+            workload_teardown_runtime,
+        ) = match workload_composition {
+            ComputeWorkloadComposition::ProtocolOnly => {
+                Self::require_protocol_only_node_services(&node_services);
+                (None, None, None, None, None, None)
+            }
+            ComputeWorkloadComposition::Managed {
+                network_manager,
+                local_node,
+                capability_selection,
+                execution_provider_id,
+                sovereignty,
+                lifecycle_stores,
+                source_authority,
+                provision_capabilities,
+                restart_capabilities,
+                teardown_capabilities,
+                desire_admission_guard,
+                projection_sink,
+            } => {
+                let saga_store = lifecycle_stores.saga();
+                let tenant_retirement_store = lifecycle_stores.tenant_retirement();
+                let service_manager = node_services
+                    .service_manager()
+                    .expect("managed workload composition requires an exact tenant-source owner");
+                let teardown_capabilities = teardown_capabilities.map(|capabilities| {
+                        capabilities
+                            .into_registry_for(&capability_selection, &execution_provider_id)
+                            .expect(
+                                "managed workload composition requires the exact configured teardown provider realm",
+                            )
+                    });
+                let coordinator = Arc::new(match desire_admission_guard {
+                    Some(guard) => {
+                        WorkloadSagaCoordinator::with_desire_admission_guard(saga_store, guard)
+                    }
+                    None => WorkloadSagaCoordinator::new(saga_store),
+                });
+                let provider_reports = network_manager.capability_registry().clone();
+                let provision_capabilities = Arc::new(*provision_capabilities);
+                let restart_projector = Arc::new(WorkloadProjectionOrchestrator::new(
+                    Arc::clone(&provision_capabilities),
+                    Arc::clone(&projection_sink),
+                ));
+                let teardown_runtime = teardown_capabilities.map(|capabilities| {
+                    Arc::new(WorkloadTeardownRuntime::new(
+                        Arc::clone(&coordinator),
+                        Arc::clone(&source_authority),
+                        provider_reports.clone(),
+                        Arc::new(capabilities),
+                    ))
+                });
+                let provisioner = teardown_runtime.as_ref().map(|runtime| {
+                    Arc::new(
+                        WorkloadProvisioner::new(
+                            local_node,
+                            provider_reports.clone(),
+                            *capability_selection,
+                            sovereignty,
+                            Arc::clone(&coordinator),
+                            Arc::clone(runtime),
+                            Arc::clone(&source_authority),
+                            (*provision_capabilities).clone(),
+                            Arc::clone(&projection_sink),
+                        )
+                        .expect(
+                            "managed workload composition requires an exact provider-report selection",
+                        ),
+                    )
+                });
+                let restart_runtime = Arc::new(
+                    WorkloadRestartRuntime::compose(
+                        Arc::clone(&coordinator),
+                        Arc::clone(&source_authority),
+                        provider_reports.clone(),
+                        provision_capabilities,
+                        Arc::new(*restart_capabilities),
+                        Arc::new(ServiceManagerWorkloadRestartResolutionFence::new(
+                            service_manager,
+                            restart_projector,
+                        )),
+                    )
+                    .expect("managed workload composition requires a retained restart watch"),
+                );
+                (
+                    Some(network_manager),
+                    Some(coordinator),
+                    Some(tenant_retirement_store),
+                    provisioner,
+                    Some(restart_runtime),
+                    teardown_runtime,
+                )
+            }
+        };
+        let node_services = node_services.resolve();
         let runtime_manager = RuntimeManager::new(engine.clone(), runtime.clone());
         let DeploymentConfig {
             convex_registry,
@@ -103,6 +282,14 @@ impl ComputeState {
         Self {
             engine,
             active_deployment: Arc::new(ActiveDeployment::new(active_deployment)),
+            system_connectivity_projection,
+            network_manager,
+            workload_saga_coordinator,
+            tenant_retirement_store,
+            workload_provisioner,
+            workload_restart_runtime,
+            workload_teardown_runtime,
+            workload_startup_report: tokio::sync::OnceCell::new(),
             system_convex_registry,
             control_plane,
             node_services,
@@ -113,6 +300,127 @@ impl ComputeState {
 
     pub fn current_deployment(&self) -> Arc<DeploymentState> {
         self.active_deployment.current()
+    }
+
+    /// Rebuildable observed-system publication. It never owns provider effects.
+    pub fn system_connectivity_projection(
+        &self,
+    ) -> &nimbus_system::SystemConnectivityProjectionRuntime {
+        &self.system_connectivity_projection
+    }
+
+    /// The one process-owned local network composition, when this compute
+    /// state was built for workload-capable serving.
+    ///
+    /// Protocol-only routers deliberately return `None`. The returned Arc is
+    /// the injected manager itself. Compute never reopens or reconstructs its
+    /// store and never reselects providers; it snapshots the manager's exact
+    /// immutable reports only when constructing the sole provisioner.
+    pub fn network_manager(&self) -> Option<Arc<LocalNetworkManager>> {
+        self.network_manager.clone()
+    }
+
+    /// The one compute-owned workload-saga coordinator, when this state was
+    /// built for workload-capable serving.
+    pub fn workload_saga_coordinator(&self) -> Option<Arc<WorkloadSagaCoordinator>> {
+        self.workload_saga_coordinator.clone()
+    }
+
+    /// The durable tenant-retirement and workload-inventory fence store.
+    pub(crate) fn tenant_retirement_store(&self) -> Option<Arc<dyn TenantRetirementStore>> {
+        self.tenant_retirement_store.clone()
+    }
+
+    /// The sole product-level workload provision authority for this realm.
+    pub fn workload_provisioner(&self) -> Option<Arc<WorkloadProvisioner>> {
+        self.workload_provisioner.clone()
+    }
+
+    /// The sole compute-owned restart runtime, when workload lifecycle is
+    /// enabled. Callers use its transport-free explicit submission seam.
+    pub(crate) fn workload_restart_runtime(&self) -> Option<Arc<WorkloadRestartRuntime>> {
+        self.workload_restart_runtime.clone()
+    }
+
+    /// The sole exact teardown runtime for the managed provider realm.
+    /// Protocol-only or partially composed realms return `None` and native
+    /// retirement fails before source, store, or provider mutation.
+    pub(crate) fn workload_teardown_runtime(&self) -> Option<Arc<WorkloadTeardownRuntime>> {
+        self.workload_teardown_runtime.clone()
+    }
+
+    /// Establish complete durable workload truth before workload-capable
+    /// serving or foreground admission begins. Concurrent callers join the
+    /// same attempt; a failed attempt stays retryable and starts no watch.
+    pub async fn prepare_workload_lifecycle(
+        &self,
+    ) -> Result<WorkloadStartupRecoveryReport, ComputeError> {
+        let report = self
+            .workload_startup_report
+            .get_or_try_init(|| async {
+                let Some(coordinator) = self.workload_saga_coordinator() else {
+                    return Ok::<_, ComputeError>(WorkloadStartupRecoveryReport::empty());
+                };
+                let tenant_retirements = self
+                    .tenant_retirement_runtime()?
+                    .ok_or_else(|| {
+                        ComputeError::not_found(
+                            "managed workload composition has no tenant-retirement runtime",
+                        )
+                    })?
+                    .recover_retained()
+                    .await
+                    .map_err(tenant_retirement_compute_error)?;
+                let restart_runtime = self.workload_restart_runtime().ok_or_else(|| {
+                    ComputeError::not_found("managed workload composition has no restart runtime")
+                })?;
+                let report = WorkloadStartupRecovery::new(
+                    coordinator,
+                    self.workload_provisioner(),
+                    restart_runtime,
+                    self.workload_teardown_runtime(),
+                )
+                .recover_and_activate()
+                .await
+                .map_err(|error| {
+                    ComputeError::from(nimbus_core::Error::Internal(error.to_string()))
+                })?;
+                Ok(report.with_tenant_retirements(tenant_retirements))
+            })
+            .await?;
+        Ok(report.clone())
+    }
+
+    fn tenant_retirement_runtime(&self) -> Result<Option<TenantRetirementRuntime>, ComputeError> {
+        let Some(coordinator) = self.workload_saga_coordinator() else {
+            return Ok(None);
+        };
+        let services = self.service_manager().ok_or_else(|| {
+            ComputeError::not_found("tenant retirement requires one exact services source owner")
+        })?;
+        let retirement_store = self.tenant_retirement_store().ok_or_else(|| {
+            ComputeError::not_found("tenant retirement requires one durable retirement store")
+        })?;
+        let driver = TenantRetirementDriver::new(
+            coordinator,
+            retirement_store,
+            services,
+            self.resource_retirer()?,
+        );
+        Ok(Some(TenantRetirementRuntime::new(
+            Arc::clone(&self.engine),
+            Arc::clone(&self.runtime_manager),
+            driver,
+        )))
+    }
+
+    fn require_protocol_only_node_services(node_services: &NodeServicesConfig) {
+        assert!(
+            node_services.service_manager().is_none()
+                && node_services.machine_lifecycle_manager().is_none()
+                && node_services.node_workload_coordinator().is_none(),
+            "service and machine workload lifecycle requires managed workload composition"
+        );
     }
 
     pub fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
@@ -145,6 +453,10 @@ impl ComputeState {
 
     pub fn machine_lifecycle_manager(&self) -> Option<Arc<dyn MachineLifecycleManager>> {
         self.node_services.machine_lifecycle_manager()
+    }
+
+    pub fn node_workload_coordinator(&self) -> Option<Arc<NodeWorkloadCoordinator>> {
+        self.node_services.node_workload_coordinator()
     }
 
     pub fn tenant_isolation_mode(&self) -> TenantIsolationMode {
@@ -186,6 +498,16 @@ impl ComputeState {
         &self,
         tenant_id: nimbus_core::TenantId,
     ) -> Result<(), ComputeError> {
+        if let Some(store) = self.tenant_retirement_store() {
+            let retirement = store.load_retirement(&tenant_id).await.map_err(|error| {
+                ComputeError::from(nimbus_core::Error::Internal(error.to_string()))
+            })?;
+            if retirement.is_some() {
+                return Err(ComputeError::from(nimbus_core::Error::conflict(format!(
+                    "tenant {tenant_id} has retained durable retirement authority"
+                ))));
+            }
+        }
         self.engine.create_tenant_async(tenant_id.clone()).await?;
         if let Some(registry) = self.current_deployment().convex_registry() {
             registry
@@ -201,6 +523,12 @@ impl ComputeState {
         &self,
         tenant_id: nimbus_core::TenantId,
     ) -> Result<(), ComputeError> {
+        if let Some(runtime) = self.tenant_retirement_runtime()? {
+            return runtime
+                .retire(tenant_id)
+                .await
+                .map_err(tenant_retirement_compute_error);
+        }
         let deletion = self
             .engine
             .begin_tenant_delete_async(tenant_id.clone())
@@ -209,12 +537,20 @@ impl ComputeState {
             .runtime_manager
             .retire_tenant_deletion(&deletion)
             .await?;
-        self.runtime_service_registry()
-            .teardown_tenant_async(&tenant_id)
-            .await?;
         self.engine.finish_tenant_delete_async(deletion).await?;
         self.runtime_manager.forget_retired_owner(&owner_id);
         Ok(())
+    }
+}
+
+fn tenant_retirement_compute_error(
+    error: crate::tenant_retirement::TenantRetirementError,
+) -> ComputeError {
+    match error {
+        crate::tenant_retirement::TenantRetirementError::Lifecycle(error) => {
+            ComputeError::from(error)
+        }
+        error => ComputeError::from(nimbus_core::Error::Internal(error.to_string())),
     }
 }
 
@@ -411,10 +747,385 @@ pub async fn record_authenticated_usage(
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use nimbus_runtime::{InvocationServiceBinding, InvocationServices};
+    use nimbus_node::{
+        HostLifecycleBackendCapabilities, HostLifecycleBackendKind, HostLifecycleFuture,
+        HostLifecycleStatus, NodeAgentAssignment, NodeAgentReconcileReport,
+        NodeWorkloadReconcileCapability, NodeWorkloadReconcileOutcome,
+    };
     use tempfile::tempdir;
 
     use super::*;
+    use crate::workload_saga::{
+        ConfirmedWorkloadTeardownCommand, FinalIngressWithdrawalCapability,
+        IngressTeardownCapabilities, NetworkAttachmentTeardownCapabilities,
+        NetworkDetachmentCapability, NetworkReleaseCapability, WorkloadExecutionDrainCapability,
+        WorkloadExecutionStopCapability, WorkloadExecutionTeardownCapabilities,
+        WorkloadTeardownCapabilityFuture, WorkloadTeardownCapabilityRegistry,
+        sandbox_execution_provider_id,
+    };
+
+    #[test]
+    fn tenant_retirement_lifecycle_errors_keep_core_classification() {
+        let tenant_id = nimbus_core::TenantId::new("retirement-error-classification")
+            .expect("fixture tenant should validate");
+        let missing = tenant_retirement_compute_error(
+            crate::tenant_retirement::TenantRetirementError::Lifecycle(
+                nimbus_core::Error::TenantNotFound(tenant_id.clone()),
+            ),
+        );
+        assert!(matches!(
+            missing,
+            ComputeError::Core(nimbus_core::Error::TenantNotFound(ref observed))
+                if observed == &tenant_id
+        ));
+
+        let precondition = tenant_retirement_compute_error(
+            crate::tenant_retirement::TenantRetirementError::Lifecycle(
+                nimbus_core::Error::PreconditionFailed("crossed incarnation".to_owned()),
+            ),
+        );
+        assert!(matches!(
+            precondition,
+            ComputeError::Core(nimbus_core::Error::PreconditionFailed(ref message))
+                if message == "crossed incarnation"
+        ));
+    }
+
+    fn managed_network_manager_test_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    #[derive(Default)]
+    struct EffectForbiddenNodeCapability {
+        calls: AtomicUsize,
+    }
+
+    #[derive(Default)]
+    struct EffectForbiddenWorkloadSagaStore {
+        calls: AtomicUsize,
+        restart_watch_calls: AtomicUsize,
+        tenant_retirement_reads: AtomicUsize,
+    }
+
+    #[derive(Default)]
+    struct EffectForbiddenSourceAuthority {
+        calls: AtomicUsize,
+    }
+
+    #[derive(Default)]
+    struct EffectForbiddenProjectionSink {
+        calls: AtomicUsize,
+    }
+
+    #[derive(Default)]
+    struct EffectForbiddenTeardownCapability;
+
+    macro_rules! impl_effect_forbidden_teardown_capability {
+        ($capability:ident) => {
+            impl $capability for EffectForbiddenTeardownCapability {
+                fn execute<'a>(
+                    &'a self,
+                    _command: &'a ConfirmedWorkloadTeardownCommand,
+                ) -> WorkloadTeardownCapabilityFuture<'a> {
+                    Box::pin(async { panic!("effect-forbidden teardown must not execute") })
+                }
+
+                fn inspect<'a>(
+                    &'a self,
+                    _command: &'a ConfirmedWorkloadTeardownCommand,
+                ) -> WorkloadTeardownCapabilityFuture<'a> {
+                    Box::pin(async { panic!("effect-forbidden teardown must not inspect") })
+                }
+            }
+        };
+    }
+
+    impl_effect_forbidden_teardown_capability!(FinalIngressWithdrawalCapability);
+    impl_effect_forbidden_teardown_capability!(WorkloadExecutionDrainCapability);
+    impl_effect_forbidden_teardown_capability!(WorkloadExecutionStopCapability);
+    impl_effect_forbidden_teardown_capability!(NetworkDetachmentCapability);
+    impl_effect_forbidden_teardown_capability!(NetworkReleaseCapability);
+
+    impl crate::workload_projection::WorkloadProjectionSink for EffectForbiddenProjectionSink {
+        fn project<'a>(
+            &'a self,
+            _projection: &'a crate::workload_projection::WorkloadObservedProjection,
+        ) -> crate::workload_projection::WorkloadProjectionSinkFuture<'a> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                panic!("effect-forbidden projection sink must not be called")
+            })
+        }
+    }
+
+    impl WorkloadProvisionSourceAuthority for EffectForbiddenSourceAuthority {
+        fn current_source<'a>(
+            &'a self,
+            _key: &'a nimbus_workloads::WorkloadSagaKey,
+            _identity: &'a nimbus_workloads::WorkloadProvisionSourceIdentity,
+        ) -> crate::workload_saga::WorkloadProvisionSourceFuture<'a> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(crate::workload_saga::WorkloadProvisionSourceAuthorityError::Unavailable)
+            })
+        }
+    }
+
+    fn effect_free_provider_realm() -> (
+        nimbus_network::NetworkCapabilityRegistry,
+        nimbus_network::NetworkCapabilitySelection,
+    ) {
+        let requirements = nimbus_sandbox::sandbox_network_plan_requirements(
+            nimbus_sandbox::SandboxBackendKind::Krun,
+        );
+        let ingress_provider =
+            nimbus_network::NetworkProviderId::for_registration_key("state-fixture-ingress");
+        let lifecycle = nimbus_network::NetworkLifecycleCapabilitySet::new([]);
+        let attachment = nimbus_network::NetworkAttachmentProviderRegistration::new(
+            requirements.required_attachment_provider_id().clone(),
+            requirements.capability_requirements().attachment().clone(),
+            [nimbus_network::NetworkAddressFamily::Ipv4],
+            lifecycle.clone(),
+            nimbus_network::NetworkSovereigntyCapabilities::new(
+                nimbus_network::NetworkControlPlaneLocality::LocalOnly,
+                [],
+                true,
+            ),
+        );
+        let ingress = nimbus_network::NetworkIngressProviderRegistration::new(
+            ingress_provider.clone(),
+            nimbus_network::NetworkEndpointCapabilitySet::new(
+                [nimbus_network::NetworkAddressFamily::Ipv4],
+                [nimbus_network::NetworkBindRealmKind::Host],
+                [nimbus_network::NetworkExposure::Loopback],
+                [nimbus_network::PortProtocol::Tcp],
+                [nimbus_network::NetworkPortAssignmentMode::ProviderAssigned],
+            ),
+            nimbus_network::NetworkIngressCapabilitySet::new([]),
+            nimbus_network::NetworkForwardingCapabilitySet::new([]),
+            lifecycle,
+            nimbus_network::NetworkSovereigntyCapabilities::new(
+                nimbus_network::NetworkControlPlaneLocality::LocalOnly,
+                [],
+                true,
+            ),
+        );
+        let selection = nimbus_network::NetworkCapabilitySelection::new(
+            requirements.required_attachment_provider_id().clone(),
+            ingress_provider,
+        );
+        (
+            nimbus_network::NetworkCapabilityRegistry::new([
+                nimbus_network::NetworkCapabilityBundle::new(attachment, ingress),
+            ])
+            .expect("effect-free provider reports should validate"),
+            selection,
+        )
+    }
+
+    fn effect_forbidden_exact_teardown_realm(
+        selection: &NetworkCapabilitySelection,
+    ) -> ExactWorkloadTeardownCapabilityRealm {
+        let capability = Arc::new(EffectForbiddenTeardownCapability);
+        let execution_provider_id =
+            sandbox_execution_provider_id(nimbus_sandbox::SandboxBackendKind::Krun);
+        let registry = WorkloadTeardownCapabilityRegistry::new(
+            [NetworkAttachmentTeardownCapabilities::new(
+                selection.attachment_provider_id().clone(),
+                capability.clone(),
+                capability.clone(),
+            )],
+            [WorkloadExecutionTeardownCapabilities::new(
+                execution_provider_id.clone(),
+                capability.clone(),
+                capability.clone(),
+            )],
+            [IngressTeardownCapabilities::new(
+                selection.ingress_provider_id().clone(),
+                capability,
+            )],
+        )
+        .expect("effect-forbidden teardown registry should validate");
+        ExactWorkloadTeardownCapabilityRealm::new(registry, selection, &execution_provider_id)
+            .expect("effect-forbidden exact teardown realm should validate")
+    }
+
+    impl WorkloadSagaStore for EffectForbiddenWorkloadSagaStore {
+        fn load<'a>(
+            &'a self,
+            _key: &'a nimbus_workloads::WorkloadSagaKey,
+        ) -> nimbus_workloads::WorkloadSagaFuture<'a, Option<nimbus_workloads::WorkloadSagaRecord>>
+        {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+            })
+        }
+
+        fn compare_and_swap<'a>(
+            &'a self,
+            _expected: nimbus_workloads::WorkloadSagaExpected,
+            _next: nimbus_workloads::WorkloadSagaRecord,
+        ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadSagaCommit>
+        {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+            })
+        }
+
+        fn list_recoverable<'a>(
+            &'a self,
+            _request: nimbus_workloads::WorkloadSagaPageRequest,
+        ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadSagaPage> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+            })
+        }
+
+        fn list_restart_candidates<'a>(
+            &'a self,
+            request: nimbus_workloads::WorkloadRestartCandidatePageRequest,
+        ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadRestartCandidatePage>
+        {
+            Box::pin(async move {
+                self.restart_watch_calls.fetch_add(1, Ordering::AcqRel);
+                nimbus_workloads::WorkloadRestartCandidatePage::new(&request, Vec::new(), false)
+            })
+        }
+
+        fn list_for_tenant<'a>(
+            &'a self,
+            _tenant_id: &'a nimbus_core::TenantId,
+            _request: nimbus_workloads::WorkloadSagaTenantPageRequest,
+        ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadSagaTenantPage>
+        {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+            })
+        }
+    }
+
+    impl nimbus_workloads::TenantRetirementStore for EffectForbiddenWorkloadSagaStore {
+        fn load_retirement<'a>(
+            &'a self,
+            _tenant_id: &'a nimbus_core::TenantId,
+        ) -> nimbus_workloads::TenantRetirementFuture<
+            'a,
+            Option<nimbus_workloads::TenantRetirementRecord>,
+        > {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::TenantRetirementStoreError::Unavailable)
+            })
+        }
+
+        fn compare_and_swap_retirement<'a>(
+            &'a self,
+            _expected: nimbus_workloads::TenantRetirementExpected,
+            _next: nimbus_workloads::TenantRetirementRecord,
+        ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementCommit>
+        {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::TenantRetirementStoreError::Unavailable)
+            })
+        }
+
+        fn delete_retirement<'a>(
+            &'a self,
+            _expected: nimbus_workloads::TenantRetirementRecord,
+        ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementCommit>
+        {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::TenantRetirementStoreError::Unavailable)
+            })
+        }
+
+        fn list_active_retirements<'a>(
+            &'a self,
+            _request: nimbus_workloads::TenantRetirementPageRequest,
+        ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementPage>
+        {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::TenantRetirementStoreError::Unavailable)
+            })
+        }
+
+        fn list_retirements<'a>(
+            &'a self,
+            request: nimbus_workloads::TenantRetirementPageRequest,
+        ) -> nimbus_workloads::TenantRetirementFuture<'a, nimbus_workloads::TenantRetirementPage>
+        {
+            Box::pin(async move {
+                self.tenant_retirement_reads.fetch_add(1, Ordering::AcqRel);
+                nimbus_workloads::TenantRetirementPage::retained(&request, Vec::new(), false)
+            })
+        }
+
+        fn load_workload_mutation_epoch<'a>(
+            &'a self,
+            _tenant_id: &'a nimbus_core::TenantId,
+        ) -> nimbus_workloads::TenantRetirementFuture<
+            'a,
+            nimbus_workloads::TenantWorkloadMutationEpoch,
+        > {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::TenantRetirementStoreError::Unavailable)
+            })
+        }
+    }
+
+    impl NodeWorkloadReconcileCapability for EffectForbiddenNodeCapability {
+        fn backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
+            vec![HostLifecycleBackendCapabilities::new(
+                HostLifecycleBackendKind::DirectProcess,
+                true,
+            )]
+        }
+
+        fn reconcile_assignment<'a>(
+            &'a self,
+            _assignment: NodeAgentAssignment,
+        ) -> HostLifecycleFuture<'a, NodeWorkloadReconcileOutcome> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_core::Error::Internal(
+                    "node reconcile effect must not run".to_owned(),
+                ))
+            })
+        }
+
+        fn reconcile_assignments<'a>(
+            &'a self,
+            _assignments: Vec<NodeAgentAssignment>,
+        ) -> HostLifecycleFuture<'a, NodeAgentReconcileReport> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_core::Error::Internal(
+                    "node reconcile effect must not run".to_owned(),
+                ))
+            })
+        }
+
+        fn inspect_assignment<'a>(
+            &'a self,
+            _assignment: &'a NodeAgentAssignment,
+        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_core::Error::Internal(
+                    "node inspect effect must not run".to_owned(),
+                ))
+            })
+        }
+    }
 
     #[test]
     fn active_deployment_keeps_previous_snapshot_arc_alive_after_activation() {
@@ -508,6 +1219,7 @@ mod tests {
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
+            workload_composition: ComputeWorkloadComposition::ProtocolOnly,
             deployment: DeploymentConfig::default().with_convex(ConvexRegistry::empty()),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: empty_node_services()
@@ -540,104 +1252,6 @@ mod tests {
         ))
     }
 
-    struct FailFirstTenantTeardown {
-        attempts: AtomicUsize,
-    }
-
-    impl RuntimeServiceRegistry for FailFirstTenantTeardown {
-        fn snapshot_for_tenant(&self, _tenant_id: &nimbus_core::TenantId) -> InvocationServices {
-            InvocationServices::new()
-        }
-
-        fn resolve_service_binding(
-            &self,
-            _tenant_id: &nimbus_core::TenantId,
-            _service_name: &str,
-        ) -> Result<Option<InvocationServiceBinding>, nimbus_core::Error> {
-            Ok(None)
-        }
-
-        fn teardown_tenant_async<'a>(
-            &'a self,
-            _tenant_id: &'a nimbus_core::TenantId,
-        ) -> nimbus_services::RuntimeServiceTeardownFuture<'a> {
-            Box::pin(async move {
-                if self.attempts.fetch_add(1, Ordering::AcqRel) == 0 {
-                    Err(nimbus_core::Error::Internal(
-                        "injected tenant service teardown failure".to_owned(),
-                    ))
-                } else {
-                    Ok(())
-                }
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn partial_tenant_delete_stays_fenced_and_retries_to_completion() {
-        let temp = tempdir().expect("service tempdir should build");
-        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
-        let teardown = Arc::new(FailFirstTenantTeardown {
-            attempts: AtomicUsize::new(0),
-        });
-        let state = ComputeState::from_config(ComputeStateConfig {
-            engine,
-            deployment: DeploymentConfig::default(),
-            control_plane: ControlPlaneConfig::router_options_default(),
-            node_services: NodeServicesConfig::from_runtime_service_registry(teardown.clone()),
-            runtime: RuntimeGovernorConfig::default(),
-        });
-        let tenant_id =
-            nimbus_core::TenantId::new("retry-delete").expect("tenant id should be valid");
-        state
-            .create_tenant_async(tenant_id.clone())
-            .await
-            .expect("tenant should create");
-        let original = state
-            .runtime_manager()
-            .acquire_invocation_lease(tenant_id.clone(), 0)
-            .await
-            .expect("original invocation lease should build");
-        let original_owner = original.owner_lease().owner_id().clone();
-        drop(original);
-
-        let first_error = state
-            .delete_tenant(tenant_id.clone())
-            .await
-            .expect_err("first service teardown should fail");
-        assert!(
-            first_error
-                .to_string()
-                .contains("injected tenant service teardown failure")
-        );
-        assert_eq!(teardown.attempts.load(Ordering::Acquire), 1);
-        let rejected = state
-            .runtime_manager()
-            .acquire_invocation_lease(tenant_id.clone(), 0)
-            .await
-            .expect_err("partially deleted tenant must remain fail-closed");
-        assert!(matches!(
-            rejected,
-            nimbus_core::Error::TenantNotFound(ref rejected_id) if rejected_id == &tenant_id
-        ));
-
-        state
-            .delete_tenant(tenant_id.clone())
-            .await
-            .expect("retry should finish the fenced deletion");
-        assert_eq!(teardown.attempts.load(Ordering::Acquire), 2);
-        state
-            .create_tenant_async(tenant_id.clone())
-            .await
-            .expect("tenant should recreate after completed deletion");
-        let recreated = state
-            .runtime_manager()
-            .acquire_invocation_lease(tenant_id, 0)
-            .await
-            .expect("recreated invocation lease should build");
-        assert_ne!(recreated.owner_lease().owner_id(), &original_owner);
-    }
-
     #[test]
     fn compute_state_carries_runtime_host_resource_budget() {
         let temp = tempdir().expect("service tempdir should build");
@@ -647,6 +1261,7 @@ mod tests {
         );
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
+            workload_composition: ComputeWorkloadComposition::ProtocolOnly,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: empty_node_services()
@@ -693,6 +1308,7 @@ mod tests {
         };
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
+            workload_composition: ComputeWorkloadComposition::ProtocolOnly,
             deployment: DeploymentConfig::default()
                 .with_convex(ConvexRegistry::empty().with_runtime_limits(adapter_limits.clone()))
                 .with_system_convex_registry(
@@ -726,5 +1342,358 @@ mod tests {
                 .runtime_limits(),
             expected_convex_limits
         );
+    }
+
+    #[tokio::test]
+    async fn compute_state_retains_the_exact_managed_workload_composition() {
+        let _network_manager_guard = managed_network_manager_test_lock().lock().await;
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let (provider_reports, capability_selection) = effect_free_provider_realm();
+        let manager =
+            LocalNetworkManager::open(temp.path().join("network"), provider_reports.clone())
+                .expect("network manager should build");
+        assert!(
+            !manager.authority_path().exists(),
+            "an empty manager should not materialize durable authority"
+        );
+        let capability = Arc::new(EffectForbiddenNodeCapability::default());
+        let coordinator = Arc::new(NodeWorkloadCoordinator::new(capability.clone()));
+        let saga_store = Arc::new(EffectForbiddenWorkloadSagaStore::default());
+        let source_authority = Arc::new(EffectForbiddenSourceAuthority::default());
+        let projection_sink = Arc::new(EffectForbiddenProjectionSink::default());
+        let teardown_capabilities = effect_forbidden_exact_teardown_realm(&capability_selection);
+        let state = ComputeState::from_config(ComputeStateConfig {
+            engine,
+            workload_composition: ComputeWorkloadComposition::Managed {
+                network_manager: Arc::clone(&manager),
+                local_node: crate::embedded_local_node_identity(),
+                capability_selection: Box::new(capability_selection),
+                execution_provider_id: sandbox_execution_provider_id(
+                    nimbus_sandbox::SandboxBackendKind::Krun,
+                ),
+                sovereignty: nimbus_network::NetworkSovereigntyRequirements::new(
+                    nimbus_network::NetworkControlPlaneLocality::LocalOnly,
+                    [],
+                    true,
+                ),
+                lifecycle_stores: WorkloadLifecycleStores::shared(saga_store.clone()),
+                source_authority: source_authority.clone(),
+                provision_capabilities: Box::new(
+                    WorkloadProvisionCapabilityRegistry::new([], [], [])
+                        .expect("empty provision registry should fail closed"),
+                ),
+                restart_capabilities: Box::new(
+                    WorkloadRestartCapabilityRegistry::new([])
+                        .expect("empty restart registry should fail closed"),
+                ),
+                teardown_capabilities: Some(Box::new(teardown_capabilities)),
+                desire_admission_guard: None,
+                projection_sink: projection_sink.clone(),
+            },
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: NodeServicesConfig::default()
+                .with_service_manager(Arc::new(nimbus_services::ServiceManager::new(
+                    Arc::new(nimbus_services::EmptyServiceDefinitionCatalog),
+                    nimbus_sandbox::SandboxBackendKind::Krun,
+                )))
+                .with_node_workload_coordinator(Arc::clone(&coordinator)),
+            runtime: RuntimeGovernorConfig::default(),
+        });
+
+        let first = state
+            .network_manager()
+            .expect("managed compute state should expose its manager");
+        let second = state
+            .network_manager()
+            .expect("repeated access should expose its manager");
+        assert!(Arc::ptr_eq(&first, &manager));
+        assert!(Arc::ptr_eq(&second, &manager));
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(first.capability_registry().selections().count(), 1);
+        let injected_coordinator = state
+            .node_workload_coordinator()
+            .expect("managed compute state should expose its node coordinator");
+        assert!(Arc::ptr_eq(&injected_coordinator, &coordinator));
+        let first_saga_coordinator = state
+            .workload_saga_coordinator()
+            .expect("managed compute state should expose its saga coordinator");
+        let second_saga_coordinator = state
+            .workload_saga_coordinator()
+            .expect("managed compute state should retain one saga coordinator");
+        assert!(Arc::ptr_eq(
+            &first_saga_coordinator,
+            &second_saga_coordinator
+        ));
+        let first_provisioner = state
+            .workload_provisioner()
+            .expect("managed compute state should expose its provisioner");
+        let second_provisioner = state
+            .workload_provisioner()
+            .expect("managed compute state should retain one provisioner");
+        assert!(Arc::ptr_eq(&first_provisioner, &second_provisioner));
+        assert_eq!(
+            first_provisioner.local_node(),
+            &crate::embedded_local_node_identity()
+        );
+        assert_eq!(first_provisioner.provider_reports().selections().count(), 1);
+        let first_teardown_runtime = state
+            .workload_teardown_runtime()
+            .expect("managed exact composition should retain its teardown runtime");
+        let second_teardown_runtime = state
+            .workload_teardown_runtime()
+            .expect("repeated access should reuse the sole teardown runtime");
+        assert!(Arc::ptr_eq(
+            &first_teardown_runtime,
+            &second_teardown_runtime
+        ));
+        let startup_error = state
+            .prepare_workload_lifecycle()
+            .await
+            .expect_err("unavailable durable startup truth must fail readiness closed");
+        assert!(
+            startup_error
+                .to_string()
+                .contains("workload saga store is unavailable")
+        );
+        assert_eq!(saga_store.calls.load(Ordering::Acquire), 1);
+        assert_eq!(
+            saga_store.tenant_retirement_reads.load(Ordering::Acquire),
+            1
+        );
+        assert_eq!(saga_store.restart_watch_calls.load(Ordering::Acquire), 0);
+        let saga_key = nimbus_workloads::WorkloadSagaKey::new(
+            nimbus_core::TenantId::new("managed-composition").expect("fixture tenant is valid"),
+            nimbus_core::WorkloadId::new("managed-composition").expect("fixture workload is valid"),
+        );
+        assert_eq!(
+            first_saga_coordinator.load(&saga_key).await,
+            Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+        );
+        assert_eq!(saga_store.calls.load(Ordering::Acquire), 2);
+        assert_eq!(source_authority.calls.load(Ordering::Acquire), 0);
+        assert_eq!(projection_sink.calls.load(Ordering::Acquire), 0);
+        assert_eq!(capability.calls.load(Ordering::Acquire), 0);
+        assert!(
+            !manager.authority_path().exists(),
+            "read-only manager access must not materialize durable authority"
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_state_rejects_crossed_teardown_realm_before_authority_or_effects() {
+        let _network_manager_guard = managed_network_manager_test_lock().lock().await;
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let (provider_reports, capability_selection) = effect_free_provider_realm();
+        let manager = LocalNetworkManager::open(temp.path().join("network"), provider_reports)
+            .expect("network manager should build");
+        let saga_store = Arc::new(EffectForbiddenWorkloadSagaStore::default());
+        let source_authority = Arc::new(EffectForbiddenSourceAuthority::default());
+        let projection_sink = Arc::new(EffectForbiddenProjectionSink::default());
+        let teardown_capabilities = effect_forbidden_exact_teardown_realm(&capability_selection);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ComputeState::from_config(ComputeStateConfig {
+                engine,
+                workload_composition: ComputeWorkloadComposition::Managed {
+                    network_manager: Arc::clone(&manager),
+                    local_node: crate::embedded_local_node_identity(),
+                    capability_selection: Box::new(capability_selection),
+                    execution_provider_id: sandbox_execution_provider_id(
+                        nimbus_sandbox::SandboxBackendKind::Container,
+                    ),
+                    sovereignty: nimbus_network::NetworkSovereigntyRequirements::new(
+                        nimbus_network::NetworkControlPlaneLocality::LocalOnly,
+                        [],
+                        true,
+                    ),
+                    lifecycle_stores: WorkloadLifecycleStores::shared(saga_store.clone()),
+                    source_authority: source_authority.clone(),
+                    provision_capabilities: Box::new(
+                        WorkloadProvisionCapabilityRegistry::new([], [], [])
+                            .expect("empty provision registry should validate"),
+                    ),
+                    restart_capabilities: Box::new(
+                        WorkloadRestartCapabilityRegistry::new([])
+                            .expect("empty restart registry should validate"),
+                    ),
+                    teardown_capabilities: Some(Box::new(teardown_capabilities)),
+                    desire_admission_guard: None,
+                    projection_sink: projection_sink.clone(),
+                },
+                deployment: DeploymentConfig::default(),
+                control_plane: ControlPlaneConfig::router_options_default(),
+                node_services: NodeServicesConfig::default().with_service_manager(Arc::new(
+                    nimbus_services::ServiceManager::new(
+                        Arc::new(nimbus_services::EmptyServiceDefinitionCatalog),
+                        nimbus_sandbox::SandboxBackendKind::Krun,
+                    ),
+                )),
+                runtime: RuntimeGovernorConfig::default(),
+            })
+        }));
+
+        assert!(
+            result.is_err(),
+            "crossed teardown realm must fail at composition"
+        );
+        assert_eq!(saga_store.calls.load(Ordering::Acquire), 0);
+        assert_eq!(saga_store.restart_watch_calls.load(Ordering::Acquire), 0);
+        assert_eq!(source_authority.calls.load(Ordering::Acquire), 0);
+        assert_eq!(projection_sink.calls.load(Ordering::Acquire), 0);
+        assert!(!manager.authority_path().exists());
+    }
+
+    #[tokio::test]
+    async fn unmanaged_definition_deletion_does_not_require_teardown_composition() {
+        let _network_manager_guard = managed_network_manager_test_lock().lock().await;
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let services = Arc::new(nimbus_services::ServiceManager::new(
+            Arc::new(nimbus_services::EmptyServiceDefinitionCatalog),
+            nimbus_sandbox::SandboxBackendKind::Krun,
+        ));
+        let tenant_id =
+            nimbus_core::TenantId::new("unmanaged-delete").expect("fixture tenant should validate");
+        let built_in = services
+            .create_service_definition(
+                &tenant_id,
+                "built-in",
+                nimbus_services::ServiceBackend::built_in("browser"),
+                std::collections::BTreeMap::new(),
+            )
+            .expect("built-in definition should create");
+        let external = services
+            .create_service_definition(
+                &tenant_id,
+                "external",
+                nimbus_services::ServiceBackend::external(
+                    "https://example.invalid",
+                    nimbus_services::ExternalAuthPolicy::None,
+                    nimbus_services::HealthCheckPolicy::Http {
+                        path: "/health".to_owned(),
+                    },
+                ),
+                std::collections::BTreeMap::new(),
+            )
+            .expect("external definition should create");
+        let (provider_reports, capability_selection) = effect_free_provider_realm();
+        let state = ComputeState::from_config(ComputeStateConfig {
+            engine,
+            workload_composition: ComputeWorkloadComposition::Managed {
+                network_manager: LocalNetworkManager::open(
+                    temp.path().join("network"),
+                    provider_reports,
+                )
+                .expect("network manager should build"),
+                local_node: crate::embedded_local_node_identity(),
+                capability_selection: Box::new(capability_selection),
+                execution_provider_id: sandbox_execution_provider_id(
+                    nimbus_sandbox::SandboxBackendKind::Krun,
+                ),
+                sovereignty: nimbus_network::NetworkSovereigntyRequirements::new(
+                    nimbus_network::NetworkControlPlaneLocality::LocalOnly,
+                    [],
+                    true,
+                ),
+                lifecycle_stores: WorkloadLifecycleStores::shared(Arc::new(
+                    EffectForbiddenWorkloadSagaStore::default(),
+                )),
+                source_authority: Arc::new(EffectForbiddenSourceAuthority::default()),
+                provision_capabilities: Box::new(
+                    WorkloadProvisionCapabilityRegistry::new([], [], [])
+                        .expect("empty provision registry should validate"),
+                ),
+                restart_capabilities: Box::new(
+                    WorkloadRestartCapabilityRegistry::new([])
+                        .expect("empty restart registry should validate"),
+                ),
+                teardown_capabilities: None,
+                desire_admission_guard: None,
+                projection_sink: Arc::new(EffectForbiddenProjectionSink::default()),
+            },
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: NodeServicesConfig::default().with_service_manager(services.clone()),
+            runtime: RuntimeGovernorConfig::default(),
+        });
+        let context = nimbus_tenant::TenantIsolationContext::system(
+            tenant_id.clone(),
+            "service.definition.delete",
+        );
+
+        crate::services::delete_service_definition(
+            &state,
+            &context,
+            "built-in",
+            built_in.generation,
+            false,
+        )
+        .await
+        .expect("built-in deletion should use only services authority");
+        crate::services::delete_service_definition(
+            &state,
+            &context,
+            "external",
+            external.generation,
+            false,
+        )
+        .await
+        .expect("external deletion should use only services authority");
+
+        assert!(
+            services
+                .service_definition_for_tenant(&tenant_id, "built-in")
+                .is_none()
+        );
+        assert!(
+            services
+                .service_definition_for_tenant(&tenant_id, "external")
+                .is_none()
+        );
+        assert!(state.resource_retirer().is_err());
+    }
+
+    #[test]
+    fn protocol_only_compute_rejects_a_node_coordinator_before_capability_use() {
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let capability = Arc::new(EffectForbiddenNodeCapability::default());
+        let coordinator = Arc::new(NodeWorkloadCoordinator::new(capability.clone()));
+
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ComputeState::from_config(ComputeStateConfig {
+                engine,
+                workload_composition: ComputeWorkloadComposition::ProtocolOnly,
+                deployment: DeploymentConfig::default(),
+                control_plane: ControlPlaneConfig::router_options_default(),
+                node_services: empty_node_services().with_node_workload_coordinator(coordinator),
+                runtime: RuntimeGovernorConfig::default(),
+            })
+        }));
+
+        assert!(rejected.is_err());
+        assert_eq!(capability.calls.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn protocol_only_compute_reports_no_node_workload_coordinator() {
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let state = ComputeState::from_config(ComputeStateConfig {
+            engine,
+            workload_composition: ComputeWorkloadComposition::ProtocolOnly,
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: empty_node_services(),
+            runtime: RuntimeGovernorConfig::default(),
+        });
+
+        assert!(state.node_workload_coordinator().is_none());
+        assert!(state.network_manager().is_none());
+        assert!(state.workload_saga_coordinator().is_none());
+        assert!(state.workload_provisioner().is_none());
+        assert!(state.resource_provisioner().is_err());
     }
 }

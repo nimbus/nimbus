@@ -25,7 +25,7 @@ impl Engine {
         let runtime_for_commit = runtime.clone();
         let tenant_id_for_commit = tenant_id.clone();
         let commit_faults = self.commit_faults.clone();
-        runtime.submit_internal_committer(move || {
+        let changed = runtime.submit_internal_committer(move || {
             apply_set_table_schema(
                 &runtime_for_commit,
                 &tenant_id_for_commit,
@@ -33,6 +33,9 @@ impl Engine {
                 &commit_faults,
             )
         })?;
+        if !changed {
+            return Ok(());
+        }
         let projection_token = runtime.projection_token()?;
         self.notify_table_schema_change_observers(tenant_id, &table, projection_token);
         Ok(())
@@ -52,7 +55,7 @@ impl Engine {
         let tenant_id_for_task = tenant_id.clone();
         let runtime_for_task = runtime.clone();
         let commit_faults = self.commit_faults.clone();
-        runtime
+        let changed = runtime
             .submit_internal_committer_async(move || {
                 apply_set_table_schema(
                     &runtime_for_task,
@@ -62,6 +65,9 @@ impl Engine {
                 )
             })
             .await?;
+        if !changed {
+            return Ok(());
+        }
         let projection_token = runtime.projection_token()?;
         self.notify_table_schema_change_observers(&tenant_id, &table, projection_token);
         Ok(())
@@ -249,9 +255,12 @@ fn apply_set_table_schema(
     tenant_id: &TenantId,
     table_schema: TableSchema,
     commit_faults: &CommitFaultClient,
-) -> Result<()> {
+) -> Result<bool> {
     let _operation = runtime.enter_operation(tenant_id)?;
     runtime.ensure_committer_lease_for_assignment()?;
+    if stored_table_schema_matches(runtime, &table_schema) {
+        return Ok(false);
+    }
     let previous_durable_head = runtime.durable_head();
     let table = table_schema.table.clone();
     let mut table_schema = table_schema;
@@ -330,7 +339,7 @@ fn apply_set_table_schema(
             .finish_policy_revision_mismatches(pending, POLICY_REVISION_CHANGED_MESSAGE);
     }
     runtime.publish_mutation_journal_progress_in_actor(journal_progress);
-    Ok(())
+    Ok(true)
 }
 
 fn apply_delete_table_schema(

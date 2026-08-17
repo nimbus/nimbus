@@ -8,6 +8,9 @@ mod source_package;
 mod source_store;
 
 #[cfg(test)]
+#[path = "tests/connectivity.rs"]
+mod connectivity_tests;
+#[cfg(test)]
 mod tests;
 
 pub use identity::{is_reserved_tenant_id, is_system_tenant_id, system_tenant_id, user_tenant_id};
@@ -16,10 +19,10 @@ use inventory::adapter_capability_inventory;
 pub use inventory::route_inventory;
 #[cfg(test)]
 use keys::{
-    machine_document_id, machine_listener_document_id, machine_port_document_id,
-    subscription_document_id, workload_status_document_id,
+    listener_document_id, machine_document_id, port_document_id, subscription_document_id,
+    workload_status_document_id,
 };
-pub use projection::install_table_projection_observer;
+pub use projection::{SystemConnectivityProjectionRuntime, install_table_projection_observer};
 pub use records::SystemTenantStatusEvidenceWriter;
 pub use records::ensure_system_tenant_async;
 pub(crate) use records::record_table_state_for_generation_async;
@@ -29,15 +32,19 @@ pub use records::{
     read_source_package_modules_async,
 };
 pub use records::{
-    RunRecord, SystemDeploymentFunctionRecordInput, SystemDeploymentHttpRouteRecordInput,
-    SystemDeploymentRecordInput, delete_cron_job_state_async, delete_machine_state_async,
-    delete_scheduled_job_state_async, delete_subscription_state_async, endpoint_protocol,
-    prepare_system_tenant_async, record_deployment_state_async, record_listener_state_async,
-    record_machine_state_async, record_run_async, record_scheduled_job_result_state_async,
-    record_service_handle_async, record_source_package_state_async,
-    record_subscription_delivery_async, record_subscription_error_async,
-    record_subscription_state_async, record_system_event_async, record_table_state_async,
-    sandbox_backend, sandbox_status, sync_scheduler_state_for_tenant_async,
+    RunRecord, SystemConnectivityObservationError, SystemDeploymentFunctionRecordInput,
+    SystemDeploymentHttpRouteRecordInput, SystemDeploymentRecordInput,
+    SystemPortListenerObservation, SystemPublishedEndpointObservation,
+    SystemServiceConnectivityObservation, SystemUnixListenerObservation,
+    delete_cron_job_state_async, delete_machine_state_async, delete_scheduled_job_state_async,
+    delete_subscription_state_async, endpoint_protocol, prepare_system_tenant_async,
+    record_deployment_state_async, record_machine_state_async,
+    record_port_listener_observation_async, record_run_async,
+    record_scheduled_job_result_state_async, record_service_connectivity_observation_async,
+    record_source_package_state_async, record_subscription_delivery_async,
+    record_subscription_error_async, record_subscription_state_async, record_system_event_async,
+    record_table_state_async, record_unix_listener_observation_async, sandbox_backend,
+    sandbox_status, sync_scheduler_state_for_tenant_async,
 };
 #[cfg(test)]
 use schema::{SystemTable, system_table_schemas};

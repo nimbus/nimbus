@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use nimbus::Error;
+use nimbus_network::LocalPortLeaseAuthority;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use signal_hook_registry::{SigId, register as register_signal, unregister as unregister_signal};
@@ -18,6 +19,7 @@ mod helper_paths;
 mod image;
 mod launch;
 mod ports;
+mod process_identity;
 mod readiness;
 mod ssh;
 mod stop;
@@ -28,14 +30,14 @@ pub(crate) use self::helper_env_guard::MachineHelperEnvGuard;
 use self::launch::MachineLaunchPlan;
 use self::readiness::{
     bind_ready_listener, conduct_readiness_check, post_start_networking, pre_start_networking,
-    start_bootstrap_server, start_vm, wait_for_machine_ready,
+    secure_machine_runtime_root, start_bootstrap_server, start_vm, wait_for_machine_ready,
 };
 use self::stop::{cleanup_runtime_artifacts, handle_start_machine_error, remove_file_if_exists};
 
 pub(super) use super::record::{MachineHelperBinaryPaths, MachineRuntimeState};
 use super::{
-    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineRootLayout,
-    MachineStateRecord, write_json_file,
+    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineStateRecord,
+    write_json_file,
 };
 
 const DEFAULT_KRUNKIT_BINARY: &str = "krunkit";
@@ -210,28 +212,126 @@ fn emit_machine_warning(message: impl AsRef<str>) {
 }
 
 pub(super) fn start_machine(
+    network: &super::network_composition::HostMachineNetworkAuthority,
     paths: &MachinePaths,
     config: &mut MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
+    start_machine_with_lifecycle(&network.lifecycle_handle()?, paths, config, state)
+}
+
+pub(super) fn next_machine_forwarder_authority(
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+) -> Result<nimbus_machine::MachineForwarderAuthority, Error> {
+    self::launch::next_machine_forwarder_authority(config, state)
+}
+
+/// Start only if the caller's already-prepared forwarder authority is still
+/// the exact next authority for this locked config and state.
+///
+/// The first check precedes opening the lifecycle publication store. The
+/// lifecycle implementation checks again before image/bootstrap preparation
+/// and verifies the built launch plan before any provider process starts.
+pub(super) fn start_machine_with_expected_forwarder_authority(
+    network: &super::network_composition::HostMachineNetworkAuthority,
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+    expected: &nimbus_machine::MachineForwarderAuthority,
+) -> Result<(), Error> {
+    authenticate_expected_forwarder_authority(config, state, expected)?;
+    start_machine_with_lifecycle_and_expected(
+        &network.lifecycle_handle()?,
+        paths,
+        config,
+        state,
+        Some(expected),
+    )
+}
+
+pub(super) fn start_machine_with_lifecycle(
+    network: &super::network_composition::MachineNetworkLifecycleHandle,
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+) -> Result<(), Error> {
+    start_machine_with_lifecycle_and_expected(network, paths, config, state, None)
+}
+
+fn start_machine_with_lifecycle_and_expected(
+    network: &super::network_composition::MachineNetworkLifecycleHandle,
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+    expected: Option<&nimbus_machine::MachineForwarderAuthority>,
+) -> Result<(), Error> {
+    if let Some(expected) = expected {
+        authenticate_expected_forwarder_authority(config, state, expected)?;
+    }
     emit_machine_progress(format!("Starting machine \"{}\"", config.name));
     ensure_machine_can_start(paths, config, state)?;
+    super::publication_authority::ensure_no_fenced_machine_publications(
+        &network.machine_publications(),
+        config.network_authority.provider_instance(),
+    )?;
     converge_machine_image_contract(paths, config, state)?;
     ensure_machine_bootstrap_identity(paths, config)?;
     validate_machine_bootstrap_contract(config)?;
+    secure_machine_runtime_root(paths)?;
 
-    cleanup_runtime_artifacts(paths)?;
-    let launch_plan = MachineLaunchPlan::build(paths, config, state)?;
     let startup_signals = StartupSignalMonitor::install()?;
+    cleanup_runtime_artifacts(paths)?;
+    let port_authority = network.port_leases();
+    let launch_plan = MachineLaunchPlan::build(&port_authority, paths, config, state)?;
+    if let Some(expected) = expected
+        && launch_plan.runtime().forwarder_authority != *expected
+    {
+        return Err(with_pre_provider_lease_cleanup(
+            &launch_plan,
+            Error::conflict(format!(
+                "machine '{}' launch authority changed after exact preparation",
+                config.name
+            )),
+        ));
+    }
 
     state.lifecycle = MachineLifecycle::Starting;
     state.manager = MachineManagerState::Launching;
     state.runtime = Some(launch_plan.runtime().clone());
     state.last_error = None;
-    write_json_file(&paths.state_path, state)?;
+    if let Err(error) = write_json_file(&paths.state_path, state) {
+        return Err(with_pre_provider_lease_cleanup(&launch_plan, error));
+    }
 
-    let ready_listener = bind_ready_listener(&paths.ready_socket_path)?;
-    let _ignition_server = start_bootstrap_server(paths, config, &launch_plan)?;
+    let ready_listener = match bind_ready_listener(&paths.ready_socket_path) {
+        Ok(listener) => listener,
+        Err(error) => {
+            return handle_start_machine_error(
+                paths,
+                config,
+                state,
+                with_pre_provider_lease_cleanup(&launch_plan, error),
+                None,
+                None,
+                None,
+            );
+        }
+    };
+    let _ignition_server = match start_bootstrap_server(paths, config, &launch_plan) {
+        Ok(server) => server,
+        Err(error) => {
+            return handle_start_machine_error(
+                paths,
+                config,
+                state,
+                with_pre_provider_lease_cleanup(&launch_plan, error),
+                None,
+                None,
+                None,
+            );
+        }
+    };
 
     let mut gvproxy_child = None;
     let mut api_forward_child = None;
@@ -239,6 +339,11 @@ pub(super) fn start_machine(
     if let Err(error) =
         pre_start_networking(paths, &launch_plan, &mut gvproxy_child, &startup_signals)
     {
+        let error = if gvproxy_child.is_none() {
+            with_pre_provider_lease_cleanup(&launch_plan, error)
+        } else {
+            error
+        };
         return handle_start_machine_error(
             paths,
             config,
@@ -299,6 +404,17 @@ pub(super) fn start_machine(
             api_forward_child.as_mut(),
         );
     }
+    if let Err(error) = launch_plan.ssh_port_lease().activate_exact_loopback() {
+        return handle_start_machine_error(
+            paths,
+            config,
+            state,
+            error,
+            vmm_child.as_mut(),
+            gvproxy_child.as_mut(),
+            api_forward_child.as_mut(),
+        );
+    }
     if let Err(error) = post_start_networking(
         paths,
         config,
@@ -316,13 +432,16 @@ pub(super) fn start_machine(
             api_forward_child.as_mut(),
         );
     }
-    if let Err(error) = ensure_guest_machine_api_ready(
+    if let Err(error) = self::guest::ensure_guest_machine_api_ready(
         paths,
         config,
+        &launch_plan.runtime().forwarder_authority,
         launch_plan.runtime().ssh_port,
-        &mut vmm_child,
-        &mut gvproxy_child,
-        &mut api_forward_child,
+        self::guest::GuestMachineApiProcesses {
+            vmm: &mut vmm_child,
+            gvproxy: &mut gvproxy_child,
+            api_forward: &mut api_forward_child,
+        },
         &startup_signals,
     ) {
         return handle_start_machine_error(
@@ -341,6 +460,26 @@ pub(super) fn start_machine(
     state.last_error = None;
     write_json_file(&paths.state_path, state)?;
     Ok(())
+}
+
+fn authenticate_expected_forwarder_authority(
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+    expected: &nimbus_machine::MachineForwarderAuthority,
+) -> Result<(), Error> {
+    let current = self::launch::next_machine_forwarder_authority(config, state)?;
+    current
+        .authenticate(expected)
+        .map_err(|error| Error::PreconditionFailed(error.to_string()))
+}
+
+fn with_pre_provider_lease_cleanup(launch_plan: &MachineLaunchPlan, primary: Error) -> Error {
+    match launch_plan.ssh_port_lease().abandon_before_provider_start() {
+        Ok(()) => primary,
+        Err(cleanup) => Error::Internal(format!(
+            "{primary}; failed to settle the machine SSH lease before gvproxy started: {cleanup}"
+        )),
+    }
 }
 
 fn ensure_machine_bootstrap_identity(
@@ -442,26 +581,6 @@ fn requires_bootc_machine_config(config: &MachineConfigRecord) -> bool {
     self::guest::requires_bootc_machine_config(config)
 }
 
-fn ensure_guest_machine_api_ready(
-    paths: &MachinePaths,
-    config: &MachineConfigRecord,
-    ssh_port: u16,
-    vmm_child: &mut Option<Child>,
-    gvproxy_child: &mut Option<Child>,
-    api_forward_child: &mut Option<Child>,
-    startup_signals: &StartupSignalMonitor,
-) -> Result<(), Error> {
-    self::guest::ensure_guest_machine_api_ready(
-        paths,
-        config,
-        ssh_port,
-        vmm_child,
-        gvproxy_child,
-        api_forward_child,
-        startup_signals,
-    )
-}
-
 pub(super) fn inspect_desired_guest_nimbus_binary(
     paths: &MachinePaths,
 ) -> DesiredGuestNimbusBinaryStatus {
@@ -481,18 +600,28 @@ fn resolve_guest_nimbus_binary(paths: &MachinePaths) -> Result<PathBuf, Error> {
 }
 
 pub(super) fn stop_machine(
+    network: &super::network_composition::HostMachineNetworkAuthority,
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
+    stop_authority: &super::stop_authority::HostMachineStopAuthority,
+    authorization: nimbus_compute::machine_stop_authority::ConfirmedMachineStopAuthorization,
 ) -> Result<(), Error> {
-    self::stop::stop_machine(paths, config, state)
+    self::stop::stop_machine(
+        &network.lifecycle_handle()?,
+        paths,
+        config,
+        state,
+        stop_authority,
+        authorization,
+    )
 }
 
 pub(super) fn release_machine_ssh_port(
-    roots: &MachineRootLayout,
-    machine_name: &str,
+    port_authority: &LocalPortLeaseAuthority,
+    state: &MachineStateRecord,
 ) -> Result<(), Error> {
-    self::ports::release_machine_ssh_port(roots, machine_name)
+    self::ports::release_machine_ssh_port(port_authority, state)
 }
 
 pub(super) fn refresh_machine_state(

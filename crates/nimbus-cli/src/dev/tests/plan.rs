@@ -52,6 +52,46 @@ fn dev_plan_uses_project_local_persistence_root() {
 }
 
 #[test]
+fn dev_plan_retains_every_advertised_wire_socket_until_start_handoff() {
+    let temp = tempdir().expect("tempdir should build");
+    create_source_root(temp.path(), "convex");
+
+    let mut plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+        .expect("dev plan should resolve");
+    let advertised_ports = [
+        plan.wire.mongodb_port.port,
+        plan.wire.dynamodb_port.port,
+        plan.wire.s3_port.port,
+    ];
+    assert_eq!(plan.start_command.mongodb_port, Some(advertised_ports[0]));
+    assert_eq!(plan.start_command.dynamodb_port, Some(advertised_ports[1]));
+    assert_eq!(plan.start_command.s3_port, Some(advertised_ports[2]));
+    for port in advertised_ports {
+        let competing = std::net::TcpListener::bind(("127.0.0.1", port));
+        assert!(
+            matches!(
+                competing,
+                Err(ref error) if error.kind() == std::io::ErrorKind::AddrInUse
+            ),
+            "advertised dev wire port {port} must remain held by its exact handoff socket"
+        );
+    }
+
+    let listeners = plan
+        .start_command
+        .prebound_wire_listeners
+        .take()
+        .expect("dev start command should carry its retained listener bundle");
+    listeners
+        .close_and_settle()
+        .expect("discarded dev plan should close and settle every listener");
+    for port in advertised_ports {
+        std::net::TcpListener::bind(("127.0.0.1", port))
+            .expect("explicit plan cancellation should release the advertised socket");
+    }
+}
+
+#[test]
 fn dev_start_command_inherits_conservative_runtime_host_budget() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");
@@ -442,7 +482,7 @@ fn dev_auto_discovers_compose_for_local_development() {
 }
 
 #[test]
-fn dev_uses_workload_controller_for_compose_services() {
+fn dev_builds_ordered_desired_intents_for_compose_services() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");
     fs::write(
@@ -481,12 +521,11 @@ services:
         &crate::workload_boot::default_local_node_capacity().expect("local node should build"),
     )
     .expect("dev workload-control plan should resolve");
-    let mut workload_ids = workload_plan
+    let workload_ids = workload_plan
         .desired_workloads()
-        .into_iter()
+        .iter()
         .map(|workload| workload.workload_id().to_owned())
         .collect::<Vec<_>>();
-    workload_ids.sort();
 
     assert_eq!(
         workload_plan.compose_files(),

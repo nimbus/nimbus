@@ -48,14 +48,14 @@ pub use nimbus_egress::{
     EgressRequest, EgressRule,
 };
 // Sandbox orchestration surface.
+pub use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 pub use nimbus_sandbox::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
-    SandboxHandle, SandboxId, SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec,
-    SandboxOciBuildSpec, SandboxOciImageReferenceSpec, SandboxOciImageSource, SandboxOciImageSpec,
-    SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge,
-    SandboxResourceLimits, SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxRootSpec,
-    SandboxRootfsSpec, SandboxSpec, SandboxStatus, validate_sandbox_mounts,
-    validate_tenant_volume_name,
+    SandboxBackend, SandboxBackendKind, SandboxError, SandboxHandle, SandboxId,
+    SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec, SandboxOciBuildSpec,
+    SandboxOciImageReferenceSpec, SandboxOciImageSource, SandboxOciImageSpec, SandboxOwnerSpec,
+    SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge, SandboxResourceLimits,
+    SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec,
+    SandboxSpec, SandboxStatus, validate_sandbox_mounts, validate_tenant_volume_name,
 };
 // Server integration and transport construction helpers.
 #[cfg(feature = "aws-kms")]

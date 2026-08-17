@@ -16,6 +16,22 @@ fn cli_defaults_to_embedded_sqlite() {
 }
 
 #[test]
+fn network_state_dir_is_an_explicit_top_level_start_input() {
+    let command = parse_start([
+        "nimbus",
+        "start",
+        "--network-state-dir",
+        "/var/lib/nimbus/network",
+    ]);
+
+    assert_eq!(
+        command.network_state_dir.as_deref(),
+        Some(Path::new("/var/lib/nimbus/network"))
+    );
+    assert!(StartCommand::default().network_state_dir.is_none());
+}
+
+#[test]
 fn cors_allow_origin_flag_repeats_and_normalizes() {
     let command = parse_start([
         "nimbus",
@@ -117,29 +133,6 @@ fn start_command_default_uses_production_tenant_isolation() {
         command.tenant_isolation_mode,
         nimbus_tenant::TenantIsolationMode::Production,
         "start is the production-oriented server entrypoint; dev opts out explicitly"
-    );
-}
-
-#[test]
-fn production_start_compose_manager_rejects_tag_only_image_before_backend_setup() {
-    let tempdir = tempfile::tempdir().expect("tempdir should build");
-    let compose = tempdir.path().join("compose.yaml");
-    fs::write(&compose, "services:\n  api:\n    image: busybox:latest\n")
-        .expect("compose fixture should write");
-    let selection = crate::compose::discovery::ResolvedComposeSelection::explicit(compose);
-
-    let error = match super::boot::load_service_manager(
-        Some(&selection),
-        &tempdir.path().join("control"),
-        nimbus_tenant::TenantIsolationMode::Production,
-    ) {
-        Ok(_) => panic!("production compose manager should reject tag-only images"),
-        Err(error) => error,
-    };
-
-    assert!(
-        error.to_string().contains("digest-pinned OCI image"),
-        "expected production image admission error, got: {error}"
     );
 }
 

@@ -2,7 +2,9 @@ use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr};
 
 use nimbus_core::TenantId;
-use nimbus_kv::{CredentialRegistry, KvError, NimbusKvConfig, run_listener, serve};
+use nimbus_kv::{
+    CredentialRegistry, KvError, NimbusKvConfig, NimbusKvListenerConfig, run_listener, serve,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
@@ -13,12 +15,19 @@ fn tenant(id: &str) -> TenantId {
 }
 
 async fn spawn_test_server(credentials: CredentialRegistry) -> (SocketAddr, JoinHandle<()>) {
+    let state_root = tempfile::tempdir().expect("listener state root should exist");
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .expect("listener binds");
     let addr = listener.local_addr().expect("listener has addr");
-    let config = NimbusKvConfig::new(addr, credentials);
+    let config = NimbusKvConfig::new(
+        addr,
+        credentials,
+        NimbusKvListenerConfig::reconstruct_direct(state_root.path())
+            .expect("direct test authority should reconstruct once"),
+    );
     let handle = tokio::spawn(async move {
+        let _state_root = state_root;
         serve(listener, config).await.expect("server should run");
     });
     (addr, handle)
@@ -99,9 +108,12 @@ async fn hello_3_negotiates_resp3() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn listener_rejects_non_loopback_bind() {
+    let state_root = tempfile::tempdir().expect("listener state root should exist");
     let config = NimbusKvConfig::new(
         "0.0.0.0:0".parse().expect("addr parses"),
         CredentialRegistry::generated_dev(tenant("tenant-a")).0,
+        NimbusKvListenerConfig::reconstruct_direct(state_root.path())
+            .expect("direct test authority should reconstruct once"),
     );
 
     let error = run_listener(config)
@@ -121,6 +133,32 @@ async fn unauthenticated_command_is_rejected() {
 
     let response = write_command(&mut stream, &[b"PING"]).await;
     assert_eq!(response, "-NOAUTH Authentication required\r\n");
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unknown_client_commands_share_one_bounded_metric_label() {
+    let (credentials, credential) = CredentialRegistry::generated_dev(tenant("tenant-a"));
+    let (addr, server) = spawn_test_server(credentials).await;
+    let mut stream = TcpStream::connect(addr).await.expect("connects");
+
+    for index in 0..128 {
+        let name = format!("CLIENT-SUPPLIED-UNKNOWN-{index}");
+        let response = write_command(&mut stream, &[name.as_bytes()]).await;
+        assert_eq!(response, "-NOAUTH Authentication required\r\n");
+    }
+
+    let auth = write_command(&mut stream, &[b"AUTH", credential.password.as_bytes()]).await;
+    assert_eq!(auth, "+OK\r\n");
+    let metrics = write_command(&mut stream, &[b"NIMBUS.METRICS"]).await;
+    assert!(
+        metrics.contains("command.UNKNOWN.calls:128"),
+        "unknown commands must share one metric bucket, got {metrics:?}"
+    );
+    assert!(
+        !metrics.contains("CLIENT-SUPPLIED-UNKNOWN"),
+        "client-supplied command names must not appear in metrics: {metrics:?}"
+    );
     server.abort();
 }
 

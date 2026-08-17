@@ -859,13 +859,12 @@ fn parses_hidden_machine_api_subcommand() {
 
     match machine.command {
         MachineSubcommand::Api(api) => {
-            assert_eq!(api.socket_path, Some(PathBuf::from("/tmp/nimbus.sock")));
+            assert_eq!(api.socket_path, PathBuf::from("/tmp/nimbus.sock"));
             assert_eq!(
                 api.control_data_dir,
                 Some(PathBuf::from("/tmp/nimbus-control"))
             );
             assert_eq!(api.guest_node_id, "guest-node-a");
-            assert!(!api.socket_activation);
         }
         _ => panic!("expected api subcommand"),
     }

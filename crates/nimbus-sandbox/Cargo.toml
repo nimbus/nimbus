@@ -9,15 +9,22 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Gates deterministic cross-crate fixture construction. The feature is used
+# only by upper-crate dev-dependencies and adds no production provider path.
+test-hooks = []
+
 [dependencies]
 flate2 = "1"
-fs2.workspace = true
 libc.workspace = true
 async-trait = "0.1"
 bytes = "1"
+cap-std = "4.0.2"
+fs2.workspace = true
 nimbus-blob = { path = "../nimbus-blob" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-egress = { path = "../nimbus-egress" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-proxy = { path = "../nimbus-proxy" }
 oci-client = "0.16"
 serde.workspace = true
@@ -26,6 +33,7 @@ shell-words.workspace = true
 sha2.workspace = true
 tar = "0.4"
 thiserror.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
@@ -35,7 +43,12 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 futures.workspace = true
-tempfile.workspace = true
+nimbus-process-harness = { path = "../nimbus-process-harness" }
+proptest = "1"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }

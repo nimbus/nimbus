@@ -14,6 +14,7 @@ use crate::paths::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineRootLayout {
     pub config_root: PathBuf,
     pub state_root: PathBuf,
@@ -105,14 +106,6 @@ impl MachineRootLayout {
         self.state_root.join(format!("{name}.lock"))
     }
 
-    pub fn port_allocation_state_path(&self) -> PathBuf {
-        self.state_root.join("port-alloc.dat")
-    }
-
-    pub fn port_allocation_lock_path(&self) -> PathBuf {
-        self.state_root.join("port-alloc.lck")
-    }
-
     pub fn paths(&self, name: &str) -> MachinePaths {
         let config_dir = self.config_root.join(name);
         let state_dir = self.state_root.join(name);
@@ -139,6 +132,7 @@ impl MachineRootLayout {
             efi_variable_store_path: data_dir.join("efi-variable-store"),
             api_forward_pid_path: runtime_dir.join(format!("{name}-api-forward.pid")),
             gvproxy_pid_path: runtime_dir.join(format!("{name}-gvproxy.pid")),
+            gvproxy_process_identity_path: runtime_dir.join(format!("{name}-gvproxy-process.json")),
             vmm_pid_path: runtime_dir.join(format!("{name}-vmm.pid")),
             api_forward_log_path: runtime_dir.join(format!("{name}-api-forward.log")),
             machine_log_path: runtime_dir.join(format!("{name}.log")),
@@ -169,6 +163,31 @@ mod tests {
 
         assert_eq!(layout.data_root, PathBuf::from("root/data"));
         assert_eq!(layout.cache_root, PathBuf::from("root/cache"));
+        assert_eq!(
+            serde_json::to_value(&layout).expect("machine roots should serialize"),
+            serde_json::json!({
+                "config_root": "root/config",
+                "state_root": "root/state",
+                "data_root": "root/data",
+                "cache_root": "root/cache",
+                "runtime_root": "root/runtime",
+            }),
+            "machine roots must contain artifacts only"
+        );
+
+        let mut obsolete_mixed_root =
+            serde_json::to_value(&layout).expect("machine roots should serialize");
+        obsolete_mixed_root
+            .as_object_mut()
+            .expect("machine roots wire should be an object")
+            .insert(
+                "network_state_root".to_owned(),
+                serde_json::json!("root/state"),
+            );
+        assert!(
+            serde_json::from_value::<MachineRootLayout>(obsolete_mixed_root).is_err(),
+            "the removed mixed-root field must not be admitted as compatibility data"
+        );
     }
 
     #[test]
@@ -207,6 +226,7 @@ mod tests {
             ("XDG_DATA_HOME", "/xdg/data"),
             ("XDG_CACHE_HOME", "/xdg/cache"),
             (MACHINE_RUNTIME_ROOT_ENV, "/run/nimbus-machine"),
+            ("NIMBUS_CONTROL_DATA_DIR", "/must/not/become/a/machine/root"),
         ]))
         .expect("xdg roots should resolve");
 
@@ -224,6 +244,12 @@ mod tests {
             PathBuf::from("/xdg/cache/nimbus/machine")
         );
         assert_eq!(layout.runtime_root, PathBuf::from("/run/nimbus-machine"));
+        assert!(
+            !serde_json::to_string(&layout)
+                .expect("machine roots should serialize")
+                .contains("network"),
+            "network authority must not enter the artifact-root record"
+        );
     }
 
     #[test]

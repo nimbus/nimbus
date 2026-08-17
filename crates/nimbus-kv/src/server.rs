@@ -21,7 +21,9 @@ use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::{NimbusKvMetrics, NimbusKvStore, TieringConfig};
+use crate::{
+    NimbusKvListener, NimbusKvListenerConfig, NimbusKvMetrics, NimbusKvStore, TieringConfig,
+};
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
@@ -33,6 +35,14 @@ pub enum KvError {
     Protocol(#[from] RedisProtocolError),
     #[error(transparent)]
     Core(#[from] nimbus_core::Error),
+    #[error(transparent)]
+    Network(#[from] nimbus_network::PortLeaseError),
+    #[error("{primary}; {context}: {cleanup}")]
+    ListenerLifecycle {
+        primary: Box<KvError>,
+        context: &'static str,
+        cleanup: Box<nimbus_network::PortLeaseError>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,11 +137,13 @@ impl CredentialRegistry {
                     constant_time_eq(binding.username.as_bytes(), username.as_bytes());
                 let password_matches =
                     constant_time_eq(binding.password.as_bytes(), password.as_bytes());
-                (username_matches & password_matches).then(|| binding.clone())
+                (username_matches & password_matches & !binding.tenant.is_nimbus_reserved())
+                    .then(|| binding.clone())
             }),
             None => {
                 let mut matches = self.bindings.values().filter(|binding| {
                     constant_time_eq(binding.password.as_bytes(), password.as_bytes())
+                        & !binding.tenant.is_nimbus_reserved()
                 });
                 let binding = matches.next()?;
                 if matches.next().is_some() {
@@ -155,16 +167,22 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 pub struct NimbusKvConfig {
     pub bind_addr: SocketAddr,
     pub credentials: CredentialRegistry,
+    pub listener: NimbusKvListenerConfig,
     pub store: Option<NimbusKvStore>,
     pub metrics: Option<NimbusKvMetrics>,
 }
 
 impl NimbusKvConfig {
     #[must_use]
-    pub fn new(bind_addr: SocketAddr, credentials: CredentialRegistry) -> Self {
+    pub fn new(
+        bind_addr: SocketAddr,
+        credentials: CredentialRegistry,
+        listener: NimbusKvListenerConfig,
+    ) -> Self {
         Self {
             bind_addr,
             credentials,
+            listener,
             store: None,
             metrics: None,
         }
@@ -242,38 +260,65 @@ struct CommandOutcome {
 /// Bind and run the RESP listener until the process is interrupted.
 pub async fn run_listener(config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(config.bind_addr)?;
-    let listener = TcpListener::bind(config.bind_addr).await?;
-    serve(listener, config).await
+    let listener = bind_listener(&config).await?;
+    serve_listener(listener, config).await
 }
 
 /// Serve an already-bound listener.
 pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(listener.local_addr()?)?;
+    let listener = adopt_listener(listener, &config)?;
+    serve_listener(listener, config).await
+}
+
+/// Bind the configured RESP socket in the `nimbus-kv` effect owner.
+pub async fn bind_listener(config: &NimbusKvConfig) -> Result<NimbusKvListener, KvError> {
+    refuse_non_loopback_bind(config.bind_addr)?;
+    crate::listener::bind(&config.listener, config.bind_addr).await
+}
+
+/// Wrap an already-bound RESP socket at the pre-bound adoption seam.
+pub fn adopt_listener(
+    listener: TcpListener,
+    config: &NimbusKvConfig,
+) -> Result<NimbusKvListener, KvError> {
+    refuse_non_loopback_bind(listener.local_addr()?)?;
+    crate::listener::adopt(&config.listener, config.bind_addr, listener)
+}
+
+/// Serve through an already active standalone KV listener.
+///
+/// This narrow transition lets an outer composition observe the exact bound
+/// address before serving without exposing the raw socket or duplicating the
+/// listener lifecycle.
+pub async fn serve_listener(
+    listener: NimbusKvListener,
+    config: NimbusKvConfig,
+) -> Result<(), KvError> {
+    if let Err(error) = validate_serve_listener_policy(&listener, &config) {
+        return Err(listener.close_after_confirmed_local_error(error));
+    }
     let NimbusKvConfig {
         bind_addr: _,
         credentials,
+        listener: _,
         store,
         metrics,
     } = config;
-    let store = match (store, metrics) {
-        (Some(_), Some(_)) => {
-            return Err(nimbus_core::Error::InvalidInput(
-                "NimbusKvConfig::with_metrics cannot be combined with a prebuilt NimbusKvStore"
-                    .to_string(),
-            )
-            .into());
-        }
-        (Some(store), None) => store,
-        (None, Some(metrics)) => {
-            NimbusKvStore::no_disk_with_metrics(TieringConfig::no_disk(), metrics)?
-        }
-        (None, None) => NimbusKvStore::no_disk(TieringConfig::no_disk())?,
+    let store = match create_store(store, metrics) {
+        Ok(store) => store,
+        Err(error) => return Err(listener.close_after_confirmed_local_error(error)),
     };
     let credentials = Arc::new(credentials);
     let metrics = store.metrics();
 
     loop {
-        let (stream, peer_addr) = listener.accept().await?;
+        let (stream, peer_addr) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(error) => {
+                return Err(listener.close_after_confirmed_local_error(error.into()));
+            }
+        };
         let credentials = Arc::clone(&credentials);
         let store = store.clone();
         let metrics = metrics.clone();
@@ -282,6 +327,33 @@ pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), 
                 tracing::warn!(%peer_addr, error = %error, "nimbus-kv connection ended with error");
             }
         });
+    }
+}
+
+fn validate_serve_listener_policy(
+    listener: &NimbusKvListener,
+    config: &NimbusKvConfig,
+) -> Result<(), KvError> {
+    refuse_non_loopback_bind(config.bind_addr)?;
+    refuse_non_loopback_bind(listener.local_addr()?)?;
+    Ok(())
+}
+
+fn create_store(
+    store: Option<NimbusKvStore>,
+    metrics: Option<NimbusKvMetrics>,
+) -> Result<NimbusKvStore, KvError> {
+    match (store, metrics) {
+        (Some(_), Some(_)) => Err(nimbus_core::Error::InvalidInput(
+            "NimbusKvConfig::with_metrics cannot be combined with a prebuilt NimbusKvStore"
+                .to_string(),
+        )
+        .into()),
+        (Some(store), None) => Ok(store),
+        (None, Some(metrics)) => {
+            NimbusKvStore::no_disk_with_metrics(TieringConfig::no_disk(), metrics)
+        }
+        (None, None) => NimbusKvStore::no_disk(TieringConfig::no_disk()),
     }
 }
 
@@ -981,6 +1053,58 @@ fn generate_dev_password() -> String {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn leased_listener_serve_revalidates_loopback_and_settles_rejection() {
+        let root = tempfile::tempdir().expect("network state root should exist");
+        let bind_addr = SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0));
+        let listener_config =
+            NimbusKvListenerConfig::reconstruct_direct_for_incarnation(root.path(), "serve-policy")
+                .expect("direct test authority should reconstruct");
+        let mut config = NimbusKvConfig::new(
+            bind_addr,
+            CredentialRegistry::single_dev(
+                TenantId::new("tenant-a").expect("tenant should validate"),
+                "test-password",
+            ),
+            listener_config,
+        );
+        let listener = crate::listener::bind(&config.listener, config.bind_addr)
+            .await
+            .expect("internal test setup should create the policy-invalid active listener");
+        let actual_addr = listener
+            .local_addr()
+            .expect("active listener should report its kernel address");
+        assert!(!actual_addr.ip().is_loopback());
+        config.bind_addr = SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, actual_addr.port()));
+
+        let error = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            serve_listener(listener, config),
+        )
+        .await
+        .expect("the public serve transition must reject before entering its accept loop")
+        .expect_err("a non-loopback leased listener must not serve");
+        match error {
+            KvError::Io(error) => assert_eq!(error.kind(), io::ErrorKind::InvalidInput),
+            other => panic!("expected loopback policy rejection, got {other:?}"),
+        }
+
+        let records = nimbus_network::LocalPortLeaseAuthority::open(root.path())
+            .expect("authority should reopen")
+            .list()
+            .expect("records should list");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].phase(),
+            nimbus_network::PortLeasePhase::Released,
+            "confirmed policy rejection must settle the exact active lease"
+        );
+        let rebound = TcpListener::bind(actual_addr)
+            .await
+            .expect("policy rejection must close the concrete listener");
+        drop(rebound);
+    }
+
     #[test]
     fn registry_authentication_checks_username_and_password() {
         let shared_password = generate_dev_password();
@@ -1019,5 +1143,29 @@ mod tests {
             registry.authenticate(None, &shared_password).is_none(),
             "password-only authentication must reject ambiguous bindings"
         );
+    }
+
+    #[test]
+    fn reserved_tenant_bindings_never_authenticate() {
+        for reserved in ["_nimbus", "_reserved"] {
+            let tenant = TenantId::new(reserved).expect("reserved tenant should validate");
+            let direct = CredentialRegistry::new().bind(reserved, "secret", tenant.clone());
+            assert!(direct.authenticate(Some(reserved), "secret").is_none());
+            assert!(direct.authenticate(None, "secret").is_none());
+
+            let single = CredentialRegistry::single_dev(tenant.clone(), "single-secret");
+            assert!(
+                single
+                    .authenticate(Some(reserved), "single-secret")
+                    .is_none()
+            );
+
+            let (generated, credential) = CredentialRegistry::generated_dev(tenant);
+            assert!(
+                generated
+                    .authenticate(Some(&credential.username), &credential.password)
+                    .is_none()
+            );
+        }
     }
 }

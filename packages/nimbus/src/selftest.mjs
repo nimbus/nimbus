@@ -25,8 +25,14 @@ async function main() {
     return;
   }
   const indexBundle = await bundleModule("index.ts", "neutral");
-  const controlPlaneBundle = await bundleModule("control-plane/client.ts", "neutral");
-  const controlPlaneRoutesBundle = await bundleModule("control_plane_routes.ts", "neutral");
+  const controlPlaneBundle = await bundleModule(
+    "control-plane/client.ts",
+    "neutral",
+  );
+  const controlPlaneRoutesBundle = await bundleModule(
+    "control_plane_routes.ts",
+    "neutral",
+  );
   await assertControlPlaneRouteManifest(controlPlaneRoutesBundle);
   await bundleModule("browser.ts", "browser");
   await bundleModule("react.ts", "browser");
@@ -36,6 +42,7 @@ async function main() {
   await assertRestClientRouteParity(restBundle);
   await assertExplicitOptionsBypassLocalCredentialFile(indexBundle);
   await assertLifecycleWaitValidation(indexBundle);
+  await assertServiceRestartRoute(indexBundle);
   await assertServiceWaitUsesMonotonicTime(controlPlaneBundle);
   await assertServiceDefinitionRoutes(indexBundle);
   await assertSandboxRoutes(indexBundle);
@@ -55,15 +62,53 @@ async function assertNativeSocketBranding() {
 }
 
 async function assertCommitErrorEnvelopeDecoding(indexBundle) {
-  const sdk = await import(`${pathToFileURL(indexBundle).href}?errors=${Date.now()}`);
+  const sdk = await import(
+    `${pathToFileURL(indexBundle).href}?errors=${Date.now()}`
+  );
   const cases = [
     ["op.conflict", "conflict", "NimbusConflictError", "retryable", true],
-    ["rate.overloaded", "overloaded", "NimbusOverloadedError", "retryable_after_backoff", true],
-    ["rate.committer_full", "committer_full", "NimbusCommitterFullError", "retryable_after_backoff", true],
-    ["rate.rejected_before_execution", "rejected_before_execution", "NimbusRejectedBeforeExecutionError", "retryable", true],
-    ["rate.limited", "rate_limited", "NimbusRateLimitedError", "retryable_after_backoff", true],
-    ["op.out_of_retention", "out_of_retention", "NimbusOutOfRetentionError", "restart_transaction", true],
-    ["op.cap_exceeded", "cap_exceeded", "NimbusCapExceededError", "terminal", false],
+    [
+      "rate.overloaded",
+      "overloaded",
+      "NimbusOverloadedError",
+      "retryable_after_backoff",
+      true,
+    ],
+    [
+      "rate.committer_full",
+      "committer_full",
+      "NimbusCommitterFullError",
+      "retryable_after_backoff",
+      true,
+    ],
+    [
+      "rate.rejected_before_execution",
+      "rejected_before_execution",
+      "NimbusRejectedBeforeExecutionError",
+      "retryable",
+      true,
+    ],
+    [
+      "rate.limited",
+      "rate_limited",
+      "NimbusRateLimitedError",
+      "retryable_after_backoff",
+      true,
+    ],
+    [
+      "op.out_of_retention",
+      "out_of_retention",
+      "NimbusOutOfRetentionError",
+      "restart_transaction",
+      true,
+    ],
+    [
+      "op.cap_exceeded",
+      "cap_exceeded",
+      "NimbusCapExceededError",
+      "terminal",
+      false,
+    ],
   ];
 
   for (const [code, kind, name, retryability, retryable] of cases) {
@@ -175,13 +220,18 @@ async function bundleModule(relativePath, platform) {
 
 async function assertExplicitOptionsBypassLocalCredentialFile(indexBundle) {
   const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-sdk-"));
-  const badCredentialsPath = path.join(fixtureDir, "application_default_credentials.json");
+  const badCredentialsPath = path.join(
+    fixtureDir,
+    "application_default_credentials.json",
+  );
   await fs.writeFile(badCredentialsPath, "not json", "utf8");
 
   const previousCredentialsPath = process.env.NIMBUS_APPLICATION_CREDENTIALS;
   process.env.NIMBUS_APPLICATION_CREDENTIALS = badCredentialsPath;
   try {
-    const { Nimbus } = await import(`${pathToFileURL(indexBundle).href}?t=${Date.now()}`);
+    const { Nimbus } = await import(
+      `${pathToFileURL(indexBundle).href}?t=${Date.now()}`
+    );
     let observedUrl = "";
     let observedAuthorization = "";
     const client = new Nimbus({
@@ -191,7 +241,9 @@ async function assertExplicitOptionsBypassLocalCredentialFile(indexBundle) {
       fetch: async (input, init = {}) => {
         observedUrl = String(input);
         observedAuthorization = String(
-          init.headers && typeof init.headers === "object" && "Authorization" in init.headers
+          init.headers &&
+            typeof init.headers === "object" &&
+            "Authorization" in init.headers
             ? init.headers.Authorization
             : "",
         );
@@ -219,7 +271,9 @@ async function assertExplicitOptionsBypassLocalCredentialFile(indexBundle) {
 }
 
 async function assertLifecycleWaitValidation(indexBundle) {
-  const { Nimbus } = await import(`${pathToFileURL(indexBundle).href}?validation=${Date.now()}`);
+  const { Nimbus } = await import(
+    `${pathToFileURL(indexBundle).href}?validation=${Date.now()}`
+  );
   let fetchCalls = 0;
   const client = new Nimbus({
     endpoint: "http://localhost:8080",
@@ -227,14 +281,17 @@ async function assertLifecycleWaitValidation(indexBundle) {
     token: "explicit-token",
     fetch: async () => {
       fetchCalls += 1;
-      return new Response(JSON.stringify({
-        name: "db",
-        lifecycleState: "ready",
-        readiness: "ready",
-        health: "healthy",
-      }), {
-        headers: { "content-type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          name: "db",
+          lifecycleState: "ready",
+          readiness: "ready",
+          health: "healthy",
+        }),
+        {
+          headers: { "content-type": "application/json" },
+        },
+      );
     },
   });
 
@@ -251,7 +308,56 @@ async function assertLifecycleWaitValidation(indexBundle) {
   assert.equal(fetchCalls, 0);
 
   await client.services.start({ name: "db", waitUntil: "healthy" });
-  assert.equal(fetchCalls, 2, "start with healthy wait should POST then poll GET");
+  assert.equal(
+    fetchCalls,
+    2,
+    "start with healthy wait should POST then poll GET",
+  );
+}
+
+async function assertServiceRestartRoute(indexBundle) {
+  const { Nimbus } = await import(
+    `${pathToFileURL(indexBundle).href}?restart=${Date.now()}`
+  );
+  const observed = [];
+  const client = new Nimbus({
+    endpoint: "http://localhost:8080",
+    tenantId: "tenant",
+    token: "explicit-token",
+    fetch: async (input, init = {}) => {
+      observed.push({
+        url: String(input),
+        method: init.method ?? "GET",
+        body: typeof init.body === "string" ? JSON.parse(init.body) : null,
+      });
+      return new Response(
+        JSON.stringify({
+          tenantId: "tenant",
+          name: "db",
+          sourceGeneration: 7,
+          requestId: "deploy-42",
+          workloadRestartRequestId: "wrr_test",
+          restartEpoch: 3,
+          disposition: "applied",
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const response = await client.services.restart({
+    name: "db",
+    sourceGeneration: 7,
+    requestId: "deploy-42",
+  });
+  assert.deepEqual(observed, [
+    {
+      url: "http://localhost:8080/api/tenants/tenant/services/db/restart",
+      method: "POST",
+      body: { sourceGeneration: 7, requestId: "deploy-42" },
+    },
+  ]);
+  assert.equal(response.restartEpoch, 3);
 }
 
 async function assertServiceWaitUsesMonotonicTime(controlPlaneBundle) {
@@ -288,7 +394,12 @@ async function assertServiceWaitUsesMonotonicTime(controlPlaneBundle) {
     );
 
     await assert.rejects(
-      services.wait({ name: "db", until: "healthy", timeoutMs: 10, intervalMs: 6 }),
+      services.wait({
+        name: "db",
+        until: "healthy",
+        timeoutMs: 10,
+        intervalMs: 6,
+      }),
       new Error(
         "Nimbus service db did not reach healthy within 10ms; last observed status was starting.",
       ),
@@ -306,7 +417,9 @@ async function assertServiceWaitUsesMonotonicTime(controlPlaneBundle) {
 }
 
 async function assertServiceDefinitionRoutes(indexBundle) {
-  const { Nimbus } = await import(`${pathToFileURL(indexBundle).href}?definitions=${Date.now()}`);
+  const { Nimbus } = await import(
+    `${pathToFileURL(indexBundle).href}?definitions=${Date.now()}`
+  );
   const observed = [];
   const client = new Nimbus({
     endpoint: "http://localhost:8080",
@@ -318,31 +431,34 @@ async function assertServiceDefinitionRoutes(indexBundle) {
         method: init.method ?? "GET",
         body: typeof init.body === "string" ? JSON.parse(init.body) : null,
       });
-      return new Response(JSON.stringify({
-        metadata: {
-          tenantId: "tenant",
-          name: "browser",
-          generation: 1,
-          resourceVersion: "svcdef-v1",
-          createdAt: "1970-01-01T00:00:00Z",
-          updatedAt: "1970-01-01T00:00:00Z",
-          labels: {},
-          source: "dynamic",
+      return new Response(
+        JSON.stringify({
+          metadata: {
+            tenantId: "tenant",
+            name: "browser",
+            generation: 1,
+            resourceVersion: "svcdef-v1",
+            createdAt: "1970-01-01T00:00:00Z",
+            updatedAt: "1970-01-01T00:00:00Z",
+            labels: {},
+            source: "dynamic",
+          },
+          spec: {
+            backend: { kind: "builtIn", provider: "browser" },
+          },
+          status: {
+            backend: "builtIn",
+            lifecycleState: "declared",
+            readiness: "unknown",
+            health: "unknown",
+            conditions: [],
+          },
+          items: [],
+        }),
+        {
+          headers: { "content-type": "application/json" },
         },
-        spec: {
-          backend: { kind: "builtIn", provider: "browser" },
-        },
-        status: {
-          backend: "builtIn",
-          lifecycleState: "declared",
-          readiness: "unknown",
-          health: "unknown",
-          conditions: [],
-        },
-        items: [],
-      }), {
-        headers: { "content-type": "application/json" },
-      });
+      );
     },
   });
 
@@ -356,17 +472,27 @@ async function assertServiceDefinitionRoutes(indexBundle) {
     backend: { kind: "builtIn", provider: "browser" },
   });
   await client.services.list({ limit: 10, pageToken: "browser" });
-  await client.services.delete({ name: "browser", ifMatchGeneration: 2, force: true });
+  await client.services.delete({
+    name: "browser",
+    ifMatchGeneration: 2,
+    force: true,
+  });
 
-  assert.deepEqual(observed.map((request) => [request.method, request.url]), [
-    ["POST", "http://localhost:8080/api/tenants/tenant/services"],
-    ["PUT", "http://localhost:8080/api/tenants/tenant/services/browser"],
-    ["GET", "http://localhost:8080/api/tenants/tenant/services?limit=10&pageToken=browser"],
+  assert.deepEqual(
+    observed.map((request) => [request.method, request.url]),
     [
-      "DELETE",
-      "http://localhost:8080/api/tenants/tenant/services/browser?ifMatchGeneration=2&force=true",
+      ["POST", "http://localhost:8080/api/tenants/tenant/services"],
+      ["PUT", "http://localhost:8080/api/tenants/tenant/services/browser"],
+      [
+        "GET",
+        "http://localhost:8080/api/tenants/tenant/services?limit=10&pageToken=browser",
+      ],
+      [
+        "DELETE",
+        "http://localhost:8080/api/tenants/tenant/services/browser?ifMatchGeneration=2&force=true",
+      ],
     ],
-  ]);
+  );
   assert.deepEqual(observed[0].body, {
     metadata: { name: "browser", labels: {} },
     spec: { backend: { kind: "builtIn", provider: "browser" } },
@@ -375,7 +501,9 @@ async function assertServiceDefinitionRoutes(indexBundle) {
 }
 
 async function assertSandboxRoutes(indexBundle) {
-  const { Nimbus } = await import(`${pathToFileURL(indexBundle).href}?sandboxes=${Date.now()}`);
+  const { Nimbus } = await import(
+    `${pathToFileURL(indexBundle).href}?sandboxes=${Date.now()}`
+  );
   const observed = [];
   const client = new Nimbus({
     endpoint: "http://localhost:8080",
@@ -387,53 +515,75 @@ async function assertSandboxRoutes(indexBundle) {
         method: init.method ?? "GET",
         body: typeof init.body === "string" ? JSON.parse(init.body) : null,
       });
-      return new Response(JSON.stringify({
-        metadata: {
-          tenantId: "tenant",
-          id: "sandbox-1",
-          generation: 1,
-          resourceVersion: "sandbox-v1",
-          createdAt: "1970-01-01T00:00:00Z",
-          updatedAt: "1970-01-01T00:00:00Z",
-          labels: {},
+      return new Response(
+        JSON.stringify({
+          metadata: {
+            tenantId: "tenant",
+            id: "sandbox-1",
+            generation: 1,
+            resourceVersion: "sandbox-v1",
+            createdAt: "1970-01-01T00:00:00Z",
+            updatedAt: "1970-01-01T00:00:00Z",
+            labels: {},
+          },
+          spec: {
+            profile: "worker",
+            sandbox: {},
+          },
+          status: {
+            lifecycleState: "ready",
+            readiness: "ready",
+            health: "healthy",
+            backend: "krun",
+            endpoints: [],
+            conditions: [],
+          },
+          items: [],
+        }),
+        {
+          headers: { "content-type": "application/json" },
         },
-        spec: {
-          profile: "worker",
-          sandbox: {},
-        },
-        status: {
-          lifecycleState: "ready",
-          readiness: "ready",
-          health: "healthy",
-          backend: "krun",
-          endpoints: [],
-          conditions: [],
-        },
-        items: [],
-      }), {
-        headers: { "content-type": "application/json" },
-      });
+      );
     },
   });
   const spec = {
     tenantId: "tenant",
     owner: { kind: "standalone" },
     backend: "krun",
-    root: { kind: "oci_image", source: { kind: "reference", reference: "registry.example.com/worker:latest" } },
+    root: {
+      kind: "oci_image",
+      source: {
+        kind: "reference",
+        reference: "registry.example.com/worker:latest",
+      },
+    },
     process: { argv: ["worker"] },
   };
 
   await client.sandboxes.create({ profile: "worker", spec });
-  await client.sandboxes.list({ limit: 5, labelKey: "app", labelValue: "test" });
+  await client.sandboxes.list({
+    limit: 5,
+    labelKey: "app",
+    labelValue: "test",
+  });
   await client.sandboxes.get({ id: "sandbox-1" });
   await client.sandboxes.stop({ id: "sandbox-1" });
 
-  assert.deepEqual(observed.map((request) => [request.method, request.url]), [
-    ["POST", "http://localhost:8080/api/tenants/tenant/sandboxes"],
-    ["GET", "http://localhost:8080/api/tenants/tenant/sandboxes?limit=5&labelKey=app&labelValue=test"],
-    ["GET", "http://localhost:8080/api/tenants/tenant/sandboxes/sandbox-1"],
-    ["POST", "http://localhost:8080/api/tenants/tenant/sandboxes/sandbox-1/stop"],
-  ]);
+  assert.deepEqual(
+    observed.map((request) => [request.method, request.url]),
+    [
+      ["POST", "http://localhost:8080/api/tenants/tenant/sandboxes"],
+      [
+        "GET",
+        "http://localhost:8080/api/tenants/tenant/sandboxes?limit=5&labelKey=app&labelValue=test",
+      ],
+      ["GET", "http://localhost:8080/api/tenants/tenant/sandboxes/sandbox-1"],
+      [
+        "POST",
+        "http://localhost:8080/api/tenants/tenant/sandboxes/sandbox-1/stop",
+      ],
+    ],
+  );
   assert.deepEqual(observed[0].body, {
     profile: "worker",
     spec,
@@ -442,7 +592,9 @@ async function assertSandboxRoutes(indexBundle) {
 }
 
 async function assertSessionRoutes(indexBundle) {
-  const { Nimbus } = await import(`${pathToFileURL(indexBundle).href}?sessions=${Date.now()}`);
+  const { Nimbus } = await import(
+    `${pathToFileURL(indexBundle).href}?sessions=${Date.now()}`
+  );
   const observed = [];
   const client = new Nimbus({
     endpoint: "http://localhost:8080",
@@ -454,37 +606,40 @@ async function assertSessionRoutes(indexBundle) {
         method: init.method ?? "GET",
         body: typeof init.body === "string" ? JSON.parse(init.body) : null,
       });
-      return new Response(JSON.stringify({
-        metadata: {
-          tenantId: "tenant",
-          id: "session-1",
-          generation: 1,
-          resourceVersion: "session-v1",
-          createdAt: "1970-01-01T00:00:00Z",
-          updatedAt: "1970-01-01T00:00:00Z",
-        },
-        spec: {
-          target: { service: { name: "browser" } },
-          targetSnapshot: {
-            service: {
-              name: "browser",
-              generation: 1,
-              backend: "builtIn",
-              provider: "browser",
-            },
+      return new Response(
+        JSON.stringify({
+          metadata: {
+            tenantId: "tenant",
+            id: "session-1",
+            generation: 1,
+            resourceVersion: "session-v1",
+            createdAt: "1970-01-01T00:00:00Z",
+            updatedAt: "1970-01-01T00:00:00Z",
           },
-          channels: ["cdp"],
-          expiresAt: "1970-01-01T00:15:00Z",
+          spec: {
+            target: { service: { name: "browser" } },
+            targetSnapshot: {
+              service: {
+                name: "browser",
+                generation: 1,
+                backend: "builtIn",
+                provider: "browser",
+              },
+            },
+            channels: ["cdp"],
+            expiresAt: "1970-01-01T00:15:00Z",
+          },
+          status: {
+            lifecycleState: "open",
+            expiresAt: "1970-01-01T00:15:00Z",
+            conditions: [],
+          },
+          items: [],
+        }),
+        {
+          headers: { "content-type": "application/json" },
         },
-        status: {
-          lifecycleState: "open",
-          expiresAt: "1970-01-01T00:15:00Z",
-          conditions: [],
-        },
-        items: [],
-      }), {
-        headers: { "content-type": "application/json" },
-      });
+      );
     },
   });
 
@@ -497,12 +652,18 @@ async function assertSessionRoutes(indexBundle) {
   await client.sessions.get({ id: "session-1" });
   await client.sessions.close({ id: "session-1", reason: "test_complete" });
 
-  assert.deepEqual(observed.map((request) => [request.method, request.url]), [
-    ["POST", "http://localhost:8080/api/sessions"],
-    ["GET", "http://localhost:8080/api/sessions?tenantId=tenant&limit=5&state=open"],
-    ["GET", "http://localhost:8080/api/sessions/session-1"],
-    ["POST", "http://localhost:8080/api/sessions/session-1/close"],
-  ]);
+  assert.deepEqual(
+    observed.map((request) => [request.method, request.url]),
+    [
+      ["POST", "http://localhost:8080/api/sessions"],
+      [
+        "GET",
+        "http://localhost:8080/api/sessions?tenantId=tenant&limit=5&state=open",
+      ],
+      ["GET", "http://localhost:8080/api/sessions/session-1"],
+      ["POST", "http://localhost:8080/api/sessions/session-1/close"],
+    ],
+  );
   assert.deepEqual(observed[0].body, {
     tenantId: "tenant",
     target: { service: { name: "browser" } },
@@ -514,13 +675,16 @@ async function assertSessionRoutes(indexBundle) {
 
 async function typecheckNimbusAuthExtension() {
   const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-ts-"));
-  const normalize = (target) => path.relative(fixtureDir, target).replaceAll("\\", "/");
+  const normalize = (target) =>
+    path.relative(fixtureDir, target).replaceAll("\\", "/");
   const serverEntry = normalize(path.join(packageRoot, "src", "server.ts"));
   const browserEntry = normalize(path.join(packageRoot, "src", "browser.ts"));
   const reactEntry = normalize(path.join(packageRoot, "src", "react.ts"));
   const valuesEntry = normalize(path.join(packageRoot, "src", "values.ts"));
   const rootEntry = normalize(path.join(packageRoot, "src", "index.ts"));
-  const restEntry = normalize(path.join(packageRoot, "src", "transports", "rest.ts"));
+  const restEntry = normalize(
+    path.join(packageRoot, "src", "transports", "rest.ts"),
+  );
 
   await fs.writeFile(
     path.join(fixtureDir, "tsconfig.json"),
@@ -623,10 +787,11 @@ const _serviceStop = _sdk.services.stop({ name: "db" });
 const _serviceStopStopped = _sdk.services.stop({ name: "db", waitUntil: "stopped" });
 // @ts-expect-error service stop waits for stopped, not readiness.
 _sdk.services.stop({ name: "db", waitUntil: "ready" });
-const _serviceRestart = _sdk.services.restart({ name: "db" });
-const _serviceRestartHealthy = _sdk.services.restart({ name: "db", waitUntil: "healthy" });
-// @ts-expect-error service restart waits for activation conditions, not stopped.
-_sdk.services.restart({ name: "db", waitUntil: "stopped" });
+const _serviceRestart = _sdk.services.restart({
+  name: "db",
+  sourceGeneration: 7,
+  requestId: "deploy-42",
+});
 const _serviceGet = _sdk.services.get({ name: "db" });
 const _serviceWait = _sdk.services.wait({ name: "db", until: "healthy" });
 const _serviceCreateBuiltIn = _sdk.services.create({
@@ -781,10 +946,14 @@ export const identityHttp = httpAction(async (ctx) => {
     "utf8",
   );
 
-  const result = spawnSync(process.execPath, [tscPath, "-p", path.join(fixtureDir, "tsconfig.json")], {
-    encoding: "utf8",
-    cwd: fixtureDir,
-  });
+  const result = spawnSync(
+    process.execPath,
+    [tscPath, "-p", path.join(fixtureDir, "tsconfig.json")],
+    {
+      encoding: "utf8",
+      cwd: fixtureDir,
+    },
+  );
   assert.equal(result.status, 0, result.stderr || result.stdout);
 }
 

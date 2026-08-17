@@ -83,7 +83,8 @@ impl FairnessRegistry {
     /// detached handle rather than poisoning registration — budgets are
     /// fairness aids, not correctness gates, and a detached handle still
     /// meters and accounts (it just is not shared with other PEPs).
-    pub fn tenant(&self, tenant: &TenantId) -> Arc<TenantFairness> {
+    #[cfg(test)]
+    pub(crate) fn tenant(&self, tenant: &TenantId) -> Arc<TenantFairness> {
         let mut map = match self.tenants.lock() {
             Ok(map) => map,
             // Fail-OPEN by design (deliberately the opposite polarity of the
@@ -132,8 +133,8 @@ impl FairnessRegistry {
                 entry.pins += 1;
                 Arc::clone(&entry.fairness)
             }
-            // Fail-open, matching `tenant()`: a detached lease still meters
-            // and accounts; its drop is a no-op (ptr_eq guard below).
+            // Fail-open: a detached lease still meters and accounts; its drop
+            // is a no-op (the pointer-identity guard below rejects it).
             Err(_) => Arc::new(TenantFairness::new(
                 tenant.clone(),
                 self.dns_permits_per_tenant,
@@ -229,11 +230,6 @@ impl TenantFairness {
             decisions_denied: AtomicU64::new(0),
             task_time: TenantTaskTimeAccounting::new(),
         }
-    }
-
-    /// The owning tenant.
-    pub fn tenant(&self) -> &str {
-        self.tenant.as_str()
     }
 
     /// The owning tenant's typed id (registry keying).

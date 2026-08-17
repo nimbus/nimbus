@@ -1,6 +1,7 @@
 //! Machine provider selection and per-provider capability contracts.
 
 use nimbus_core::Error;
+use nimbus_network::NetworkManagementMode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,7 +27,7 @@ pub enum MachineBootstrapMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MachineProviderCapabilities {
-    pub uses_provider_networking: bool,
+    pub network_management_mode: NetworkManagementMode,
     pub requires_exclusive_active: bool,
     pub image_format: MachineImageFormat,
     pub bootstrap_mode: MachineBootstrapMode,
@@ -34,7 +35,7 @@ pub struct MachineProviderCapabilities {
 }
 
 const KRUNKIT_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderCapabilities {
-    uses_provider_networking: false,
+    network_management_mode: NetworkManagementMode::NimbusHostManaged,
     requires_exclusive_active: true,
     image_format: MachineImageFormat::Raw,
     bootstrap_mode: MachineBootstrapMode::Ignition,
@@ -47,7 +48,7 @@ const KRUNKIT_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProvid
 // krunkit's. The two differ only in the VMM binary and the on-VMM net-device
 // syntax, both of which are owned by the per-provider `MachineVmmBackend`.
 const VFKIT_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderCapabilities {
-    uses_provider_networking: false,
+    network_management_mode: NetworkManagementMode::NimbusHostManaged,
     requires_exclusive_active: true,
     image_format: MachineImageFormat::Raw,
     bootstrap_mode: MachineBootstrapMode::Ignition,
@@ -55,7 +56,7 @@ const VFKIT_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProvider
 };
 
 const WSL2_PROVIDER_CAPABILITIES: MachineProviderCapabilities = MachineProviderCapabilities {
-    uses_provider_networking: true,
+    network_management_mode: NetworkManagementMode::ProviderManaged,
     requires_exclusive_active: false,
     image_format: MachineImageFormat::Tar,
     bootstrap_mode: MachineBootstrapMode::ShellScript,
@@ -99,8 +100,8 @@ impl MachineProvider {
         }
     }
 
-    pub fn uses_provider_networking(self) -> bool {
-        self.capabilities().uses_provider_networking
+    pub fn network_management_mode(self) -> NetworkManagementMode {
+        self.capabilities().network_management_mode
     }
 
     pub fn requires_exclusive_active(self) -> bool {

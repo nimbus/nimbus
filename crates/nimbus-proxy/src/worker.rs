@@ -1,13 +1,11 @@
 use std::io;
 use std::net::{SocketAddr, TcpListener};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use nimbus_egress::{
-    CompiledEgressPolicy, EgressPolicy, EgressProtocol, EgressRule, LayeredEgressPolicy,
-};
+use nimbus_egress::{CompiledEgressPolicy, EgressProtocol, EgressRule, LayeredEgressPolicy};
 use pingora_core::apps::HttpServerApp;
 use pingora_core::protocols::http::ServerSession as HttpSession;
 use pingora_core::server::configuration::ServerConf;
@@ -58,6 +56,11 @@ use crate::{
 };
 
 const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(2);
+
+mod health;
+mod policy_reload;
+
+pub(crate) use health::WorkloadPepHealth;
 
 pub struct WorkloadPepConfig {
     pub bind_addr: SocketAddr,
@@ -215,24 +218,35 @@ pub struct WorkloadPep {
     shutdown_ack: Option<mpsc::Receiver<()>>,
     _substrate: ProxySubstrate,
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
-    audit_healthy: Arc<AtomicBool>,
+    health: Arc<WorkloadPepHealth>,
 }
 
-impl WorkloadPep {
-    pub fn start(config: WorkloadPepConfig) -> Result<Self> {
+/// Bound but inert PEP listener.
+///
+/// The socket is held so a control-plane owner can durably adopt and activate
+/// its lease before any accept loop starts.
+pub struct PreparedWorkloadPep {
+    local_addr: SocketAddr,
+    listener: TcpListener,
+    config: WorkloadPepConfig,
+}
+
+impl PreparedWorkloadPep {
+    /// Validate configuration, bind the listener, and leave it inert.
+    ///
+    /// The returned socket is retained but no accept loop runs until
+    /// [`Self::start`].
+    pub fn prepare(config: WorkloadPepConfig) -> Result<Self> {
         if config.max_connections == 0 {
             return Err(EgressProxyError::OperationFailed {
                 message: "egress proxy max_connections must be greater than 0".to_owned(),
             });
         }
-        let listener = TcpListener::bind(config.bind_addr).map_err(|error| {
-            EgressProxyError::OperationFailed {
-                message: format!(
-                    "failed to bind egress proxy on {}: {error}",
-                    config.bind_addr
-                ),
-            }
-        })?;
+        let listener =
+            TcpListener::bind(config.bind_addr).map_err(|error| EgressProxyError::BindFailed {
+                address: config.bind_addr,
+                kind: error.kind(),
+            })?;
         let local_addr =
             listener
                 .local_addr()
@@ -245,6 +259,28 @@ impl WorkloadPep {
                 message: format!("failed to configure egress proxy listener: {error}"),
             })?;
 
+        Ok(Self {
+            local_addr,
+            listener,
+            config,
+        })
+    }
+
+    /// Return the concrete address held by the prepared listener.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    /// Start serving on the already-bound listener.
+    ///
+    /// This is infallible because configuration and socket preparation
+    /// completed before the durable control-plane activation boundary.
+    pub fn start(self) -> WorkloadPep {
+        let Self {
+            local_addr,
+            listener,
+            config,
+        } = self;
         let policy_state = Arc::new(RwLock::new({
             let mut state = config
                 .policy
@@ -260,6 +296,7 @@ impl WorkloadPep {
             .unwrap_or_else(|| Arc::new(AtomicBool::new(true)));
         #[cfg(not(test))]
         let audit_healthy = Arc::new(AtomicBool::new(true));
+        let health = Arc::new(WorkloadPepHealth::new(audit_healthy));
         let request_ids = Arc::new(RequestIdGenerator::new());
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (ack_tx, ack_rx) = mpsc::channel();
@@ -267,7 +304,7 @@ impl WorkloadPep {
         let worker = ProxyWorker {
             listener,
             policy_state: Arc::clone(&policy_state),
-            audit_healthy: Arc::clone(&audit_healthy),
+            health: Arc::clone(&health),
             resolver: config.resolver,
             dns_cache: config.dns_cache,
             credential_provider: config
@@ -288,14 +325,20 @@ impl WorkloadPep {
         };
         substrate.handle().spawn(worker.run(shutdown_rx, ack_tx));
 
-        Ok(Self {
+        WorkloadPep {
             local_addr,
             shutdown,
             shutdown_ack: Some(ack_rx),
             _substrate: substrate,
             policy_state,
-            audit_healthy,
-        })
+            health,
+        }
+    }
+}
+
+impl WorkloadPep {
+    pub fn start(config: WorkloadPepConfig) -> Result<Self> {
+        Ok(PreparedWorkloadPep::prepare(config)?.start())
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -309,43 +352,56 @@ impl WorkloadPep {
             .map_err(|_| EgressProxyError::OperationFailed {
                 message: "egress proxy policy lock is poisoned".to_owned(),
             })?;
-        let audit_healthy = self.audit_healthy.load(Ordering::SeqCst);
-        Ok(guard.readiness(audit_healthy))
+        let (audit_healthy, worker_live) = self.health.snapshot();
+        Ok(guard.readiness(audit_healthy, worker_live))
     }
 
-    pub fn reload_policy(&self, policy: CompiledEgressPolicy) -> Result<PolicyGeneration> {
-        let mut guard =
-            self.policy_state
-                .write()
-                .map_err(|_| EgressProxyError::OperationFailed {
-                    message: "egress proxy policy lock is poisoned".to_owned(),
-                })?;
-        Ok(guard.reload(policy))
+    /// Stop accepting, abort in-flight work, and wait for the worker to
+    /// confirm that it dropped the listener.
+    ///
+    /// Durable composition owners must use this explicit result before
+    /// deleting published artifacts or releasing port authority. [`Drop`]
+    /// remains a bounded best-effort safety net, but its ignored result is not
+    /// proof that a provider effect stopped.
+    pub fn shutdown(&mut self) -> Result<()> {
+        self.shutdown_and_wait()
     }
 
-    pub fn reload_uncompiled_policy(&self, policy: EgressPolicy) -> Result<PolicyGeneration> {
-        let compiled = policy
-            .compile()
-            .map_err(|message| EgressProxyError::OperationFailed {
-                message: format!("invalid egress proxy policy reload: {message}"),
-            })?;
-        self.reload_policy(compiled)
+    fn shutdown_and_wait(&mut self) -> Result<()> {
+        let _ = self.shutdown.send(true);
+        let Some(shutdown_ack) = self.shutdown_ack.as_ref() else {
+            return Ok(());
+        };
+        match shutdown_ack.recv_timeout(SHUTDOWN_ACK_TIMEOUT) {
+            Ok(()) => {
+                self.shutdown_ack = None;
+                Ok(())
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(EgressProxyError::OperationFailed {
+                message: "egress proxy worker disappeared before explicit listener shutdown \
+                              acknowledgement"
+                    .to_owned(),
+            }),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(EgressProxyError::OperationFailed {
+                message: format!(
+                    "egress proxy worker did not confirm listener shutdown within {:?}",
+                    SHUTDOWN_ACK_TIMEOUT
+                ),
+            }),
+        }
     }
 }
 
 impl Drop for WorkloadPep {
     fn drop(&mut self) {
-        let _ = self.shutdown.send(true);
-        if let Some(shutdown_ack) = self.shutdown_ack.take() {
-            let _ = shutdown_ack.recv_timeout(SHUTDOWN_ACK_TIMEOUT);
-        }
+        let _ = self.shutdown_and_wait();
     }
 }
 
 struct ProxyWorker {
     listener: TcpListener,
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
-    audit_healthy: Arc<AtomicBool>,
+    health: Arc<WorkloadPepHealth>,
     resolver: Resolver,
     dns_cache: DnsCacheConfig,
     credential_provider: CredentialSecretProviderRef,
@@ -365,9 +421,11 @@ struct ProxyWorker {
 
 impl ProxyWorker {
     async fn run(self, shutdown: watch::Receiver<bool>, shutdown_ack: mpsc::Sender<()>) {
+        let mut liveness = WorkerLivenessGuard(Arc::clone(&self.health));
         let listener = match tokio::net::TcpListener::from_std(self.listener) {
             Ok(listener) => listener,
             Err(_) => {
+                liveness.mark_stopped();
                 let _ = shutdown_ack.send(());
                 return;
             }
@@ -375,7 +433,7 @@ impl ProxyWorker {
         let limiter = Arc::new(Semaphore::new(self.max_connections));
         let context = Arc::new(ClientHandlerContext {
             policy_state: self.policy_state,
-            audit_healthy: self.audit_healthy,
+            health: self.health,
             resolver: self.resolver,
             dns_cache: self.dns_cache,
             credential_provider: self.credential_provider,
@@ -392,7 +450,22 @@ impl ProxyWorker {
             tenant_fairness: self.tenant_fairness,
         });
         accept_loop(listener, context, limiter, shutdown).await;
+        liveness.mark_stopped();
         let _ = shutdown_ack.send(());
+    }
+}
+
+struct WorkerLivenessGuard(Arc<WorkloadPepHealth>);
+
+impl WorkerLivenessGuard {
+    fn mark_stopped(&mut self) {
+        self.0.mark_worker_stopped();
+    }
+}
+
+impl Drop for WorkerLivenessGuard {
+    fn drop(&mut self) {
+        self.0.mark_worker_stopped();
     }
 }
 
@@ -456,7 +529,7 @@ async fn drain_over_limit_client(client: &mut TcpStream) {
 #[derive(Clone)]
 struct ClientHandlerContext {
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
-    audit_healthy: Arc<AtomicBool>,
+    health: Arc<WorkloadPepHealth>,
     resolver: Resolver,
     dns_cache: DnsCacheConfig,
     credential_provider: CredentialSecretProviderRef,
@@ -477,7 +550,7 @@ impl ClientHandlerContext {
     fn terminal_sinks(&self) -> TerminalSinks<'_> {
         TerminalSinks::new(
             &self.durable_decision_sink,
-            self.audit_healthy.as_ref(),
+            self.health.as_ref(),
             &self.decision_logger,
         )
     }
@@ -531,7 +604,7 @@ async fn handle_client(
     };
     phase_recorder.record(EgressProxyRequestPhase::RejectMalformedOrCallerCredentials);
 
-    if !context.audit_healthy.load(Ordering::SeqCst) {
+    if !context.health.audit_is_healthy() {
         return audit_unhealthy_terminal(
             &mut client,
             &phase_recorder,
@@ -552,7 +625,7 @@ async fn handle_client(
         phase_recorder.clone(),
         Arc::clone(&context.decision_logger),
         Arc::clone(&context.durable_decision_sink),
-        Arc::clone(&context.audit_healthy),
+        Arc::clone(&context.health),
         EgressDecisionLog::denied(
             &request_id,
             &parsed,
@@ -765,7 +838,7 @@ async fn handle_client(
                 if let Err(error) = record_durable_decision(
                     &phase_recorder,
                     &context.durable_decision_sink,
-                    context.audit_healthy.as_ref(),
+                    context.health.as_ref(),
                     &allowed_decision_log,
                 ) {
                     let mut client = client;
@@ -836,7 +909,7 @@ async fn handle_client(
                         let _ = record_durable_decision(
                             &phase_recorder,
                             &context.durable_decision_sink,
-                            context.audit_healthy.as_ref(),
+                            context.health.as_ref(),
                             &decision_log,
                         );
                         emit_terminal_log(&phase_recorder, &context.decision_logger, decision_log);
@@ -883,7 +956,7 @@ async fn handle_client(
                 if let Err(error) = record_durable_decision(
                     &phase_recorder,
                     &context.durable_decision_sink,
-                    context.audit_healthy.as_ref(),
+                    context.health.as_ref(),
                     &outer_allowed_decision_log,
                 ) {
                     return audit_failure_terminal(
@@ -917,7 +990,7 @@ async fn handle_client(
                         phase_recorder: &phase_recorder,
                         decision_logger: &context.decision_logger,
                         durable_decision_sink: &context.durable_decision_sink,
-                        audit_healthy: context.audit_healthy.as_ref(),
+                        health: context.health.as_ref(),
                         response_started_signal: response_started_signal.clone(),
                         request_id: &request_id,
                         policy_generation: active_policy.policy_generation,
@@ -957,7 +1030,7 @@ async fn handle_client(
                         let _ = record_durable_decision(
                             &phase_recorder,
                             &context.durable_decision_sink,
-                            context.audit_healthy.as_ref(),
+                            context.health.as_ref(),
                             &decision_log,
                         );
                         emit_terminal_log(&phase_recorder, &context.decision_logger, decision_log);
@@ -966,7 +1039,7 @@ async fn handle_client(
                             && record_durable_decision(
                                 &phase_recorder,
                                 &context.durable_decision_sink,
-                                context.audit_healthy.as_ref(),
+                                context.health.as_ref(),
                                 &decision_log,
                             )
                             .is_err()
@@ -988,7 +1061,7 @@ async fn handle_client(
                             let _ = record_durable_decision(
                                 &phase_recorder,
                                 &context.durable_decision_sink,
-                                context.audit_healthy.as_ref(),
+                                context.health.as_ref(),
                                 &decision_log,
                             );
                         }
@@ -1145,7 +1218,7 @@ async fn handle_forward_http(
     if let Err(error) = record_durable_decision(
         &phase_recorder,
         &context.durable_decision_sink,
-        context.audit_healthy.as_ref(),
+        context.health.as_ref(),
         &allowed_decision_log,
     ) {
         return audit_failure_terminal(
@@ -1179,7 +1252,7 @@ async fn handle_forward_http(
         phase_recorder,
         decision_logger: Arc::clone(&context.decision_logger),
         durable_decision_sink: Arc::clone(&context.durable_decision_sink),
-        audit_healthy: Arc::clone(&context.audit_healthy),
+        health: Arc::clone(&context.health),
         response_started_signal: response_started_signal.clone(),
         final_response_write_gate: final_response_write_gate.clone(),
     };
@@ -1383,4 +1456,55 @@ fn render_pingora_downstream_request(
     let mut bytes = rendered.into_bytes();
     bytes.extend_from_slice(&buffer[parsed.body_offset..]);
     bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disconnected_shutdown_channel_is_not_provider_absence_evidence() {
+        let mut pep = WorkloadPep::start(WorkloadPepConfig::without_active_policy())
+            .expect("test PEP should start");
+        let (acknowledgement, disconnected) = mpsc::channel();
+        drop(acknowledgement);
+        pep.shutdown_ack = Some(disconnected);
+
+        for attempt in 1..=2 {
+            let error = pep
+                .shutdown()
+                .expect_err("channel loss must never manufacture provider acknowledgement");
+            assert!(
+                error
+                    .to_string()
+                    .contains("disappeared before explicit listener shutdown acknowledgement"),
+                "attempt {attempt} must retain the exact fail-closed diagnostic: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn stopped_worker_with_active_policy_is_not_ready() {
+        let mut pep = WorkloadPep::start(WorkloadPepConfig::new(
+            nimbus_egress::CompiledEgressPolicy::deny_all(),
+        ))
+        .expect("test PEP should start");
+        assert!(
+            pep.readiness()
+                .expect("running PEP readiness should be observable")
+                .ready,
+            "precondition: a running policy-bearing PEP should be ready"
+        );
+        pep.shutdown()
+            .expect("worker should acknowledge explicit listener shutdown");
+
+        let readiness = pep
+            .readiness()
+            .expect("stopped PEP readiness should remain observable");
+
+        assert!(
+            !readiness.ready,
+            "a stopped worker must not remain ready merely because policy state is retained"
+        );
+    }
 }

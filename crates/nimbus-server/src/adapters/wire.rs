@@ -3,14 +3,73 @@
 //! Adapters that speak their own protocol on their own port (MongoDB wire
 //! protocol, DynamoDB HTTP) run beside the main HTTP server and share its
 //! `Arc<Engine>`. `serve` drives every registered adapter through one uniform
-//! bind -> guard -> record -> spawn sequence, so adding an adapter means
-//! implementing this trait — not growing another bespoke block in
-//! `construction.rs`.
+//! bind -> guard -> record -> prepare sequence, then activates and supervises
+//! the complete group. Adding an adapter means implementing this trait, not
+//! growing another bespoke block in `construction.rs`.
 
+use std::future::Future;
+use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use nimbus_engine::Engine;
+
+pub(crate) type WireProtocolTaskFuture =
+    Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'static>>;
+
+/// Unspawned tasks for one sibling wire adapter.
+///
+/// The required listener factory keeps the concrete socket in the structured
+/// listener group until task construction succeeds. Optional background tasks
+/// share the adapter lifecycle but never own the listening socket.
+pub(crate) struct WireProtocolTasks {
+    listener_name: &'static str,
+    listener: Box<dyn FnOnce(tokio::net::TcpListener) -> WireProtocolTaskFuture + Send + 'static>,
+    background: Vec<WireProtocolTask>,
+}
+
+impl WireProtocolTasks {
+    pub(crate) fn new(
+        listener_name: &'static str,
+        listener: impl FnOnce(tokio::net::TcpListener) -> WireProtocolTaskFuture + Send + 'static,
+    ) -> Self {
+        Self {
+            listener_name,
+            listener: Box::new(listener),
+            background: Vec::new(),
+        }
+    }
+
+    pub(crate) fn with_background(
+        mut self,
+        name: &'static str,
+        future: WireProtocolTaskFuture,
+    ) -> Self {
+        self.background.push(WireProtocolTask { name, future });
+        self
+    }
+
+    pub(crate) fn bind_listener(self, listener: tokio::net::TcpListener) -> Vec<WireProtocolTask> {
+        let Self {
+            listener_name,
+            listener: listener_task,
+            mut background,
+        } = self;
+        let mut tasks = Vec::with_capacity(background.len() + 1);
+        tasks.push(WireProtocolTask {
+            name: listener_name,
+            future: listener_task(listener),
+        });
+        tasks.append(&mut background);
+        tasks
+    }
+}
+
+pub(crate) struct WireProtocolTask {
+    pub(crate) name: &'static str,
+    pub(crate) future: WireProtocolTaskFuture,
+}
 
 /// A sibling wire-protocol listener serving an adapter surface beside the
 /// main HTTP server.
@@ -18,8 +77,8 @@ use nimbus_engine::Engine;
 /// For each adapter, `serve` binds [`bind_addr`](Self::bind_addr), runs
 /// [`guard`](Self::guard) against the post-bind local address (fail-closed: a
 /// guard error aborts boot before the listener serves a single byte), records
-/// the listener in the system tenant, then hands the listener to
-/// [`spawn`](Self::spawn).
+/// the listener in the system tenant, and prepares its unspawned task set.
+/// The complete listener group activates only after every adapter succeeds.
 pub(crate) trait WireProtocolAdapter: Send {
     /// Stable adapter name recorded in the system tenant listener registry.
     fn name(&self) -> &'static str;
@@ -34,14 +93,10 @@ pub(crate) trait WireProtocolAdapter: Send {
     /// so OS-assigned ports are already resolved.
     fn guard(&self, addr: SocketAddr) -> std::io::Result<()>;
 
-    /// Spawn the listener task plus any adapter-owned background tasks,
-    /// consuming the adapter's config. Every returned handle is aborted when
-    /// the main HTTP server exits.
-    fn spawn(
-        self: Box<Self>,
-        listener: tokio::net::TcpListener,
-        engine: Arc<Engine>,
-    ) -> Vec<tokio::task::JoinHandle<()>>;
+    /// Construct, but do not spawn, the listener task and any adapter-owned
+    /// background tasks. The server-owned listener group spawns and supervises
+    /// the complete set only after bind, guard, and projection succeed.
+    fn build_tasks(self: Box<Self>, engine: Arc<Engine>) -> io::Result<WireProtocolTasks>;
 }
 
 #[cfg(test)]

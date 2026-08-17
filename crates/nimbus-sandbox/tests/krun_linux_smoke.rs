@@ -1,4 +1,3 @@
-#![cfg(target_os = "linux")]
 #![allow(clippy::field_reassign_with_default)]
 
 use std::env;
@@ -11,12 +10,15 @@ use std::time::{Duration, Instant};
 use futures::executor::block_on;
 
 use nimbus_core::TenantId;
+use nimbus_network::EndpointProtocol;
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
 use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxOwnerSpec,
-    SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxRestartPolicy,
-    SandboxRootSpec, SandboxSpec, SandboxStatus,
+    SandboxBackend, SandboxBackendKind, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
+    SandboxResourceLimits, SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
+
+#[path = "support/provision.rs"]
+mod provision_support;
 
 #[path = "krun_linux_smoke/cleanup.rs"]
 mod cleanup;
@@ -26,7 +28,5 @@ mod inspect;
 mod launch;
 #[path = "krun_linux_smoke/published_endpoints.rs"]
 mod published_endpoints;
-#[path = "krun_linux_smoke/restart.rs"]
-mod restart;
 #[path = "krun_linux_smoke/support.rs"]
 mod support;

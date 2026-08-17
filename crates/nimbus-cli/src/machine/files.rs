@@ -9,6 +9,7 @@ use tempfile::NamedTempFile;
 
 use super::DEFAULT_MACHINE_NAME;
 use super::manager::refresh_machine_state;
+use super::network_composition::HostMachineNetworkAuthority;
 use super::record::{MachineConfigRecord, MachinePaths, MachineRootLayout, MachineStateRecord};
 
 pub(super) fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), Error> {
@@ -187,6 +188,64 @@ pub(super) fn load_machine_config_if_exists(
     }
 }
 
+/// Read one current-version machine config without repair, backup, or write.
+///
+/// Provision-source preparation uses this before it owns the machine lock only
+/// to reject provider-managed networking. A host-managed result is never
+/// trusted until the authenticated locked snapshot is read again.
+#[cfg(any(unix, test))]
+pub(super) fn read_machine_config_snapshot_if_exists(
+    path: &Path,
+) -> Result<Option<MachineConfigRecord>, Error> {
+    let Some(bytes) = read_file_if_exists(path)? else {
+        return Ok(None);
+    };
+    let version = probe_machine_record_version(path, &bytes, "machine config")?;
+    if version != super::CURRENT_MACHINE_CONFIG_VERSION {
+        return Err(Error::InvalidInput(format!(
+            "machine config at {} uses schema version {version}; expected {}",
+            path.display(),
+            super::CURRENT_MACHINE_CONFIG_VERSION
+        )));
+    }
+    parse_machine_record(path, &bytes, "machine config").map(Some)
+}
+
+/// Read the exact persisted config and state without refresh, repair, or write.
+///
+/// Callers must hold the authenticated machine-record lock. This is a desired
+/// source snapshot, not observed process status; activation re-reads and
+/// compares it under the same lock before any machine effect.
+#[cfg(any(unix, test))]
+pub(super) fn load_machine_provision_source_snapshot(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    machine_name: &str,
+) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
+    let paths = roots.paths(machine_name);
+    let config = read_machine_config_snapshot_if_exists(&paths.config_path)?.ok_or_else(|| {
+        Error::InvalidInput(format!(
+            "machine '{machine_name}' is not initialized; run `nimbus machine start` to create it with defaults or `nimbus machine init` to configure it first"
+        ))
+    })?;
+    authenticate_machine_config(network, &config, roots)?;
+    let state = match read_file_if_exists(&paths.state_path)? {
+        Some(bytes) => {
+            let version = probe_machine_record_version(&paths.state_path, &bytes, "machine state")?;
+            if version != super::CURRENT_MACHINE_STATE_VERSION {
+                return Err(Error::InvalidInput(format!(
+                    "machine state at {} uses schema version {version}; expected {}",
+                    paths.state_path.display(),
+                    super::CURRENT_MACHINE_STATE_VERSION
+                )));
+            }
+            parse_machine_record(&paths.state_path, &bytes, "machine state")?
+        }
+        None => MachineStateRecord::initialized(),
+    };
+    Ok((paths, config, state))
+}
+
 fn rebuild_machine_state(
     path: &Path,
     reason: impl Into<String>,
@@ -240,6 +299,7 @@ pub(super) fn load_machine_state_if_exists(
 
 pub(super) fn load_initialized_machine(
     roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
     machine_name: &str,
 ) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
     let paths = roots.paths(machine_name);
@@ -249,11 +309,34 @@ pub(super) fn load_initialized_machine(
             machine_name
         ))
     })?;
+    authenticate_machine_config(network, &config, roots)?;
     let mut state = load_machine_state_if_exists(&paths.state_path)?
         .unwrap_or_else(MachineStateRecord::initialized);
     refresh_machine_state(&paths, &mut state)?;
     write_json_file(&paths.state_path, &state)?;
     Ok((paths, config, state))
+}
+
+pub(super) fn authenticate_initialized_machine_if_exists(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    machine_name: &str,
+) -> Result<(), Error> {
+    let paths = roots.paths(machine_name);
+    let Some(config) = load_machine_config_if_exists(&paths.config_path)? else {
+        return Ok(());
+    };
+    authenticate_machine_config(network, &config, roots)
+}
+
+fn authenticate_machine_config(
+    network: &HostMachineNetworkAuthority,
+    config: &MachineConfigRecord,
+    roots: &MachineRootLayout,
+) -> Result<(), Error> {
+    network
+        .authenticate_config(config, roots)
+        .map_err(|error| Error::PreconditionFailed(error.to_string()))
 }
 
 pub(super) fn remove_dir_if_exists(path: &Path) -> Result<(), Error> {
@@ -280,11 +363,57 @@ pub(super) fn with_machine_lock<T>(
     operation()
 }
 
-pub(super) fn with_default_machine_lock<T>(
+pub(super) fn with_authenticated_machine_lock<T>(
     roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    machine_name: &str,
     operation: impl FnOnce() -> Result<T, Error>,
 ) -> Result<T, Error> {
-    with_machine_lock(roots, DEFAULT_MACHINE_NAME, operation)
+    authenticate_initialized_machine_if_exists(roots, network, machine_name)?;
+    with_machine_lock(roots, machine_name, || {
+        authenticate_initialized_machine_if_exists(roots, network, machine_name)?;
+        operation()
+    })
+}
+
+pub(super) fn with_authenticated_default_machine_lock<T>(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    operation: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    with_authenticated_machine_lock(roots, network, DEFAULT_MACHINE_NAME, operation)
+}
+
+/// Lock the default machine without invoking config backup or state repair.
+///
+/// Provision-source preparation and activation are exact-snapshot operations.
+/// They authenticate the current-version config once before creating the lock
+/// path and again while holding the lock, but never convert a read failure into
+/// a filesystem mutation.
+#[cfg(any(unix, test))]
+pub(super) fn with_exact_authenticated_default_machine_lock<T>(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    operation: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    authenticate_machine_config_snapshot_if_exists(roots, network, DEFAULT_MACHINE_NAME)?;
+    with_machine_lock(roots, DEFAULT_MACHINE_NAME, || {
+        authenticate_machine_config_snapshot_if_exists(roots, network, DEFAULT_MACHINE_NAME)?;
+        operation()
+    })
+}
+
+#[cfg(any(unix, test))]
+fn authenticate_machine_config_snapshot_if_exists(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    machine_name: &str,
+) -> Result<(), Error> {
+    let paths = roots.paths(machine_name);
+    let Some(config) = read_machine_config_snapshot_if_exists(&paths.config_path)? else {
+        return Ok(());
+    };
+    authenticate_machine_config(network, &config, roots)
 }
 
 fn lock_machine_records(
@@ -358,8 +487,9 @@ pub(super) fn remove_file_if_exists(path: &Path) -> Result<(), Error> {
 ///
 /// These are the runtime endpoints a fresh launch must never inherit from a
 /// previous run: the readiness/ignition/API control sockets, the gvproxy
-/// datagram sockets, the VMM REST endpoint, and the three helper pid files. A
-/// stop removes them outright; a full teardown removes them alongside the
+/// datagram sockets, the VMM REST endpoint, the three helper pid files, and the
+/// exact gvproxy process-birth receipt. A stop removes them outright; a full
+/// teardown removes them alongside the
 /// [logs](machine_runtime_log_paths). Returned owned because
 /// [`krunkit_gvproxy_socket_path`](MachinePaths::krunkit_gvproxy_socket_path)
 /// derives its path rather than storing one, so a borrow would dangle.
@@ -370,9 +500,11 @@ pub(super) fn machine_runtime_socket_and_pid_paths(paths: &MachinePaths) -> Vec<
         paths.api_socket_path.clone(),
         paths.gvproxy_socket_path.clone(),
         paths.krunkit_gvproxy_socket_path(),
+        paths.gvproxy_services_socket_path(),
         paths.vmm_endpoint_path.clone(),
         paths.api_forward_pid_path.clone(),
         paths.gvproxy_pid_path.clone(),
+        paths.gvproxy_process_identity_path.clone(),
         paths.vmm_pid_path.clone(),
     ]
 }
@@ -400,4 +532,27 @@ pub(super) fn remove_machine_runtime_artifacts(paths: &MachinePaths) -> Result<(
         remove_file_if_exists(&path)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_cleanup_owns_the_parent_gvproxy_services_socket() {
+        let root = tempfile::TempDir::new().expect("machine path fixture should exist");
+        let roots = MachineRootLayout::new(
+            root.path().join("config"),
+            root.path().join("state"),
+            root.path().join("data"),
+            root.path().join("cache"),
+            root.path().join("runtime"),
+        );
+        let paths = roots.paths("default");
+
+        assert!(
+            machine_runtime_socket_and_pid_paths(&paths)
+                .contains(&paths.gvproxy_services_socket_path())
+        );
+    }
 }

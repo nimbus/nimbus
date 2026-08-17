@@ -23,7 +23,7 @@ pub use audit::{
     LocalServerAuditEvent, LocalServerAuditLog, LocalServerAuditRecord, origin_from_headers,
     tenant_id_from_path, tenant_id_from_request,
 };
-pub use paths::{LocalServerPaths, LocalServerPlatform};
+pub use paths::{LocalNodeNetworkRoot, LocalServerPaths, LocalServerPlatform};
 pub use policy::{
     LOCAL_ADMIN_HEADER_NAME, LocalServerRouteFamily, is_loopback_origin, parse_origin,
 };

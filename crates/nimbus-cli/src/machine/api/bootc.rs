@@ -5,8 +5,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use serde_json::Value;
 
-use super::binaries::resolve_binary;
 use super::*;
+use crate::provider_binaries::resolve_binary;
 
 pub(super) async fn machine_api_bootc_status(
     State(state): State<MachineApiState>,
@@ -20,6 +20,7 @@ pub(super) async fn machine_api_bootc_switch(
     State(state): State<MachineApiState>,
     Json(request): Json<MachineApiBootcSwitchRequest>,
 ) -> Result<Json<MachineApiBootcOperationResponse>, MachineApiHttpError> {
+    require_forwarder_authority(&state, &request.forwarder_authority)?;
     spawn_bootc_task(move || {
         let before = read_bootc_status(&state)?;
         let transport = request.transport.as_deref().unwrap_or("registry");
@@ -49,6 +50,7 @@ pub(super) async fn machine_api_bootc_upgrade(
     State(state): State<MachineApiState>,
     Json(request): Json<MachineApiBootcUpgradeRequest>,
 ) -> Result<Json<MachineApiBootcOperationResponse>, MachineApiHttpError> {
+    require_forwarder_authority(&state, &request.forwarder_authority)?;
     spawn_bootc_task(move || {
         let before = read_bootc_status(&state)?;
         let mut args = vec!["upgrade", "--quiet"];
@@ -74,8 +76,9 @@ pub(super) async fn machine_api_bootc_upgrade(
 
 pub(super) async fn machine_api_bootc_rollback(
     State(state): State<MachineApiState>,
-    Json(_request): Json<MachineApiBootcRollbackRequest>,
+    Json(request): Json<MachineApiBootcRollbackRequest>,
 ) -> Result<Json<MachineApiBootcOperationResponse>, MachineApiHttpError> {
+    require_forwarder_authority(&state, &request.forwarder_authority)?;
     spawn_bootc_task(move || {
         let before = read_bootc_status(&state)?;
         let output = run_bootc_command(&state, &["rollback"])?;
@@ -210,6 +213,8 @@ fn render_command_stream(label: &str, contents: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nimbus_network::{NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration};
+    use tempfile::TempDir;
 
     #[test]
     fn extracts_bootc_status_digest_fields() {
@@ -240,5 +245,53 @@ mod tests {
             Some("sha256:staged")
         );
         assert_eq!(deployment_image(&status, "rollback"), None);
+    }
+
+    #[tokio::test]
+    async fn bootc_mutation_rejects_stale_parent_authority_before_binary_effect() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let expected = MachineForwarderAuthority::new(
+            NetworkProviderHandle::new(
+                NetworkProviderId::for_registration_key("bootc-authority-test"),
+                "provider-instance",
+            )
+            .expect("provider handle should validate"),
+            NetworkResourceGeneration::new(2),
+        );
+        let stale = MachineForwarderAuthority::new(
+            expected.provider_instance().clone(),
+            NetworkResourceGeneration::new(1),
+        );
+        let state = MachineApiState {
+            control_data_dir: temp_dir.path().join("control"),
+            listen_mode: MachineApiListenMode::DirectSocket,
+            binary_lookup_path: Some(temp_dir.path().as_os_str().to_os_string()),
+            helper_binary_dirs: Vec::new(),
+            service_workloads: None,
+            machine_port_forwarder: None,
+            forwarder_authority: Some(expected),
+        };
+
+        let error = machine_api_bootc_switch(
+            State(state),
+            Json(MachineApiBootcSwitchRequest {
+                forwarder_authority: stale,
+                image: "ghcr.io/nimbus/machine-os:next".to_owned(),
+                transport: Some("registry".to_owned()),
+            }),
+        )
+        .await
+        .expect_err("stale parent authority must fail before resolving or running bootc");
+
+        assert_eq!(error.status, StatusCode::CONFLICT);
+        assert!(
+            error.message.contains("generation does not match"),
+            "{}",
+            error.message
+        );
+        assert!(
+            !temp_dir.path().join("bootc-effect").exists(),
+            "authority rejection must precede bootc provider effects"
+        );
     }
 }

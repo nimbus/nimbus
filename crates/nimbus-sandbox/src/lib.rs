@@ -10,21 +10,62 @@ pub mod backends;
 
 mod artifact_paths;
 mod backend;
-mod endpoint;
 mod error;
+mod execution_attempt;
+mod inspection;
 mod instance;
+mod network_status;
 mod process;
+mod provider_command;
+mod provision;
 mod spec;
+mod teardown;
 pub mod volume;
 
+pub use crate::backends::oci::network::{
+    MachinePortForwardOutcome, MachinePortForwardReceipt, MachinePortForwardingRetirement,
+    MachinePortForwardingRetirementObservation, OciMachinePortForwarderConfig,
+    OciMachinePortForwardingRetirement,
+};
+pub use crate::backends::oci::network::{OciNetworkProcess, OciNetworkProcessError};
+pub use crate::backends::{SandboxNetworkPlanRequirements, sandbox_network_plan_requirements};
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
-pub use endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 pub use error::{Result, SandboxError};
+pub use execution_attempt::{
+    SandboxExecutionAttemptId, SandboxExecutionAttemptIdError, SandboxRestartAttemptFence,
+};
+pub use inspection::{
+    SandboxCleanupObservation, SandboxExecutionAttemptObservation, SandboxExecutionObservation,
+    SandboxInspection, SandboxInspectionVersion, SandboxObservationUnknownReason,
+    SandboxRestartAssessment, SandboxRestartBlocker, SandboxRestartIneligibility,
+};
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
+pub use network_status::{SandboxNetworkStatus, SandboxNetworkStatusError};
+pub use provider_command::{
+    ProviderCommandAttemptJournal, ProviderCommandClaim, ProviderCommandClaimDecision,
+    ProviderCommandClaimInput, ProviderCommandCurrentExecution, ProviderCommandCurrentInspection,
+    ProviderCommandExecutionClaim, ProviderCommandJournalError, ProviderCommandObservation,
+    ProviderCommandObservationKind, ProviderCommandOperation, ProviderCommandStartedClaimDecision,
+    ProviderCommandStartedExecutionClaim,
+};
+pub use provision::{
+    SandboxProvisionDependencyListener, SandboxProvisionEndpointIdentity,
+    SandboxProvisionIngressRoute, SandboxProvisionIngressTargetObservation,
+    SandboxProvisionIngressTargets, SandboxProvisionListener, SandboxProvisionNetworkPlan,
+    SandboxProvisionNetworkPlanError, SandboxProvisionPhaseObservation,
+};
 pub use spec::{
     SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec, SandboxOciBuildSpec,
     SandboxOciImageReferenceSpec, SandboxOciImageSource, SandboxOciImageSpec, SandboxOwnerSpec,
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceCharge, SandboxResourceLimits,
     SandboxResourceQuotaPolicy, SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec,
     SandboxSpec, validate_sandbox_mounts, validate_tenant_volume_name,
+};
+pub use teardown::{
+    SandboxExecutionTeardownCommand, SandboxExecutionTeardownCommandError,
+    SandboxExecutionTeardownObservation, SandboxExecutionTeardownOperation,
+    SandboxNetworkReleaseAbsenceEvidence, SandboxNetworkTeardownCommand,
+    SandboxNetworkTeardownCommandError, SandboxNetworkTeardownCommandInput,
+    SandboxNetworkTeardownIdentity, SandboxNetworkTeardownIdentityInput,
+    SandboxNetworkTeardownObservation, SandboxNetworkTeardownOperation,
 };

@@ -7,28 +7,33 @@ mod systemd_transient;
 
 pub use direct_process::{DirectProcessBackend, DirectProcessEvidence};
 pub use host_lifecycle::{
-    HostBackendObservedState, HostExecutable, HostLifecycleBackend,
-    HostLifecycleBackendCapabilities, HostLifecycleBackendKind, HostLifecycleFuture,
-    HostLifecycleJournalSelectorEvidence, HostLifecyclePlan, HostLifecycleProperty,
-    HostLifecyclePropertySet, HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason,
-    HostRestartPolicy, RunnerKind, RunnerSpec, RuntimePoolTrustClass, RuntimePoolTrustState,
-    SystemdUnitKind, SystemdUnitName, TenantWorkloadId, TenantWorkloadLifecycleEvidence,
+    HostBackendObservedState, HostExecutable, HostExecutionDrainProvider,
+    HostExecutionStopProvider, HostLifecycleBackend, HostLifecycleBackendCapabilities,
+    HostLifecycleBackendKind, HostLifecycleFuture, HostLifecycleJournalSelectorEvidence,
+    HostLifecyclePlan, HostLifecycleProperty, HostLifecyclePropertySet, HostLifecycleRequest,
+    HostLifecycleStatus, HostLifecycleStatusReason, HostRestartPolicy, HostRestartProviderClaim,
+    HostRestartProviderClaimInput, HostTeardownExecuteClaim, HostTeardownExecuteObservation,
+    HostTeardownFuture, HostTeardownInspectClaim, HostTeardownInspectObservation,
+    HostTeardownProviderClaimInput, RunnerKind, RunnerSpec, RuntimePoolTrustClass,
+    RuntimePoolTrustState, SystemdUnitKind, SystemdUnitName, TenantWorkloadLifecycleEvidence,
 };
 pub use memory_pressure::{
     CgroupV2CpuPressureThresholds, CgroupV2HostPressureSource, CgroupV2MemoryPressureSource,
     HostCpuPressureObservation, HostMemoryPressureObservation, HostPressureObservation,
 };
 pub(crate) use nimbus_workloads::{
-    LocalEnforcementBinding, NodeIdentity, TenantSystemEvidenceProjection,
-    TenantWorkloadDeletionState, TenantWorkloadSpec,
+    LocalEnforcementBinding, TenantSystemEvidenceProjection, TenantWorkloadDeletionState,
+    TenantWorkloadSpec,
 };
+pub use nimbus_workloads::{NodeIdentity, WorkloadExecutionId};
 #[cfg(test)]
-pub(crate) use nimbus_workloads::{TenantFinalizerRecord, TenantWorkloadGeneration};
+pub(crate) use nimbus_workloads::{TenantFinalizerRecord, WorkloadGeneration};
 pub use reconciler::{
     NodeAgent, NodeAgentAssignment, NodeAgentCapabilityReport, NodeAgentReconcileReport,
     NodeAgentTransportAdmission, NodeAssignmentDisposition, NodeBackendCapabilitySource,
-    NodeWorkloadDesiredState, NodeWorkloadReconcileAction, NodeWorkloadReconcileOutcome,
-    NodeWorkloadReconciler, StatusEvidenceWrite, StatusEvidenceWriter,
+    NodeWorkloadDesiredState, NodeWorkloadReconcileAction, NodeWorkloadReconcileCapability,
+    NodeWorkloadReconcileOutcome, NodeWorkloadReconciler, StatusEvidenceWrite,
+    StatusEvidenceWriter,
 };
 pub use status::{
     NodeStatusAuthorizer, TenantNodeObservationIds, TenantObservedResourceUsage,
@@ -43,8 +48,8 @@ pub use systemd_transient::{
     StartTransientMode, SystemdDbusClient, SystemdDbusProperty, SystemdExecStart,
     SystemdInspectUnitRequest, SystemdJournalSelector, SystemdStartTransientUnitRequest,
     SystemdStartTransientUnitResponse, SystemdStopUnitRequest, SystemdStopUnitResponse,
-    SystemdTransientCapabilities, SystemdTransientUnitBackend, SystemdUnitStatus,
-    UnavailableSystemdDbusClient,
+    SystemdStopUnitSubmission, SystemdTransientCapabilities, SystemdTransientUnitBackend,
+    SystemdUnitJobStatus, SystemdUnitStatus, UnavailableSystemdDbusClient,
 };
 
 #[cfg(test)]

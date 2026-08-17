@@ -12,6 +12,7 @@ use crate::phase::{EgressProxyRequestPhase, RequestPhaseRecorder};
 use crate::policy_state::PolicyGeneration;
 use crate::request::ParsedProxyRequest;
 use crate::response::{HttpProxyResponse, write_http_response_async};
+use crate::worker::WorkloadPepHealth;
 
 const AUDIT_UNHEALTHY_FAIL_CLOSED_REASON: &str =
     "egress proxy decision audit is unhealthy; failing closed until restart";
@@ -119,19 +120,19 @@ impl RequestIdGenerator {
 #[derive(Clone, Copy)]
 pub(crate) struct TerminalSinks<'a> {
     durable_decision_sink: &'a DurableDecisionSink,
-    audit_healthy: &'a AtomicBool,
+    health: &'a WorkloadPepHealth,
     decision_logger: &'a DecisionLogger,
 }
 
 impl<'a> TerminalSinks<'a> {
     pub(crate) fn new(
         durable_decision_sink: &'a DurableDecisionSink,
-        audit_healthy: &'a AtomicBool,
+        health: &'a WorkloadPepHealth,
         decision_logger: &'a DecisionLogger,
     ) -> Self {
         Self {
             durable_decision_sink,
-            audit_healthy,
+            health,
             decision_logger,
         }
     }
@@ -150,7 +151,7 @@ pub(crate) struct AbortTerminalGuard {
     phase_recorder: RequestPhaseRecorder,
     decision_logger: DecisionLogger,
     durable_decision_sink: DurableDecisionSink,
-    audit_healthy: Arc<AtomicBool>,
+    health: Arc<WorkloadPepHealth>,
     slot: AbortTerminalSlot,
 }
 
@@ -159,14 +160,14 @@ impl AbortTerminalGuard {
         phase_recorder: RequestPhaseRecorder,
         decision_logger: DecisionLogger,
         durable_decision_sink: DurableDecisionSink,
-        audit_healthy: Arc<AtomicBool>,
+        health: Arc<WorkloadPepHealth>,
         decision_log: EgressDecisionLog,
     ) -> Self {
         Self {
             phase_recorder,
             decision_logger,
             durable_decision_sink,
-            audit_healthy,
+            health,
             slot: AbortTerminalSlot::new(decision_log),
         }
     }
@@ -187,7 +188,7 @@ impl Drop for AbortTerminalGuard {
             let _ = record_durable_decision(
                 &self.phase_recorder,
                 &self.durable_decision_sink,
-                self.audit_healthy.as_ref(),
+                self.health.as_ref(),
                 &decision_log,
             );
         }
@@ -210,7 +211,7 @@ pub(crate) async fn malformed_terminal(
     if record_durable_decision(
         phase_recorder,
         terminal_sinks.durable_decision_sink,
-        terminal_sinks.audit_healthy,
+        terminal_sinks.health,
         &decision_log,
     )
     .is_err()
@@ -237,7 +238,7 @@ pub(crate) async fn audit_unhealthy_terminal(
     let _ = record_durable_decision(
         phase_recorder,
         terminal_sinks.durable_decision_sink,
-        terminal_sinks.audit_healthy,
+        terminal_sinks.health,
         &decision_log,
     );
     emit_terminal_log(phase_recorder, terminal_sinks.decision_logger, decision_log);
@@ -265,7 +266,7 @@ pub(crate) async fn deny_terminal(
     if record_durable_decision(
         phase_recorder,
         terminal_sinks.durable_decision_sink,
-        terminal_sinks.audit_healthy,
+        terminal_sinks.health,
         &decision_log,
     )
     .is_err()
@@ -309,7 +310,7 @@ pub(crate) fn emit_terminal_log(
 pub(crate) fn record_durable_decision(
     phase_recorder: &RequestPhaseRecorder,
     durable_decision_sink: &DurableDecisionSink,
-    audit_healthy: &AtomicBool,
+    health: &WorkloadPepHealth,
     decision_log: &EgressDecisionLog,
 ) -> io::Result<()> {
     match durable_decision_sink(decision_log) {
@@ -321,7 +322,7 @@ pub(crate) fn record_durable_decision(
             Ok(())
         }
         Err(error) => {
-            audit_healthy.store(false, Ordering::SeqCst);
+            health.mark_audit_unhealthy();
             Err(error)
         }
     }
@@ -352,7 +353,7 @@ pub(crate) async fn upstream_error_terminal(
     if record_durable_decision(
         phase_recorder,
         terminal_sinks.durable_decision_sink,
-        terminal_sinks.audit_healthy,
+        terminal_sinks.health,
         &decision_log,
     )
     .is_err()

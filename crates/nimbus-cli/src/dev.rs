@@ -3,11 +3,15 @@ use std::io;
 use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
+use nimbus_operator::LocalNodeNetworkRoot;
 
 use crate::cli_ux;
+use crate::network_composition::StagedLocalNetworkComposition;
 use crate::node_runtime;
 use crate::provision;
-use crate::start::run_start_command;
+use crate::start::{
+    StartCommand, network_root_from_start_command, run_start_command_with_prepared_network,
+};
 
 mod adapter;
 mod banner;
@@ -26,7 +30,9 @@ use adapter::DevAdapter;
 use banner::emit_dev_banner;
 use env_file::write_env_local_deployment;
 use launch::{announce_launch_url_when_ready, operator_console_url};
+#[cfg(test)]
 use plan::resolve_dev_plan;
+use plan::resolve_dev_plan_with_staged_network;
 use watch::run_dev_watch_loop;
 
 const DEFAULT_DEV_PORT: u16 = 3210;
@@ -72,12 +78,25 @@ pub(crate) struct DevCommand {
     #[arg(long)]
     pub(crate) data_dir: Option<PathBuf>,
 
+    /// Stable OS-node root for host-global network allocation authority.
+    ///
+    /// This is independent of the app and local dev persistence roots.
+    #[arg(long)]
+    pub(crate) network_state_dir: Option<PathBuf>,
+
     /// Suppress the default browser auto-open and print a one-line launch
     /// URL banner instead. Auto-open is also suppressed automatically in
     /// non-interactive environments (when `$CI` or `$NO_BROWSER` is set,
     /// or stdout is not a TTY); in those cases the same banner is printed.
     #[arg(long, default_value_t = false)]
     pub(crate) no_open: bool,
+}
+
+fn resolve_dev_network_root(command: &DevCommand) -> nimbus::Result<LocalNodeNetworkRoot> {
+    network_root_from_start_command(&StartCommand {
+        network_state_dir: command.network_state_dir.clone(),
+        ..StartCommand::default()
+    })
 }
 
 pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn std::error::Error>> {
@@ -100,7 +119,10 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         }
     }
 
-    let plan = resolve_dev_plan(command, &cwd)?;
+    let network_root = resolve_dev_network_root(&command)?;
+    let staged_network = StagedLocalNetworkComposition::claim(&network_root)?;
+    let (plan, prepared_network) =
+        resolve_dev_plan_with_staged_network(command, &cwd, staged_network)?;
     tracing::debug!(
         mongodb = plan.wire_surfaces.mongodb,
         dynamodb = plan.wire_surfaces.dynamodb,
@@ -169,7 +191,7 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
         auto_open_decision,
     ));
     if plan.once {
-        return run_start_command(plan.start_command).await;
+        return run_start_command_with_prepared_network(plan.start_command, prepared_network).await;
     }
 
     let watch_plan = plan.watch_plan();
@@ -186,7 +208,7 @@ pub(crate) async fn run_dev_command(command: DevCommand) -> Result<(), Box<dyn s
     // watch borrows `plan.app_dir` / `plan.wire` is a disjoint partial
     // move — `DevPlan` has no `Drop`, so the borrow checker allows it.
     tokio::select! {
-        result = run_start_command(plan.start_command) => result,
+        result = run_start_command_with_prepared_network(plan.start_command, prepared_network) => result,
         result = run_dev_watch_loop(watch_plan, watch_roots_rx) => result,
         result = redetect::run_manifest_watch_loop(redetect::ManifestWatch {
             app_dir: &plan.app_dir,

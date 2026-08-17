@@ -1,7 +1,5 @@
-use nimbus::{
-    SandboxBackend, SandboxBackendKind, SandboxError, SandboxHandle, SandboxId, SandboxSpec,
-};
-use nimbus_sandbox::SandboxFuture;
+use nimbus::{Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxId};
+use nimbus_sandbox::{SandboxFuture, SandboxInspection};
 
 use super::client::MachineApiClient;
 
@@ -14,8 +12,19 @@ pub(crate) struct ForwardedMachineApiSandboxBackend {
 }
 
 impl ForwardedMachineApiSandboxBackend {
-    pub(crate) fn new(client: MachineApiClient) -> Self {
-        Self { client }
+    pub(crate) fn new(
+        client: MachineApiClient,
+        _network: &super::HostMachineNetworkAuthority,
+    ) -> Result<Self, Error> {
+        Ok(Self { client })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        client: MachineApiClient,
+        _port_leases: nimbus_network::LocalPortLeaseAuthority,
+    ) -> Result<Self, Error> {
+        Ok(Self { client })
     }
 }
 
@@ -24,23 +33,7 @@ impl SandboxBackend for ForwardedMachineApiSandboxBackend {
         SandboxBackendKind::Container
     }
 
-    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-        let message = format!(
-            "forwarded machine API backend cannot start service sandbox {} on this host",
-            spec.display_name()
-        );
-        Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
-    }
-
-    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
-        Box::pin(async move {
-            Err(SandboxError::BackendUnavailable {
-                message: unsupported_machine_api_backend_message(),
-            })
-        })
-    }
-
-    fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
+    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         Box::pin(async move {
             Err(SandboxError::BackendUnavailable {
                 message: unsupported_machine_api_backend_message(),

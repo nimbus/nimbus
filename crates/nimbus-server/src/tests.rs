@@ -114,7 +114,7 @@ use crate::adapters::firebase::grpc::generated::google::firestore::v1::{
 use crate::adapters::firebase::grpc::generated::google::r#type::LatLng as GrpcLatLng;
 
 fn router_for_engine(engine: Arc<Engine>) -> Router {
-    build_router(RouterOptions::new(engine))
+    build_router(RouterOptions::protocol_only(engine))
 }
 
 fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> Router {
@@ -122,7 +122,7 @@ fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> Ro
         std::num::NonZeroUsize::new(64).expect("test host parallelism is nonzero");
     let runtime_limits = convex_registry.runtime_limits();
     build_router(
-        RouterOptions::new(engine)
+        RouterOptions::protocol_only(engine)
             .with_runtime_limits(runtime_limits)
             .with_convex_registry(convex_registry)
             .with_runtime_host_resource_budget(
@@ -145,7 +145,7 @@ fn router_for_convex_with_tenancy(
         |auth, silo| auth.bind(&silo, verifier.clone()),
     );
     build_router(
-        RouterOptions::new(engine)
+        RouterOptions::protocol_only(engine)
             .with_runtime_limits(runtime_limits)
             .with_convex_registry(convex_registry)
             .with_convex_silo_auth(silo_auth)
@@ -367,11 +367,11 @@ async fn assert_convex_anonymous_ws_refused(server: &ServerFixture, tenant: &str
 }
 
 fn router_for_firebase(engine: Arc<Engine>, firebase_config: FirebaseConfig) -> Router {
-    build_router(RouterOptions::new(engine).with_firebase_config(firebase_config))
+    build_router(RouterOptions::protocol_only(engine).with_firebase_config(firebase_config))
 }
 
 fn router_for_license(engine: Arc<Engine>, license_state: LicenseState) -> Router {
-    build_router(RouterOptions::new(engine).with_license(license_state))
+    build_router(RouterOptions::protocol_only(engine).with_license(license_state))
 }
 
 #[tokio::test]
@@ -381,7 +381,11 @@ async fn serve_loads_embedded_system_convex_registry_by_default() {
         .await
         .expect("listener should bind");
     let addr = listener.local_addr().expect("listener should have addr");
-    let server = tokio::spawn(serve(listener, ServeOptions::new(fixture.engine())));
+    let server = tokio::spawn(serve(
+        listener,
+        ServeOptions::reconstruct_direct(fixture.engine())
+            .expect("test server network authority should reconstruct once"),
+    ));
     tokio::task::yield_now().await;
     if server.is_finished() {
         let result = server.await;
@@ -461,7 +465,7 @@ async fn serve_loads_embedded_system_convex_registry_by_default() {
 }
 
 #[tokio::test]
-async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
+async fn router_prepare_system_tenant_does_not_fabricate_physical_adapter_listeners() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let listen_addr = "127.0.0.1:45678".parse().expect("listen addr should parse");
     RouterBuildConfig::core(fixture.engine())
@@ -481,18 +485,10 @@ async fn router_prepare_system_tenant_records_enabled_adapter_listeners() {
         )
         .await
         .expect("listeners should list");
-    let has_listener = |adapter: &str, protocol: &str| {
-        listeners.iter().any(|listener| {
-            listener.fields.get("adapter") == Some(&json!(adapter))
-                && listener.fields.get("protocol") == Some(&json!(protocol))
-                && listener.fields.get("state") == Some(&json!("listening"))
-                && listener.fields.get("address") == Some(&json!(listen_addr.to_string()))
-        })
-    };
-    assert!(has_listener("native", "http"));
-    assert!(has_listener("convex", "websocket"));
-    assert!(has_listener("firebase", "http+websocket"));
-    assert!(has_listener("cloudflare", "http"));
+    assert!(
+        listeners.is_empty(),
+        "logical protocol registration must not fabricate physical listener authority"
+    );
 }
 
 fn header_csv_values(response: &reqwest::Response, header_name: &str) -> BTreeSet<String> {
@@ -1882,6 +1878,8 @@ mod local_server_security;
 mod local_ui;
 #[path = "tests/machine_lifecycle.rs"]
 mod machine_lifecycle;
+#[path = "tests/managed_workload.rs"]
+mod managed_workload;
 #[path = "tests/mongodb_wire.rs"]
 mod mongodb_wire;
 #[path = "tests/registry_and_license/mod.rs"]

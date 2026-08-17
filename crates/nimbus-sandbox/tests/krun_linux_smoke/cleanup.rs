@@ -60,9 +60,13 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
         .with_port_binding(http_binding(host_port, guest_port));
     spec.process = busybox_http_process(guest_port);
 
-    let handle = block_on(backend.start(spec))
-        .expect("image-backed start with non-root user should succeed");
-    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+    let provisioned = provision_krun(&backend, &state_root, spec, true)
+        .expect("image-backed non-root-user provision phases should succeed");
+    assert!(!provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let teardown = provisioned.teardown;
+    let _ingress = provisioned.ingress;
+    let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
     assert_eq!(ready_handle.status, SandboxStatus::Ready);
@@ -126,14 +130,14 @@ fn krun_backend_m2_user_and_stop_signal_lowering() {
     );
 
     let stop_start = Instant::now();
-    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     let stop_elapsed = stop_start.elapsed();
     eprintln!("stop elapsed: {stop_elapsed:?}");
 
     let stopped_handle = block_on(backend.inspect(&handle.id))
         .expect("inspect after stop should succeed")
         .expect("stopped sandbox should still have a manifest");
-    assert_eq!(stopped_handle.status, SandboxStatus::Stopped);
+    assert_eq!(stopped_handle.handle.status, SandboxStatus::Stopped);
 
     let manifest_after: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("manifest should be readable after stop"),

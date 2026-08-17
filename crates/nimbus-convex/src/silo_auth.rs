@@ -67,15 +67,20 @@ impl ConvexSiloAuthRegistry {
     }
 
     /// Bind or replace a silo's verifier. This is an operator/deployment action,
-    /// never request input.
+    /// never request input. Reserved tenants remain outside application auth.
     #[must_use]
     pub fn bind(mut self, silo: &TenantId, verifier: Arc<dyn ApplicationAuthVerifier>) -> Self {
-        self.verifiers.insert(silo.as_str().to_owned(), verifier);
+        if !silo.is_nimbus_reserved() {
+            self.verifiers.insert(silo.as_str().to_owned(), verifier);
+        }
         self
     }
 
     #[must_use]
     pub fn verifier_for_silo(&self, silo: &TenantId) -> Option<Arc<dyn ApplicationAuthVerifier>> {
+        if silo.is_nimbus_reserved() {
+            return None;
+        }
         self.verifiers.get(silo.as_str()).cloned()
     }
 
@@ -217,5 +222,23 @@ mod tests {
             error.message(),
             "no Convex auth providers are configured for silo `unprovisioned`"
         );
+    }
+
+    #[tokio::test]
+    async fn reserved_silos_never_register_or_select_an_application_verifier() {
+        for reserved in ["_nimbus", "_reserved"] {
+            let registry = ConvexSiloAuthRegistry::new().bind(
+                &silo(reserved),
+                Arc::new(NamedVerifier("reserved-verifier")),
+            );
+
+            assert!(!registry.contains_silo(&silo(reserved)));
+            assert!(registry.verifier_for_silo(&silo(reserved)).is_none());
+            let error = registry
+                .verify_bearer_token(&silo(reserved), "token")
+                .await
+                .expect_err("reserved application silo must fail closed");
+            assert!(!error.message().contains("reserved-verifier"));
+        }
     }
 }

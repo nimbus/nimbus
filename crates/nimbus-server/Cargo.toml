@@ -49,6 +49,7 @@ nimbus-dynamodb = { path = "../nimbus-dynamodb" }
 nimbus-egress = { path = "../nimbus-egress" }
 nimbus-license = { path = "../nimbus-license" }
 nimbus-mongodb = { path = "../nimbus-mongodb" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-provenance = { path = "../nimbus-provenance" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-s3 = { path = "../nimbus-s3" }
@@ -102,6 +103,7 @@ hyper = "1"
 hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"] }
 tower-http.workspace = true
 tracing.workspace = true
+ulid.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [target.'cfg(windows)'.dependencies]
@@ -122,6 +124,8 @@ nimbus-compute = { path = "../nimbus-compute", features = ["test-hooks"] }
 nimbus-engine = { path = "../nimbus-engine", default-features = false, features = [
     "test-hooks",
 ] }
+nimbus-network = { path = "../nimbus-network" }
+nimbus-process-harness = { path = "../nimbus-process-harness" }
 nimbus-testing = { path = "../nimbus-testing", default-features = false }
 serde_yaml.workspace = true
 tempfile.workspace = true

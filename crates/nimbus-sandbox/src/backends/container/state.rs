@@ -5,10 +5,11 @@ use nimbus_core::TenantId;
 use serde::{Deserialize, Serialize};
 
 use super::runtime::ContainerSandboxBackendConfig;
-use crate::endpoint::PublishedEndpoint;
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::spec::{SandboxLifecycleSpec, SandboxPortBinding, SandboxResourceLimits, SandboxSpec};
+use crate::{SandboxNetworkStatus, SandboxProvisionNetworkPlan};
+use nimbus_network::{NetworkAttachmentId, PublishedEndpoint};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerSandboxStateView {
@@ -23,7 +24,7 @@ impl ContainerSandboxStateView {
     }
 
     pub fn from_config(config: &ContainerSandboxBackendConfig) -> Self {
-        Self::new(config.state_root.clone())
+        Self::new(config.workload_state_root.clone())
     }
 
     pub fn state_root(&self) -> &Path {
@@ -36,7 +37,7 @@ impl ContainerSandboxStateView {
             .into_iter()
             .filter(ContainerPersistedSandboxRecord::is_service_owned)
             .map(ContainerPersistedSandboxRecord::into_summary)
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>>>()?;
         summaries.sort_by(compare_summary_order);
         Ok(summaries)
     }
@@ -64,9 +65,10 @@ impl ContainerSandboxStateView {
         else {
             return Ok(None);
         };
-        self.read_record(&manifest_path).map(|record| {
-            record.and_then(|record| record.is_service_owned().then(|| record.into_details()))
-        })
+        match self.read_record(&manifest_path)? {
+            Some(record) if record.is_service_owned() => record.into_details().map(Some),
+            Some(_) | None => Ok(None),
+        }
     }
 
     pub fn inspect_service(
@@ -83,7 +85,9 @@ impl ContainerSandboxStateView {
             })
             .max_by(compare_service_identity_preference);
 
-        Ok(selected.map(ContainerPersistedSandboxRecord::into_details))
+        selected
+            .map(ContainerPersistedSandboxRecord::into_details)
+            .transpose()
     }
 
     pub fn log_paths(&self, sandbox_id: &SandboxId) -> Result<Option<ContainerSandboxLogPaths>> {
@@ -148,7 +152,7 @@ pub struct ContainerSandboxSummary {
     pub service_name: String,
     pub status: SandboxStatus,
     pub published_endpoints: Vec<PublishedEndpoint>,
-    pub restart_count: u32,
+    pub network_status: Option<SandboxNetworkStatus>,
     pub last_exit_code: Option<i32>,
     pub shutdown_requested: bool,
 }
@@ -188,34 +192,58 @@ impl ContainerPersistedSandboxRecord {
             .expect("service sandbox state records require service owner metadata")
     }
 
-    fn into_summary(self) -> ContainerSandboxSummary {
+    fn portable_network_status(&self) -> Result<Option<SandboxNetworkStatus>> {
+        self.manifest
+            .provision_network_plan
+            .as_ref()
+            .map(|plan| {
+                plan.project_portable_status(
+                    self.manifest
+                        .network_config
+                        .as_ref()
+                        .map(|config| &config.attachment_id),
+                    &self.manifest.handle.published_endpoints,
+                )
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "container state for {} carries crossed portable network status: {error}",
+                        self.manifest.handle.id
+                    ),
+                })
+            })
+            .transpose()
+    }
+
+    fn into_summary(self) -> Result<ContainerSandboxSummary> {
         let service_name = self.service_name().to_owned();
-        ContainerSandboxSummary {
+        let network_status = self.portable_network_status()?;
+        Ok(ContainerSandboxSummary {
             sandbox_id: self.manifest.handle.id,
             tenant_id: self.manifest.spec.tenant_id,
             service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints,
-            restart_count: self.manifest.restart_count,
+            network_status,
             last_exit_code: self.manifest.last_exit_code,
             shutdown_requested: self.manifest.shutdown_requested,
-        }
+        })
     }
 
-    fn into_details(self) -> ContainerSandboxDetails {
+    fn into_details(self) -> Result<ContainerSandboxDetails> {
         let service_name = self.service_name().to_owned();
+        let network_status = self.portable_network_status()?;
         let summary = ContainerSandboxSummary {
             sandbox_id: self.manifest.handle.id,
             tenant_id: self.manifest.spec.tenant_id.clone(),
             service_name,
             status: self.manifest.status,
             published_endpoints: self.manifest.handle.published_endpoints.clone(),
-            restart_count: self.manifest.restart_count,
+            network_status,
             last_exit_code: self.manifest.last_exit_code,
             shutdown_requested: self.manifest.shutdown_requested,
         };
 
-        ContainerSandboxDetails {
+        Ok(ContainerSandboxDetails {
             summary,
             resources: self.manifest.spec.resources,
             lifecycle: self.manifest.spec.lifecycle,
@@ -226,7 +254,7 @@ impl ContainerPersistedSandboxRecord {
             },
             state_dir: self.manifest.conmon_layout.container_state_dir,
             manifest_path: self.manifest_path,
-        }
+        })
     }
 }
 
@@ -234,12 +262,17 @@ impl ContainerPersistedSandboxRecord {
 struct ContainerPersistedManifest {
     handle: SandboxHandle,
     spec: SandboxSpec,
+    provision_network_plan: Option<SandboxProvisionNetworkPlan>,
+    network_config: Option<ContainerPersistedNetworkConfig>,
     conmon_layout: ContainerPersistedConmonLayout,
     last_exit_code: Option<i32>,
-    #[serde(default)]
-    restart_count: u32,
     shutdown_requested: bool,
     status: SandboxStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct ContainerPersistedNetworkConfig {
+    attachment_id: NetworkAttachmentId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -295,21 +328,20 @@ mod tests {
     use tempfile::TempDir;
 
     use super::ContainerSandboxStateView;
-    use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
     use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
-    use crate::spec::{SandboxPortBinding, SandboxResourceLimits};
+    use crate::spec::{SandboxPortBinding, SandboxResourceLimits, SandboxSpec};
+    use nimbus_network::{EndpointProtocol, NetworkAttachmentId, PublishedEndpoint};
 
     #[test]
     fn state_view_lists_manifest_backed_summaries_and_skips_missing_manifest_dirs() {
         let temp_dir = TempDir::new().expect("temporary directory should exist");
-        write_manifest_with_restart_count(
+        write_manifest(
             temp_dir.path(),
             "db-01aaa",
             "svc-demo",
             "db",
             SandboxStatus::Ready,
             Some(137),
-            2,
         );
         write_manifest(
             temp_dir.path(),
@@ -346,7 +378,7 @@ mod tests {
         assert_eq!(summaries[0].status, SandboxStatus::Stopped);
         assert_eq!(summaries[1].status, SandboxStatus::Ready);
         assert_eq!(summaries[1].last_exit_code, Some(137));
-        assert_eq!(summaries[1].restart_count, 2);
+        assert_eq!(summaries[1].network_status, None);
     }
 
     #[test]
@@ -508,6 +540,62 @@ mod tests {
         );
     }
 
+    #[test]
+    fn state_view_projects_exact_portable_status_and_rejects_crossed_attachment() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        write_manifest(
+            temp_dir.path(),
+            "api-01aaa",
+            "svc-demo",
+            "api",
+            SandboxStatus::Ready,
+            None,
+        );
+        let (manifest_path, plan) =
+            add_exact_network_plan(temp_dir.path(), "api-01aaa", "svc-demo", "container-state");
+        let view = ContainerSandboxStateView::new(temp_dir.path());
+
+        let summary = view
+            .list()
+            .expect("exact status should project")
+            .pop()
+            .expect("service summary should exist");
+        let status = summary
+            .network_status
+            .expect("exact plan should produce portable status");
+        assert_eq!(
+            status
+                .attachment()
+                .expect("attachment should be observed")
+                .attachment_id(),
+            plan.attachment_id()
+        );
+        assert_eq!(
+            status.published_endpoints()[0].endpoint_id(),
+            plan.listeners()[0].endpoint_id()
+        );
+
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest should read"))
+                .expect("manifest should parse");
+        manifest["network_config"]["attachment_id"] = serde_json::to_value(
+            NetworkAttachmentId::for_workload_attachment("crossed", "primary"),
+        )
+        .expect("crossed attachment should serialize");
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should write");
+
+        assert!(
+            view.list()
+                .expect_err("crossed attachment evidence must fail closed")
+                .to_string()
+                .contains("crossed portable network status")
+        );
+    }
+
     fn write_manifest(
         state_root: &Path,
         sandbox_id: &str,
@@ -515,26 +603,6 @@ mod tests {
         service_name: &str,
         status: SandboxStatus,
         last_exit_code: Option<i32>,
-    ) {
-        write_manifest_with_restart_count(
-            state_root,
-            sandbox_id,
-            tenant_id,
-            service_name,
-            status,
-            last_exit_code,
-            0,
-        );
-    }
-
-    fn write_manifest_with_restart_count(
-        state_root: &Path,
-        sandbox_id: &str,
-        tenant_id: &str,
-        service_name: &str,
-        status: SandboxStatus,
-        last_exit_code: Option<i32>,
-        restart_count: u32,
     ) {
         write_manifest_with_owner(ManifestFixture {
             state_root,
@@ -547,7 +615,6 @@ mod tests {
             }),
             status,
             last_exit_code,
-            restart_count,
         });
     }
 
@@ -569,8 +636,38 @@ mod tests {
             }),
             status,
             last_exit_code: None,
-            restart_count: 0,
         });
+    }
+
+    fn add_exact_network_plan(
+        state_root: &Path,
+        sandbox_id: &str,
+        tenant_id: &str,
+        label: &str,
+    ) -> (std::path::PathBuf, crate::SandboxProvisionNetworkPlan) {
+        let tenant_id = TenantId::new(tenant_id).expect("tenant id should parse");
+        let sandbox_id = SandboxId::new(sandbox_id);
+        let manifest_path =
+            crate::artifact_paths::manifest_path(state_root, &tenant_id, &sandbox_id);
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest should read"))
+                .expect("manifest should parse");
+        let spec: SandboxSpec =
+            serde_json::from_value(manifest["spec"].clone()).expect("sandbox spec should parse");
+        let plan = crate::provision::test_support::sandbox_provision_network_plan_fixture(
+            &spec,
+            &sandbox_id,
+            label,
+        );
+        manifest["provision_network_plan"] =
+            serde_json::to_value(&plan).expect("provision plan should serialize");
+        manifest["network_config"] = json!({"attachment_id": plan.attachment_id()});
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should write");
+        (manifest_path, plan)
     }
 
     struct ManifestFixture<'a> {
@@ -581,7 +678,6 @@ mod tests {
         owner: serde_json::Value,
         status: SandboxStatus,
         last_exit_code: Option<i32>,
-        restart_count: u32,
     }
 
     fn write_manifest_with_owner(fixture: ManifestFixture<'_>) {
@@ -600,11 +696,14 @@ mod tests {
             fixture.handle_name,
             crate::backend::SandboxBackendKind::Container,
             fixture.status,
-            vec![PublishedEndpoint::new(
-                "http",
-                PublishedEndpointProtocol::Tcp,
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
-            )],
+            vec![
+                PublishedEndpoint::new(
+                    "http",
+                    EndpointProtocol::Tcp,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
+                )
+                .with_guest_port(8080),
+            ],
         );
         let manifest = json!({
             "handle": handle,
@@ -635,7 +734,6 @@ mod tests {
                 "oci_log": container_dir.join("oci.log")
             },
             "last_exit_code": fixture.last_exit_code,
-            "restart_count": fixture.restart_count,
             "shutdown_requested": matches!(fixture.status, SandboxStatus::Stopped),
             "status": fixture.status
         });

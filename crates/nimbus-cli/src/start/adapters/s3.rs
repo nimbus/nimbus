@@ -41,7 +41,6 @@ where
 pub(super) fn resolve_s3(
     command: &StartCommand,
     env_lookup: &impl Fn(&str) -> Option<String>,
-    port_is_free: &impl Fn(u16) -> bool,
     store: &mut CredentialStore<'_>,
 ) -> Result<Option<S3Config>, Error> {
     if !command.s3 {
@@ -56,19 +55,9 @@ pub(super) fn resolve_s3(
     }
     ensure_host_opt_in(&command.s3_host, command.allow_network)
         .map_err(|error| Error::InvalidInput(format!("--s3-host: {error}")))?;
-    let port = match command.s3_port {
-        Some(port) => port,
-        None => {
-            if !port_is_free(S3_CONVENTIONAL_PORT) {
-                return Err(Error::InvalidInput(format!(
-                    "S3 conventional port {S3_CONVENTIONAL_PORT} is busy; \
-                     pass --s3-port to serve on another port or --no-s3 \
-                     to disable the listener"
-                )));
-            }
-            S3_CONVENTIONAL_PORT
-        }
-    };
+    // Availability is an effect result, not configuration state. The server's
+    // shared lease authority and real bind enforce this exact desired port.
+    let port = command.s3_port.unwrap_or(S3_CONVENTIONAL_PORT);
     let raw_bindings: Vec<String> = if command.s3_access_key.is_empty() {
         env_lookup(S3_ACCESS_KEYS_ENV)
             .map(|raw| {

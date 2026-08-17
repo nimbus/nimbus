@@ -5,7 +5,6 @@ use s3s::auth::{S3Auth, SecretKey};
 use s3s::{S3Result, s3_error};
 
 pub const S3_ACCESS_KEY_SPEC: &str = "ACCESS_KEY_ID:SECRET:TENANT";
-const RESERVED_TENANT_PREFIX: &str = "_nimbus";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyBinding {
@@ -57,7 +56,7 @@ impl AccessKeyRegistry {
     pub fn binding(&self, access_key_id: &str) -> S3Result<&KeyBinding> {
         self.bindings
             .get(access_key_id)
-            .filter(|binding| !is_reserved_tenant(&binding.tenant))
+            .filter(|binding| !binding.tenant.is_nimbus_reserved())
             .ok_or_else(|| s3_error!(InvalidAccessKeyId))
     }
 
@@ -99,16 +98,12 @@ fn parse_binding(binding: &str) -> Result<(String, String, TenantId)> {
         )));
     }
     let tenant = TenantId::new(tenant)?;
-    if is_reserved_tenant(&tenant) {
+    if tenant.is_nimbus_reserved() {
         return Err(Error::InvalidInput(format!(
             "invalid S3 access-key binding `{binding}`: tenant `{tenant}` is reserved"
         )));
     }
     Ok((access_key_id.to_string(), secret.to_string(), tenant))
-}
-
-fn is_reserved_tenant(tenant: &TenantId) -> bool {
-    tenant.as_str().starts_with(RESERVED_TENANT_PREFIX)
 }
 
 #[cfg(test)]
@@ -137,8 +132,11 @@ mod tests {
 
     #[test]
     fn reserved_tenant_is_rejected() {
-        let error = AccessKeyRegistry::from_operator_spec("AKIA:secret:_nimbus_internal")
-            .expect_err("reserved tenant should fail");
-        assert!(error.to_string().contains("reserved"));
+        for reserved in ["_nimbus_internal", "_reserved"] {
+            let spec = format!("AKIA:secret:{reserved}");
+            let error = AccessKeyRegistry::from_operator_spec(&spec)
+                .expect_err("reserved tenant should fail");
+            assert!(error.to_string().contains("reserved"));
+        }
     }
 }

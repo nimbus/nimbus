@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use nimbus::Error;
+use nimbus_machine::MachineForwarderAuthority;
+use nimbus_network::{LocalPortLeaseAuthority, NetworkResourceGeneration};
 
 use super::super::bootstrap::resolve_ignition_file;
 use super::super::guest_config::render_machine_config_bundle;
@@ -14,19 +16,23 @@ use super::super::{
 };
 use super::helper_paths::resolve_gvproxy_binary;
 use super::image::resolve_bootable_image_path;
-use super::ports::allocate_machine_ssh_port;
+use super::ports::PreparedMachineSshPortLease;
 use super::vmm::{MachineVmmBackend, VmmLaunchContext, vmm_backend};
 use super::{MachineHelperBinaryPaths, MachineRuntimeState, READY_VSOCK_PORT, mount_tag};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(super) struct MachineLaunchPlan {
     pub(super) runtime: MachineRuntimeState,
-    /// The gvproxy user-mode network helper command, present only for providers
-    /// whose backend [`requires_gvproxy`](MachineVmmBackend::requires_gvproxy).
-    /// Provider-managed networking backends leave this `None`.
-    pub(super) gvproxy_command: Option<MachineCommandLine>,
+    pub(super) ssh_port_lease: PreparedMachineSshPortLease,
+    /// The gvproxy user-mode network helper command required by every backend
+    /// admitted through the current host-managed VMM seam.
+    ///
+    /// Provider-managed networking is a different lifecycle mode and is
+    /// rejected by [`vmm_backend`] before this plan can reserve a host lease.
+    pub(super) gvproxy_command: MachineCommandLine,
     pub(super) vmm_command: MachineCommandLine,
     pub(super) ignition_file_path: Option<PathBuf>,
+    #[cfg(test)]
     pub(super) machine_config_bundle_dir: Option<PathBuf>,
 }
 
@@ -112,11 +118,20 @@ impl MachineCommandLine {
 
 impl MachineLaunchPlan {
     pub(super) fn build(
+        port_authority: &LocalPortLeaseAuthority,
         paths: &MachinePaths,
         config: &MachineConfigRecord,
         state: &MachineStateRecord,
     ) -> Result<Self, Error> {
         let backend = vmm_backend(config.provider)?;
+        if backend.provider() != config.provider {
+            return Err(Error::Internal(format!(
+                "machine backend resolver returned {:?} for requested provider {:?}",
+                backend.provider(),
+                config.provider
+            )));
+        }
+        let forwarder_authority = next_machine_forwarder_authority(config, state)?;
         let helper_binaries = MachineHelperBinaryPaths {
             vmm: backend.resolve_vmm_binary()?,
             gvproxy: resolve_gvproxy_binary()?,
@@ -125,9 +140,12 @@ impl MachineLaunchPlan {
             resolve_bootable_image_path(paths, &config.guest.image_source, config.provider)?;
         let bootstrap_mode = machine_bootstrap_mode(config);
         let ignition_file_path = match bootstrap_mode {
-            MachineBootstrapMode::Ignition => {
-                Some(resolve_ignition_file(paths, config, READY_VSOCK_PORT)?)
-            }
+            MachineBootstrapMode::Ignition => Some(resolve_ignition_file(
+                paths,
+                config,
+                READY_VSOCK_PORT,
+                &forwarder_authority,
+            )?),
             MachineBootstrapMode::BootcMachineConfig | MachineBootstrapMode::ShellScript => None,
         };
         let machine_config_bundle_dir = match bootstrap_mode {
@@ -135,54 +153,70 @@ impl MachineLaunchPlan {
                 paths,
                 config,
                 READY_VSOCK_PORT,
+                &forwarder_authority,
             )?),
             MachineBootstrapMode::ShellScript => None,
             MachineBootstrapMode::Ignition => None,
         };
-        let ssh_port = allocate_machine_ssh_port(&config.roots, &config.name, state)?;
+        let efi_variable_store_path = config
+            .guest
+            .efi_variable_store_path
+            .clone()
+            .unwrap_or_else(|| paths.efi_variable_store_path.clone());
         let rest_uri = format!("unix://{}", paths.vmm_endpoint_path.display());
-        let runtime = MachineRuntimeState {
-            helper_binaries: helper_binaries.clone(),
-            image_path: image_path.clone(),
-            efi_variable_store_path: config
-                .guest
-                .efi_variable_store_path
-                .clone()
-                .unwrap_or_else(|| paths.efi_variable_store_path.clone()),
-            machine_image_source: describe_machine_image_source(&config.guest.image_source),
-            ssh_port,
-            rest_uri: rest_uri.clone(),
-            ready_vsock_port: READY_VSOCK_PORT,
-        };
-
-        // The backend owns whether host networking flows through gvproxy. Only
-        // build (and later spawn) the helper when it does; provider-managed
-        // networking backends run without it.
-        let gvproxy_command = backend.requires_gvproxy().then(|| MachineCommandLine {
-            program: helper_binaries.gvproxy.clone(),
-            args: build_gvproxy_args(backend.as_ref(), paths, ssh_port),
-            // gvproxy writes its own `-log-file`; no stdout+stderr capture needed.
-            capture_log_path: None,
-        });
-
         let vmm_command = backend.build_launch_command(
             &helper_binaries.vmm,
             &VmmLaunchContext {
                 paths,
                 config,
                 image_path: &image_path,
-                efi_variable_store_path: &runtime.efi_variable_store_path,
+                efi_variable_store_path: &efi_variable_store_path,
                 rest_uri: &rest_uri,
                 bootstrap_mode,
                 machine_config_bundle_dir: machine_config_bundle_dir.as_deref(),
             },
         )?;
 
+        // Reserve and claim only after every fallible pure/provider-command
+        // preparation step has succeeded. From this point onward the plan is
+        // assembled without another fallible operation, so a returned claim
+        // always reaches the explicit pre-provider compensation boundary in
+        // `start_machine`.
+        let ssh_port_lease =
+            PreparedMachineSshPortLease::prepare(port_authority.clone(), &config.name, state)?;
+        let ssh_port = ssh_port_lease.selected_port();
+        let runtime = MachineRuntimeState {
+            helper_binaries: helper_binaries.clone(),
+            image_path: image_path.clone(),
+            efi_variable_store_path,
+            machine_image_source: describe_machine_image_source(&config.guest.image_source),
+            ssh_listener_id: ssh_port_lease.listener_id().clone(),
+            forwarder_authority,
+            ssh_port,
+            rest_uri: rest_uri.clone(),
+            ready_vsock_port: READY_VSOCK_PORT,
+        };
+
+        // Every backend admitted by `vmm_backend` currently uses Nimbus-owned
+        // host networking. Keep that state structural: a valid launch plan
+        // always carries the gvproxy command corresponding to its claimed SSH
+        // listener. Provider-managed networking must enter through its own
+        // lifecycle seam rather than accidentally combining a host lease with
+        // no host networking effect.
+        let gvproxy_command = MachineCommandLine {
+            program: helper_binaries.gvproxy.clone(),
+            args: build_gvproxy_args(backend.as_ref(), paths, ssh_port),
+            // gvproxy writes its own `-log-file`; no stdout+stderr capture needed.
+            capture_log_path: None,
+        };
+
         Ok(Self {
             runtime,
+            ssh_port_lease,
             gvproxy_command,
             vmm_command,
             ignition_file_path,
+            #[cfg(test)]
             machine_config_bundle_dir,
         })
     }
@@ -190,6 +224,43 @@ impl MachineLaunchPlan {
     pub(super) fn runtime(&self) -> &MachineRuntimeState {
         &self.runtime
     }
+
+    pub(super) fn ssh_port_lease(&self) -> &PreparedMachineSshPortLease {
+        &self.ssh_port_lease
+    }
+}
+
+pub(super) fn next_machine_forwarder_authority(
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+) -> Result<MachineForwarderAuthority, Error> {
+    let provider_instance = config.network_authority.provider_instance();
+    let generation = match state.runtime.as_ref() {
+        None => NetworkResourceGeneration::new(1),
+        Some(runtime) => {
+            if runtime.forwarder_authority.provider_instance() != provider_instance {
+                return Err(Error::conflict(format!(
+                    "machine '{}' persisted runtime belongs to a different parent-issued \
+                     forwarder provider",
+                    config.name
+                )));
+            }
+            runtime
+                .forwarder_authority
+                .generation()
+                .checked_next()
+                .ok_or_else(|| {
+                    Error::conflict(format!(
+                        "machine '{}' exhausted its forwarder provider generation",
+                        config.name
+                    ))
+                })?
+        }
+    };
+    Ok(MachineForwarderAuthority::new(
+        provider_instance.clone(),
+        generation,
+    ))
 }
 
 fn build_gvproxy_args(
@@ -201,6 +272,8 @@ fn build_gvproxy_args(
     // forwarding flags are shared across every gvproxy-backed provider.
     let mut args = backend.gvproxy_listen_args(&paths.gvproxy_socket_path);
     args.extend([
+        "-services".to_owned(),
+        format!("unix://{}", paths.gvproxy_services_socket_path().display()),
         "-pid-file".to_owned(),
         paths.gvproxy_pid_path.display().to_string(),
         "-log-file".to_owned(),

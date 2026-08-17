@@ -1,0 +1,1648 @@
+{
+  "schema_version": 2,
+  "source_head": "bcb0a1b06758d78155787aaf98a2cc502e02c039",
+  "scope": {
+    "production_network": "Every Rust production TCP/UDP allocation, availability probe, bind, provider bind request, pre-bound listener consumer, and inherited socket found by the recorded scans.",
+    "local_ipc": "Production Unix-domain binds and inherited descriptors are classified separately because a host TCP/UDP PortLease must not absorb filesystem-path ownership.",
+    "tests": "Inline and path-owned test fixtures are exemptions only when their cfg/module ownership is mechanically proven below.",
+    "identity": "Every active occurrence is keyed by repository path, authority kind, enclosing symbol, and ordinal; numeric addresses and ports are diagnostics, never identity."
+  },
+  "scan_commands": [
+    "node scripts/verify-nimbus-network-bind-census.mjs --inventory docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json --print-candidates",
+    "rg -n --glob '*.rs' --glob '!**/target/**' --glob '!**/vendor/**' '(TcpListener|UdpSocket|TcpSocket|Socket)::bind|from_std\\(|from_raw_fd|LISTEN_FDS|port_is_available|is_port_available|find_available_port|allocate_port|reserve_port|PortManager|port_manager' crates packages tests",
+    "rg -n 'port_mappings|host_port|publish.*port|ssh-port|ssh_port|gvproxy|MachinePortProxy|WorkloadPep::start|PreparedWorkloadPep::prepare' crates/nimbus-sandbox crates/nimbus-proxy crates/nimbus-cli crates/nimbus-machine",
+    "rg -n 'PublishedEndpointProtocol|PublishedEndpoint' crates/nimbus-network crates/nimbus-sandbox crates/nimbus-services crates/nimbus-tenant crates/nimbus-system crates/nimbus-machine crates/nimbus-node crates/nimbus-server crates/nimbus-cli"
+  ],
+  "production_sites": [
+    {
+      "id": "network-port-lease-authority",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "allocation-authority",
+      "path": "crates/nimbus-network/src/port_lease.rs",
+      "line": 739,
+      "symbol": "LocalPortLeaseAuthority::reserve_port",
+      "authority_kinds": [
+        "suspicious-port-allocation-definition"
+      ],
+      "authority_symbols": [
+        "reserve_port"
+      ],
+      "current_owner": "nimbus-network",
+      "current_truth": "Owns the single crash-safe host-global reserve operation; callers supply stable identity, generation, conflict semantics, and tenant attribution while provider effects remain outside the crate.",
+      "disposition": "canonical-authority",
+      "target_owner": "nimbus-network remains the sole allocation authority",
+      "owner_item": "NNC3.1"
+    },
+    {
+      "id": "sandbox-manifest-port-allocation",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "allocation-adapter",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+      "line": 231,
+      "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
+      "authority_kinds": [
+        "suspicious-port-allocation-definition"
+      ],
+      "authority_symbols": [
+        "reserve_launch_ports_for_sandbox"
+      ],
+      "current_owner": "nimbus-sandbox composition consuming nimbus-network authority",
+      "current_truth": "Builds the complete launch request batch and delegates atomic exact/range reservation and tenant accounting to LocalPortLeaseAuthority; it performs no manifest scan or first-free selection.",
+      "disposition": "migrated",
+      "target_owner": "nimbus-network owns allocation authority; sandbox owns launch projection and provider sequencing",
+      "owner_item": "NNC3.4",
+      "deletion_item": "NNC3.9"
+    },
+    {
+      "id": "sandbox-pep-port-allocation",
+      "status": "active",
+      "verification": "symbol-presence",
+      "category": "allocation-consumer",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+      "line": 231,
+      "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
+      "declaration_name": "reserve_launch_ports_for_sandbox",
+      "current_owner": "nimbus-sandbox composition consuming nimbus-network authority",
+      "current_truth": "Adds the host-internal PEP request to the same atomic launch batch; LocalPortLeaseAuthority selects and fences the port without charging tenant publication quota.",
+      "disposition": "migrated",
+      "target_owner": "nimbus-network owns the host-global reservation; sandbox owns PEP desired-state projection",
+      "owner_item": "NNC3.4",
+      "deletion_item": "NNC3.9"
+    },
+    {
+      "id": "sandbox-pep-assignment",
+      "status": "active",
+      "verification": "symbol-presence",
+      "category": "allocation-consumer",
+      "path": "crates/nimbus-sandbox/src/backends/oci/egress/assignment.rs",
+      "line": 184,
+      "symbol": "egress_proxy_assignment",
+      "declaration_name": "egress_proxy_assignment",
+      "current_owner": "nimbus-sandbox",
+      "current_truth": "Projects one already-reserved internal listener into PEP assignment state; later sandbox sequencing claims before the proxy-owned bind and activates only from exact provider evidence.",
+      "disposition": "migrated",
+      "target_owner": "sandbox composes the network lease with the proxy-owned PEP effect",
+      "owner_item": "NNC3.4"
+    },
+    {
+      "id": "cli-dev-prebound-bind",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "socket-bind",
+      "path": "crates/nimbus-cli/src/dev/wire.rs",
+      "line": 333,
+      "symbol": "bind_and_retain_wire_listener",
+      "authority_kinds": [
+        "tcp-bind"
+      ],
+      "authority_symbols": [
+        "bind_and_retain_wire_listener"
+      ],
+      "current_owner": "nimbus-cli dev composition consuming nimbus-server listener authority",
+      "current_truth": "Claims before each conventional or provider-assigned real bind, records exact no-effect failure, and retains the socket plus Active lease for server adoption.",
+      "disposition": "provider-bind",
+      "target_owner": "CLI retains the pre-serve socket effect; nimbus-server owns the lease/socket adapter and eventual adoption",
+      "owner_item": "NNC3.7a"
+    },
+    {
+      "id": "cli-dev-prebound-consumer",
+      "status": "active",
+      "verification": "symbol-presence",
+      "category": "pre-bound-consumer",
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "line": 98,
+      "symbol": "run_start_command_inner",
+      "declaration_name": "run_start_command_inner",
+      "current_owner": "nimbus-cli startup composition plus nimbus-server adoption",
+      "current_truth": "Retains pre-bound sibling sockets across fallible startup work and transfers the same-incarnation bundle into ServeOptions immediately before serving; earlier failure and drop paths settle owned listeners.",
+      "disposition": "adopted",
+      "target_owner": "nimbus-server consumes continuously held sockets and Active leases without numeric-port handoff",
+      "owner_item": "NNC3.7a"
+    },
+    {
+      "id": "cli-start-adapter-probe",
+      "status": "retired",
+      "verification": "retired",
+      "category": "availability-probe",
+      "path": "crates/nimbus-cli/src/start/adapters/mod.rs",
+      "line": 200,
+      "symbol": "deleted availability callback from resolve_adapter_enablement",
+      "current_owner": "deleted from production",
+      "current_truth": "Start adapter resolution is pure desired-state selection; conventional and explicit conflicts are decided by the shared lease plus the real provider bind.",
+      "disposition": "retired",
+      "target_owner": "server shared authority plus real provider bind",
+      "owner_item": "NNC3.7a",
+      "retired_item": "NNC3.7a"
+    },
+    {
+      "id": "machine-ssh-port-allocation",
+      "status": "active",
+      "verification": "symbol-presence",
+      "category": "allocation-consumer",
+      "path": "crates/nimbus-cli/src/machine/manager/ports.rs",
+      "line": 49,
+      "symbol": "PreparedMachineSshPortLease::prepare",
+      "declaration_name": "prepare",
+      "current_owner": "nimbus-cli machine adapter consuming nimbus-network authority",
+      "current_truth": "Atomically range-reserves and claims a loopback port in the shared node-local authority before gvproxy can start.",
+      "disposition": "migrated",
+      "target_owner": "nimbus-network PortLease authority",
+      "owner_item": "NNC3.7"
+    },
+    {
+      "id": "machine-ssh-port-probe",
+      "status": "retired",
+      "verification": "retired",
+      "category": "availability-probe",
+      "path": "crates/nimbus-cli/src/machine/manager/ports.rs",
+      "line": 49,
+      "symbol": "deleted machine_port_is_available",
+      "current_owner": "deleted from production",
+      "current_truth": "Production machine allocation performs no socket probe/drop; only explicit test harnesses create real external-binder evidence.",
+      "disposition": "retired",
+      "target_owner": "network lease plus gvproxy provider-bind evidence",
+      "owner_item": "NNC3.7",
+      "retired_item": "NNC3.7"
+    },
+    {
+      "id": "cli-main-direct-listener",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "socket-bind",
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "line": 800,
+      "symbol": "start_listener",
+      "authority_kinds": [
+        "tcp-bind"
+      ],
+      "authority_symbols": [
+        "start_listener"
+      ],
+      "current_owner": "nimbus-cli socket effect consuming nimbus-server listener authority",
+      "current_truth": "Resolves candidate addresses, reserves and claims before each real bind, records exact no-effect failure, and adopts/activates the observed address before publication.",
+      "disposition": "migrated",
+      "target_owner": "CLI retains hostname resolution and the socket effect; nimbus-server owns the listener lease adapter",
+      "owner_item": "NNC3.5"
+    },
+    {
+      "id": "cli-main-systemd-listener",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "inherited-socket",
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "line": 861,
+      "symbol": "activated_systemd_listener",
+      "authority_kinds": [
+        "listener-return-handoff",
+        "tcp-from-raw-fd",
+        "tcp-from-std"
+      ],
+      "authority_symbols": [
+        "activated_systemd_listener"
+      ],
+      "current_owner": "systemd plus nimbus-cli adoption",
+      "current_truth": "Validates LISTEN_PID/LISTEN_FDS, consumes inherited TCP fd 3, converts it to Tokio, and adopts it with externally owned provenance so Nimbus never releases systemd authority.",
+      "disposition": "adopted",
+      "target_owner": "systemd retains bind authority; Nimbus records inherited lease provenance",
+      "owner_item": "NNC3.3"
+    },
+    {
+      "id": "node-systemd-socket-unit",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "external-socket-effect",
+      "path": "crates/nimbus-cli/src/node_service.rs",
+      "line": 489,
+      "symbol": "render_socket",
+      "authority_kinds": [
+        "systemd-listen-stream-request"
+      ],
+      "authority_symbols": [
+        "render_socket"
+      ],
+      "current_owner": "nimbus-cli node service plus systemd",
+      "current_truth": "Declares the main TCP ListenStream for systemd to bind before process start; Nimbus later adopts the inherited descriptor.",
+      "disposition": "adopted",
+      "target_owner": "systemd retains the bind effect; Nimbus records external provenance",
+      "owner_item": "NNC3.3"
+    },
+    {
+      "id": "server-sibling-wire-listeners",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "socket-bind",
+      "path": "crates/nimbus-server/src/construction.rs",
+      "line": 500,
+      "symbol": "serve_leased",
+      "authority_kinds": [
+        "listener-ownership-slot",
+        "tcp-bind"
+      ],
+      "authority_symbols": [
+        "<module>",
+        "bind_listener",
+        "new",
+        "prepare",
+        "run_listener",
+        "serve_leased",
+        "settle_rejected_listener"
+      ],
+      "authority_paths": [
+        "crates/nimbus-server/src/construction.rs",
+        "crates/nimbus-server/src/adapters/dynamodb/listener.rs",
+        "crates/nimbus-server/src/adapters/mongodb/listener.rs",
+        "crates/nimbus-server/src/adapters/s3/listener.rs",
+        "crates/nimbus-server/src/adapters/wire.rs",
+        "crates/nimbus-server/src/listener_group.rs"
+      ],
+      "current_owner": "nimbus-server socket and protocol composition",
+      "current_truth": "Consumes same-incarnation pre-bound siblings when supplied; otherwise claims before each MongoDB, DynamoDB, or S3 bind, guards and projects while claimed, prepares every listener task before group activation, supervises child death, and settles all leases after confirmed closure.",
+      "disposition": "migrated",
+      "target_owner": "server retains binds and protocol tasks; every listener consumes a nimbus-network lease",
+      "owner_item": "NNC3.5",
+      "lifecycle_item": "NNC7.1a"
+    },
+    {
+      "id": "server-main-listener-consumer",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "pre-bound-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "line": 454,
+      "symbol": "into_leased",
+      "authority_kinds": [
+        "listener-ownership-slot",
+        "listener-return-handoff",
+        "tcp-from-std"
+      ],
+      "authority_symbols": [
+        "<module>",
+        "abandon_prepared_after_guard_failure",
+        "adopt",
+        "adopt_external_main",
+        "adopt_external_main_listener",
+        "adopt_std",
+        "close_after_failed_adoption",
+        "close_std_after_failed_adoption",
+        "into_leased",
+        "into_parts",
+        "serve",
+        "serve_tls",
+        "serve_with_router_config"
+      ],
+      "authority_paths": [
+        "crates/nimbus-server/src/listener_lease.rs",
+        "crates/nimbus-server/src/construction.rs",
+        "crates/nimbus-server/src/tls.rs"
+      ],
+      "current_owner": "nimbus-server listener adapter",
+      "current_truth": "Converts a continuously held standard listener to Tokio without releasing its Active lease; public embedders explicitly adopt external sockets and same-incarnation checks fence every handoff.",
+      "disposition": "adopted",
+      "target_owner": "server consumes generation-scoped listener and lease identity without becoming allocation authority",
+      "owner_item": "NNC3.5"
+    },
+    {
+      "id": "kv-direct-listener",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "socket-bind",
+      "path": "crates/nimbus-kv/src/listener.rs",
+      "line": 359,
+      "symbol": "bind",
+      "authority_kinds": [
+        "listener-ownership-slot",
+        "tcp-bind"
+      ],
+      "authority_symbols": [
+        "<module>",
+        "adopt",
+        "bind",
+        "close_after_failed_adoption"
+      ],
+      "current_owner": "nimbus-kv socket adapter consuming nimbus-network authority",
+      "current_truth": "Claims before the standalone RESP bind, records durable no-effect failure, and adopts/activates the exact observed address before serving.",
+      "disposition": "migrated",
+      "target_owner": "KV retains RESP and socket effects while consuming the cross-process lease authority",
+      "owner_item": "NNC3.6"
+    },
+    {
+      "id": "kv-prebound-listener",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "pre-bound-consumer",
+      "path": "crates/nimbus-kv/src/server.rs",
+      "line": 268,
+      "symbol": "serve",
+      "authority_kinds": [
+        "listener-ownership-slot"
+      ],
+      "authority_symbols": [
+        "adopt_listener",
+        "serve"
+      ],
+      "current_owner": "nimbus-kv",
+      "current_truth": "Adopts an injected Tokio listener with externally owned provenance, validates its exact address, and never releases the external socket authority as Nimbus-owned.",
+      "disposition": "adopted",
+      "target_owner": "KV preserves the pre-bound listener seam while nimbus-network records its fence",
+      "owner_item": "NNC3.6"
+    },
+    {
+      "id": "pep-listener-bind",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "socket-bind",
+      "path": "crates/nimbus-proxy/src/worker.rs",
+      "line": 246,
+      "symbol": "PreparedWorkloadPep::prepare",
+      "authority_kinds": [
+        "listener-ownership-slot",
+        "tcp-bind",
+        "tcp-from-std"
+      ],
+      "authority_symbols": [
+        "<module>",
+        "accept_loop",
+        "prepare",
+        "run"
+      ],
+      "current_owner": "nimbus-proxy socket, policy-enforcement, and forwarding effect",
+      "current_truth": "Binds and retains an inert PEP listener only after sandbox owns the exact durable bind claim; sandbox adopts/activates before PreparedWorkloadPep starts its accept loop.",
+      "disposition": "migrated",
+      "target_owner": "proxy retains PEP and forwarding effects; sandbox composes exact nimbus-network provider evidence",
+      "owner_item": "NNC3.4"
+    },
+    {
+      "id": "machine-port-proxy-bind",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "socket-bind",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+      "line": 327,
+      "symbol": "PreparedMachinePortProxy::prepare",
+      "authority_kinds": [
+        "listener-ownership-slot",
+        "tcp-bind"
+      ],
+      "authority_symbols": [
+        "<module>",
+        "accept_machine_port_proxy",
+        "accept_machine_port_proxy_with",
+        "accept_machine_port_proxy_with_listener_observer",
+        "new",
+        "prepare"
+      ],
+      "current_owner": "nimbus-sandbox MachinePortProxy effect",
+      "current_truth": "Validates the exact request, binds and retains an inert wildcard guest listener under its durable claim, then adopts/activates the complete batch before any accept loop starts.",
+      "disposition": "migrated",
+      "target_owner": "sandbox retains the socket/forwarding effect while consuming nimbus-network authority",
+      "owner_item": "NNC3.4"
+    },
+    {
+      "id": "netavark-port-mapping-effect",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "provider-bind-request",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/netavark.rs",
+      "line": 574,
+      "symbol": "build_netavark_request",
+      "authority_kinds": [
+        "netavark-port-mapping-request"
+      ],
+      "authority_symbols": [
+        "build_netavark_request"
+      ],
+      "current_owner": "nimbus-sandbox Netavark adapter",
+      "current_truth": "Lowers only the lease-authenticated sandbox bindings into the Netavark request; Netavark owns the kernel effects and sandbox records exact provider evidence.",
+      "disposition": "provider-effect",
+      "target_owner": "sandbox retains Netavark realization and consumes nimbus-network leases",
+      "owner_item": "NNC3.4"
+    },
+    {
+      "id": "machine-forwarder-port-effect",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "provider-bind-request",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "line": 433,
+      "symbol": "expose_one",
+      "authority_kinds": [
+        "machine-forwarder-port-request"
+      ],
+      "authority_symbols": [
+        "expose_one",
+        "withdraw_one"
+      ],
+      "current_owner": "nimbus-sandbox machine-forwarder adapter",
+      "current_truth": "The structural census anchors the exact POST /expose and POST /unexpose provider mutations, while excluding read-only GET /all inspection. The durable batch coordinator invokes each mutation only after persisting EffectMayExist and advances the slot only from exact current route observation; the external forwarder remains the host publication effect owner.",
+      "disposition": "provider-effect",
+      "target_owner": "sandbox retains provider effects and exact inspection/delete evidence",
+      "owner_item": "NNC3.4, NNC5.3a, NNC5.4, NNC5.4a"
+    },
+    {
+      "id": "machine-gvproxy-ssh-bind",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "provider-bind-request",
+      "path": "crates/nimbus-cli/src/machine/manager/launch.rs",
+      "line": 279,
+      "symbol": "build_gvproxy_args",
+      "authority_kinds": [
+        "gvproxy-ssh-port-request"
+      ],
+      "authority_symbols": [
+        "build_gvproxy_args"
+      ],
+      "current_owner": "nimbus-cli machine manager plus gvproxy",
+      "current_truth": "Passes only the shared authority's durably range-selected and claimed port to gvproxy; exact SSH readiness adopts and activates the provider result.",
+      "disposition": "provider-effect",
+      "target_owner": "machine retains gvproxy effect; provider observation completes the nimbus-network lease",
+      "owner_item": "NNC3.7"
+    },
+    {
+      "id": "machine-api-unix-consumer",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "unix-pre-bound-consumer",
+      "path": "crates/nimbus-cli/src/machine/api.rs",
+      "line": 175,
+      "symbol": "serve_machine_api",
+      "authority_kinds": [
+        "listener-ownership-slot",
+        "listener-return-handoff"
+      ],
+      "authority_symbols": [
+        "resolve_machine_api_listener",
+        "serve_machine_api"
+      ],
+      "authority_paths": [
+        "crates/nimbus-cli/src/machine/api.rs",
+        "crates/nimbus-cli/src/machine/api/listener.rs"
+      ],
+      "current_owner": "nimbus-cli machine API",
+      "current_truth": "Resolves the guest-manager-owned direct Unix listener and transfers that exact descriptor into the machine API serve loop without asserting TCP/UDP port authority.",
+      "disposition": "local-ipc-exempt",
+      "target_owner": "remain machine-owned filesystem IPC and descriptor handoff",
+      "owner_item": "NNC0.1, NNC4.6e"
+    },
+    {
+      "id": "machine-api-unix-direct",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "unix-bind",
+      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
+      "line": 30,
+      "symbol": "bind_direct_listener",
+      "authority_kinds": [
+        "listener-return-handoff",
+        "unix-bind",
+        "unix-from-std"
+      ],
+      "authority_symbols": [
+        "bind_direct_listener"
+      ],
+      "current_owner": "nimbus-cli machine API",
+      "current_truth": "Binds a filesystem Unix socket after stale-path cleanup and converts the same descriptor to Tokio.",
+      "disposition": "local-ipc-exempt",
+      "target_owner": "remain machine-owned filesystem IPC, outside host TCP/UDP PortLease authority",
+      "owner_item": "NNC0.1, NNC4.6e"
+    },
+    {
+      "id": "machine-api-unix-systemd",
+      "status": "retired",
+      "verification": "retired",
+      "category": "unix-inherited-socket",
+      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
+      "line": 1,
+      "symbol": "deleted inherited_systemd_listener and tokio_listener_from_inherited_fd",
+      "current_owner": "deleted from production",
+      "current_truth": "Machine API startup is guest-manager-first and direct-listener-only; no inherited listener can bypass guest authority composition.",
+      "disposition": "retired",
+      "target_owner": "guest manager retains listener sequencing; systemd transient units remain workload lifecycle effects",
+      "owner_item": "NNC4.6e",
+      "retired_item": "NNC4.6e"
+    },
+    {
+      "id": "machine-ready-unix-listener",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "unix-bind",
+      "path": "crates/nimbus-cli/src/machine/manager/readiness.rs",
+      "line": 206,
+      "symbol": "bind_ready_listener",
+      "authority_kinds": [
+        "listener-return-handoff",
+        "unix-bind"
+      ],
+      "authority_symbols": [
+        "bind_ready_listener"
+      ],
+      "current_owner": "nimbus-cli machine manager",
+      "current_truth": "Uses a provider-local filesystem Unix listener for readiness rendezvous.",
+      "disposition": "local-ipc-exempt",
+      "target_owner": "remain machine-provider filesystem IPC",
+      "owner_item": "NNC0.1"
+    },
+    {
+      "id": "machine-ignition-unix-listener",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "unix-bind",
+      "path": "crates/nimbus-cli/src/machine/manager/readiness.rs",
+      "line": 232,
+      "symbol": "serve_ignition_file",
+      "authority_kinds": [
+        "unix-bind",
+        "unix-from-std"
+      ],
+      "authority_symbols": [
+        "serve_ignition_file"
+      ],
+      "current_owner": "nimbus-cli machine manager",
+      "current_truth": "Uses one provider-local filesystem Unix listener and Tokio conversion for the one-shot ignition transport.",
+      "disposition": "local-ipc-exempt",
+      "target_owner": "remain machine-provider filesystem IPC",
+      "owner_item": "NNC0.1"
+    },
+    {
+      "id": "sandbox-exact-provision-port-allocation",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "allocation-adapter",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+      "line": 388,
+      "symbol": "OciPortLeaseCoordinator::reserve_exact_provision_ports",
+      "authority_kinds": [
+        "suspicious-port-allocation-definition"
+      ],
+      "authority_symbols": [
+        "reserve_exact_provision_ports"
+      ],
+      "current_owner": "nimbus-sandbox composition consuming nimbus-network authority",
+      "current_truth": "Translates the compiled exact plan plus any internal dependency listener into one durable network-owned batch; it does not scan or select ports.",
+      "disposition": "migrated",
+      "target_owner": "nimbus-network owns host-global reservation; sandbox owns exact provision projection and provider sequencing",
+      "owner_item": "NNC6.4"
+    },
+    {
+      "id": "server-workload-ingress-listener",
+      "status": "active",
+      "verification": "source-occurrence",
+      "category": "socket-bind",
+      "path": "crates/nimbus-server/src/workload_ingress.rs",
+      "line": 520,
+      "symbol": "RunningIngressBatch::start",
+      "authority_kinds": [
+        "tcp-bind",
+        "listener-return-handoff"
+      ],
+      "authority_symbols": [
+        "start",
+        "into_std_parts"
+      ],
+      "authority_paths": [
+        "crates/nimbus-server/src/workload_ingress.rs",
+        "crates/nimbus-server/src/listener_lease.rs"
+      ],
+      "current_owner": "nimbus-server workload-ingress adapter",
+      "current_truth": "Authenticates the exact plan, claims before the real bind, adopts and activates the lease, then continuously hands the owned socket and lifetime into the transparent ingress worker.",
+      "disposition": "migrated",
+      "target_owner": "server retains the bind and ingress worker; every listener consumes a nimbus-network lease",
+      "owner_item": "NNC6.4"
+    }
+  ],
+  "authority_occurrences": [
+    {
+      "site_id": "cli-dev-prebound-bind",
+      "path": "crates/nimbus-cli/src/dev/wire.rs",
+      "kind": "tcp-bind",
+      "symbol": "bind_and_retain_wire_listener",
+      "ordinal": 1,
+      "line": 333
+    },
+    {
+      "site_id": "machine-api-unix-consumer",
+      "path": "crates/nimbus-cli/src/machine/api.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "serve_machine_api",
+      "ordinal": 1,
+      "line": 179
+    },
+    {
+      "site_id": "machine-api-unix-consumer",
+      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
+      "kind": "listener-return-handoff",
+      "symbol": "resolve_machine_api_listener",
+      "ordinal": 1,
+      "line": 5
+    },
+    {
+      "site_id": "machine-api-unix-direct",
+      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
+      "kind": "listener-return-handoff",
+      "symbol": "bind_direct_listener",
+      "ordinal": 1,
+      "line": 10
+    },
+    {
+      "site_id": "machine-api-unix-direct",
+      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
+      "kind": "unix-bind",
+      "symbol": "bind_direct_listener",
+      "ordinal": 1,
+      "line": 30
+    },
+    {
+      "site_id": "machine-api-unix-direct",
+      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
+      "kind": "unix-from-std",
+      "symbol": "bind_direct_listener",
+      "ordinal": 1,
+      "line": 53
+    },
+    {
+      "site_id": "machine-gvproxy-ssh-bind",
+      "path": "crates/nimbus-cli/src/machine/manager/launch.rs",
+      "kind": "gvproxy-ssh-port-request",
+      "symbol": "build_gvproxy_args",
+      "ordinal": 1,
+      "line": 281
+    },
+    {
+      "site_id": "machine-ready-unix-listener",
+      "path": "crates/nimbus-cli/src/machine/manager/readiness.rs",
+      "kind": "listener-return-handoff",
+      "symbol": "bind_ready_listener",
+      "ordinal": 1,
+      "line": 305
+    },
+    {
+      "site_id": "machine-ready-unix-listener",
+      "path": "crates/nimbus-cli/src/machine/manager/readiness.rs",
+      "kind": "unix-bind",
+      "symbol": "bind_ready_listener",
+      "ordinal": 1,
+      "line": 307
+    },
+    {
+      "site_id": "machine-ignition-unix-listener",
+      "path": "crates/nimbus-cli/src/machine/manager/readiness.rs",
+      "kind": "unix-bind",
+      "symbol": "serve_ignition_file",
+      "ordinal": 1,
+      "line": 333
+    },
+    {
+      "site_id": "machine-ignition-unix-listener",
+      "path": "crates/nimbus-cli/src/machine/manager/readiness.rs",
+      "kind": "unix-from-std",
+      "symbol": "serve_ignition_file",
+      "ordinal": 1,
+      "line": 358
+    },
+    {
+      "site_id": "node-systemd-socket-unit",
+      "path": "crates/nimbus-cli/src/node_service.rs",
+      "kind": "systemd-listen-stream-request",
+      "symbol": "render_socket",
+      "ordinal": 1,
+      "line": 489
+    },
+    {
+      "site_id": "cli-main-direct-listener",
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "kind": "tcp-bind",
+      "symbol": "start_listener",
+      "ordinal": 1,
+      "line": 768
+    },
+    {
+      "site_id": "cli-main-systemd-listener",
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "kind": "listener-return-handoff",
+      "symbol": "activated_systemd_listener",
+      "ordinal": 1,
+      "line": 829
+    },
+    {
+      "site_id": "cli-main-systemd-listener",
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "kind": "tcp-from-raw-fd",
+      "symbol": "activated_systemd_listener",
+      "ordinal": 1,
+      "line": 876
+    },
+    {
+      "site_id": "cli-main-systemd-listener",
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "kind": "tcp-from-std",
+      "symbol": "activated_systemd_listener",
+      "ordinal": 1,
+      "line": 878
+    },
+    {
+      "site_id": "cli-main-systemd-listener",
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "kind": "listener-return-handoff",
+      "symbol": "activated_systemd_listener",
+      "ordinal": 2,
+      "line": 882
+    },
+    {
+      "site_id": "kv-direct-listener",
+      "path": "crates/nimbus-kv/src/listener.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "adopt",
+      "ordinal": 1,
+      "line": 225
+    },
+    {
+      "site_id": "kv-direct-listener",
+      "path": "crates/nimbus-kv/src/listener.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "close_after_failed_adoption",
+      "ordinal": 1,
+      "line": 270
+    },
+    {
+      "site_id": "kv-direct-listener",
+      "path": "crates/nimbus-kv/src/listener.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "<module>",
+      "ordinal": 1,
+      "line": 296
+    },
+    {
+      "site_id": "kv-direct-listener",
+      "path": "crates/nimbus-kv/src/listener.rs",
+      "kind": "tcp-bind",
+      "symbol": "bind",
+      "ordinal": 1,
+      "line": 359
+    },
+    {
+      "site_id": "kv-direct-listener",
+      "path": "crates/nimbus-kv/src/listener.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "adopt",
+      "ordinal": 2,
+      "line": 368
+    },
+    {
+      "site_id": "kv-prebound-listener",
+      "path": "crates/nimbus-kv/src/server.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "serve",
+      "ordinal": 1,
+      "line": 268
+    },
+    {
+      "site_id": "kv-prebound-listener",
+      "path": "crates/nimbus-kv/src/server.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "adopt_listener",
+      "ordinal": 1,
+      "line": 282
+    },
+    {
+      "site_id": "network-port-lease-authority",
+      "path": "crates/nimbus-network/src/port_lease.rs",
+      "kind": "suspicious-port-allocation-definition",
+      "symbol": "reserve_port",
+      "ordinal": 1,
+      "line": 740
+    },
+    {
+      "site_id": "pep-listener-bind",
+      "path": "crates/nimbus-proxy/src/worker.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "<module>",
+      "ordinal": 1,
+      "line": 230
+    },
+    {
+      "site_id": "pep-listener-bind",
+      "path": "crates/nimbus-proxy/src/worker.rs",
+      "kind": "tcp-bind",
+      "symbol": "prepare",
+      "ordinal": 1,
+      "line": 246
+    },
+    {
+      "site_id": "pep-listener-bind",
+      "path": "crates/nimbus-proxy/src/worker.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "<module>",
+      "ordinal": 2,
+      "line": 402
+    },
+    {
+      "site_id": "pep-listener-bind",
+      "path": "crates/nimbus-proxy/src/worker.rs",
+      "kind": "tcp-from-std",
+      "symbol": "run",
+      "ordinal": 1,
+      "line": 425
+    },
+    {
+      "site_id": "pep-listener-bind",
+      "path": "crates/nimbus-proxy/src/worker.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "accept_loop",
+      "ordinal": 1,
+      "line": 473
+    },
+    {
+      "site_id": "machine-forwarder-port-effect",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "machine-forwarder-port-request",
+      "symbol": "expose_one",
+      "ordinal": 1,
+      "line": 436
+    },
+    {
+      "site_id": "machine-forwarder-port-effect",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "machine-forwarder-port-request",
+      "symbol": "withdraw_one",
+      "ordinal": 1,
+      "line": 450
+    },
+    {
+      "site_id": "netavark-port-mapping-effect",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/netavark.rs",
+      "kind": "netavark-port-mapping-request",
+      "symbol": "build_netavark_request",
+      "ordinal": 1,
+      "line": 801
+    },
+    {
+      "site_id": "machine-port-proxy-bind",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "<module>",
+      "ordinal": 1,
+      "line": 108
+    },
+    {
+      "site_id": "machine-port-proxy-bind",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+      "kind": "tcp-bind",
+      "symbol": "prepare",
+      "ordinal": 1,
+      "line": 342
+    },
+    {
+      "site_id": "machine-port-proxy-bind",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "accept_machine_port_proxy",
+      "ordinal": 1,
+      "line": 1042
+    },
+    {
+      "site_id": "machine-port-proxy-bind",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "accept_machine_port_proxy_with",
+      "ordinal": 1,
+      "line": 1057
+    },
+    {
+      "site_id": "machine-port-proxy-bind",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "accept_machine_port_proxy_with_listener_observer",
+      "ordinal": 1,
+      "line": 1081
+    },
+    {
+      "site_id": "machine-port-proxy-bind",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "<module>",
+      "ordinal": 2,
+      "line": 1149
+    },
+    {
+      "site_id": "machine-port-proxy-bind",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "new",
+      "ordinal": 1,
+      "line": 1155
+    },
+    {
+      "site_id": "sandbox-manifest-port-allocation",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+      "kind": "suspicious-port-allocation-definition",
+      "symbol": "reserve_launch_ports_for_sandbox",
+      "ordinal": 1,
+      "line": 231
+    },
+    {
+      "site_id": "server-sibling-wire-listeners",
+      "path": "crates/nimbus-server/src/adapters/dynamodb/listener.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "run_listener",
+      "ordinal": 1,
+      "line": 83
+    },
+    {
+      "site_id": "server-sibling-wire-listeners",
+      "path": "crates/nimbus-server/src/adapters/mongodb/listener.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "run_listener",
+      "ordinal": 1,
+      "line": 92
+    },
+    {
+      "site_id": "server-sibling-wire-listeners",
+      "path": "crates/nimbus-server/src/adapters/s3/listener.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "run_listener",
+      "ordinal": 1,
+      "line": 234
+    },
+    {
+      "site_id": "server-sibling-wire-listeners",
+      "path": "crates/nimbus-server/src/adapters/wire.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "<module>",
+      "ordinal": 1,
+      "line": 28
+    },
+    {
+      "site_id": "server-sibling-wire-listeners",
+      "path": "crates/nimbus-server/src/adapters/wire.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "new",
+      "ordinal": 1,
+      "line": 35
+    },
+    {
+      "site_id": "server-sibling-wire-listeners",
+      "path": "crates/nimbus-server/src/adapters/wire.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "bind_listener",
+      "ordinal": 1,
+      "line": 53
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/construction.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "adopt_external_main_listener",
+      "ordinal": 1,
+      "line": 169
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/construction.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "serve_with_router_config",
+      "ordinal": 1,
+      "line": 340
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/construction.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "serve",
+      "ordinal": 1,
+      "line": 394
+    },
+    {
+      "site_id": "server-sibling-wire-listeners",
+      "path": "crates/nimbus-server/src/construction.rs",
+      "kind": "tcp-bind",
+      "symbol": "serve_leased",
+      "ordinal": 1,
+      "line": 517
+    },
+    {
+      "site_id": "server-sibling-wire-listeners",
+      "path": "crates/nimbus-server/src/listener_group.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "prepare",
+      "ordinal": 1,
+      "line": 65
+    },
+    {
+      "site_id": "server-sibling-wire-listeners",
+      "path": "crates/nimbus-server/src/listener_group.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "settle_rejected_listener",
+      "ordinal": 1,
+      "line": 333
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "adopt",
+      "ordinal": 1,
+      "line": 208
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "adopt_std",
+      "ordinal": 1,
+      "line": 235
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "close_after_failed_adoption",
+      "ordinal": 1,
+      "line": 325
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "close_std_after_failed_adoption",
+      "ordinal": 1,
+      "line": 343
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "<module>",
+      "ordinal": 1,
+      "line": 402
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "<module>",
+      "ordinal": 2,
+      "line": 414
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "tcp-from-std",
+      "symbol": "into_leased",
+      "ordinal": 1,
+      "line": 469
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-return-handoff",
+      "symbol": "into_parts",
+      "ordinal": 1,
+      "line": 526
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "adopt_external_main",
+      "ordinal": 1,
+      "line": 768
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "abandon_prepared_after_guard_failure",
+      "ordinal": 1,
+      "line": 1491
+    },
+    {
+      "site_id": "server-main-listener-consumer",
+      "path": "crates/nimbus-server/src/tls.rs",
+      "kind": "listener-ownership-slot",
+      "symbol": "serve_tls",
+      "ordinal": 1,
+      "line": 118
+    },
+    {
+      "site_id": "sandbox-exact-provision-port-allocation",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+      "kind": "suspicious-port-allocation-definition",
+      "symbol": "reserve_exact_provision_ports",
+      "ordinal": 1,
+      "line": 389
+    },
+    {
+      "site_id": "server-workload-ingress-listener",
+      "path": "crates/nimbus-server/src/listener_lease.rs",
+      "kind": "listener-return-handoff",
+      "symbol": "into_std_parts",
+      "ordinal": 1,
+      "line": 493
+    },
+    {
+      "site_id": "server-workload-ingress-listener",
+      "path": "crates/nimbus-server/src/workload_ingress.rs",
+      "kind": "tcp-bind",
+      "symbol": "start",
+      "ordinal": 1,
+      "line": 1042
+    }
+  ],
+  "non_authority_occurrences": [
+    {
+      "path": "crates/nimbus-cli/src/compose/quadlet_export.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "render_kube_ports",
+      "ordinal": 1,
+      "line": 636,
+      "reason": "Formats an already-admitted Compose port plan into generated Kubernetes YAML; it neither chooses a host port nor creates or adopts a socket."
+    },
+    {
+      "path": "crates/nimbus-cli/src/compose/quadlet_export.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "render_port",
+      "ordinal": 1,
+      "line": 766,
+      "reason": "Formats an already-admitted Compose port binding into Quadlet text; it does not allocate, bind, or adopt a host listener."
+    },
+    {
+      "path": "crates/nimbus-cli/src/kv.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "prepare_kv_command",
+      "ordinal": 1,
+      "line": 91,
+      "reason": "Binds validated CLI values and a manager-derived listener capability into NimbusKvConfig; the real socket remains classified under nimbus-kv."
+    },
+    {
+      "path": "crates/nimbus-cli/src/start/adapters/convex_tenancy.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "resolve_convex_tenancy",
+      "ordinal": 1,
+      "line": 51,
+      "reason": "Binds trusted Convex tenant metadata into a registry; it is not a socket or port authority."
+    },
+    {
+      "path": "crates/nimbus-cli/src/start/adapters/firebase.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "resolve_firebase",
+      "ordinal": 1,
+      "line": 38,
+      "reason": "Binds Firebase tenant configuration into an adapter registry; it is not a socket or port authority."
+    },
+    {
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "run_start_command_inner",
+      "ordinal": 1,
+      "line": 261,
+      "reason": "Binds resolved adapter configuration into an in-process registry; real listener effects are classified separately."
+    },
+    {
+      "path": "crates/nimbus-compute/src/config/deployment.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "with_convex_silo_auth_verifier",
+      "ordinal": 1,
+      "line": 48,
+      "reason": "Binds an authentication verifier to a trusted silo registry; it has no socket or port effect."
+    },
+    {
+      "path": "crates/nimbus-compute/src/deploy.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "deploy_app",
+      "ordinal": 1,
+      "line": 132,
+      "reason": "Binds a deployment-scoped authentication verifier to compute configuration; it has no socket or port effect."
+    },
+    {
+      "path": "crates/nimbus-convex/src/tenancy.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "from_operator_spec",
+      "ordinal": 1,
+      "line": 136,
+      "reason": "Binds trusted Convex tenant metadata to a registry; it is an identity mapping rather than a network effect."
+    },
+    {
+      "path": "crates/nimbus-dynamodb/src/config.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "with_access_key",
+      "ordinal": 1,
+      "line": 69,
+      "reason": "Binds an access key to a credential registry; it does not create or adopt a network listener."
+    },
+    {
+      "path": "crates/nimbus-kv/src/server.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "single_dev",
+      "ordinal": 1,
+      "line": 95,
+      "reason": "Binds generated development credentials into NimbusKvConfig; the listener authority is classified in listener.rs."
+    },
+    {
+      "path": "crates/nimbus-kv/src/server.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "generated_dev_for",
+      "ordinal": 1,
+      "line": 116,
+      "reason": "Binds generated development credentials into NimbusKvConfig; the listener authority is classified in listener.rs."
+    },
+    {
+      "path": "crates/nimbus-kv/src/server.rs",
+      "kind": "ambiguous-associated-bind",
+      "symbol": "bind_listener",
+      "ordinal": 1,
+      "line": 277,
+      "reason": "Delegates to the already-classified nimbus-kv listener adapter; crate::listener::bind is not a socket associated function or a second allocation authority."
+    },
+    {
+      "path": "crates/nimbus-mongodb/src/credential_registry.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "from_operator_spec",
+      "ordinal": 1,
+      "line": 176,
+      "reason": "Binds trusted MongoDB credentials to a registry; it is not a socket bind or descriptor adoption."
+    },
+    {
+      "path": "crates/nimbus-proxy/src/pingora_io.rs",
+      "kind": "ambiguous-descriptor-adoption",
+      "symbol": "socket_digest",
+      "ordinal": 1,
+      "line": 317,
+      "reason": "Constructs a read-only SocketDigest from an existing descriptor to observe socket metadata; it neither owns nor adopts the listener."
+    },
+    {
+      "path": "crates/nimbus-proxy/src/pingora_io.rs",
+      "kind": "ambiguous-descriptor-adoption",
+      "symbol": "socket_digest",
+      "ordinal": 2,
+      "line": 322,
+      "reason": "Constructs a read-only SocketDigest from an existing raw socket to observe metadata; it neither owns nor adopts the listener."
+    },
+    {
+      "path": "crates/nimbus-runtime/src/runtime/bootstrap/state.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "new",
+      "ordinal": 1,
+      "line": 37,
+      "reason": "Binds an in-process runtime HostBridge slot; nimbus-runtime has no Nimbus workspace or network dependency."
+    },
+    {
+      "path": "crates/nimbus-runtime/src/runtime/bootstrap/state.rs",
+      "kind": "ambiguous-instance-bind",
+      "symbol": "bind_runtime_host_bridge",
+      "ordinal": 1,
+      "line": 586,
+      "reason": "Binds an in-process runtime HostBridge slot; it does not allocate, bind, or adopt a network socket."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/conmon/creator.rs",
+      "kind": "ambiguous-descriptor-adoption",
+      "symbol": "launch_gate_pipe",
+      "ordinal": 1,
+      "line": 551,
+      "reason": "Converts the read end of a creator-local Unix pipe into a launch gate; it cannot allocate, bind, or adopt a host TCP/UDP listener."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/conmon/creator.rs",
+      "kind": "ambiguous-descriptor-adoption",
+      "symbol": "launch_gate_pipe",
+      "ordinal": 2,
+      "line": 553,
+      "reason": "Converts the write end of the same creator-local Unix pipe into a launch gate; it cannot allocate, bind, or adopt a host TCP/UDP listener."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/conmon/runtime_process.rs",
+      "kind": "ambiguous-descriptor-adoption",
+      "symbol": "signal_authenticated_runtime_process",
+      "ordinal": 1,
+      "line": 319,
+      "reason": "Reads the raw descriptor of the process-authenticated Linux pidfd solely to signal that exact runtime process; it cannot allocate, bind, or adopt a host TCP/UDP listener."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/container/bundle.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "validate_port_bindings",
+      "ordinal": 1,
+      "line": 237,
+      "reason": "Formats a validation error for duplicate caller-supplied host-port bindings; it performs no allocation or provider effect."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "ambiguous_mutation_error",
+      "ordinal": 1,
+      "line": 1721,
+      "reason": "Formats a joined mutation/inspection diagnostic from an already-admitted exact binding; it performs no bind, allocation, provider mutation, or authority transition."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "validate_port_bindings",
+      "ordinal": 1,
+      "line": 554,
+      "reason": "Formats a validation error for a zero caller-supplied host port; it performs no allocation or socket effect."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/krun/bundle.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "validate_port_bindings",
+      "ordinal": 2,
+      "line": 570,
+      "reason": "Formats a validation error for a duplicate caller-supplied host-port binding; it performs no allocation or socket effect."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/krun/ingress.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "format_private_tsi_port_map",
+      "ordinal": 1,
+      "line": 19,
+      "reason": "Serializes admitted bindings and the authenticated attachment address into the libkrun private TSI port-map string; it neither chooses a port nor creates or adopts a socket."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "encode_gvproxy_request",
+      "ordinal": 1,
+      "line": 652,
+      "reason": "Formats a serialization error while lowering an already-admitted binding into a native gvproxy request; it neither chooses a port nor creates or adopts a socket."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "authenticate_current_routes",
+      "ordinal": 1,
+      "line": 725,
+      "reason": "Formats a fail-closed diagnostic while translating the read-only native gvproxy route list into Nimbus observation evidence; it performs no bind, allocation, or provider mutation."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "mutation_observation_error",
+      "ordinal": 1,
+      "line": 779,
+      "reason": "Formats a fail-closed forwarding diagnostic from an already-attributed provider observation; it performs no bind, allocation, socket adoption, or provider mutation."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "ambiguous-descriptor-adoption",
+      "symbol": "connect_unix_with_timeout",
+      "ordinal": 1,
+      "line": 997,
+      "reason": "Connects to the exact configured local Unix gvproxy control socket with a bounded deadline; it does not bind, allocate, adopt a listener, or participate in host TCP/UDP PortLease authority."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "machine_forward_remote",
+      "ordinal": 1,
+      "line": 1217,
+      "reason": "Formats an admitted host port as the remote endpoint consumed by the classified forwarder request; it is not an allocator or socket owner."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "prepare",
+      "ordinal": 1,
+      "line": 346,
+      "reason": "Formats the error from the separately classified TcpListener bind; it does not create a second bind or allocation authority."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "reserve_launch_ports_for_sandbox",
+      "ordinal": 1,
+      "line": 341,
+      "reason": "Formats an invariant error from the already-classified PortLease reservation path; it performs no additional allocation or socket effect."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "withdraw_bindings",
+      "ordinal": 1,
+      "line": 1399,
+      "reason": "Formats a withdrawal failure for an authenticated existing lease; the nimbus-network withdrawal call owns the state transition."
+    },
+    {
+      "path": "crates/nimbus-tenant/src/operator_policy.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "summary",
+      "ordinal": 1,
+      "line": 355,
+      "reason": "Formats endpoint policy data for display; nimbus-tenant remains the admission owner and performs no bind, adoption, or allocation effect."
+    },
+    {
+      "path": "crates/nimbus-tenant/src/operator_policy/prove.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "is_write_capable_endpoint",
+      "ordinal": 1,
+      "line": 327,
+      "reason": "Formats endpoint policy fields for a conservative write-capability heuristic; it performs no network effect."
+    },
+    {
+      "path": "crates/nimbus-tenant/src/operator_policy/prove.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "is_write_capable_endpoint",
+      "ordinal": 2,
+      "line": 339,
+      "reason": "Pattern-matches a policy host-port value for advisory classification; it performs no allocation, bind, or descriptor adoption."
+    }
+  ],
+  "portable_owner_sites": [
+    {
+      "id": "cidr-vocabulary",
+      "path": "crates/nimbus-core/src/net.rs",
+      "current_owner": "nimbus-core",
+      "current_truth": "Pure Cidr validation remains shared zero-I/O vocabulary."
+    },
+    {
+      "id": "segment-allocator-contract",
+      "path": "crates/nimbus-network/src/segment.rs",
+      "line": 185,
+      "current_owner": "nimbus-network",
+      "current_truth": "The portable allocator contract consumes NetworkAttachmentId and contains no provider realization."
+    },
+    {
+      "id": "single-node-segment-adapter",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/segment.rs",
+      "line": 286,
+      "current_owner": "nimbus-sandbox",
+      "current_truth": "The sandbox adapter persists provider-adjacent state while implementing the injected portable allocation contract."
+    },
+    {
+      "id": "cluster-shaped-segment-adapter",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/cluster.rs",
+      "line": 90,
+      "current_owner": "nimbus-sandbox",
+      "current_truth": "Consumes a fenced super-net lease only; cluster membership, routing, and transport remain outside nimbus-network."
+    },
+    {
+      "id": "sandbox-ipam-effect-state",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/ipam.rs",
+      "current_owner": "nimbus-sandbox",
+      "current_truth": "Provider-adjacent IPAM effect state remains sandbox-owned and generation fenced."
+    },
+    {
+      "id": "published-endpoint-vocabulary",
+      "path": "crates/nimbus-network/src/endpoint.rs",
+      "line": 27,
+      "current_owner": "nimbus-network",
+      "current_truth": "Transport-free endpoint handles and protocols have one portable owner; service naming remains in nimbus-services."
+    }
+  ],
+  "trust_inputs_not_network_authorities": [
+    {
+      "id": "cloud-functions-http-tenant-binding",
+      "path": "crates/nimbus-cloud-functions/src/http/tenant_binding.rs",
+      "owner": "nimbus-cloud-functions deployment registry",
+      "network_rule": "Compute may compile only already trusted and admitted tenant attribution; request path data never selects a network tenant."
+    },
+    {
+      "id": "convex-silo-auth-registry",
+      "path": "crates/nimbus-convex/src/silo_auth.rs",
+      "owner": "nimbus-convex/auth/compute/server",
+      "network_rule": "Network never selects a verifier or inspects a bearer; failed authentication or admission makes zero network calls."
+    },
+    {
+      "id": "deployment-artifact-lease",
+      "path": "crates/nimbus-compute/src/state.rs",
+      "owner": "nimbus-compute",
+      "network_rule": "An in-memory generation lifetime for staged artifacts is not a PortLease and remains a distinct authority."
+    }
+  ],
+  "non_production_exemptions": [
+    {
+      "mechanism": "path-convention",
+      "patterns": [
+        "crates/**/tests/**",
+        "crates/**/tests.rs"
+      ],
+      "classification": "test-only",
+      "allowed_shape": "Loopback port zero or explicit collision fixture; the structural scanner rejects any production mod, path, or include edge into the exempt source."
+    },
+    {
+      "mechanism": "cfg-test-item",
+      "pattern": "#[cfg(test)] item or module",
+      "classification": "test-only",
+      "allowed_shape": "The structural Rust scanner skips only the attributed AST item or expression; the rest of the production-named file remains scanned."
+    },
+    {
+      "mechanism": "path-owned-test-module",
+      "classification": "test-only",
+      "files": [
+        {
+          "path": "crates/nimbus-sandbox/src/backends/container/runtime/lifecycle.rs",
+          "declared_from": "crates/nimbus-sandbox/src/backends/container/runtime/tests.rs",
+          "cfg_owner": "crates/nimbus-sandbox/src/backends/container/runtime.rs",
+          "owner_module": "tests",
+          "module": "lifecycle"
+        },
+        {
+          "path": "crates/nimbus-sandbox/src/backends/container/runtime/planning.rs",
+          "declared_from": "crates/nimbus-sandbox/src/backends/container/runtime/tests.rs",
+          "cfg_owner": "crates/nimbus-sandbox/src/backends/container/runtime.rs",
+          "owner_module": "tests",
+          "module": "planning"
+        },
+        {
+          "path": "crates/nimbus-sandbox/src/backends/container/runtime/support.rs",
+          "declared_from": "crates/nimbus-sandbox/src/backends/container/runtime.rs",
+          "cfg_owner": "crates/nimbus-sandbox/src/backends/container/runtime.rs",
+          "owner_module": "support",
+          "module": "support"
+        },
+        {
+          "path": "crates/nimbus-sandbox/src/backends/container/runtime/launch_cleanup.rs",
+          "declared_from": "crates/nimbus-sandbox/src/backends/container/runtime/lifecycle.rs",
+          "cfg_owner": "crates/nimbus-sandbox/src/backends/container/runtime.rs",
+          "owner_module": "tests",
+          "module": "launch_cleanup"
+        },
+        {
+          "path": "crates/nimbus-sandbox/src/backends/oci/network/segment/configured_handle_tests.rs",
+          "declared_from": "crates/nimbus-sandbox/src/backends/oci/network/segment.rs",
+          "cfg_owner": "crates/nimbus-sandbox/src/backends/oci/network/segment.rs",
+          "owner_module": "configured_handle_tests",
+          "module": "configured_handle_tests"
+        },
+        {
+          "path": "crates/nimbus-sandbox/src/backends/oci/network/test_support.rs",
+          "declared_from": "crates/nimbus-sandbox/src/backends/oci/network.rs",
+          "cfg_owner": "crates/nimbus-sandbox/src/backends/oci/network.rs",
+          "owner_module": "test_support",
+          "module": "test_support"
+        },
+        {
+          "path": "crates/nimbus-cli/src/test_support.rs",
+          "declared_from": "crates/nimbus-cli/src/lib.rs",
+          "cfg_owner": "crates/nimbus-cli/src/lib.rs",
+          "owner_module": "test_support",
+          "module": "test_support"
+        },
+        {
+          "path": "crates/nimbus-cli/src/test_support/managed_workload.rs",
+          "declared_from": "crates/nimbus-cli/src/test_support.rs",
+          "cfg_owner": "crates/nimbus-cli/src/lib.rs",
+          "owner_module": "test_support",
+          "module": "managed_workload"
+        },
+        {
+          "path": "crates/nimbus-compute/src/workload_saga/teardown_test_support.rs",
+          "declared_from": "crates/nimbus-compute/src/workload_saga.rs",
+          "cfg_owner": "crates/nimbus-compute/src/workload_saga.rs",
+          "owner_module": "teardown_test_support",
+          "module": "teardown_test_support"
+        },
+        {
+          "path": "crates/nimbus-cli/src/machine/api/service_workloads/composition_tests.rs",
+          "declared_from": "crates/nimbus-cli/src/machine/api/service_workloads.rs",
+          "cfg_owner": "crates/nimbus-cli/src/machine/api/service_workloads.rs",
+          "owner_module": "composition_tests",
+          "module": "composition_tests"
+        },
+        {
+          "path": "crates/nimbus-cli/src/machine/publication_authority/confirmed/stop_barrier/process_tests.rs",
+          "declared_from": "crates/nimbus-cli/src/machine/publication_authority/confirmed/stop_barrier.rs",
+          "cfg_owner": "crates/nimbus-cli/src/machine/publication_authority/confirmed/stop_barrier.rs",
+          "owner_module": "process_tests",
+          "module": "process_tests"
+        },
+        {
+          "path": "crates/nimbus-server/src/workload_ingress/owner_exit_tests.rs",
+          "declared_from": "crates/nimbus-server/src/workload_ingress.rs",
+          "cfg_owner": "crates/nimbus-server/src/workload_ingress.rs",
+          "owner_module": "owner_exit_tests",
+          "module": "owner_exit_tests"
+        }
+      ],
+      "allowed_shape": "The exact child path is admitted only while its declaration remains inside the mechanically verified #[cfg(test)] tests module and no production mod, path, or include edge reaches it."
+    },
+    {
+      "mechanism": "path-convention",
+      "patterns": [
+        "crates/**/benches/**"
+      ],
+      "classification": "benchmark-only",
+      "allowed_shape": "Loopback ephemeral fixture; the structural scanner rejects any production inclusion edge into the benchmark path."
+    },
+    {
+      "mechanism": "test-support-crate",
+      "path_prefix": "crates/nimbus-testing/",
+      "classification": "test-support-only",
+      "allowed_shape": "Deterministic fixture listener; the structural scanner excludes the exact crate prefix and rejects any production source inclusion edge into it."
+    }
+  ],
+  "summary": {
+    "production_sites": 28,
+    "active_production_sites": 25,
+    "retired_production_sites": 3,
+      "authority_occurrences": 67,
+    "non_authority_occurrences": 37,
+    "portable_owner_sites": 6,
+    "trust_inputs_not_network_authorities": 3,
+    "unclassified_production_sites": 0,
+    "production_tcp_bind_occurrences": 7,
+    "production_udp_bind_occurrences": 0,
+    "local_ipc_occurrences": 5
+  }
+}

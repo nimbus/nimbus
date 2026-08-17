@@ -660,8 +660,9 @@ fn otel_severity(
 #[cfg(test)]
 mod tests {
     use nimbus_core::{PrincipalContext, TenantId};
+    use nimbus_network::EndpointProtocol;
     use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
-    use nimbus_sandbox::{PublishedEndpointProtocol, SandboxResourceCharge};
+    use nimbus_sandbox::SandboxResourceCharge;
 
     use super::super::{
         RuntimeIsolationTier, TenantImagePolicyDecision, TenantIsolationContext,
@@ -702,7 +703,7 @@ mod tests {
             TenantNetworkEndpointDecision::new(
                 "db",
                 "postgres",
-                PublishedEndpointProtocol::Tcp,
+                EndpointProtocol::Tcp,
                 "127.0.0.1",
                 15432,
             )

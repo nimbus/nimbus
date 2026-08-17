@@ -1,20 +1,27 @@
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
+#[cfg(test)]
+use nimbus::SandboxBackend;
 use nimbus::{
-    Error, LocalBuildAdmission, SandboxBackend, SandboxBackendKind, ServiceDefinitionCatalog,
-    ServiceManager, TenantId,
+    Error, LocalBuildAdmission, SandboxBackendKind, ServiceDefinitionCatalog, ServiceManager,
+    TenantId,
 };
+use nimbus_network::NetworkAttachmentProviderRegistration;
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 
 use crate::compose::discovery::ResolvedComposeSelection;
+#[cfg(test)]
+use crate::machine::ForwardedMachineApiSandboxBackend;
+#[cfg(test)]
+use crate::machine::HostMachineNetworkComposition;
+#[cfg(test)]
+use crate::machine::ensure_default_machine_api_client_started;
 use crate::machine::{
-    ForwardedMachineApiSandboxBackend, MachineApiClient, ensure_default_machine_api_client_started,
-    require_default_machine_api_client,
+    HostMachineNetworkAuthority, MachineApiClient, require_default_machine_api_client,
 };
+use crate::network_composition::StagedLocalNetworkComposition;
 
-use super::lifecycle::ServiceLifecycleTarget;
 use super::{ComposeProjectContext, file};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,14 +44,87 @@ impl ServiceHostPlatform {
 }
 
 pub(super) enum ServiceExecutionSurface {
-    Krun {
-        state_view: KrunSandboxStateView,
-        backend: Arc<dyn SandboxBackend>,
-    },
-    ForwardedContainer {
-        client: MachineApiClient,
-        backend: Arc<dyn SandboxBackend>,
-    },
+    Krun { state_view: KrunSandboxStateView },
+    ForwardedContainer { client: MachineApiClient },
+}
+
+#[derive(Clone)]
+pub(crate) struct LocalKrunExecutionSurface {
+    pub(crate) state_view: KrunSandboxStateView,
+}
+
+/// A local service manager prepared under the staged OS-node authority.
+///
+/// The concrete backend remains retained by `ServiceManager`; its exact
+/// source-owned attachment report is kept separately until the CLI freezes
+/// the complete local capability registry.
+pub(crate) struct PreparedLocalServiceManager {
+    pub(crate) manager: ServiceManager,
+    pub(crate) attachment: NetworkAttachmentProviderRegistration,
+    pub(crate) backend: Arc<KrunSandboxBackend>,
+    pub(crate) state_view: KrunSandboxStateView,
+}
+
+/// Prepare a host-managed local backend without performing machine or socket
+/// effects.
+///
+/// `None` means this selection is not a host-managed local composition (for
+/// example the macOS forwarded-machine path). The caller freezes an honest
+/// empty local registry before constructing that separate provider realm.
+pub(crate) fn prepare_local_service_manager_for_selection_with_isolation_mode(
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &Path,
+    tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
+    staged_network: &mut StagedLocalNetworkComposition,
+) -> Result<Option<PreparedLocalServiceManager>, Error> {
+    let host_platform = ServiceHostPlatform::current();
+    let admission_mode = match tenant_isolation_mode {
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment => {
+            file::ComposeAdmissionMode::LocalDevelopment
+        }
+        nimbus_tenant::TenantIsolationMode::Production => file::ComposeAdmissionMode::Production,
+    };
+    let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
+    let backend_kind = required_effective_project_backend(
+        &context,
+        None,
+        "prepare a compose-backed local network composition",
+        host_platform,
+    )?;
+    if backend_kind != SandboxBackendKind::Krun {
+        return Ok(None);
+    }
+
+    let catalog = load_service_definition_catalog_for_execution_platform_with_admission(
+        selection,
+        host_platform,
+        admission_mode,
+    )?;
+    let config = context
+        .control_plane
+        .krun_backend_config_with_network_authority(staged_network.authority().state_root());
+    let process = staged_network
+        .prepare_krun_process(&config)
+        .map_err(|error| Error::InvalidInput(error.to_string()))?;
+    let state_view = KrunSandboxStateView::from_config(&config);
+    let backend = Arc::new(
+        KrunSandboxBackend::with_network_process(config, process)
+            .map_err(|error| Error::InvalidInput(error.to_string()))?,
+    );
+    let attachment = backend
+        .host_managed_attachment_registration()
+        .map_err(|error| Error::InvalidInput(error.to_string()))?;
+    let local_build_admission = match admission_mode {
+        file::ComposeAdmissionMode::LocalDevelopment => LocalBuildAdmission::Allowed,
+        file::ComposeAdmissionMode::Production => LocalBuildAdmission::Denied,
+    };
+    Ok(Some(PreparedLocalServiceManager {
+        manager: ServiceManager::new(catalog, backend_kind)
+            .with_local_build_admission(local_build_admission),
+        attachment,
+        backend,
+        state_view,
+    }))
 }
 
 #[cfg(test)]
@@ -63,6 +143,7 @@ pub(super) fn load_host_backed_service_manager_for_platform(
     )
 }
 
+#[cfg(test)]
 pub(super) fn load_host_backed_service_manager_for_platform_selection_with_admission(
     selection: &ResolvedComposeSelection,
     control_data_dir: &Path,
@@ -79,7 +160,10 @@ pub(super) fn load_host_backed_service_manager_for_platform_selection_with_admis
     let machine_api_client = match machine_api_client {
         Some(client) => Some(client),
         None if should_auto_start_default_machine_for_host_loader(&context, host_platform)? => {
-            Some(ensure_default_machine_api_client_started()?)
+            let network = HostMachineNetworkComposition::claim_default()?;
+            Some(ensure_default_machine_api_client_started(
+                &network.authority(),
+            )?)
         }
         None => None,
     };
@@ -88,9 +172,11 @@ pub(super) fn load_host_backed_service_manager_for_platform_selection_with_admis
         file::ComposeAdmissionMode::LocalDevelopment => LocalBuildAdmission::Allowed,
         file::ComposeAdmissionMode::Production => LocalBuildAdmission::Denied,
     };
-    Ok(ServiceManager::new(catalog, backend).with_local_build_admission(local_build_admission))
+    Ok(ServiceManager::new(catalog, backend.kind())
+        .with_local_build_admission(local_build_admission))
 }
 
+#[cfg(test)]
 pub(super) fn should_auto_start_default_machine_for_host_loader(
     context: &ComposeProjectContext,
     host_platform: ServiceHostPlatform,
@@ -125,72 +211,6 @@ pub(super) fn lookup_current_remote_service_details(
         .inspect_current_service_sandbox(tenant, service_name)
         .map(|response| response.details)
         .map_err(|error| machine_api_operation_error(operation, client, error))
-}
-
-pub(super) fn resolve_remote_service_down_targets(
-    context: &ComposeProjectContext,
-    client: &MachineApiClient,
-    tenant: &TenantId,
-    requested_service: Option<&str>,
-) -> Result<Vec<ServiceLifecycleTarget>, Error> {
-    match requested_service {
-        Some(service_name) => {
-            let details = lookup_current_remote_service_details(
-                context,
-                client,
-                tenant,
-                service_name,
-                "resolve persisted sandbox state",
-            )?
-            .ok_or_else(|| {
-                missing_persisted_service_error(
-                    &context.control_plane.project_name,
-                    tenant,
-                    service_name,
-                )
-            })?;
-            Ok(vec![ServiceLifecycleTarget {
-                sandbox_id: details.summary.sandbox_id,
-                service_name: details.summary.service_name,
-                status: details.summary.status,
-            }])
-        }
-        None => {
-            let summaries = client
-                .list_service_sandboxes(Some(tenant))
-                .map_err(|error| {
-                    machine_api_operation_error("list persisted sandbox state", client, error)
-                })?;
-            let service_names = summaries
-                .into_iter()
-                .map(|summary| summary.service_name)
-                .collect::<BTreeSet<_>>();
-
-            service_names
-                .into_iter()
-                .map(|service_name| {
-                    lookup_current_remote_service_details(
-                        context,
-                        client,
-                        tenant,
-                        &service_name,
-                        "resolve persisted sandbox state",
-                    )?
-                    .map(|details| ServiceLifecycleTarget {
-                        sandbox_id: details.summary.sandbox_id,
-                        service_name: details.summary.service_name,
-                        status: details.summary.status,
-                    })
-                    .ok_or_else(|| {
-                        Error::Internal(format!(
-                            "persisted sandbox state changed while resolving service {} in tenant {} under project {}",
-                            service_name, tenant, context.control_plane.project_name
-                        ))
-                    })
-                })
-                .collect()
-        }
-    }
 }
 
 pub(super) fn missing_persisted_service_error(
@@ -299,17 +319,6 @@ pub(super) fn required_project_backend(
     }
 }
 
-pub(super) fn load_service_definition_catalog_for_execution_platform(
-    selection: &ResolvedComposeSelection,
-    host_platform: ServiceHostPlatform,
-) -> Result<Arc<dyn ServiceDefinitionCatalog>, Error> {
-    load_service_definition_catalog_for_execution_platform_with_admission(
-        selection,
-        host_platform,
-        file::ComposeAdmissionMode::LocalDevelopment,
-    )
-}
-
 pub(super) fn load_service_definition_catalog_for_execution_platform_with_admission(
     selection: &ResolvedComposeSelection,
     host_platform: ServiceHostPlatform,
@@ -358,7 +367,7 @@ fn service_declares_backend(service: &file::ComposeServicePlan) -> bool {
         .is_some()
 }
 
-fn required_effective_project_backend(
+pub(super) fn required_effective_project_backend(
     context: &ComposeProjectContext,
     requested_service: Option<&str>,
     operation: &str,
@@ -418,6 +427,7 @@ fn effective_project_backend_assignments(
         .join(", ")
 }
 
+#[cfg(test)]
 pub(super) fn load_host_backed_project_backend(
     context: &ComposeProjectContext,
     host_platform: ServiceHostPlatform,
@@ -431,27 +441,61 @@ pub(super) fn load_host_backed_project_backend(
     )?;
     match backend {
         SandboxBackendKind::Krun => Ok(Arc::new(KrunSandboxBackend::new(
-            context.control_plane.krun_backend_config(),
+            context
+                .control_plane
+                .reconstruct_direct_krun_backend_config(),
         ))),
         SandboxBackendKind::Container => {
-            load_forwarded_machine_api_backend(context, host_platform, machine_api_client)
+            load_forwarded_machine_api_backend(context, host_platform, machine_api_client, None)
         }
     }
 }
 
+#[cfg(test)]
 pub(super) fn load_forwarded_machine_api_backend(
     context: &ComposeProjectContext,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<Arc<dyn SandboxBackend>, Error> {
     match host_platform {
         ServiceHostPlatform::Macos => {
             let client = match machine_api_client {
                 Some(client) => client,
-                None => require_default_machine_api_client()?,
+                None => require_default_machine_api_client(network.ok_or_else(|| {
+                    Error::Internal(
+                        "forwarded machine backend requires the retained parent network authority"
+                            .to_owned(),
+                    )
+                })?)?,
             };
             validate_forwarded_machine_api_backend(context, &client)?;
-            Ok(Arc::new(ForwardedMachineApiSandboxBackend::new(client)))
+            let backend = match network {
+                Some(network) => ForwardedMachineApiSandboxBackend::new(client, network)?,
+                #[cfg(test)]
+                None => ForwardedMachineApiSandboxBackend::new_for_test(
+                    client,
+                    nimbus_network::LocalPortLeaseAuthority::open(
+                        context
+                            .control_plane
+                            .project_root
+                            .join("test-parent-machine-network"),
+                    )
+                    .map_err(|error| {
+                        Error::Internal(format!(
+                            "failed to open isolated test parent publication authority: {error}"
+                        ))
+                    })?,
+                )?,
+                #[cfg(not(test))]
+                None => {
+                    return Err(Error::Internal(
+                        "forwarded machine backend requires the retained parent network authority"
+                            .to_owned(),
+                    ));
+                }
+            };
+            Ok(Arc::new(backend))
         }
         ServiceHostPlatform::Linux => Err(Error::InvalidInput(format!(
             "compose project {} selects sandbox backend container, but nimbus load a compose-backed sandbox manager only supports that backend through the macOS guest machine API today",
@@ -464,6 +508,7 @@ pub(super) fn load_forwarded_machine_api_backend(
     }
 }
 
+#[cfg(test)]
 pub(super) fn validate_forwarded_machine_api_backend(
     context: &ComposeProjectContext,
     client: &MachineApiClient,
@@ -526,30 +571,53 @@ pub(super) fn resolve_service_execution_surface(
     operation: &str,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
+    local_krun: Option<LocalKrunExecutionSurface>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<ServiceExecutionSurface, Error> {
     let backend =
         required_effective_project_backend(context, requested_service, operation, host_platform)?;
     match backend {
-        SandboxBackendKind::Krun => Ok(ServiceExecutionSurface::Krun {
-            state_view: KrunSandboxStateView::from_config(
-                &context.control_plane.krun_backend_config(),
-            ),
-            backend: Arc::new(KrunSandboxBackend::new(
-                context.control_plane.krun_backend_config(),
-            )),
-        }),
+        SandboxBackendKind::Krun => {
+            let local_krun = require_local_krun_execution(context, operation, local_krun)?;
+            Ok(ServiceExecutionSurface::Krun {
+                state_view: local_krun.state_view,
+            })
+        }
         SandboxBackendKind::Container => {
             let client = resolve_forwarded_machine_api_client(
                 context,
                 host_platform,
                 machine_api_client,
                 operation,
+                network,
             )?;
-            let backend: Arc<dyn SandboxBackend> =
-                Arc::new(ForwardedMachineApiSandboxBackend::new(client.clone()));
-            Ok(ServiceExecutionSurface::ForwardedContainer { client, backend })
+            Ok(ServiceExecutionSurface::ForwardedContainer { client })
         }
     }
+}
+
+fn require_local_krun_execution(
+    context: &ComposeProjectContext,
+    _operation: &str,
+    local_krun: Option<LocalKrunExecutionSurface>,
+) -> Result<LocalKrunExecutionSurface, Error> {
+    if let Some(local_krun) = local_krun {
+        return Ok(local_krun);
+    }
+    #[cfg(test)]
+    {
+        let config = context
+            .control_plane
+            .reconstruct_direct_krun_backend_config();
+        Ok(LocalKrunExecutionSurface {
+            state_view: KrunSandboxStateView::from_config(&config),
+        })
+    }
+    #[cfg(not(test))]
+    Err(Error::Internal(format!(
+        "nimbus {_operation} requires the manager-derived local krun composition for project {}",
+        context.control_plane.project_name
+    )))
 }
 
 fn resolve_forwarded_machine_api_client(
@@ -557,11 +625,16 @@ fn resolve_forwarded_machine_api_client(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     operation: &str,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<MachineApiClient, Error> {
     match host_platform {
         ServiceHostPlatform::Macos => match machine_api_client {
             Some(client) => Ok(client),
-            None => require_default_machine_api_client(),
+            None => require_default_machine_api_client(network.ok_or_else(|| {
+                Error::Internal(format!(
+                    "nimbus {operation} requires the retained parent network authority"
+                ))
+            })?),
         },
         ServiceHostPlatform::Linux => Err(Error::InvalidInput(format!(
             "compose project {} selects sandbox backend container, but nimbus {} only supports that backend through the macOS guest machine API today",
@@ -628,54 +701,6 @@ pub(super) fn validate_forwarded_machine_api_operations(
         client.socket_path().display(),
         blockers,
     )))
-}
-
-pub(super) fn resolve_service_down_targets(
-    state_view: &KrunSandboxStateView,
-    tenant: &TenantId,
-    requested_service: Option<&str>,
-    project_name: &str,
-) -> Result<Vec<ServiceLifecycleTarget>, Error> {
-    match requested_service {
-        Some(service_name) => {
-            let details = state_view
-                .inspect_service(tenant, service_name)
-                .map_err(|error| render_state_lookup_error("resolve persisted sandbox state", error))?
-                .ok_or_else(|| {
-                    Error::InvalidInput(format!(
-                        "no persisted sandbox state found for service {} in tenant {} under project {}",
-                        service_name, tenant, project_name
-                    ))
-                })?;
-            Ok(vec![ServiceLifecycleTarget::from_details(details)])
-        }
-        None => {
-            let service_names = state_view
-                .list_for_tenant(tenant)
-                .map_err(|error| render_state_lookup_error("list persisted sandbox state", error))?
-                .into_iter()
-                .map(|summary| summary.service_name)
-                .collect::<BTreeSet<_>>();
-
-            service_names
-                .into_iter()
-                .map(|service_name| {
-                    state_view
-                        .inspect_service(tenant, &service_name)
-                        .map_err(|error| {
-                            render_state_lookup_error("resolve persisted sandbox state", error)
-                        })?
-                        .map(ServiceLifecycleTarget::from_details)
-                        .ok_or_else(|| {
-                            Error::Internal(format!(
-                                "persisted sandbox state changed while resolving service {} in tenant {} under project {}",
-                                service_name, tenant, project_name
-                            ))
-                        })
-                })
-                .collect()
-        }
-    }
 }
 
 type MachineApiServiceSandboxDetails = crate::machine::MachineApiServiceSandboxDetails;

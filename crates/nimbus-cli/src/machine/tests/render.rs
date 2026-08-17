@@ -155,6 +155,7 @@ fn machine_status_table_output_is_default_human_summary() {
             disk_gib: 40,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(temp_dir.path(), "team-a"),
         roots: layout,
     };
     let state = MachineStateRecord {
@@ -215,6 +216,7 @@ fn machine_status_table_output_can_omit_headings() {
             disk_gib: 40,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(temp_dir.path(), "team-a"),
         roots: layout,
     };
     let state = MachineStateRecord {
@@ -270,6 +272,7 @@ fn machine_status_json_output_serializes_full_status_view() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(temp_dir.path(), "team-a"),
         roots: layout,
     };
 
@@ -596,6 +599,7 @@ fn machine_list_prioritizes_active_and_default_machines() {
                     disk_gib,
                 },
                 volumes: Vec::new(),
+                network_authority: test_network_authority_record(temp_dir.path(), name),
                 roots: layout.clone(),
             },
         )
@@ -623,7 +627,13 @@ fn machine_list_prioritizes_active_and_default_machines() {
         }
     }
 
-    let machines = build_machine_list_entries(&layout).expect("machine list should build");
+    let port_leases =
+        nimbus_network::LocalPortLeaseAuthority::open(temp_dir.path().join("network-authority"))
+            .expect("test machine port authority should open");
+    let network = HostMachineNetworkAuthority::from_port_leases_for_test(port_leases)
+        .expect("test host network authority should open");
+    let machines =
+        build_machine_list_entries(&layout, &network).expect("machine list should build");
 
     assert_eq!(
         machines
@@ -693,6 +703,7 @@ fn machine_inspect_json_output_serializes_full_config_and_state() {
             source: PathBuf::from("/Users"),
             target: PathBuf::from("/Users"),
         }],
+        network_authority: test_network_authority_record(temp_dir.path(), "team-a"),
         roots: layout,
     };
     let state = MachineStateRecord {
@@ -742,6 +753,7 @@ fn machine_inspect_yaml_output_serializes_full_config_and_state() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(temp_dir.path(), "default"),
         roots: layout,
     };
 
@@ -787,6 +799,7 @@ fn machine_render_surfaces_vfkit_provider_in_status_inspect_and_list() {
             disk_gib: 40,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(temp_dir.path(), "team-vfkit"),
         roots: layout,
     };
     let state = MachineStateRecord {

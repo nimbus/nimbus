@@ -15,10 +15,11 @@ mod tests;
 pub(crate) use self::boot::resolve_optional_compose_selection;
 #[cfg(test)]
 pub(crate) use self::boot::resolve_start_app_dir;
-pub(crate) use self::boot::run_start_command;
+pub(crate) use self::boot::{run_start_command, run_start_command_with_prepared_network};
 pub(crate) use self::config::persistence_config_from_start_command;
 pub(crate) use self::config::{
-    CliKeyProvider, CliTenantProvider, RuntimeConfigFile, runtime_config_from_start_command,
+    CliKeyProvider, CliTenantProvider, RuntimeConfigFile, network_root_from_start_command,
+    runtime_config_from_start_command,
 };
 use self::runtime_limits::{
     default_runtime_control_plane_reserve_millicpus, default_runtime_heap_mb,
@@ -100,14 +101,14 @@ pub(crate) struct StartCommand {
     pub(crate) cloudflare: bool,
 
     /// Disable the MongoDB wire-protocol listener (served by default on
-    /// port 27017 when free, with SCRAM credentials from the data dir's
+    /// port 27017, with SCRAM credentials from the data dir's
     /// wire-credential store unless operator credentials are provided).
     #[arg(long = "no-mongodb", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) mongodb: bool,
 
     /// Explicit port for the MongoDB wire-protocol listener. Without this
-    /// flag the listener serves on 27017 when free and is skipped (with a
-    /// warning) when busy; an explicit port fails loud instead.
+    /// flag the listener serves on 27017 and a conflict fails startup with
+    /// guidance to choose another port or disable the listener.
     #[arg(long)]
     pub(crate) mongodb_port: Option<u16>,
 
@@ -125,15 +126,14 @@ pub(crate) struct StartCommand {
     pub(crate) mongodb_username: Option<String>,
 
     /// Disable the DynamoDB HTTP listener (served by default on port 8000
-    /// when free, with the generated wire-credential store key bound to
+    /// with the generated wire-credential store key bound to
     /// the `default` tenant unless operator bindings are provided).
     #[arg(long = "no-dynamodb", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) dynamodb: bool,
 
     /// Explicit port for the DynamoDB HTTP listener (DynamoDB Local
-    /// convention is 8000). Without this flag the listener serves on 8000
-    /// when free and is skipped (with a warning) when busy; an explicit
-    /// port fails loud instead.
+    /// convention is 8000). Without this flag a conflict on 8000 fails
+    /// startup with guidance to choose another port or disable the listener.
     #[arg(long)]
     pub(crate) dynamodb_port: Option<u16>,
 
@@ -150,15 +150,14 @@ pub(crate) struct StartCommand {
     pub(crate) dynamodb_access_key: Vec<String>,
 
     /// Disable the S3 HTTP listener (served by default on port 9000
-    /// when free, with the generated wire-credential store key bound to
+    /// with the generated wire-credential store key bound to
     /// the `default` tenant unless operator bindings are provided).
     #[arg(long = "no-s3", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) s3: bool,
 
     /// Explicit port for the S3 HTTP listener (S3-compatible local
-    /// convention is 9000). Without this flag the listener serves on 9000
-    /// when free and is skipped (with a warning) when busy; an explicit
-    /// port fails loud instead.
+    /// convention is 9000). Without this flag a conflict on 9000 fails
+    /// startup with guidance to choose another port or disable the listener.
     #[arg(long)]
     pub(crate) s3_port: Option<u16>,
 
@@ -181,6 +180,12 @@ pub(crate) struct StartCommand {
     /// Optional override for the local redb control-plane directory.
     #[arg(long)]
     pub(crate) control_data_dir: Option<PathBuf>,
+
+    /// Stable OS-node root for host-global network allocation authority.
+    ///
+    /// This is independent of tenant, control-plane, and project data roots.
+    #[arg(long)]
+    pub(crate) network_state_dir: Option<PathBuf>,
 
     /// Tenant persistence provider mode.
     #[arg(long, value_enum)]
@@ -402,6 +407,11 @@ pub(crate) struct StartCommand {
     #[arg(skip)]
     pub(crate) mongodb_credentials_from_store: bool,
 
+    /// Continuously held dev wire listeners awaiting transfer into the
+    /// server's matching listener-authority incarnation.
+    #[arg(skip)]
+    pub(crate) prebound_wire_listeners: Option<nimbus_server::PreboundServerListeners>,
+
     /// Tenant-isolation mode selected by the owning command.
     #[arg(skip = nimbus_tenant::TenantIsolationMode::Production)]
     pub(crate) tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
@@ -442,6 +452,7 @@ impl Default for StartCommand {
             s3_access_key: Vec::new(),
             data_dir: None,
             control_data_dir: None,
+            network_state_dir: None,
             tenant_provider: None,
             libsql_url: None,
             libsql_auth_token: None,
@@ -492,6 +503,7 @@ impl Default for StartCommand {
             deploy_admin_token: None,
             auto_tenant: None,
             mongodb_credentials_from_store: false,
+            prebound_wire_listeners: None,
             tenant_isolation_mode: nimbus_tenant::TenantIsolationMode::Production,
         }
     }

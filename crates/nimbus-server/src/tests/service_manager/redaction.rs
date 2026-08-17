@@ -5,20 +5,17 @@ async fn service_definition_responses_redact_sandbox_launch_details() {
     let temp = tempfile::tempdir().expect("tempdir should create");
     let (local_server_security, token) = local_server_security(temp.path());
     let engine = Arc::new(Engine::new(temp.path()).expect("engine should create"));
-    let backend = Arc::new(ReadySandboxBackend {
-        image_starts: AtomicUsize::new(0),
-        stop_calls: AtomicUsize::new(0),
-    });
+    let backend = Arc::new(ReadySandboxBackend::default());
     let tenant_id = TenantId::new("tenant").expect("tenant id should parse");
+    let manager = service_manager_with_catalog(
+        backend.clone(),
+        BTreeMap::from([(
+            "builder".to_owned(),
+            sensitive_static_build_backend(&tenant_id, "builder"),
+        )]),
+    );
     let server = ServerFixture::start(
-        crate::router::RouterBuildConfig::core(engine.clone())
-            .with_service_manager(service_manager_with_catalog(
-                backend.clone(),
-                BTreeMap::from([(
-                    "builder".to_owned(),
-                    sensitive_static_build_backend(&tenant_id, "builder"),
-                )]),
-            ))
+        managed_router_config(engine.clone(), manager, backend.clone())
             .with_local_server_security(local_server_security)
             .without_deploy_admin_token()
             .build(),

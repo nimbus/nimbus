@@ -14,7 +14,7 @@ use nimbus_engine::Engine;
 use nimbus_object_storage::ObjectStorageConfig;
 pub use nimbus_s3::{AccessKeyRegistry, DEFAULT_S3_PORT};
 
-use super::wire::WireProtocolAdapter;
+use super::wire::{WireProtocolAdapter, WireProtocolTasks};
 
 /// Server-side S3 listener config.
 ///
@@ -118,14 +118,10 @@ impl WireProtocolAdapter for S3Config {
         listener::guard_config(self)
     }
 
-    fn spawn(
-        self: Box<Self>,
-        listener: tokio::net::TcpListener,
-        engine: Arc<Engine>,
-    ) -> Vec<tokio::task::JoinHandle<()>> {
+    fn build_tasks(self: Box<Self>, engine: Arc<Engine>) -> std::io::Result<WireProtocolTasks> {
         let config = *self;
-        vec![tokio::spawn(async move {
-            listener::run_listener(listener, engine, config).await;
-        })]
+        Ok(WireProtocolTasks::new("listener", move |listener| {
+            Box::pin(listener::run_listener(listener, engine, config))
+        }))
     }
 }

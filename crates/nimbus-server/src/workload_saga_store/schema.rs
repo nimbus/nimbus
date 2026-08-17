@@ -1,0 +1,200 @@
+use std::sync::Arc;
+
+use nimbus_core::{
+    AccessOperator, AccessPredicate, AccessRule, AccessValue, Error, FieldSchema, FieldType,
+    IndexDefinition, PrincipalClaimSource, TableAccessPolicy, TableName, TableSchema, TenantId,
+};
+use nimbus_engine::Engine;
+use nimbus_workloads::WorkloadSagaStoreError;
+use serde_json::Value;
+
+pub(crate) const WORKLOAD_SAGA_TABLE: &str = "_workload_sagas";
+pub(crate) const WORKLOAD_SAGA_TENANT: &str = "_nimbus";
+pub(crate) const TENANT_RETIREMENT_TABLE: &str = "_tenant_retirements";
+pub(crate) const WORKLOAD_SAGA_TENANT_EPOCH_TABLE: &str = "_workload_saga_tenant_epochs";
+
+pub(crate) async fn prepare_exact_schema(
+    engine: &Arc<Engine>,
+) -> Result<(), WorkloadSagaStoreError> {
+    let tenant = workload_saga_tenant()?;
+    engine
+        .ensure_tenant_ready_async(tenant.clone())
+        .await
+        .map_err(unavailable)?;
+
+    prepare_table(engine, &tenant, exact_table_schema()).await?;
+    prepare_table(engine, &tenant, exact_tenant_retirement_table_schema()).await?;
+    prepare_table(engine, &tenant, exact_tenant_epoch_table_schema()).await
+}
+
+async fn prepare_table(
+    engine: &Arc<Engine>,
+    tenant: &TenantId,
+    expected: TableSchema,
+) -> Result<(), WorkloadSagaStoreError> {
+    let table = expected.table.clone();
+    match engine
+        .get_table_schema_async(tenant.clone(), table.clone())
+        .await
+    {
+        Ok(existing) => verify_exact_schema(&expected, &existing),
+        Err(Error::SchemaNotFound(_)) => {
+            engine
+                .set_table_schema_async(tenant.clone(), expected.clone())
+                .await
+                .map_err(unavailable)?;
+            let installed = engine
+                .get_table_schema_async(tenant.clone(), table)
+                .await
+                .map_err(unavailable)?;
+            verify_exact_schema(&expected, &installed)
+        }
+        Err(error) => Err(unavailable(error)),
+    }
+}
+
+pub(crate) fn workload_saga_tenant() -> Result<TenantId, WorkloadSagaStoreError> {
+    TenantId::new(WORKLOAD_SAGA_TENANT).map_err(unavailable)
+}
+
+pub(crate) fn workload_saga_table() -> Result<TableName, WorkloadSagaStoreError> {
+    TableName::new(WORKLOAD_SAGA_TABLE).map_err(unavailable)
+}
+
+pub(crate) fn tenant_retirement_table() -> Result<TableName, WorkloadSagaStoreError> {
+    TableName::new(TENANT_RETIREMENT_TABLE).map_err(unavailable)
+}
+
+pub(crate) fn workload_saga_tenant_epoch_table() -> Result<TableName, WorkloadSagaStoreError> {
+    TableName::new(WORKLOAD_SAGA_TENANT_EPOCH_TABLE).map_err(unavailable)
+}
+
+pub(crate) fn exact_table_schema() -> TableSchema {
+    TableSchema {
+        table: TableName::new(WORKLOAD_SAGA_TABLE)
+            .expect("private workload-saga table name should be valid"),
+        fields: vec![
+            field("formatVersion", FieldType::Number, true),
+            field("sagaId", FieldType::String, true),
+            field("tenantId", FieldType::String, true),
+            field("workloadId", FieldType::String, true),
+            field("workloadKind", FieldType::String, true),
+            field("desiredState", FieldType::String, true),
+            field("desiredGeneration", FieldType::String, true),
+            field("desiredDigest", FieldType::String, true),
+            field("executable", FieldType::Object, true),
+            field("source", FieldType::Object, true),
+            field("restartPolicy", FieldType::Object, true),
+            field("sagaRevision", FieldType::String, true),
+            field("phase", FieldType::String, true),
+            field("recoveryEligible", FieldType::Boolean, true),
+            field("restartWatchCandidate", FieldType::Boolean, true),
+            field("phaseDetail", FieldType::Object, true),
+            field("restartState", FieldType::Object, true),
+            field("provisionDisposition", FieldType::Object, false),
+            field("teardownDisposition", FieldType::Object, false),
+            field("compiledNetworkPlan", FieldType::Object, true),
+            field("activationIntent", FieldType::String, true),
+            field("publicationIntent", FieldType::String, true),
+            field("admission", FieldType::Object, true),
+            field("successorIntent", FieldType::Object, false),
+            field("lastTransition", FieldType::Object, true),
+            field("failure", FieldType::Object, false),
+        ],
+        indexes: vec![
+            IndexDefinition::new("by_tenantId_and_workloadId", ["tenantId", "workloadId"]),
+            IndexDefinition::new("by_recovery", ["recoveryEligible", "sagaId"]),
+            IndexDefinition::new(
+                "by_restartWatchCandidate_and_sagaId",
+                ["restartWatchCandidate", "sagaId"],
+            ),
+            IndexDefinition::new("by_tenantId_and_phase", ["tenantId", "phase"]),
+            IndexDefinition::new("by_desiredState_and_phase", ["desiredState", "phase"]),
+        ],
+        access_policy: Some(system_access_policy()),
+    }
+}
+
+pub(crate) fn exact_tenant_retirement_table_schema() -> TableSchema {
+    TableSchema {
+        table: TableName::new(TENANT_RETIREMENT_TABLE)
+            .expect("private tenant-retirement table name should be valid"),
+        fields: vec![
+            field("formatVersion", FieldType::Number, true),
+            field("retirementId", FieldType::String, true),
+            field("tenantId", FieldType::String, true),
+            field("tenantIncarnation", FieldType::String, true),
+            field("revision", FieldType::String, true),
+            field("phase", FieldType::String, true),
+            field("active", FieldType::Boolean, true),
+            field("sources", FieldType::Array, true),
+        ],
+        indexes: vec![
+            IndexDefinition::new("by_retirementId", ["retirementId"]),
+            IndexDefinition::new("by_active_and_retirementId", ["active", "retirementId"]),
+            IndexDefinition::new("by_tenantId", ["tenantId"]),
+        ],
+        access_policy: Some(system_access_policy()),
+    }
+}
+
+pub(crate) fn exact_tenant_epoch_table_schema() -> TableSchema {
+    TableSchema {
+        table: TableName::new(WORKLOAD_SAGA_TENANT_EPOCH_TABLE)
+            .expect("private workload-saga tenant-epoch table name should be valid"),
+        fields: vec![
+            field("formatVersion", FieldType::Number, true),
+            field("tenantId", FieldType::String, true),
+            field("mutationEpoch", FieldType::String, true),
+        ],
+        indexes: Vec::new(),
+        access_policy: Some(system_access_policy()),
+    }
+}
+
+fn verify_exact_schema(
+    expected: &TableSchema,
+    existing: &TableSchema,
+) -> Result<(), WorkloadSagaStoreError> {
+    let mut expected = expected.clone();
+    expected.reconcile_index_metadata(Some(existing));
+    if &expected == existing {
+        Ok(())
+    } else {
+        Err(WorkloadSagaStoreError::Corrupt)
+    }
+}
+
+fn field(name: &str, field_type: FieldType, required: bool) -> FieldSchema {
+    FieldSchema {
+        name: name.to_owned(),
+        field_type,
+        required,
+    }
+}
+
+fn system_access_policy() -> TableAccessPolicy {
+    let rule = AccessRule {
+        require_authenticated: true,
+        predicates: vec![AccessPredicate {
+            left: AccessValue::PrincipalClaim {
+                principal: PrincipalClaimSource::Identity,
+                claim: "sub".to_owned(),
+            },
+            op: AccessOperator::Eq,
+            right: AccessValue::Literal {
+                value: Value::String("system".to_owned()),
+            },
+        }],
+    };
+    TableAccessPolicy {
+        read: rule.clone(),
+        create: rule.clone(),
+        update: rule.clone(),
+        delete: rule,
+    }
+}
+
+fn unavailable(_error: Error) -> WorkloadSagaStoreError {
+    WorkloadSagaStoreError::Unavailable
+}

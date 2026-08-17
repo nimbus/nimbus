@@ -62,9 +62,13 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
         guest_script,
     ]);
 
-    let handle =
-        block_on(backend.start(spec)).expect("guest-user-switch image-backed start should succeed");
-    let cleanup_guard = CleanupGuard::new(backend.clone(), handle.id.clone());
+    let provisioned = provision_krun(&backend, &state_root, spec, true)
+        .expect("guest-user-switch image-backed provision phases should succeed");
+    assert!(!provisioned.ingress.is_empty());
+    let handle = provisioned.handle;
+    let teardown = provisioned.teardown;
+    let _ingress = provisioned.ingress;
+    let cleanup_guard = CleanupGuard::new(backend.clone(), teardown.clone());
 
     let ready_handle = wait_for_ready(&backend, &handle.id, Duration::from_secs(30));
     assert_eq!(ready_handle.status, SandboxStatus::Ready);
@@ -120,6 +124,6 @@ fn krun_backend_m3_guest_user_switch_applies_image_user_inside_guest() {
         Some("/.nimbus/nimbus-guest-user-switch")
     );
 
-    block_on(backend.stop(&handle.id)).expect("stop should succeed");
+    retire_krun(&backend, &teardown).expect("exact teardown should succeed");
     cleanup_guard.disarm();
 }

@@ -16,11 +16,10 @@ use tracing::{info, warn};
 
 /// Current UNIX time in whole seconds (the unit DynamoDB TTL attributes use).
 ///
-/// Pure plumbing: this loop is not itself unit-tested (it's a real
-/// `tokio::spawn` background task on a real `tokio::time::interval`); the
-/// clock-dependent unit that *is* tested is `sweep_all_tenants`, which
-/// already takes `now: i64` as an explicit parameter. No struct here would
-/// benefit from holding an injected `Arc<dyn WallClock>`.
+/// Pure plumbing: this loop is not itself unit-tested. The listener group runs
+/// it as a real background task over `tokio::time::interval`. The tested
+/// clock-dependent unit is `sweep_all_tenants`, which takes `now: i64` as an
+/// explicit parameter. No struct here benefits from an injected wall clock.
 fn now_epoch_seconds() -> i64 {
     nimbus_core::clock::system_now_secs() as i64
 }

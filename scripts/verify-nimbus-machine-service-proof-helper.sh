@@ -282,30 +282,31 @@ rendered="$*"
 case "${rendered}" in
   *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"tail -n 200"*"/var/lib/nimbus/control/node-agent/status.jsonl"*)
     cat <<'OUT'
-{"projection":{"decision_id":"tid_local-demo_service_db","tenant_id":"local-demo","surface":"node.workload_executor","authority_class":"operator","workload_uid":"tw_local-demo_db","workload_subject":"db","generation":1},"status":{"workload_uid":"tw_local-demo_db","observed_generation":1,"decision_id":"tid_local-demo_service_db","writer_node_id":"machine-os-guest-node","target":"status","phase":"ready","conditions":[{"type":"ready","status":"true","reason":"Ready"}],"observed_usage":{},"node_observation_ids":{},"lifecycle_evidence":{"backend":"systemd_transient_unit","unit_name":"nimbus-tw_local-demo-db.service","job_path":"/org/freedesktop/systemd1/job/991","process_id":2002,"cgroup_path":"/system.slice/nimbus-tw_local-demo-db.service","journal_selectors":[{"field":"_SYSTEMD_UNIT","value":"nimbus-tw_local-demo-db.service"},{"field":"NIMBUS_WORKLOAD_ID","value":"tw_local-demo_db"}],"status_reason":"ready","message":null},"cleanup_progress":null,"diagnostics":{},"evidence_correlation_ids":["nimbus-tw_local-demo-db.service","/org/freedesktop/systemd1/job/991","pid:2002","/system.slice/nimbus-tw_local-demo-db.service"]}}
+{"projection":{"decision_id":"tid_local-demo_service_db","tenant_id":"local-demo","surface":"node.workload_executor","authority_class":"operator","workload_uid":"twu_1111111111111111111111111111111111111111111111111111111111111111","workload_subject":"db","generation":"1"},"status":{"workload_uid":"twu_1111111111111111111111111111111111111111111111111111111111111111","observed_generation":"1","decision_id":"tid_local-demo_service_db","writer_node_id":"machine-os-guest-node","target":"status","phase":"ready","conditions":[{"type":"ready","status":"true","reason":"Ready"}],"observed_usage":{},"node_observation_ids":{},"lifecycle_evidence":{"backend":"systemd_transient_unit","unit_name":"nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service","job_path":"/org/freedesktop/systemd1/job/991","process_id":2002,"cgroup_path":"/system.slice/nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service","journal_selectors":[{"field":"_SYSTEMD_UNIT","value":"nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service"},{"field":"NIMBUS_WORKLOAD_EXECUTION_ID","value":"wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23"}],"status_reason":"ready","message":null},"cleanup_progress":null,"diagnostics":{},"evidence_correlation_ids":["nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service","/org/freedesktop/systemd1/job/991","pid:2002","/system.slice/nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service"]}}
 OUT
     ;;
-  *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"systemctl list-units \"nimbus-tw_*.service\" --all --no-pager --no-legend 2>&1 || true"*)
+  *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"systemctl list-units \"nimbus-wex_*.service\" --all --no-pager --no-legend 2>&1 || true"*)
     cat <<'OUT'
-nimbus-tw_local-demo-db.service loaded active running Nimbus tenant workload tw_local-demo_db
+nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service loaded active running Nimbus workload execution wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23
 OUT
     ;;
   *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"systemctl show --no-pager --property=Id,LoadState,ActiveState,SubState,MainPID,ControlGroup"*)
     cat <<'OUT'
-# unit nimbus-tw_local-demo-db.service
-Id=nimbus-tw_local-demo-db.service
+# unit nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+Id=nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
 LoadState=loaded
 ActiveState=active
 SubState=running
 MainPID=2002
-ControlGroup=/system.slice/nimbus-tw_local-demo-db.service
+ControlGroup=/system.slice/nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
 OUT
     ;;
   *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"journalctl -b -u"*)
     cat <<'OUT'
-# journal unit nimbus-tw_local-demo-db.service
-NIMBUS_WORKLOAD_ID=tw_local-demo_db
-nimbus-container-runner started
+# journal unit nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+_SYSTEMD_UNIT=nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+NIMBUS_WORKLOAD_EXECUTION_ID=wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23
+MESSAGE=nimbus-container-runner started
 OUT
     ;;
   *"-i ${FAKE_SSH_IDENTITY_PATH}"*"-p ${FAKE_SSH_PORT}"*"root@127.0.0.1"*"/bin/sh -lc "*"ls -lZ"*"/usr/libexec/nimbus/nimbus-container-runner"*)
@@ -410,14 +411,17 @@ grep -F "runtime_pid: 2002" "${output_dir}/service-ps.txt" >/dev/null
 grep -F "guest log line" "${output_dir}/service-logs.txt" >/dev/null
 grep -F "HTTP/1.1 200 OK" "${output_dir}/localhost-probe.txt" >/dev/null
 grep -F '"projection"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
-grep -F '"observed_generation":1' "${output_dir}/guest-node-agent-status.txt" >/dev/null
+grep -F '"observed_generation":"1"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
 grep -F '"lifecycle_evidence"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
 grep -F '"systemd_transient_unit"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
-grep -F '"cgroup_path":"/system.slice/nimbus-tw_local-demo-db.service"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
-grep -F '"NIMBUS_WORKLOAD_ID"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
-grep -F "nimbus-tw_local-demo-db.service" "${output_dir}/guest-systemd-transient-units.txt" >/dev/null
-grep -F "ControlGroup=/system.slice/nimbus-tw_local-demo-db.service" "${output_dir}/guest-systemd-transient-unit-status.txt" >/dev/null
-grep -F "NIMBUS_WORKLOAD_ID=tw_local-demo_db" "${output_dir}/guest-node-workload-journal.txt" >/dev/null
+grep -F '"cgroup_path":"/system.slice/nimbus-wex_' "${output_dir}/guest-node-agent-status.txt" >/dev/null
+grep -F '"NIMBUS_WORKLOAD_EXECUTION_ID"' "${output_dir}/guest-node-agent-status.txt" >/dev/null
+grep -F "nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service" "${output_dir}/guest-systemd-transient-units.txt" >/dev/null
+grep -F "ControlGroup=/system.slice/nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service" "${output_dir}/guest-systemd-transient-unit-status.txt" >/dev/null
+grep -F "_SYSTEMD_UNIT=nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service" "${output_dir}/guest-node-workload-journal.txt" >/dev/null
+grep -F "NIMBUS_WORKLOAD_EXECUTION_ID=wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23" "${output_dir}/guest-node-workload-journal.txt" >/dev/null
+grep -F "MESSAGE=nimbus-container-runner started" "${output_dir}/guest-node-workload-journal.txt" >/dev/null
+grep -F -- "--output=export" "${output_dir}/guest-node-workload-journal-command.txt" >/dev/null
 grep -F "/usr/libexec/nimbus/nimbus-container-runner" "${output_dir}/guest-typed-runner-path.txt" >/dev/null
 grep -F "action: stopped" "${output_dir}/service-down.txt" >/dev/null
 grep -F "[]" "${output_dir}/service-list-after-down.txt" >/dev/null

@@ -24,8 +24,6 @@ pub mod machine {
         include_str!("../embedded/templates/machine/ready.service.tmpl");
     pub const NIMBUS_SERVICE: &str =
         include_str!("../embedded/templates/machine/nimbus.service.tmpl");
-    pub const NIMBUS_SOCKET: &str =
-        include_str!("../embedded/templates/machine/nimbus.socket.tmpl");
     pub const VIRTIOFS_ROOT_OFF: &str =
         include_str!("../embedded/templates/machine/virtiofs-root-off.service");
     pub const VIRTIOFS_ROOT_ON: &str =
@@ -50,7 +48,9 @@ mod tests {
     fn machine_templates_are_available() {
         assert!(machine::READY_SERVICE.contains("{ready_vsock_port}"));
         assert!(machine::NIMBUS_SERVICE.contains("{guest_nimbus_bin}"));
-        assert!(machine::NIMBUS_SOCKET.contains("{guest_nimbus_socket}"));
+        assert!(machine::NIMBUS_SERVICE.contains("{guest_nimbus_socket}"));
+        assert!(machine::NIMBUS_SERVICE.contains("Restart=no"));
+        assert!(!machine::NIMBUS_SERVICE.contains("Restart=on-failure"));
         assert!(machine::VIRTIOFS_MOUNT.contains("{target}"));
     }
 }

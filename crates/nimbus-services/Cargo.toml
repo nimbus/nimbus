@@ -15,19 +15,20 @@ workspace = true
 [dependencies]
 futures.workspace = true
 nimbus-core = { path = "../nimbus-core" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 nimbus-workloads = { path = "../nimbus-workloads" }
+serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 ulid.workspace = true
 url.workspace = true
 
-nimbus-egress = { path = "../nimbus-egress" }
-nimbus-proxy = { path = "../nimbus-proxy" }
 nimbus-storage = { path = "../nimbus-storage" }
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+nimbus-egress = { path = "../nimbus-egress" }
 tempfile.workspace = true

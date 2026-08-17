@@ -21,6 +21,8 @@ members = [
     "crates/nimbus-license",
     "crates/nimbus-machine",
     "crates/nimbus-mongodb",
+    "crates/nimbus-network",
+    "crates/nimbus-process-harness",
     "crates/nimbus-node",
     "crates/nimbus-object-storage",
     "crates/nimbus-operator",
@@ -110,7 +112,7 @@ node_resolver = { version = "0.93.0", features = ["sync"] }
 crc32c = "0.6"
 crc32fast = "1"
 extenddb-core = { git = "https://github.com/ExtendDB/extenddb", rev = "0448ca066c86bddf2eb465092b8b6854923665ee" }
-fjall = "3.1.5"
+fjall = "3.1.9"
 futures = "0.3"
 fs2 = "0.4"
 fuser = "0.17.0"
@@ -118,7 +120,7 @@ hex = "0.4"
 hkdf = "0.12"
 hmac = "0.12"
 indicatif = "0.18"
-imbl = "=7.0.0"
+rpds = "1.2.1"
 hyper = "0.14.32"
 http = "1"
 signal-hook-registry = "1"
@@ -173,6 +175,7 @@ tower-service = "0.3"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+wait-timeout = "0.2"
 time = "0.3"
 toml = "0.9"
 twox-hash = "2"
@@ -181,7 +184,7 @@ zip = { version = "6", default-features = false }
 sys_traits = "0.1.28"
 url = "2"
 v8 = { version = "149.4.0", default-features = false, features = ["simdutf"] }
-wasmtime = "46.0.1"
+wasmtime = "46.0.2"
 # Direct zbus is required for the session/system test-bus utilities and any
 # hand-rolled `#[proxy]` escape hatch; pin the latest 5.x (the line
 # `zbus_systemd 0.26000.0` selects via its own `zbus = "5.3"` floor) so the
@@ -227,6 +230,9 @@ brotli = { path = "third_party/brotli-3.5.0" }
 # vendored copy backports upstream's own 4.x gate so pingora's copy exports no
 # C symbols. Applies only to the ^2 node; Deno's 4.x/5.x stay on crates.io.
 brotli-decompressor = { path = "third_party/brotli-decompressor-2.5.1" }
+# Pingora 0.8.1 and mysql_async 0.36 require lru 0.16. The local copy carries
+# upstream's panic-safety and mutable-borrow soundness fixes without a waiver.
+lru = { path = "third_party/lru-0.16.4" }
 deno_core = { git = "https://github.com/nimbus/deno", tag = "v2.9.3-nimbus.1" }
 deno_crypto = { git = "https://github.com/nimbus/deno", tag = "v2.9.3-nimbus.1" }
 deno_crypto_provider = { git = "https://github.com/nimbus/deno", tag = "v2.9.3-nimbus.1" }

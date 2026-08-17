@@ -1,4 +1,5 @@
 use nimbus_core::{DocumentId, TableName, TenantId};
+use nimbus_network::{IngressRouteId, ListenerId, PortLeaseId};
 
 pub(super) fn stable_key_segment(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -76,37 +77,16 @@ pub(super) fn cron_job_document_id(tenant_id: &TenantId, name: &str) -> String {
     )
 }
 
-pub(super) fn machine_listener_document_id(machine_name: &str) -> String {
-    format!("listener:machine-api:{}", stable_key_segment(machine_name))
+pub(super) fn connectivity_route_document_id(route_id: &IngressRouteId) -> String {
+    format!("connectivity-route:{}", route_id.as_str())
 }
 
-pub(super) fn listener_document_id(adapter: &str, protocol: &str) -> String {
-    format!(
-        "listener:{}:{}",
-        stable_key_segment(adapter),
-        stable_key_segment(protocol)
-    )
+pub(super) fn listener_document_id(listener_id: &ListenerId) -> String {
+    format!("listener:{}", listener_id.as_str())
 }
 
-pub(super) fn machine_port_document_id(machine_name: &str, port_name: &str) -> String {
-    format!(
-        "port:machine:{}:{}",
-        stable_key_segment(machine_name),
-        stable_key_segment(port_name)
-    )
-}
-
-pub(super) fn service_port_document_id(
-    tenant_id: &TenantId,
-    service_name: &str,
-    endpoint_name: &str,
-) -> String {
-    format!(
-        "port:service:{}:{}:{}",
-        stable_key_segment(tenant_id.as_str()),
-        stable_key_segment(service_name),
-        stable_key_segment(endpoint_name)
-    )
+pub(super) fn port_document_id(port_lease_id: &PortLeaseId) -> String {
+    format!("port:{}", port_lease_id.as_str())
 }
 
 pub(super) fn subscription_document_id(

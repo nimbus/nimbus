@@ -1,5 +1,6 @@
-use nimbus_core::{DocumentId, Error, Mutation, TableName, TenantId};
+use nimbus_core::{DocumentId, Error, FieldType, Mutation, TableName, TenantId};
 use nimbus_engine::Engine;
+use nimbus_storage::{FaultInjector, FaultPoint};
 use nimbus_testing::{AdmittedDecisionScenario, EngineFixture};
 use serde_json::{Value, json};
 
@@ -12,6 +13,26 @@ use nimbus_node::{
 use nimbus_tenant::TenantIsolationContext;
 
 use super::*;
+
+#[derive(Default)]
+struct OneShotProjectionFault {
+    armed: std::sync::atomic::AtomicBool,
+    failures: std::sync::atomic::AtomicUsize,
+}
+
+impl FaultInjector for OneShotProjectionFault {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if self.armed.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            self.failures
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            return Err(nimbus_core::Error::Internal(format!(
+                "injected machine deletion projection failure at {}",
+                point.as_str()
+            )));
+        }
+        Ok(())
+    }
+}
 
 fn table_name(table: SystemTable) -> TableName {
     table.table_name().expect("system table name should parse")
@@ -38,6 +59,28 @@ fn assert_system_index_fields(
     assert_eq!(actual_fields, fields);
 }
 
+fn assert_system_field(
+    schemas: &[nimbus_core::TableSchema],
+    table: SystemTable,
+    field_name: &str,
+    field_type: FieldType,
+    required: bool,
+) {
+    let table_name = table_name(table);
+    let schema = schemas
+        .iter()
+        .find(|schema| schema.table == table_name)
+        .expect("system table schema should exist");
+    let field = schema
+        .fields
+        .iter()
+        .find(|field| field.name == field_name)
+        .expect("system table field should exist");
+
+    assert_eq!(field.field_type, field_type);
+    assert_eq!(field.required, required);
+}
+
 #[test]
 fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
     let schemas = system_table_schemas().expect("system table schemas should build");
@@ -50,6 +93,7 @@ fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
         "adapter_capabilities",
         "bundles",
         "cron_jobs",
+        "connectivity_routes",
         "events",
         "functions",
         "listeners",
@@ -85,6 +129,20 @@ fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
         SystemTable::CronJobs,
         "by_tenantId_and_status",
         &["tenantId", "status"],
+    );
+    assert_system_field(
+        &schemas,
+        SystemTable::WorkloadStatus,
+        "executionId",
+        FieldType::String,
+        true,
+    );
+    assert_system_field(
+        &schemas,
+        SystemTable::WorkloadStatus,
+        "observedGeneration",
+        FieldType::String,
+        true,
     );
     for schema in schemas {
         schema
@@ -187,12 +245,10 @@ async fn prepare_system_tenant_seeds_network_and_adapter_posture_documents() {
         .list_documents_async(tenant_id.clone(), table_name(SystemTable::Listeners))
         .await
         .expect("listeners should list");
-    assert_eq!(listeners.len(), 1);
-    assert_eq!(
-        listeners[0].fields.get("address"),
-        Some(&json!(listen_addr.to_string()))
+    assert!(
+        listeners.is_empty(),
+        "static system seeding must not fabricate physical listener observations"
     );
-    assert_eq!(listeners[0].fields.get("state"), Some(&json!("listening")));
 
     let status = engine
         .get_document_async(
@@ -541,8 +597,16 @@ async fn sync_scheduler_state_deletes_only_matching_tenant_pending_projection() 
 }
 
 #[tokio::test]
-async fn record_machine_state_projects_machine_listener_and_port_documents() {
-    let fixture = EngineFixture::new(|path| Engine::new(path));
+async fn machine_projection_records_and_retries_deletion_without_recreating_connectivity() {
+    let fault = std::sync::Arc::new(OneShotProjectionFault::default());
+    let engine_fault: std::sync::Arc<dyn FaultInjector> = fault.clone();
+    let fixture = EngineFixture::new(move |path| {
+        Engine::new_with_simulation(
+            path,
+            std::sync::Arc::new(nimbus_core::SystemWallClock),
+            engine_fault,
+        )
+    });
     let engine = fixture.engine();
     let roots = nimbus_machine::MachineRootLayout::new(
         fixture.data_dir().join("config"),
@@ -551,6 +615,12 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
         fixture.data_dir().join("cache"),
         fixture.data_dir().join("run"),
     );
+    let provider_instance = nimbus_network::NetworkProviderHandle::new(
+        nimbus_network::NetworkProviderId::for_registration_key("system-test-machine-gvproxy"),
+        "system-projection-fixture",
+    )
+    .expect("fixture provider handle should validate");
+    let forwarder_provider_id = provider_instance.provider_id().clone();
     let config = nimbus_machine::MachineConfigRecord {
         version: nimbus_machine::CURRENT_MACHINE_CONFIG_VERSION,
         name: "default".to_string(),
@@ -572,6 +642,11 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
         },
         volumes: vec![],
         roots,
+        network_authority: nimbus_machine::MachineNetworkAuthorityRecord::new(
+            fixture.data_dir().join("network-authority"),
+            provider_instance.clone(),
+        )
+        .expect("fixture network authority should validate"),
     };
     let mut state = nimbus_machine::MachineStateRecord::initialized();
 
@@ -597,6 +672,10 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
 
     state.lifecycle = nimbus_machine::MachineLifecycle::Running;
     state.manager = nimbus_machine::MachineManagerState::Ready;
+    let ssh_listener_id = nimbus_network::ListenerId::for_workload_listener(
+        "system-projection-fixture",
+        "ssh-forward",
+    );
     state.runtime = Some(nimbus_machine::MachineRuntimeState {
         helper_binaries: nimbus_machine::MachineHelperBinaryPaths {
             vmm: fixture.data_dir().join("krunkit"),
@@ -605,6 +684,11 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
         image_path: fixture.data_dir().join("default.raw"),
         efi_variable_store_path: fixture.data_dir().join("efi"),
         machine_image_source: "docker://ghcr.io/nimbus/machine-os:v0.1.31".to_string(),
+        ssh_listener_id: ssh_listener_id.clone(),
+        forwarder_authority: nimbus_machine::MachineForwarderAuthority::new(
+            provider_instance,
+            nimbus_network::NetworkResourceGeneration::new(1),
+        ),
         ssh_port: 2222,
         rest_uri: "unix:///tmp/nimbus/default-krunkit.sock".to_string(),
         ready_vsock_port: 1025,
@@ -614,166 +698,150 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
         .await
         .expect("running machine state should project");
 
+    let machine_api_listener_id =
+        nimbus_network::ListenerId::for_workload_listener("managed-machine:default", "machine-api");
     let listener = engine
         .get_document_async(
             tenant_id.clone(),
             table_name(SystemTable::Listeners),
-            DocumentId::from_key(machine_listener_document_id("default")).expect("id should parse"),
+            DocumentId::from_key(listener_document_id(&machine_api_listener_id))
+                .expect("id should parse"),
         )
         .await
         .expect("machine listener document should exist");
     assert_eq!(listener.fields.get("adapter"), Some(&json!("machine")));
     assert_eq!(listener.fields.get("protocol"), Some(&json!("unix")));
-    assert_eq!(listener.fields.get("state"), Some(&json!("listening")));
+    assert_eq!(
+        listener.fields.get("listenerId"),
+        Some(&json!(machine_api_listener_id.as_str()))
+    );
+    assert_eq!(listener.fields.get("observedPhase"), Some(&json!("ready")));
+    assert_eq!(listener.fields.get("cleanupState"), Some(&json!("clear")));
+    assert_eq!(
+        listener.fields.get("providerId"),
+        Some(&json!(forwarder_provider_id.as_str()))
+    );
+    assert!(
+        listener.fields.get("portLeaseId").is_none(),
+        "the Unix Machine API listener must not fabricate a host-port lease"
+    );
 
+    let ssh_identity = nimbus_machine::MachineSshPortLeaseIdentity::for_listener(&ssh_listener_id);
     let ssh_port = engine
         .get_document_async(
-            tenant_id,
+            tenant_id.clone(),
             table_name(SystemTable::Ports),
-            DocumentId::from_key(machine_port_document_id("default", "ssh"))
+            DocumentId::from_key(port_document_id(ssh_identity.port_lease_id()))
                 .expect("id should parse"),
         )
         .await
         .expect("machine ssh port document should exist");
     assert_eq!(ssh_port.fields.get("machineId"), Some(&json!("default")));
+    assert_eq!(
+        ssh_port.fields.get("listenerId"),
+        Some(&json!(ssh_listener_id.as_str()))
+    );
+    assert_eq!(
+        ssh_port.fields.get("portLeaseId"),
+        Some(&json!(ssh_identity.port_lease_id().as_str()))
+    );
+    assert_eq!(ssh_port.fields.get("generation"), Some(&json!("1")));
+    assert_eq!(ssh_port.fields.get("leaseEpoch"), Some(&json!("1")));
+    assert_eq!(
+        ssh_port.fields.get("providerId"),
+        Some(&json!(ssh_identity.provider_id().as_str()))
+    );
+    assert_eq!(
+        ssh_port.fields.get("actualAddress"),
+        Some(&json!("127.0.0.1:2222"))
+    );
     assert_eq!(ssh_port.fields.get("hostPort"), Some(&json!(2222)));
-    assert_eq!(ssh_port.fields.get("guestPort"), Some(&json!(22)));
-    assert_eq!(ssh_port.fields.get("state"), Some(&json!("running")));
-}
+    assert_eq!(ssh_port.fields.get("protocol"), Some(&json!("tcp")));
+    assert_eq!(ssh_port.fields.get("observedPhase"), Some(&json!("ready")));
+    assert_eq!(ssh_port.fields.get("cleanupState"), Some(&json!("clear")));
 
-#[tokio::test]
-async fn system_evidence_write_does_not_wait_on_another_tenant_delete_fence() {
-    let fixture = EngineFixture::new(|path| Engine::new(path));
-    let engine = fixture.engine();
-    ensure_system_tenant_async(&engine)
+    state
+        .runtime
+        .as_mut()
+        .expect("running machine should retain runtime state")
+        .ssh_port = 3333;
+    record_machine_state_async(&engine, &config, &state)
         .await
-        .expect("system tenant should prepare");
-    let tenant_id = TenantId::new("deleting-service-owner").expect("tenant should parse");
-    engine
-        .create_tenant_async(tenant_id.clone())
+        .expect("moved machine SSH state should project");
+    let moved_ports = engine
+        .list_documents_async(tenant_id.clone(), table_name(SystemTable::Ports))
         .await
-        .expect("application tenant should create");
-    let deletion = engine
-        .begin_tenant_delete_async(tenant_id.clone())
-        .await
-        .expect("application tenant delete fence should begin");
-    let stopped = nimbus_sandbox::SandboxHandle::new(
-        tenant_id,
-        nimbus_sandbox::SandboxId::new("sandbox-stopped"),
-        "db",
-        nimbus_sandbox::SandboxBackendKind::Container,
-        nimbus_sandbox::SandboxStatus::Stopped,
-        Vec::new(),
+        .expect("machine ports should list");
+    assert_eq!(
+        moved_ports.len(),
+        1,
+        "an address move must update the canonical lease row instead of adding one"
     );
-
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        record_service_handle_async(&engine, &stopped.tenant_id, &stopped),
-    )
-    .await
-    .expect("system evidence must not wait on an unrelated tenant load fence")
-    .expect("stopped service evidence should project");
-
-    engine
-        .finish_tenant_delete_async(deletion)
-        .await
-        .expect("application tenant delete should finish");
-}
-
-#[tokio::test]
-async fn record_service_handle_removes_only_stale_ports_for_that_service() {
-    let fixture = EngineFixture::new(|path| Engine::new(path));
-    let engine = fixture.engine();
-    let tenant_id = TenantId::new("demo").expect("tenant should parse");
-
-    let first_search = nimbus_sandbox::SandboxHandle::new(
-        tenant_id.clone(),
-        nimbus_sandbox::SandboxId::new("sandbox-search"),
-        "search",
-        nimbus_sandbox::SandboxBackendKind::Container,
-        nimbus_sandbox::SandboxStatus::Ready,
-        vec![
-            nimbus_sandbox::PublishedEndpoint::new(
-                "http",
-                nimbus_sandbox::PublishedEndpointProtocol::Http,
-                "127.0.0.1:18080".parse().expect("endpoint should parse"),
-            )
-            .with_guest_port(8080),
-            nimbus_sandbox::PublishedEndpoint::new(
-                "metrics",
-                nimbus_sandbox::PublishedEndpointProtocol::Tcp,
-                "127.0.0.1:19090".parse().expect("endpoint should parse"),
-            )
-            .with_guest_port(9090),
-        ],
-    );
-    record_service_handle_async(&engine, &tenant_id, &first_search)
-        .await
-        .expect("initial service handle should project");
-
-    let billing = nimbus_sandbox::SandboxHandle::new(
-        tenant_id.clone(),
-        nimbus_sandbox::SandboxId::new("sandbox-billing"),
-        "billing",
-        nimbus_sandbox::SandboxBackendKind::Container,
-        nimbus_sandbox::SandboxStatus::Ready,
-        vec![
-            nimbus_sandbox::PublishedEndpoint::new(
-                "api",
-                nimbus_sandbox::PublishedEndpointProtocol::Http,
-                "127.0.0.1:18081".parse().expect("endpoint should parse"),
-            )
-            .with_guest_port(8081),
-        ],
-    );
-    record_service_handle_async(&engine, &tenant_id, &billing)
-        .await
-        .expect("other service handle should project");
-
-    let updated_search = nimbus_sandbox::SandboxHandle::new(
-        tenant_id.clone(),
-        nimbus_sandbox::SandboxId::new("sandbox-search"),
-        "search",
-        nimbus_sandbox::SandboxBackendKind::Container,
-        nimbus_sandbox::SandboxStatus::Ready,
-        vec![
-            nimbus_sandbox::PublishedEndpoint::new(
-                "http",
-                nimbus_sandbox::PublishedEndpointProtocol::Http,
-                "127.0.0.1:28080".parse().expect("endpoint should parse"),
-            )
-            .with_guest_port(8080),
-        ],
-    );
-    record_service_handle_async(&engine, &tenant_id, &updated_search)
-        .await
-        .expect("updated service handle should replace stale ports");
-
-    let ports = engine
-        .list_documents_async(
-            system_tenant_id().expect("system tenant should parse"),
+    let moved_ssh_port = engine
+        .get_document_async(
+            tenant_id,
             table_name(SystemTable::Ports),
+            DocumentId::from_key(port_document_id(ssh_identity.port_lease_id()))
+                .expect("id should parse"),
         )
         .await
-        .expect("ports should list");
+        .expect("the stable machine SSH port document should survive an address move");
+    assert_eq!(moved_ssh_port.fields.get("hostPort"), Some(&json!(3333)));
     assert_eq!(
-        ports.len(),
-        2,
-        "expected one search port and one billing port"
+        moved_ssh_port.fields.get("actualAddress"),
+        Some(&json!("127.0.0.1:3333"))
     );
-    assert!(ports.iter().any(|document| {
-        document.fields.get("serviceName") == Some(&json!("search"))
-            && document.fields.get("endpointName") == Some(&json!("http"))
-            && document.fields.get("hostPort") == Some(&json!(28080))
-    }));
-    assert!(!ports.iter().any(|document| {
-        document.fields.get("serviceName") == Some(&json!("search"))
-            && document.fields.get("endpointName") == Some(&json!("metrics"))
-    }));
-    assert!(ports.iter().any(|document| {
-        document.fields.get("serviceName") == Some(&json!("billing"))
-            && document.fields.get("endpointName") == Some(&json!("api"))
-    }));
+    assert_eq!(
+        moved_ssh_port.fields.get("listenerId"),
+        Some(&json!(ssh_listener_id.as_str()))
+    );
+
+    let runtime = SystemConnectivityProjectionRuntime::new(&engine);
+    fault
+        .armed
+        .store(true, std::sync::atomic::Ordering::Release);
+    runtime.project_machine_deletion("default");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let machine_rows = engine
+                .list_documents_async(
+                    system_tenant_id().expect("system tenant should parse"),
+                    table_name(SystemTable::Machines),
+                )
+                .await
+                .unwrap_or_default();
+            let listener_rows = engine
+                .list_documents_async(
+                    system_tenant_id().expect("system tenant should parse"),
+                    table_name(SystemTable::Listeners),
+                )
+                .await
+                .unwrap_or_default();
+            let port_rows = engine
+                .list_documents_async(
+                    system_tenant_id().expect("system tenant should parse"),
+                    table_name(SystemTable::Ports),
+                )
+                .await
+                .unwrap_or_default();
+            if machine_rows.is_empty()
+                && listener_rows.is_empty()
+                && port_rows.is_empty()
+                && runtime.retained_entry_count_for_testing() == 0
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("machine deletion projection should retry to completion");
+    assert_eq!(
+        fault.failures.load(std::sync::atomic::Ordering::Acquire),
+        1,
+        "the injected projection failure should occur exactly once"
+    );
+    assert_eq!(runtime.retained_entry_count_for_testing(), 0);
 }
 
 #[tokio::test]
@@ -873,7 +941,7 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
     let engine = fixture.engine();
     let scenario = AdmittedDecisionScenario::new()
         .with_surface("system_tenant.workload_status.test")
-        .with_generation(3);
+        .with_generation(u64::MAX);
     let context = scenario.context();
     let binding = scenario.binding();
     let spec = binding.spec();
@@ -953,8 +1021,17 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
         .expect("workload status document should exist");
     assert_eq!(document.fields.get("tenantId"), Some(&json!("tenant-a")));
     assert_eq!(
+        document.fields.get("executionId"),
+        Some(&json!(status.execution_id().as_str()))
+    );
+    assert_eq!(
         document.fields.get("decisionId"),
         Some(&json!(spec.decision_id().as_str()))
+    );
+    assert_eq!(
+        document.fields.get("observedGeneration"),
+        Some(&json!(u64::MAX.to_string())),
+        "workload generations must remain lossless beyond the JSON integer range"
     );
     assert_eq!(document.fields.get("phase"), Some(&json!("running")));
     assert_eq!(

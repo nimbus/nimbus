@@ -8,64 +8,158 @@ use std::time::{Duration, Instant};
 
 use libc::{SIGKILL, SIGTERM, kill};
 use nimbus::Error;
+use nimbus_compute::machine_stop_authority::ConfirmedMachineStopAuthorization;
+use nimbus_network::NetworkManagementMode;
 
+use super::super::network_composition::MachineNetworkLifecycleHandle;
+use super::super::publication_authority::withdraw_machine_publications;
 use super::super::{
     MachineBootstrapMode, MachineConfigRecord, MachineLifecycle, MachinePaths, MachineProvider,
     MachineStateRecord, machine_bootstrap_mode,
 };
+use super::ports::{
+    machine_ssh_port_provider_absence_confirmed, retain_machine_ssh_port_after_confirmed_stop,
+    withdraw_machine_ssh_port,
+};
+use super::process_identity::{
+    ExactProcessObservation, GvproxyProcessReceipt, MachineProcessIdentity, observe_exact_process,
+};
 use super::{HARD_STOP_WAIT_TIMEOUT, MachineManagerState, POLL_INTERVAL};
+use crate::machine::stop_authority::HostMachineStopAuthority;
 
 pub(super) fn stop_machine(
+    network: &MachineNetworkLifecycleHandle,
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
+    stop_authority: &HostMachineStopAuthority,
+    authorization: ConfirmedMachineStopAuthorization,
 ) -> Result<(), Error> {
+    let runtime = state.runtime.as_ref().ok_or_else(|| {
+        Error::conflict(format!(
+            "machine '{}' has no runtime identity for its host SSH listener",
+            config.name
+        ))
+    })?;
+    if authorization.barrier().machine_name() != config.name
+        || authorization.barrier().forwarder_authority() != &runtime.forwarder_authority
+    {
+        return Err(Error::conflict(
+            "physical-machine stop authorization is crossed with the current machine incarnation",
+        ));
+    }
+    match config.provider.network_management_mode() {
+        NetworkManagementMode::NimbusHostManaged => {}
+        NetworkManagementMode::ProviderManaged => {
+            return Err(config.provider.unavailable_error());
+        }
+    }
+    let stop_barrier = stop_authority.begin_physical_stop(&authorization)?;
     if matches!(
         state.lifecycle,
         MachineLifecycle::Stopped | MachineLifecycle::Uninitialized
     ) {
+        stop_authority.record_physical_stop_absent(&stop_barrier)?;
         return Ok(());
     }
+    let port_authority = network.port_leases();
+    let publication_cleanup = withdraw_machine_publications(
+        network.machine_publications(),
+        port_authority.clone(),
+        &runtime.forwarder_authority,
+    )?;
+    let gvproxy_absence_previously_confirmed =
+        machine_ssh_port_provider_absence_confirmed(&port_authority, runtime)?;
+    let host_network_cleanup = withdraw_machine_ssh_port(&port_authority, runtime)?;
 
     let mut stop_errors = Vec::new();
     if let Err(error) = stop_provider_machine(paths, config, resolve_stop_wait_timeout()) {
         stop_errors.push(error.to_string());
     }
 
-    if let Some(pid) = read_pid(&paths.vmm_pid_path)?
-        && pid_is_alive(pid)
-    {
-        stop_errors.push(format!(
+    match read_pid(&paths.vmm_pid_path) {
+        Ok(Some(pid)) if pid_is_alive(pid) => stop_errors.push(format!(
             "provider stop completed but the machine VMM is still alive at pid {pid}"
-        ));
+        )),
+        Ok(_) => {}
+        Err(error) => stop_errors.push(error.to_string()),
     }
-    if !config.provider.uses_provider_networking()
-        && let Some(pid) = read_pid(&paths.api_forward_pid_path)?
-        && let Err(error) = stop_pid(pid, HARD_STOP_WAIT_TIMEOUT)
+    match read_pid(&paths.api_forward_pid_path) {
+        Ok(Some(pid)) => {
+            if let Err(error) = stop_pid(pid, HARD_STOP_WAIT_TIMEOUT) {
+                stop_errors.push(error.to_string());
+            }
+        }
+        Ok(None) => {}
+        Err(error) => stop_errors.push(error.to_string()),
+    }
+    let mut gvproxy_stop_confirmed = gvproxy_absence_previously_confirmed;
+    match gvproxy_absence_previously_confirmed {
+        true => {}
+        false => match GvproxyProcessReceipt::load_authenticated(
+            &paths.gvproxy_process_identity_path,
+            &runtime.forwarder_authority,
+        ) {
+            Ok(Some(receipt)) => {
+                match stop_exact_process(receipt.process(), HARD_STOP_WAIT_TIMEOUT) {
+                    Ok(()) => {
+                        gvproxy_stop_confirmed = true;
+                    }
+                    Err(error) => stop_errors.push(error.to_string()),
+                }
+            }
+            Ok(None) => stop_errors.push(
+                "gvproxy process identity evidence is missing; numeric pid evidence cannot \
+                 authorize signaling or release, so parent publication and SSH authority remain \
+                 fenced for reconciliation"
+                    .to_owned(),
+            ),
+            Err(error) => stop_errors.push(error.to_string()),
+        },
+    }
+    if gvproxy_stop_confirmed {
+        if let Err(error) = publication_cleanup.release_after_confirmed_provider_stop() {
+            stop_errors.push(error.to_string());
+        }
+        if let Some(cleanup) = host_network_cleanup
+            && let Err(error) = retain_machine_ssh_port_after_confirmed_stop(cleanup)
+        {
+            stop_errors.push(error.to_string());
+        }
+    }
+
+    if stop_errors.is_empty()
+        && let Err(error) = cleanup_runtime_artifacts(paths)
     {
         stop_errors.push(error.to_string());
     }
-    if !config.provider.uses_provider_networking()
-        && let Some(pid) = read_pid(&paths.gvproxy_pid_path)?
-        && let Err(error) = stop_pid(pid, HARD_STOP_WAIT_TIMEOUT)
+    if stop_errors.is_empty()
+        && let Err(error) = stop_authority.record_physical_stop_absent(&stop_barrier)
     {
         stop_errors.push(error.to_string());
     }
 
-    cleanup_runtime_artifacts(paths)?;
-    state.lifecycle = MachineLifecycle::Stopped;
-    state.manager = if state.runtime.is_some() {
-        MachineManagerState::HelpersResolved
-    } else {
-        MachineManagerState::Unconfigured
-    };
-    state.last_error = if stop_errors.is_empty() {
-        None
-    } else {
-        Some(stop_errors.join("; "))
-    };
+    if stop_errors.is_empty() {
+        state.lifecycle = MachineLifecycle::Stopped;
+        state.manager = if state.runtime.is_some() {
+            MachineManagerState::HelpersResolved
+        } else {
+            MachineManagerState::Unconfigured
+        };
+        state.last_error = None;
+        super::write_json_file(&paths.state_path, state)?;
+        return Ok(());
+    }
+
+    let diagnostic = stop_errors.join("; ");
+    state.lifecycle = MachineLifecycle::Failed;
+    state.manager = MachineManagerState::Stale;
+    state.last_error = Some(diagnostic.clone());
     super::write_json_file(&paths.state_path, state)?;
-    Ok(())
+    Err(Error::Internal(format!(
+        "machine '{}' stop is incomplete; unresolved teardown evidence remains: {diagnostic}",
+        config.name
+    )))
 }
 
 pub(super) fn stop_provider_machine(
@@ -359,6 +453,56 @@ fn stop_pid(pid: i32, timeout: Duration) -> Result<(), Error> {
     Err(Error::Internal(format!(
         "process {pid} did not stop after SIGTERM and SIGKILL"
     )))
+}
+
+fn stop_exact_process(process: &MachineProcessIdentity, timeout: Duration) -> Result<(), Error> {
+    if exact_process_is_absent(process)? {
+        return Ok(());
+    }
+    signal_exact_process(process, SIGTERM)?;
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if exact_process_is_absent(process)? {
+            return Ok(());
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+
+    signal_exact_process(process, SIGKILL)?;
+    let kill_deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < kill_deadline {
+        if exact_process_is_absent(process)? {
+            return Ok(());
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+
+    Err(Error::Internal(format!(
+        "exact gvproxy process {} did not stop after SIGTERM and SIGKILL",
+        process.pid()
+    )))
+}
+
+fn signal_exact_process(process: &MachineProcessIdentity, signal: i32) -> Result<(), Error> {
+    match observe_exact_process(process)? {
+        ExactProcessObservation::Exact => {
+            let pid = i32::try_from(process.pid()).map_err(|_| {
+                Error::Internal(format!(
+                    "gvproxy PID {} cannot be signaled on this host",
+                    process.pid()
+                ))
+            })?;
+            send_signal(pid, signal)
+        }
+        ExactProcessObservation::Absent | ExactProcessObservation::Replaced => Ok(()),
+    }
+}
+
+fn exact_process_is_absent(process: &MachineProcessIdentity) -> Result<bool, Error> {
+    Ok(!matches!(
+        observe_exact_process(process)?,
+        ExactProcessObservation::Exact
+    ))
 }
 
 pub(super) fn cleanup_process(child: &mut Child) -> Result<(), Error> {

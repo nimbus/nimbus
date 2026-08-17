@@ -1,12 +1,15 @@
 use super::*;
 
+pub(super) use super::provision_support::{ExactTeardownFixture, provision_krun, retire_krun};
+
 pub(super) fn smoke_backend_config(
     bundle_root: PathBuf,
     state_root: PathBuf,
 ) -> KrunSandboxBackendConfig {
     let mut config = KrunSandboxBackendConfig::default();
     config.bundle_root = bundle_root;
-    config.state_root = state_root;
+    config.workload_state_root = state_root.clone();
+    config.network_state_root = state_root;
     config.start_mode = KrunStartMode::Execute;
 
     if let Some(runtime_path) = env::var_os("NIMBUS_KRUN_SMOKE_RUNTIME") {
@@ -27,12 +30,7 @@ pub(super) fn sandbox_tenant() -> TenantId {
 }
 
 pub(super) fn http_binding(host_port: u16, guest_port: u16) -> SandboxPortBinding {
-    SandboxPortBinding::new(
-        "http",
-        PublishedEndpointProtocol::Http,
-        host_port,
-        guest_port,
-    )
+    SandboxPortBinding::new("http", EndpointProtocol::Http, host_port, guest_port)
 }
 
 pub(super) fn rootfs_spec(name: &str, rootfs: impl Into<PathBuf>) -> SandboxSpec {
@@ -245,11 +243,11 @@ pub(super) fn wait_for_status(
 ) -> nimbus_sandbox::SandboxHandle {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Some(handle) = block_on(backend.inspect(id))
+        if let Some(inspection) = block_on(backend.inspect(id))
             .expect("inspect should succeed")
-            .filter(|h| h.status == expected)
+            .filter(|inspection| inspection.handle.status == expected)
         {
-            return handle;
+            return inspection.handle;
         }
         thread::sleep(Duration::from_millis(250));
     }
@@ -341,14 +339,14 @@ pub(super) fn env_u16(key: &str) -> Option<u16> {
 
 pub(super) struct CleanupGuard {
     backend: KrunSandboxBackend,
-    sandbox_id: Option<nimbus_sandbox::SandboxId>,
+    teardown: Option<ExactTeardownFixture>,
 }
 
 impl CleanupGuard {
-    pub(super) fn new(backend: KrunSandboxBackend, sandbox_id: nimbus_sandbox::SandboxId) -> Self {
+    pub(super) fn new(backend: KrunSandboxBackend, teardown: ExactTeardownFixture) -> Self {
         Self {
             backend,
-            sandbox_id: Some(sandbox_id),
+            teardown: Some(teardown),
         }
     }
 
@@ -359,8 +357,8 @@ impl CleanupGuard {
 
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
-        if let Some(sandbox_id) = self.sandbox_id.take() {
-            let _ = block_on(self.backend.stop(&sandbox_id));
+        if let Some(teardown) = self.teardown.take() {
+            let _ = retire_krun(&self.backend, &teardown);
         }
     }
 }

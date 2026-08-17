@@ -20,6 +20,15 @@ impl TenantId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Returns whether this id belongs to the Nimbus-reserved tenant namespace.
+    ///
+    /// This method classifies tenant names. Callers still own authorization for
+    /// any reserved tenant they expose.
+    #[must_use]
+    pub fn is_nimbus_reserved(&self) -> bool {
+        self.0.starts_with('_')
+    }
 }
 
 impl Display for TenantId {
@@ -592,6 +601,13 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn tenant_id_classifies_the_complete_reserved_namespace() {
+        assert!(TenantId::new("_nimbus").unwrap().is_nimbus_reserved());
+        assert!(TenantId::new("_reserved").unwrap().is_nimbus_reserved());
+        assert!(!TenantId::new("tenant-a").unwrap().is_nimbus_reserved());
+    }
 
     #[test]
     fn timestamp_system_time_conversion_handles_pre_epoch_explicitly() {

@@ -7,17 +7,19 @@ fn render_service_list_defaults_to_local_project_tenant_and_can_expand_to_all_te
     let control_data_dir = temp_dir.path().join("control");
     let context = load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
-    let krun_config = context.control_plane.krun_backend_config();
+    let krun_config = context
+        .control_plane
+        .reconstruct_direct_krun_backend_config();
 
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01aaa",
         context.control_plane.local_tenant_id.as_str(),
         "db",
         SandboxStatus::Ready,
     );
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01bbb",
         "tenant-other",
         "db",
@@ -67,10 +69,12 @@ fn render_service_list_discovers_parent_project_when_file_is_omitted() {
     let control_data_dir = temp_dir.path().join("control");
     let context = load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
-    let krun_config = context.control_plane.krun_backend_config();
+    let krun_config = context
+        .control_plane
+        .reconstruct_direct_krun_backend_config();
 
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01aaa",
         context.control_plane.local_tenant_id.as_str(),
         "db",
@@ -104,7 +108,6 @@ fn render_service_list_can_omit_headings() {
         service_name: "db".to_owned(),
         status: SandboxStatus::Ready,
         published_endpoints: Vec::new(),
-        restart_count: 1,
         last_exit_code: None,
         shutdown_requested: false,
     }];
@@ -125,17 +128,19 @@ fn render_service_inspect_defaults_to_local_project_tenant_and_honors_tenant_ove
     let control_data_dir = temp_dir.path().join("control");
     let context = load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
-    let krun_config = context.control_plane.krun_backend_config();
+    let krun_config = context
+        .control_plane
+        .reconstruct_direct_krun_backend_config();
 
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01aaa",
         context.control_plane.local_tenant_id.as_str(),
         "db",
         SandboxStatus::Ready,
     );
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01bbb",
         "tenant-other",
         "db",

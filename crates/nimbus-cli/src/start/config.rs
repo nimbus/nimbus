@@ -5,6 +5,7 @@ use nimbus::{
     AwsKmsConfig, EmbeddedProviderKind, EnginePersistenceConfig, Error, KeyDirectoryConfig,
     LocalEncryptionConfig, LocalKeyProviderConfig, MasterKeyFileConfig,
 };
+use nimbus_operator::LocalNodeNetworkRoot;
 use serde::Deserialize;
 
 use crate::function_scaling::NimbusFunctionsFileConfig;
@@ -15,6 +16,7 @@ const DEFAULT_DATA_DIR: &str = "./data";
 const CONFIG_FILE_ENV: &str = "NIMBUS_CONFIG";
 const DATA_DIR_ENV: &str = "NIMBUS_DATA_DIR";
 const CONTROL_DATA_DIR_ENV: &str = "NIMBUS_CONTROL_DATA_DIR";
+const NETWORK_STATE_DIR_ENV: &str = "NIMBUS_NETWORK_STATE_DIR";
 const TENANT_PROVIDER_ENV: &str = "NIMBUS_TENANT_PROVIDER";
 const LIBSQL_URL_ENV: &str = "NIMBUS_LIBSQL_URL";
 const LIBSQL_AUTH_TOKEN_ENV: &str = "NIMBUS_LIBSQL_AUTH_TOKEN";
@@ -96,7 +98,19 @@ impl CliKeyProvider {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct RuntimeConfigFile {
     pub(crate) persistence: PersistenceFileConfig,
+    pub(crate) network: NetworkFileConfig,
     pub(crate) functions: NimbusFunctionsFileConfig,
+}
+
+/// OS-node network-authority inputs.
+///
+/// This is intentionally separate from persistence configuration: changing a
+/// tenant, control-plane, or project data root must not select another
+/// host-global network authority.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct NetworkFileConfig {
+    pub(crate) state_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -799,6 +813,44 @@ pub(crate) fn persistence_config_from_start_command(
     persistence_config_from_sources(command, &file_config.persistence, &env)
 }
 
+/// Resolve the one OS-node network-authority root for a start-family command.
+///
+/// CLI input wins over the dedicated environment variable, which wins over
+/// the top-level `network.state_dir` config value. With no explicit source,
+/// `nimbus-operator` supplies the stable platform default. Persistence and
+/// project roots are deliberately absent from this decision.
+pub(crate) fn network_root_from_start_command(
+    command: &StartCommand,
+) -> nimbus::Result<LocalNodeNetworkRoot> {
+    let config_path = runtime_config_path(command);
+    let file_config = load_runtime_config_file(config_path.as_deref())?;
+    let environment_state_dir = std::env::var_os(NETWORK_STATE_DIR_ENV).map(PathBuf::from);
+    resolve_network_root_from_sources(
+        command,
+        &file_config.network,
+        environment_state_dir,
+        LocalNodeNetworkRoot::resolve_for_current_platform,
+    )
+}
+
+fn resolve_network_root_from_sources<F>(
+    command: &StartCommand,
+    file: &NetworkFileConfig,
+    environment_state_dir: Option<PathBuf>,
+    resolve_platform_root: F,
+) -> nimbus::Result<LocalNodeNetworkRoot>
+where
+    F: FnOnce(Option<&Path>) -> std::io::Result<LocalNodeNetworkRoot>,
+{
+    let explicit = command
+        .network_state_dir
+        .as_deref()
+        .or(environment_state_dir.as_deref())
+        .or(file.state_dir.as_deref());
+    resolve_platform_root(explicit)
+        .map_err(|error| Error::InvalidInput(format!("invalid local node network root: {error}")))
+}
+
 pub(crate) fn runtime_config_from_start_command(
     command: &StartCommand,
 ) -> nimbus::Result<RuntimeConfigFile> {
@@ -882,4 +934,181 @@ fn optional_env_usize(key: &str) -> nimbus::Result<Option<usize>> {
             })
         })
         .transpose()
+}
+
+#[cfg(test)]
+mod network_root_tests {
+    use super::*;
+
+    fn absolute_path(name: &str) -> PathBuf {
+        #[cfg(target_os = "windows")]
+        {
+            PathBuf::from(format!(r"C:\nimbus-tests\{name}"))
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            PathBuf::from(format!("/nimbus-tests/{name}"))
+        }
+    }
+
+    fn resolve(
+        command: &StartCommand,
+        file: &NetworkFileConfig,
+        environment_state_dir: Option<&str>,
+    ) -> nimbus::Result<nimbus_operator::LocalNodeNetworkRoot> {
+        let platform_default = absolute_path("operator-default");
+        resolve_network_root_from_sources(
+            command,
+            file,
+            environment_state_dir.map(PathBuf::from),
+            |explicit| {
+                LocalNodeNetworkRoot::resolve_for_current_platform(
+                    explicit.or(Some(platform_default.as_path())),
+                )
+            },
+        )
+    }
+
+    #[test]
+    fn network_root_precedence_is_cli_then_environment_then_config_then_platform_default() {
+        let cli_root = absolute_path("cli");
+        let environment_root = absolute_path("environment");
+        let config_root = absolute_path("config");
+        let command = StartCommand {
+            network_state_dir: Some(cli_root.clone()),
+            ..StartCommand::default()
+        };
+        let file = NetworkFileConfig {
+            state_dir: Some(config_root.clone()),
+        };
+        assert_eq!(
+            resolve(&command, &file, environment_root.to_str())
+                .expect("CLI network root should resolve")
+                .as_path(),
+            cli_root
+        );
+
+        let command = StartCommand::default();
+        assert_eq!(
+            resolve(&command, &file, environment_root.to_str())
+                .expect("environment network root should resolve")
+                .as_path(),
+            environment_root
+        );
+        assert_eq!(
+            resolve(&command, &file, None)
+                .expect("config network root should resolve")
+                .as_path(),
+            config_root
+        );
+        assert_eq!(
+            resolve(&command, &NetworkFileConfig::default(), None)
+                .expect("operator platform default should resolve")
+                .as_path(),
+            absolute_path("operator-default")
+        );
+    }
+
+    #[test]
+    fn persistence_roots_cannot_change_the_default_network_root() {
+        let first = StartCommand {
+            data_dir: Some(absolute_path("first-data")),
+            control_data_dir: Some(absolute_path("first-control")),
+            ..StartCommand::default()
+        };
+        let second = StartCommand {
+            data_dir: Some(absolute_path("second-data")),
+            control_data_dir: Some(absolute_path("second-control")),
+            ..StartCommand::default()
+        };
+
+        let first_root = resolve(&first, &NetworkFileConfig::default(), None)
+            .expect("first platform default should resolve");
+        let second_root = resolve(&second, &NetworkFileConfig::default(), None)
+            .expect("second platform default should resolve");
+        assert_eq!(first_root, second_root);
+        assert_eq!(first_root.as_path(), absolute_path("operator-default"));
+    }
+
+    #[test]
+    fn every_explicit_network_root_source_uses_operator_validation_without_mutation() {
+        let relative = format!("relative-network-state-{}", std::process::id());
+        let relative_path = PathBuf::from(&relative);
+        assert!(!relative_path.exists());
+
+        for command in [
+            StartCommand {
+                network_state_dir: Some(PathBuf::new()),
+                ..StartCommand::default()
+            },
+            StartCommand {
+                network_state_dir: Some(relative_path.clone()),
+                ..StartCommand::default()
+            },
+        ] {
+            let error = resolve(&command, &NetworkFileConfig::default(), None)
+                .expect_err("invalid CLI network root must be rejected");
+            assert!(matches!(error, Error::InvalidInput(_)));
+        }
+
+        for environment_state_dir in [Some(""), Some(relative.as_str())] {
+            let error = resolve(
+                &StartCommand::default(),
+                &NetworkFileConfig::default(),
+                environment_state_dir,
+            )
+            .expect_err("invalid environment network root must be rejected");
+            assert!(matches!(error, Error::InvalidInput(_)));
+        }
+
+        for state_dir in [PathBuf::new(), relative_path.clone()] {
+            let error = resolve(
+                &StartCommand::default(),
+                &NetworkFileConfig {
+                    state_dir: Some(state_dir),
+                },
+                None,
+            )
+            .expect_err("invalid config network root must be rejected");
+            assert!(matches!(error, Error::InvalidInput(_)));
+        }
+
+        assert!(
+            !relative_path.exists(),
+            "network-root validation must not create relative input paths"
+        );
+    }
+
+    #[test]
+    fn network_config_is_top_level_and_keeps_unknown_field_guards() {
+        let parsed: RuntimeConfigFile = serde_yaml::from_str(
+            r#"
+network:
+  state_dir: /config/network
+"#,
+        )
+        .expect("top-level network config should parse");
+        assert_eq!(
+            parsed.network.state_dir.as_deref(),
+            Some(Path::new("/config/network"))
+        );
+
+        let nested_error = serde_yaml::from_str::<RuntimeConfigFile>(
+            r#"
+network:
+  state_root: /config/network
+"#,
+        )
+        .expect_err("unknown network fields must be rejected");
+        assert!(nested_error.to_string().contains("unknown field"));
+
+        let top_level_error = serde_yaml::from_str::<RuntimeConfigFile>(
+            r#"
+networking:
+  state_dir: /config/network
+"#,
+        )
+        .expect_err("unknown top-level sections must remain rejected");
+        assert!(top_level_error.to_string().contains("unknown field"));
+    }
 }

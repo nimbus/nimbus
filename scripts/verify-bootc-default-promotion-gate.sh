@@ -13,7 +13,8 @@ This gate intentionally composes two evidence classes:
 - immutable release assets, digest references, SBOM, checksums, and AppleHV OCI metadata
 - booted guest proof, machine API readiness, bootc/runtime capabilities, and clean SELinux AVC evidence
 - service proof showing the forwarded machine API drove a node-agent-backed
-  systemd transient unit with cgroup, journal, workload id, and generation evidence
+  systemd transient unit with cgroup, journal, execution identity, and observed
+  workload-generation evidence
 
 Options:
   --release-dir <path>      Directory containing downloaded machine-os release assets
@@ -47,6 +48,94 @@ assert_matches() {
   local pattern="$2"
   local label="$3"
   grep -E "${pattern}" "${path}" >/dev/null || die "${label} did not match /${pattern}/ in ${path}"
+}
+
+status_record_correlates_execution() {
+  local path="$1"
+  local execution_id="$2"
+  local execution_unit="$3"
+  local record
+  local unit_field="\"unit_name\":\"${execution_unit}\""
+  local cgroup_field="\"cgroup_path\":\"/system.slice/${execution_unit}\""
+  local unit_selector="\"field\":\"_SYSTEMD_UNIT\",\"value\":\"${execution_unit}\""
+  local execution_selector="\"field\":\"NIMBUS_WORKLOAD_EXECUTION_ID\",\"value\":\"${execution_id}\""
+
+  while IFS= read -r record; do
+    if [[ "${record}" == *"${unit_field}"* \
+      && "${record}" == *"${cgroup_field}"* \
+      && "${record}" == *"${unit_selector}"* \
+      && "${record}" == *"${execution_selector}"* ]]; then
+      return 0
+    fi
+  done <"${path}"
+  return 1
+}
+
+unit_list_contains_execution() {
+  local path="$1"
+  local execution_unit="$2"
+  awk -v unit="${execution_unit}" '$1 == unit { found = 1 } END { exit found ? 0 : 1 }' "${path}"
+}
+
+systemd_status_block_correlates_execution() {
+  local path="$1"
+  local execution_unit="$2"
+  awk \
+    -v header="# unit ${execution_unit}" \
+    -v id="Id=${execution_unit}" \
+    -v cgroup="ControlGroup=/system.slice/${execution_unit}" '
+      function finish_block() {
+        if (active && saw_id && saw_cgroup) {
+          matched = 1
+        }
+      }
+      /^# unit / {
+        finish_block()
+        active = ($0 == header)
+        saw_id = 0
+        saw_cgroup = 0
+        next
+      }
+      active && $0 == id { saw_id = 1 }
+      active && $0 == cgroup { saw_cgroup = 1 }
+      END {
+        finish_block()
+        exit matched ? 0 : 1
+      }
+    ' "${path}"
+}
+
+journal_record_correlates_execution() {
+  local path="$1"
+  local execution_id="$2"
+  local execution_unit="$3"
+  awk \
+    -v header="# journal unit ${execution_unit}" \
+    -v unit_field="_SYSTEMD_UNIT=${execution_unit}" \
+    -v execution_field="NIMBUS_WORKLOAD_EXECUTION_ID=${execution_id}" '
+      function finish_record() {
+        if (active && saw_unit && saw_execution) {
+          matched = 1
+        }
+        saw_unit = 0
+        saw_execution = 0
+      }
+      /^# journal unit / {
+        finish_record()
+        active = ($0 == header)
+        next
+      }
+      $0 == "" {
+        finish_record()
+        next
+      }
+      active && $0 == unit_field { saw_unit = 1 }
+      active && $0 == execution_field { saw_execution = 1 }
+      END {
+        finish_record()
+        exit matched ? 0 : 1
+      }
+    ' "${path}"
 }
 
 summary_value() {
@@ -272,19 +361,28 @@ assert_contains "${service_localhost_probe}" "HTTP/1.1 200 OK" "service localhos
 assert_contains "${service_node_agent_status}" '"projection"' "node-agent status projection"
 assert_contains "${service_node_agent_status}" '"status"' "node-agent status body"
 assert_contains "${service_node_agent_status}" '"workload_uid"' "node-agent workload id"
-assert_contains "${service_node_agent_status}" '"observed_generation"' "node-agent observed generation"
+assert_contains "${service_node_agent_status}" '"observed_generation":"1"' "node-agent observed generation"
 assert_contains "${service_node_agent_status}" '"lifecycle_evidence"' "node-agent lifecycle evidence"
 assert_contains "${service_node_agent_status}" '"systemd_transient_unit"' "node-agent backend evidence"
 assert_contains "${service_node_agent_status}" '"unit_name"' "node-agent unit evidence"
 assert_contains "${service_node_agent_status}" '"process_id"' "node-agent process evidence"
 assert_contains "${service_node_agent_status}" '"cgroup_path"' "node-agent cgroup evidence"
 assert_contains "${service_node_agent_status}" '"journal_selectors"' "node-agent journal selector evidence"
-assert_contains "${service_node_agent_status}" '"NIMBUS_WORKLOAD_ID"' "node-agent workload journal selector"
-assert_contains "${service_node_agent_status}" "nimbus-tw_" "node-agent transient unit name"
-assert_contains "${service_systemd_units}" "nimbus-tw_" "systemd transient unit list"
-assert_contains "${service_systemd_unit_status}" "Id=nimbus-tw_" "systemd transient unit status"
-assert_contains "${service_systemd_unit_status}" "ControlGroup=/system.slice/nimbus-tw_" "systemd transient unit cgroup"
-assert_contains "${service_node_workload_journal}" "nimbus-tw_" "node workload journal unit"
+assert_contains "${service_node_agent_status}" '"NIMBUS_WORKLOAD_EXECUTION_ID"' "node-agent execution journal selector"
+status_execution_ids="$(grep -Eo 'wex_[0-9a-f]{64}' "${service_node_agent_status}" | LC_ALL=C sort -u || true)"
+[[ -n "${status_execution_ids}" ]] || die "workload execution identity missing from node-agent status"
+matching_execution_ids=()
+while IFS= read -r execution_id; do
+  [[ -n "${execution_id}" ]] || continue
+  execution_unit="nimbus-${execution_id}.service"
+  if status_record_correlates_execution "${service_node_agent_status}" "${execution_id}" "${execution_unit}" \
+    && unit_list_contains_execution "${service_systemd_units}" "${execution_unit}" \
+    && systemd_status_block_correlates_execution "${service_systemd_unit_status}" "${execution_unit}" \
+    && journal_record_correlates_execution "${service_node_workload_journal}" "${execution_id}" "${execution_unit}"; then
+    matching_execution_ids+=("${execution_id}")
+  fi
+done <<<"${status_execution_ids}"
+[[ "${#matching_execution_ids[@]}" -eq 1 ]] || die "workload execution identity correlation expected exactly one status/unit/cgroup/journal match, observed ${#matching_execution_ids[@]}"
 assert_matches "${service_node_workload_journal}" 'Started|conmon|nimbus-container-runner' "node workload journal content"
 assert_contains "${service_typed_runner_path}" "/usr/libexec/nimbus/nimbus-container-runner" "typed container runner path"
 

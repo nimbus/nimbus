@@ -1,23 +1,115 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
 
 use nimbus_core::TenantId;
+use nimbus_network::{NetworkResourceGeneration, PublishedEndpointHandle, PublishedEndpointId};
 use nimbus_sandbox::{SandboxHandle, SandboxSpec};
 use nimbus_tenant::TenantVolumePolicyDecision;
+use nimbus_workloads::WorkloadExecutionReference;
 use sha2::{Digest, Sha256};
 use ulid::Ulid;
 
+const SERVICE_DEFINITION_RESOURCE_VERSION_DOMAIN: &[u8] =
+    b"nimbus.services.service-definition.resource-version.v1";
+const SANDBOX_RESOURCE_VERSION_DOMAIN: &[u8] =
+    b"nimbus.services.sandbox-resource.resource-version.v1";
+
 pub trait ServiceInstanceCatalog: Send + Sync + 'static {
-    fn service_instances_for_tenant(&self, tenant_id: &TenantId)
-    -> BTreeMap<String, SandboxHandle>;
+    fn service_instances_for_tenant(
+        &self,
+        tenant_id: &TenantId,
+    ) -> BTreeMap<String, ServiceInstanceObservation>;
 
     fn service_instance_for_name(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<SandboxHandle> {
+    ) -> Option<ServiceInstanceObservation> {
         self.service_instances_for_tenant(tenant_id)
             .remove(service_name)
+    }
+}
+
+/// Services-owned readiness observation paired with portable endpoint handles.
+///
+/// Logical service names and readiness remain in this crate. Endpoint IDs and
+/// generations remain network-owned values, and a provider address never
+/// substitutes for either one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceInstanceObservation {
+    handle: SandboxHandle,
+    published_endpoints: Vec<PublishedEndpointHandle>,
+}
+
+impl ServiceInstanceObservation {
+    /// Validate one complete address-to-control-plane correlation.
+    pub fn new(
+        handle: SandboxHandle,
+        published_endpoints: Vec<PublishedEndpointHandle>,
+    ) -> Result<Self, nimbus_core::Error> {
+        if handle.published_endpoints.len() != published_endpoints.len() {
+            return Err(nimbus_core::Error::InvalidInput(
+                "service endpoint handles do not cover the observed endpoint set".to_owned(),
+            ));
+        }
+
+        let mut observed_by_name = BTreeMap::new();
+        for endpoint in &handle.published_endpoints {
+            if observed_by_name
+                .insert(endpoint.name.as_str(), endpoint)
+                .is_some()
+            {
+                return Err(nimbus_core::Error::InvalidInput(format!(
+                    "service observation contains duplicate endpoint name `{}`",
+                    endpoint.name
+                )));
+            }
+        }
+        let mut stable_ids = BTreeSet::new();
+        let mut handle_names = BTreeSet::new();
+        let mut generation = None;
+        for endpoint_handle in &published_endpoints {
+            if !stable_ids.insert(endpoint_handle.endpoint_id()) {
+                return Err(nimbus_core::Error::InvalidInput(
+                    "service observation contains a duplicate stable endpoint ID".to_owned(),
+                ));
+            }
+            if !handle_names.insert(endpoint_handle.endpoint().name.as_str()) {
+                return Err(nimbus_core::Error::InvalidInput(format!(
+                    "service endpoint handles contain duplicate name `{}`",
+                    endpoint_handle.endpoint().name
+                )));
+            }
+            if generation.is_some_and(|current| current != endpoint_handle.generation()) {
+                return Err(nimbus_core::Error::InvalidInput(
+                    "service endpoint handles cross network generations".to_owned(),
+                ));
+            }
+            generation = Some(endpoint_handle.generation());
+            if observed_by_name.get(endpoint_handle.endpoint().name.as_str())
+                != Some(&endpoint_handle.endpoint())
+            {
+                return Err(nimbus_core::Error::InvalidInput(format!(
+                    "service endpoint handle `{}` does not match its observed location",
+                    endpoint_handle.endpoint().name
+                )));
+            }
+        }
+
+        Ok(Self {
+            handle,
+            published_endpoints,
+        })
+    }
+
+    /// Services-owned workload readiness and observed endpoint locations.
+    pub fn handle(&self) -> &SandboxHandle {
+        &self.handle
+    }
+
+    /// Stable endpoint identities, generations, and observed locations.
+    pub fn published_endpoints(&self) -> &[PublishedEndpointHandle] {
+        &self.published_endpoints
     }
 }
 
@@ -81,6 +173,61 @@ pub struct SandboxResource {
     pub created_at_millis: u64,
     pub updated_at_millis: u64,
     pub labels: BTreeMap<String, String>,
+}
+
+/// Desired source for one standalone sandbox, stored before provider effects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxResourceSource {
+    pub tenant_id: TenantId,
+    pub id: String,
+    pub profile: String,
+    pub spec: SandboxSpec,
+    pub generation: u64,
+    pub resource_version: String,
+    pub created_at_millis: u64,
+    pub updated_at_millis: u64,
+    pub labels: BTreeMap<String, String>,
+}
+
+/// Optional provider observation for one exact desired sandbox execution attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxResourceObservation {
+    pub tenant_id: TenantId,
+    pub id: String,
+    pub source_generation: u64,
+    pub observed_execution_generation: u64,
+    pub execution: WorkloadExecutionReference,
+    pub handle: SandboxHandle,
+    pub observed_at_millis: u64,
+}
+
+/// Source plus its optional observed projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxResourceSnapshot {
+    pub source: SandboxResourceSource,
+    pub observation: Option<SandboxResourceObservation>,
+}
+
+/// Attempt-fenced observed projection for a sandbox-backed service definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceDefinitionObservation {
+    pub tenant_id: TenantId,
+    pub name: String,
+    pub source_generation: u64,
+    pub observed_execution_generation: u64,
+    pub execution: WorkloadExecutionReference,
+    pub handle: SandboxHandle,
+    pub published_endpoints: Vec<PublishedEndpointHandle>,
+    /// Last authenticated nonempty stable identity set for this execution.
+    pub endpoint_identity_fence: BTreeMap<String, (PublishedEndpointId, NetworkResourceGeneration)>,
+    pub observed_at_millis: u64,
+}
+
+impl ServiceDefinitionObservation {
+    /// Revalidate the observation before logical service resolution.
+    pub fn service_instance(&self) -> Result<ServiceInstanceObservation, nimbus_core::Error> {
+        ServiceInstanceObservation::new(self.handle.clone(), self.published_endpoints.clone())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -290,19 +437,153 @@ impl ServiceDefinition {
         name: impl Into<String>,
         backend: ServiceBackend,
     ) -> Self {
+        Self::static_catalog_with_labels(tenant_id, name, backend, BTreeMap::new())
+    }
+
+    /// Build one complete immutable catalog snapshot at its initial generation.
+    pub fn static_catalog_with_labels(
+        tenant_id: TenantId,
+        name: impl Into<String>,
+        backend: ServiceBackend,
+        labels: BTreeMap<String, String>,
+    ) -> Self {
         let name = name.into();
+        let generation = 1;
+        let resource_version =
+            service_definition_resource_version(&tenant_id, &name, generation, &backend, &labels);
         Self {
             tenant_id,
-            resource_version: format!("static:{name}"),
+            resource_version,
             name,
             backend,
-            generation: 0,
+            generation,
             created_at_millis: 0,
             updated_at_millis: 0,
-            labels: BTreeMap::new(),
+            labels,
             source: ServiceDefinitionSource::StaticCatalog,
         }
     }
+}
+
+impl SandboxResourceSource {
+    pub fn new(
+        tenant_id: TenantId,
+        id: impl Into<String>,
+        profile: impl Into<String>,
+        spec: SandboxSpec,
+        generation: u64,
+        now_millis: u64,
+        labels: BTreeMap<String, String>,
+    ) -> Self {
+        let id = id.into();
+        let profile = profile.into();
+        let resource_version =
+            sandbox_resource_version(&tenant_id, &id, &profile, generation, &spec, &labels);
+        Self {
+            tenant_id,
+            id,
+            profile,
+            spec,
+            generation,
+            resource_version,
+            created_at_millis: now_millis,
+            updated_at_millis: now_millis,
+            labels,
+        }
+    }
+}
+
+fn service_definition_resource_version(
+    tenant_id: &TenantId,
+    name: &str,
+    generation: u64,
+    backend: &ServiceBackend,
+    labels: &BTreeMap<String, String>,
+) -> String {
+    let backend = canonical_service_backend_bytes(backend);
+    let labels = serde_json::to_vec(labels)
+        .expect("service labels must have an infallible canonical JSON representation");
+    let generation = generation.to_be_bytes();
+    digest_resource_version(
+        SERVICE_DEFINITION_RESOURCE_VERSION_DOMAIN,
+        [
+            tenant_id.as_str().as_bytes(),
+            name.as_bytes(),
+            generation.as_slice(),
+            backend.as_slice(),
+            labels.as_slice(),
+        ],
+    )
+}
+
+fn sandbox_resource_version(
+    tenant_id: &TenantId,
+    id: &str,
+    profile: &str,
+    generation: u64,
+    spec: &SandboxSpec,
+    labels: &BTreeMap<String, String>,
+) -> String {
+    let spec = serde_json::to_vec(spec)
+        .expect("sandbox specs must have an infallible canonical JSON representation");
+    let labels = serde_json::to_vec(labels)
+        .expect("sandbox labels must have an infallible canonical JSON representation");
+    let generation = generation.to_be_bytes();
+    digest_resource_version(
+        SANDBOX_RESOURCE_VERSION_DOMAIN,
+        [
+            tenant_id.as_str().as_bytes(),
+            id.as_bytes(),
+            profile.as_bytes(),
+            generation.as_slice(),
+            spec.as_slice(),
+            labels.as_slice(),
+        ],
+    )
+}
+
+fn canonical_service_backend_bytes(backend: &ServiceBackend) -> Vec<u8> {
+    let value = match backend {
+        ServiceBackend::Sandbox(spec) => serde_json::json!({
+            "kind": "sandbox",
+            "spec": spec,
+        }),
+        ServiceBackend::BuiltIn(spec) => serde_json::json!({
+            "kind": "built_in",
+            "provider": spec.provider(),
+        }),
+        ServiceBackend::External(spec) => {
+            let auth = match spec.auth() {
+                ExternalAuthPolicy::None => "none",
+            };
+            let HealthCheckPolicy::Http { path } = spec.health();
+            serde_json::json!({
+                "kind": "external",
+                "endpoint_url": spec.endpoint(),
+                "auth": auth,
+                "health": {
+                    "kind": "http",
+                    "path": path,
+                },
+            })
+        }
+    };
+    serde_json::to_vec(&value)
+        .expect("service backend values must have an infallible canonical JSON representation")
+}
+
+fn digest_resource_version<'a>(
+    domain: &[u8],
+    frames: impl IntoIterator<Item = &'a [u8]>,
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update((domain.len() as u64).to_be_bytes());
+    digest.update(domain);
+    for frame in frames {
+        digest.update((frame.len() as u64).to_be_bytes());
+        digest.update(frame);
+    }
+    format!("sha256:{}", lower_hex(&digest.finalize()))
 }
 
 impl DurableObjectNamespace {
@@ -445,16 +726,16 @@ fn lower_hex(bytes: &[u8]) -> String {
 }
 
 pub trait ServiceDefinitionCatalog: Send + Sync + 'static {
-    fn service_backend_for_tenant(
+    fn service_definition_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<ServiceBackend>;
+    ) -> Option<ServiceDefinition>;
 
-    fn service_backends_for_tenant(
+    fn service_definitions_for_tenant(
         &self,
         _tenant_id: &TenantId,
-    ) -> BTreeMap<String, ServiceBackend> {
+    ) -> BTreeMap<String, ServiceDefinition> {
         BTreeMap::new()
     }
 
@@ -474,7 +755,7 @@ impl ServiceInstanceCatalog for EmptyServiceInstanceCatalog {
     fn service_instances_for_tenant(
         &self,
         _tenant_id: &TenantId,
-    ) -> BTreeMap<String, SandboxHandle> {
+    ) -> BTreeMap<String, ServiceInstanceObservation> {
         BTreeMap::new()
     }
 }
@@ -483,23 +764,26 @@ impl ServiceInstanceCatalog for EmptyServiceInstanceCatalog {
 pub struct EmptyServiceDefinitionCatalog;
 
 impl ServiceDefinitionCatalog for EmptyServiceDefinitionCatalog {
-    fn service_backend_for_tenant(
+    fn service_definition_for_tenant(
         &self,
         _tenant_id: &TenantId,
         _service_name: &str,
-    ) -> Option<ServiceBackend> {
+    ) -> Option<ServiceDefinition> {
         None
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use nimbus_core::TenantId;
 
     use super::{
         DurableObjectId, DurableObjectIdError, DurableObjectInstanceKey, DurableObjectNamespace,
         DurableObjectNamespaceError, DurableObjectStorageHandle, EmptyServiceDefinitionCatalog,
-        EmptyServiceInstanceCatalog, ServiceDefinitionCatalog, ServiceInstanceCatalog,
+        EmptyServiceInstanceCatalog, ServiceBackend, ServiceDefinition, ServiceDefinitionCatalog,
+        ServiceInstanceCatalog,
     };
 
     #[test]
@@ -533,7 +817,7 @@ mod tests {
 
         assert!(
             catalog
-                .service_backend_for_tenant(&tenant_id, "db")
+                .service_definition_for_tenant(&tenant_id, "db")
                 .is_none(),
             "empty service definition catalog should not declare services"
         );
@@ -551,6 +835,59 @@ mod tests {
                 .is_empty(),
             "empty service definition catalog should not authorize service volumes"
         );
+    }
+
+    #[test]
+    fn static_service_definition_digest_is_complete_stable_and_initial_generation() {
+        let tenant_id = TenantId::new("tenant-a").expect("tenant id should be valid");
+        let mut labels = BTreeMap::new();
+        labels.insert("region".to_owned(), "local".to_owned());
+        let definition = ServiceDefinition::static_catalog_with_labels(
+            tenant_id.clone(),
+            "api",
+            ServiceBackend::built_in("native-api"),
+            labels.clone(),
+        );
+        let reconstructed = ServiceDefinition::static_catalog_with_labels(
+            tenant_id.clone(),
+            "api",
+            ServiceBackend::built_in("native-api"),
+            labels.clone(),
+        );
+
+        assert_eq!(definition.generation, 1);
+        assert_eq!(definition, reconstructed);
+        assert!(definition.resource_version.starts_with("sha256:"));
+        assert_eq!(definition.resource_version.len(), "sha256:".len() + 64);
+
+        for changed in [
+            ServiceDefinition::static_catalog_with_labels(
+                TenantId::new("tenant-b").expect("tenant id should be valid"),
+                "api",
+                ServiceBackend::built_in("native-api"),
+                labels.clone(),
+            ),
+            ServiceDefinition::static_catalog_with_labels(
+                tenant_id.clone(),
+                "worker",
+                ServiceBackend::built_in("native-api"),
+                labels.clone(),
+            ),
+            ServiceDefinition::static_catalog_with_labels(
+                tenant_id.clone(),
+                "api",
+                ServiceBackend::built_in("native-worker"),
+                labels.clone(),
+            ),
+            ServiceDefinition::static_catalog_with_labels(
+                tenant_id,
+                "api",
+                ServiceBackend::built_in("native-api"),
+                BTreeMap::new(),
+            ),
+        ] {
+            assert_ne!(definition.resource_version, changed.resource_version);
+        }
     }
 
     #[test]

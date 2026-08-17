@@ -1,99 +1,150 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nimbus_core::{Error, TenantId};
-use nimbus_egress::{EgressPolicy, EgressRule};
-use nimbus_runtime::HostCallCancellation;
+use nimbus_egress::EgressPolicy;
+use nimbus_network::{
+    EndpointProtocol, NetworkResourceGeneration, PublishedEndpoint, PublishedEndpointHandle,
+    PublishedEndpointId,
+};
 use nimbus_sandbox::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
-    SandboxFuture, SandboxHandle, SandboxId, SandboxMountSpec, SandboxOciBuildSpec,
-    SandboxOciImageSource, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
+    SandboxBackend, SandboxBackendKind, SandboxFuture, SandboxHandle, SandboxId, SandboxInspection,
+    SandboxMountSpec, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
     SandboxStatus,
 };
+use nimbus_workloads::{
+    NodeIdentity, WorkloadDesiredDigest, WorkloadExecutionAttemptId, WorkloadExecutionId,
+    WorkloadExecutionReference, WorkloadGeneration, WorkloadRestartEpoch,
+};
+use sha2::{Digest, Sha256};
 
 use crate::{
     ExternalAuthPolicy, HealthCheckPolicy, RuntimeServiceRegistry, ServiceBackend,
-    ServiceDefinitionCatalog, SessionLifecycleState, SessionTarget,
+    ServiceDefinition, ServiceDefinitionCatalog, ServiceInstanceObservation, SessionLifecycleState,
+    SessionTarget,
 };
-use nimbus_tenant::{
-    TenantImageVerificationEvidence, TenantImageVerificationProvider, TenantIsolationContext,
-    TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantVolumePolicyDecision,
-    WorkloadAttributes,
-};
+use nimbus_tenant::{TenantIsolationContext, TenantVolumePolicyDecision};
 
 use super::*;
 
 mod definition_lifecycle;
-mod lifecycle;
 mod sandbox_resources;
 mod sessions;
-mod tenant_teardown;
+mod source_projection;
+mod source_retirement;
 
-struct StubServiceDefinitionCatalog {
-    launches: BTreeMap<String, ServiceBackend>,
+pub(super) fn execution_reference_for_handle(
+    handle: &mut SandboxHandle,
+    generation: u64,
+    restart_epoch: u64,
+) -> WorkloadExecutionReference {
+    let identity_seed = format!("{}\0{}", handle.tenant_id, handle.name);
+    let workload_uid = format!("twu_{:x}", Sha256::digest(identity_seed.as_bytes()))
+        .try_into()
+        .expect("fixture workload uid should validate");
+    let node_identity =
+        NodeIdentity::new("services-test-node").expect("fixture node identity should validate");
+    let generation = WorkloadGeneration::new(generation);
+    let restart_epoch = WorkloadRestartEpoch::new(restart_epoch);
+    let execution_id =
+        WorkloadExecutionId::for_execution(&workload_uid, &node_identity, generation);
+    let attempt_id = WorkloadExecutionAttemptId::for_execution(&execution_id, restart_epoch);
+    let desired_digest = WorkloadDesiredDigest::sha256(identity_seed);
+    handle.id = SandboxId::new(execution_id.as_str());
+    serde_json::from_value(serde_json::json!({
+        "workloadUid": workload_uid,
+        "nodeIdentity": node_identity,
+        "executionId": execution_id,
+        "restartEpoch": restart_epoch,
+        "attemptId": attempt_id,
+        "generation": generation,
+        "desiredDigest": desired_digest,
+    }))
+    .expect("fixture execution reference should validate")
+}
+
+pub(super) fn endpoint_handles_for_handle(
+    handle: &SandboxHandle,
+    generation: u64,
+) -> Vec<PublishedEndpointHandle> {
+    let incarnation = format!(
+        "nimbus.services.test-incarnation.v1:{}:{}",
+        handle.tenant_id, handle.name
+    );
+    handle
+        .published_endpoints
+        .iter()
+        .cloned()
+        .map(|endpoint| {
+            PublishedEndpointHandle::new(
+                PublishedEndpointId::for_workload_endpoint(&incarnation, &endpoint.name),
+                NetworkResourceGeneration::new(generation),
+                endpoint,
+            )
+        })
+        .collect()
+}
+
+pub(super) fn service_instance_observation(
+    handle: SandboxHandle,
+    published_endpoints: Vec<PublishedEndpointHandle>,
+) -> ServiceInstanceObservation {
+    ServiceInstanceObservation::new(handle, published_endpoints)
+        .expect("fixture service instance observation should validate")
+}
+
+pub(super) struct StubServiceDefinitionCatalog {
+    pub(super) launches: BTreeMap<String, ServiceBackend>,
 }
 
 impl ServiceDefinitionCatalog for StubServiceDefinitionCatalog {
-    fn service_backend_for_tenant(
+    fn service_definition_for_tenant(
         &self,
-        _tenant_id: &TenantId,
+        tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<ServiceBackend> {
-        self.launches.get(service_name).cloned()
+    ) -> Option<ServiceDefinition> {
+        self.launches.get(service_name).cloned().map(|backend| {
+            ServiceDefinition::static_catalog(tenant_id.clone(), service_name, backend)
+        })
     }
 }
 
-struct StubSandboxBackend {
+pub(super) struct StubSandboxBackend {
     image_starts: AtomicUsize,
-    build_starts: AtomicUsize,
     stop_calls: AtomicUsize,
     artifact_cleanup_calls: AtomicUsize,
     inspect_calls: AtomicUsize,
     egress_reloads: Mutex<Vec<(String, EgressPolicy)>>,
-    fail_stop_ids: Mutex<BTreeSet<String>>,
     ready_after_inspects: usize,
-    handle_tenant_override: Option<TenantId>,
-    handle_name_override: Option<String>,
     handles: Mutex<BTreeMap<String, SandboxHandle>>,
+    inspection_overrides: Mutex<BTreeMap<String, SandboxInspection>>,
 }
 
 impl StubSandboxBackend {
-    fn new(ready_after_inspects: usize) -> Self {
+    pub(super) fn new(ready_after_inspects: usize) -> Self {
         Self {
             image_starts: AtomicUsize::new(0),
-            build_starts: AtomicUsize::new(0),
             stop_calls: AtomicUsize::new(0),
             artifact_cleanup_calls: AtomicUsize::new(0),
             inspect_calls: AtomicUsize::new(0),
             egress_reloads: Mutex::new(Vec::new()),
-            fail_stop_ids: Mutex::new(BTreeSet::new()),
             ready_after_inspects,
-            handle_tenant_override: None,
-            handle_name_override: None,
             handles: Mutex::new(BTreeMap::new()),
+            inspection_overrides: Mutex::new(BTreeMap::new()),
         }
     }
 
-    fn with_handle_tenant_override(mut self, tenant_id: TenantId) -> Self {
-        self.handle_tenant_override = Some(tenant_id);
-        self
+    pub(super) fn retirement_effect_counts(&self) -> (usize, usize, usize) {
+        (
+            self.inspect_calls.load(Ordering::SeqCst),
+            self.stop_calls.load(Ordering::SeqCst),
+            self.artifact_cleanup_calls.load(Ordering::SeqCst),
+        )
     }
 
-    fn with_handle_name_override(mut self, name: impl Into<String>) -> Self {
-        self.handle_name_override = Some(name.into());
-        self
-    }
-
-    fn fail_stop_for(&self, id: &str) {
-        self.fail_stop_ids
-            .lock()
-            .expect("failed stop id set should not be poisoned")
-            .insert(id.to_owned());
-    }
-
-    fn sandbox_handle(
+    pub(super) fn sandbox_handle(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
@@ -103,7 +154,7 @@ impl StubSandboxBackend {
             vec![
                 PublishedEndpoint::new(
                     "postgres",
-                    PublishedEndpointProtocol::Tcp,
+                    EndpointProtocol::Tcp,
                     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                 )
                 .with_guest_port(5432),
@@ -111,50 +162,14 @@ impl StubSandboxBackend {
         } else {
             Vec::new()
         };
-        let handle_tenant_id = self
-            .handle_tenant_override
-            .as_ref()
-            .unwrap_or(tenant_id)
-            .clone();
-        let handle_name = self.handle_name_override.as_deref().unwrap_or(service_name);
         SandboxHandle::new(
-            handle_tenant_id.clone(),
-            SandboxId::new(format!("sandbox-{handle_tenant_id}-{service_name}")),
-            handle_name,
+            tenant_id.clone(),
+            SandboxId::new(format!("sandbox-{tenant_id}-{service_name}")),
+            service_name,
             SandboxBackendKind::Krun,
             status,
             endpoints,
         )
-    }
-}
-
-struct RecordingImageVerifier {
-    evidence: TenantImageVerificationEvidence,
-    calls: AtomicUsize,
-    references: Mutex<Vec<String>>,
-}
-
-impl RecordingImageVerifier {
-    fn with_evidence(evidence: TenantImageVerificationEvidence) -> Self {
-        Self {
-            evidence,
-            calls: AtomicUsize::new(0),
-            references: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-impl TenantImageVerificationProvider for RecordingImageVerifier {
-    fn verify_registry_image(
-        &self,
-        request: &nimbus_tenant::TenantImageVerificationRequest,
-    ) -> nimbus_core::Result<TenantImageVerificationEvidence> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        self.references
-            .lock()
-            .expect("image verifier references should not be poisoned")
-            .push(request.image_reference().to_string());
-        Ok(self.evidence.clone())
     }
 }
 
@@ -163,35 +178,17 @@ impl SandboxBackend for StubSandboxBackend {
         SandboxBackendKind::Krun
     }
 
-    fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
-        match &spec.root {
-            SandboxRootSpec::Rootfs(_) => {
-                let message = format!("rootfs launch unsupported for {}", spec.display_name());
-                return Box::pin(async move { Err(SandboxError::InvalidSpec { message }) });
-            }
-            SandboxRootSpec::OciImage(image) => match &image.source {
-                SandboxOciImageSource::Reference(_) => {
-                    self.image_starts.fetch_add(1, Ordering::SeqCst);
-                }
-                SandboxOciImageSource::Build(_) => {
-                    self.build_starts.fetch_add(1, Ordering::SeqCst);
-                }
-            },
-        }
-        let handle = self.sandbox_handle(
-            &spec.tenant_id,
-            spec.display_name(),
-            SandboxStatus::Starting,
-        );
-        self.handles
-            .lock()
-            .expect("backend lock should not be poisoned")
-            .insert(handle.id.as_str().to_owned(), handle.clone());
-        Box::pin(async move { Ok(handle) })
-    }
-
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         let inspect_call = self.inspect_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(inspection) = self
+            .inspection_overrides
+            .lock()
+            .expect("inspection override map should not be poisoned")
+            .get(id.as_str())
+            .cloned()
+        {
+            return Box::pin(async move { Ok(Some(inspection)) });
+        }
         let mut handles = self
             .handles
             .lock()
@@ -203,25 +200,7 @@ impl SandboxBackend for StubSandboxBackend {
             }
             handle
         });
-        Box::pin(async move { Ok(handle) })
-    }
-
-    fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
-        self.stop_calls.fetch_add(1, Ordering::SeqCst);
-        if self
-            .fail_stop_ids
-            .lock()
-            .expect("failed stop id set should not be poisoned")
-            .contains(id.as_str())
-        {
-            let message = format!("stub backend refused to stop sandbox {id}");
-            return Box::pin(async move { Err(SandboxError::OperationFailed { message }) });
-        }
-        self.handles
-            .lock()
-            .expect("backend lock should not be poisoned")
-            .remove(id.as_str());
-        Box::pin(async move { Ok(()) })
+        Box::pin(async move { Ok(handle.map(SandboxInspection::provider_reported)) })
     }
 
     fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> SandboxFuture<()> {
@@ -252,26 +231,7 @@ fn sparse_image_spec_with_reference(name: &str, image_reference: impl Into<Strin
     )
 }
 
-fn sparse_build_spec(
-    name: &str,
-    image_name: impl Into<String>,
-    dockerfile_path: impl Into<std::path::PathBuf>,
-    context_path: impl Into<std::path::PathBuf>,
-) -> SandboxSpec {
-    SandboxSpec::new(
-        TenantId::new("tenant").expect("tenant id should be valid"),
-        SandboxOwnerSpec::service(name),
-        SandboxBackendKind::Krun,
-        SandboxRootSpec::oci_image(SandboxOciImageSource::Build(SandboxOciBuildSpec::new(
-            image_name,
-            dockerfile_path,
-            context_path,
-        ))),
-        SandboxProcessSpec::new(Vec::<String>::new()),
-    )
-}
-
-fn standalone_resource_spec(tenant_id: &TenantId, display_name: &str) -> SandboxSpec {
+pub(super) fn standalone_resource_spec(tenant_id: &TenantId, display_name: &str) -> SandboxSpec {
     SandboxSpec::new(
         tenant_id.clone(),
         SandboxOwnerSpec::standalone_named(display_name),
@@ -281,20 +241,36 @@ fn standalone_resource_spec(tenant_id: &TenantId, display_name: &str) -> Sandbox
     )
 }
 
-fn image_service_backend(name: &str, image_reference: impl Into<String>) -> ServiceBackend {
-    ServiceBackend::sandbox(sparse_image_spec_with_reference(name, image_reference))
+pub(super) fn reserve_standalone_source(
+    manager: &ServiceManager,
+    tenant_id: &TenantId,
+    stable_resource_id: &str,
+    profile: &str,
+    spec: SandboxSpec,
+    labels: BTreeMap<String, String>,
+) -> crate::SandboxResourceSource {
+    let prepared = manager
+        .prepare_standalone_sandbox_provision_source(
+            tenant_id,
+            stable_resource_id,
+            profile,
+            spec,
+            labels,
+        )
+        .expect("standalone desired source should prepare");
+    let decision =
+        TenantIsolationContext::system(tenant_id.clone(), "test.standalone_sandbox.reserve")
+            .with_deployment_generation(prepared.source().generation)
+            .admit_decision(prepared.policy_input().clone())
+            .expect("standalone desired source should admit");
+    manager
+        .reserve_standalone_sandbox_provision_source(&decision, prepared)
+        .expect("standalone desired source should reserve")
 }
 
-fn build_service_backend(
+pub(super) fn image_service_backend(
     name: &str,
-    image_name: impl Into<String>,
-    dockerfile_path: impl Into<std::path::PathBuf>,
-    context_path: impl Into<std::path::PathBuf>,
+    image_reference: impl Into<String>,
 ) -> ServiceBackend {
-    ServiceBackend::sandbox(sparse_build_spec(
-        name,
-        image_name,
-        dockerfile_path,
-        context_path,
-    ))
+    ServiceBackend::sandbox(sparse_image_spec_with_reference(name, image_reference))
 }

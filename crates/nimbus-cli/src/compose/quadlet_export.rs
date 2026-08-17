@@ -3,7 +3,7 @@ use std::fs;
 use std::net::IpAddr;
 use std::path::Path;
 
-use nimbus::{Error, PublishedEndpointProtocol, Result, SandboxRestartPolicy};
+use nimbus::{EndpointProtocol, Error, Result, SandboxRestartPolicy};
 use sha2::{Digest, Sha256};
 
 use crate::cli_ux;
@@ -763,7 +763,7 @@ fn with_provenance(
 
 fn render_port(service_name: &str, port: &ComposePortBindingPlan) -> Result<String> {
     match port.protocol {
-        PublishedEndpointProtocol::Tcp => Ok(format!(
+        EndpointProtocol::Tcp => Ok(format!(
             "{}:{}:{}",
             render_ip(port.host_address),
             port.host_port,
@@ -1109,6 +1109,7 @@ services:
         ]);
         let crate::Command::Compose(ComposeCommand {
             command: ComposeSubcommand::Export(export),
+            ..
         }) = cli.command
         else {
             panic!("compose export should parse");

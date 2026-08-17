@@ -1,10 +1,11 @@
 use nimbus_core::{PrincipalContext, TenantId};
+use nimbus_network::EndpointProtocol;
 use nimbus_runtime::{
     RuntimeBackendKind, RuntimeBundle, RuntimeLimits, RuntimePolicy, RuntimeProfile,
 };
 use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec,
-    SandboxResourceCharge, SandboxRootSpec, SandboxSpec,
+    SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec, SandboxResourceCharge,
+    SandboxRootSpec, SandboxSpec,
 };
 
 use super::*;
@@ -36,6 +37,186 @@ fn test_application_context() -> TenantIsolationContext {
     )
 }
 
+fn direct_network_decision(
+    services: impl IntoIterator<Item = impl Into<String>>,
+    endpoints: impl IntoIterator<Item = TenantNetworkEndpointDecision>,
+) -> nimbus_core::Result<TenantIsolationDecision> {
+    let context = TenantIsolationContext::system(
+        TenantId::new("tenant-a").expect("tenant id should parse"),
+        "tenant-network-direct-input-test",
+    );
+    context.admit_decision(
+        TenantIsolationPolicyInput::new(WorkloadAttributes::service("db"))
+            .with_services(TenantServiceGrantPolicyDecision::new(services))
+            .with_network(TenantNetworkPolicyDecision::new(endpoints)),
+    )
+}
+
+#[test]
+fn direct_network_decision_rejects_malformed_endpoint_fields() {
+    let cases = [
+        (
+            vec![""],
+            TenantNetworkEndpointDecision::new(
+                "",
+                "postgres",
+                EndpointProtocol::Tcp,
+                "127.0.0.1",
+                15432,
+            ),
+        ),
+        (
+            vec!["db"],
+            TenantNetworkEndpointDecision::new("db", "", EndpointProtocol::Tcp, "127.0.0.1", 15432),
+        ),
+        (
+            vec!["db service"],
+            TenantNetworkEndpointDecision::new(
+                "db service",
+                "postgres",
+                EndpointProtocol::Tcp,
+                "127.0.0.1",
+                15432,
+            ),
+        ),
+        (
+            vec!["db"],
+            TenantNetworkEndpointDecision::new(
+                "db",
+                "post gres",
+                EndpointProtocol::Tcp,
+                "127.0.0.1",
+                15432,
+            ),
+        ),
+        (
+            vec!["db"],
+            TenantNetworkEndpointDecision::new(
+                "db",
+                "postgres",
+                EndpointProtocol::Tcp,
+                "https://db.example.com/path",
+                15432,
+            ),
+        ),
+        (
+            vec!["db"],
+            TenantNetworkEndpointDecision::new(
+                "db",
+                "postgres",
+                EndpointProtocol::Tcp,
+                "127.0.0.1",
+                0,
+            ),
+        ),
+        (
+            vec!["db"],
+            TenantNetworkEndpointDecision::new(
+                "db",
+                "postgres",
+                EndpointProtocol::Tcp,
+                "127.0.0.1",
+                15432,
+            )
+            .with_guest_port(0),
+        ),
+    ];
+
+    for (services, endpoint) in cases {
+        let error = direct_network_decision(services, [endpoint])
+            .expect_err("direct tenant admission must reject malformed endpoint fields");
+        assert!(
+            matches!(error, nimbus_core::Error::InvalidInput(_)),
+            "endpoint validation should return a typed invalid-input error: {error}"
+        );
+    }
+}
+
+#[test]
+fn direct_network_decision_rejects_duplicate_and_ungranted_endpoints() {
+    let endpoint = TenantNetworkEndpointDecision::new(
+        "db",
+        "postgres",
+        EndpointProtocol::Tcp,
+        "127.0.0.1",
+        15432,
+    );
+    let duplicate = direct_network_decision(["db"], [endpoint.clone(), endpoint])
+        .expect_err("duplicate service/endpoint keys must be rejected");
+    assert!(matches!(duplicate, nimbus_core::Error::InvalidInput(_)));
+
+    let ungranted = direct_network_decision(
+        ["cache"],
+        [TenantNetworkEndpointDecision::new(
+            "db",
+            "postgres",
+            EndpointProtocol::Tcp,
+            "127.0.0.1",
+            15432,
+        )],
+    )
+    .expect_err("network endpoints must reference an admitted service grant");
+    assert!(matches!(ungranted, nimbus_core::Error::InvalidInput(_)));
+}
+
+#[test]
+fn admitted_network_endpoint_projection_is_exact_and_deterministic() {
+    let endpoint = TenantNetworkEndpointDecision::new(
+        "db",
+        "postgres",
+        EndpointProtocol::Tcp,
+        "db.internal.example",
+        15432,
+    )
+    .with_guest_port(5432);
+    assert_eq!(endpoint.service_name(), "db");
+    assert_eq!(endpoint.endpoint_name(), "postgres");
+    assert_eq!(endpoint.protocol(), EndpointProtocol::Tcp);
+    assert_eq!(endpoint.host(), "db.internal.example");
+    assert_eq!(endpoint.host_port(), 15432);
+    assert_eq!(endpoint.guest_port(), Some(5432));
+
+    let first = direct_network_decision(["db"], [endpoint.clone()])
+        .expect("valid direct endpoint input should admit");
+    let repeated = direct_network_decision(["db"], [endpoint])
+        .expect("the same valid direct endpoint input should admit");
+    assert_eq!(first.id(), repeated.id());
+
+    let network_json = serde_json::to_value(first.network())
+        .expect("admitted network policy should serialize deterministically");
+    assert!(network_json.get("public_exposure_allowed").is_none());
+    assert!(network_json.get("generic_loopback_allowed").is_none());
+}
+
+#[test]
+fn admitted_network_endpoint_permutation_is_canonical() {
+    let db = TenantNetworkEndpointDecision::new(
+        "db",
+        "postgres",
+        EndpointProtocol::Tcp,
+        "db.internal.example",
+        15432,
+    )
+    .with_guest_port(5432);
+    let cache = TenantNetworkEndpointDecision::new(
+        "cache",
+        "redis",
+        EndpointProtocol::Tcp,
+        "cache.internal.example",
+        16379,
+    )
+    .with_guest_port(6379);
+
+    let forward = direct_network_decision(["cache", "db"], [db.clone(), cache.clone()])
+        .expect("valid endpoint set should admit");
+    let reverse = direct_network_decision(["cache", "db"], [cache.clone(), db.clone()])
+        .expect("reversed valid endpoint set should admit");
+
+    assert_eq!(forward.id(), reverse.id());
+    assert_eq!(forward.network().endpoints(), reverse.network().endpoints());
+    assert_eq!(forward.network().endpoints(), &[cache, db]);
+}
+
 fn tenant_decision_input(
     context: &TenantIsolationContext,
     policy: &RuntimePolicy,
@@ -58,7 +239,7 @@ fn tenant_decision_input(
             TenantNetworkEndpointDecision::new(
                 "db",
                 "postgres",
-                PublishedEndpointProtocol::Tcp,
+                EndpointProtocol::Tcp,
                 "127.0.0.1",
                 15432,
             )
@@ -511,7 +692,7 @@ fn tenant_isolation_decision_clones_inputs_so_policy_cannot_widen_after_admissio
         .push(TenantNetworkEndpointDecision::new(
             "other-tenant-db",
             "postgres",
-            PublishedEndpointProtocol::Tcp,
+            EndpointProtocol::Tcp,
             "127.0.0.1",
             25432,
         ));

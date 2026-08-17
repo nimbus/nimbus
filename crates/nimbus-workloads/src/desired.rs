@@ -1,14 +1,17 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 
 use nimbus_core::{Error, TenantId};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DesiredWorkloadState {
     Running,
     Stopped,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DesiredWorkloadKind {
     Service,
     Sandbox,
@@ -81,95 +84,6 @@ impl DesiredWorkload {
 
     pub fn binding_key(&self) -> Option<&str> {
         self.binding_key.as_deref()
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DesiredWorkloadSnapshot {
-    workloads: BTreeMap<(TenantId, String), DesiredWorkload>,
-}
-
-impl DesiredWorkloadSnapshot {
-    pub fn workloads(&self) -> impl Iterator<Item = &DesiredWorkload> {
-        self.workloads.values()
-    }
-
-    pub fn len(&self) -> usize {
-        self.workloads.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.workloads.is_empty()
-    }
-}
-
-pub trait DesiredWorkloadStore {
-    fn upsert_desired_workload(&mut self, workload: DesiredWorkload) -> DesiredWorkload;
-    fn desired_workload(&self, tenant_id: &TenantId, workload_id: &str) -> Option<DesiredWorkload>;
-    fn snapshot_desired_workloads(&self) -> DesiredWorkloadSnapshot;
-    fn restore_desired_workloads(&mut self, snapshot: DesiredWorkloadSnapshot);
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct InMemoryDesiredWorkloadStore {
-    workloads: BTreeMap<(TenantId, String), DesiredWorkload>,
-}
-
-impl DesiredWorkloadStore for InMemoryDesiredWorkloadStore {
-    fn upsert_desired_workload(&mut self, workload: DesiredWorkload) -> DesiredWorkload {
-        let key = (workload.tenant_id.clone(), workload.workload_id.clone());
-        self.workloads.insert(key, workload.clone());
-        workload
-    }
-
-    fn desired_workload(&self, tenant_id: &TenantId, workload_id: &str) -> Option<DesiredWorkload> {
-        self.workloads
-            .get(&(tenant_id.clone(), workload_id.to_owned()))
-            .cloned()
-    }
-
-    fn snapshot_desired_workloads(&self) -> DesiredWorkloadSnapshot {
-        DesiredWorkloadSnapshot {
-            workloads: self.workloads.clone(),
-        }
-    }
-
-    fn restore_desired_workloads(&mut self, snapshot: DesiredWorkloadSnapshot) {
-        self.workloads = snapshot.workloads;
-    }
-}
-
-#[derive(Debug)]
-pub struct WorkloadController<S> {
-    store: S,
-}
-
-impl<S> WorkloadController<S>
-where
-    S: DesiredWorkloadStore,
-{
-    pub fn new(store: S) -> Self {
-        Self { store }
-    }
-
-    pub fn store(&self) -> &S {
-        &self.store
-    }
-
-    pub fn store_mut(&mut self) -> &mut S {
-        &mut self.store
-    }
-
-    pub fn record_desired_workload(&mut self, workload: DesiredWorkload) -> DesiredWorkload {
-        self.store.upsert_desired_workload(workload)
-    }
-
-    pub fn snapshot(&self) -> DesiredWorkloadSnapshot {
-        self.store.snapshot_desired_workloads()
-    }
-
-    pub fn restore(&mut self, snapshot: DesiredWorkloadSnapshot) {
-        self.store.restore_desired_workloads(snapshot);
     }
 }
 
@@ -396,29 +310,12 @@ pub(crate) fn validate_component(label: &str, value: impl Into<String>) -> Resul
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     fn tenant_id() -> TenantId {
         TenantId::new("tenant-a").expect("tenant id should parse")
-    }
-
-    #[test]
-    fn desired_workload_replay_after_restart() {
-        let service =
-            DesiredWorkload::service(tenant_id(), "api", DesiredWorkloadState::Running, 3)
-                .expect("desired service should build");
-        let mut controller = WorkloadController::new(InMemoryDesiredWorkloadStore::default());
-        controller.record_desired_workload(service.clone());
-        let snapshot = controller.snapshot();
-
-        let mut restarted = WorkloadController::new(InMemoryDesiredWorkloadStore::default());
-        restarted.restore(snapshot);
-        let replayed = restarted
-            .store()
-            .desired_workload(service.tenant_id(), service.workload_id())
-            .expect("desired workload should replay after restart");
-
-        assert_eq!(replayed, service);
     }
 
     #[test]

@@ -14,7 +14,9 @@ workspace = true
 
 [dependencies]
 nimbus-core = { path = "../nimbus-core" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
+nimbus-workloads = { path = "../nimbus-workloads" }
 serde.workspace = true
 serde_json.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }

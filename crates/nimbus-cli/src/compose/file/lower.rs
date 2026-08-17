@@ -3,6 +3,7 @@ use super::raw::*;
 use super::warnings::*;
 use super::*;
 use crate::compose::discovery::ResolvedComposeSelection;
+use nimbus_services::ServiceDefinition;
 use nimbus_tenant::TenantVolumePolicyDecision;
 use oci_client::Reference;
 use std::collections::{BTreeMap, BTreeSet};
@@ -195,26 +196,45 @@ fn ensure_service_volumes_declared(
 }
 
 impl ServiceDefinitionCatalog for ComposeServiceCatalog {
-    fn service_backend_for_tenant(
+    fn service_definition_for_tenant(
         &self,
         tenant_id: &TenantId,
         service_name: &str,
-    ) -> Option<ServiceBackend> {
-        self.service_backends
+    ) -> Option<ServiceDefinition> {
+        let backend = self.service_backends.get(service_name)?;
+        let labels = self
+            .project
+            .services
             .get(service_name)
-            .map(|backend| service_backend_template_for_tenant(backend, tenant_id))
+            .map(|service| service.labels.clone())
+            .unwrap_or_default();
+        Some(ServiceDefinition::static_catalog_with_labels(
+            tenant_id.clone(),
+            service_name,
+            service_backend_template_for_tenant(backend, tenant_id),
+            labels,
+        ))
     }
 
-    fn service_backends_for_tenant(
+    fn service_definitions_for_tenant(
         &self,
         tenant_id: &TenantId,
-    ) -> BTreeMap<String, ServiceBackend> {
+    ) -> BTreeMap<String, ServiceDefinition> {
         self.service_backends
             .iter()
             .map(|(service_name, backend)| {
                 (
                     service_name.clone(),
-                    service_backend_template_for_tenant(backend, tenant_id),
+                    ServiceDefinition::static_catalog_with_labels(
+                        tenant_id.clone(),
+                        service_name,
+                        service_backend_template_for_tenant(backend, tenant_id),
+                        self.project
+                            .services
+                            .get(service_name)
+                            .map(|service| service.labels.clone())
+                            .unwrap_or_default(),
+                    ),
                 )
             })
             .collect()

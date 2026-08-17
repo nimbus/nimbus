@@ -1,20 +1,111 @@
 use super::*;
 
 #[test]
-fn ensure_guest_nimbus_socket_shell_repairs_first_boot_failures() {
-    let script = ensure_guest_nimbus_socket_shell_script();
+fn machine_runtime_root_rejects_symlink_or_foreign_owner() {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
 
-    assert!(script.contains("systemctl daemon-reload"), "{script}");
+    let root = TempDir::new().expect("runtime-root fixture should exist");
+    let runtime = root.path().join("runtime");
+    fs::create_dir(&runtime).expect("runtime root should create");
+    let link = root.path().join("runtime-link");
+    symlink(&runtime, &link).expect("runtime symlink should create");
+    let uid = fs::metadata(&runtime)
+        .expect("runtime root should inspect")
+        .uid();
+
     assert!(
-        script.contains("systemctl stop nimbus.service nimbus.socket"),
-        "{script}"
+        secure_machine_runtime_root_for_owner(&link, uid).is_err(),
+        "a symlink must never become machine runtime authority"
     );
     assert!(
-        script.contains("systemctl reset-failed nimbus.service nimbus.socket"),
-        "{script}"
+        secure_machine_runtime_root_for_owner(&runtime, uid.wrapping_add(1)).is_err(),
+        "a foreign-owned runtime root must fail closed"
     );
-    assert!(script.contains("systemctl start nimbus.socket"), "{script}");
+
+    secure_machine_runtime_root_for_owner(&runtime, uid)
+        .expect("the exact owner should secure the runtime root");
+    assert_eq!(
+        fs::metadata(&runtime)
+            .expect("secured runtime root should inspect")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+}
+
+#[test]
+fn pre_start_networking_secures_parent_services_socket_owner_only() {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    let root = TempDir::new().expect("services-socket fixture should exist");
+    let socket_path = root.path().join("gvproxy-services.sock");
+    let listener = UnixListener::bind(&socket_path).expect("services socket should bind");
+    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o777))
+        .expect("permissive fail-before mode should install");
+    let uid = fs::symlink_metadata(&socket_path)
+        .expect("services socket should inspect")
+        .uid();
+
+    secure_machine_forwarder_services_socket_for_owner(&socket_path, uid)
+        .expect("the exact owner should secure the services socket");
+    assert_eq!(
+        fs::symlink_metadata(&socket_path)
+            .expect("secured services socket should inspect")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+
+    drop(listener);
+    let regular_path = root.path().join("not-a-socket");
+    fs::write(&regular_path, b"not a socket").expect("regular file should write");
+    assert!(
+        secure_machine_forwarder_services_socket_for_owner(&regular_path, uid).is_err(),
+        "a regular file must never become forwarding authority"
+    );
+}
+
+#[test]
+fn direct_guest_nimbus_service_start_is_parent_ordered_and_disabled_across_boots() {
+    let script = start_guest_nimbus_service_shell_script();
+
+    let restart = script
+        .find("systemctl restart nimbus.service")
+        .expect("service should start only after parent authority refresh");
+    let socket_ready = script
+        .find("test -S")
+        .expect("direct listener should be proven before publication");
+    let relabel = script
+        .find("chcon -t container_var_run_t")
+        .expect("direct listener should receive the forwarding SELinux label");
+    let active = script
+        .find("systemctl is-active nimbus.service")
+        .expect("service activity should be proven");
+
+    assert!(restart < socket_ready, "{script}");
+    assert!(socket_ready < relabel, "{script}");
+    assert!(relabel < active, "{script}");
+    assert!(!script.contains("enable nimbus.service"), "{script}");
+    assert!(!script.contains("start nimbus.socket"), "{script}");
     assert!(script.contains(GUEST_NIMBUS_SOCKET), "{script}");
+}
+
+#[test]
+fn direct_guest_nimbus_service_stop_has_no_legacy_socket_activation_path() {
+    let script = stop_guest_nimbus_service_shell_script();
+
+    assert!(
+        script.contains("systemctl stop nimbus.service"),
+        "the host should stop only the direct service: {script}"
+    );
+    assert!(
+        script.contains("systemctl reset-failed nimbus.service"),
+        "the direct service failure state should be cleared for an authorized restart: {script}"
+    );
+    assert!(!script.contains("nimbus.socket"), "{script}");
+    assert!(!script.contains("disable"), "{script}");
 }
 
 #[test]
@@ -163,12 +254,14 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
     paths
         .ensure_directories()
         .expect("machine directories should exist");
+    let gvproxy_services_socket_path = paths.gvproxy_services_socket_path();
 
     for path in [
         &paths.ready_socket_path,
         &paths.ignition_socket_path,
         &paths.api_socket_path,
         &paths.gvproxy_socket_path,
+        &gvproxy_services_socket_path,
         &paths.vmm_endpoint_path,
         &paths.api_forward_pid_path,
         &paths.gvproxy_pid_path,
@@ -218,6 +311,8 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         image_path,
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: describe_machine_image_source(&config.guest.image_source),
+        ssh_listener_id: fixture_machine_ssh_listener_id("readiness-interrupted"),
+        forwarder_authority: test_forwarder_authority(&config),
         ssh_port: 20022,
         rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
@@ -263,6 +358,7 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         &paths.ignition_socket_path,
         &paths.api_socket_path,
         &paths.gvproxy_socket_path,
+        &gvproxy_services_socket_path,
         &paths.vmm_endpoint_path,
         &paths.api_forward_pid_path,
         &paths.gvproxy_pid_path,

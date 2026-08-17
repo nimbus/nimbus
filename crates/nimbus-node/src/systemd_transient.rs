@@ -1,6 +1,10 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use nimbus_core::{Error, Result};
+use nimbus_workloads::{
+    WorkloadExecutionReference, WorkloadOwnerEvidenceDigest, WorkloadProvisionDispatchClaim,
+};
 use serde::Serialize;
 
 use super::{
@@ -8,9 +12,20 @@ use super::{
     HostLifecycleBackendKind, HostLifecycleFuture, HostLifecycleJournalSelectorEvidence,
     HostLifecyclePlan, HostLifecycleProperty, HostLifecycleRequest, HostLifecycleStatus,
     HostLifecycleStatusReason, HostRestartPolicy, LocalEnforcementBinding, SystemdUnitKind,
-    SystemdUnitName, TenantWorkloadId, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase,
-    TenantWorkloadStatus,
+    SystemdUnitName, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase, WorkloadExecutionId,
 };
+use crate::host_lifecycle::{HostActivationFence, HostProviderPlan, HostRestartProviderClaim};
+#[path = "systemd_transient/teardown.rs"]
+mod teardown;
+#[path = "systemd_transient/teardown_store.rs"]
+mod teardown_store;
+use teardown_store::{SystemdTeardownStore, SystemdTeardownStoreGuard};
+
+#[cfg(test)]
+#[path = "systemd_transient/teardown/tests.rs"]
+mod teardown_fail_before_tests;
+
+const WORKLOAD_EXECUTION_JOURNAL_FIELD: &str = "NIMBUS_WORKLOAD_EXECUTION_ID";
 
 /// Live `zbus_systemd`-backed `SystemdDbusClient`. Present only on Linux when
 /// the `systemd-dbus` feature is enabled; otherwise the backend keeps its
@@ -31,6 +46,25 @@ pub trait SystemdDbusClient: Send + Sync + 'static {
         request: SystemdStopUnitRequest,
     ) -> HostLifecycleFuture<'a, SystemdStopUnitResponse>;
 
+    /// Submit one stop while retaining every ambiguity boundary.
+    ///
+    /// Clients that cannot classify transport stages conservatively report an
+    /// unknown submission on error. The live zbus client overrides this and
+    /// distinguishes pre-call, unknown-call, accepted-job, and terminal state.
+    fn stop_unit_exact<'a>(
+        &'a self,
+        request: SystemdStopUnitRequest,
+    ) -> HostLifecycleFuture<'a, SystemdStopUnitSubmission> {
+        Box::pin(async move {
+            Ok(match self.stop_unit(request).await {
+                Ok(response) => SystemdStopUnitSubmission::Terminal(Box::new(response)),
+                Err(error) => SystemdStopUnitSubmission::UnknownSubmission {
+                    error: error.to_string(),
+                },
+            })
+        })
+    }
+
     fn inspect_unit<'a>(
         &'a self,
         request: SystemdInspectUnitRequest,
@@ -40,6 +74,7 @@ pub trait SystemdDbusClient: Send + Sync + 'static {
 #[derive(Debug, Clone)]
 pub struct SystemdTransientUnitBackend<C = UnavailableSystemdDbusClient> {
     client: Arc<C>,
+    teardown_store: Option<Arc<SystemdTeardownStore>>,
 }
 
 impl SystemdTransientUnitBackend<UnavailableSystemdDbusClient> {
@@ -60,9 +95,9 @@ impl SystemdTransientUnitBackend<zbus_client::ZbusSystemdClient> {
     /// keep the fail-closed `SystemdTransientUnitBackend::unavailable(...)`
     /// path. Returns `Err` if the system bus cannot be opened (callers may fall
     /// back to `unavailable`).
-    pub async fn linux_systemd_default() -> Result<Self> {
+    pub async fn linux_systemd_default(teardown_state_root: impl AsRef<Path>) -> Result<Self> {
         let client = zbus_client::ZbusSystemdClient::new(zbus_client::BusKind::System).await?;
-        Ok(Self::new(client))
+        Self::new_with_teardown_state_root(client, teardown_state_root)
     }
 }
 
@@ -73,7 +108,24 @@ where
     pub fn new(client: C) -> Self {
         Self {
             client: Arc::new(client),
+            teardown_store: None,
         }
+    }
+
+    /// Construct an exact-teardown-capable backend with crash-safe receipts.
+    pub fn new_with_teardown_state_root(client: C, root: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self {
+            client: Arc::new(client),
+            teardown_store: Some(Arc::new(SystemdTeardownStore::open(root)?)),
+        })
+    }
+
+    fn teardown_store(&self) -> Result<&SystemdTeardownStore> {
+        self.teardown_store.as_deref().ok_or_else(|| {
+            Error::Internal(
+                "exact systemd teardown requires a durable teardown state root".to_owned(),
+            )
+        })
     }
 
     fn ensure_capable(&self) -> Result<()> {
@@ -82,6 +134,192 @@ where
 
     pub fn backend_capabilities(&self) -> HostLifecycleBackendCapabilities {
         self.client.capabilities().to_backend_capabilities()
+    }
+
+    /// Report whether this backend can execute the exact teardown protocol.
+    ///
+    /// General lifecycle capability does not require the teardown store. The
+    /// exact drain and stop providers do, so their capability view adds that
+    /// requirement without disabling healthy provision or restart behavior.
+    pub fn execution_teardown_capabilities(&self) -> HostLifecycleBackendCapabilities {
+        self.client
+            .capabilities()
+            .to_execution_teardown_backend_capabilities(self.teardown_store.is_some())
+    }
+
+    async fn activate_provider_exact(
+        &self,
+        plan: &HostProviderPlan,
+    ) -> Result<HostLifecycleStatus> {
+        self.ensure_capable()?;
+        let request = SystemdStartTransientUnitRequest::from_provider_plan(plan)?;
+        let request_digest =
+            WorkloadOwnerEvidenceDigest::sha256(serde_json::to_vec(&request).map_err(|error| {
+                Error::Internal(format!(
+                    "failed to encode exact systemd activation admission: {error}"
+                ))
+            })?);
+        let mut admission = match self.teardown_store.as_deref() {
+            Some(store) => {
+                let mut guard = store.lock_state()?;
+                guard
+                    .state_mut()
+                    .begin_activation(request.execution_id(), request_digest)?;
+                guard.checkpoint()?;
+                Some(guard)
+            }
+            None => None,
+        };
+        let expected_fence = request.activation_fence().cloned();
+        if let Some(expected_fence) = expected_fence.as_ref() {
+            let observed = self
+                .client
+                .inspect_unit(SystemdInspectUnitRequest::for_execution(
+                    plan.execution_id().clone(),
+                )?)
+                .await?;
+            if let Some(adopted) = adopt_exact_systemd_observation(expected_fence, &observed)? {
+                settle_systemd_activation(
+                    admission.as_mut(),
+                    request.execution_id(),
+                    request_digest,
+                )?;
+                return Ok(adopted);
+            }
+        }
+        let response = match self.client.start_transient_unit(request.clone()).await {
+            Ok(response) => response,
+            Err(start_error) => {
+                let Some(expected_fence) = expected_fence.as_ref() else {
+                    return Err(start_error);
+                };
+                let observed = self
+                    .client
+                    .inspect_unit(SystemdInspectUnitRequest::for_execution(
+                        plan.execution_id().clone(),
+                    )?)
+                    .await;
+                match observed {
+                    Ok(observed) => {
+                        if let Some(adopted) =
+                            adopt_exact_systemd_observation(expected_fence, &observed)?
+                        {
+                            settle_systemd_activation(
+                                admission.as_mut(),
+                                request.execution_id(),
+                                request_digest,
+                            )?;
+                            return Ok(adopted);
+                        }
+                        return Err(start_error);
+                    }
+                    Err(_) => return Err(start_error),
+                }
+            }
+        };
+        if response.unit_name() != plan.unit_name() {
+            return Err(Error::InvalidInput(format!(
+                "systemd StartTransientUnit returned unit {}, but plan requested {}",
+                response.unit_name().as_str(),
+                plan.unit_name().as_str()
+            )));
+        }
+        settle_systemd_activation(admission.as_mut(), request.execution_id(), request_digest)?;
+        let lifecycle_evidence = TenantWorkloadLifecycleEvidence::from_provider_plan(
+            plan,
+            HostLifecycleStatusReason::Submitted,
+        )
+        .with_job_path(response.job_path())?
+        .with_cgroup_path(request.cgroup_path())?
+        .with_journal_selectors(journal_selector_evidence(request.journal_selectors())?);
+        Ok(
+            HostLifecycleStatus::from_provider_state(plan, HostBackendObservedState::Submitted)
+                .with_lifecycle_evidence(lifecycle_evidence),
+        )
+    }
+
+    async fn inspect_provider(&self, plan: &HostProviderPlan) -> Result<HostLifecycleStatus> {
+        self.ensure_capable()?;
+        let observed = self
+            .client
+            .inspect_unit(SystemdInspectUnitRequest::for_execution(
+                plan.execution_id().clone(),
+            )?)
+            .await?;
+        if let Some(expected_fence) = plan.activation_fence() {
+            if observed.is_absent() {
+                return Err(Error::NotFound(format!(
+                    "systemd unit {} is absent",
+                    plan.unit_name().as_str()
+                )));
+            }
+            ensure_exact_systemd_fence(expected_fence, &observed)?;
+        }
+        observed.to_host_lifecycle_status()
+    }
+
+    async fn inspect_restart_source(
+        &self,
+        claim: &HostRestartProviderClaim,
+    ) -> Result<SystemdUnitStatus> {
+        self.ensure_capable()?;
+        let observed = self
+            .client
+            .inspect_unit(SystemdInspectUnitRequest::for_execution(
+                claim.source_execution().execution_id().clone(),
+            )?)
+            .await?;
+        if observed.is_absent() {
+            claim.require_step(nimbus_workloads::WorkloadRestartStep::QuiesceExecution)?;
+            return Ok(observed);
+        }
+        observed
+            .activation_fence()
+            .ok_or_else(|| {
+                Error::PermissionDenied(format!(
+                    "systemd restart source unit {} has no retained activation fence",
+                    observed.unit_name().as_str()
+                ))
+            })?
+            .authenticate_restart_source(claim)?;
+        Ok(observed)
+    }
+
+    async fn inspect_restart_target(
+        &self,
+        claim: &HostRestartProviderClaim,
+        request: HostLifecycleRequest,
+    ) -> Result<HostLifecycleStatus> {
+        let plan = HostProviderPlan::from_restart(claim, request)?;
+        if plan.backend() != HostLifecycleBackendKind::SystemdTransientUnit {
+            return Err(Error::InvalidInput(
+                "SystemdTransientUnitBackend exact restart inspection requires a systemd_transient_unit request"
+                    .to_owned(),
+            ));
+        }
+        self.ensure_capable()?;
+        let observed = self
+            .client
+            .inspect_unit(SystemdInspectUnitRequest::for_execution(
+                plan.execution_id().clone(),
+            )?)
+            .await?;
+        if observed.is_absent() {
+            return Err(Error::NotFound(format!(
+                "systemd unit {} is absent",
+                plan.unit_name().as_str()
+            )));
+        }
+        observed
+            .activation_fence()
+            .ok_or_else(|| {
+                Error::PermissionDenied(format!(
+                    "systemd restart target unit {} has no retained activation fence",
+                    observed.unit_name().as_str()
+                ))
+            })?
+            .authenticate_restart_target(claim)?;
+        observed.to_host_lifecycle_status()
     }
 }
 
@@ -106,64 +344,165 @@ where
         Ok(plan)
     }
 
-    fn start<'a>(
-        &'a self,
-        plan: HostLifecyclePlan,
-    ) -> HostLifecycleFuture<'a, TenantWorkloadStatus> {
-        Box::pin(async move {
-            self.ensure_capable()?;
-            let request = SystemdStartTransientUnitRequest::from_plan(&plan)?;
-            let response = self.client.start_transient_unit(request).await?;
-            if response.unit_name() != plan.unit_name() {
-                return Err(Error::InvalidInput(format!(
-                    "systemd StartTransientUnit returned unit {}, but plan requested {}",
-                    response.unit_name().as_str(),
-                    plan.unit_name().as_str()
-                )));
-            }
-            let request = SystemdStartTransientUnitRequest::from_plan(&plan)?;
-            let lifecycle_evidence = TenantWorkloadLifecycleEvidence::from_plan(
-                &plan,
-                HostLifecycleStatusReason::Submitted,
-            )
-            .with_job_path(response.job_path())?
-            .with_cgroup_path(request.cgroup_path())?
-            .with_journal_selectors(journal_selector_evidence(request.journal_selectors())?);
-            let status =
-                HostLifecycleStatus::from_backend_state(&plan, HostBackendObservedState::Submitted)
-                    .with_lifecycle_evidence(lifecycle_evidence);
-            let workload_status = status.to_workload_status(&plan)?;
-            Ok(workload_status)
-        })
-    }
-
-    fn stop<'a>(
-        &'a self,
-        workload_id: TenantWorkloadId,
-    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-        Box::pin(async move {
-            self.ensure_capable()?;
-            let response = self
-                .client
-                .stop_unit(SystemdStopUnitRequest::for_workload(workload_id)?)
-                .await?;
-            response.status().to_host_lifecycle_status()
-        })
-    }
-
     fn inspect<'a>(
         &'a self,
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
     ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
         Box::pin(async move {
             self.ensure_capable()?;
             let status = self
                 .client
-                .inspect_unit(SystemdInspectUnitRequest::for_workload(workload_id)?)
+                .inspect_unit(SystemdInspectUnitRequest::for_execution(execution_id)?)
                 .await?;
             status.to_host_lifecycle_status()
         })
     }
+
+    fn inspect_exact<'a>(
+        &'a self,
+        plan: HostLifecyclePlan,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            self.inspect_provider(&HostProviderPlan::from_lifecycle(&plan))
+                .await
+        })
+    }
+
+    fn activate_exact<'a>(
+        &'a self,
+        execution: WorkloadExecutionReference,
+        claim: WorkloadProvisionDispatchClaim,
+        request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            let plan = HostProviderPlan::from_execution(&execution, &claim, request)?;
+            if plan.backend() != HostLifecycleBackendKind::SystemdTransientUnit {
+                return Err(Error::InvalidInput(
+                    "SystemdTransientUnitBackend exact activation requires a systemd_transient_unit request"
+                        .to_owned(),
+                ));
+            }
+            self.activate_provider_exact(&plan).await
+        })
+    }
+
+    fn inspect_activation<'a>(
+        &'a self,
+        execution: WorkloadExecutionReference,
+        claim: WorkloadProvisionDispatchClaim,
+        request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            let plan = HostProviderPlan::from_execution(&execution, &claim, request)?;
+            if plan.backend() != HostLifecycleBackendKind::SystemdTransientUnit {
+                return Err(Error::InvalidInput(
+                    "SystemdTransientUnitBackend exact inspection requires a systemd_transient_unit request"
+                        .to_owned(),
+                ));
+            }
+            self.inspect_provider(&plan).await
+        })
+    }
+
+    fn quiesce_restart_exact<'a>(
+        &'a self,
+        claim: HostRestartProviderClaim,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            claim.require_execute_authority()?;
+            let observed = self.inspect_restart_source(&claim).await?;
+            if observed.active_state() == "inactive" {
+                return observed.to_host_lifecycle_status();
+            }
+            let request = SystemdStopUnitRequest::for_execution(
+                claim.source_execution().execution_id().clone(),
+            )?;
+            match self.client.stop_unit(request).await {
+                Ok(response) => response.status().to_host_lifecycle_status(),
+                Err(stop_error) => match self.inspect_restart_source(&claim).await {
+                    Ok(observed) if observed.active_state() == "inactive" => {
+                        observed.to_host_lifecycle_status()
+                    }
+                    _ => Err(stop_error),
+                },
+            }
+        })
+    }
+
+    fn inspect_restart_quiescence<'a>(
+        &'a self,
+        claim: HostRestartProviderClaim,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            self.inspect_restart_source(&claim)
+                .await?
+                .to_host_lifecycle_status()
+        })
+    }
+
+    fn activate_restart_exact<'a>(
+        &'a self,
+        claim: HostRestartProviderClaim,
+        request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move {
+            claim.require_execute_authority()?;
+            let plan = HostProviderPlan::from_restart(&claim, request)?;
+            if plan.backend() != HostLifecycleBackendKind::SystemdTransientUnit {
+                return Err(Error::InvalidInput(
+                    "SystemdTransientUnitBackend exact restart activation requires a systemd_transient_unit request"
+                        .to_owned(),
+                ));
+            }
+            self.activate_provider_exact(&plan).await
+        })
+    }
+
+    fn inspect_restart_activation<'a>(
+        &'a self,
+        claim: HostRestartProviderClaim,
+        request: HostLifecycleRequest,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move { self.inspect_restart_target(&claim, request).await })
+    }
+}
+
+fn settle_systemd_activation(
+    admission: Option<&mut SystemdTeardownStoreGuard<'_>>,
+    execution_id: &WorkloadExecutionId,
+    request_digest: WorkloadOwnerEvidenceDigest,
+) -> Result<()> {
+    let Some(admission) = admission else {
+        return Ok(());
+    };
+    admission
+        .state_mut()
+        .settle_activation(execution_id, request_digest)?;
+    admission.checkpoint()
+}
+
+fn adopt_exact_systemd_observation(
+    expected_fence: &HostActivationFence,
+    observed: &SystemdUnitStatus,
+) -> Result<Option<HostLifecycleStatus>> {
+    if observed.is_absent() {
+        return Ok(None);
+    }
+    ensure_exact_systemd_fence(expected_fence, observed)?;
+    observed.to_host_lifecycle_status().map(Some)
+}
+
+fn ensure_exact_systemd_fence(
+    expected_fence: &HostActivationFence,
+    observed: &SystemdUnitStatus,
+) -> Result<()> {
+    if observed.activation_fence() == Some(expected_fence) {
+        return Ok(());
+    }
+    Err(Error::PermissionDenied(format!(
+        "systemd unit {} is crossed with the retained activation fence",
+        observed.unit_name().as_str()
+    )))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -237,13 +576,35 @@ impl SystemdTransientCapabilities {
     }
 
     pub fn to_backend_capabilities(&self) -> HostLifecycleBackendCapabilities {
+        self.to_backend_capabilities_with_teardown_state(None)
+    }
+
+    fn to_execution_teardown_backend_capabilities(
+        &self,
+        durable_teardown_state: bool,
+    ) -> HostLifecycleBackendCapabilities {
+        self.to_backend_capabilities_with_teardown_state(Some(durable_teardown_state))
+    }
+
+    fn to_backend_capabilities_with_teardown_state(
+        &self,
+        durable_teardown_state: Option<bool>,
+    ) -> HostLifecycleBackendCapabilities {
+        let durable_state_available = durable_teardown_state.unwrap_or(true);
         let mut capabilities = HostLifecycleBackendCapabilities::new(
             HostLifecycleBackendKind::SystemdTransientUnit,
-            self.dbus_available && self.transient_units && self.service_units,
+            self.dbus_available
+                && self.transient_units
+                && self.service_units
+                && durable_state_available,
         )
         .with_feature("dbus", self.dbus_available)
         .with_feature("transient_units", self.transient_units)
         .with_feature("service_units", self.service_units);
+        if let Some(durable_teardown_state) = durable_teardown_state {
+            capabilities =
+                capabilities.with_feature("durable_teardown_state", durable_teardown_state);
+        }
         if !self.dbus_available {
             capabilities = capabilities
                 .with_failure_reason("systemd D-Bus is unavailable for transient unit backend")
@@ -257,6 +618,11 @@ impl SystemdTransientCapabilities {
         if !self.service_units {
             capabilities = capabilities
                 .with_failure_reason("systemd service units are unavailable")
+                .expect("static failure reason should be valid");
+        }
+        if durable_teardown_state == Some(false) {
+            capabilities = capabilities
+                .with_failure_reason("durable systemd teardown state store is unavailable")
                 .expect("static failure reason should be valid");
         }
         capabilities
@@ -339,25 +705,36 @@ pub struct SystemdStartTransientUnitRequest {
     unit_name: SystemdUnitName,
     mode: StartTransientMode,
     properties: Vec<SystemdDbusProperty>,
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     cgroup_path: String,
     journal_selectors: Vec<SystemdJournalSelector>,
+    activation_fence: Option<HostActivationFence>,
 }
 
 impl SystemdStartTransientUnitRequest {
     pub fn from_plan(plan: &HostLifecyclePlan) -> Result<Self> {
+        Self::from_provider_plan(&HostProviderPlan::from_lifecycle(plan))
+    }
+
+    fn from_provider_plan(plan: &HostProviderPlan) -> Result<Self> {
         if plan.backend() != HostLifecycleBackendKind::SystemdTransientUnit {
             return Err(Error::InvalidInput(format!(
                 "cannot build StartTransientUnit request for {:?} backend",
                 plan.backend()
             )));
         }
+        let activation_fence = plan.activation_fence().cloned();
+        let journal_fields = activation_fence.as_ref().map_or_else(
+            || vec![execution_journal_field(plan.execution_id())],
+            HostActivationFence::journal_fields,
+        );
         let mut properties = vec![
             SystemdDbusProperty::Description(format!(
                 "Nimbus tenant workload {}",
-                plan.workload_id().as_str()
+                plan.execution_id().as_str()
             )),
-            SystemdDbusProperty::ExecStart(SystemdExecStart::from_plan(plan)?),
+            SystemdDbusProperty::LogExtraFields(journal_fields.clone()),
+            SystemdDbusProperty::ExecStart(SystemdExecStart::from_provider_plan(plan)?),
         ];
         properties.extend(
             plan.properties()
@@ -367,14 +744,12 @@ impl SystemdStartTransientUnitRequest {
         );
         Ok(Self {
             unit_name: plan.unit_name().clone(),
-            mode: StartTransientMode::Replace,
+            mode: StartTransientMode::Fail,
             properties,
-            workload_id: plan.workload_id().clone(),
+            execution_id: plan.execution_id().clone(),
             cgroup_path: cgroup_path_for_unit(plan.unit_name()),
-            journal_selectors: vec![
-                SystemdJournalSelector::new("_SYSTEMD_UNIT", plan.unit_name().as_str())?,
-                SystemdJournalSelector::new("NIMBUS_WORKLOAD_ID", plan.workload_id().as_str())?,
-            ],
+            journal_selectors: journal_selectors(plan.unit_name(), &journal_fields)?,
+            activation_fence,
         })
     }
 
@@ -384,17 +759,18 @@ impl SystemdStartTransientUnitRequest {
     /// `StartTransientMode::Fail` so a stale unit surfaces instead of being
     /// silently replaced.
     #[cfg(feature = "systemd-dbus-integration-tests")]
-    pub fn for_integration_test(
-        workload_id: TenantWorkloadId,
+    pub fn for_integration_execution(
+        execution_id: WorkloadExecutionId,
         executable: impl Into<String>,
         args: Vec<String>,
     ) -> Result<Self> {
-        let unit_name = systemd_unit_for_workload(&workload_id)?;
+        let unit_name = systemd_unit_for_execution(&execution_id)?;
         let properties = vec![
             SystemdDbusProperty::Description(format!(
                 "Nimbus NDB5 integration test {}",
-                workload_id.as_str()
+                execution_id.as_str()
             )),
+            SystemdDbusProperty::LogExtraFields(vec![execution_journal_field(&execution_id)]),
             SystemdDbusProperty::ExecStart(SystemdExecStart {
                 executable: executable.into(),
                 args,
@@ -405,12 +781,16 @@ impl SystemdStartTransientUnitRequest {
             cgroup_path: cgroup_path_for_unit(&unit_name),
             journal_selectors: vec![
                 SystemdJournalSelector::new("_SYSTEMD_UNIT", unit_name.as_str())?,
-                SystemdJournalSelector::new("NIMBUS_WORKLOAD_ID", workload_id.as_str())?,
+                SystemdJournalSelector::new(
+                    WORKLOAD_EXECUTION_JOURNAL_FIELD,
+                    execution_id.as_str(),
+                )?,
             ],
             unit_name,
             mode: StartTransientMode::Fail,
             properties,
-            workload_id,
+            execution_id,
+            activation_fence: None,
         })
     }
 
@@ -426,8 +806,8 @@ impl SystemdStartTransientUnitRequest {
         &self.properties
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn cgroup_path(&self) -> &str {
@@ -436,6 +816,10 @@ impl SystemdStartTransientUnitRequest {
 
     pub fn journal_selectors(&self) -> &[SystemdJournalSelector] {
         &self.journal_selectors
+    }
+
+    pub(crate) fn activation_fence(&self) -> Option<&HostActivationFence> {
+        self.activation_fence.as_ref()
     }
 }
 
@@ -448,6 +832,7 @@ pub enum SystemdDbusProperty {
     MemoryMax(u64),
     CpuWeight(u64),
     TasksMax(u64),
+    LogExtraFields(Vec<String>),
     ExecStart(SystemdExecStart),
 }
 
@@ -473,9 +858,17 @@ impl SystemdDbusProperty {
             Self::MemoryMax(_) => "MemoryMax",
             Self::CpuWeight(_) => "CPUWeight",
             Self::TasksMax(_) => "TasksMax",
+            Self::LogExtraFields(_) => "LogExtraFields",
             Self::ExecStart(_) => "ExecStart",
         }
     }
+}
+
+fn execution_journal_field(execution_id: &WorkloadExecutionId) -> String {
+    format!(
+        "{WORKLOAD_EXECUTION_JOURNAL_FIELD}={}",
+        execution_id.as_str()
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -486,7 +879,7 @@ pub struct SystemdExecStart {
 }
 
 impl SystemdExecStart {
-    fn from_plan(plan: &HostLifecyclePlan) -> Result<Self> {
+    fn from_provider_plan(plan: &HostProviderPlan) -> Result<Self> {
         Ok(Self {
             executable: plan.executable().as_str().to_string(),
             args: plan.args().to_vec(),
@@ -494,7 +887,7 @@ impl SystemdExecStart {
         })
     }
 
-    #[cfg(all(test, feature = "systemd-dbus-test-bus"))]
+    #[cfg(all(test, target_os = "linux", feature = "systemd-dbus-test-bus"))]
     pub(crate) fn for_test(executable: impl Into<String>, args: Vec<String>) -> Self {
         Self {
             executable: executable.into(),
@@ -577,23 +970,25 @@ impl SystemdStartTransientUnitResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SystemdStopUnitRequest {
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     unit_name: SystemdUnitName,
     mode: StartTransientMode,
 }
 
 impl SystemdStopUnitRequest {
-    pub fn for_workload(workload_id: TenantWorkloadId) -> Result<Self> {
-        let unit_name = systemd_unit_for_workload(&workload_id)?;
+    pub fn for_execution(execution_id: WorkloadExecutionId) -> Result<Self> {
+        let unit_name = systemd_unit_for_execution(&execution_id)?;
         Ok(Self {
-            workload_id,
+            execution_id,
+            // StopUnit replacement is a teardown-only systemd operation. Exact
+            // provisioning always uses StartTransientMode::Fail.
             mode: StartTransientMode::Replace,
             unit_name,
         })
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn unit_name(&self) -> &SystemdUnitName {
@@ -607,21 +1002,21 @@ impl SystemdStopUnitRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SystemdInspectUnitRequest {
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     unit_name: SystemdUnitName,
 }
 
 impl SystemdInspectUnitRequest {
-    pub fn for_workload(workload_id: TenantWorkloadId) -> Result<Self> {
-        let unit_name = systemd_unit_for_workload(&workload_id)?;
+    pub fn for_execution(execution_id: WorkloadExecutionId) -> Result<Self> {
+        let unit_name = systemd_unit_for_execution(&execution_id)?;
         Ok(Self {
-            workload_id,
+            execution_id,
             unit_name,
         })
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn unit_name(&self) -> &SystemdUnitName {
@@ -633,6 +1028,96 @@ impl SystemdInspectUnitRequest {
 pub struct SystemdStopUnitResponse {
     job_path: String,
     status: SystemdUnitStatus,
+}
+
+/// Provider-visible `StopUnit` submission boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SystemdStopUnitSubmission {
+    PreCallFailure { error: String },
+    UnknownSubmission { error: String },
+    AcceptedJobIncomplete { job_path: String, error: String },
+    Terminal(Box<SystemdStopUnitResponse>),
+    TerminalFailure { job_path: String, result: String },
+}
+
+impl SystemdStopUnitSubmission {
+    pub fn pre_call_failure(error: impl Into<String>) -> Self {
+        Self::PreCallFailure {
+            error: error.into(),
+        }
+    }
+
+    pub fn unknown_submission(error: impl Into<String>) -> Self {
+        Self::UnknownSubmission {
+            error: error.into(),
+        }
+    }
+
+    pub fn accepted_job_incomplete(
+        job_path: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Result<Self> {
+        Ok(Self::AcceptedJobIncomplete {
+            job_path: valid_object_path(job_path, "systemd accepted stop job path")?,
+            error: error.into(),
+        })
+    }
+
+    pub fn terminal_failure(
+        job_path: impl Into<String>,
+        result: impl Into<String>,
+    ) -> Result<Self> {
+        Ok(Self::TerminalFailure {
+            job_path: valid_object_path(job_path, "systemd terminal stop job path")?,
+            result: nimbus_core::non_empty(result, "systemd terminal stop job result")?,
+        })
+    }
+}
+
+/// Current systemd job attached to an exact unit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SystemdUnitJobStatus {
+    id: u32,
+    path: String,
+    job_type: String,
+    state: String,
+}
+
+impl SystemdUnitJobStatus {
+    pub fn new(
+        id: u32,
+        path: impl Into<String>,
+        job_type: impl Into<String>,
+        state: impl Into<String>,
+    ) -> Result<Self> {
+        if id == 0 {
+            return Err(Error::InvalidInput(
+                "systemd current job ID must be greater than zero".to_owned(),
+            ));
+        }
+        Ok(Self {
+            id,
+            path: valid_object_path(path, "systemd current job path")?,
+            job_type: nimbus_core::non_empty(job_type, "systemd current job type")?,
+            state: nimbus_core::non_empty(state, "systemd current job state")?,
+        })
+    }
+
+    pub const fn id(&self) -> u32 {
+        self.id
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn job_type(&self) -> &str {
+        &self.job_type
+    }
+
+    pub fn state(&self) -> &str {
+        &self.state
+    }
 }
 
 impl SystemdStopUnitResponse {
@@ -654,19 +1139,67 @@ impl SystemdStopUnitResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SystemdUnitStatus {
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     unit_name: SystemdUnitName,
     active_state: String,
     sub_state: String,
     job_path: Option<String>,
+    current_job: Option<SystemdUnitJobStatus>,
     main_pid: Option<u32>,
     cgroup_path: String,
     journal_selectors: Vec<SystemdJournalSelector>,
+    activation_fence: Option<HostActivationFence>,
+    #[serde(skip)]
+    presence: SystemdUnitPresence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SystemdUnitPresence {
+    Present,
+    ExplicitlyAbsent,
 }
 
 impl SystemdUnitStatus {
+    /// Report that one exact inspected unit does not exist without exposing
+    /// the private unit-presence representation.
+    ///
+    /// External D-Bus adapters use this result for a successful inspection of
+    /// a unit that systemd does not know. The request binds the absence to the
+    /// exact execution and derived unit name that Nimbus inspected.
+    pub fn absent_for_inspect_request(request: &SystemdInspectUnitRequest) -> Result<Self> {
+        let mut status = Self::new(
+            request.execution_id().clone(),
+            request.unit_name().clone(),
+            "inactive",
+            "dead",
+        )?;
+        status.presence = SystemdUnitPresence::ExplicitlyAbsent;
+        Ok(status)
+    }
+
+    /// Build provider status for one exact start request without exposing the
+    /// private activation-fence representation.
+    ///
+    /// External D-Bus adapters can retain and return the opaque fence through
+    /// this constructor. They cannot inspect, modify, or synthesize its raw
+    /// fields.
+    pub fn for_start_request(
+        request: &SystemdStartTransientUnitRequest,
+        active_state: impl Into<String>,
+        sub_state: impl Into<String>,
+    ) -> Result<Self> {
+        let mut status = Self::new(
+            request.execution_id().clone(),
+            request.unit_name().clone(),
+            active_state,
+            sub_state,
+        )?;
+        status.activation_fence = request.activation_fence().cloned();
+        Ok(status)
+    }
+
     pub fn new(
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
         unit_name: SystemdUnitName,
         active_state: impl Into<String>,
         sub_state: impl Into<String>,
@@ -674,18 +1207,31 @@ impl SystemdUnitStatus {
         let cgroup_path = cgroup_path_for_unit(&unit_name);
         let journal_selectors = vec![
             SystemdJournalSelector::new("_SYSTEMD_UNIT", unit_name.as_str())?,
-            SystemdJournalSelector::new("NIMBUS_WORKLOAD_ID", workload_id.as_str())?,
+            SystemdJournalSelector::new(WORKLOAD_EXECUTION_JOURNAL_FIELD, execution_id.as_str())?,
         ];
         Ok(Self {
-            workload_id,
+            execution_id,
             unit_name,
             active_state: active_state.into(),
             sub_state: sub_state.into(),
             job_path: None,
+            current_job: None,
             main_pid: None,
             cgroup_path,
             journal_selectors,
+            activation_fence: None,
+            presence: SystemdUnitPresence::Present,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn explicitly_absent(
+        execution_id: WorkloadExecutionId,
+        unit_name: SystemdUnitName,
+    ) -> Result<Self> {
+        let mut status = Self::new(execution_id, unit_name, "inactive", "dead")?;
+        status.presence = SystemdUnitPresence::ExplicitlyAbsent;
+        Ok(status)
     }
 
     pub fn with_job_path(mut self, job_path: impl Into<String>) -> Result<Self> {
@@ -693,8 +1239,19 @@ impl SystemdUnitStatus {
         Ok(self)
     }
 
+    pub fn with_current_job(mut self, job: SystemdUnitJobStatus) -> Self {
+        self.current_job = Some(job);
+        self
+    }
+
     pub fn with_main_pid(mut self, main_pid: u32) -> Self {
         self.main_pid = Some(main_pid);
+        self
+    }
+
+    #[cfg(any(test, all(target_os = "linux", feature = "systemd-dbus")))]
+    pub(crate) fn with_activation_fence(mut self, fence: HostActivationFence) -> Self {
+        self.activation_fence = Some(fence);
         self
     }
 
@@ -719,8 +1276,8 @@ impl SystemdUnitStatus {
         status_from_observed(self, observed)
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn unit_name(&self) -> &SystemdUnitName {
@@ -739,6 +1296,10 @@ impl SystemdUnitStatus {
         self.job_path.as_deref()
     }
 
+    pub fn current_job(&self) -> Option<&SystemdUnitJobStatus> {
+        self.current_job.as_ref()
+    }
+
     pub fn main_pid(&self) -> Option<u32> {
         self.main_pid
     }
@@ -750,6 +1311,31 @@ impl SystemdUnitStatus {
     pub fn journal_selectors(&self) -> &[SystemdJournalSelector] {
         &self.journal_selectors
     }
+
+    pub(crate) fn activation_fence(&self) -> Option<&HostActivationFence> {
+        self.activation_fence.as_ref()
+    }
+
+    fn is_absent(&self) -> bool {
+        self.presence == SystemdUnitPresence::ExplicitlyAbsent
+    }
+}
+
+fn journal_selectors(
+    unit_name: &SystemdUnitName,
+    fields: &[String],
+) -> Result<Vec<SystemdJournalSelector>> {
+    let mut selectors = vec![SystemdJournalSelector::new(
+        "_SYSTEMD_UNIT",
+        unit_name.as_str(),
+    )?];
+    for field in fields {
+        let (name, value) = field.split_once('=').ok_or_else(|| {
+            Error::InvalidInput("systemd journal field must use NAME=value form".to_owned())
+        })?;
+        selectors.push(SystemdJournalSelector::new(name, value)?);
+    }
+    Ok(selectors)
 }
 
 fn status_from_observed(
@@ -808,7 +1394,7 @@ fn status_from_observed(
         lifecycle_evidence = lifecycle_evidence.with_process_id(u64::from(main_pid));
     }
     Ok(HostLifecycleStatus::new_for_backend(
-        status.workload_id.clone(),
+        status.execution_id.clone(),
         status.unit_name.clone(),
         phase,
         reason,
@@ -828,8 +1414,8 @@ fn journal_selector_evidence(
         .collect()
 }
 
-fn systemd_unit_for_workload(workload_id: &TenantWorkloadId) -> Result<SystemdUnitName> {
-    SystemdUnitName::for_workload(workload_id, SystemdUnitKind::Service)
+fn systemd_unit_for_execution(execution_id: &WorkloadExecutionId) -> Result<SystemdUnitName> {
+    SystemdUnitName::for_execution(execution_id, SystemdUnitKind::Service)
 }
 
 fn cgroup_path_for_unit(unit_name: &SystemdUnitName) -> String {
@@ -847,317 +1433,5 @@ fn valid_object_path(value: impl Into<String>, field: &str) -> Result<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use nimbus_testing::AdmittedDecisionScenario;
-
-    use super::*;
-    use crate::{HostExecutable, HostLifecyclePropertySet, HostRestartPolicy, TenantWorkloadPhase};
-
-    #[derive(Clone)]
-    struct FakeSystemdDbusClient {
-        capabilities: SystemdTransientCapabilities,
-        last_start: Arc<Mutex<Option<SystemdStartTransientUnitRequest>>>,
-        last_stop: Arc<Mutex<Option<SystemdStopUnitRequest>>>,
-        status: Arc<Mutex<Option<SystemdUnitStatus>>>,
-    }
-
-    impl FakeSystemdDbusClient {
-        fn available() -> Self {
-            Self {
-                capabilities: SystemdTransientCapabilities::available(),
-                last_start: Arc::new(Mutex::new(None)),
-                last_stop: Arc::new(Mutex::new(None)),
-                status: Arc::new(Mutex::new(None)),
-            }
-        }
-
-        fn with_capabilities(capabilities: SystemdTransientCapabilities) -> Self {
-            Self {
-                capabilities,
-                last_start: Arc::new(Mutex::new(None)),
-                last_stop: Arc::new(Mutex::new(None)),
-                status: Arc::new(Mutex::new(None)),
-            }
-        }
-
-        fn last_start(&self) -> SystemdStartTransientUnitRequest {
-            self.last_start
-                .lock()
-                .expect("fake client lock should not be poisoned")
-                .clone()
-                .expect("start should have been called")
-        }
-    }
-
-    impl SystemdDbusClient for FakeSystemdDbusClient {
-        fn capabilities(&self) -> SystemdTransientCapabilities {
-            self.capabilities.clone()
-        }
-
-        fn start_transient_unit<'a>(
-            &'a self,
-            request: SystemdStartTransientUnitRequest,
-        ) -> HostLifecycleFuture<'a, SystemdStartTransientUnitResponse> {
-            Box::pin(async move {
-                let response = SystemdStartTransientUnitResponse::new(
-                    request.unit_name().clone(),
-                    "/org/freedesktop/systemd1/job/42",
-                )?;
-                let status = SystemdUnitStatus::new(
-                    request.workload_id().clone(),
-                    request.unit_name().clone(),
-                    "activating",
-                    "start",
-                )?
-                .with_job_path(response.job_path())?;
-                *self
-                    .last_start
-                    .lock()
-                    .expect("fake client lock should not be poisoned") = Some(request);
-                *self
-                    .status
-                    .lock()
-                    .expect("fake client lock should not be poisoned") = Some(status);
-                Ok(response)
-            })
-        }
-
-        fn stop_unit<'a>(
-            &'a self,
-            request: SystemdStopUnitRequest,
-        ) -> HostLifecycleFuture<'a, SystemdStopUnitResponse> {
-            Box::pin(async move {
-                *self
-                    .last_stop
-                    .lock()
-                    .expect("fake client lock should not be poisoned") = Some(request.clone());
-                let status = SystemdUnitStatus::new(
-                    request.workload_id().clone(),
-                    request.unit_name().clone(),
-                    "inactive",
-                    "dead",
-                )?;
-                *self
-                    .status
-                    .lock()
-                    .expect("fake client lock should not be poisoned") = Some(status.clone());
-                SystemdStopUnitResponse::new("/org/freedesktop/systemd1/job/43", status)
-            })
-        }
-
-        fn inspect_unit<'a>(
-            &'a self,
-            request: SystemdInspectUnitRequest,
-        ) -> HostLifecycleFuture<'a, SystemdUnitStatus> {
-            Box::pin(async move {
-                let status = self
-                    .status
-                    .lock()
-                    .expect("fake client lock should not be poisoned")
-                    .clone()
-                    .unwrap_or_else(|| {
-                        SystemdUnitStatus::new(
-                            request.workload_id().clone(),
-                            request.unit_name().clone(),
-                            "active",
-                            "running",
-                        )
-                        .expect("status should build")
-                        .with_main_pid(1001)
-                    });
-                Ok(status)
-            })
-        }
-    }
-
-    fn binding() -> LocalEnforcementBinding {
-        AdmittedDecisionScenario::new()
-            .with_surface("systemd.transient")
-            .with_generation(12)
-            .with_workload_name("service:run")
-            .with_invocation_id("invoke-systemd")
-            .binding()
-    }
-
-    fn request() -> HostLifecycleRequest {
-        HostLifecycleRequest::new(
-            HostLifecycleBackendKind::SystemdTransientUnit,
-            HostExecutable::trusted("/usr/libexec/nimbus/conmon-crun-launcher")
-                .expect("trusted executable should parse"),
-        )
-        .with_args(["--bundle", "/run/nimbus/bundles/workload"])
-        .expect("args should parse")
-        .with_properties(
-            HostLifecyclePropertySet::from_raw_systemd_properties([
-                ("Description", "Nimbus workload"),
-                ("Restart", "on-failure"),
-                ("RestartSec", "2"),
-                ("MemoryMax", "536870912"),
-                ("CPUWeight", "100"),
-                ("TasksMax", "128"),
-            ])
-            .expect("properties should parse"),
-        )
-    }
-
-    #[test]
-    fn start_transient_unit_request_uses_trusted_exec_and_allowlisted_properties() {
-        let binding = binding();
-        let plan = HostLifecyclePlan::from_binding(&binding, request()).expect("plan should build");
-        let request =
-            SystemdStartTransientUnitRequest::from_plan(&plan).expect("request should build");
-
-        assert_eq!(request.unit_name(), plan.unit_name());
-        assert_eq!(request.mode().as_dbus_str(), "replace");
-        assert_eq!(request.workload_id(), plan.workload_id());
-        assert!(
-            request.cgroup_path().contains(plan.unit_name().as_str()),
-            "cgroup path should correlate to unit"
-        );
-        assert!(request.journal_selectors().iter().any(|selector| {
-            selector.field() == "_SYSTEMD_UNIT" && selector.value() == plan.unit_name().as_str()
-        }));
-        assert!(request.journal_selectors().iter().any(|selector| {
-            selector.field() == "NIMBUS_WORKLOAD_ID"
-                && selector.value() == plan.workload_id().as_str()
-        }));
-
-        let exec = request
-            .properties()
-            .iter()
-            .find_map(|property| match property {
-                SystemdDbusProperty::ExecStart(exec) => Some(exec),
-                _ => None,
-            })
-            .expect("ExecStart property should be generated by Nimbus");
-        assert_eq!(
-            exec.executable(),
-            "/usr/libexec/nimbus/conmon-crun-launcher"
-        );
-        assert_eq!(
-            exec.args(),
-            &[
-                "--bundle".to_string(),
-                "/run/nimbus/bundles/workload".to_string()
-            ]
-        );
-        assert!(!exec.ignore_failure());
-        assert!(request.properties().iter().any(|property| {
-            matches!(
-                property,
-                SystemdDbusProperty::Restart(HostRestartPolicy::OnFailure)
-            )
-        }));
-        assert!(
-            request
-                .properties()
-                .iter()
-                .any(|property| { matches!(property, SystemdDbusProperty::MemoryMax(536870912)) })
-        );
-    }
-
-    #[test]
-    fn systemd_backend_rejects_disallowed_properties_and_wrong_backend_plan() {
-        let binding = binding();
-        let backend = SystemdTransientUnitBackend::new(FakeSystemdDbusClient::available());
-        let denied = HostLifecyclePropertySet::from_raw_systemd_properties([(
-            "ExecStart",
-            "/bin/sh -c escape",
-        )])
-        .expect_err("raw ExecStart should fail before backend validation");
-        assert!(denied.to_string().contains("not allowlisted"));
-
-        let wrong_request = HostLifecycleRequest::new(
-            HostLifecycleBackendKind::DirectProcess,
-            HostExecutable::trusted("/usr/libexec/nimbus/conmon-crun-launcher")
-                .expect("trusted executable should parse"),
-        );
-        let error = backend
-            .validate(&binding, wrong_request)
-            .expect_err("systemd backend should reject direct process plan");
-        assert!(
-            error
-                .to_string()
-                .contains("requires a systemd_transient_unit plan"),
-            "error should name backend mismatch: {error}"
-        );
-    }
-
-    #[tokio::test]
-    async fn backend_calls_start_transient_unit_and_maps_stop_inspect_status() {
-        let client = FakeSystemdDbusClient::available();
-        let backend = SystemdTransientUnitBackend::new(client.clone());
-        let binding = binding();
-        let plan = backend
-            .validate(&binding, request())
-            .expect("systemd plan should validate");
-        let workload_id = plan.workload_id().clone();
-
-        let started = backend
-            .start(plan)
-            .await
-            .expect("systemd start should submit transient unit");
-        assert_eq!(started.phase(), TenantWorkloadPhase::Bound);
-        let start = client.last_start();
-        assert_eq!(
-            start.unit_name().as_str(),
-            started.evidence_correlation_ids()[0]
-        );
-
-        let inspected = backend
-            .inspect(workload_id.clone())
-            .await
-            .expect("inspect should map fake D-Bus status");
-        assert_eq!(
-            inspected.reason(),
-            super::super::HostLifecycleStatusReason::Submitted
-        );
-
-        let stopped = backend
-            .stop(workload_id)
-            .await
-            .expect("stop should map fake D-Bus status");
-        assert_eq!(
-            stopped.reason(),
-            super::super::HostLifecycleStatusReason::Stopped
-        );
-    }
-
-    #[test]
-    fn systemd_backend_fails_closed_when_dbus_or_features_are_unavailable() {
-        let binding = binding();
-        for (capabilities, expected) in [
-            (
-                SystemdTransientCapabilities::available().without_dbus(),
-                "D-Bus is unavailable",
-            ),
-            (
-                SystemdTransientCapabilities::available().without_transient_units(),
-                "transient units are unavailable",
-            ),
-            (
-                SystemdTransientCapabilities::available().without_service_units(),
-                "service units are unavailable",
-            ),
-        ] {
-            let backend = SystemdTransientUnitBackend::new(
-                FakeSystemdDbusClient::with_capabilities(capabilities),
-            );
-            let error = backend
-                .validate(&binding, request())
-                .expect_err("unavailable systemd feature should fail closed");
-            assert!(
-                error.to_string().contains(expected),
-                "expected `{expected}` in error, got {error}"
-            );
-        }
-
-        let backend = SystemdTransientUnitBackend::unavailable("not linux");
-        let error = backend
-            .validate(&binding, request())
-            .expect_err("unavailable default client should fail closed");
-        assert!(error.to_string().contains("D-Bus is unavailable"));
-    }
-}
+#[path = "systemd_transient/tests.rs"]
+mod tests;

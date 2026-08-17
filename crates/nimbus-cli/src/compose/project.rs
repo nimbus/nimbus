@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,6 +8,9 @@ use sha2::{Digest, Sha256};
 
 use crate::compose::discovery::ResolvedComposeSelection;
 use crate::compose::file::ComposeProjectPlan;
+use crate::provider_binaries::{
+    apply_resolved_krun_runtime_paths, default_container_provider_binary_dirs,
+};
 
 const SERVICES_CONTROL_ROOT: &str = "services";
 const PROJECTS_CONTROL_ROOT: &str = "projects";
@@ -117,8 +121,35 @@ impl ComposeProjectControlPlane {
         self.backend_root(SandboxBackendKind::Krun)
     }
 
-    pub(crate) fn krun_backend_config(&self) -> KrunSandboxBackendConfig {
+    /// Explicit test-only reconstruction for isolated state-view fixtures.
+    #[cfg(test)]
+    pub(crate) fn reconstruct_direct_krun_backend_config(&self) -> KrunSandboxBackendConfig {
         KrunSandboxBackendConfig::under_root(self.krun_backend_root())
+    }
+
+    pub(crate) fn krun_backend_config_with_network_authority(
+        &self,
+        network_state_root: &Path,
+    ) -> KrunSandboxBackendConfig {
+        let path_env = std::env::var_os("PATH");
+        let helper_binary_dirs = default_container_provider_binary_dirs();
+        self.krun_backend_config_with_provider_search(
+            network_state_root,
+            path_env.as_deref(),
+            &helper_binary_dirs,
+        )
+    }
+
+    fn krun_backend_config_with_provider_search(
+        &self,
+        network_state_root: &Path,
+        path_env: Option<&OsStr>,
+        helper_binary_dirs: &[PathBuf],
+    ) -> KrunSandboxBackendConfig {
+        let mut config = KrunSandboxBackendConfig::under_root(self.krun_backend_root())
+            .with_network_state_root(network_state_root);
+        apply_resolved_krun_runtime_paths(&mut config, path_env, helper_binary_dirs);
+        config
     }
 }
 
@@ -158,6 +189,18 @@ mod tests {
     use super::*;
     use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
     use crate::test_support::with_current_dir;
+
+    #[cfg(unix)]
+    fn write_executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::write(path, "#!/bin/sh\nexit 0\n").expect("provider helper should write");
+        let mut permissions = fs::metadata(path)
+            .expect("provider helper metadata should read")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("provider helper should be executable");
+    }
 
     fn write_compose_fixture(
         tempdir: &tempfile::TempDir,
@@ -218,7 +261,10 @@ services:
                 .join("container")
         );
 
-        let config = context.control_plane.krun_backend_config();
+        let network_state_root = tempdir.path().join("logical-node-network");
+        let config = context
+            .control_plane
+            .krun_backend_config_with_network_authority(&network_state_root);
         assert_eq!(
             config.bundle_root,
             context
@@ -229,7 +275,7 @@ services:
                 .join("bundles")
         );
         assert_eq!(
-            config.state_root,
+            config.workload_state_root,
             context
                 .control_plane
                 .project_root
@@ -237,10 +283,71 @@ services:
                 .join("krun")
                 .join("state")
         );
+        assert_eq!(config.network_state_root, network_state_root);
+        assert_ne!(config.network_state_root, config.workload_state_root);
         assert_eq!(
             context.control_plane.local_tenant_id.as_str(),
             format!("svc-{}", context.control_plane.project_key)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn direct_compose_krun_resolves_network_helpers_outside_path() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let compose_path = write_compose_fixture(
+            &tempdir,
+            "stack/compose.yaml",
+            "name: demo\nservices:\n  api:\n    image: busybox:latest\n",
+        );
+        let context = ComposeProjectContext::load(&compose_path, &tempdir.path().join("control"))
+            .expect("context should load");
+        let helper_dir = tempdir.path().join("provider-helpers");
+        fs::create_dir_all(&helper_dir).expect("provider helper directory should build");
+        let netavark = helper_dir.join("netavark");
+        let aardvark_dns = helper_dir.join("aardvark-dns");
+        write_executable(&netavark);
+        write_executable(&aardvark_dns);
+
+        let config = context
+            .control_plane
+            .krun_backend_config_with_provider_search(
+                &tempdir.path().join("network"),
+                Some(OsStr::new("/usr/bin:/bin")),
+                &[helper_dir],
+            );
+
+        assert_eq!(config.netavark_path, netavark);
+        assert_eq!(config.aardvark_dns_path, aardvark_dns);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn direct_compose_krun_preserves_private_runtime_when_path_has_stock_crun() {
+        let tempdir = tempfile::tempdir().expect("tempdir should build");
+        let compose_path = write_compose_fixture(
+            &tempdir,
+            "stack/compose.yaml",
+            "name: demo\nservices:\n  api:\n    image: busybox:latest\n",
+        );
+        let context = ComposeProjectContext::load(&compose_path, &tempdir.path().join("control"))
+            .expect("context should load");
+        let stock_binary_dir = tempdir.path().join("stock-bin");
+        fs::create_dir_all(&stock_binary_dir).expect("stock binary directory should build");
+        write_executable(&stock_binary_dir.join("crun"));
+        let expected_runtime =
+            KrunSandboxBackendConfig::under_root(context.control_plane.krun_backend_root())
+                .runtime_path;
+
+        let config = context
+            .control_plane
+            .krun_backend_config_with_provider_search(
+                &tempdir.path().join("network"),
+                Some(stock_binary_dir.as_os_str()),
+                &[],
+            );
+
+        assert_eq!(config.runtime_path, expected_runtime);
     }
 
     #[test]

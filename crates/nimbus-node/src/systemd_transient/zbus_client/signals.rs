@@ -39,6 +39,29 @@ impl JobOutcome {
     pub(crate) fn succeeded(&self) -> bool {
         matches!(self, JobOutcome::Done | JobOutcome::Skipped)
     }
+
+    pub(crate) fn label(&self) -> &str {
+        match self {
+            Self::Done => "done",
+            Self::Skipped => "skipped",
+            Self::Failed(result) => result,
+        }
+    }
+}
+
+/// Exact `StopUnit` call boundary, including the accepted-job wait window.
+#[derive(Debug)]
+pub(crate) enum StopUnitSubmission {
+    PreCallFailure(Error),
+    UnknownSubmission(Error),
+    AcceptedJobIncomplete {
+        job_path: OwnedObjectPath,
+        error: Error,
+    },
+    Terminal {
+        job_path: OwnedObjectPath,
+        outcome: JobOutcome,
+    },
 }
 
 /// Ensure the connection is subscribed to systemd signals.
@@ -88,12 +111,22 @@ pub(crate) async fn stop_unit_and_wait(
     name: String,
     mode: String,
     job_completion_timeout: Duration,
-) -> Result<(OwnedObjectPath, JobOutcome)> {
-    ensure_subscribed(manager).await?;
-    let mut job_removed = manager.receive_job_removed().await.map_err(map_zbus)?;
-    let job_path = manager.stop_unit(name, mode).await.map_err(map_zbus)?;
-    let outcome = wait_for_job(&mut job_removed, &job_path, "stop", job_completion_timeout).await?;
-    Ok((job_path, outcome))
+) -> StopUnitSubmission {
+    if let Err(error) = ensure_subscribed(manager).await {
+        return StopUnitSubmission::PreCallFailure(error);
+    }
+    let mut job_removed = match manager.receive_job_removed().await.map_err(map_zbus) {
+        Ok(stream) => stream,
+        Err(error) => return StopUnitSubmission::PreCallFailure(error),
+    };
+    let job_path = match manager.stop_unit(name, mode).await.map_err(map_zbus) {
+        Ok(job_path) => job_path,
+        Err(error) => return StopUnitSubmission::UnknownSubmission(error),
+    };
+    match wait_for_job(&mut job_removed, &job_path, "stop", job_completion_timeout).await {
+        Ok(outcome) => StopUnitSubmission::Terminal { job_path, outcome },
+        Err(error) => StopUnitSubmission::AcceptedJobIncomplete { job_path, error },
+    }
 }
 
 /// Drain `JobRemoved` signals until the one for `job_path` arrives.

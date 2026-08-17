@@ -14,7 +14,6 @@ pub(super) struct ServiceSandboxSummaryView {
     pub(super) service_name: String,
     pub(super) status: SandboxStatus,
     pub(super) published_endpoints: Vec<PublishedEndpoint>,
-    pub(super) restart_count: u32,
     pub(super) last_exit_code: Option<i32>,
     pub(super) shutdown_requested: bool,
 }
@@ -74,7 +73,6 @@ fn render_service_list_table(summaries: &[ServiceSandboxSummaryView], no_heading
         cli_ux::TableColumn::left("TENANT", 16),
         cli_ux::TableColumn::left("STATUS", 12),
         cli_ux::TableColumn::left("SANDBOX", 14),
-        cli_ux::TableColumn::right("RESTARTS", 8),
         cli_ux::TableColumn::right("EXIT", 4),
         cli_ux::TableColumn::left("ENDPOINTS", 12),
     ];
@@ -86,7 +84,6 @@ fn render_service_list_table(summaries: &[ServiceSandboxSummaryView], no_heading
                 summary.tenant_id.to_string(),
                 render_sandbox_status(summary.status).to_owned(),
                 summary.sandbox_id.to_string(),
-                summary.restart_count.to_string(),
                 summary
                     .last_exit_code
                     .map(|value| value.to_string())
@@ -230,10 +227,10 @@ fn render_published_endpoints(endpoints: &[PublishedEndpoint]) -> String {
         .join(", ")
 }
 
-fn render_published_endpoint_protocol(protocol: nimbus::PublishedEndpointProtocol) -> &'static str {
+fn render_published_endpoint_protocol(protocol: nimbus::EndpointProtocol) -> &'static str {
     match protocol {
-        nimbus::PublishedEndpointProtocol::Tcp => "tcp",
-        nimbus::PublishedEndpointProtocol::Http => "http",
-        nimbus::PublishedEndpointProtocol::Https => "https",
+        nimbus::EndpointProtocol::Tcp => "tcp",
+        nimbus::EndpointProtocol::Http => "http",
+        nimbus::EndpointProtocol::Https => "https",
     }
 }

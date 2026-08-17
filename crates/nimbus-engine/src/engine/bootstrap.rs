@@ -283,7 +283,7 @@ fn build_embedded_from_plan(
 
 /// Builds the PostgreSQL-backed engine. Paired with the `not(feature)`
 /// definition below so the dispatch `match` in
-/// [`build_from_bootstrap_plan_with_encryption`] stays exhaustive and provider
+/// [`build_from_plan`] stays exhaustive and provider
 /// selection cannot silently degrade: an uncompiled provider is an error, never
 /// a fallback to the embedded store.
 #[cfg(feature = "postgres")]

@@ -230,11 +230,15 @@ pub fn router(engine: Arc<Engine>, config: S3Config) -> Router {
     }
 }
 
-pub async fn run_listener(listener: TcpListener, engine: Arc<Engine>, config: S3Config) {
+pub async fn run_listener(
+    listener: TcpListener,
+    engine: Arc<Engine>,
+    config: S3Config,
+) -> std::io::Result<()> {
     info!("S3 listener started on {:?}", listener.local_addr().ok());
-    if let Err(error) = axum::serve(listener, router(engine, config)).await {
-        error!("S3 listener error: {error}");
-    }
+    axum::serve(listener, router(engine, config))
+        .await
+        .inspect_err(|error| error!("S3 listener error: {error}"))
 }
 
 async fn convex_download(

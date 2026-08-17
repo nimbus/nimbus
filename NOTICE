@@ -113,3 +113,11 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ================================================================================
+lru: https://github.com/jeromefroe/lru-rs
+Copyright Jerome Froelich and lru-rs contributors
+Licensed under the MIT License. Nimbus uses a locally patched copy at
+third_party/lru-0.16.4. The complete upstream license is retained in that
+directory. The patch backports upstream commits
+f9a7f00fcf2d33e00adb03758cb350aaaa52cddb for RUSTSEC-2026-0253 and
+a615a5b29f21de6dd222394da91ab4e2c6918016 for mutable-reference soundness.
+================================================================================

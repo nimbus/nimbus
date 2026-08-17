@@ -20,27 +20,68 @@ pub(super) use nimbus_proxy::{WorkloadPep, WorkloadPepConfig};
 
 pub(super) use super::super::{
     GUEST_USER_GID_ENV, GUEST_USER_HELPER_GUEST_PATH, GUEST_USER_UID_ENV, GuestUserIds,
-    KrunImageMetadata, KrunSandboxBackend, KrunSandboxBackendConfig, KrunSandboxManifest,
-    KrunStartMode, ReadinessProbeTarget, configured_stop_signal, configured_stop_timeout,
-    desired_krun_vm_config, krun_vm_config_path, parse_guest_user, probe_target_ready,
-    readiness_probe_target, restart_backoff_delay, restart_policy_allows_restart, running_status,
-    slugify, visible_published_endpoints,
+    KrunCreatorHandoffState, KrunEffectBarrierFailureStage, KrunEffectBarrierTestProbe,
+    KrunImageMetadata, KrunLaunchAuthority, KrunLifecycleLockTestProbe,
+    KrunProviderFailureCleanupState, KrunRuntimeAbsenceProof, KrunSandboxBackend,
+    KrunSandboxBackendConfig, KrunSandboxManifest, KrunStartMode, KrunStartPlan,
+    configured_stop_signal, configured_stop_timeout, desired_krun_vm_config, krun_vm_config_path,
+    parse_guest_user, published_endpoints, running_status, slugify, visible_published_endpoints,
 };
 pub(super) use crate::backend::{SandboxBackend, SandboxBackendKind};
+pub(super) use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
 pub(super) use crate::backends::oci::buildah::{
     ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
 };
 pub(super) use crate::backends::oci::command::CommandSpec;
-pub(super) use crate::endpoint::PublishedEndpointProtocol;
+pub(super) use crate::backends::oci::materializer::{
+    MaterializedImageRootfs, PreparedMaterializedImageLaunch,
+};
+pub(super) use crate::backends::readiness_probe::{
+    FixedReadinessProbeProvider, ReadinessProbeObservation, ReadinessProbeTarget,
+    readiness_probe_target,
+};
+pub(super) use crate::inspection::{
+    SandboxCleanupObservation, SandboxExecutionObservation, SandboxRestartAssessment,
+    SandboxRestartBlocker, SandboxRestartIneligibility,
+};
 pub(super) use crate::instance::{SandboxId, SandboxStatus};
+use crate::provision::test_support::legacy_start_attachment_network_plan_fixture;
+pub(super) use crate::provision::test_support::sandbox_provision_network_plan_fixture as sample_provision_network_plan;
 pub(super) use crate::spec::{
     SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxResourceQuotaPolicy,
     SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
 };
-
+pub(super) use nimbus_network::EndpointProtocol;
 pub(super) fn sample_spec() -> SandboxSpec {
     sample_spec_with_rootfs(Path::new("/srv/rootfs"))
+}
+
+/// Drive the same four exact provider command streams used by compute for one
+/// immutable Krun manifest. This is test composition, not a backend lifecycle
+/// capability.
+/// Preserve plan-only lowering coverage after removal of the production
+/// coarse-start authority. This fixture deliberately exercises only the
+/// test-only planner and provider-local artifact materialization; it does not
+/// attach, activate, publish, or stand in for the compute provision saga.
+pub(super) fn materialize_plan_only_fixture(
+    backend: &KrunSandboxBackend,
+    spec: SandboxSpec,
+) -> crate::Result<crate::SandboxHandle> {
+    let launch_plan = backend.plan_start(&spec)?;
+    materialize_plan_only_plan_fixture(backend, launch_plan)
+}
+
+pub(super) fn materialize_plan_only_plan_fixture(
+    backend: &KrunSandboxBackend,
+    launch_plan: KrunStartPlan,
+) -> crate::Result<crate::SandboxHandle> {
+    backend.materialize_krun_vm_config(&launch_plan.manifest)?;
+    let mut manifest = launch_plan.manifest;
+    manifest.last_exit_code = None;
+    manifest.shutdown_requested = false;
+    backend.write_manifest(&manifest)?;
+    Ok(manifest.handle)
 }
 
 /// Loopback bind address (ephemeral port) for starting test egress PEPs without
@@ -167,30 +208,54 @@ pub(super) fn sample_image_metadata() -> KrunImageMetadata {
 
 pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> KrunSandboxManifest {
     let endpoints = visible_published_endpoints(start_mode, &spec, SandboxStatus::Starting);
-    let network_layout = super::super::OciNetworkLayout::new(
-        "/tmp/state",
-        &spec.tenant_id,
-        &crate::instance::SandboxId::new("sandbox-01"),
-    );
+    let sandbox_id = crate::instance::SandboxId::new("sandbox-01");
+    let attachment_network_plan = (start_mode == KrunStartMode::Execute).then(|| {
+        legacy_start_attachment_network_plan_fixture(&spec, &sandbox_id, "krun-sample-manifest")
+    });
+    let network_config = attachment_network_plan.as_ref().map(|plan| {
+        let mut config = super::super::OciNetworkConfig::default();
+        config.attachment_id =
+            crate::backends::oci::network::default_network_attachment_id(&sandbox_id);
+        config.network_plan = Some(plan.clone());
+        config
+    });
+    let network_layout =
+        super::super::OciNetworkLayout::under_root("/tmp/state", &spec.tenant_id, &sandbox_id);
     KrunSandboxManifest {
         handle: crate::instance::SandboxHandle::new(
             spec.tenant_id.clone(),
-            crate::instance::SandboxId::new("sandbox-01"),
+            sandbox_id.clone(),
             spec.display_name().to_owned(),
             SandboxBackendKind::Krun,
             SandboxStatus::Starting,
             endpoints,
         ),
+        execution_attempt_id: crate::SandboxExecutionAttemptId::new("wea_test").unwrap(),
         spec,
         image_metadata: KrunImageMetadata::default(),
         launch_artifact: None,
+        provision_prepared: true,
         bundle_layout: super::super::KrunBundleLayout::new("/tmp/bundle"),
-        conmon_layout: super::super::OciConmonLayout::new(
-            "/tmp/state",
-            &crate::instance::SandboxId::new("sandbox-01"),
-        ),
+        conmon_layout: super::super::OciConmonLayout::new("/tmp/state", &sandbox_id),
         network_layout,
-        network_config: Default::default(),
+        provision_network_plan: None,
+        network_config,
+        port_leases: Vec::new(),
+        launch_authority: match start_mode {
+            KrunStartMode::PlanOnly => KrunLaunchAuthority::PlanOnly,
+            KrunStartMode::Execute => KrunLaunchAuthority::ProviderOwned,
+        },
+        creator_handoff: match start_mode {
+            KrunStartMode::PlanOnly => KrunCreatorHandoffState::NotSpawned,
+            KrunStartMode::Execute => KrunCreatorHandoffState::RuntimeObserved {
+                receipt: crate::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+                    "test-runtime-observed",
+                ),
+            },
+        },
+        provider_failure_cleanup: KrunProviderFailureCleanupState::Inactive,
+        execution_teardown: Default::default(),
+        network_teardown: Default::default(),
         egress_proxy: None,
         conmon_launch: super::super::OciConmonLaunchPlan {
             create_command: CommandSpec::new("/bin/true"),
@@ -199,8 +264,6 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
             delete_command: CommandSpec::new("/bin/true"),
         },
         last_exit_code: None,
-        restart_count: 0,
-        next_restart_at_millis: None,
         start_mode,
         shutdown_requested: false,
         status: SandboxStatus::Starting,

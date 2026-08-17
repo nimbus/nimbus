@@ -12,12 +12,53 @@ pub mod config;
 pub mod deploy;
 pub mod execution;
 pub mod machine_lifecycle;
+pub mod machine_stop_authority;
 pub mod machines;
+pub mod node_workloads;
 pub mod pagination;
+pub mod resource_provision;
+pub mod resource_retirement;
 pub mod runtime_manager;
 pub mod sandbox_spec;
 pub mod sandboxes;
 pub mod scheduling;
-pub mod service_manager;
 pub mod services;
 pub mod state;
+mod tenant_retirement;
+pub mod workload_executable;
+pub mod workload_network_plan;
+pub mod workload_projection;
+pub mod workload_provision_composition;
+pub mod workload_provision_source;
+pub mod workload_provisioner;
+pub mod workload_saga;
+
+pub use resource_provision::{
+    ComputeResourceProvisionError, ComputeResourceProvisioner, SandboxServiceProvisionSnapshot,
+};
+pub use resource_retirement::{
+    ComputeResourceRetirementError, ComputeResourceRetirer, SandboxServiceRetirementOutcome,
+    WorkloadTeardownDisposition,
+};
+pub use workload_projection::{
+    ServiceManagerWorkloadProjectionSink, WorkloadExecutionObservationCapability,
+    WorkloadExecutionObservationFuture, WorkloadExecutionObservationRequest,
+    WorkloadIngressBindingWitness, WorkloadIngressObservationCapability,
+    WorkloadIngressObservationFuture, WorkloadIngressObservationRequest,
+    WorkloadObservedIngressEndpoint, WorkloadObservedProjection, WorkloadProjectionOrchestrator,
+    WorkloadProjectionPendingReason, WorkloadProjectionRejectedReason, WorkloadProjectionSink,
+    WorkloadProjectionSinkError, WorkloadProjectionSinkFuture, WorkloadProjectionState,
+    WorkloadProviderObservation,
+};
+pub use workload_provision_composition::{
+    ComposedWorkloadProvision, WorkloadProvisionCompositionError,
+    WorkloadProvisionCompositionInput, WorkloadProvisionSourceSnapshot, compose_workload_provision,
+};
+pub use workload_provision_source::ServiceManagerWorkloadProvisionSourceAuthority;
+pub use workload_provisioner::{
+    WorkloadProvisionCancellation, WorkloadProvisionCompensationState,
+    WorkloadProvisionConfigurationError, WorkloadProvisionEndpointSemantics,
+    WorkloadProvisionError, WorkloadProvisionOutcome, WorkloadProvisionRequest,
+    WorkloadProvisionResult, WorkloadProvisionSource, WorkloadProvisioner,
+    embedded_local_node_identity,
+};

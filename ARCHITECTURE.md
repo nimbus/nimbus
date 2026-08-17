@@ -27,7 +27,7 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-cli` | The `nimbus` CLI application library: `start`, `dev`, `deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`, `encryption`, codegen, and more. Invoked by the thin `nimbus-bin` entrypoint. |
 | `nimbus-cloud-functions` | Cloud Functions-compatible adapter contracts and runtime bridge. |
 | `nimbus-code-index` | Deploy-time structural JavaScript/TypeScript code-navigation index built with oxc. |
-| `nimbus-compute` | Transport-free compute-plane composition: execution workers, runtime provenance, filesystem grants, and service/runtime wiring shared by server and CLI. |
+| `nimbus-compute` | Transport-free compute-plane composition and sole workload-saga coordinator: provision, restart, teardown, execution workers, runtime provenance, filesystem grants, and service/runtime wiring shared by server and CLI. |
 | `nimbus-convex` | Convex protocol semantics: function registry, subscriptions, document identity, host-call payloads. |
 | `nimbus-core` | Shared types and validation. Zero I/O. |
 | `nimbus-crypto` | At-rest envelope/keyring primitives, crypto-shred, and framed blob AEAD; depends only on `nimbus-core` plus external crypto crates. |
@@ -40,6 +40,7 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-license` | License file loading and status (community / trial / enterprise). |
 | `nimbus-machine` | Render-independent machine records and provider contracts shared by CLI and server. |
 | `nimbus-mongodb` | MongoDB wire protocol: BSON bridging, command handlers, connections, auth. |
+| `nimbus-network` | Transport-free connectivity-resource lifecycle: stable identity, plans, durable leases/state, capability evidence, readiness composition, and reconciliation contracts. Its only outgoing workspace edge is `nimbus-core`. |
 | `nimbus-node` | Node-side workload lifecycle: systemd transient units over D-Bus, reconciler, host lifecycle backends. |
 | `nimbus-object-storage` | Native object-storage control-plane resolver: turns persisted placement policy and operator config into `BlobStore` compositions shared by S3, Convex `_storage`, and backup/restore. Deliberately not a protocol crate. |
 | `nimbus-operator` | Operator (host administrator) security model for local and deploy servers. |
@@ -47,15 +48,15 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-proxy` | Pingora-based egress proxy: policy enforcement, DNS/CONNECT handling, TLS interception, connection pooling, and fairness for tenant egress traffic. |
 | `nimbus-runtime` | V8 execution via `deno_core`; defines the runtime surface and the `HostBridge` trait. Zero workspace dependencies. |
 | `nimbus-s3` | S3-compatible object surface over the Nimbus blob and metadata planes (Seam D). |
-| `nimbus-sandbox` | Backend-agnostic sandbox and isolation lifecycle contracts. |
+| `nimbus-sandbox` | Backend-agnostic sandbox and isolation lifecycle contracts plus concrete Netavark, namespace, IPAM, nftables, gvproxy, and guest-network effects. |
 | `nimbus-server` | HTTP/WebSocket transport: axum router, adapter transport shims, embedded UI, local-server security. |
-| `nimbus-services` | Service registry and service-manager primitives. |
+| `nimbus-services` | Logical service naming, readiness, registry, and service-manager primitives. |
 | `nimbus-storage` | Persistence providers (SQLite, redb, Postgres, MySQL, libSQL) plus commit log, indexes, and scheduler state. |
 | `nimbus-system` | System-tenant records, route inventory, and status projections. |
 | `nimbus-tenant` | Tenant isolation decisions, workload identity, and admission policy. |
 | `nimbus-testing` | Shared test fixtures and the deterministic verification harness. |
 | `nimbus-workload-identity` | Workload-identity issuance seam: provider-auth policy, admission-anchored mint authorization, node/machine identity and trust-domain config, and short-lived JWT/SPIFFE-SVID minting (SI0–SI4). Production cluster-membership identity stays unconstructible until HS1; the `WorkloadIdentity` projection stays in `nimbus-tenant`. |
-| `nimbus-workloads` | Workload admission, desired-state, placement, and execution-control seams shared by the node reconciler and scheduler. |
+| `nimbus-workloads` | Portable workload desired state, durable saga vocabulary, admission, placement, and execution-control seams shared by compute, node reconciliation, and scheduling. |
 | `workspace-hack` | `cargo-hakari`-managed dependency-unification package. No product logic; exists only to speed up workspace builds. |
 
 ### npm packages (`packages/`)
@@ -194,6 +195,27 @@ contracts shared by the CLI and the server control plane.
 
 ### Egress & network trust
 
+`nimbus-network` is the transport-free connectivity-resource control plane. It
+owns stable attachment, segment, endpoint, route, listener, and port identity;
+portable plans; durable node-local lease/state machines; provider capability
+evidence; and reconciliation contracts. It does not bind sockets, parse
+protocols, create namespaces, forward packets, select tenant policy, or own
+logical service names. Those effects stay in `nimbus-sandbox`,
+`nimbus-server`, `nimbus-kv`, `nimbus-machine`, `nimbus-proxy`, and
+`nimbus-node`; compute remains the sole workload lifecycle coordinator,
+services retains naming/readiness, and system tables remain observed
+projections. Future cluster membership, node identity, routing, mesh, and raft
+lease sourcing stay outside `nimbus-network`.
+
+The durable network model separates desired generation, lease/provider
+handle, and observed status. Stable identity and generation/epoch fencing are
+required; an address is never workload identity. Provision follows admit →
+reserve → prepare an inert workload → attach the same generation → prove
+activation prerequisites → activate → prove workload readiness → publish →
+observe. No tenant instruction runs before authenticated attachment and any
+required policy-enforcement readiness. Teardown follows withdraw → drain →
+stop → detach → release → record.
+
 Workload egress is decided and enforced by two crates with a strict
 PDP/PEP split: `nimbus-egress` is the pure decision core (compiled
 allow-list policy, credential/DLP metadata, the node-global
@@ -224,14 +246,15 @@ Every tenant gets an isolated persistence namespace. `nimbus-tenant` owns
 isolation decisions, workload identity, and admission policy; `nimbus-system`
 owns the system tenant's records and projections.
 
-**Workload-identity ladder.** Three deliberately separate types carry a
+**Workload-identity ladder.** Four deliberately separate types carry a
 workload's identity through the stack, each anchored to a different concern:
 
 | Layer | Type | Home | Role |
 | --- | --- | --- | --- |
 | Routing key | `WorkloadId` | `nimbus-core/src/types.rs` | Opaque routing key. Lives in `nimbus-core` on purpose: `nimbus-proxy`'s per-workload PEP registry keys on it without depending on `nimbus-sandbox`. |
 | Admitted identity | `WorkloadIdentity` | `nimbus-tenant/src/identity.rs` | Rich projection, constructible only via `from_decision(&TenantIsolationDecision)`; renders SPIFFE-shaped `subject()`/`spiffe_id()` strings. |
-| Node-local name | `TenantWorkloadId` | `nimbus-node/src/host_lifecycle.rs` | systemd unit naming. |
+| Tenant-qualified admitted UID | `TenantWorkloadUid` | `nimbus-workloads/src/tenant.rs` | Stable admitted workload incarnation derived from workload identity and decision. |
+| Generation-scoped execution | `WorkloadExecutionId` | `nimbus-workloads/src/saga.rs` | Derived from admitted UID, assigned node, and `WorkloadGeneration`; node backends, systemd units, and observed status consume it. |
 
 `WorkloadIdentity` stays in `nimbus-tenant` rather than moving into a
 dedicated identity crate: construction is gated on holding a real

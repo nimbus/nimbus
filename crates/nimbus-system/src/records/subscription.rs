@@ -5,44 +5,13 @@ use nimbus_engine::Engine;
 use serde_json::json;
 
 use crate::identity::is_system_tenant_id;
-use crate::keys::{listener_document_id, subscription_document_id};
+use crate::keys::subscription_document_id;
 use crate::schema::SystemTable;
 
 use super::{
     delete_system_document_if_exists_async, ensure_system_tenant_async, object_fields,
     unix_time_millis, upsert_system_document_async,
 };
-
-pub async fn record_listener_state_async(
-    engine: &Arc<Engine>,
-    adapter: &str,
-    protocol: &str,
-    address: &str,
-    state: &str,
-    version: Option<&str>,
-    error: Option<&str>,
-) -> Result<()> {
-    ensure_system_tenant_async(engine).await?;
-    let mut fields = object_fields(json!({
-        "adapter": adapter,
-        "protocol": protocol,
-        "address": address,
-        "state": state,
-    }));
-    if let Some(version) = version {
-        fields.insert("version".to_owned(), json!(version));
-    }
-    if let Some(error) = error {
-        fields.insert("error".to_owned(), json!(error));
-    }
-    upsert_system_document_async(
-        engine,
-        SystemTable::Listeners,
-        &listener_document_id(adapter, protocol),
-        fields,
-    )
-    .await
-}
 
 pub async fn record_subscription_state_async(
     engine: &Arc<Engine>,

@@ -1,15 +1,40 @@
+mod attachment_authority;
+mod creator_recovery;
+mod egress_readiness;
+mod endpoint_projection;
+mod explicit_stop;
+mod generation_fencing;
+mod launch_compensation;
+mod legacy_stop_config;
+mod lifecycle_locking;
+mod manifest_durability;
+mod manifest_schema;
+mod natural_exit;
+mod network_composition;
+mod provider_failure_recovery;
+mod provision_phases;
+mod restart_phases;
+mod root_ownership;
+mod startup_fencing;
 mod support;
 use support::*;
 
-use nimbus_egress::{EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV};
+use crate::backends::oci::network::AttachmentAttachAuthority;
+use nimbus_network::LocalPortLeaseAuthority;
 
-fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
+pub(super) fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
     config["process"]["env"]
         .as_array()
         .expect("env should be an array")
         .iter()
         .map(|value| value.as_str().expect("env entries should be strings"))
         .collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn sample_execution_attempt_id(id: &SandboxId) -> crate::SandboxExecutionAttemptId {
+    crate::SandboxExecutionAttemptId::new(format!("test-execution-attempt:{id}"))
+        .expect("test execution attempt should validate")
 }
 
 // KME4 readiness gate: the execute path no longer fails closed unconditionally;
@@ -29,6 +54,7 @@ fn execute_launch_denies_when_egress_pep_is_not_ready() {
         temp_dir.path().to_path_buf(),
     ));
     let id = SandboxId::new("kme4-not-ready");
+    let tenant = TenantId::new("tenant-kme4-not-ready").expect("tenant id should be valid");
     let netns_path = temp_dir.path().join("netns-installed");
     fs::write(&netns_path, b"netns").expect("netns marker should write");
 
@@ -38,20 +64,20 @@ fn execute_launch_denies_when_egress_pep_is_not_ready() {
         .expect("a policy-less PEP should still bind and start");
     backend
         .egress_proxies
-        .insert_running_for_test(&id, policyless)
+        .insert_running_for_test(&tenant, &id, policyless)
         .expect("test PEP should register");
     let readiness = backend
         .egress_proxies
-        .readiness(&id)
+        .readiness(&tenant, &id)
         .expect("readiness should resolve")
         .expect("a PEP is registered");
     assert!(
-        !readiness.ready && readiness.policy_generation.is_none(),
+        !readiness.is_ready() && readiness.policy_generation().is_none(),
         "precondition: the registered PEP must be not-ready, got: {readiness:?}"
     );
 
     let error = backend
-        .ensure_execute_egress_preconditions(&id, &netns_path)
+        .ensure_execute_egress_preconditions(&tenant, &id, &netns_path)
         .expect_err("a not-ready PEP must deny the launch fail-closed");
     assert!(
         error.to_string().contains("not ready")
@@ -81,17 +107,65 @@ fn execute_launch_permits_when_netns_installed_and_pep_ready() {
         .expect("a ready PEP should start with a compiled policy");
     let readiness = backend
         .egress_proxies
-        .readiness(&id)
+        .readiness(&tenant, &id)
         .expect("readiness should resolve")
         .expect("a PEP is registered");
     assert!(
-        readiness.ready && readiness.policy_generation.is_some(),
+        readiness.is_ready() && readiness.policy_generation().is_some(),
         "precondition: the registered PEP must be ready, got: {readiness:?}"
     );
 
     backend
-        .ensure_execute_egress_preconditions(&id, &netns_path)
+        .ensure_execute_egress_preconditions(&tenant, &id, &netns_path)
         .expect("all preconditions satisfied must permit the launch");
+}
+
+/// NNC0.6 regression for NNCF6. This captures the exact unsafe boundary after
+/// the persistent namespace path exists but before Netavark has emitted status
+/// and before an attachment phase can prove the egress pin. It consumes the
+/// platform-independent half of the production complete-readiness gate so the
+/// same proof runs on Linux and non-Linux hosts.
+#[test]
+fn nnc0_6_krun_rejects_netns_path_without_complete_attachment_evidence() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+    let manifest = sample_manifest(
+        sample_spec_for_tenant("tenant-nnc0-6", "partial-attachment"),
+        KrunStartMode::Execute,
+    );
+    fs::create_dir_all(
+        manifest
+            .network_layout
+            .netns_path
+            .parent()
+            .expect("netns path should have a parent"),
+    )
+    .expect("netns parent should create");
+    fs::write(&manifest.network_layout.netns_path, b"netns")
+        .expect("netns-created boundary should persist");
+    assert!(
+        !manifest.network_layout.status_path.exists(),
+        "precondition: Netavark status must still be absent at this partial boundary"
+    );
+    backend
+        .egress_proxies
+        .ensure_running(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            &EgressPolicy::deny_all(),
+            loopback_addr(),
+        )
+        .expect("ready PEP isolates the missing attachment-evidence condition");
+
+    let readiness = backend.ensure_complete_host_managed_attachment_readiness_for_test(&manifest);
+
+    assert!(
+        readiness.is_err(),
+        "NNCF6: a netns path plus ready PEP cannot prove Netavark setup or egress pin; \
+         partial same-generation attachment must deny launch"
+    );
 }
 
 /// NETNS-ABSENT arm: even with a ready PEP, a missing deny-by-default netns must
@@ -111,7 +185,7 @@ fn execute_launch_denies_when_network_namespace_is_not_installed() {
         .expect("a ready PEP should start");
 
     let error = backend
-        .ensure_execute_egress_preconditions(&id, &missing_netns)
+        .ensure_execute_egress_preconditions(&tenant, &id, &missing_netns)
         .expect_err("a missing netns must deny the launch fail-closed");
     assert!(
         error.to_string().contains("network namespace")
@@ -129,11 +203,12 @@ fn execute_launch_denies_when_egress_pep_is_absent() {
         temp_dir.path().to_path_buf(),
     ));
     let id = SandboxId::new("kme4-no-pep");
+    let tenant = TenantId::new("tenant-kme4-no-pep").expect("tenant id should be valid");
     let netns_path = temp_dir.path().join("netns-installed");
     fs::write(&netns_path, b"netns").expect("netns marker should write");
 
     let error = backend
-        .ensure_execute_egress_preconditions(&id, &netns_path)
+        .ensure_execute_egress_preconditions(&tenant, &id, &netns_path)
         .expect_err("an absent PEP must deny the launch fail-closed");
     assert!(
         error
@@ -154,8 +229,23 @@ fn execute_start_denies_fail_closed_off_linux() {
         temp_dir.path().to_path_buf(),
     ));
 
-    let error = block_on(backend.start(sample_spec()))
-        .expect_err("krun execute-mode must fail closed on a non-Linux host");
+    let spec = sample_spec();
+    let activation_id = SandboxId::new("kme4-off-linux-activation");
+    let network_plan = sample_provision_network_plan(&spec, &activation_id, "off-linux-activation");
+    backend
+        .reserve_provision_network(
+            spec,
+            activation_id.clone(),
+            sample_execution_attempt_id(&activation_id),
+            network_plan,
+        )
+        .expect("non-Linux reservation must not launch the VMM");
+    backend
+        .prepare_provision_workload(&activation_id, &sample_execution_attempt_id(&activation_id))
+        .expect("non-Linux preparation must not launch the VMM");
+    let error = backend
+        .activate_provision_workload(&activation_id, &sample_execution_attempt_id(&activation_id))
+        .expect_err("krun activation must fail closed on a non-Linux host");
     assert!(
         matches!(error, crate::error::SandboxError::BackendUnavailable { .. })
             && error.to_string().contains("requires a Linux host"),
@@ -189,17 +279,16 @@ fn execute_start_denies_fail_closed_off_linux() {
 }
 
 #[test]
-fn plan_only_backend_lowers_through_generic_trait_surface() {
+fn plan_only_backend_lowers_before_generic_lifecycle_inspection() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(
-        KrunSandboxBackendConfig::plan_only(
-            temp_dir.path().join("bundles"),
-            temp_dir.path().join("state"),
-        ),
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
     ));
     let spec = sample_spec();
 
-    let handle = block_on(backend.start(spec)).expect("plan-only start should succeed");
+    let handle = materialize_plan_only_fixture(&backend, spec)
+        .expect("plan-only lowering should materialize its fixture");
     assert_eq!(handle.backend, SandboxBackendKind::Krun);
     assert_eq!(handle.status, crate::instance::SandboxStatus::Starting);
     assert_eq!(handle.published_endpoints.len(), 2);
@@ -207,17 +296,11 @@ fn plan_only_backend_lowers_through_generic_trait_surface() {
     let inspected = block_on(backend.inspect(&handle.id))
         .expect("inspect should succeed")
         .expect("plan-only sandbox should persist a manifest");
-    assert_eq!(inspected.id, handle.id);
-
-    block_on(backend.stop(&handle.id)).expect("stop should succeed in plan-only mode");
-    let stopped = block_on(backend.inspect(&handle.id))
-        .expect("inspect after stop should succeed")
-        .expect("stopped sandbox should still have a manifest");
-    assert_eq!(stopped.status, crate::instance::SandboxStatus::Stopped);
+    assert_eq!(inspected.handle.id, handle.id);
 }
 
 #[test]
-fn plan_only_backend_lowers_image_launch_through_generic_trait_surface() {
+fn plan_only_backend_lowers_image_launch_before_lifecycle_inspection() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let image_reference = sample_registry_image_reference();
     let mut config = KrunSandboxBackendConfig::plan_only(
@@ -225,12 +308,12 @@ fn plan_only_backend_lowers_image_launch_through_generic_trait_surface() {
         temp_dir.path().join("state"),
     );
     config.use_buildah_unshare = false;
-    let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
+    let backend = KrunSandboxBackend::new(config);
 
     let mut spec = sparse_image_spec("image-trait");
     spec.root = SandboxRootSpec::oci_image_reference(image_reference);
-    let handle = block_on(backend.start(spec.clone()))
-        .expect("plan-only image-backed start should succeed through the trait");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only image-backed lowering should materialize");
 
     assert_eq!(handle.backend, SandboxBackendKind::Krun);
     assert_eq!(handle.status, crate::instance::SandboxStatus::Starting);
@@ -238,11 +321,11 @@ fn plan_only_backend_lowers_image_launch_through_generic_trait_surface() {
     let inspected = block_on(backend.inspect(&handle.id))
         .expect("inspect should succeed")
         .expect("plan-only image-backed sandbox should persist a manifest");
-    assert_eq!(inspected.id, handle.id);
+    assert_eq!(inspected.handle.id, handle.id);
 }
 
 #[test]
-fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
+fn plan_only_backend_lowers_build_launch_before_lifecycle_inspection() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let workspace = temp_dir.path().join("workspace");
     fs::create_dir_all(&workspace).expect("workspace directory should exist");
@@ -255,11 +338,11 @@ fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
         temp_dir.path().join("state"),
     );
     config.use_buildah_unshare = false;
-    let backend: Box<dyn SandboxBackend> = Box::new(KrunSandboxBackend::new(config));
+    let backend = KrunSandboxBackend::new(config);
 
     let spec = sparse_build_spec("build-trait", "nimbus-api", &dockerfile_path, &workspace);
-    let handle = block_on(backend.start(spec.clone()))
-        .expect("plan-only build-backed start should succeed through the trait");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only build-backed lowering should materialize");
 
     assert_eq!(handle.backend, SandboxBackendKind::Krun);
     assert_eq!(handle.status, crate::instance::SandboxStatus::Starting);
@@ -267,7 +350,7 @@ fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
     let inspected = block_on(backend.inspect(&handle.id))
         .expect("inspect should succeed")
         .expect("plan-only build-backed sandbox should persist a manifest");
-    assert_eq!(inspected.id, handle.id);
+    assert_eq!(inspected.handle.id, handle.id);
     let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let manifest = fs::read_to_string(&manifest_path).expect("manifest should be readable");
     assert!(
@@ -289,7 +372,8 @@ fn plan_start_writes_bundle_and_manifest_under_backend_roots() {
     ));
     let spec = sample_spec();
 
-    let handle = block_on(backend.start(spec.clone())).expect("plan-only start should succeed");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only lowering should materialize");
     let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let bundle_path = bundle_config_path(temp_dir.path(), &spec, &handle.id);
 
@@ -299,9 +383,8 @@ fn plan_start_writes_bundle_and_manifest_under_backend_roots() {
     let rendered_bundle =
         fs::read_to_string(bundle_path).expect("bundle config should be readable");
     assert!(
-        rendered_bundle
-            .contains("\"krun.port_map\": \"127.0.0.1:15432:5432,127.0.0.1:18080:8080\""),
-        "bundle config should preserve the address:host:guest TSI mapping"
+        rendered_bundle.contains("\"krun.port_map\": \"0.0.0.0:15432:5432,0.0.0.0:18080:8080\""),
+        "prepared bundle should retain the pre-attachment private TSI placeholder"
     );
 }
 
@@ -315,10 +398,10 @@ fn plan_start_scopes_artifacts_by_tenant_for_same_service_name() {
     let tenant_a = sample_spec_for_tenant("tenant-a", "api");
     let tenant_b = sample_spec_for_tenant("tenant-b", "api");
 
-    let handle_a =
-        block_on(backend.start(tenant_a.clone())).expect("tenant-a start should persist");
-    let handle_b =
-        block_on(backend.start(tenant_b.clone())).expect("tenant-b start should persist");
+    let handle_a = materialize_plan_only_fixture(&backend, tenant_a.clone())
+        .expect("tenant-a plan should persist");
+    let handle_b = materialize_plan_only_fixture(&backend, tenant_b.clone())
+        .expect("tenant-b plan should persist");
 
     let manifest_a = manifest_path(temp_dir.path(), &tenant_a, &handle_a.id);
     let manifest_b = manifest_path(temp_dir.path(), &tenant_b, &handle_b.id);
@@ -358,10 +441,10 @@ fn plan_start_lowers_tenant_volume_mounts_under_tenant_state_root() {
     let tenant_b = sample_spec_for_tenant("tenant-b", "api")
         .with_mount(SandboxMountSpec::tenant_volume("shared", "/var/lib/app").read_only(true));
 
-    let handle_a =
-        block_on(backend.start(tenant_a.clone())).expect("tenant-a start should persist");
-    let handle_b =
-        block_on(backend.start(tenant_b.clone())).expect("tenant-b start should persist");
+    let handle_a = materialize_plan_only_fixture(&backend, tenant_a.clone())
+        .expect("tenant-a plan should persist");
+    let handle_b = materialize_plan_only_fixture(&backend, tenant_b.clone())
+        .expect("tenant-b plan should persist");
 
     let volume_a = temp_dir
         .path()
@@ -430,10 +513,10 @@ fn remove_tenant_artifacts_deletes_only_matching_krun_tenant_roots() {
     ));
     let tenant_a = sample_spec_for_tenant("tenant-a", "api");
     let tenant_b = sample_spec_for_tenant("tenant-b", "api");
-    let handle_a =
-        block_on(backend.start(tenant_a.clone())).expect("tenant-a start should persist");
-    let handle_b =
-        block_on(backend.start(tenant_b.clone())).expect("tenant-b start should persist");
+    let handle_a = materialize_plan_only_fixture(&backend, tenant_a.clone())
+        .expect("tenant-a plan should persist");
+    let handle_b = materialize_plan_only_fixture(&backend, tenant_b.clone())
+        .expect("tenant-b plan should persist");
     let shared_cache = temp_dir
         .path()
         .join("state")
@@ -482,7 +565,8 @@ fn plan_only_start_writes_krun_vm_config_for_explicit_resource_limits() {
             .with_memory_limit_bytes(256 * 1024 * 1024),
     );
 
-    let handle = block_on(backend.start(spec.clone())).expect("plan-only start should succeed");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only lowering should materialize");
     let vm_config_path = krun_vm_config_path(&rootfs);
     let vm_config =
         fs::read_to_string(&vm_config_path).expect("krun vm config should be materialized");
@@ -508,7 +592,7 @@ fn plan_only_start_removes_stale_krun_vm_config_when_cpu_limit_is_unset() {
     ));
     let spec = sample_spec_with_rootfs(&rootfs).with_memory_limit_bytes(256 * 1024 * 1024);
 
-    block_on(backend.start(spec)).expect("plan-only start should succeed");
+    materialize_plan_only_fixture(&backend, spec).expect("plan-only lowering should materialize");
 
     assert!(
         !stale_vm_config.exists(),
@@ -531,7 +615,7 @@ fn rootfs_plan_resolves_entrypoint_command_and_user_without_image_defaults() {
         .with_command(["exec app"])
         .with_user("1001:1002");
 
-    let handle = block_on(backend.start(spec.clone()))
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
         .expect("rootfs krun plan should lower entrypoint/command without image defaults");
     let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let manifest: serde_json::Value = serde_json::from_slice(
@@ -722,7 +806,18 @@ fn plan_start_with_launch_defaults_preserves_explicit_operator_overrides() {
         PathBuf::from("/workspace")
     );
     assert!(!launch_plan.manifest.spec.process.terminal);
-    assert_eq!(launch_plan.manifest.spec.port_bindings.len(), 1);
+    assert_eq!(
+        launch_plan.manifest.spec.port_bindings,
+        vec![
+            SandboxPortBinding::tcp("http", 18080, 8080),
+            SandboxPortBinding::tcp("tcp-8443", 15000, 8443),
+        ],
+        "the explicit mapping wins for 8080 while an inert preview is rendered for the remaining image port"
+    );
+    assert!(
+        launch_plan.manifest.port_leases.is_empty(),
+        "plan-only rendering must not claim durable host-port authority"
+    );
     assert_eq!(
         launch_plan.manifest.image_metadata.healthcheck,
         Some(ImageHealthcheck {
@@ -756,8 +851,8 @@ fn oci_image_root_plan_only_persists_and_then_cleans_up_materialized_rootfs() {
     let mut spec = spec;
     spec.root = SandboxRootSpec::oci_image_reference(image_reference);
 
-    let handle =
-        block_on(backend.start(spec.clone())).expect("plan-only image-backed start should succeed");
+    let handle = materialize_plan_only_fixture(&backend, spec.clone())
+        .expect("plan-only image-backed lowering should materialize");
 
     let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let manifest_before_stop =
@@ -770,19 +865,6 @@ fn oci_image_root_plan_only_persists_and_then_cleans_up_materialized_rootfs() {
     assert!(
         rootfs_path.exists(),
         "image-backed plan should materialize a rootfs under the krun state root"
-    );
-
-    block_on(backend.stop(&handle.id)).expect("plan-only stop should succeed");
-
-    let manifest_after_stop =
-        fs::read_to_string(&manifest_path).expect("manifest should be readable after stop");
-    assert!(
-        manifest_after_stop.contains("\"launch_artifact\": null"),
-        "stop should clear launch-artifact metadata after cleanup"
-    );
-    assert!(
-        !rootfs_path.exists(),
-        "stop should remove the materialized rootfs after cleanup"
     );
 }
 
@@ -824,7 +906,7 @@ fn oci_image_root_plan_only_skips_krun_vm_config_prelude_for_materialized_rootfs
 }
 
 #[test]
-fn oci_image_root_plan_only_auto_assigns_exposed_ports_and_reuses_released_ports() {
+fn oci_image_root_plan_only_previews_ports_without_reserving_them() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let image_reference = sample_registry_image_reference();
 
@@ -839,50 +921,152 @@ fn oci_image_root_plan_only_auto_assigns_exposed_ports_and_reuses_released_ports
 
     let mut first_spec = sparse_image_spec("first");
     first_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
-    let first = block_on(backend.start(first_spec))
-        .expect("first plan-only image-backed start should succeed");
+    let first = materialize_plan_only_fixture(&backend, first_spec)
+        .expect("first plan-only image-backed lowering should succeed");
     let first_inspected = block_on(backend.inspect(&first.id))
         .expect("inspect should succeed")
         .expect("first sandbox should be persisted");
-    assert_eq!(first_inspected.published_endpoints.len(), 1);
-    assert_eq!(first_inspected.published_endpoints[0].address.port(), 15000);
+    assert_eq!(first_inspected.handle.published_endpoints.len(), 1);
+    assert_eq!(
+        first_inspected.handle.published_endpoints[0].address.port(),
+        15000
+    );
 
     let mut second_spec = sparse_image_spec("second");
     second_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
-    let second = block_on(backend.start(second_spec))
-        .expect("second plan-only image-backed start should succeed");
+    let second = materialize_plan_only_fixture(&backend, second_spec)
+        .expect("second plan-only image-backed lowering should succeed");
     let second_inspected = block_on(backend.inspect(&second.id))
         .expect("inspect should succeed")
         .expect("second sandbox should be persisted");
-    assert_eq!(second_inspected.published_endpoints.len(), 1);
+    assert_eq!(second_inspected.handle.published_endpoints.len(), 1);
     assert_eq!(
-        second_inspected.published_endpoints[0].address.port(),
-        15001
+        second_inspected.handle.published_endpoints[0]
+            .address
+            .port(),
+        15000,
+        "inert plan-only previews must not treat another manifest as allocation authority"
     );
-
-    block_on(backend.stop(&first.id)).expect("stopping the first sandbox should succeed");
 
     let mut third_spec = sparse_image_spec("third");
     third_spec.root = SandboxRootSpec::oci_image_reference(image_reference);
-    let third = block_on(backend.start(third_spec.clone()))
-        .expect("third plan-only image-backed start should succeed");
+    let third = materialize_plan_only_fixture(&backend, third_spec.clone())
+        .expect("third plan-only image-backed lowering should succeed");
     let third_inspected = block_on(backend.inspect(&third.id))
         .expect("inspect should succeed")
         .expect("third sandbox should be persisted");
-    assert_eq!(third_inspected.published_endpoints.len(), 1);
-    assert_eq!(third_inspected.published_endpoints[0].address.port(), 15000);
+    assert_eq!(third_inspected.handle.published_endpoints.len(), 1);
+    assert_eq!(
+        third_inspected.handle.published_endpoints[0].address.port(),
+        15000
+    );
 
     let third_bundle =
         fs::read_to_string(bundle_config_path(temp_dir.path(), &third_spec, &third.id))
             .expect("third bundle config should be readable");
     assert!(
-        third_bundle.contains("\"krun.port_map\": \"127.0.0.1:15000:8080\""),
+        third_bundle.contains("\"krun.port_map\": \"0.0.0.0:15000:8080\""),
         "auto-assigned bindings should rewrite the krun port map annotation"
     );
 }
 
 #[test]
-fn oci_image_root_plan_only_rejects_same_tenant_port_quota_exhaustion() {
+fn plan_only_range_exhaustion_creates_no_durable_segment_allocation() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    );
+    config.published_port_range = 15000..=15000;
+    let backend = KrunSandboxBackend::new(config);
+    let spec = sample_spec().with_port_binding(SandboxPortBinding::tcp("explicit", 15000, 9090));
+
+    let error = backend
+        .plan_start_with_id(
+            &spec,
+            &SandboxId::new("plan-only-range-exhaustion"),
+            Some(&sample_launch_defaults()),
+            None,
+        )
+        .expect_err("the image-derived ports must not fit in the exhausted preview range");
+    assert!(
+        error.to_string().contains("published port range")
+            && error.to_string().contains("exhausted"),
+        "the original preview failure must remain primary: {error}"
+    );
+
+    let segments = backend
+        .segment_allocator
+        .inspect_segments(&spec.tenant_id)
+        .expect("segment authority should inspect")
+        .unwrap_or_default();
+    assert!(
+        segments.is_empty(),
+        "authority-free plan preview must fail before creating a segment allocation: {segments:?}"
+    );
+}
+
+#[test]
+fn successful_plan_only_previews_do_not_consume_the_node_segment_pool() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    );
+    config.node_network_supernet = "10.252.0.0/30".to_owned();
+    config.node_tenant_subnet_prefix = 30;
+    let backend = KrunSandboxBackend::new(config);
+
+    for (tenant, sandbox) in [("preview-a", "app-a"), ("preview-b", "app-b")] {
+        let spec = sample_spec_for_tenant(tenant, sandbox);
+        backend
+            .plan_start_with_id(&spec, &SandboxId::new(sandbox), None, None)
+            .expect("an authority-free preview must not exhaust the one-slot node pool");
+        assert!(
+            backend
+                .segment_allocator
+                .inspect_segments(&spec.tenant_id)
+                .expect("preview segment authority should inspect")
+                .unwrap_or_default()
+                .is_empty(),
+            "a successful preview must not create attachment-less segment authority"
+        );
+    }
+}
+
+#[test]
+fn execute_manifest_without_attachment_config_fails_before_network_effects() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+    let mut manifest = sample_manifest(
+        sample_spec_for_tenant("missing-network-authority", "app"),
+        KrunStartMode::Execute,
+    );
+    manifest.network_config = None;
+    let claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
+        .expect("missing-config test claim should mint");
+
+    let error = backend
+        .configure_network(
+            &manifest,
+            AttachmentAttachAuthority::FreshLaunch(&claim),
+            true,
+        )
+        .expect_err("missing attachment config must fail before Netavark");
+    assert!(
+        error.to_string().contains("no reserved network attachment"),
+        "the failure must name the missing attachment authority: {error}"
+    );
+    assert!(
+        !manifest.network_layout.netns_path.exists(),
+        "a manifest without attachment authority must not create a network namespace"
+    );
+}
+
+#[test]
+fn oci_image_root_plan_only_does_not_charge_manifest_only_port_previews() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let image_reference = sample_registry_image_reference();
 
@@ -893,24 +1077,30 @@ fn oci_image_root_plan_only_rejects_same_tenant_port_quota_exhaustion() {
     config.use_buildah_unshare = false;
     config.published_port_range = 15000..=15005;
     config.max_published_ports_per_tenant = Some(1);
+    let state_root = config.network_state_root.clone();
 
     let backend = KrunSandboxBackend::new(config);
 
     let mut first_spec = sparse_image_spec("first");
     first_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
-    block_on(backend.start(first_spec))
-        .expect("first image-backed service should consume the single tenant port");
+    materialize_plan_only_fixture(&backend, first_spec)
+        .expect("first image-backed service plan should render");
 
     let mut second_spec = sparse_image_spec("second");
     second_spec.root = SandboxRootSpec::oci_image_reference(image_reference);
-    let error = block_on(backend.start(second_spec))
-        .expect_err("second same-tenant image-backed service should exceed the port quota");
-
+    let second = materialize_plan_only_fixture(&backend, second_spec)
+        .expect("a manifest-only preview must not consume durable tenant quota");
     assert!(
-        error.to_string().contains("published port quota exceeded")
-            && error.to_string().contains("tenant")
-            && error.to_string().contains("limit 1"),
-        "expected tenant port quota error, got: {error}"
+        !second.published_endpoints.is_empty(),
+        "the second plan should still render its image-derived endpoint"
+    );
+    let durable = LocalPortLeaseAuthority::open(&state_root)
+        .expect("durable port authority should open")
+        .list()
+        .expect("durable port authority should list");
+    assert!(
+        durable.is_empty(),
+        "manifest-only previews must not be charged as durable tenant-published leases: {durable:?}"
     );
 }
 
@@ -929,10 +1119,10 @@ fn plan_only_backend_rejects_same_tenant_active_sandbox_quota_exhaustion() {
         .with_max_log_bytes_per_tenant(None);
     let backend = KrunSandboxBackend::new(config);
 
-    block_on(backend.start(sample_spec()))
+    materialize_plan_only_fixture(&backend, sample_spec())
         .expect("first plan-only sandbox should consume the single active slot");
 
-    let error = block_on(backend.start(sample_spec_for_tenant("tenant", "api")))
+    let error = materialize_plan_only_fixture(&backend, sample_spec_for_tenant("tenant", "api"))
         .expect_err("second same-tenant sandbox should exceed active sandbox quota");
 
     assert!(
@@ -940,48 +1130,6 @@ fn plan_only_backend_rejects_same_tenant_active_sandbox_quota_exhaustion() {
             && error.to_string().contains("tenant")
             && error.to_string().contains("limit 1"),
         "expected active sandbox quota error, got: {error}"
-    );
-}
-
-#[test]
-fn configured_stop_signal_prefers_image_metadata_and_falls_back_to_term() {
-    assert_eq!(
-        configured_stop_signal(
-            sample_image_metadata()
-                .with_stop_signal("SIGQUIT")
-                .stop_signal
-                .as_deref()
-        ),
-        "SIGQUIT"
-    );
-    assert_eq!(
-        configured_stop_signal(
-            sample_image_metadata()
-                .with_stop_signal("  ")
-                .stop_signal
-                .as_deref()
-        ),
-        "TERM"
-    );
-    assert_eq!(configured_stop_signal(None), "TERM");
-}
-
-#[test]
-fn configured_stop_timeout_prefers_sandbox_lifecycle_and_falls_back_to_backend_default() {
-    let backend_default = KrunSandboxBackendConfig {
-        stop_timeout: Duration::from_secs(5),
-        ..KrunSandboxBackendConfig::default()
-    };
-    assert_eq!(
-        configured_stop_timeout(
-            &sample_spec().with_stop_timeout(Duration::from_secs(30)),
-            backend_default.stop_timeout,
-        ),
-        Duration::from_secs(30)
-    );
-    assert_eq!(
-        configured_stop_timeout(&sample_spec(), backend_default.stop_timeout),
-        Duration::from_secs(5)
     );
 }
 
@@ -1025,12 +1173,12 @@ fn readiness_probe_target_prefers_http_endpoints() {
     )
     .with_port_bindings([
         SandboxPortBinding::tcp("postgres", 15432, 5432),
-        SandboxPortBinding::new("http", PublishedEndpointProtocol::Http, 18080, 8080),
+        SandboxPortBinding::new("http", EndpointProtocol::Http, 18080, 8080),
     ]);
     let manifest = sample_manifest(spec, KrunStartMode::Execute);
 
     assert_eq!(
-        readiness_probe_target(&manifest),
+        readiness_probe_target(&published_endpoints(&manifest.spec)),
         Some(ReadinessProbeTarget::Http(SocketAddr::from((
             [127, 0, 0, 1],
             18080
@@ -1039,35 +1187,65 @@ fn readiness_probe_target_prefers_http_endpoints() {
 }
 
 #[test]
-fn probe_target_ready_succeeds_for_http_listener() {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
-    let address = listener
-        .local_addr()
-        .expect("listener should report local addr");
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("listener should accept");
-        let mut request = [0_u8; 256];
-        let _ = stream.read(&mut request);
-        stream
-            .write_all(b"HTTP/1.0 204 No Content\r\nContent-Length: 0\r\n\r\n")
-            .expect("server should write response");
+fn running_status_passes_the_exact_http_target_and_image_timeout_to_the_provider() {
+    let spec = SandboxSpec::new(
+        TenantId::new("tenant").expect("tenant id should be valid"),
+        SandboxOwnerSpec::service("http-service"),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
+        SandboxProcessSpec::new(["/bin/service"]),
+    )
+    .with_port_binding(SandboxPortBinding::new(
+        "http",
+        EndpointProtocol::Http,
+        18_080,
+        8080,
+    ));
+    let mut manifest = sample_manifest(spec, KrunStartMode::Execute);
+    manifest.image_metadata.healthcheck = Some(ImageHealthcheck {
+        test: Vec::new(),
+        interval: None,
+        timeout: Some(37_000_000),
+        start_period: None,
+        retries: None,
     });
+    let provider = FixedReadinessProbeProvider::ready();
 
-    assert!(
-        probe_target_ready(ReadinessProbeTarget::Http(address), Duration::from_secs(1)),
-        "expected HTTP readiness probe to pass against local listener"
+    assert_eq!(running_status(&manifest, &provider), SandboxStatus::Ready);
+    assert_eq!(
+        provider.calls(),
+        vec![(
+            ReadinessProbeTarget::Http(SocketAddr::from(([127, 0, 0, 1], 18_080))),
+            Duration::from_millis(37),
+        )]
     );
-    server.join().expect("server thread should join");
+}
+
+#[test]
+fn krun_composition_accepts_a_deterministic_readiness_provider() {
+    let temp = TempDir::new().expect("temporary root should create");
+    let fixed = std::sync::Arc::new(FixedReadinessProbeProvider::ready());
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp.path().join("bundles"),
+        temp.path().join("state"),
+    ))
+    .with_readiness_probe_provider(fixed.clone());
+    let target = ReadinessProbeTarget::Tcp(
+        "127.0.0.1:18080"
+            .parse::<SocketAddr>()
+            .expect("target should parse"),
+    );
+    let timeout = Duration::from_millis(41);
+
+    assert_eq!(
+        backend.readiness_probe_provider.probe(target, timeout),
+        ReadinessProbeObservation::Ready
+    );
+    assert_eq!(fixed.calls(), vec![(target, timeout)]);
 }
 
 #[test]
 fn running_status_stays_starting_until_probe_passes() {
-    let unused_listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
-    let address = unused_listener
-        .local_addr()
-        .expect("listener should report local addr");
-    drop(unused_listener);
-
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
         SandboxOwnerSpec::service("tcp-service"),
@@ -1075,20 +1253,18 @@ fn running_status_stays_starting_until_probe_passes() {
         SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
         SandboxProcessSpec::new(["/bin/service"]),
     )
-    .with_port_binding(SandboxPortBinding::tcp("tcp", address.port(), 8080));
+    .with_port_binding(SandboxPortBinding::tcp("tcp", 18_080, 8080));
     let manifest = sample_manifest(spec, KrunStartMode::Execute);
+    let provider = FixedReadinessProbeProvider::not_ready("connection refused");
 
-    assert_eq!(running_status(&manifest), SandboxStatus::Starting);
+    assert_eq!(
+        running_status(&manifest, &provider),
+        SandboxStatus::Starting
+    );
 }
 
 #[test]
 fn running_status_degrades_ready_sandboxes_to_not_ready_on_probe_failure() {
-    let unused_listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
-    let address = unused_listener
-        .local_addr()
-        .expect("listener should report local addr");
-    drop(unused_listener);
-
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
         SandboxOwnerSpec::service("http-service"),
@@ -1098,8 +1274,8 @@ fn running_status_degrades_ready_sandboxes_to_not_ready_on_probe_failure() {
     )
     .with_port_binding(SandboxPortBinding::new(
         "http",
-        PublishedEndpointProtocol::Http,
-        address.port(),
+        EndpointProtocol::Http,
+        18_080,
         8080,
     ));
     let mut manifest = sample_manifest(spec, KrunStartMode::Execute);
@@ -1107,25 +1283,16 @@ fn running_status_degrades_ready_sandboxes_to_not_ready_on_probe_failure() {
     manifest.handle.status = SandboxStatus::Ready;
     manifest.handle.published_endpoints =
         visible_published_endpoints(KrunStartMode::Execute, &manifest.spec, SandboxStatus::Ready);
+    let provider = FixedReadinessProbeProvider::unknown("inspection unavailable");
 
-    assert_eq!(running_status(&manifest), SandboxStatus::NotReady);
+    assert_eq!(
+        running_status(&manifest, &provider),
+        SandboxStatus::NotReady
+    );
 }
 
 #[test]
 fn running_status_recovers_not_ready_sandboxes_when_probe_returns() {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
-    let address = listener
-        .local_addr()
-        .expect("listener should report local addr");
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("listener should accept");
-        let mut request = [0_u8; 256];
-        let _ = stream.read(&mut request);
-        stream
-            .write_all(b"HTTP/1.0 204 No Content\r\nContent-Length: 0\r\n\r\n")
-            .expect("server should write response");
-    });
-
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
         SandboxOwnerSpec::service("http-service"),
@@ -1135,16 +1302,16 @@ fn running_status_recovers_not_ready_sandboxes_when_probe_returns() {
     )
     .with_port_binding(SandboxPortBinding::new(
         "http",
-        PublishedEndpointProtocol::Http,
-        address.port(),
+        EndpointProtocol::Http,
+        18_080,
         8080,
     ));
     let mut manifest = sample_manifest(spec, KrunStartMode::Execute);
     manifest.status = SandboxStatus::NotReady;
     manifest.handle.status = SandboxStatus::NotReady;
+    let provider = FixedReadinessProbeProvider::new(ReadinessProbeObservation::Ready);
 
-    assert_eq!(running_status(&manifest), SandboxStatus::Ready);
-    server.join().expect("server thread should join");
+    assert_eq!(running_status(&manifest, &provider), SandboxStatus::Ready);
 }
 
 #[test]
@@ -1159,7 +1326,11 @@ fn detect_runtime_status_marks_stale_pidfiles_as_failed() {
         .expect("plan should lower")
         .manifest;
     let state_stub = temp_dir.path().join("krun-state");
-    fs::write(&state_stub, "#!/bin/sh\nexit 1\n").expect("state stub should write");
+    fs::write(
+        &state_stub,
+        "#!/bin/sh\nprintf '%s\\n' 'container `db-01` does not exist: open `/run/crun/db-01/status`: No such file or directory' >&2\nexit 1\n",
+    )
+    .expect("state stub should write");
     let mut permissions = fs::metadata(&state_stub)
         .expect("state stub metadata should resolve")
         .permissions();
@@ -1202,137 +1373,6 @@ fn visible_published_endpoints_hide_execute_mode_endpoints_until_ready() {
 }
 
 #[test]
-fn restart_policy_allows_expected_restart_shapes() {
-    assert!(
-        !restart_policy_allows_restart(SandboxRestartPolicy::Never, 42, 0),
-        "never policy should not restart"
-    );
-    assert!(
-        restart_policy_allows_restart(SandboxRestartPolicy::OnFailure { max_restarts: 1 }, 42, 0),
-        "on-failure should restart non-zero exits within budget"
-    );
-    assert!(
-        !restart_policy_allows_restart(SandboxRestartPolicy::OnFailure { max_restarts: 1 }, 0, 0),
-        "on-failure should not restart clean exits"
-    );
-    assert!(
-        !restart_policy_allows_restart(SandboxRestartPolicy::Always { max_restarts: 1 }, 42, 1),
-        "restart budget should cap repeated restarts"
-    );
-}
-
-#[test]
-fn restart_backoff_delay_grows_and_caps() {
-    assert_eq!(restart_backoff_delay(0), Duration::from_secs(1));
-    assert_eq!(restart_backoff_delay(1), Duration::from_secs(2));
-    assert_eq!(restart_backoff_delay(2), Duration::from_secs(4));
-    assert_eq!(restart_backoff_delay(6), Duration::from_secs(60));
-    assert_eq!(restart_backoff_delay(12), Duration::from_secs(60));
-}
-
-#[test]
-fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() {
-    let manifest: KrunSandboxManifest = serde_json::from_value(json!({
-        "handle": {
-            "tenant_id": "tenant",
-            "id": "sandbox-01",
-            "name": "legacy",
-            "backend": "krun",
-            "status": "starting",
-            "published_endpoints": [],
-        },
-        "spec": {
-            "tenant_id": "tenant",
-            "owner": {
-                "kind": "standalone",
-                "display_name": "legacy",
-            },
-            "backend": "krun",
-            "root": {
-                "kind": "rootfs",
-                "rootfs": "/srv/rootfs",
-                "readonly": false,
-            },
-            "process": {
-                "args": ["/bin/service"],
-                "env": ["PATH=/usr/bin"],
-                "cwd": "/",
-                "terminal": false,
-            },
-            "resources": {
-                "cpu_count": null,
-                "memory_limit_bytes": null,
-            },
-            "port_bindings": [],
-        },
-        "image_metadata": {},
-        "launch_artifact": null,
-        "bundle_layout": {
-            "bundle_dir": "/tmp/bundle",
-            "config_path": "/tmp/bundle/config.json",
-        },
-        "conmon_layout": {
-            "state_root": "/tmp/state",
-            "container_state_dir": "/tmp/state/containers/sandbox-01",
-            "exit_dir": "/tmp/state/exits",
-            "persist_dir": "/tmp/state/persist/sandbox-01",
-            "ctr_log": "/tmp/state/containers/sandbox-01/ctr.log",
-            "oci_log": "/tmp/state/containers/sandbox-01/oci.log",
-            "pidfile": "/tmp/state/containers/sandbox-01/pidfile",
-            "conmon_pidfile": "/tmp/state/containers/sandbox-01/conmon.pid",
-            "exit_status_file": "/tmp/state/exits/sandbox-01",
-            "manifest_path": "/tmp/state/containers/sandbox-01/manifest.json",
-        },
-        "network_layout": {
-            "network_root": "/tmp/state/tenants/tenant/networks",
-            "run_root": "/tmp/state/tenants/tenant/networks/run",
-            "netns_root": "/tmp/state/tenants/tenant/networks/netns",
-            "container_network_dir": "/tmp/state/tenants/tenant/networks/containers/sandbox-01",
-            "netns_path": "/tmp/state/tenants/tenant/networks/netns/sandbox-01",
-            "status_path": "/tmp/state/tenants/tenant/networks/containers/sandbox-01/status.json",
-            "ipam_state_path": "/tmp/state/tenants/tenant/networks/run/ipam-state.json",
-            "ipam_lock_path": "/tmp/state/tenants/tenant/networks/run/ipam.lock",
-        },
-        "egress_proxy": null,
-        "conmon_launch": {
-            "create_command": {
-                "program": "/usr/bin/conmon",
-                "args": [],
-            },
-            "state_command": {
-                "program": "/usr/libexec/nimbus/crun",
-                "args": ["state", "sandbox-01"],
-            },
-            "start_command": {
-                "program": "/usr/libexec/nimbus/crun",
-                "args": ["start", "sandbox-01"],
-            },
-        },
-        "last_exit_code": null,
-        "start_mode": "execute",
-        "shutdown_requested": false,
-        "status": "starting",
-    }))
-    .expect("manifest should deserialize with restart defaults");
-
-    assert_eq!(manifest.restart_count, 0);
-    assert_eq!(
-        manifest.spec.lifecycle.restart_policy,
-        SandboxRestartPolicy::Never
-    );
-    assert_eq!(manifest.spec.lifecycle.stop_timeout, None);
-    assert!(
-        manifest
-            .conmon_launch
-            .delete_command
-            .program
-            .as_os_str()
-            .is_empty(),
-        "legacy manifests should default the delete command instead of failing to deserialize"
-    );
-}
-
-#[test]
 fn desired_krun_vm_config_requires_memory_when_cpu_count_is_requested() {
     let error = desired_krun_vm_config(
         &sample_spec().with_resource_limits(SandboxResourceLimits::default().with_cpu_count(2)),
@@ -1344,235 +1384,5 @@ fn desired_krun_vm_config_requires_memory_when_cpu_count_is_requested() {
             .to_string()
             .contains("cpu_count requires memory_limit_bytes"),
         "expected actionable validation error, got: {error}"
-    );
-}
-
-#[test]
-fn launch_network_config_denies_direct_bridge_egress() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
-        temp_dir.path().to_path_buf(),
-    ));
-
-    let tenant = nimbus_core::TenantId::new("deny-tenant").expect("tenant should parse");
-    assert_eq!(
-        backend
-            .network_config(&tenant)
-            .expect("network config should resolve")
-            .direct_egress,
-        crate::backends::oci::network::OciNetworkDirectEgress::Deny,
-        "krun VMMs must run inside a deny-by-default bridge with no ambient egress route"
-    );
-}
-
-#[test]
-fn execute_egress_proxy_binds_bridge_gateway_after_published_ports() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
-    config.published_port_range = 15000..=15002;
-    let backend = KrunSandboxBackend::new(config);
-
-    let spec = sample_spec().with_port_binding(SandboxPortBinding::tcp("extra", 15000, 8080));
-    let network_config = backend
-        .network_config(&spec.tenant_id)
-        .expect("primary network config resolves");
-    let proxy = backend
-        .allocate_egress_proxy(&network_config, &spec)
-        .expect("execute launches should assign a bridge-reachable egress proxy");
-
-    assert_eq!(
-        proxy
-            .bind_addr()
-            .expect("egress proxy bind address should resolve"),
-        "10.0.0.1:15001"
-            .parse()
-            .expect("bridge gateway socket address should parse"),
-        "the egress PEP must bind on the bridge gateway and skip already-published host ports"
-    );
-}
-
-#[test]
-fn execute_plan_injects_proxy_env_and_workload_scoped_trust_anchor() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
-    config.published_port_range = 15000..=15002;
-    let backend = KrunSandboxBackend::new(config);
-    let sandbox_id = SandboxId::new("db-01");
-
-    let plan = backend
-        .plan_start_with_id(&sample_spec(), &sandbox_id, None, None)
-        .expect("execute krun plan should lower");
-
-    let egress_proxy = plan
-        .manifest
-        .egress_proxy
-        .as_ref()
-        .expect("execute krun plan should assign an egress proxy");
-    assert_eq!(egress_proxy.host, "10.0.0.1");
-    assert_eq!(egress_proxy.port, 15000);
-    let config: serde_json::Value = serde_json::from_slice(
-        &fs::read(&plan.manifest.bundle_layout.config_path).expect("bundle config should read"),
-    )
-    .expect("bundle config should parse");
-    let env = env_from_config(&config);
-    for expected in [
-        format!("{EGRESS_PROXY_URL_ENV}=http://10.0.0.1:15000"),
-        "HTTP_PROXY=http://10.0.0.1:15000".to_owned(),
-        "HTTPS_PROXY=http://10.0.0.1:15000".to_owned(),
-        "NO_PROXY=".to_owned(),
-        format!("{EGRESS_CA_BUNDLE_ENV}=/run/nimbus/egress/ca.pem"),
-        format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}=/run/nimbus/egress/ca.pem"),
-    ] {
-        assert!(
-            env.contains(&expected.as_str()),
-            "execute krun bundle should carry proxy and trust env {expected:?}: {env:?}"
-        );
-    }
-
-    let trust_anchor_path = temp_dir
-        .path()
-        .join("state")
-        .join("egress-trust-anchors")
-        .join("tenant")
-        .join("db-01.pem");
-    assert!(
-        trust_anchor_path.is_file(),
-        "execute krun planning must materialize the deterministic trust-anchor mount source"
-    );
-    assert!(
-        fs::read_to_string(&trust_anchor_path)
-            .expect("trust-anchor placeholder should read")
-            .contains("placeholder"),
-        "the planner writes a placeholder that the live PEP overwrites before launch"
-    );
-    let mounts = config["mounts"]
-        .as_array()
-        .expect("mounts should be an array");
-    let trust_mount = mounts
-        .iter()
-        .find(|mount| mount["destination"] == "/run/nimbus/egress/ca.pem")
-        .expect("execute krun bundle should mount the trust anchor");
-    assert_eq!(trust_mount["type"], "bind");
-    assert_eq!(
-        trust_mount["source"].as_str(),
-        Some(trust_anchor_path.to_string_lossy().as_ref())
-    );
-}
-
-#[test]
-fn plan_scopes_network_namespace_path_by_tenant() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
-        temp_dir.path().join("bundles"),
-        temp_dir.path().join("state"),
-    ));
-
-    let tenant_a_plan = backend
-        .plan_start_with_id(
-            &sample_spec_for_tenant("tenant-a", "db"),
-            &SandboxId::new("db-a"),
-            None,
-            None,
-        )
-        .expect("tenant-a plan should lower");
-    let tenant_b_plan = backend
-        .plan_start_with_id(
-            &sample_spec_for_tenant("tenant-b", "db"),
-            &SandboxId::new("db-b"),
-            None,
-            None,
-        )
-        .expect("tenant-b plan should lower");
-
-    assert!(
-        tenant_a_plan
-            .manifest
-            .network_layout
-            .netns_path
-            .starts_with(
-                temp_dir
-                    .path()
-                    .join("state")
-                    .join("tenants")
-                    .join("tenant-a")
-            ),
-        "the sandbox netns must be rooted under the owning tenant"
-    );
-    assert_ne!(
-        tenant_a_plan.manifest.network_layout.netns_path,
-        tenant_b_plan.manifest.network_layout.netns_path,
-        "the same service name in different tenants must not share a network namespace"
-    );
-    assert!(
-        tenant_a_plan.manifest.egress_proxy.is_none(),
-        "plan-only launches must not claim a live egress proxy"
-    );
-}
-
-#[test]
-fn plan_writes_bundle_joining_the_planned_network_namespace() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
-        temp_dir.path().join("bundles"),
-        temp_dir.path().join("state"),
-    ));
-
-    let plan = backend
-        .plan_start_with_id(&sample_spec(), &SandboxId::new("db-01"), None, None)
-        .expect("plan-only launch should lower");
-
-    let config: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&plan.manifest.bundle_layout.config_path)
-            .expect("bundle config should be readable"),
-    )
-    .expect("bundle config should parse");
-    let env = env_from_config(&config);
-    assert!(
-        env.iter().all(|entry| {
-            !entry.starts_with("HTTP_PROXY=")
-                && !entry.starts_with(&format!("{EGRESS_CA_BUNDLE_ENV}="))
-                && !entry.starts_with(&format!("{EGRESS_NODE_EXTRA_CA_CERTS_ENV}="))
-        }),
-        "plan-only krun bundles must not inject live proxy or trust env: {env:?}"
-    );
-    let namespaces = config["linux"]["namespaces"]
-        .as_array()
-        .expect("linux.namespaces should be an array");
-    let network_namespace = namespaces
-        .iter()
-        .find(|namespace| namespace["type"] == "network")
-        .expect("krun bundle must carry the deny-by-default network namespace");
-
-    assert_eq!(
-        network_namespace["path"],
-        plan.manifest
-            .network_layout
-            .netns_path
-            .to_string_lossy()
-            .as_ref(),
-        "the bundle network namespace entry must point at the planned tenant-scoped netns"
-    );
-}
-
-/// KME5 hardening: the krun microVM network must be resolver-free. The
-/// deny-by-default guest resolves names through the host PEP (`HTTP_PROXY`),
-/// so the backend's `network_config` turns `enable_dns` off, which stops
-/// netavark from binding an in-subnet aardvark-dns stub on the bridge gateway
-/// `:53` — closing the residual DNS-exfil channel and removing the
-/// `10.89.0.1:53` collision between two krun sandboxes.
-#[test]
-fn krun_network_config_disables_bridge_dns_resolver() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
-        temp_dir.path().to_path_buf(),
-    ));
-
-    let tenant = nimbus_core::TenantId::new("dns-tenant").expect("tenant should parse");
-    assert!(
-        !backend
-            .network_config(&tenant)
-            .expect("network config should resolve")
-            .enable_dns,
-        "the krun backend must disable the bridge DNS resolver stub (enable_dns=false)"
     );
 }

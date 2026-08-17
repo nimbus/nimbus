@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use nimbus::Error;
+use nimbus_machine::{MachineBootAuthorityEvidence, MachineForwarderAuthority};
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
@@ -24,37 +25,41 @@ use super::{MachineConfigRecord, MachinePaths, MachineVolume};
 #[cfg(any(unix, test))]
 pub(super) const GUEST_MACHINE_CONFIG_MOUNT_TAG: &str = "nimbus-machine-config";
 const CURRENT_GUEST_MACHINE_CONFIG_VERSION: u32 = 1;
-const GUEST_MACHINE_CONFIG_EVIDENCE_PATH: &str =
-    "/var/lib/nimbus/control/machine-config-applied.json";
-const GUEST_NIMBUS_CONTROL_DIR: &str = "/var/lib/nimbus/control";
+const GUEST_MACHINE_CONFIG_EVIDENCE_PATH: &str = "/var/lib/nimbus/machine-config-applied.json";
+const GUEST_MACHINE_API_AUTHORITY_PATH: &str = "/var/lib/nimbus/machine-api-authority.json";
 const GUEST_NIMBUS_DATA_DIR: &str = "/var/lib/nimbus/data";
 const GUEST_NIMBUS_RUN_DIR: &str = "/run/nimbus";
 #[cfg(any(unix, test))]
 const VIRTIOFS_SELINUX_CONTEXT: &str = "system_u:object_r:nfs_t:s0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MachineConfigBundle {
     version: u32,
     machine_id: String,
     hostname: String,
     ssh_user: String,
     api_socket: String,
+    forwarder_authority: MachineForwarderAuthority,
     ready_signal: ReadySignalConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ReadySignalConfig {
     kind: String,
     port: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VolumeConfigBundle {
     version: u32,
     volumes: Vec<VolumeConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VolumeConfig {
     source: PathBuf,
     target: PathBuf,
@@ -106,6 +111,7 @@ pub(super) fn render_machine_config_bundle(
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     ready_vsock_port: u32,
+    forwarder_authority: &MachineForwarderAuthority,
 ) -> Result<PathBuf, Error> {
     let identity_path = config.guest.ssh_identity_path.as_ref().ok_or_else(|| {
         Error::InvalidInput(format!(
@@ -141,6 +147,7 @@ pub(super) fn render_machine_config_bundle(
         hostname: format!("nimbus-{}", config.name),
         ssh_user: config.guest.ssh_user.clone(),
         api_socket: "/run/nimbus/nimbus.sock".to_owned(),
+        forwarder_authority: forwarder_authority.clone(),
         ready_signal: ReadySignalConfig {
             kind: "vsock".to_owned(),
             port: ready_vsock_port,
@@ -185,6 +192,21 @@ fn apply_machine_guest_config_with_options(
     let authorized_keys_sha256 = file_sha256(&config_dir.join("authorized_keys"))?;
 
     ensure_base_directories(&options.root)?;
+    let boot_authority = MachineBootAuthorityEvidence::new(
+        bundle.machine_id.clone(),
+        bundle.forwarder_authority.clone(),
+    )
+    .map_err(|error| {
+        Error::InvalidInput(format!(
+            "machine config contains invalid parent-issued forwarder authority: {error}"
+        ))
+    })?;
+    write_guest_json(
+        &options.root,
+        Path::new(GUEST_MACHINE_API_AUTHORITY_PATH),
+        &boot_authority,
+        0o600,
+    )?;
     write_guest_text(
         &options.root,
         Path::new("/etc/hostname"),
@@ -368,11 +390,7 @@ fn read_authorized_keys(config_dir: &Path) -> Result<String, Error> {
 }
 
 fn ensure_base_directories(root: &Path) -> Result<(), Error> {
-    for path in [
-        GUEST_NIMBUS_CONTROL_DIR,
-        GUEST_NIMBUS_DATA_DIR,
-        GUEST_NIMBUS_RUN_DIR,
-    ] {
+    for path in [GUEST_NIMBUS_DATA_DIR, GUEST_NIMBUS_RUN_DIR] {
         create_guest_dir(root, Path::new(path), 0o755)?;
     }
     Ok(())
@@ -838,7 +856,25 @@ mod tests {
                 temp_dir.path().join("state"),
                 temp_dir.path().join("runtime"),
             ),
+            network_authority: nimbus_machine::MachineNetworkAuthorityRecord::new(
+                temp_dir.path().join("network-authority"),
+                nimbus_network::NetworkProviderHandle::new(
+                    nimbus_network::NetworkProviderId::for_registration_key(
+                        "guest-config-test-gvproxy",
+                    ),
+                    "guest-config-test-machine",
+                )
+                .expect("test provider handle should validate"),
+            )
+            .expect("test network authority should validate"),
         }
+    }
+
+    fn forwarder_authority(config: &MachineConfigRecord) -> MachineForwarderAuthority {
+        MachineForwarderAuthority::new(
+            config.network_authority.provider_instance().clone(),
+            nimbus_network::NetworkResourceGeneration::new(1),
+        )
     }
 
     #[test]
@@ -846,8 +882,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let config = sample_config(&temp_dir);
         let paths = config.roots.paths("default");
+        let authority = forwarder_authority(&config);
 
-        render_machine_config_bundle(&paths, &config, 1025).expect("bundle should render");
+        render_machine_config_bundle(&paths, &config, 1025, &authority)
+            .expect("bundle should render");
 
         let machine: serde_json::Value = serde_json::from_slice(
             &fs::read(paths.guest_config_bundle_dir.join("machine.json"))
@@ -859,6 +897,10 @@ mod tests {
         assert_eq!(machine["ssh_user"], DEFAULT_BOOTC_MACHINE_SSH_USER);
         assert_eq!(machine["ready_signal"]["kind"], "vsock");
         assert_eq!(machine["ready_signal"]["port"], 1025);
+        assert_eq!(
+            machine["forwarder_authority"],
+            serde_json::to_value(&authority).expect("authority should serialize")
+        );
         assert_eq!(
             fs::read_to_string(paths.guest_config_bundle_dir.join("authorized_keys"))
                 .expect("authorized_keys should read")
@@ -888,6 +930,8 @@ mod tests {
     #[test]
     fn guest_apply_rejects_unsupported_version() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
+        let config = sample_config(&temp_dir);
+        let authority = forwarder_authority(&config);
         write_json_file(
             &temp_dir.path().join("machine.json"),
             &json!({
@@ -896,6 +940,7 @@ mod tests {
                 "hostname": "nimbus-default",
                 "ssh_user": "nimbus",
                 "api_socket": "/run/nimbus/nimbus.sock",
+                "forwarder_authority": authority,
                 "ready_signal": {"kind": "vsock", "port": 1025}
             }),
         )
@@ -919,8 +964,9 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let config = sample_config(&temp_dir);
         let paths = config.roots.paths("default");
-        let config_dir =
-            render_machine_config_bundle(&paths, &config, 1025).expect("bundle should render");
+        let authority = forwarder_authority(&config);
+        let config_dir = render_machine_config_bundle(&paths, &config, 1025, &authority)
+            .expect("bundle should render");
         let root = temp_dir.path().join("guest-root");
         fs::create_dir_all(root.join("etc")).expect("etc should exist");
         fs::write(
@@ -950,12 +996,23 @@ mod tests {
                 .contains("Type=virtiofs")
         );
         let evidence: serde_json::Value = serde_json::from_slice(
-            &fs::read(root.join("var/lib/nimbus/control/machine-config-applied.json"))
+            &fs::read(root.join("var/lib/nimbus/machine-config-applied.json"))
                 .expect("evidence should read"),
         )
         .expect("evidence should parse");
         assert_eq!(evidence["machine_id"], "default");
         assert_eq!(evidence["volume_count"], 1);
+        let boot_authority: MachineBootAuthorityEvidence = serde_json::from_slice(
+            &fs::read(root.join("var/lib/nimbus/machine-api-authority.json"))
+                .expect("boot authority should read"),
+        )
+        .expect("boot authority should parse");
+        assert_eq!(boot_authority.machine_id(), "default");
+        assert_eq!(boot_authority.forwarder_authority(), &authority);
+        assert!(
+            !root.join("var/lib/nimbus/control").exists(),
+            "guest config application must not pre-create the network authority root"
+        );
     }
 
     #[test]

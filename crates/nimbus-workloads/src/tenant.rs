@@ -4,8 +4,10 @@ use nimbus_tenant::{
     TenantQuotaPolicyDecision, TenantServiceAccessDecision, TenantStorageAccessDecision,
     WorkloadIdentity,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::{WorkloadExecutionId, WorkloadGeneration};
 
 mod credential_projection;
 
@@ -14,12 +16,13 @@ pub use credential_projection::{
     TenantCredentialProjectionRequest, TenantCredentialProjectionScope,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct NodeIdentity(String);
 
 impl NodeIdentity {
     pub fn new(value: impl Into<String>) -> Result<Self> {
-        Ok(Self(non_empty(value, "node identity")?))
+        value.into().try_into()
     }
 
     pub fn as_str(&self) -> &str {
@@ -27,20 +30,22 @@ impl NodeIdentity {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-pub struct TenantWorkloadGeneration(u64);
+impl TryFrom<String> for NodeIdentity {
+    type Error = Error;
 
-impl TenantWorkloadGeneration {
-    pub fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub fn as_u64(self) -> u64 {
-        self.0
+    fn try_from(value: String) -> Result<Self> {
+        Ok(Self(non_empty(value, "node identity")?))
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+impl From<NodeIdentity> for String {
+    fn from(value: NodeIdentity) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct TenantWorkloadUid(String);
 
 impl TenantWorkloadUid {
@@ -58,6 +63,42 @@ impl TenantWorkloadUid {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+impl TryFrom<String> for TenantWorkloadUid {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        validate_digest_id(&value, "twu", "tenant workload uid")?;
+        Ok(Self(value))
+    }
+}
+
+impl From<TenantWorkloadUid> for String {
+    fn from(value: TenantWorkloadUid) -> Self {
+        value.0
+    }
+}
+
+fn validate_digest_id(value: &str, prefix: &str, label: &str) -> Result<()> {
+    let Some(digest) = value
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_prefix('_'))
+    else {
+        return Err(Error::InvalidInput(format!(
+            "{label} must use the `{prefix}_<sha256>` form"
+        )));
+    };
+    if digest.len() != 64
+        || digest
+            .bytes()
+            .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+    {
+        return Err(Error::InvalidInput(format!(
+            "{label} must contain 64 lowercase hexadecimal digest characters"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,7 +167,7 @@ pub struct TenantWorkloadSpec {
     authority_class: String,
     workload_identity: WorkloadIdentity,
     workload_uid: TenantWorkloadUid,
-    generation: TenantWorkloadGeneration,
+    generation: WorkloadGeneration,
     assigned_node_id: Option<NodeIdentity>,
     runtime_invocation_id: Option<String>,
     storage_projection: TenantStorageProjection,
@@ -143,7 +184,7 @@ impl TenantWorkloadSpec {
         let workload_uid =
             TenantWorkloadUid::for_admitted_identity(&workload_identity, decision.id());
         let generation =
-            TenantWorkloadGeneration::new(workload_identity.deployment_generation().unwrap_or(0));
+            WorkloadGeneration::new(workload_identity.deployment_generation().unwrap_or(0));
         let assigned_node_id = workload_identity
             .node_id()
             .map(NodeIdentity::new)
@@ -211,8 +252,22 @@ impl TenantWorkloadSpec {
         &self.workload_identity
     }
 
-    pub fn generation(&self) -> TenantWorkloadGeneration {
+    pub fn generation(&self) -> WorkloadGeneration {
         self.generation
+    }
+
+    pub fn execution_id(&self) -> Result<WorkloadExecutionId> {
+        let Some(node_identity) = &self.assigned_node_id else {
+            return Err(Error::PermissionDenied(format!(
+                "workload execution identity requires an admitted node assignment for workload {}",
+                self.workload_uid.as_str()
+            )));
+        };
+        Ok(WorkloadExecutionId::for_execution(
+            &self.workload_uid,
+            node_identity,
+            self.generation,
+        ))
     }
 
     pub fn assigned_node_id(&self) -> Option<&NodeIdentity> {
@@ -260,7 +315,7 @@ impl TenantWorkloadSpec {
     pub fn ensure_request_identity(
         &self,
         workload_uid: &TenantWorkloadUid,
-        generation: TenantWorkloadGeneration,
+        generation: WorkloadGeneration,
         decision_id: &TenantIsolationDecisionId,
         context: &str,
     ) -> Result<()> {
@@ -387,7 +442,7 @@ impl TenantFinalizerRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantEgressReloadRequest {
     workload_uid: TenantWorkloadUid,
-    generation: TenantWorkloadGeneration,
+    generation: WorkloadGeneration,
     decision_id: TenantIsolationDecisionId,
 }
 
@@ -454,7 +509,7 @@ pub struct TenantSystemEvidenceProjection {
     authority_class: String,
     workload_uid: TenantWorkloadUid,
     workload_subject: String,
-    generation: TenantWorkloadGeneration,
+    generation: WorkloadGeneration,
     redacted_fields: Vec<String>,
 }
 
@@ -483,7 +538,7 @@ impl TenantSystemEvidenceProjection {
         &self.workload_subject
     }
 
-    pub fn generation(&self) -> TenantWorkloadGeneration {
+    pub fn generation(&self) -> WorkloadGeneration {
         self.generation
     }
 
@@ -520,6 +575,23 @@ pub(crate) mod test_support {
             .expect("decision should admit")
     }
 
+    pub(crate) fn admitted_decision_without_node(
+        workload_name: &str,
+        generation: u64,
+    ) -> TenantIsolationDecision {
+        let tenant_id = TenantId::new("tenant-a").expect("tenant id should parse");
+        let context = TenantIsolationContext::operator(tenant_id, "workloads.test")
+            .with_deployment_generation(generation)
+            .with_workload_location(WorkloadLocation::new());
+        let input = TenantIsolationPolicyInput::new(WorkloadAttributes::service(workload_name))
+            .with_services(TenantServiceGrantPolicyDecision::new(["db", "cache"]))
+            .with_storage(TenantStoragePolicyDecision::namespace("tenant-a-storage"));
+
+        context
+            .admit_decision(input)
+            .expect("decision without a node should admit")
+    }
+
     pub(crate) fn binding_with_credentials() -> LocalEnforcementBinding {
         let decision = admitted_decision("messages:send", 7);
         let spec = TenantWorkloadSpec::from_decision(&decision)
@@ -542,7 +614,10 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{admitted_decision, assert_error_contains, binding_with_credentials};
+    use super::test_support::{
+        admitted_decision, admitted_decision_without_node, assert_error_contains,
+        binding_with_credentials,
+    };
     use super::*;
 
     #[test]
@@ -566,6 +641,16 @@ mod tests {
         assert!(
             spec.workload_uid().as_str().starts_with("twu_"),
             "workload UID should be derived, not caller supplied"
+        );
+        assert_eq!(
+            spec.execution_id()
+                .expect("assigned workload should have an execution id"),
+            WorkloadExecutionId::for_execution(
+                spec.workload_uid(),
+                spec.assigned_node_id()
+                    .expect("node assignment should be present"),
+                spec.generation(),
+            )
         );
         assert_eq!(
             binding.storage_access().namespace_name(),
@@ -608,6 +693,15 @@ mod tests {
                 .contains(&"raw_credentials".to_string()),
             "system evidence projection should preserve redaction metadata"
         );
+    }
+
+    #[test]
+    fn execution_id_requires_an_admitted_node_assignment() {
+        let decision = admitted_decision_without_node("messages:send", 7);
+        let spec = TenantWorkloadSpec::from_decision(&decision)
+            .expect("spec without a node should materialize");
+
+        assert_error_contains(spec.execution_id(), "requires an admitted node assignment");
     }
 
     #[test]

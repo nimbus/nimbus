@@ -531,12 +531,8 @@ pub(super) struct MachineGuestConfigApplyCommand {
 #[derive(Debug, Args)]
 pub(super) struct MachineApiCommand {
     /// Direct unix socket path to bind for the guest machine API.
-    #[arg(long, conflicts_with = "socket_activation")]
-    pub(super) socket_path: Option<PathBuf>,
-
-    /// Inherit the listening unix socket from systemd socket activation.
-    #[arg(long, conflicts_with = "socket_path")]
-    pub(super) socket_activation: bool,
+    #[arg(long, default_value = "/run/nimbus/nimbus.sock")]
+    pub(super) socket_path: PathBuf,
 
     /// Optional override for the persisted control-plane directory root.
     #[arg(long)]

@@ -29,6 +29,7 @@ postgres = ["nimbus-engine/postgres"]
 nimbus-core = { path = "../nimbus-core" }
 nimbus-engine = { path = "../nimbus-engine", default-features = false }
 nimbus-machine = { path = "../nimbus-machine" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-node = { path = "../nimbus-node" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-tenant = { path = "../nimbus-tenant" }

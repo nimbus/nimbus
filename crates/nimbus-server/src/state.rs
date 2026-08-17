@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use axum::response::{IntoResponse, Response};
 use nimbus_core::Error;
-use nimbus_engine::Engine;
 
 use crate::config::transport::TransportConfig;
 use crate::error_envelope::StructuredHttpError;
 use crate::local_server::LocalServerPolicyError;
 use crate::system::VersionCheck;
+use crate::workload_composition::ServerWorkloadProfile;
 
 pub(crate) use nimbus_compute::config::control_plane::ControlPlaneConfig;
 pub(crate) use nimbus_compute::config::deployment::DeploymentConfig;
@@ -19,7 +19,7 @@ pub(crate) use nimbus_compute::state::{
 };
 
 pub(crate) struct AppStateConfig {
-    pub(crate) engine: Arc<Engine>,
+    pub(crate) workload: ServerWorkloadProfile,
     pub(crate) deployment: DeploymentConfig,
     pub(crate) control_plane: ControlPlaneConfig,
     pub(crate) node_services: NodeServicesConfig,
@@ -54,15 +54,18 @@ impl std::ops::Deref for AppState {
 impl AppState {
     pub(crate) fn from_config(config: AppStateConfig) -> Self {
         let AppStateConfig {
-            engine,
+            workload,
             deployment,
             control_plane,
             node_services,
             transport,
             runtime,
         } = config;
+        workload.authenticate_node_services(&node_services);
+        let (engine, workload_composition) = workload.into_compute();
         let compute = ComputeState::from_config(ComputeStateConfig {
             engine,
+            workload_composition,
             deployment,
             control_plane,
             node_services,

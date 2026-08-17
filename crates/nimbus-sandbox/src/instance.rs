@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use nimbus_core::TenantId;
 
 use crate::backend::SandboxBackendKind;
-use crate::endpoint::PublishedEndpoint;
+use nimbus_network::PublishedEndpoint;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SandboxId(String);
