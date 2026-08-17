@@ -1,0 +1,104 @@
+# AVR2 Public Network Architecture
+
+Date: 2026-08-17
+
+## Result
+
+AVR2 implementation acceptance is complete. Nimbus now has a public,
+source-verified network control-plane page. The public overview, architecture
+index, sandbox page, server page, capability matrix, and source map use the
+same ownership model. The phase-one campaign stays in progress until hosted
+checks pass and the owner authorizes the merge. Then the owner reconciles
+current main.
+
+| Checkpoint | Revision |
+| --- | --- |
+| AVR2 start | `e592ac5e9b8d8e1f05011634ebce2defe5737e38` |
+| Public network architecture | `4ad5a2c1b6a9cdf84ff9293004ec42b5414dd594` |
+| Review corrections | `38973458201818a57190c507d0cb34124aa6c218` |
+| Mutation isolation correction | `d74bce443721701cf6a03708173be2c791ab382c` |
+
+## Acceptance ledger
+
+| Action | Result | Evidence |
+| --- | --- | --- |
+| AVR2.1 Add the public page and source-map rows. | Pass. | `docs/concepts/architecture/network-control-plane.md` maps each authority, state, capability, lifecycle, and exclusion claim to current source. Eight source-map rows route those claims. |
+| AVR2.2 Change both page counts. | Pass. | Both public architecture indexes state thirteen pages. The directory contains fourteen Markdown files, including its index. |
+| AVR2.3 Add lifecycle-plane cross-links. | Pass. | The product overview, concept index, sandbox architecture, server architecture, root README, root architecture, and capability matrix route to the new page. |
+| AVR2.4 Inspect every generated LLM file. | Pass. | `llms.txt` is the short index for the two generated sets. `llms-full.txt` and `llms-small.txt` contain the page and cross-links. All three files are private-fence clean. |
+
+The fail-before verifier reported `0 passed, 6 failed` for AVRC05-AVRC10.
+The final AVR2 verifier reports `6 passed, 0 failed`. The phase-one aggregate
+reports `10 passed, 0 failed`.
+
+## Architecture proof
+
+The source audit confirmed these claims:
+
+- `nimbus-network` has `nimbus-core` as its only outgoing Nimbus workspace
+  dependency.
+- The crate contains no transport or provider effects. Server, KV, sandbox,
+  machine, proxy, and node code retain those effects.
+- Stable plan, attachment, segment, endpoint, listener, route, port-lease, and
+  provider identities stay separate from addresses.
+- Desired plans, durable authority, and observed status use separate types.
+- The node-local store owns segment, attachment, tenant-IPAM, and port-lease
+  partitions under one revision and commit domain.
+- Capability evidence records management, attachment, isolation, address,
+  bind, exposure, assignment, ingress, forwarding, lifecycle, TLS, locality,
+  dependency, and offline-restart dimensions.
+- The durable saga follows reserve, prepare, attach, activation checks,
+  activate, readiness checks, publish, and observe. Teardown follows withdraw,
+  drain, stop, detach, release, and record.
+- Compute remains the workload saga coordinator. Services retains logical
+  naming. Multi-node cluster transport remains separate and unavailable.
+
+No public document links to a private plan or proof.
+
+## Review disposition
+
+The configured `phase` invocation skipped because this repository reviews at
+the `pre-pr` cadence. It contacted no model and does not count as a review.
+
+The one complete review used Codex with GPT-5.6 Sol, xhigh reasoning, and fast
+service. It reviewed `origin/main..HEAD` and reported two findings:
+
+| Finding | Disposition |
+| --- | --- |
+| P2, confidence 0.98: make the private-doc fence detect relative links. | Accepted. Commit `389734582` resolves inline and reference-style Markdown targets from the source file. It rejects paths that normalize into `docs/private`. |
+| P3, confidence 0.99: update the proof index to the current execution state. | Accepted. Commit `389734582` routes to the completed AVR0 and AVR1 proofs and the current AVR2 checkpoint. |
+
+Because the accepted P2 changed executable verification, one narrow correction
+review ran with the same Sol, xhigh, and fast identity. It reported one finding:
+
+| Finding | Disposition |
+| --- | --- |
+| P2, confidence 0.99: preserve the cross-link when mutating AVRC10. | Accepted. Commit `d74bce443` appends the relative private link to the green fixture, so the fence is the only failing predicate. |
+
+The final mutation suite passes 24/24. A separate meta-mutation disables only
+the fence and then fails specifically with `self-test AVRC10: mutation did not
+fail closed`. This proves that the corrected test reaches the intended
+predicate. The review cadence permits no third review, and none ran.
+
+## Verification evidence
+
+| Command or check | Result |
+| --- | --- |
+| `bash -n scripts/verify-docs-app-verification.sh` | Pass. |
+| `shellcheck scripts/verify-docs-app-verification.sh` | Pass; no diagnostics. |
+| `bash scripts/verify-docs-app-verification.sh --task AVR2` | Pass; 6 passed, 0 failed. |
+| `bash scripts/verify-docs-app-verification.sh --through-phase 1` | Pass; 10 passed, 0 failed. |
+| `bash scripts/verify-docs-app-verification.sh --self-test` | Pass; 24/24 mutations detected. |
+| Fence-disabled AVRC10 meta-mutation | Expected failure at AVRC10; the other first-phase mutations reached AVRC10. |
+| `bash scripts/verify-nimbus-network-control-plane.sh` | Pass; 39 passed, 0 failed. |
+| `bash scripts/check-docs.sh` | Pass; 109 pages, source map resolved, private fence intact. |
+| `npm --prefix website run build` | Pass; 110 HTML files, including the 404 page. |
+| `bash scripts/verify-nimbus-docs-site.sh` | Pass; 17/17. |
+| New page and proof-index technical-writing lint | Pass; 2 files, 0 diagnostics. |
+| Edited legacy-document lint delta | Pass; 310 diagnostics before and after, zero new diagnostics. |
+| Generated LLM private-fence inspection | Pass; all three files are clean. |
+| `git diff --check` | Pass. |
+
+The site build still emits Astro's `markdown.gfm` and `markdown.smartypants`
+deprecation warning. AVR10 owns that low-priority cleanup. It does not affect
+AVR2 output or acceptance.

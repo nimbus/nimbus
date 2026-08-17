@@ -3,9 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: execute AVR2.1-AVR2.4. Add the source-verified public network
-architecture page, source-map rows, lifecycle-plane cross-links, and generated
-`llms` evidence.
+Next action: publish implementation PR 1 for AVR0-AVR2, record hosted checks,
+and wait for owner merge authorization. Reconcile current main before AVR3.
 
 ## Outcome
 
@@ -102,6 +101,7 @@ Promote this plan to `active` only when every gate holds:
 | AVRF16 | LOW, confirmed | Public overview and sandbox/server pages omit lifecycle-plane cross-links. | AVR2 |
 | AVRF17 | HIGH, confirmed | Concurrent cases share platform authentication, discovery, and audit paths; a later server can replace the discovery record used by bare-local commands. | AVR7 |
 | AVRF18 | HIGH, confirmed | Repository bootstrap routing names six missing private routing, operating, local-development, adapter, and Convex-guidance documents. | AVR0 |
+| AVRF19 | LOW, confirmed | The docs build emits Astro's `markdown.gfm` and `markdown.smartypants` deprecation warning. | AVR10 |
 
 ## Decisions
 
@@ -123,7 +123,7 @@ contract records condition ownership, phase counts, and exact commands:
 |---|---|---|---|
 | AVR0 | Verify the baseline, author the 24-condition verifier red, repair private verification routing, and capture all fail-before evidence without product changes. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr0.md`. Work commit `e7ea6d220`; baseline 0/24; mutation self-test 24/24; docs 108; site 17/17; build 109 pages; six Markdown files lint-clean. |
 | AVR1 | Extract stable network-verifier contracts, archive the completed network plan, and correct private routing and status. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr1.md`. Work commits `3300c6b6f` and `b24959165`; AVRC01-AVRC04 4/4; network verifier 39/39; mutation suite 610/610; docs 108; site 17/17; build 109 pages. |
-| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `in_progress` | Started after AVR1 acceptance. First action: map each public ownership and state-separation claim to current source before writing the network architecture page. |
+| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `in_progress` | Implementation acceptance complete. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. Work commits `4ad5a2c1b`, `389734582`, and `d74bce443`; AVRC05-AVRC10 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML. PR, hosted, merge, and reconciliation evidence remain. |
 | AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `todo` | |
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `todo` | |
 | AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `todo` | |
@@ -325,12 +325,14 @@ its predecessor PR is open or unmerged.
 ### AVR10 Example documentation and comments
 
 - Problem: user and maintainer text reports old counts, failures, and semantics.
-- Owning seam and paths: `examples/README.md`, per-app READMEs, runner comments,
-  Make target comments, CLI help touched by this plan, and `docs/source-map.md`.
+- Owning seam: example READMEs, runner and Make comments, and affected CLI help.
+  It also owns `docs/source-map.md` and the docs-site Markdown processor.
 - Steps: execute AVR10.1-AVR10.6 from the acceptance contract in order.
 - Acceptance: no text states an old count or partial Convex status. Update text
   distinguishes push from polling. Commands match tested paths and Node range.
+- Acceptance: the docs build emits no deprecated Markdown-processor warning.
 - Fail-before: static searches find every stale claim from AVRF14 and AVRF15.
+- Fail-before: the docs build emits the warning recorded by AVRF19.
 - Verification: run the AVR10 command-contract row and require AVRC24 `1/1`.
   Record zero new technical-writing diagnostics. Do not expand this task to fix
   unrelated diagnostics in untouched plans-index lines.
@@ -430,3 +432,4 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | AVR1 | started | AVR0 is durable. Classify the 13 executable readers, extract stable contract inputs, preserve verifier behavior, correct stale private status, then archive and reroute the completed network plan. |
 | 2026-08-17 | AVR1 | completed | Work commits `3300c6b6f` and `b24959165` extracted the stable JSON contract, archived the completed network plan, refreshed live-source census inputs, and corrected three affected mutation fixtures. Proof: `proof/docs-and-app-verification-reliability/avr1.md`. AVRC01-AVRC04 4/4; network verifier 39/39; mutations 610/610; docs 108; site 17/17; build 109 pages. |
 | 2026-08-17 | AVR2 | started | AVR1 is durable and all archival behavior is green. Map public network ownership and lifecycle claims to source, add the public page and source-map routes, then inspect every generated `llms` output. |
+| 2026-08-17 | AVR2 | candidate complete | Work commits `4ad5a2c1b`, `389734582`, and `d74bce443` publish the source-verified page and close all review findings. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. AVR2 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML; lint delta zero. Implementation PR 1 is next. |
