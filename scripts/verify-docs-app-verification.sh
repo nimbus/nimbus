@@ -257,7 +257,7 @@ mutate_fixture() {
     AVRC07) printf '%s\n' '# no source-map row' >"${root}/docs/source-map.md" ;;
     AVRC08) printf '%s\n' 'network owns all transport and effects' >"${root}/docs/concepts/architecture/network-control-plane.md" ;;
     AVRC09) printf '%s\n' 'network state' >"${root}/docs/concepts/architecture/network-control-plane.md" ;;
-    AVRC10) printf '%s\n' '[private](../private/secret.md)' >"${root}/docs/concepts/how-nimbus-works.md" ;;
+    AVRC10) printf '%s\n' '[private](../private/secret.md)' >>"${root}/docs/concepts/how-nimbus-works.md" ;;
   esac
 }
 
