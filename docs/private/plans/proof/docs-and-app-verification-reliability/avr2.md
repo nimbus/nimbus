@@ -7,10 +7,11 @@ Date: 2026-08-17
 AVR2 implementation acceptance is complete. Nimbus now has a public,
 source-verified network control-plane page. The public overview, architecture
 index, sandbox page, server page, capability matrix, and source map use the
-same ownership model. The phase-one campaign stays in progress until hosted
-checks pass and the owner authorizes the merge. A hosted test correction is
-candidate-green locally and awaits its commit and replacement runs. Then the
-owner reconciles current main.
+same ownership model.
+
+The phase-one campaign stays in progress until hosted checks pass and the
+owner authorizes the merge. Commit `b98ee3242` is candidate-green locally.
+Replacement hosted runs remain. Then the owner reconciles current main.
 
 | Checkpoint | Revision |
 | --- | --- |
@@ -18,6 +19,7 @@ owner reconciles current main.
 | Public network architecture | `4ad5a2c1b6a9cdf84ff9293004ec42b5414dd594` |
 | Review corrections | `38973458201818a57190c507d0cb34124aa6c218` |
 | Mutation isolation correction | `d74bce443721701cf6a03708173be2c791ab382c` |
+| Hosted test correction | `b98ee3242656f40e347ac81ce9961bbdcd6df099` |
 | Implementation PR 1 | [#275](https://github.com/nimbus/nimbus/pull/275) |
 
 ## Acceptance ledger
