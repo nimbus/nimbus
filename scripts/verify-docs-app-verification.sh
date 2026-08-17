@@ -52,9 +52,66 @@ NODE
 }
 
 public_private_fence_clean() {
-  ! grep -RIEq --include='*.md' '\]\([^)]*docs/private/' \
-    "${ROOT}/docs/get-started" "${ROOT}/docs/developers" "${ROOT}/docs/agents" \
-    "${ROOT}/docs/operators" "${ROOT}/docs/concepts" "${ROOT}/docs/reference"
+  node - "${ROOT}" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const root = path.resolve(process.argv[2]);
+const privateRoot = path.join(root, "docs", "private");
+const publicRoots = [
+  "get-started",
+  "developers",
+  "agents",
+  "operators",
+  "concepts",
+  "reference",
+].map((name) => path.join(root, "docs", name));
+
+function markdownFiles(directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const candidate = path.join(directory, entry.name);
+    if (entry.isDirectory()) return markdownFiles(candidate);
+    return entry.isFile() && entry.name.endsWith(".md") ? [candidate] : [];
+  });
+}
+
+function resolvesIntoPrivate(file, rawTarget) {
+  const targetWithoutSuffix = rawTarget.split(/[?#]/u, 1)[0];
+  if (!targetWithoutSuffix || /^[a-z][a-z0-9+.-]*:/iu.test(targetWithoutSuffix)) {
+    return false;
+  }
+
+  let target;
+  try {
+    target = decodeURIComponent(targetWithoutSuffix).replaceAll("\\", "/");
+  } catch {
+    target = targetWithoutSuffix.replaceAll("\\", "/");
+  }
+  if (target.startsWith("//")) return false;
+  if (/^\/?docs\/private(?:\/|$)/u.test(target)) return true;
+
+  const resolved = target.startsWith("/")
+    ? path.resolve(root, target.slice(1))
+    : path.resolve(path.dirname(file), target);
+  return resolved === privateRoot || resolved.startsWith(`${privateRoot}${path.sep}`);
+}
+
+const inlineLink = /!?\[[^\]]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))/gu;
+const referenceLink = /^\s*\[[^\]]+\]:\s*(?:<([^>\n]+)>|(\S+))/gmu;
+for (const file of publicRoots.flatMap(markdownFiles)) {
+  const markdown = fs.readFileSync(file, "utf8");
+  for (const pattern of [inlineLink, referenceLink]) {
+    pattern.lastIndex = 0;
+    for (const match of markdown.matchAll(pattern)) {
+      const target = match[1] ?? match[2];
+      if (resolvesIntoPrivate(file, target)) {
+        console.error(`${path.relative(root, file)} links into private docs: ${target}`);
+        process.exit(1);
+      }
+    }
+  }
+}
+NODE
 }
 
 evaluate_condition() {
@@ -200,7 +257,7 @@ mutate_fixture() {
     AVRC07) printf '%s\n' '# no source-map row' >"${root}/docs/source-map.md" ;;
     AVRC08) printf '%s\n' 'network owns all transport and effects' >"${root}/docs/concepts/architecture/network-control-plane.md" ;;
     AVRC09) printf '%s\n' 'network state' >"${root}/docs/concepts/architecture/network-control-plane.md" ;;
-    AVRC10) printf '%s\n' '[private](docs/private/secret.md)' >"${root}/docs/concepts/how-nimbus-works.md" ;;
+    AVRC10) printf '%s\n' '[private](../private/secret.md)' >"${root}/docs/concepts/how-nimbus-works.md" ;;
   esac
 }
 
