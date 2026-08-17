@@ -22,8 +22,8 @@ have landed and supersede the original wording:
 - SI0 created `nimbus-workload-identity`. Admission-anchored workload identity
   projection remains distinct from provider credential minting.
 
-The network architecture and active closeout status are canonical in
-[`nimbus-network-control-plane-plan.md`](nimbus-network-control-plane-plan.md)
+The network architecture and completed closeout record are canonical in
+[`archive/nimbus-network-control-plane-plan.md`](archive/nimbus-network-control-plane-plan.md)
 and
 [`../architecture/network/control-plane.md`](../architecture/network/control-plane.md).
 

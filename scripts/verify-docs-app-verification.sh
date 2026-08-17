@@ -29,6 +29,28 @@ no_executable_plan_readers() {
   [ -z "${matches}" ]
 }
 
+network_contract_valid() {
+  node - "${ROOT}/scripts/nimbus-network-control-plane/verification-contract.json" <<'NODE'
+const fs = require("fs");
+const input = process.argv[2];
+try {
+  const contract = JSON.parse(fs.readFileSync(input, "utf8"));
+  process.exit(
+    contract.schemaVersion === 1 &&
+      contract.status === "complete" &&
+      contract.archivedPlan ===
+        "docs/private/plans/archive/nimbus-network-control-plane-plan.md" &&
+      /^[0-9a-f]{40}$/u.test(contract.completionCheckpoint ?? "") &&
+      /^[0-9a-f]{40}$/u.test(contract.itemCheckpoints?.["NNC6.5"] ?? "")
+      ? 0
+      : 1,
+  );
+} catch {
+  process.exit(1);
+}
+NODE
+}
+
 public_private_fence_clean() {
   ! grep -RIEq --include='*.md' '\]\([^)]*docs/private/' \
     "${ROOT}/docs/get-started" "${ROOT}/docs/developers" "${ROOT}/docs/agents" \
@@ -42,11 +64,11 @@ evaluate_condition() {
       no_executable_plan_readers
       ;;
     AVRC02)
-      has scripts/nimbus-network-control-plane/verification-contract.env '^NNC_VERIFICATION_STATUS=complete$' &&
-        has scripts/verify-nimbus-network-control-plane.sh 'verification-contract\.env'
+      network_contract_valid &&
+        has scripts/verify-nimbus-network-control-plane.sh 'verification-contract\.json'
       ;;
     AVRC03)
-      has "${NETWORK_PLAN_REL}" "Status: \`complete; NNC0-NNC9 done\`" &&
+      has docs/private/plans/archive/nimbus-network-control-plane-plan.md "Status: \`complete; NNC0-NNC9 done\`" &&
         lacks docs/private/architecture/network/control-plane.md 'NNC9 closeout is active'
       ;;
     AVRC04)
@@ -129,11 +151,11 @@ write_green_fixture() {
       printf '%s\n' '# stable verifier input' >"${root}/scripts/safe.sh"
       ;;
     AVRC02)
-      printf '%s\n' 'NNC_VERIFICATION_STATUS=complete' >"${root}/scripts/nimbus-network-control-plane/verification-contract.env"
-      printf '%s\n' '. scripts/nimbus-network-control-plane/verification-contract.env' >"${root}/scripts/verify-nimbus-network-control-plane.sh"
+      printf '%s\n' '{"schemaVersion":1,"status":"complete","archivedPlan":"docs/private/plans/archive/nimbus-network-control-plane-plan.md","completionCheckpoint":"1111111111111111111111111111111111111111","itemCheckpoints":{"NNC6.5":"2222222222222222222222222222222222222222"}}' >"${root}/scripts/nimbus-network-control-plane/verification-contract.json"
+      printf '%s\n' 'scripts/nimbus-network-control-plane/verification-contract.json' >"${root}/scripts/verify-nimbus-network-control-plane.sh"
       ;;
     AVRC03)
-      printf '%s\n' "Status: \`complete; NNC0-NNC9 done\`" >"${root}/${NETWORK_PLAN_REL}"
+      printf '%s\n' "Status: \`complete; NNC0-NNC9 done\`" >"${root}/docs/private/plans/archive/nimbus-network-control-plane-plan.md"
       printf '%s\n' 'Status: landed architecture; implementation merged.' >"${root}/docs/private/architecture/network/control-plane.md"
       ;;
     AVRC04)
@@ -170,7 +192,7 @@ mutate_fixture() {
   local id="$1" root="$2"
   case "${id}" in
     AVRC01) printf '%s\n' "${NETWORK_PLAN_REL}" >"${root}/scripts/safe.sh" ;;
-    AVRC02) rm "${root}/scripts/nimbus-network-control-plane/verification-contract.env" ;;
+    AVRC02) rm "${root}/scripts/nimbus-network-control-plane/verification-contract.json" ;;
     AVRC03) printf '%s\n' 'Status: landed architecture; NNC9 closeout is active.' >"${root}/docs/private/architecture/network/control-plane.md" ;;
     AVRC04) printf '%s\n' '# plan returned to active tree' >"${root}/${NETWORK_PLAN_REL}" ;;
     AVRC05) rm "${root}/docs/concepts/architecture/network-control-plane.md" ;;

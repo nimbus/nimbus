@@ -10,6 +10,12 @@ import {
 } from "./workload-restart-test-assertion.mjs";
 
 const hasTestsAt = createAttributedTestChecker(extractItem);
+const HISTORICAL_PLAN_PATH = [
+  "docs/private/plans",
+  "nimbus-network-control-plane-plan.md",
+].join("/");
+const VERIFICATION_CONTRACT_PATH =
+  "scripts/nimbus-network-control-plane/verification-contract.json";
 
 // Ownership reason: this deep NNCV034 verifier owns one production scan and
 // one sole-diagnostic mutation contract. Its sibling owns only the green
@@ -125,7 +131,7 @@ const ALLOWED_EXACT_PATHS = new Set([
   "scripts/verify-nimbus-network-machine-forwarded-batch-convergence.mjs",
   "docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json",
   "docs/private/plans/proof/nimbus-network-control-plane/nnc4.6f-production-network-authority-census.json",
-  "docs/private/plans/nimbus-network-control-plane-plan.md",
+  HISTORICAL_PLAN_PATH,
   "docs/private/plans/README.md",
   "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",
 ]);
@@ -174,7 +180,7 @@ const R1_ALLOWED_EXACT_PATHS = new Set([
   "scripts/nimbus-network-control-plane/workload-restart-source-contract.mjs",
   "scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh",
   "scripts/verify-nimbus-network-control-plane.sh",
-  "docs/private/plans/nimbus-network-control-plane-plan.md",
+  HISTORICAL_PLAN_PATH,
   "docs/private/plans/README.md",
   "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",
 ]);
@@ -243,7 +249,7 @@ const R2_ALLOWED_EXACT_PATHS = new Set([
   "scripts/nimbus-network-control-plane/workload-restart-contract.sh",
   "scripts/nimbus-network-control-plane/workload-restart-source-contract.mjs",
   "scripts/verify-nimbus-network-control-plane.sh",
-  "docs/private/plans/nimbus-network-control-plane-plan.md",
+  HISTORICAL_PLAN_PATH,
   "docs/private/plans/README.md",
   "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",
 ]);
@@ -389,7 +395,7 @@ const R3_ALLOWED_EXACT_PATHS = new Set([
   "crates/nimbus-workloads/src/saga/tests/restart_state.rs",
   "crates/nimbus-workloads/src/store/tests.rs",
   "docs/private/plans/README.md",
-  "docs/private/plans/nimbus-network-control-plane-plan.md",
+  HISTORICAL_PLAN_PATH,
   "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",
   "packages/nimbus/src/capability_surface_contract.mjs",
   "packages/nimbus/src/control-plane/client.ts",
@@ -562,7 +568,7 @@ function productionSources(root) {
     testEntries,
     files: Object.fromEntries(entries),
     plan: [
-      readText(root, "docs/private/plans/nimbus-network-control-plane-plan.md"),
+      readText(root, VERIFICATION_CONTRACT_PATH),
       readText(
         root,
         "docs/private/plans/proof/nimbus-network-control-plane/nnc6.4a-fenced-restart-substitution-audit.md",

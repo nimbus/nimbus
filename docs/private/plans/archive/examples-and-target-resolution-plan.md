@@ -1,6 +1,6 @@
 # Examples And Target Resolution — Control Plane
 
-Status: `active`
+Status: `archived`. Execution ended with EX9 closeout incomplete.
 Owner branch: `examples-and-target-resolution` (single PR to `nimbus/nimbus` at closeout)
 Control-plane updates (this file, plans README): commit direct to `main`.
 

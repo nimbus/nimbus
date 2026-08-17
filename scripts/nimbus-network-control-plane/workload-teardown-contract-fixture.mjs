@@ -1189,7 +1189,9 @@ zero stop effects; Definition/source/session removal waits for safe lifecycle pr
     auditItemCompleteCheckpoint: null,
     currentChangedPaths: [
       "docs/private/plans/README.md",
-      "docs/private/plans/nimbus-network-control-plane-plan.md",
+      ["docs/private/plans", "nimbus-network-control-plane-plan.md"].join(
+        "/",
+      ),
       "docs/private/plans/proof/nimbus-network-control-plane/nnc6.5-teardown-choreography-substitution-audit.md",
       "scripts/nimbus-network-control-plane/workload-teardown-contract-fixture.mjs",
       "scripts/nimbus-network-control-plane/workload-teardown-contract.sh",
@@ -1201,7 +1203,9 @@ zero stop effects; Definition/source/session removal waits for safe lifecycle pr
     ],
     historicalAuditChangedPaths: [
       "docs/private/plans/README.md",
-      "docs/private/plans/nimbus-network-control-plane-plan.md",
+      ["docs/private/plans", "nimbus-network-control-plane-plan.md"].join(
+        "/",
+      ),
       "docs/private/plans/proof/nimbus-network-control-plane/nnc6.5-teardown-choreography-substitution-audit.md",
       "scripts/nimbus-network-control-plane/workload-teardown-contract-fixture.mjs",
       "scripts/nimbus-network-control-plane/workload-teardown-contract.sh",

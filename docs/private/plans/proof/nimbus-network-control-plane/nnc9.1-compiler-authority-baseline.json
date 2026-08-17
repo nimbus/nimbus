@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "input": {
-    "sha256": "0c406b1f997f78eb2ca311165bc2e67136f5526297d703984a3d25d4eb6aca43",
-    "files": 1661
+    "sha256": "f53daa295519e7b7cefcdd0e1ce4666f3e4a2c948be04fc2b64c400e7c5f30f4",
+    "files": 1663
   },
   "inventory": {
     "path": "docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json",
@@ -188,8 +188,8 @@
         {
           "name": "nimbus_cli",
           "kind": "lib",
-          "bytes": 35658665,
-          "sha256": "f99caf1fc95a26930c1147da11514d183fa64bcea35796a95fb2a615753bc5b7",
+          "bytes": 35663971,
+          "sha256": "c7ab43e2c76f17cfcad60789914c02c463379bf821d9b17bcc6e799b2163ee21",
           "calls": {
             "tcp-bind": 2,
             "tcp-from-std": 1,
@@ -401,7 +401,7 @@
           "name": "nimbus_sandbox",
           "kind": "lib",
           "bytes": 38520242,
-          "sha256": "8d04499da4c1a39594bc7e9428f2945886639f05e36d5d7238e52bf069ac3134",
+          "sha256": "e4bfef2b41e02ef7254886ee68a2debf1584910c16d6dd828b964c2e6bb64f11",
           "calls": {
             "tcp-bind": 1,
             "tcp-from-std": 0,
@@ -636,7 +636,7 @@
     }
   },
   "source_boundaries": {
-    "scanner_sha256": "061bc37d60f204ebd2e9462b2c296eafa3a9b27e0321957337f11521109b2a20",
+    "scanner_sha256": "d9718d2f97d0b2abae18f93fe09253eebbdf1d183009f13f5a90ce36efe0b5db",
     "include_expansions": [
       {
         "path": "crates/nimbus-firebase/src/grpc.rs",
@@ -661,12 +661,6 @@
       {
         "path": "crates/nimbus-cli/src/machine/mod.rs",
         "kind": "module-path",
-        "detail": "stub/backend.rs",
-        "line": 19
-      },
-      {
-        "path": "crates/nimbus-cli/src/machine/mod.rs",
-        "kind": "module-path",
         "detail": "stub/bootstrap.rs",
         "line": 24
       },
@@ -681,6 +675,18 @@
         "kind": "module-path",
         "detail": "stub/manager.rs",
         "line": 39
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "module-path",
+        "detail": "stub/provision_source.rs",
+        "line": 49
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "module-path",
+        "detail": "stub/stop_authority.rs",
+        "line": 58
       },
       {
         "path": "crates/nimbus-node/src/direct_process.rs",
@@ -819,12 +825,6 @@
       {
         "path": "crates/nimbus-cli/src/machine/mod.rs",
         "kind": "conditional-module",
-        "detail": "cfg(not (unix))|crates/nimbus-cli/src/machine/stub/backend.rs",
-        "line": 19
-      },
-      {
-        "path": "crates/nimbus-cli/src/machine/mod.rs",
-        "kind": "conditional-module",
         "detail": "cfg(unix)|crates/nimbus-cli/src/machine/bootstrap.rs,crates/nimbus-cli/src/machine/bootstrap/mod.rs",
         "line": 21
       },
@@ -867,14 +867,26 @@
       {
         "path": "crates/nimbus-cli/src/machine/mod.rs",
         "kind": "conditional-module",
-        "detail": "cfg(unix)|crates/nimbus-cli/src/machine/publication_authority.rs,crates/nimbus-cli/src/machine/publication_authority/mod.rs",
-        "line": 48
+        "detail": "cfg(not (unix))|crates/nimbus-cli/src/machine/stub/provision_source.rs",
+        "line": 49
       },
       {
         "path": "crates/nimbus-cli/src/machine/mod.rs",
         "kind": "conditional-module",
         "detail": "cfg(unix)|crates/nimbus-cli/src/machine/stop_authority.rs,crates/nimbus-cli/src/machine/stop_authority/mod.rs",
-        "line": 53
+        "line": 55
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/mod.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(not (unix))|crates/nimbus-cli/src/machine/stub/stop_authority.rs",
+        "line": 58
+      },
+      {
+        "path": "crates/nimbus-cli/src/machine/publication_authority.rs",
+        "kind": "conditional-module",
+        "detail": "cfg(unix)|crates/nimbus-cli/src/machine/publication_authority/confirmed.rs,crates/nimbus-cli/src/machine/publication_authority/confirmed/mod.rs",
+        "line": 49
       },
       {
         "path": "crates/nimbus-crypto/src/lib.rs",

@@ -347,17 +347,19 @@ run_self_test() {
     done
   }
 
-  if NIMBUS_NETWORK_VERIFY_PLAN="${temporary}/missing-plan.md" \
+  if NIMBUS_NETWORK_VERIFY_CONTRACT="${temporary}/missing-contract.json" \
     NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
-    "${script}" >"${temporary}/missing-plan.out" 2>&1; then
-    printf 'SELFTEST FAIL missing plan unexpectedly exited zero\n'
+    "${script}" >"${temporary}/missing-contract.out" 2>&1; then
+    printf 'SELFTEST FAIL missing verification contract unexpectedly exited zero\n'
     self_fail=$((self_fail + 1))
-  elif ! grep -q '^FAIL NNCV001 plan-in-HEAD' "${temporary}/missing-plan.out" ||
-    grep -q '^PASS NNCV001 plan-in-HEAD' "${temporary}/missing-plan.out"; then
-    printf 'SELFTEST FAIL missing plan did not produce an exclusive NNCV001 failure\n'
+  elif ! grep -q '^FAIL NNCV001 verification-contract-in-HEAD' \
+    "${temporary}/missing-contract.out" ||
+    grep -q '^PASS NNCV001 verification-contract-in-HEAD' \
+      "${temporary}/missing-contract.out"; then
+    printf 'SELFTEST FAIL missing verification contract did not produce an exclusive NNCV001 failure\n'
     self_fail=$((self_fail + 1))
   else
-    printf 'SELFTEST PASS missing plan fails closed as NNCV001\n'
+    printf 'SELFTEST PASS missing verification contract fails closed as NNCV001\n'
   fi
 
   if NIMBUS_NETWORK_VERIFY_INVENTORY="${temporary}/missing-inventory.json" \
@@ -386,84 +388,91 @@ run_self_test() {
     printf 'SELFTEST PASS missing dependency baseline fails closed as NNCV002\n'
   fi
 
-  invalid_checkpoint_plan="${temporary}/invalid-checkpoint-plan.md"
-  if ! node - "${PLAN}" "${invalid_checkpoint_plan}" <<'NODE'
+  invalid_checkpoint_contract="${temporary}/invalid-checkpoint-contract.json"
+  if ! node - "${CONTRACT}" "${invalid_checkpoint_contract}" <<'NODE'
 const fs = require("fs");
 const [source, target] = process.argv.slice(2);
-const text = fs.readFileSync(source, "utf8");
-const invalid = text.replace(
-  /^(\| Last checkpoint commit \|.*?`)[0-9a-f]{40}(`.*\|)$/m,
-  "$1" + "0".repeat(40) + "$2",
-);
-if (invalid === text) process.exit(1);
-fs.writeFileSync(target, invalid);
+const contract = JSON.parse(fs.readFileSync(source, "utf8"));
+contract.completionCheckpoint = "0".repeat(40);
+fs.writeFileSync(target, JSON.stringify(contract));
 NODE
   then
     printf 'SELFTEST FAIL nonexistent checkpoint fixture could not be built\n'
     self_fail=$((self_fail + 1))
-  elif NIMBUS_NETWORK_VERIFY_PLAN="${invalid_checkpoint_plan}" \
+  elif NIMBUS_NETWORK_VERIFY_CONTRACT="${invalid_checkpoint_contract}" \
     NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
     "${script}" >"${temporary}/invalid-checkpoint.out" 2>&1; then
     printf 'SELFTEST FAIL nonexistent checkpoint unexpectedly exited zero\n'
     self_fail=$((self_fail + 1))
-  elif ! grep -q '^FAIL NNCV008 checkpoint-ledger-recoverable' "${temporary}/invalid-checkpoint.out" ||
-    grep -q '^PASS NNCV008 checkpoint-ledger-recoverable' "${temporary}/invalid-checkpoint.out" ||
-    ! grep -q 'Last checkpoint commit does not resolve: 0000000000000000000000000000000000000000' "${temporary}/invalid-checkpoint.out"; then
+  elif ! grep -q '^FAIL NNCV008 completion-contract-valid' "${temporary}/invalid-checkpoint.out" ||
+    grep -q '^PASS NNCV008 completion-contract-valid' "${temporary}/invalid-checkpoint.out" ||
+    ! grep -q 'completionCheckpoint does not resolve: 0000000000000000000000000000000000000000' "${temporary}/invalid-checkpoint.out"; then
     printf 'SELFTEST FAIL nonexistent checkpoint did not produce the exact exclusive NNCV008 diagnostic\n'
     self_fail=$((self_fail + 1))
   else
     printf 'SELFTEST PASS nonexistent checkpoint fails closed as NNCV008\n'
   fi
 
-  checkpoint_complete_active="${temporary}/checkpoint-complete-active.md"
-  checkpoint_active_valid="${temporary}/checkpoint-active-valid.md"
-  if ! node - "${PLAN}" "${checkpoint_complete_active}" "${checkpoint_active_valid}" <<'NODE'
+  active_contract="${temporary}/active-contract.json"
+  duplicate_vocabulary_contract="${temporary}/duplicate-vocabulary-contract.json"
+  valid_contract="${temporary}/valid-contract.json"
+  if ! node - "${CONTRACT}" "${active_contract}" "${duplicate_vocabulary_contract}" \
+    "${valid_contract}" <<'NODE'
 const fs = require("fs");
-const [source, completeActiveTarget, activeValidTarget] = process.argv.slice(2);
-const text = fs.readFileSync(source, "utf8");
-const activeRow = "| NNC9.6 | `in_progress` | **Owned paths:** fixture. **Last green:** fixture. **Next:** fixture. **Blocker:** none. |";
-const doneRow = text.split("\n").find(line => line.startsWith("| NNC9.6 | `done` |"));
-if (!doneRow) process.exit(1);
-fs.writeFileSync(completeActiveTarget, text.replace(doneRow, activeRow));
-const active = text
-  .replace("Status: `complete; NNC0-NNC9 done`", "Status: `active; fixture in progress`")
-  .replace("| Plan status | `complete; NNC0-NNC9 done` |", "| Plan status | `active; fixture in progress` |")
-  .replace("| Current item | `none — plan complete` |", "| Current item | `NNC9.6 — fixture` |")
-  .replace(doneRow, activeRow);
-if (active === text) process.exit(1);
-fs.writeFileSync(activeValidTarget, active);
+const [source, activeTarget, duplicateTarget, validTarget] = process.argv.slice(2);
+const contract = JSON.parse(fs.readFileSync(source, "utf8"));
+fs.writeFileSync(validTarget, JSON.stringify(contract));
+fs.writeFileSync(activeTarget, JSON.stringify({...contract, status: "active"}));
+fs.writeFileSync(
+  duplicateTarget,
+  JSON.stringify({...contract, vocabulary: [...contract.vocabulary, contract.vocabulary[0]]}),
+);
 NODE
   then
-    printf 'SELFTEST FAIL checkpoint completion fixtures could not be built\n'
+    printf 'SELFTEST FAIL completion-contract fixtures could not be built\n'
     self_fail=$((self_fail + 1))
-  elif NIMBUS_NETWORK_VERIFY_PLAN="${checkpoint_complete_active}" \
+  elif NIMBUS_NETWORK_VERIFY_CONTRACT="${active_contract}" \
     NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
-    "${script}" >"${temporary}/checkpoint-complete-active.out" 2>&1; then
-    printf 'SELFTEST FAIL complete plan with active row unexpectedly exited zero\n'
+    "${script}" >"${temporary}/active-contract.out" 2>&1; then
+    printf 'SELFTEST FAIL active completion contract unexpectedly exited zero\n'
     self_fail=$((self_fail + 1))
-  elif ! grep -q '^FAIL NNCV008 checkpoint-ledger-recoverable' \
-    "${temporary}/checkpoint-complete-active.out" ||
-    ! grep -q 'complete plan must have zero in_progress rows, found 1' \
-      "${temporary}/checkpoint-complete-active.out"; then
-    printf 'SELFTEST FAIL complete plan did not reject an active ledger row\n'
+  elif ! grep -q '^FAIL NNCV008 completion-contract-valid' \
+    "${temporary}/active-contract.out" ||
+    ! grep -q 'status must equal complete' "${temporary}/active-contract.out"; then
+    printf 'SELFTEST FAIL completion contract did not reject active status\n'
     self_fail=$((self_fail + 1))
   else
-    printf 'SELFTEST PASS complete plan rejects an active ledger row\n'
+    printf 'SELFTEST PASS completion contract rejects active status\n'
   fi
 
-  if NIMBUS_NETWORK_VERIFY_PLAN="${checkpoint_active_valid}" \
+  if NIMBUS_NETWORK_VERIFY_CONTRACT="${duplicate_vocabulary_contract}" \
     NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
-    "${script}" >"${temporary}/checkpoint-active-valid.out" 2>&1; then
-    printf 'SELFTEST FAIL active fixture unexpectedly passed every unrelated status gate\n'
+    "${script}" >"${temporary}/duplicate-vocabulary.out" 2>&1; then
+    printf 'SELFTEST FAIL duplicate vocabulary unexpectedly exited zero\n'
     self_fail=$((self_fail + 1))
-  elif ! grep -q '^PASS NNCV008 checkpoint-ledger-recoverable' \
-    "${temporary}/checkpoint-active-valid.out" ||
-    grep -q '^FAIL NNCV008 checkpoint-ledger-recoverable' \
-      "${temporary}/checkpoint-active-valid.out"; then
-    printf 'SELFTEST FAIL active plan with one current row did not pass NNCV008\n'
+  elif ! grep -q '^FAIL NNCV008 completion-contract-valid' \
+    "${temporary}/duplicate-vocabulary.out" ||
+    ! grep -q 'vocabulary must be a unique array' \
+      "${temporary}/duplicate-vocabulary.out"; then
+    printf 'SELFTEST FAIL completion contract accepted duplicate vocabulary\n'
     self_fail=$((self_fail + 1))
   else
-    printf 'SELFTEST PASS active plan accepts exactly one matching current row\n'
+    printf 'SELFTEST PASS completion contract rejects duplicate vocabulary\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_CONTRACT="${valid_contract}" \
+    NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    "${script}" >"${temporary}/valid-contract.out" 2>&1; then
+    printf 'SELFTEST FAIL valid override unexpectedly passed unrelated archive and HEAD gates\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^PASS NNCV008 completion-contract-valid' \
+    "${temporary}/valid-contract.out" ||
+    grep -q '^FAIL NNCV008 completion-contract-valid' \
+      "${temporary}/valid-contract.out"; then
+    printf 'SELFTEST FAIL valid completion contract did not pass NNCV008\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS valid completion contract passes NNCV008\n'
   fi
 
   if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \

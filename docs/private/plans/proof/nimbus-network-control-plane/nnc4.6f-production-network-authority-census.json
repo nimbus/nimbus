@@ -415,7 +415,7 @@
       "kind": "manager-derived-parent-machine-authority-declaration",
       "symbol": "injected",
       "ordinal": 1,
-      "line": 124,
+      "line": 126,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc4.6e"
@@ -483,9 +483,9 @@
     {
       "path": "crates/nimbus-cli/src/network_composition/forwarded/profile.rs",
       "kind": "manager-derived-parent-machine-authority",
-      "symbol": "prepare_forwarded_workload_profile",
+      "symbol": "prepare_forwarded_workload_profile_for_host",
       "ordinal": 1,
-      "line": 71,
+      "line": 81,
       "classification": "manager-derived-handle",
       "os_node_realm": "parent-host",
       "evidence": "nnc6.5f1"

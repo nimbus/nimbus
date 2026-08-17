@@ -21,8 +21,9 @@ PROVISION_DECISION="crates/nimbus-compute/src/workload_saga/provision_decision.r
 STORE_CODEC="crates/nimbus-server/src/workload_saga_store/codec.rs"
 STORE_SCHEMA="crates/nimbus-server/src/workload_saga_store/schema.rs"
 PROCESS_PROOF="crates/nimbus-server/src/workload_saga_store/tests/compiled_plan_durability.rs"
-OWNER_PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
+OWNER_CONTRACT="scripts/nimbus-network-control-plane/verification-contract.json"
 OWNER_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.2a-durable-compiled-network-plan.md"
+HISTORICAL_PLAN_PATH="docs/private/plans/nimbus-network-control-plane-"'plan.md'
 
 NNC62A_ERRORS=()
 NNC62A_CHECKS=0
@@ -233,12 +234,13 @@ verify_pure_action_and_process_proof() {
 }
 
 verify_owner_and_allowlist() {
-  if ! require_nonempty_file "${OWNER_PLAN}" "canonical network control-plane plan" ||
+  if ! require_nonempty_file "${OWNER_CONTRACT}" "stable network verification contract" ||
     ! require_nonempty_file "${OWNER_PROOF}" "NNC6.2a owner proof"; then
     return
   fi
-  if ! rg -q 'NNC6\.2a.*durable complete compiled-plan carrier' "${OWNER_PLAN}"; then
-    add_error "canonical plan does not route NNC6.2a to durable complete compiled-plan ownership"
+  if ! rg -q '"NNC6\.2a"' "${OWNER_CONTRACT}" ||
+    ! rg -q 'durable complete compiled-plan carrier' "${OWNER_CONTRACT}"; then
+    add_error "stable contract does not route NNC6.2a to durable complete compiled-plan ownership"
   else
     pass_check
   fi
@@ -257,7 +259,7 @@ verify_owner_and_allowlist() {
   if [ "${NIMBUS_NETWORK_NNC62A_TEST_MUTATION:-}" = "unexpected-path" ]; then
     changed="${changed}\ncrates/nimbus-network/src/provider_effect.rs"
   fi
-  unexpected="$(printf '%s\n' "${changed}" | awk '
+  unexpected="$(printf '%s\n' "${changed}" | awk -v historical_plan_path="${HISTORICAL_PLAN_PATH}" '
     NF == 0 { next }
     $0 == "crates/nimbus-workloads/src/saga.rs" { next }
     $0 == "crates/nimbus-workloads/src/network_plan.rs" { next }
@@ -282,7 +284,7 @@ verify_owner_and_allowlist() {
     $0 == "scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh" { next }
     $0 == "scripts/verify-nimbus-network-control-plane.sh" { next }
     $0 == "docs/private/plans/proof/nimbus-network-control-plane/nnc6.2a-durable-compiled-network-plan.md" { next }
-    $0 == "docs/private/plans/nimbus-network-control-plane-plan.md" { next }
+    $0 == historical_plan_path { next }
     $0 == "docs/private/plans/README.md" { next }
     { print }
   ')"

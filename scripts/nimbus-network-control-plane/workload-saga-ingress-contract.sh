@@ -12,7 +12,8 @@ INGRESS="crates/nimbus-compute/src/workload_saga/ingress.rs"
 INGRESS_TESTS="crates/nimbus-compute/src/workload_saga/ingress/tests.rs"
 SERVER_TEST_ROOT="crates/nimbus-server/src/workload_saga_store/tests/mod.rs"
 SERVER_PROOF="crates/nimbus-server/src/workload_saga_store/tests/ingress.rs"
-OWNER_PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
+OWNER_CONTRACT="scripts/nimbus-network-control-plane/verification-contract.json"
+HISTORICAL_PLAN_PATH="docs/private/plans/nimbus-network-control-plane-"'plan.md'
 
 NNC61E1_ERRORS=()
 NNC61E1_CHECKS=0
@@ -77,7 +78,7 @@ pub struct WorkloadSagaCoordinator;" ;;
 crates/nimbus-services/src/manager/activation.rs"
       ;;
     wrong-plan-route)
-      plan_source="${plan_source/bounded compute-owned durable workload-saga submission seam/effectful runtime lifecycle registry}"
+      contract_source="${contract_source/bounded compute-owned durable workload-saga submission seam/effectful runtime lifecycle registry}"
       ;;
   esac
 }
@@ -88,7 +89,7 @@ verify_surface() {
   ingress_tests_source="$(source_without_comments "${REPO_ROOT}/${INGRESS_TESTS}")"
   server_root_source="$(source_without_comments "${REPO_ROOT}/${SERVER_TEST_ROOT}")"
   server_source="$(source_without_comments "${REPO_ROOT}/${SERVER_PROOF}")"
-  plan_source="$(source_without_comments "${REPO_ROOT}/${OWNER_PLAN}")"
+  contract_source="$(source_without_comments "${REPO_ROOT}/${OWNER_CONTRACT}")"
   changed_paths="${NIMBUS_NETWORK_NNC61E1_TEST_CHANGED_PATHS:-}"
 
   if [ -z "${changed_paths}" ]; then
@@ -200,14 +201,14 @@ verify_surface() {
     pass_check
   fi
 
-  if ! printf '%s\n' "${plan_source}" |
-    rg -q '^\| NNC6\.1e1 \| Implement the bounded compute-owned durable workload-saga submission seam after NNC6\.2a\.'; then
-    add_error "canonical plan does not route NNC6.1e1 to bounded durable submission"
+  if ! printf '%s\n' "${contract_source}" |
+    rg -q '"NNC6\.1e1":[[:space:]]*"Implement the bounded compute-owned durable workload-saga submission seam after NNC6\.2a\.'; then
+    add_error "stable contract does not route NNC6.1e1 to bounded durable submission"
   else
     pass_check
   fi
 
-  unexpected="$(printf '%s\n' "${changed_paths}" | awk '
+  unexpected="$(printf '%s\n' "${changed_paths}" | awk -v historical_plan_path="${HISTORICAL_PLAN_PATH}" '
     NF == 0 { next }
     $0 == "crates/nimbus-compute/src/workload_saga.rs" { next }
     $0 == "crates/nimbus-compute/src/workload_saga/ingress.rs" { next }
@@ -216,7 +217,7 @@ verify_surface() {
     $0 == "crates/nimbus-server/src/workload_saga_store/tests/ingress.rs" { next }
     $0 == "scripts/nimbus-network-control-plane/workload-saga-ingress-contract.sh" { next }
     $0 == "scripts/verify-nimbus-network-control-plane.sh" { next }
-    $0 == "docs/private/plans/nimbus-network-control-plane-plan.md" { next }
+    $0 == historical_plan_path { next }
     $0 == "docs/private/plans/README.md" { next }
     $0 == "docs/private/plans/proof/nimbus-network-control-plane/nnc6.1e1-durable-workload-saga-ingress.md" { next }
     $0 ~ /^docs\/private\/plans\/proof\/nimbus-network-control-plane\/nnc[0-9][0-9A-Za-z._-]*\.md$/ { next }
@@ -292,7 +293,7 @@ write_fixture() {
     >"${fixture}/${SERVER_PROOF}"
   printf '%s\n' \
     '| NNC6.1e1 | Implement the bounded compute-owned durable workload-saga submission seam after NNC6.2a. | frozen |' \
-    >"${fixture}/${OWNER_PLAN}"
+    >"${fixture}/${OWNER_CONTRACT}"
 }
 
 run_self_test() {
@@ -349,7 +350,7 @@ run_self_test() {
       missing-crash-harness) expected='distinct-process ingress proof lacks SubprocessCrashCutHarness' ;;
       duplicate-coordinator) expected='expected one canonical WorkloadSagaCoordinator' ;;
       unexpected-path) expected='NNC6.1e1 source diff escapes the frozen allowlist' ;;
-      wrong-plan-route) expected='canonical plan does not route NNC6.1e1 to bounded durable submission' ;;
+      wrong-plan-route) expected='stable contract does not route NNC6.1e1 to bounded durable submission' ;;
     esac
     if ! rg -q -F "${expected}" "${output}"; then
       printf 'SELFTEST FAIL NNCV030 %s missed diagnostic %s\n' "${mutation}" "${expected}"

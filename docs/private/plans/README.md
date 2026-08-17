@@ -74,7 +74,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `complete; NNC0-NNC9 done`. Canonical record for the transport-free connectivity-resource lifecycle; final evidence stays in `proof/nimbus-network-control-plane/`. It preserves `nimbus-network -> nimbus-core` as the sole outgoing workspace edge; concrete effects stay with sandbox, server, KV, machine, proxy, and node; future cluster transport stays in the deferred horizontal-scaling lane.
+- `archive/nimbus-network-control-plane-plan.md` - `complete; NNC0-NNC9 done`.
+  This is the archived record for the transport-free connectivity-resource
+  lifecycle. Final evidence stays in `proof/nimbus-network-control-plane/`.
+  The only outgoing workspace edge remains `nimbus-network -> nimbus-core`.
+  Concrete effects stay with sandbox, server, KV, machine, proxy, and node.
+  Future cluster transport stays in the deferred horizontal-scaling lane.
 - `docs-and-app-verification-reliability-plan.md` - `active` owner for network
   documentation, stable verifier contracts, plan archival, and fresh-checkout
   application verification. It will keep source unchanged and use product-owned

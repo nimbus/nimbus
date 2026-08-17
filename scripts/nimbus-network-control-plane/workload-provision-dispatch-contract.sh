@@ -82,7 +82,7 @@ CLOUD_FUNCTIONS_TRIGGER="crates/nimbus-cloud-functions/src/trigger_executor.rs"
 CLOUD_FUNCTIONS_READ_ONLY_TESTS="crates/nimbus-cloud-functions/tests/read_only_snapshots.rs"
 NETWORK_MANIFEST="crates/nimbus-network/Cargo.toml"
 NETWORK_SOURCE="crates/nimbus-network/src/lib.rs"
-OWNER_PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
+OWNER_CONTRACT="scripts/nimbus-network-control-plane/verification-contract.json"
 OWNER_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.4-atomic-provision-caller-cutover.md"
 
 NNC64_ERRORS=()
@@ -366,7 +366,7 @@ $(source_without_comments "${REPO_ROOT}/${MACHINE_LOCAL_SERVER}")"
   cloud_functions_trigger_source="$(source_without_comments "${REPO_ROOT}/${CLOUD_FUNCTIONS_TRIGGER}")"
   network_manifest_source="$(source_without_comments "${REPO_ROOT}/${NETWORK_MANIFEST}")"
   network_source="$(source_without_comments "${REPO_ROOT}/${NETWORK_SOURCE}")"
-  owner_plan_source="$(source_without_comments "${REPO_ROOT}/${OWNER_PLAN}")"
+  owner_contract_source="$(source_without_comments "${REPO_ROOT}/${OWNER_CONTRACT}")"
   owner_proof_source="$(source_without_comments "${REPO_ROOT}/${OWNER_PROOF}")"
   legacy_mutation_source=""
 }
@@ -566,7 +566,7 @@ verify_contract() {
     sandbox_container_provider_source sandbox_krun_provider_source \
     services_registry_source compose_lifecycle_source \
     node_reconciler_source cloud_functions_host_source network_manifest_source \
-    owner_plan_source; do
+    owner_contract_source; do
     if [ -z "${!required}" ]; then
       add_error "required-inputs-and-tools: missing or empty ${required}"
     fi
@@ -578,7 +578,7 @@ verify_contract() {
   done
   if [ "${#NNC64_ERRORS[@]}" -eq "${required_errors}" ]; then pass_check; fi
 
-  check_literals "routing-proof-and-completion-baseline" "${owner_plan_source}
+  check_literals "routing-proof-and-completion-baseline" "${owner_contract_source}
 ${owner_proof_source}" 'NNC6.4' 'provider dispatch' '40 checks' '50 passed'
 
   pin_errors="${#NNC64_ERRORS[@]}"
