@@ -47,7 +47,7 @@ evaluate_condition() {
 const fs = require("fs");
 const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 if (!Array.isArray(value.cases) || value.cases.length !== 9) process.exit(1);
-const required = ["name", "workspace", "appDir", "boot", "smoke", "updateSemantics"];
+const required = ["name", "workspace", "appDir", "boot", "smoke", "surfaces", "updateSemantics"];
 const names = new Set();
 for (const item of value.cases) {
   if (!item || required.some((key) => !(key in item))) process.exit(1);
@@ -59,11 +59,17 @@ NODE
     AVRC14)
       has scripts/examples-verify.sh 'disposable.*workspace' &&
         has scripts/examples-verify.sh 'prepare_case_workspace' &&
+        has scripts/examples-verify-workspace.mjs 'prepareCaseWorkspace' &&
+        has scripts/examples-verify-cases.json '"inputs"' &&
         lacks scripts/examples-verify.sh 'npm run codegen -w "\$\{workspace\}"'
       ;;
     AVRC15)
       has scripts/examples-verify.sh 'capture_source_byte_manifest' &&
-        has scripts/examples-verify.sh 'verify_source_byte_manifest'
+        has scripts/examples-verify.sh 'verify_source_byte_manifest' &&
+        has scripts/examples-verify.sh 'trap finalize_examples_verification EXIT' &&
+        has scripts/examples-verify-workspace.mjs 'captureSourceByteManifest' &&
+        has scripts/examples-verify-workspace.mjs 'verifySourceByteManifest' &&
+        lacks scripts/examples-verify.sh 'git (checkout|reset|clean)'
       ;;
     AVRC16)
       has crates/nimbus-cli/src/dev/tests.rs 'compose_discovery_defaults_to_enabled' &&
@@ -160,16 +166,26 @@ const fs = require("fs");
 const path = process.argv[2];
 const cases = Array.from({length: 9}, (_, i) => ({
   name: `case-${i}`, workspace: `workspace-${i}`, appDir: `app-${i}`,
-  boot: {}, smoke: {}, updateSemantics: "push"
+  boot: {}, smoke: {}, surfaces: ["fixture"], updateSemantics: "push"
 }));
 fs.writeFileSync(path, JSON.stringify({cases}));
 NODE
       ;;
     AVRC14)
       printf '%s\n' '# disposable workspace' 'prepare_case_workspace() { :; }' >"${root}/scripts/examples-verify.sh"
+      printf '%s\n' 'export function prepareCaseWorkspace() {}' >"${root}/scripts/examples-verify-workspace.mjs"
+      printf '%s\n' '{"inputs":[]}' >"${root}/scripts/examples-verify-cases.json"
       ;;
     AVRC15)
-      printf '%s\n' 'capture_source_byte_manifest() { :; }' 'verify_source_byte_manifest() { :; }' >"${root}/scripts/examples-verify.sh"
+      printf '%s\n' \
+        'capture_source_byte_manifest() { :; }' \
+        'verify_source_byte_manifest() { :; }' \
+        'trap finalize_examples_verification EXIT' \
+        >"${root}/scripts/examples-verify.sh"
+      printf '%s\n' \
+        'export function captureSourceByteManifest() {}' \
+        'export function verifySourceByteManifest() {}' \
+        >"${root}/scripts/examples-verify-workspace.mjs"
       ;;
     AVRC16)
       printf '%s\n' '# compose_discovery_defaults_to_enabled' '# explicit_compose_file_still_loads' >"${root}/crates/nimbus-cli/src/dev/tests.rs"
@@ -454,6 +470,10 @@ run_avr3_behavior_tests() {
   rm -rf "${tmp}"
 }
 
+run_avr4_behavior_tests() {
+  node "${ROOT}/scripts/examples-verify-workspace-test.mjs"
+}
+
 usage() {
   printf 'usage: %s --task AVR3..AVR10 | --condition AVRC11..AVRC24 | --self-test-condition AVRC11..AVRC24\n' "$0" >&2
 }
@@ -472,6 +492,9 @@ case "${1:-}" in
     fi
     if [ "$2" = "AVR3" ]; then
       run_avr3_behavior_tests
+    fi
+    if [ "$2" = "AVR4" ]; then
+      run_avr4_behavior_tests
     fi
     ;;
   --condition)

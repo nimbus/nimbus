@@ -140,72 +140,37 @@ PY
 )}"
 NIMBUS_URL="http://127.0.0.1:${PORT}"
 DATA_ROOT="$(mktemp -d -t nimbus-examples-verify.XXXXXX)"
+CASE_MANIFEST="${REPO_ROOT}/scripts/examples-verify-cases.json"
+WORKSPACE_ADAPTER="${REPO_ROOT}/scripts/examples-verify-workspace.mjs"
+SOURCE_BYTE_SNAPSHOT="${DATA_ROOT}/source-bytes.before.json"
+CASE_ROWS="${DATA_ROOT}/cases.pipe"
 
-# Manifest fields, pipe-delimited:
-#   name | workspace | app_dir | needs_codegen(0/1) | needs_app_dir_boot(0/1) | boot_env | boot_flags | smoke_env | boot_mode(start|dev)
-# needs_app_dir_boot: whether the boot command needs `--app-dir`. Under
-# `nimbus start` this means "does this app have a server-side functions
-# surface at all" (Convex/native SDK functions, or a Cloud Functions
-# bundle) — the plain document-CRUD apps (nimbus/tasks, mongodb/tasks,
-# dynamodb/tasks) have no `convex/`/`nimbus/`/`firebase.json` source and
-# boot preflight rejects `--app-dir` pointed at them with "No Convex or
-# Cloud Functions surface found"; they must boot with no --app-dir at all.
-# Under `nimbus dev` (firebase/tasks and cloud-functions/tasks, see
-# boot_mode) --app-dir instead drives adapter *detection*; for
-# firebase/tasks that computes the Firestore auto-tenant, for
-# cloud-functions/tasks it both registers the functions bundle and gets the
-# same auto-tenant as a side effect (dev always sets one, defaulting to
-# "demo" for any non-Firestore-client adapter).
-# boot_env / smoke_env: comma-separated KEY=VAL pairs, or "-" for none. Every
-# app whose smoke talks to the main HTTP listener carries an explicit
-# NIMBUS_NATIVE_URL/NIMBUS_FIRESTORE_URL/NIMBUS_CLOUD_FUNCTIONS_URL entry
-# pinned to ${NIMBUS_URL} (built from the resolved ephemeral PORT above) —
-# each smoke.ts's own "http://localhost:8080" fallback default only matched
-# by coincidence when PORT was hardcoded to 8080; it does not track PORT now
-# that PORT is resolved per run. mongodb/tasks and dynamodb/tasks are
-# unaffected: their smokes talk to separate wire-protocol listener ports
-# (27017/8000 by default), not the main HTTP PORT.
-# boot_flags: a single space-free extra CLI argument (KEY=VAL form), or "-".
-# boot_mode: "start" (default, no Compose auto-discovery, no sideline
-# needed) or "dev". firebase/tasks and cloud-functions/tasks are "dev"
-# apps: both send Firestore REST calls carrying a mock/emulator auth token,
-# and Firestore admission requires a cryptographically verified project
-# claim (the #24 gate,
-# crates/nimbus-firebase/src/project_tenant_registry.rs). The only local
-# bypass for that is `nimbus dev`'s auto-tenant handling
-# (crates/nimbus-cli/src/dev/plan.rs, unconditionally sets `auto_tenant`,
-# which crates/nimbus-cli/src/start/adapters/firebase.rs turns into the
-# Firebase emulator-token-verification bypass) — there is no equivalent
-# flag on `nimbus start`. This matches both apps' own README-documented
-# `nimbus dev` instructions. A "dev" boot pays the compose.yaml sideline
-# cost (see sideline_compose/restore_compose below) that "start" boots are
-# otherwise designed to avoid.
-# nimbus/agent-chat, nimbus/agent-worker, and convex/tasks are all
-# `nimbus/`- or `convex/`-source-rooted apps that dispatch through the same
-# Convex-style tenancy path, so all three need the EX3.7 dev-mode anonymous
-# team envs at boot (EX4.1/EX4.2 established this live for the first two;
-# EX3.7d for the third) or every mutation 403s with no bound team.
-CONVEX_DEV_TENANCY_ENV="NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team,NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team"
-
-APPS=(
-  "nimbus/tasks|nimbus-tasks|examples/nimbus/tasks|0|0|-|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
-  "nimbus/agent-chat|nimbus-agent-chat|examples/nimbus/agent-chat|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
-  "nimbus/agent-worker|nimbus-agent-worker|examples/nimbus/agent-worker|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
-  "convex/tasks|convex-tasks|examples/convex/tasks|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
-  "convex/runtimes|convex-runtimes|examples/convex/runtimes|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
-  "firebase/tasks|firebase-tasks|examples/firebase/tasks|0|1|-|-|NIMBUS_FIRESTORE_URL=${NIMBUS_URL}|dev"
-  "mongodb/tasks|mongodb-tasks|examples/mongodb/tasks|0|0|NIMBUS_MONGODB_PASSWORD=nimbus|--mongodb-username=nimbus|NIMBUS_MONGODB_USERNAME=nimbus,NIMBUS_MONGODB_PASSWORD=nimbus|start"
-  "dynamodb/tasks|dynamodb-tasks|examples/dynamodb/tasks|0|0|-|--dynamodb-access-key=nimbus:nimbus:default|-|start"
-  "cloud-functions/tasks|cloud-functions-tasks|examples/cloud-functions/tasks|0|1|-|-|NIMBUS_CLOUD_FUNCTIONS_URL=${NIMBUS_URL}|dev"
-)
+# The validated manifest owns the nine application identities, declared source
+# inputs, boot behavior, smoke behavior, surfaces, and update semantics. The
+# runner copies only those inputs to a disposable workspace before codegen,
+# provisioning, boot, or smoke can write.
+if ! node "${WORKSPACE_ADAPTER}" emit-shell \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    >"${CASE_ROWS}"; then
+  exit 1
+fi
+APPS=()
+while IFS= read -r entry; do
+  APPS+=("${entry}")
+done <"${CASE_ROWS}"
+if [ "${#APPS[@]}" -ne 9 ]; then
+  echo "case manifest emitted ${#APPS[@]} rows; expected 9" >&2
+  exit 1
+fi
 
 SERVER_PID=""
 SERVER_LOG=""
 COMPOSE_SIDELINE_PATH="${REPO_ROOT}/compose.yaml"
 COMPOSE_SIDELINED=0
 
-# Sideline/restore compose.yaml around a `nimbus dev` boot (see boot_mode in
-# the manifest comment above for why this is only needed for one app).
+# Sideline/restore compose.yaml around each `nimbus dev` boot. AVR5 replaces
+# this tracked-file mutation with an explicit Compose-discovery opt-out.
 sideline_compose() {
   if [ -f "${COMPOSE_SIDELINE_PATH}" ]; then
     mv "${COMPOSE_SIDELINE_PATH}" "${COMPOSE_SIDELINE_PATH}.smoke-bak"
@@ -230,7 +195,34 @@ cleanup_server() {
   # mid-boot, so a failed run never leaves the repo in a sidelined state.
   restore_compose
 }
-trap cleanup_server EXIT
+
+capture_source_byte_manifest() {
+  node "${WORKSPACE_ADAPTER}" capture-source \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    --output "${SOURCE_BYTE_SNAPSHOT}"
+}
+
+verify_source_byte_manifest() {
+  node "${WORKSPACE_ADAPTER}" verify-source \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    --snapshot "${SOURCE_BYTE_SNAPSHOT}"
+}
+
+finalize_examples_verification() {
+  local run_status=$?
+  local final_status="${run_status}"
+  trap - EXIT
+  cleanup_server || final_status=1
+  if ! verify_source_byte_manifest; then
+    final_status=1
+  fi
+  exit "${final_status}"
+}
+
+capture_source_byte_manifest
+trap finalize_examples_verification EXIT
 
 # SIGKILL bypasses the EXIT trap above, so a prior run killed mid-`dev`-boot
 # (e.g. an operator's Ctrl-\, a CI job timeout using SIGKILL, or a `kill -9`)
@@ -334,12 +326,26 @@ build_env_args() {
   IFS="${old_ifs}"
 }
 
+FLAG_ARGS=()
+build_flag_args() {
+  FLAG_ARGS=()
+  local list="$1"
+  if [ "${list}" = "-" ]; then
+    return
+  fi
+  local old_ifs="${IFS}"
+  IFS=','
+  local flag
+  for flag in ${list}; do
+    FLAG_ARGS+=("${flag}")
+  done
+  IFS="${old_ifs}"
+}
+
 boot_server() {
   local app_dir="$1" data_dir="$2" boot_flags="$3" boot_env="$4" needs_app_dir_boot="$5" boot_mode="$6"
-  local extra_flag=()
-  if [ "${boot_flags}" != "-" ]; then
-    extra_flag=("${boot_flags}")
-  fi
+  build_flag_args "${boot_flags}"
+  local extra_flag=(${FLAG_ARGS[@]+"${FLAG_ARGS[@]}"})
   if [ "${needs_app_dir_boot}" = "1" ]; then
     extra_flag+=("--app-dir" "${app_dir}")
   fi
@@ -372,6 +378,25 @@ boot_server() {
     cat "${SERVER_LOG}" >&2
     return 1
   fi
+}
+
+CASE_APP_DIR=""
+prepare_case_workspace() {
+  local name="$1" workspace="$2"
+  CASE_APP_DIR="${DATA_ROOT}/workspaces/${workspace}"
+  node "${WORKSPACE_ADAPTER}" prepare \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    --case "${name}" \
+    --destination "${CASE_APP_DIR}" \
+    >/dev/null
+}
+
+refresh_case_dependencies() {
+  local app_dir="$1"
+  node "${WORKSPACE_ADAPTER}" refresh-dependencies \
+    --destination "${app_dir}" \
+    >/dev/null
 }
 
 stop_server() {
@@ -440,13 +465,19 @@ check_run_stdio_contract() {
 }
 
 run_one() {
-  local name="$1" workspace="$2" app_dir="$3" needs_codegen="$4" needs_app_dir_boot="$5"
-  local boot_env="$6" boot_flags="$7" smoke_env="$8" boot_mode="$9"
+  local name="$1" workspace="$2" _source_app_dir="$3" needs_codegen="$4" needs_app_dir_boot="$5"
+  local boot_env="$6" boot_flags="$7" smoke_env="$8" boot_mode="$9" smoke_command="${10}"
+  local stdio_contract="${11}" _update_semantics="${12}"
   echo "==> ${name}"
+
+  prepare_case_workspace "${name}" "${workspace}"
+  local app_dir="${CASE_APP_DIR}"
+  boot_env="${boot_env//\$\{NIMBUS_URL\}/${NIMBUS_URL}}"
+  smoke_env="${smoke_env//\$\{NIMBUS_URL\}/${NIMBUS_URL}}"
 
   if [ "${needs_codegen}" = "1" ]; then
     echo "    codegen (before boot, avoids the live-server bundle race)"
-    npm run codegen -w "${workspace}"
+    (cd "${app_dir}" && npm run codegen)
   fi
 
   local data_dir
@@ -457,13 +488,16 @@ run_one() {
   if ! boot_server "${app_dir}" "${data_dir}" "${boot_flags}" "${boot_env}" "${needs_app_dir_boot}" "${boot_mode}"; then
     exit 1
   fi
+  if [ "${needs_app_dir_boot}" = "1" ]; then
+    refresh_case_dependencies "${app_dir}"
+  fi
 
   local admin_token=""
   admin_token="$("${NIMBUS_BIN}" auth token 2>/dev/null || true)"
 
   build_env_args "${smoke_env}"
   local smoke_status=0
-  if [ "${needs_codegen}" = "1" ]; then
+  if [ "${smoke_command}" = "node" ]; then
     # Codegen already ran above; `npm run smoke` re-chains `codegen &&`,
     # which would redundantly re-trigger client codegen against a server
     # that already read the bundle once at its own boot preflight. Call
@@ -471,11 +505,11 @@ run_one() {
     (cd "${app_dir}" && env NIMBUS_ADMIN_TOKEN="${admin_token}" ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
       node --experimental-strip-types ./smoke.ts) || smoke_status=$?
   else
-    (env NIMBUS_ADMIN_TOKEN="${admin_token}" ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
-      npm run smoke -w "${workspace}") || smoke_status=$?
+    (cd "${app_dir}" && env NIMBUS_ADMIN_TOKEN="${admin_token}" ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
+      npm run smoke) || smoke_status=$?
   fi
 
-  if [ "${smoke_status}" -eq 0 ] && [ "${name}" = "convex/tasks" ]; then
+  if [ "${smoke_status}" -eq 0 ] && [ "${stdio_contract}" = "1" ]; then
     check_run_stdio_contract "${app_dir}" "http://127.0.0.1:${PORT}" || smoke_status=$?
   fi
 
@@ -503,12 +537,12 @@ ONLY="${NIMBUS_EXAMPLES_VERIFY_ONLY:-}"
 ONLY_MATCHED=0
 
 for entry in "${APPS[@]}"; do
-  IFS='|' read -r name workspace app_dir needs_codegen needs_app_dir_boot boot_env boot_flags smoke_env boot_mode <<<"${entry}"
+  IFS='|' read -r name workspace app_dir needs_codegen needs_app_dir_boot boot_env boot_flags smoke_env boot_mode smoke_command stdio_contract update_semantics <<<"${entry}"
   if [ -n "${ONLY}" ] && [ "${name}" != "${ONLY}" ]; then
     continue
   fi
   ONLY_MATCHED=1
-  run_one "${name}" "${workspace}" "${app_dir}" "${needs_codegen}" "${needs_app_dir_boot}" "${boot_env}" "${boot_flags}" "${smoke_env}" "${boot_mode}"
+  run_one "${name}" "${workspace}" "${app_dir}" "${needs_codegen}" "${needs_app_dir_boot}" "${boot_env}" "${boot_flags}" "${smoke_env}" "${boot_mode}" "${smoke_command}" "${stdio_contract}" "${update_semantics}"
 done
 
 # An ONLY value that matches nothing used to fall straight through the loop
