@@ -3,8 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: execute AVR6's omitted-target live reproduction in isolated
-operator state. Compare its result and stdio with the explicit target.
+Next action: execute AVR7's resource-lifetime inventory and fail-before tests.
+Name every port, process, temporary root, log, and cancellation owner before
+changing the runner.
 
 ## Outcome
 
@@ -133,8 +134,8 @@ contract records condition ownership, phase counts, and exact commands:
 | AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr3.md`. Work commit `8042e32e4`; AVRC11-AVRC12 2/2; 13 behavior cases; mutations 24/24; Node.js 22 Make and Node.js 24 direct live runs passed 5/5 app assertions. |
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr4.md`. Work commit `827877d06`; AVRC13-AVRC15 3/3; 6/6 behavior tests; nine preparation fixtures; mutations 24/24; 14/14 live assertions across three execution shapes. |
 | AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr5.md`. Work commit `02788d24b`; AVRC16-AVRC17 2/2; CLI 1,015 passed and 4 ignored; Clippy; live dev cases 7/7; docs 109 and 17/17. |
-| AVR6 | Reproduce and close, or disprove and remove, the bare-local target workaround. | `in_progress` | Reproduce explicit and omitted targets in isolated operator state, then preserve equal result, stdio, and fail-closed trust behavior. |
-| AVR7 | Give ports, child processes, temporary roots, logs, and cancellation one fail-closed lifetime owner. | `todo` | |
+| AVR6 | Reproduce and close, or disprove and remove, the bare-local target workaround. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr6.md`. Work commit `390bcaf27`; AVRC18 1/1; CLI 1,019 passed and 4 ignored; explicit and bare-local live results matched; wrong-silo and invalid-bearer checks failed closed. |
+| AVR7 | Give ports, child processes, temporary roots, logs, and cancellation one fail-closed lifetime owner. | `in_progress` | Inventory the current resource graph and write the bind-race, cross-case, process-tree, fault-cut, cleanup-retry, and retained-artifact fail-before tests. |
 | AVR8 | Emit canonical JSON and JUnit evidence with hashes, timings, assertions, and cleanup state. | `todo` | |
 | AVR9 | Add bounded parallel execution and meet the measured wall-clock target without coverage loss. | `todo` | |
 | AVR10 | Correct all example documentation, comments, counts, update semantics, and operator instructions. | `todo` | |
@@ -469,3 +470,5 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | AVR5 | started | Preserve default and explicit-file Compose discovery, define an explicit no-discovery mode, route both dev cases through it, and delete the tracked-file sideline and recovery path. |
 | 2026-08-17 | AVR5 | completed | Work commit `02788d24b` adds `--no-compose-discovery`, preserves default and explicit behavior, and deletes the runner's tracked-file sideline. Proof: `proof/docs-and-app-verification-reliability/avr5.md`. AVRC16-AVRC17 2/2; CLI 1,015 passed and 4 ignored; live dev cases 7/7; mutations 24/24; docs 109 and 17/17. |
 | 2026-08-17 | AVR6 | started | Reproduce explicit and omitted local targets in isolated operator state. Close or disprove the stale authentication workaround without weakening tenant or credential boundaries. |
+| 2026-08-17 | AVR6 | completed | Work commit `390bcaf27` separates host-admin discovery from application auth. Proof: `proof/docs-and-app-verification-reliability/avr6.md`. AVRC18 1/1; run tests 11/11; CLI 1,019 passed and 4 ignored; live Tasks 5/5 with equal JSON and clean stdio; all four PR #238/#239 trust regressions passed. |
+| 2026-08-17 | AVR7 | started | Inventory each runner resource owner and capture fail-before evidence for port races, cross-case operator-state reads, child-process leaks, fault cuts, cleanup retry, and retained failure artifacts. |

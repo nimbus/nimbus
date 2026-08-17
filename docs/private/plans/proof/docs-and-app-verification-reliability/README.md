@@ -1,7 +1,7 @@
 # Documentation and Application Verification Reliability Proofs
 
-Status: AVR0 through AVR5 are complete. Phase-one PR #275 merged into main.
-The owner reconciled it, and AVR6 is in progress.
+Status: AVR0 through AVR6 are complete. Phase-one PR #275 merged into main.
+The owner reconciled it, and AVR7 is in progress.
 
 Owner: `docs/private/plans/docs-and-app-verification-reliability-plan.md`
 
@@ -19,6 +19,8 @@ commands.
   workspaces, and source-byte postcondition.
 - [`avr5.md`](avr5.md) records the explicit Compose-discovery opt-out and the
   deleted tracked-file sideline.
+- [`avr6.md`](avr6.md) records equal explicit and bare-local invocation,
+  isolated credential routing, and fail-closed trust evidence.
 
 Each later task creates its proof when work starts. A task proof records
 fail-before evidence, exact commands, counts, hashes, review results, and
