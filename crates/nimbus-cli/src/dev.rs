@@ -58,6 +58,11 @@ pub(crate) struct DevCommand {
     #[arg(long)]
     pub(crate) compose_file: Vec<PathBuf>,
 
+    /// Skip `COMPOSE_FILE` and walk-up Compose discovery for this dev session.
+    /// Do not combine this option with `--compose-file`.
+    #[arg(long, default_value_t = false, conflicts_with = "compose_file")]
+    pub(crate) no_compose_discovery: bool,
+
     /// Run startup only, without the watched codegen loop.
     #[arg(long, default_value_t = false)]
     pub(crate) once: bool,

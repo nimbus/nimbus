@@ -52,6 +52,7 @@ Examples:
   nimbus dev --app-dir ./examples/convex/html
   nimbus dev --app-dir ./examples/convex/html --skip-codegen
   nimbus dev --data-dir ./.nimbus/dev
+  nimbus dev --no-compose-discovery
 
 P3 scope:
   nimbus dev now watches nimbus/ or convex/ for debounced codegen reruns.

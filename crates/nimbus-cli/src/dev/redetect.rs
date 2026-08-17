@@ -677,6 +677,7 @@ mod tests {
             port: 0,
             app_dir: None,
             compose_file: Vec::new(),
+            no_compose_discovery: false,
             once: false,
             skip_codegen: false,
             debug_node_apis: false,

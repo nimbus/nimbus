@@ -120,6 +120,7 @@ a restart. The server keeps serving even when no adapter is detected.
 | `--app-dir` | — | auto-detected | App directory containing an adapter source root. |
 | `--data-dir` | — | `<app-dir>/.nimbus/dev` | Shared local dev persistence root for tenant data and control state. |
 | `--compose-file` | `COMPOSE_FILE` | discovered | Ordered Compose file list for local service dependencies; repeat to merge overlays. |
+| `--no-compose-discovery` | — | `false` | Ignore `COMPOSE_FILE` and skip walk-up Compose discovery for this session. This flag conflicts with `--compose-file`. |
 | `--once` | — | `false` | Run startup only, without the watched codegen loop. |
 | `--skip-codegen` | — | `false` | Skip initial codegen before starting; watched reruns still use codegen. |
 | `--debug-node-apis` | — | `false` | Diagnose Node.js builtin imports that should move behind `"use node"`. |
@@ -128,6 +129,11 @@ a restart. The server keeps serving even when no adapter is detected.
 
 Browser auto-open is also suppressed automatically in non-interactive
 environments (`$CI` or `$NO_BROWSER` set, or stdout is not a TTY).
+
+Use `--no-compose-discovery` when the dev session must not load a Compose
+project from its current directory or parent directories. Explicit
+`--compose-file` behavior and default discovery stay unchanged when the flag is
+absent.
 
 ## nimbus deploy
 

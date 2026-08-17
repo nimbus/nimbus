@@ -232,7 +232,7 @@
         "mode": "dev",
         "needsAppDir": true,
         "environment": [],
-        "flags": []
+        "flags": ["--no-compose-discovery"]
       },
       "smoke": {
         "command": "npm",
@@ -324,7 +324,7 @@
         "mode": "dev",
         "needsAppDir": true,
         "environment": [],
-        "flags": []
+        "flags": ["--no-compose-discovery"]
       },
       "smoke": {
         "command": "npm",

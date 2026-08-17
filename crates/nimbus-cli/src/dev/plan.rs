@@ -111,8 +111,12 @@ fn resolve_dev_plan_inner(
     let deployment_slug =
         dirs::deployment_slug(&app_dir).map_err(|error| io::Error::other(error.to_string()))?;
     let explicit_compose_files = command.compose_file.as_slice();
-    let compose_selection = resolve_compose_selection(explicit_compose_files, cwd)
-        .map_err(|error| io::Error::other(error.to_string()))?;
+    let compose_selection = if command.no_compose_discovery {
+        None
+    } else {
+        resolve_compose_selection(explicit_compose_files, cwd)
+            .map_err(|error| io::Error::other(error.to_string()))?
+    };
     let data_dir = command
         .data_dir
         .as_deref()

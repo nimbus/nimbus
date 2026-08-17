@@ -72,13 +72,13 @@ NODE
         lacks scripts/examples-verify.sh 'git (checkout|reset|clean)'
       ;;
     AVRC16)
-      has crates/nimbus-cli/src/dev/tests.rs 'compose_discovery_defaults_to_enabled' &&
-        has crates/nimbus-cli/src/dev/tests.rs 'explicit_compose_file_still_loads'
+      grep -Rqs -- 'compose_discovery_defaults_to_enabled' "${ROOT}/crates/nimbus-cli/src/dev" &&
+        grep -Rqs -- 'explicit_compose_file_still_loads' "${ROOT}/crates/nimbus-cli/src/dev"
       ;;
     AVRC17)
       has crates/nimbus-cli/src/dev.rs 'no[_-]compose[_-]discovery' &&
-        has crates/nimbus-cli/src/dev/tests.rs 'compose_opt_out_performs_no_discovery' &&
-        lacks scripts/examples-verify.sh 'mv .*compose\.yaml'
+        grep -Rqs -- 'compose_discovery_opt_out_performs_no_discovery' "${ROOT}/crates/nimbus-cli/src/dev" &&
+        lacks scripts/examples-verify.sh 'sideline_compose|restore_compose|COMPOSE_SIDELINE_PATH|compose\.yaml\.smoke-bak|mv .*compose\.yaml'
       ;;
     AVRC18)
       has scripts/examples-verify.sh '"\$\{NIMBUS_BIN\}" run functions tasks:list' &&
@@ -192,7 +192,7 @@ NODE
       ;;
     AVRC17)
       printf '%s\n' '# no-compose-discovery' >"${root}/crates/nimbus-cli/src/dev.rs"
-      printf '%s\n' '# compose_opt_out_performs_no_discovery' >"${root}/crates/nimbus-cli/src/dev/tests.rs"
+      printf '%s\n' '# compose_discovery_opt_out_performs_no_discovery' >"${root}/crates/nimbus-cli/src/dev/tests.rs"
       printf '%s\n' '# no tracked rename' >"${root}/scripts/examples-verify.sh"
       ;;
     AVRC18)

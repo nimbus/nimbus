@@ -166,24 +166,6 @@ fi
 
 SERVER_PID=""
 SERVER_LOG=""
-COMPOSE_SIDELINE_PATH="${REPO_ROOT}/compose.yaml"
-COMPOSE_SIDELINED=0
-
-# Sideline/restore compose.yaml around each `nimbus dev` boot. AVR5 replaces
-# this tracked-file mutation with an explicit Compose-discovery opt-out.
-sideline_compose() {
-  if [ -f "${COMPOSE_SIDELINE_PATH}" ]; then
-    mv "${COMPOSE_SIDELINE_PATH}" "${COMPOSE_SIDELINE_PATH}.smoke-bak"
-    COMPOSE_SIDELINED=1
-  fi
-}
-
-restore_compose() {
-  if [ "${COMPOSE_SIDELINED}" = "1" ]; then
-    mv "${COMPOSE_SIDELINE_PATH}.smoke-bak" "${COMPOSE_SIDELINE_PATH}"
-    COMPOSE_SIDELINED=0
-  fi
-}
 
 cleanup_server() {
   if [ -n "${SERVER_PID}" ] && kill -0 "${SERVER_PID}" 2>/dev/null; then
@@ -191,9 +173,6 @@ cleanup_server() {
     wait "${SERVER_PID}" 2>/dev/null || true
   fi
   SERVER_PID=""
-  # Defense in depth: restore compose.yaml even on an unexpected abort
-  # mid-boot, so a failed run never leaves the repo in a sidelined state.
-  restore_compose
 }
 
 capture_source_byte_manifest() {
@@ -223,26 +202,6 @@ finalize_examples_verification() {
 
 capture_source_byte_manifest
 trap finalize_examples_verification EXIT
-
-# SIGKILL bypasses the EXIT trap above, so a prior run killed mid-`dev`-boot
-# (e.g. an operator's Ctrl-\, a CI job timeout using SIGKILL, or a `kill -9`)
-# can leave compose.yaml.smoke-bak on disk with compose.yaml missing. A
-# checkout in that state silently changes the meaning of every subsequent
-# `nimbus dev`/`compose` invocation in the repo, not just this lane. Heal it
-# at lane start, before anything else runs, rather than only guarding the
-# happy-path exit. The real fix is the recorded product follow-up (an
-# opt-out so `nimbus dev` skips Compose auto-discovery for a plain example
-# boot instead of needing this sideline dance at all — see the
-# "compose-auto-discovery-on-app-boot DX question" follow-up in
-# docs/private/plans/examples-and-target-resolution-plan.md); this is a
-# lane-local recovery, not that fix.
-heal_stranded_compose_sideline() {
-  if [ -f "${COMPOSE_SIDELINE_PATH}.smoke-bak" ] && [ ! -f "${COMPOSE_SIDELINE_PATH}" ]; then
-    echo "==> found compose.yaml.smoke-bak with no compose.yaml (a prior run was likely killed mid-boot); restoring compose.yaml before proceeding"
-    mv "${COMPOSE_SIDELINE_PATH}.smoke-bak" "${COMPOSE_SIDELINE_PATH}"
-  fi
-}
-heal_stranded_compose_sideline
 
 ensure_nimbus_binary() {
   if [ -x "${NIMBUS_BIN}" ]; then
@@ -352,7 +311,6 @@ boot_server() {
   build_env_args "${boot_env}"
   local subcommand=(start)
   if [ "${boot_mode}" = "dev" ]; then
-    sideline_compose
     subcommand=(dev --no-open --once)
   fi
   # The `${ARR[@]+"${ARR[@]}"}` form (rather than a bare `"${ARR[@]}"`) is
@@ -366,13 +324,6 @@ boot_server() {
   SERVER_PID=$!
   local health_status=0
   wait_for_health "${PORT}" || health_status=$?
-  # Restore compose.yaml as soon as the boot has resolved (health or
-  # failure) rather than holding it sidelined for the smoke's whole
-  # duration — the sideline only needs to cover the compose
-  # auto-discovery window at startup.
-  if [ "${boot_mode}" = "dev" ]; then
-    restore_compose
-  fi
   if [ "${health_status}" -ne 0 ]; then
     echo "server for ${app_dir} did not become healthy; log:" >&2
     cat "${SERVER_LOG}" >&2
