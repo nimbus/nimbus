@@ -1,6 +1,6 @@
 ---
 title: How Nimbus works
-description: The single-binary architecture — one engine, one storage contract, and protocol adapters that let existing Convex, Firestore, Cloud Functions, MongoDB, and DynamoDB clients talk to it.
+description: The single-binary architecture — one engine, durable storage and network control planes, and protocol adapters for existing clients.
 sidebar:
   label: How Nimbus works
   order: 2
@@ -13,7 +13,7 @@ This page is the conceptual map: what lives inside the binary, how a
 request moves through it, and why "drop-in compatible" is an architectural
 property rather than a marketing one.
 
-## One binary, five layers
+## One binary, six layers
 
 Inside the single process, responsibilities are split into layers, each
 with one job:
@@ -39,6 +39,11 @@ with one job:
   multiple providers: embedded SQLite is the default, redb is a second
   embedded option, and Postgres, MySQL, and libSQL are external options.
   See [storage backends](/operators/storage-backends/).
+- **The network control plane** owns portable connectivity-resource identity,
+  plans, durable leases, provider capability evidence, readiness, and recovery.
+  It is transport-free. Socket binding, protocol handling, namespaces, and
+  forwarding remain with their concrete effect owners. See the
+  [network control plane](/concepts/architecture/network-control-plane/).
 
 A small set of shared types defines the vocabulary — documents, tables,
 mutations, schemas, queries — used across all of them, and the CLI wraps
@@ -79,6 +84,12 @@ exactly what the bridge exposes — nothing else. Functions can also opt
 into Node.js compatibility targets while keeping the same in-process
 invocation model; see
 [how the Node runtime works](/concepts/nodejs-runtime/).
+
+Long-running workload provisioning also uses one coordinated path. Compute
+owns the workload saga. The network control plane validates each portable
+connectivity transition. Sandboxes, servers, and other providers create or
+remove the concrete resources. Desired plans, durable leases, and observed
+status remain separate throughout that lifecycle.
 
 ## Tenancy is a first-class boundary
 
@@ -135,6 +146,8 @@ precisely which operations each dialect supports today.
   trust model in depth.
 - [How the Node runtime works](/concepts/nodejs-runtime/) — the function
   runtime's compatibility contract.
+- [Network control plane](/concepts/architecture/network-control-plane/):
+  connectivity-resource plans, leases, provider evidence, and recovery.
 - [Developers](/developers/) — pick a protocol surface and build.
 - [Storage backends](/operators/storage-backends/) — choose and operate
   a persistence provider.

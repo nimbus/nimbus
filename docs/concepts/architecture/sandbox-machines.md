@@ -69,6 +69,11 @@ Execute mode requires a Linux host outright, and planning never launches a VMM:
 `PlanOnly` materializes and validates everything up to execution without
 starting a guest.
 
+These are concrete effects, not portable network authority. The
+[network control plane](/concepts/architecture/network-control-plane/) owns
+attachment, segment, endpoint, listener, and port identity. It also owns the
+durable leases and fences that authorize these sandbox effects.
+
 ## What a sandbox spec says
 
 `SandboxSpec` (`crates/nimbus-sandbox/src/spec.rs`) is the validated launch
@@ -167,5 +172,8 @@ with the per-workload sandboxes inside it running as crun containers.
   decision authorizes a sandbox launch in the first place.
 - [Runtime isolates](/concepts/architecture/runtime-isolates/) — the
   in-process isolation tier that sandboxes complement.
+- [Network control plane](/concepts/architecture/network-control-plane/):
+  the portable identity, lease, capability, and recovery seam above concrete
+  sandbox-network effects.
 - [Tenant isolation](/concepts/tenant-isolation/) — the user-facing trust
   model these mechanisms implement.

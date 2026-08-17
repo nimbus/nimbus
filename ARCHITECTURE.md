@@ -193,7 +193,7 @@ contracts; `nimbus-machine` owns the machine record model and provider
 contracts shared by the CLI and the server control plane.
 → <https://nimbusdocs.com/concepts/architecture/sandbox-machines/>
 
-### Egress & network trust
+### Network control plane
 
 `nimbus-network` is the transport-free connectivity-resource control plane. It
 owns stable attachment, segment, endpoint, route, listener, and port identity;
@@ -215,6 +215,10 @@ activation prerequisites → activate → prove workload readiness → publish �
 observe. No tenant instruction runs before authenticated attachment and any
 required policy-enforcement readiness. Teardown follows withdraw → drain →
 stop → detach → release → record.
+
+→ <https://nimbusdocs.com/concepts/architecture/network-control-plane/>
+
+### Egress & network trust
 
 Workload egress is decided and enforced by two crates with a strict
 PDP/PEP split: `nimbus-egress` is the pure decision core (compiled

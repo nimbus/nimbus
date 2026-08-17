@@ -75,6 +75,7 @@ Each capability carries one of three statuses:
 
 | Capability | Status | Notes |
 | --- | --- | --- |
+| Network control plane | Available with caveats | Node-local portable plans, stable attachment and endpoint identity, durable port and segment leases, capability evidence, readiness, and fenced recovery are implemented. Concrete effects stay with server, sandbox, machine, proxy, KV, and node providers. Multi-node cluster transport is not yet available. See the [network control plane](/concepts/architecture/network-control-plane/). |
 | Service, sandbox, and session APIs | Available with caveats | Declared services, isolated sandboxes, and scoped sessions over HTTP and the SDK. Publicly created sandboxes run sealed — deny-all egress, no caller-set mounts or resource limits; sessions are control-plane leases whose channel byte transport is not yet exposed to clients. See the [resource model](/concepts/resource-model/). |
 | Sandbox isolation backends | Available with caveats | Sandboxes run as containers or libkrun microVMs on Linux hosts, with deny-by-default egress. Non-Linux hosts need a machine (below). |
 | Machines (`nimbus machine`) | Available with caveats | A managed Linux VM that hosts sandboxes on macOS (and WSL2 on Windows). See the [CLI reference](/reference/cli/). |

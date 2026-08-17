@@ -30,6 +30,9 @@ or [Operators](/operators/) when you have a task in hand.
 
 - [Services, sandboxes, and sessions](/concepts/resource-model/) — the
   resource model for long-running workloads beyond functions.
+- [Network control plane](/concepts/architecture/network-control-plane/):
+  how portable connectivity identity, leases, provider evidence, and recovery
+  support those workloads.
 - [How the Node runtime works](/concepts/nodejs-runtime/) — why Node.js
   support is an in-process compatibility contract, not a Node process.
 
@@ -41,6 +44,6 @@ or [Operators](/operators/) when you have a task in hand.
 ## Architecture
 
 - [Architecture](/concepts/architecture/) — a system-by-system map of the
-  binary: twelve pages covering the server, adapters, engine, storage,
-  runtime, sandboxes, auth, tenancy, node lifecycle, CLI, SDK packages,
-  and observability, each citing the crates that implement it.
+  binary: thirteen pages covering the server, adapters, engine, storage,
+  networking, runtime, sandboxes, auth, tenancy, node lifecycle, CLI, SDK
+  packages, and observability. Each page cites the crates that implement it.

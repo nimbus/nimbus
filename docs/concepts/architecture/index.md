@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: A system-by-system map of the Nimbus binary — twelve pages, each owning one subsystem, each citing the crates and modules that implement it.
+description: A system-by-system map of the Nimbus binary — thirteen pages, each owning one subsystem, each citing the crates and modules that implement it.
 sidebar:
   order: 1
 ---
@@ -32,6 +32,9 @@ the engine.
 - [Storage](/concepts/architecture/storage/) — the five persistence
   providers, per-tenant physical isolation, the single-transaction
   atomicity invariant, index lifecycle, and encryption at rest.
+- [Network control plane](/concepts/architecture/network-control-plane/):
+  portable connectivity-resource identity, plans, leases, capability evidence,
+  readiness, and recovery without transport or provider effects.
 
 ## Execution and isolation
 
