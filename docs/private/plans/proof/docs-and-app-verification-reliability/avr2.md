@@ -184,12 +184,14 @@ failure cannot replace the successful preview result.
 | Desktop UI Smoke | Pass in run `32055431555`. |
 | Windows workspace check | Pass in run `32055431570`. |
 | CodeQL | Pass in failed-only attempt 2 of run `32055431439`; Rust and JavaScript analysis green. |
+| Final-head hosted suite | Pass at `c3e10f6ac`: CI `32061251288`, Docs `32061251374`, CodeQL `32061251375`, Desktop UI `32061251273`, Windows `32061251260`. |
+| Merge and reconciliation | PR #275 merged as `520dba9fb`; the clean owner branch fast-forwarded to the same current-main commit with zero divergence. |
 
 The site build still emits Astro's `markdown.gfm` and `markdown.smartypants`
 deprecation warning. AVR10 owns that low-priority cleanup. It does not affect
 AVR2 output or acceptance.
 
 The first hosted Docs run uploaded the preview and then received HTTP 503 from
-GitHub's comment API. Replacement run `32050785842` passed after service
-recovery. AVRF20 assigns bounded notification recovery to AVR11. AVR2 does not
-change the reviewed workflow.
+GitHub's comment API. Repeated failures moved AVRF20 into AVR2. Work commit
+`a786468eb` added bounded notification recovery, and hosted run `32055431404`
+proved the fallback during a real HTTP 503.

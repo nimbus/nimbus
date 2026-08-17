@@ -3,9 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: checkpoint the green hosted evidence for implementation PR 1,
-#275, at head `5e928890b`, push it, and resolve the new-head checks. Then wait
-for owner merge authorization and reconcile current main before AVR3.
+Next action: execute AVR3 fail-before cases for the fresh-checkout prerequisite
+and Node-version contracts. Attribute every affected runner, Make target, and
+focused contract test before implementation.
 
 ## Outcome
 
@@ -127,8 +127,8 @@ contract records condition ownership, phase counts, and exact commands:
 |---|---|---|---|
 | AVR0 | Verify the baseline, author the 24-condition verifier red, repair private verification routing, and capture all fail-before evidence without product changes. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr0.md`. Work commit `e7ea6d220`; baseline 0/24; mutation self-test 24/24; docs 108; site 17/17; build 109 pages; six Markdown files lint-clean. |
 | AVR1 | Extract stable network-verifier contracts, archive the completed network plan, and correct private routing and status. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr1.md`. Work commits `3300c6b6f` and `b24959165`; AVRC01-AVRC04 4/4; network verifier 39/39; mutation suite 610/610; docs 108; site 17/17; build 109 pages. |
-| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `in_progress` | Implementation acceptance complete. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. Work commits `4ad5a2c1b`, `389734582`, `d74bce443`, `b98ee3242`, and `a786468eb`; AVRC05-AVRC10 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML. AVRF21 is green locally and in hosted workspace shard 2. AVRF20 passed its live HTTP 503 fallback. CI, Docs, CodeQL, Desktop UI, and Windows are green at head `5e928890b`. PR #275 is open; the evidence checkpoint, final-head checks, merge, and reconciliation remain. |
-| AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `todo` | |
+| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr2.md`. Work commits `4ad5a2c1b`, `389734582`, `d74bce443`, `b98ee3242`, and `a786468eb`; AVRC05-AVRC10 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML. Final head `c3e10f6ac` passed CI, Docs, CodeQL, Desktop UI, and Windows. PR #275 merged as `520dba9fb`; the owner branch fast-forwarded to the same current-main commit with zero divergence. |
+| AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `in_progress` | Fail-before reproduction and source attribution are next. |
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `todo` | |
 | AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `todo` | |
 | AVR6 | Reproduce and close, or disprove and remove, the bare-local target workaround. | `todo` | |
@@ -459,3 +459,5 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | AVR2 | Docs hosted proof | Docs run `32055431404` uploaded a preview, exhausted all three comment retries on HTTP 503, emitted the explicit warning, and completed successfully. CodeQL run `32055431439` failed only when GitHub returned HTTP 503 during Rust initialization; JavaScript analysis passed. Other hosted runs remain active. |
 | 2026-08-17 | AVR2 | hosted CI green | CI run `32055431425` completed with 47 successful jobs, three expected skips, and zero failures. Workspace shard 2 passed the AVRF21 regression. Desktop UI run `32055431555` also passed. Windows remains active. |
 | 2026-08-17 | AVR2 | hosted candidate green | Windows run `32055431570` passed. Failed-only CodeQL attempt 2 passed Rust analysis after GitHub reported API recovery. PR #275 reports a clean merge state and every current-head check is green. |
+| 2026-08-17 | AVR2 | completed | Final head `c3e10f6ac` passed CI run `32061251288`, Docs `32061251374`, CodeQL `32061251375`, Desktop UI `32061251273`, and Windows `32061251260`. PR #275 merged as `520dba9fb`. The owner branch fast-forwarded to that current-main commit with zero divergence. |
+| 2026-08-17 | AVR3 | started | Implementation PR 1 is merged and reconciled. Reproduce the fresh-checkout artifact failure and the late unsupported-Node failure, then implement AVR3.1-AVR3.5 at the runner and Make seams. |
