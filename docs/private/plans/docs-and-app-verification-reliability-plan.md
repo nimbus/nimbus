@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: execute AVR0.1-AVR0.6 without product changes. First, author the
-six missing private routing and runbook documents.
+Next action: execute AVR1.1-AVR1.6. Extract stable network-verifier inputs for
+the 13 executable plan readers before archiving the completed network plan.
 
 ## Outcome
 
@@ -120,8 +120,8 @@ contract records condition ownership, phase counts, and exact commands:
 
 | ID | Task | Status | Evidence |
 |---|---|---|---|
-| AVR0 | Verify the baseline, author the 24-condition verifier red, repair private verification routing, and capture all fail-before evidence without product changes. | `in_progress` | Goal active; durable plan checkpoint `7abfe4409`; current main `82bdcf2db`. |
-| AVR1 | Extract stable network-verifier contracts, archive the completed network plan, and correct private routing and status. | `todo` | |
+| AVR0 | Verify the baseline, author the 24-condition verifier red, repair private verification routing, and capture all fail-before evidence without product changes. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr0.md`. Work commit `e7ea6d220`; baseline 0/24; mutation self-test 24/24; docs 108; site 17/17; build 109 pages; six Markdown files lint-clean. |
+| AVR1 | Extract stable network-verifier contracts, archive the completed network plan, and correct private routing and status. | `in_progress` | Started after the AVR0 checkpoint. First action: classify the 13 executable plan readers by the stable values they consume. |
 | AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `todo` | |
 | AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `todo` | |
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `todo` | |
@@ -425,3 +425,5 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | meta | authored | Plan authored from the post-merge documentation and live-application audit. No implementation started. |
 | 2026-08-17 | meta | promoted | Full plan review resolved all 11 findings. Structural audit: 13/13 task contracts, 18/18 findings routed, AVRC01-AVRC24 mapped, 425 plan lines, ledger at line 119. Technical-writing lint: 4 files, 0 diagnostics. Docs: 108 pages and 17/17 site conditions. Site build: 109 HTML pages. No product implementation started. |
 | 2026-08-17 | AVR0 | started | Goal activated. Durable plan checkpoint `7abfe4409` exists in `HEAD`; fetched `origin/main` remains `82bdcf2db`; clean branch was one commit ahead before this transition. |
+| 2026-08-17 | AVR0 | completed | Work commit `e7ea6d220` added six missing private routing/runbook documents and the two verifier entry points without product behavior changes. Proof: `proof/docs-and-app-verification-reliability/avr0.md`. Baseline 0/24; mutation self-test 24/24; all syntax, ShellCheck, writing, docs, site, link, and diff gates pass. |
+| 2026-08-17 | AVR1 | started | AVR0 is durable. Classify the 13 executable readers, extract stable contract inputs, preserve verifier behavior, correct stale private status, then archive and reroute the completed network plan. |
