@@ -3,8 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: execute AVR1.1-AVR1.6. Extract stable network-verifier inputs for
-the 13 executable plan readers before archiving the completed network plan.
+Next action: execute AVR2.1-AVR2.4. Add the source-verified public network
+architecture page, source-map rows, lifecycle-plane cross-links, and generated
+`llms` evidence.
 
 ## Outcome
 
@@ -121,8 +122,8 @@ contract records condition ownership, phase counts, and exact commands:
 | ID | Task | Status | Evidence |
 |---|---|---|---|
 | AVR0 | Verify the baseline, author the 24-condition verifier red, repair private verification routing, and capture all fail-before evidence without product changes. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr0.md`. Work commit `e7ea6d220`; baseline 0/24; mutation self-test 24/24; docs 108; site 17/17; build 109 pages; six Markdown files lint-clean. |
-| AVR1 | Extract stable network-verifier contracts, archive the completed network plan, and correct private routing and status. | `in_progress` | Started after the AVR0 checkpoint. First action: classify the 13 executable plan readers by the stable values they consume. |
-| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `todo` | |
+| AVR1 | Extract stable network-verifier contracts, archive the completed network plan, and correct private routing and status. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr1.md`. Work commits `3300c6b6f` and `b24959165`; AVRC01-AVRC04 4/4; network verifier 39/39; mutation suite 610/610; docs 108; site 17/17; build 109 pages. |
+| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `in_progress` | Started after AVR1 acceptance. First action: map each public ownership and state-separation claim to current source before writing the network architecture page. |
 | AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `todo` | |
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `todo` | |
 | AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `todo` | |
@@ -427,3 +428,5 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | AVR0 | started | Goal activated. Durable plan checkpoint `7abfe4409` exists in `HEAD`; fetched `origin/main` remains `82bdcf2db`; clean branch was one commit ahead before this transition. |
 | 2026-08-17 | AVR0 | completed | Work commit `e7ea6d220` added six missing private routing/runbook documents and the two verifier entry points without product behavior changes. Proof: `proof/docs-and-app-verification-reliability/avr0.md`. Baseline 0/24; mutation self-test 24/24; all syntax, ShellCheck, writing, docs, site, link, and diff gates pass. |
 | 2026-08-17 | AVR1 | started | AVR0 is durable. Classify the 13 executable readers, extract stable contract inputs, preserve verifier behavior, correct stale private status, then archive and reroute the completed network plan. |
+| 2026-08-17 | AVR1 | completed | Work commits `3300c6b6f` and `b24959165` extracted the stable JSON contract, archived the completed network plan, refreshed live-source census inputs, and corrected three affected mutation fixtures. Proof: `proof/docs-and-app-verification-reliability/avr1.md`. AVRC01-AVRC04 4/4; network verifier 39/39; mutations 610/610; docs 108; site 17/17; build 109 pages. |
+| 2026-08-17 | AVR2 | started | AVR1 is durable and all archival behavior is green. Map public network ownership and lifecycle claims to source, add the public page and source-map routes, then inspect every generated `llms` output. |
