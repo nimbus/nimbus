@@ -1,7 +1,7 @@
 # Documentation and Application Verification Reliability Proofs
 
 Status: AVR0 and AVR1 are complete. AVR2 implementation acceptance is complete.
-The phase-one pull-request checkpoint is next.
+Phase-one PR #275 is open, and hosted checks are in progress.
 
 Owner: `docs/private/plans/docs-and-app-verification-reliability-plan.md`
 

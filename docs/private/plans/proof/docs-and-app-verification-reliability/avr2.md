@@ -17,6 +17,7 @@ current main.
 | Public network architecture | `4ad5a2c1b6a9cdf84ff9293004ec42b5414dd594` |
 | Review corrections | `38973458201818a57190c507d0cb34124aa6c218` |
 | Mutation isolation correction | `d74bce443721701cf6a03708173be2c791ab382c` |
+| Implementation PR 1 | [#275](https://github.com/nimbus/nimbus/pull/275) |
 
 ## Acceptance ledger
 

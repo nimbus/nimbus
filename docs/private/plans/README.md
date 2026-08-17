@@ -85,8 +85,9 @@ extension-registry seam before the second concern edits `extensions.rs`.
   application verification. It will keep source unchanged and use product-owned
   ports. It will isolate temporary state and emit structured evidence. It will
   run nine apps with bounded parallelism. It consumes completed network and
-  examples decisions without reopening them. AVR0-AVR2 precede runner and
-  performance work.
+  examples decisions without reopening them. The AVR0-AVR2 phase candidate is
+  open as PR #275. It must merge and reconcile before runner and performance
+  work starts.
 - `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
   architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
   `SandboxBackend` router/dispatch seam with backend families

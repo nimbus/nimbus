@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: publish implementation PR 1 for AVR0-AVR2, record hosted checks,
-and wait for owner merge authorization. Reconcile current main before AVR3.
+Next action: monitor implementation PR 1, #275, and resolve hosted failures.
+Wait for owner merge authorization. Reconcile current main before AVR3.
 
 ## Outcome
 
@@ -123,7 +123,7 @@ contract records condition ownership, phase counts, and exact commands:
 |---|---|---|---|
 | AVR0 | Verify the baseline, author the 24-condition verifier red, repair private verification routing, and capture all fail-before evidence without product changes. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr0.md`. Work commit `e7ea6d220`; baseline 0/24; mutation self-test 24/24; docs 108; site 17/17; build 109 pages; six Markdown files lint-clean. |
 | AVR1 | Extract stable network-verifier contracts, archive the completed network plan, and correct private routing and status. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr1.md`. Work commits `3300c6b6f` and `b24959165`; AVRC01-AVRC04 4/4; network verifier 39/39; mutation suite 610/610; docs 108; site 17/17; build 109 pages. |
-| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `in_progress` | Implementation acceptance complete. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. Work commits `4ad5a2c1b`, `389734582`, and `d74bce443`; AVRC05-AVRC10 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML. PR, hosted, merge, and reconciliation evidence remain. |
+| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `in_progress` | Implementation acceptance complete. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. Work commits `4ad5a2c1b`, `389734582`, and `d74bce443`; AVRC05-AVRC10 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML. PR #275 is open; hosted, merge, and reconciliation evidence remain. |
 | AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `todo` | |
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `todo` | |
 | AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `todo` | |
@@ -433,3 +433,4 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | AVR1 | completed | Work commits `3300c6b6f` and `b24959165` extracted the stable JSON contract, archived the completed network plan, refreshed live-source census inputs, and corrected three affected mutation fixtures. Proof: `proof/docs-and-app-verification-reliability/avr1.md`. AVRC01-AVRC04 4/4; network verifier 39/39; mutations 610/610; docs 108; site 17/17; build 109 pages. |
 | 2026-08-17 | AVR2 | started | AVR1 is durable and all archival behavior is green. Map public network ownership and lifecycle claims to source, add the public page and source-map routes, then inspect every generated `llms` output. |
 | 2026-08-17 | AVR2 | candidate complete | Work commits `4ad5a2c1b`, `389734582`, and `d74bce443` publish the source-verified page and close all review findings. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. AVR2 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML; lint delta zero. Implementation PR 1 is next. |
+| 2026-08-17 | AVR2 | PR opened | Implementation PR 1 is [#275](https://github.com/nimbus/nimbus/pull/275). Head `ad7923682` started CI run `32050695309`, docs run `32050695317`, and CodeQL run `32050695320`. Hosted checks are in progress. |
