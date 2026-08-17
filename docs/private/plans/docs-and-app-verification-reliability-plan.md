@@ -3,7 +3,7 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: finish and push the AVRF20 Docs workflow hardening to
+Next action: push AVRF20 Docs workflow hardening commit `a786468eb` to
 implementation PR 1, #275, then resolve its replacement hosted runs. Wait for
 owner merge authorization. Reconcile current main before AVR3.
 
@@ -127,7 +127,7 @@ contract records condition ownership, phase counts, and exact commands:
 |---|---|---|---|
 | AVR0 | Verify the baseline, author the 24-condition verifier red, repair private verification routing, and capture all fail-before evidence without product changes. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr0.md`. Work commit `e7ea6d220`; baseline 0/24; mutation self-test 24/24; docs 108; site 17/17; build 109 pages; six Markdown files lint-clean. |
 | AVR1 | Extract stable network-verifier contracts, archive the completed network plan, and correct private routing and status. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr1.md`. Work commits `3300c6b6f` and `b24959165`; AVRC01-AVRC04 4/4; network verifier 39/39; mutation suite 610/610; docs 108; site 17/17; build 109 pages. |
-| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `in_progress` | Implementation acceptance complete. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. Work commits `4ad5a2c1b`, `389734582`, `d74bce443`, and `b98ee3242`; AVRC05-AVRC10 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML. AVRF21 is locally green: focused 1/1, stress 50/50, listener group 10/10, serialized server 663 passed and 35 ignored, Clippy clean. AVRF20 hardening passes actionlint, ShellCheck, and the 17/17 site verifier. PR #275 is open; its workflow commit, replacement hosted runs, merge, and reconciliation remain. |
+| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `in_progress` | Implementation acceptance complete. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. Work commits `4ad5a2c1b`, `389734582`, `d74bce443`, `b98ee3242`, and `a786468eb`; AVRC05-AVRC10 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML. AVRF21 is locally green: focused 1/1, stress 50/50, listener group 10/10, serialized server 663 passed and 35 ignored, Clippy clean. AVRF20 hardening passes actionlint, ShellCheck, and the 17/17 site verifier. PR #275 is open; push, replacement hosted runs, merge, and reconciliation remain. |
 | AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `todo` | |
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `todo` | |
 | AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `todo` | |

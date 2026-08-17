@@ -142,7 +142,8 @@ The site verifier now requires the job summary, bounded retries,
 `continue-on-error`, and the explicit warning outcome. `actionlint`, Bash
 syntax, ShellCheck, and all 17 site conditions pass. ShellCheck also found a
 pre-existing unchecked verifier `cd`. The directly related cleanup now exits
-if the repository-root transition fails.
+if the repository-root transition fails. Work commit `a786468eb` owns this
+hardening.
 
 ## Verification evidence
 
