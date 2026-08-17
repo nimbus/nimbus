@@ -3,9 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: push AVRF21 correction `b98ee3242` to implementation PR 1, #275,
-then resolve its replacement hosted runs. Wait for owner merge authorization.
-Reconcile current main before AVR3.
+Next action: finish and push the AVRF20 Docs workflow hardening to
+implementation PR 1, #275, then resolve its replacement hosted runs. Wait for
+owner merge authorization. Reconcile current main before AVR3.
 
 ## Outcome
 
@@ -103,7 +103,7 @@ Promote this plan to `active` only when every gate holds:
 | AVRF17 | HIGH, confirmed | Concurrent cases share platform authentication, discovery, and audit paths; a later server can replace the discovery record used by bare-local commands. | AVR7 |
 | AVRF18 | HIGH, confirmed | Repository bootstrap routing names six missing private routing, operating, local-development, adapter, and Convex-guidance documents. | AVR0 |
 | AVRF19 | LOW, confirmed | The docs build emits Astro's `markdown.gfm` and `markdown.smartypants` deprecation warning. | AVR10 |
-| AVRF20 | MEDIUM, confirmed | Docs run `32050695317` deployed its preview, then failed because the zero-retry GitHub comment step received HTTP 503. | AVR11 |
+| AVRF20 | MEDIUM, confirmed | Docs runs `32050695317`, `32050937873`, and `32054899165` deployed their previews, then failed because the zero-retry GitHub comment step received HTTP 503. | AVR2 |
 | AVRF21 | MEDIUM, confirmed | CI run `32050937772` reproduced a listener-projection test whose process-wide one-shot storage fault could be consumed by concurrent router startup instead of its named projection transaction. | AVR2 |
 | AVRF22 | HIGH, confirmed | The required local `cargo test` path runs managed `nimbus-server` tests concurrently even though they share one process-global network authority; the full lib run failed 62 tests with `DuplicateProcessComposition`, while its serialized run passed. | AVR11 |
 
@@ -127,7 +127,7 @@ contract records condition ownership, phase counts, and exact commands:
 |---|---|---|---|
 | AVR0 | Verify the baseline, author the 24-condition verifier red, repair private verification routing, and capture all fail-before evidence without product changes. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr0.md`. Work commit `e7ea6d220`; baseline 0/24; mutation self-test 24/24; docs 108; site 17/17; build 109 pages; six Markdown files lint-clean. |
 | AVR1 | Extract stable network-verifier contracts, archive the completed network plan, and correct private routing and status. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr1.md`. Work commits `3300c6b6f` and `b24959165`; AVRC01-AVRC04 4/4; network verifier 39/39; mutation suite 610/610; docs 108; site 17/17; build 109 pages. |
-| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `in_progress` | Implementation acceptance complete. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. Work commits `4ad5a2c1b`, `389734582`, `d74bce443`, and `b98ee3242`; AVRC05-AVRC10 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML. AVRF21 correction is locally green: focused 1/1, stress 50/50, listener group 10/10, serialized server 663 passed and 35 ignored, Clippy clean. PR #275 is open; push, replacement hosted runs, merge, and reconciliation remain. |
+| AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `in_progress` | Implementation acceptance complete. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. Work commits `4ad5a2c1b`, `389734582`, `d74bce443`, and `b98ee3242`; AVRC05-AVRC10 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML. AVRF21 is locally green: focused 1/1, stress 50/50, listener group 10/10, serialized server 663 passed and 35 ignored, Clippy clean. AVRF20 hardening passes actionlint, ShellCheck, and the 17/17 site verifier. PR #275 is open; its workflow commit, replacement hosted runs, merge, and reconciliation remain. |
 | AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `todo` | |
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `todo` | |
 | AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `todo` | |
@@ -203,12 +203,18 @@ its predecessor PR is open or unmerged.
 - Owning seam and paths: `ARCHITECTURE.md`, `README.md`,
   `docs/concepts/index.md`, `docs/concepts/architecture/`,
   `docs/concepts/how-nimbus-works.md`,
-  `docs/reference/current-capabilities.md`, and `docs/source-map.md`.
-- Steps: execute AVR2.1-AVR2.4 from the acceptance contract in order.
+  `docs/reference/current-capabilities.md`, `docs/source-map.md`,
+  `.github/workflows/docs.yml`, and `scripts/verify-nimbus-docs-site.sh`.
+- Steps: execute AVR2.1-AVR2.6 from the acceptance contract in order.
 - Acceptance: every claim maps to source. Transport and resource lifecycle stay
   distinct. Desired, durable, and observed state stay distinct. No public page
   links to private docs.
+- Acceptance: a successful preview upload writes its URL to the job summary.
+  PR comment delivery retries three times. If GitHub remains unavailable, the
+  workflow reports a warning but retains the successful preview result.
 - Fail-before: the architecture index and source map contain no network page.
+- Fail-before: three Docs runs uploaded a preview and then failed only when the
+  zero-retry PR comment received HTTP 503.
 - Verification: run the AVR2 command-contract row. Require
   `--through-phase 1` to report `10 passed, 0 failed`. Inspect `llms.txt`,
   `llms-full.txt`, and `llms-small.txt` for the network page and private-fence
@@ -350,17 +356,12 @@ its predecessor PR is open or unmerged.
 - Acceptance: AVR reports 24/24 and self-test 24/24. All apps and anchors pass
   in serial and parallel modes. Cleanup passes. Local, minicloud, and hosted
   gates pass. GPT-5.6 Sol reviews the complete candidate in xhigh fast mode.
-- Acceptance: the docs preview writes its URL to the job summary. Comment
-  delivery uses bounded retries. An unavailable comment API cannot turn a
-  successful build and upload red, but the job keeps visible warning evidence.
 - Acceptance: the canonical local Rust test entry point isolates tests that
   require the process-global network authority.
 - Acceptance: `make test` and `make ci` pass without a hidden manual
   `--test-threads=1` workaround. The product continues to reject a second
   in-process authority.
 - Fail-before: the AVR0 baseline remains in the proof root.
-- Fail-before: docs run `32050695317` failed only in the zero-retry preview
-  comment step after a successful preview upload.
 - Fail-before: unrestricted `cargo test -p nimbus-server --lib` reported 601
   passed, 62 `DuplicateProcessComposition` failures, and 35 ignored. The same
   binary reported 663 passed, 0 failed, and 35 ignored with
@@ -454,3 +455,4 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | AVR2 | PR opened | Implementation PR 1 is [#275](https://github.com/nimbus/nimbus/pull/275). Head `ad7923682` started CI run `32050695309`, docs run `32050695317`, and CodeQL run `32050695320`. Hosted checks are in progress. |
 | 2026-08-17 | AVR2 | hosted finding | Docs run `32050695317` failed after preview upload because GitHub's incident returned HTTP 503 to the zero-retry comment step. Replacement run `32050785842` passed. AVRF20 routes bounded notification recovery to AVR11; AVR2 product scope stays frozen. |
 | 2026-08-17 | AVR2 | hosted correction | Commit `b98ee3242` resolves CI run `32050937772` by targeting the listener projection fault to the system tenant's durable listener-and-port write record. Focused 1/1, fresh-process stress 50/50, listener group 10/10, serialized server 663 passed with 35 ignored, and package Clippy are green. The unrestricted full-server run separately exposed AVRF22 for AVR11. |
+| 2026-08-17 | AVR2 | Docs hardening | Docs run `32054899165` became the third run to upload a valid preview and then fail on a zero-retry comment PATCH during GitHub's incident. AVRF20 moved from AVR11 to AVR2 because it repeatedly blocks PR 1. The candidate writes the URL to the job summary, retries comments three times, and converts exhausted comment delivery to a visible warning. |

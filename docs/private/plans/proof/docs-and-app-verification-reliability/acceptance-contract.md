@@ -52,7 +52,7 @@ entry points. Every task runs its row and the focused commands in its plan body.
 |---|---|
 | AVR0 | `bash -n scripts/verify-docs-app-verification.sh`; `shellcheck scripts/verify-docs-app-verification.sh`; `bash scripts/verify-docs-app-verification.sh --baseline`; `bash scripts/verify-docs-app-verification.sh --self-test` |
 | AVR1 | `bash scripts/verify-nimbus-network-control-plane.sh`; `bash scripts/verify-nimbus-network-control-plane.sh --self-test`; `bash scripts/verify-docs-app-verification.sh --task AVR1`; `bash scripts/check-docs.sh`; `bash scripts/verify-nimbus-docs-site.sh` |
-| AVR2 | `bash scripts/verify-docs-app-verification.sh --task AVR2`; `bash scripts/check-docs.sh`; `npm --prefix website run build`; `bash scripts/verify-nimbus-docs-site.sh` |
+| AVR2 | `bash scripts/verify-docs-app-verification.sh --task AVR2`; `actionlint .github/workflows/docs.yml`; `bash -n scripts/verify-nimbus-docs-site.sh`; `shellcheck scripts/verify-nimbus-docs-site.sh`; `bash scripts/check-docs.sh`; `npm --prefix website run build`; `bash scripts/verify-nimbus-docs-site.sh` |
 | AVR3-AVR8 | `bash scripts/examples-verify-contract-test.sh --task <TASK>`; `bash scripts/verify-docs-app-verification.sh --task <TASK>`; task-focused Rust or live commands from the owner plan |
 | AVR9 | `bash scripts/examples-verify-contract-test.sh --task AVR9`; `bash scripts/examples-verify-benchmark.sh --serial-samples 3 --parallel-samples 5 --max-seconds 1200`; `bash scripts/verify-docs-app-verification.sh --task AVR9` |
 | AVR10 | `bash scripts/examples-verify-contract-test.sh --task AVR10`; `bash scripts/check-docs.sh`; `npm --prefix website run build`; `bash scripts/verify-nimbus-docs-site.sh`; technical-writing lint over every changed Markdown file |
@@ -65,7 +65,7 @@ entry points. Every task runs its row and the focused commands in its plan body.
 |---|---|
 | AVR0.1-AVR0.6 | Verify the baseline and durable checkpoint. Author six missing private routing and runbook documents from current source. Update bootstrap references. Inventory source, bind, operator-path, and command effects. Author 24 red conditions and mutations. Create the AVR0 proof and capture the baseline. |
 | AVR1.1-AVR1.6 | Inventory every plan reader. Extract stable fixtures. Update readers without behavior drift. Correct stale active-status claims. Archive the network plan. Update routing. |
-| AVR2.1-AVR2.4 | Add the source-verified network page and source-map rows. Change both page counts. Add lifecycle-plane cross-links. Inspect every generated `llms` file. |
+| AVR2.1-AVR2.6 | Add the source-verified network page and source-map rows. Change both page counts. Add lifecycle-plane cross-links. Inspect every generated `llms` file. Make preview notification failure independent from successful upload. Verify the workflow and warning evidence. |
 | AVR3.1-AVR3.5 | Define direct-script and Make contracts. Add explicit prerequisites. Keep the supplied-binary fast path. Add the Node preflight. Test every host mode. |
 | AVR4.1-AVR4.5 | Define nine cases. Copy declared inputs to owned workspaces. Run codegen there. Record pre/post byte manifests. Compare them on every exit without source restoration. |
 | AVR5.1-AVR5.5 | Add explicit no-discovery mode. Preserve existing default and explicit-file behavior. Route two dev cases through it. Delete sideline recovery. Update CLI documentation. |

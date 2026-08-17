@@ -124,6 +124,26 @@ This hosted correction was not an autoreview finding. The phase already used
 its one full review and one permitted narrow correction review, so no third
 review runs.
 
+## Hosted Docs hardening
+
+Docs runs `32050695317`, `32050937873`, and `32054899165` each built and
+uploaded a valid preview. Each run then failed when its zero-retry PR comment
+request received HTTP 503 during GitHub's incident. The third failure occurred
+after the AVRF21 push. This notification-only defect then blocked the phase-one
+pull request again.
+
+AVRF20 now belongs to AVR2. The preview upload step rejects a missing URL. It
+writes a valid URL to the job summary before it calls the GitHub API. The
+comment step retries three times. If all attempts fail, the step records a
+continued failure. A final step writes an Actions warning and a job-summary
+warning. The successful build and upload keep the job green.
+
+The site verifier now requires the job summary, bounded retries,
+`continue-on-error`, and the explicit warning outcome. `actionlint`, Bash
+syntax, ShellCheck, and all 17 site conditions pass. ShellCheck also found a
+pre-existing unchecked verifier `cd`. The directly related cleanup now exits
+if the repository-root transition fails.
+
 ## Verification evidence
 
 | Command or check | Result |
@@ -148,6 +168,9 @@ review runs.
 | Complete listener-group suite | Pass; 10 passed, 0 failed. |
 | Serialized `nimbus-server` lib suite | Pass; 663 passed, 0 failed, 35 ignored. |
 | `nimbus-server` lib and test Clippy | Pass with `-D warnings`. |
+| `actionlint .github/workflows/docs.yml` | Pass; no diagnostics. |
+| Docs verifier Bash syntax and ShellCheck | Pass; no diagnostics. |
+| Resilient preview source contract | Pass in site condition 8. |
 
 The site build still emits Astro's `markdown.gfm` and `markdown.smartypants`
 deprecation warning. AVR10 owns that low-priority cleanup. It does not affect

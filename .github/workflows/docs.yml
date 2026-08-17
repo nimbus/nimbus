@@ -76,12 +76,25 @@ jobs:
           set -o pipefail
           npx wrangler versions upload 2>&1 | tee preview.log
           url="$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev[^ ]*' preview.log | tail -1)"
+          if [[ -z "${url}" ]]; then
+            echo "::error title=Docs preview URL missing::The upload succeeded but returned no preview URL"
+            exit 1
+          fi
           echo "url=${url}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Docs preview"
+            echo
+            echo "${url}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Comment preview URL
+        id: preview_comment
         if: github.event_name == 'pull_request' && steps.preview.outputs.url != ''
+        continue-on-error: true
         uses: actions/github-script@v8
         with:
+          retries: 3
+          retry-exempt-status-codes: 400,401,403,404,422
           script: |
             const url = `${{ steps.preview.outputs.url }}`;
             const marker = '<!-- nimbus-docs-preview -->';
@@ -105,6 +118,16 @@ jobs:
                 body,
               });
             }
+
+      - name: Report preview comment failure
+        if: always() && github.event_name == 'pull_request' && steps.preview.outputs.url != '' && steps.preview_comment.outcome == 'failure'
+        run: |
+          echo "::warning title=Docs preview comment unavailable::The preview is available, but GitHub could not update the PR comment"
+          {
+            echo
+            echo "> [!WARNING]"
+            echo "> GitHub could not update the PR comment. Use the preview URL above."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Deploy production
         if: github.event_name != 'pull_request'
