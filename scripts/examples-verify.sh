@@ -18,11 +18,9 @@
 # cost for just the one app.
 #
 # The convex/tasks step also exercises the `nimbus run functions` process
-# stdio contract: spawn the real binary, capture stdout and stderr to
-# separate files, and assert stdout alone parses as the result JSON while
-# the resolved-target banner lands on stderr. It passes an explicit TARGET
-# URL rather than omitting TARGET — see check_run_stdio_contract() below for
-# why that is required, not a style choice.
+# contract through explicit and bare-local target resolution. Both forms must
+# return the same result JSON on stdout, keep their banners on stderr, and
+# preserve the silo and local-admin trust boundaries.
 
 set -euo pipefail
 
@@ -358,61 +356,93 @@ stop_server() {
   fi
 }
 
-# EX5.1's required process-level stdio-contract check: spawn the real
-# `nimbus run` binary, capture stdout and stderr to separate files, assert
-# stdout alone parses as the result JSON and the resolved-target banner is
-# stderr-only. Runs against the already-booted convex/tasks server.
-#
-# Passes an explicit TARGET URL rather than relying on bare local discovery.
-# `nimbus run functions ...` with TARGET omitted resolves through
-# LocalDiscovery, which unconditionally attaches the on-disk local admin
-# token as a bearer (crates/nimbus-cli/src/local_server_client.rs); the
-# server's Convex-style auth verifier then 401s that bearer on every example
-# app because none configure convex/auth.config.ts
-# (crates/nimbus-convex/src/auth/verifier/identity.rs) — a genuine, systemic
-# nimbus-cli defect outside this plan's crates/** ownership, reproduced live
-# against both convex/tasks and nimbus/agent-worker. Passing the TARGET URL
-# explicitly instead routes through invoke_remote_run_function
-# (crates/nimbus-cli/src/run.rs), which sends no Authorization header at
-# all; the request lands anonymous, matching how the smoke.ts scripts' own
-# REST clients already succeed under the dev-mode anonymous-team bypass.
+# Spawn the real `nimbus run` binary through explicit and bare-local target
+# resolution. Each stdout must contain only result JSON. Each banner stays on
+# stderr, and both target forms must return the same value.
 check_run_stdio_contract() {
   local app_dir="$1" target_url="$2"
-  local stdout_file="${DATA_ROOT}/run-stdio-contract.stdout"
-  local stderr_file="${DATA_ROOT}/run-stdio-contract.stderr"
+  local explicit_stdout="${DATA_ROOT}/run-stdio-contract.explicit.stdout"
+  local explicit_stderr="${DATA_ROOT}/run-stdio-contract.explicit.stderr"
+  local local_stdout="${DATA_ROOT}/run-stdio-contract.local.stdout"
+  local local_stderr="${DATA_ROOT}/run-stdio-contract.local.stderr"
+  local wrong_silo_stdout="${DATA_ROOT}/run-stdio-contract.wrong-silo.stdout"
+  local wrong_silo_stderr="${DATA_ROOT}/run-stdio-contract.wrong-silo.stderr"
+  local invalid_auth_body="${DATA_ROOT}/run-stdio-contract.invalid-auth.json"
 
   echo "    stdio-contract: nimbus run ${target_url} functions tasks:list"
   if ! "${NIMBUS_BIN}" run "${target_url}" functions tasks:list \
       --app "${app_dir}" --tenant demo \
-      >"${stdout_file}" 2>"${stderr_file}"; then
-    echo "FAIL stdio-contract: nimbus run functions tasks:list exited non-zero" >&2
+      >"${explicit_stdout}" 2>"${explicit_stderr}"; then
+    echo "FAIL stdio-contract: explicit nimbus run exited non-zero" >&2
     echo "--- stdout ---" >&2
-    cat "${stdout_file}" >&2
+    cat "${explicit_stdout}" >&2
     echo "--- stderr ---" >&2
-    cat "${stderr_file}" >&2
+    cat "${explicit_stderr}" >&2
     return 1
   fi
 
-  if ! node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "${stdout_file}"; then
-    echo "FAIL stdio-contract: stdout did not parse as JSON" >&2
+  echo "    stdio-contract: nimbus run functions tasks:list (local discovery)"
+  if ! "${NIMBUS_BIN}" run functions tasks:list \
+      --app "${app_dir}" --tenant demo \
+      >"${local_stdout}" 2>"${local_stderr}"; then
+    echo "FAIL stdio-contract: bare-local nimbus run exited non-zero" >&2
     echo "--- stdout ---" >&2
-    cat "${stdout_file}" >&2
-    return 1
-  fi
-
-  if ! grep -q "Running against" "${stderr_file}"; then
-    echo "FAIL stdio-contract: resolved-target banner missing from stderr" >&2
+    cat "${local_stdout}" >&2
     echo "--- stderr ---" >&2
-    cat "${stderr_file}" >&2
+    cat "${local_stderr}" >&2
     return 1
   fi
 
-  if grep -q "Running against" "${stdout_file}"; then
-    echo "FAIL stdio-contract: resolved-target banner leaked into stdout" >&2
+  if ! node -e '
+const fs = require("fs");
+const assert = require("assert");
+const explicit = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const local = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+assert.deepStrictEqual(local, explicit);
+' "${explicit_stdout}" "${local_stdout}"; then
+    echo "FAIL stdio-contract: explicit and bare-local JSON results differ" >&2
     return 1
   fi
 
-  echo "PASS stdio-contract: stdout is clean JSON, banner is stderr-only"
+  local stdout_file stderr_file
+  for stdout_file in "${explicit_stdout}" "${local_stdout}"; do
+    if grep -q "Running against" "${stdout_file}"; then
+      echo "FAIL stdio-contract: resolved-target banner leaked into ${stdout_file}" >&2
+      return 1
+    fi
+  done
+  for stderr_file in "${explicit_stderr}" "${local_stderr}"; do
+    if ! grep -q "Running against" "${stderr_file}"; then
+      echo "FAIL stdio-contract: resolved-target banner missing from ${stderr_file}" >&2
+      return 1
+    fi
+  done
+
+  if "${NIMBUS_BIN}" run "${target_url}" functions tasks:list \
+      --app "${app_dir}" --tenant avr6-wrong-silo \
+      >"${wrong_silo_stdout}" 2>"${wrong_silo_stderr}"; then
+    echo "FAIL stdio-contract: an explicit target selected an unprovisioned silo" >&2
+    return 1
+  fi
+  if [ -s "${wrong_silo_stdout}" ]; then
+    echo "FAIL stdio-contract: wrong-silo refusal wrote result data to stdout" >&2
+    cat "${wrong_silo_stdout}" >&2
+    return 1
+  fi
+
+  local invalid_auth_status
+  invalid_auth_status="$(curl -sS -o "${invalid_auth_body}" -w '%{http_code}' \
+    -H 'content-type: application/json' \
+    -H 'authorization: Bearer invalid.avr6.application.credential' \
+    --data '{"name":"tasks:list","args":{}}' \
+    "${target_url}/convex/demo/query")"
+  if [ "${invalid_auth_status}" != "401" ]; then
+    echo "FAIL stdio-contract: invalid application credential returned HTTP ${invalid_auth_status}, expected 401" >&2
+    cat "${invalid_auth_body}" >&2
+    return 1
+  fi
+
+  echo "PASS stdio-contract: target forms match; stdio is clean; wrong silo and invalid application auth fail closed"
 }
 
 run_one() {
