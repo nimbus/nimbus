@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: execute AVR5 fail-before tests for default, explicit-file, and
-no-discovery Compose behavior. Then remove the runner's tracked-file sideline.
+Next action: execute AVR6's omitted-target live reproduction in isolated
+operator state. Compare its result and stdio with the explicit target.
 
 ## Outcome
 
@@ -107,6 +107,7 @@ Promote this plan to `active` only when every gate holds:
 | AVRF22 | HIGH, confirmed | The required local `cargo test` path runs managed `nimbus-server` tests concurrently even though they share one process-global network authority; the full lib run failed 62 tests with `DuplicateProcessComposition`, while its serialized run passed. | AVR11 |
 | AVRF23 | LOW, confirmed | The fresh UI prerequisite emits 18 route-file warnings for support modules under `packages/nimbus-ui/src/routes`, which hides useful verification output. | AVR10 |
 | AVRF24 | MEDIUM, resolved | A whole-directory `node_modules` link let case provisioning remove owner-worktree package links. The AVR4 adapter now owns real case-local scope and `.bin` directories and links only their entries. | AVR4 |
+| AVRF25 | LOW, confirmed | `docs/reference/cli.md` and `docs/source-map.md` have an 85-diagnostic pre-existing technical-writing baseline. AVR5 additions are delta-clean. | AVR10 |
 
 ## Decisions
 
@@ -131,8 +132,8 @@ contract records condition ownership, phase counts, and exact commands:
 | AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr2.md`. Work commits `4ad5a2c1b`, `389734582`, `d74bce443`, `b98ee3242`, and `a786468eb`; AVRC05-AVRC10 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML. Final head `c3e10f6ac` passed CI, Docs, CodeQL, Desktop UI, and Windows. PR #275 merged as `520dba9fb`; the owner branch fast-forwarded to the same current-main commit with zero divergence. |
 | AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr3.md`. Work commit `8042e32e4`; AVRC11-AVRC12 2/2; 13 behavior cases; mutations 24/24; Node.js 22 Make and Node.js 24 direct live runs passed 5/5 app assertions. |
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr4.md`. Work commit `827877d06`; AVRC13-AVRC15 3/3; 6/6 behavior tests; nine preparation fixtures; mutations 24/24; 14/14 live assertions across three execution shapes. |
-| AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `in_progress` | Reproduce default and explicit Compose discovery, add the no-discovery fail-before test, then route both dev cases through the new mode. |
-| AVR6 | Reproduce and close, or disprove and remove, the bare-local target workaround. | `todo` | |
+| AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr5.md`. Work commit `02788d24b`; AVRC16-AVRC17 2/2; CLI 1,015 passed and 4 ignored; Clippy; live dev cases 7/7; docs 109 and 17/17. |
+| AVR6 | Reproduce and close, or disprove and remove, the bare-local target workaround. | `in_progress` | Reproduce explicit and omitted targets in isolated operator state, then preserve equal result, stdio, and fail-closed trust behavior. |
 | AVR7 | Give ports, child processes, temporary roots, logs, and cancellation one fail-closed lifetime owner. | `todo` | |
 | AVR8 | Emit canonical JSON and JUnit evidence with hashes, timings, assertions, and cleanup state. | `todo` | |
 | AVR9 | Add bounded parallel execution and meet the measured wall-clock target without coverage loss. | `todo` | |
@@ -466,3 +467,5 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | AVR4 | started | Capture source-byte mutation on success and failure. Define the nine-case manifest, disposable workspace adapter, and fail-closed byte-manifest proof before implementation. |
 | 2026-08-17 | AVR4 | completed | Work commit `827877d06` adds one nine-case manifest and an owned disposable-workspace adapter. Proof: `proof/docs-and-app-verification-reliability/avr4.md`. AVRC13-AVRC15 3/3; behavior 6/6; preparation fixtures 9/9; mutations 24/24; three live success shapes passed 14/14 assertions and an expected live failure matched source bytes. |
 | 2026-08-17 | AVR5 | started | Preserve default and explicit-file Compose discovery, define an explicit no-discovery mode, route both dev cases through it, and delete the tracked-file sideline and recovery path. |
+| 2026-08-17 | AVR5 | completed | Work commit `02788d24b` adds `--no-compose-discovery`, preserves default and explicit behavior, and deletes the runner's tracked-file sideline. Proof: `proof/docs-and-app-verification-reliability/avr5.md`. AVRC16-AVRC17 2/2; CLI 1,015 passed and 4 ignored; live dev cases 7/7; mutations 24/24; docs 109 and 17/17. |
+| 2026-08-17 | AVR6 | started | Reproduce explicit and omitted local targets in isolated operator state. Close or disprove the stale authentication workaround without weakening tenant or credential boundaries. |
