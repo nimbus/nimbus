@@ -41,8 +41,10 @@ const OWNER_DIRECTORY_MODE: u32 = 0o700;
 #[cfg(unix)]
 const OWNER_FILE_MODE: u32 = 0o600;
 
+#[cfg(unix)]
 mod confirmed;
 
+#[cfg(unix)]
 pub(crate) use confirmed::{
     ConfirmedMachineDesireAdmissionGuard, ConfirmedMachinePublicationJournal,
     ConfirmedMachinePublicationMember, ConfirmedMachinePublicationObservation,

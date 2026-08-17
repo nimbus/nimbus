@@ -62,6 +62,7 @@ pub(crate) use self::api::{
     MachineApiListenMode, MachineApiState, bind_direct_listener, default_guest_helper_binary_dirs,
     machine_api_node_workload_facade_from_sandbox_backend, serve_machine_api,
 };
+#[cfg(any(unix, test))]
 pub(crate) use self::backend::ForwardedMachineApiSandboxBackend;
 pub(crate) use self::client::MachineApiClient;
 pub(crate) use self::command::MachineCommand;

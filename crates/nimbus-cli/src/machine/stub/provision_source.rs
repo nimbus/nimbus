@@ -6,14 +6,16 @@ use nimbus_workloads::NodeIdentity;
 
 use super::network_composition::HostMachineNetworkAuthority;
 
-/// An uninhabited source keeps cross-platform composition type-correct while
-/// making activation impossible on a host that cannot prepare the source.
+/// An opaque source keeps cross-platform composition type-correct. Its only
+/// constructor fails, so a non-Unix host cannot obtain activation authority.
 #[derive(Clone)]
-pub(crate) enum PreparedDefaultMachineProvisionSource {}
+pub(crate) struct PreparedDefaultMachineProvisionSource {
+    bundle: NetworkCapabilityBundle,
+}
 
 impl PreparedDefaultMachineProvisionSource {
     pub(crate) fn bundle(&self) -> &NetworkCapabilityBundle {
-        match *self {}
+        &self.bundle
     }
 }
 
