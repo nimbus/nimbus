@@ -3,8 +3,8 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: prove this checkpoint in `HEAD`, reconcile current main, set the
-whole-plan goal, and start AVR0.1 without product changes
+Next action: execute AVR0.1-AVR0.6 without product changes. First, author the
+six missing private routing and runbook documents.
 
 ## Outcome
 
@@ -120,7 +120,7 @@ contract records condition ownership, phase counts, and exact commands:
 
 | ID | Task | Status | Evidence |
 |---|---|---|---|
-| AVR0 | Verify the baseline, author the 24-condition verifier red, repair private verification routing, and capture all fail-before evidence without product changes. | `todo` | |
+| AVR0 | Verify the baseline, author the 24-condition verifier red, repair private verification routing, and capture all fail-before evidence without product changes. | `in_progress` | Goal active; durable plan checkpoint `7abfe4409`; current main `82bdcf2db`. |
 | AVR1 | Extract stable network-verifier contracts, archive the completed network plan, and correct private routing and status. | `todo` | |
 | AVR2 | Publish and cross-link the source-verified network architecture and align public lifecycle-plane messaging. | `todo` | |
 | AVR3 | Make the application lane self-building from a fresh checkout and add a fail-fast Node version contract. | `todo` | |
@@ -424,3 +424,4 @@ Append rows at the end. This section stays last.
 |---|---|---|---|
 | 2026-08-17 | meta | authored | Plan authored from the post-merge documentation and live-application audit. No implementation started. |
 | 2026-08-17 | meta | promoted | Full plan review resolved all 11 findings. Structural audit: 13/13 task contracts, 18/18 findings routed, AVRC01-AVRC24 mapped, 425 plan lines, ledger at line 119. Technical-writing lint: 4 files, 0 diagnostics. Docs: 108 pages and 17/17 site conditions. Site build: 109 HTML pages. No product implementation started. |
+| 2026-08-17 | AVR0 | started | Goal activated. Durable plan checkpoint `7abfe4409` exists in `HEAD`; fetched `origin/main` remains `82bdcf2db`; clean branch was one commit ahead before this transition. |
