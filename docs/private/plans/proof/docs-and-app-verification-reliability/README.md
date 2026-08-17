@@ -1,7 +1,7 @@
 # Documentation and Application Verification Reliability Proofs
 
-Status: AVR0 through AVR3 are complete. Phase-one PR #275 merged into main.
-The owner reconciled it, and AVR4 is in progress.
+Status: AVR0 through AVR4 are complete. Phase-one PR #275 merged into main.
+The owner reconciled it, and AVR5 is in progress.
 
 Owner: `docs/private/plans/docs-and-app-verification-reliability-plan.md`
 
@@ -15,6 +15,8 @@ commands.
 - [`avr2.md`](avr2.md) records public network architecture and phase review.
 - [`avr3.md`](avr3.md) records fresh-checkout prerequisites and the Node.js
   host contract.
+- [`avr4.md`](avr4.md) records the validated case manifest, disposable
+  workspaces, and source-byte postcondition.
 
 Each later task creates its proof when work starts. A task proof records
 fail-before evidence, exact commands, counts, hashes, review results, and
