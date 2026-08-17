@@ -30,6 +30,100 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 NIMBUS_BIN="${NIMBUS_EXAMPLES_VERIFY_BIN:-${REPO_ROOT}/target/debug/nimbus}"
+NIMBUS_BIN_SUPPLIED=0
+if [ -n "${NIMBUS_EXAMPLES_VERIFY_BIN:-}" ]; then
+  NIMBUS_BIN_SUPPLIED=1
+fi
+
+# Node.js >=22 <25 is the supported range. Node.js 22 and 24 are the tested
+# anchors. Reject an unsupported Node host before port allocation, temporary
+# state, generated prerequisites, Cargo, npm, or any application process.
+require_supported_node() {
+  local node_version node_major
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Node.js >=22 <25 is required (tested on Node.js 22 and 24); node was not found" >&2
+    return 1
+  fi
+  if ! node_version="$(node --version 2>/dev/null)"; then
+    echo "Node.js >=22 <25 is required (tested on Node.js 22 and 24); node --version failed" >&2
+    return 1
+  fi
+  node_major="${node_version#v}"
+  node_major="${node_major%%.*}"
+  case "${node_major}" in
+    ''|*[!0-9]*)
+      echo "unsupported Node.js version ${node_version}; require Node.js >=22 <25 (tested on Node.js 22 and 24)" >&2
+      return 1
+      ;;
+  esac
+  if [ "${node_major}" -lt 22 ] || [ "${node_major}" -ge 25 ]; then
+    echo "unsupported Node.js version ${node_version}; require Node.js >=22 <25 (tested on Node.js 22 and 24)" >&2
+    return 1
+  fi
+}
+
+# A supplied binary can skip generated build prerequisites and the Rust build,
+# but it must be an executable before the Make entry starts any generation.
+require_supplied_binary() {
+  if [ "${NIMBUS_BIN_SUPPLIED}" = "1" ] && [ ! -x "${NIMBUS_BIN}" ]; then
+    echo "supplied binary is missing or not executable: ${NIMBUS_BIN}" >&2
+    return 1
+  fi
+}
+
+run_host_preflight() {
+  require_supported_node
+  require_supplied_binary
+  if [ "${NIMBUS_BIN_SUPPLIED}" = "1" ]; then
+    printf 'supplied binary %s is executable; skip generated build prerequisites and the Rust build\n' "${NIMBUS_BIN}"
+  fi
+}
+
+run_host_preflight
+
+case "$#" in
+  0) ;;
+  1)
+    if [ "$1" = "--host-preflight" ]; then
+      exit 0
+    fi
+    echo "unknown argument: $1" >&2
+    exit 2
+    ;;
+  *)
+    echo "usage: $0 [--host-preflight]" >&2
+    exit 2
+    ;;
+esac
+
+# Direct invocation cannot generate a buildable binary from a tracked-files-
+# only checkout. Fail before work with the canonical Make recovery command.
+# The Make entry owns these fresh-checkout prerequisites under single-flight.
+require_fresh_checkout_prerequisites() {
+  local missing=()
+  if [ -x "${NIMBUS_BIN}" ]; then
+    return
+  fi
+  if [ ! -f "${REPO_ROOT}/packages/nimbus-ui/dist/index.html" ]; then
+    missing+=("packages/nimbus-ui/dist/index.html")
+  fi
+  if [ ! -f "${REPO_ROOT}/crates/nimbus-assets/embedded/packages/manifest.json" ]; then
+    missing+=("crates/nimbus-assets/embedded/packages/manifest.json")
+  fi
+  if [ "${#missing[@]}" -eq 0 ]; then
+    return
+  fi
+  echo "fresh-checkout prerequisites are missing for direct script invocation:" >&2
+  local path
+  for path in "${missing[@]}"; do
+    echo "  ${path}" >&2
+  done
+  echo "run the supported entry point: make examples-verify" >&2
+  return 1
+}
+
+require_fresh_checkout_prerequisites
+
 # A fixed port (8080 was the previous default) risks a pre-existing,
 # unrelated local server already answering /health on that port — the lane
 # would then read green without ever exercising the binary under test. Bind
@@ -197,8 +291,7 @@ ensure_firebase_protobuf_stubs() {
 
 wait_for_health() {
   local port="$1"
-  local attempt
-  for attempt in $(seq 1 60); do
+  for _ in $(seq 1 60); do
     if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
       echo "server process (pid ${SERVER_PID}) for port ${port} exited before becoming healthy" >&2
       return 1
@@ -356,7 +449,8 @@ run_one() {
     npm run codegen -w "${workspace}"
   fi
 
-  local data_dir="${DATA_ROOT}/$(echo "${workspace}" | tr '/' '-')"
+  local data_dir
+  data_dir="${DATA_ROOT}/$(echo "${workspace}" | tr '/' '-')"
   mkdir -p "${data_dir}"
   SERVER_LOG="${data_dir}.server.log"
 

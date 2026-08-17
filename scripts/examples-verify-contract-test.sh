@@ -26,14 +26,20 @@ evaluate_condition() {
   local id="$1"
   case "${id}" in
     AVRC11)
-      has Makefile '^examples-verify:.*\$\(UI_DIST_INDEX\).*\$\(EMBEDDED_PKG_MANIFEST\)' &&
+      has Makefile '^examples-verify:$' &&
+        has Makefile '^[[:space:]]+bash scripts/examples-verify\.sh --host-preflight$' &&
+        has Makefile '^[[:space:]]+\$\(SINGLE_FLIGHT\).*\$\(MAKE\).*examples-verify-run$' &&
+        has Makefile '^examples-verify-run: \$\(UI_DIST_INDEX\) \$\(EMBEDDED_PKG_MANIFEST\)$' &&
         has scripts/examples-verify.sh 'fresh-checkout prerequisites' &&
         has scripts/examples-verify.sh 'make examples-verify'
       ;;
     AVRC12)
-      has scripts/examples-verify.sh 'Node\.js.*22.*24' &&
+      has Makefile '^ifeq.*NIMBUS_EXAMPLES_VERIFY_BIN' &&
+        has scripts/examples-verify.sh 'require_supported_node' &&
+        has scripts/examples-verify.sh 'require_supplied_binary' &&
+        has scripts/examples-verify.sh 'Node\.js.*22.*24' &&
         has scripts/examples-verify.sh 'unsupported Node' &&
-        has scripts/examples-verify.sh 'supplied binary.*skip'
+        has scripts/examples-verify.sh 'supplied binary.*skip.*Rust build'
       ;;
     AVRC13)
       [ -f "${ROOT}/scripts/examples-verify-cases.json" ] &&
@@ -132,11 +138,21 @@ write_green_fixture() {
   mkdir -p "${root}/scripts" "${root}/crates/nimbus-cli/src/dev" "${root}/examples/app"
   case "${id}" in
     AVRC11)
-      printf '%s\n' "examples-verify: \$(UI_DIST_INDEX) \$(EMBEDDED_PKG_MANIFEST)" >"${root}/Makefile"
+      printf '%s\n' \
+        'examples-verify:' \
+        $'\tbash scripts/examples-verify.sh --host-preflight' \
+        $'\t$(SINGLE_FLIGHT) --key examples-verify -- $(MAKE) --no-print-directory examples-verify-run' \
+        "examples-verify-run: \$(UI_DIST_INDEX) \$(EMBEDDED_PKG_MANIFEST)" \
+        >"${root}/Makefile"
       printf '%s\n' '# fresh-checkout prerequisites; use make examples-verify' >"${root}/scripts/examples-verify.sh"
       ;;
     AVRC12)
-      printf '%s\n' '# Node.js 22 and 24; unsupported Node; supplied binary can skip build' >"${root}/scripts/examples-verify.sh"
+      printf '%s\n' "ifeq (\$(strip \$(NIMBUS_EXAMPLES_VERIFY_BIN)),)" >"${root}/Makefile"
+      printf '%s\n' \
+        'require_supported_node() { :; }' \
+        'require_supplied_binary() { :; }' \
+        '# Node.js 22 and 24; unsupported Node; supplied binary can skip the Rust build' \
+        >"${root}/scripts/examples-verify.sh"
       ;;
     AVRC13)
       node - "${root}/scripts/examples-verify-cases.json" <<'NODE'
@@ -249,6 +265,195 @@ self_test_condition() {
   return 0
 }
 
+write_node_stub() {
+  local path="$1" version="$2"
+  mkdir -p "$(dirname "${path}")"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    "if [ \"\${1:-}\" = \"--version\" ]; then" \
+    "  printf '%s\\n' 'v${version}'" \
+    '  exit 0' \
+    'fi' \
+    'printf "unexpected node invocation: %s\\n" "$*" >&2' \
+    'exit 97' \
+    >"${path}"
+  chmod +x "${path}"
+}
+
+write_work_stub() {
+  local path="$1" name="$2"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    "printf '%s\\n' '${name}' >>\"\${NIMBUS_AVR_WORK_MARKER:?}\"" \
+    'exit 98' \
+    >"${path}"
+  chmod +x "${path}"
+}
+
+avr3_behavior_pass() {
+  printf 'PASS AVR3 behavior: %s\n' "$1"
+}
+
+avr3_behavior_fail() {
+  printf 'FAIL AVR3 behavior: %s\n' "$1" >&2
+  fail_count=$((fail_count + 1))
+}
+
+run_avr3_behavior_tests() {
+  local tmp fixture runner output status major command marker make_marker
+  tmp="$(mktemp -d -t nimbus-avr3-contract.XXXXXX)"
+  fixture="${tmp}/fixture"
+  runner="${fixture}/scripts/examples-verify.sh"
+  mkdir -p "${fixture}/scripts" "${fixture}/stub-bin" "${fixture}/tmp"
+  cp "${ROOT}/scripts/examples-verify.sh" "${runner}"
+  chmod +x "${runner}"
+
+  # The supported range accepts all in-range majors. Node.js 22 and 24 are
+  # the acceptance anchors; 23 proves that this is a range, not a two-value
+  # allowlist.
+  for major in 22 23 24; do
+    write_node_stub "${fixture}/stub-bin/node" "${major}.0.0"
+    output="${tmp}/node-${major}.out"
+    if env PATH="${fixture}/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+        /bin/bash "${runner}" --host-preflight >"${output}" 2>&1; then
+      avr3_behavior_pass "Node.js ${major} passes host preflight"
+    else
+      avr3_behavior_fail "Node.js ${major} must pass host preflight ($(tr '\n' ' ' <"${output}"))"
+    fi
+  done
+
+  for major in 20 21 25; do
+    write_node_stub "${fixture}/stub-bin/node" "${major}.0.0"
+    output="${tmp}/node-${major}.out"
+    status=0
+    env PATH="${fixture}/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+      /bin/bash "${runner}" --host-preflight >"${output}" 2>&1 || status=$?
+    if [ "${status}" -ne 0 ] && grep -q 'unsupported Node.js version' "${output}"; then
+      avr3_behavior_pass "Node.js ${major} fails host preflight"
+    else
+      avr3_behavior_fail "Node.js ${major} must fail host preflight with the supported range"
+    fi
+  done
+
+  output="${tmp}/node-missing.out"
+  status=0
+  env PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    /bin/bash "${runner}" --host-preflight >"${output}" 2>&1 || status=$?
+  if [ "${status}" -ne 0 ] && grep -q 'node was not found' "${output}"; then
+    avr3_behavior_pass 'missing Node.js fails host preflight'
+  else
+    avr3_behavior_fail 'missing Node.js did not fail host preflight'
+  fi
+
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 7' >"${fixture}/stub-bin/node"
+  chmod +x "${fixture}/stub-bin/node"
+  output="${tmp}/node-version-failed.out"
+  status=0
+  env PATH="${fixture}/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    /bin/bash "${runner}" --host-preflight >"${output}" 2>&1 || status=$?
+  if [ "${status}" -ne 0 ] && grep -q 'node --version failed' "${output}"; then
+    avr3_behavior_pass 'failing node --version fails host preflight'
+  else
+    avr3_behavior_fail 'failing node --version did not fail host preflight'
+  fi
+
+  write_node_stub "${fixture}/stub-bin/node" 'not-semver'
+  output="${tmp}/node-malformed.out"
+  status=0
+  env PATH="${fixture}/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    /bin/bash "${runner}" --host-preflight >"${output}" 2>&1 || status=$?
+  if [ "${status}" -ne 0 ] && grep -q 'unsupported Node.js version vnot-semver' "${output}"; then
+    avr3_behavior_pass 'malformed Node.js version fails host preflight'
+  else
+    avr3_behavior_fail 'malformed Node.js version did not fail host preflight'
+  fi
+
+  # Direct invocation from tracked files fails before port allocation,
+  # temporary state, Cargo, npm, or an application process.
+  write_node_stub "${fixture}/stub-bin/node" '22.0.0'
+  marker="${tmp}/direct-work.marker"
+  for command in python3 mktemp cargo npm; do
+    write_work_stub "${fixture}/stub-bin/${command}" "${command}"
+  done
+  output="${tmp}/direct-missing.out"
+  status=0
+  env PATH="${fixture}/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    NIMBUS_AVR_WORK_MARKER="${marker}" \
+    /bin/bash "${runner}" >"${output}" 2>&1 || status=$?
+  if [ "${status}" -ne 0 ] &&
+      grep -q 'packages/nimbus-ui/dist/index.html' "${output}" &&
+      grep -q 'crates/nimbus-assets/embedded/packages/manifest.json' "${output}" &&
+      grep -q 'run the supported entry point: make examples-verify' "${output}" &&
+      [ ! -e "${marker}" ]; then
+    avr3_behavior_pass 'direct invocation reports both prerequisites before work'
+  else
+    avr3_behavior_fail "direct invocation did not fail before work with the Make recovery command ($(tr '\n' ' ' <"${output}"))"
+  fi
+
+  # An explicit invalid binary is an input error. It fails before Make can
+  # generate artifacts or start Cargo.
+  output="${tmp}/invalid-binary.out"
+  status=0
+  env PATH="${fixture}/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    NIMBUS_EXAMPLES_VERIFY_BIN="${fixture}/missing-nimbus" \
+    NIMBUS_AVR_WORK_MARKER="${marker}" \
+    /bin/bash "${runner}" --host-preflight >"${output}" 2>&1 || status=$?
+  if [ "${status}" -ne 0 ] && grep -q 'supplied binary is missing or not executable' "${output}" && [ ! -e "${marker}" ]; then
+    avr3_behavior_pass 'invalid supplied binary fails before work'
+  else
+    avr3_behavior_fail 'invalid supplied binary did not fail before work'
+  fi
+
+  # A valid supplied binary bypasses both generated inputs and Cargo. Use an
+  # invalid case selector to stop after preflight without starting an app.
+  rm -f "${fixture}/stub-bin/python3" "${fixture}/stub-bin/mktemp"
+  mkdir -p "${fixture}/packages/firebase/src/gen/google/firestore/v1"
+  : >"${fixture}/packages/firebase/src/gen/google/firestore/v1/firestore_pb.ts"
+  marker="${tmp}/supplied-work.marker"
+  output="${tmp}/supplied.out"
+  status=0
+  env PATH="${fixture}/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    TMPDIR="${fixture}/tmp" \
+    NIMBUS_EXAMPLES_VERIFY_BIN=/usr/bin/true \
+    NIMBUS_EXAMPLES_VERIFY_ONLY=not-a-case \
+    NIMBUS_EXAMPLES_VERIFY_PORT=49152 \
+    NIMBUS_AVR_WORK_MARKER="${marker}" \
+    /bin/bash "${runner}" >"${output}" 2>&1 || status=$?
+  if [ "${status}" -ne 0 ] &&
+      grep -q 'skip generated build prerequisites and the Rust build' "${output}" &&
+      grep -q 'matched no app in the manifest' "${output}" &&
+      [ ! -e "${marker}" ]; then
+    avr3_behavior_pass 'valid supplied binary skips generated inputs and Cargo'
+  else
+    avr3_behavior_fail "supplied binary fast path performed build work or missed its evidence ($(tr '\n' ' ' <"${output}"))"
+  fi
+
+  # The public Make entry must stop at the host preflight. Override the
+  # single-flight command with a marker: any nested prerequisite work is a
+  # contract failure.
+  write_node_stub "${fixture}/stub-bin/node" '20.20.2'
+  make_marker="${tmp}/make-work.marker"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    "printf '%s\\n' work >'${make_marker}'" \
+    'exit 99' \
+    >"${tmp}/mark-single-flight.sh"
+  output="${tmp}/make-node20.out"
+  status=0
+  env PATH="${fixture}/stub-bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    NIMBUS_EXAMPLES_VERIFY_BIN=/usr/bin/true \
+    make -C "${ROOT}" examples-verify \
+      "SINGLE_FLIGHT=/bin/bash ${tmp}/mark-single-flight.sh" \
+      >"${output}" 2>&1 || status=$?
+  if [ "${status}" -ne 0 ] && grep -q 'unsupported Node.js version v20.20.2' "${output}" && [ ! -e "${make_marker}" ]; then
+    avr3_behavior_pass 'Make rejects unsupported Node before nested prerequisites'
+  else
+    avr3_behavior_fail "Make did not stop before nested prerequisite work ($(tr '\n' ' ' <"${output}"))"
+  fi
+
+  rm -rf "${tmp}"
+}
+
 usage() {
   printf 'usage: %s --task AVR3..AVR10 | --condition AVRC11..AVRC24 | --self-test-condition AVRC11..AVRC24\n' "$0" >&2
 }
@@ -264,6 +469,9 @@ case "${1:-}" in
     if [ "${selected_count}" -eq 0 ]; then
       printf 'no conditions selected for task %s\n' "$2" >&2
       exit 2
+    fi
+    if [ "$2" = "AVR3" ]; then
+      run_avr3_behavior_tests
     fi
     ;;
   --condition)
