@@ -145,6 +145,12 @@ pre-existing unchecked verifier `cd`. The directly related cleanup now exits
 if the repository-root transition fails. Work commit `a786468eb` owns this
 hardening.
 
+Docs run `32055431404` supplied the live failure proof at final head
+`5e928890b`. The upload produced a valid preview URL. The PR comment then
+received HTTP 503 after all three retries. The workflow emitted the explicit
+warning and completed successfully. This result proves that a notification
+failure cannot replace the successful preview result.
+
 ## Verification evidence
 
 | Command or check | Result |
@@ -172,6 +178,12 @@ hardening.
 | `actionlint .github/workflows/docs.yml` | Pass; no diagnostics. |
 | Docs verifier Bash syntax and ShellCheck | Pass; no diagnostics. |
 | Resilient preview source contract | Pass in site condition 8. |
+| Hosted resilient-preview contract | Pass in Docs run `32055431404`; upload succeeded, three comment retries exhausted on HTTP 503, warning emitted, job green. |
+| Hosted CI | Pass in run `32055431425`; 47 successful jobs, three expected skips, zero failures. |
+| Hosted AVRF21 regression | Pass in Rust workspace shard 2/3 of run `32055431425`. |
+| Desktop UI Smoke | Pass in run `32055431555`. |
+| Windows workspace check | Pass in run `32055431570`. |
+| CodeQL | Pass in failed-only attempt 2 of run `32055431439`; Rust and JavaScript analysis green. |
 
 The site build still emits Astro's `markdown.gfm` and `markdown.smartypants`
 deprecation warning. AVR10 owns that low-priority cleanup. It does not affect
