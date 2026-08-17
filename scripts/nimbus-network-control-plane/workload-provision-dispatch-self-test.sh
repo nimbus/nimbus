@@ -66,7 +66,8 @@ write_nnc64_fixture() {
     "${fixture_root}/crates/nimbus-cloud-functions/tests" \
     "${fixture_root}/crates/nimbus-network/src" \
     "${fixture_root}/docs/private/plans/proof/nimbus-network-control-plane" \
-    "${fixture_root}/docs/private/plans"
+    "${fixture_root}/docs/private/plans" \
+    "${fixture_root}/scripts/nimbus-network-control-plane"
 
   cat >"${fixture_root}/${WORKLOAD_PROVISION}" <<'RUST'
 pub enum WorkloadProvisionCommandMode {
@@ -521,12 +522,13 @@ TOML
 pub struct NetworkAttachmentId(String);
 RUST
 
-  cat >"${fixture_root}/${OWNER_PLAN}" <<'MARKDOWN'
-# Nimbus network control-plane plan
-
-NNC6.4 owns provider dispatch. Its contract closes with 40 checks and a self-test
-proof of 50 passed mutations.
-MARKDOWN
+  cat >"${fixture_root}/${OWNER_CONTRACT}" <<'JSON'
+{
+  "routes": {
+    "NNC6.4": "NNC6.4 owns provider dispatch. Its contract closes with 40 checks and a self-test proof of 50 passed mutations."
+  }
+}
+JSON
   cat >"${fixture_root}/${OWNER_PROOF}" <<'MARKDOWN'
 # NNC6.4 provider dispatch proof
 

@@ -292,7 +292,11 @@ write_fixture() {
     'fn crash_before_and_after_durability_reopens_exact_decision() {}' \
     >"${fixture}/${SERVER_PROOF}"
   printf '%s\n' \
-    '| NNC6.1e1 | Implement the bounded compute-owned durable workload-saga submission seam after NNC6.2a. | frozen |' \
+    '{' \
+    '  "routes": {' \
+    '    "NNC6.1e1": "Implement the bounded compute-owned durable workload-saga submission seam after NNC6.2a."' \
+    '  }' \
+    '}' \
     >"${fixture}/${OWNER_CONTRACT}"
 }
 

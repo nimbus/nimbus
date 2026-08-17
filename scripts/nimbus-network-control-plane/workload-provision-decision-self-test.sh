@@ -29,7 +29,7 @@ fixture_payload() {
     "${server_capabilities_tests_source}" "${server_codec_source}" \
     "${server_schema_source}" "${server_codec_tests_source}" \
     "${server_ingress_tests_source}" "${authority_census}" \
-    "${caller_census}" "${changed_paths}" "${owner_plan_source}" "${owner_proof_source}"
+    "${caller_census}" "${changed_paths}" "${owner_contract_source}" "${owner_proof_source}"
 }
 
 apply_test_mutation() {
@@ -476,8 +476,12 @@ write_fixture() {
   printf '%s\n' 'fn ingress_fixture_retains_provision_disposition() {}' \
     >"${fixture}/${SERVER_INGRESS_TESTS}"
   printf '%s\n' \
-    '| NNC6.3b | After NNC6.3a, implement the pure provision decision protocol and exact admitted composition inputs without product effects or provider interfaces. | frozen |' \
-    >"${fixture}/${OWNER_PLAN}"
+    '{' \
+    '  "routes": {' \
+    '    "NNC6.3b": "After NNC6.3a, implement the pure provision decision protocol and exact admitted composition inputs without product effects or provider interfaces."' \
+    '  }' \
+    '}' \
+    >"${fixture}/${OWNER_CONTRACT}"
   printf '%s\n' '# NNC6.3b' '## Acceptance Criteria' >"${fixture}/${OWNER_PROOF}"
   printf '%s\n' 'pub trait WorkloadSagaStore {}' >"${fixture}/crates/nimbus-workloads/src/store.rs"
 }
