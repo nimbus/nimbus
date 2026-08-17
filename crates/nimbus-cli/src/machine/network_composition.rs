@@ -89,12 +89,14 @@ pub(crate) struct HostMachineNetworkAuthority {
 /// This handle neither owns nor reconstructs process composition. Production
 /// callers can obtain it only from the retained [`HostMachineNetworkAuthority`];
 /// the primitive constructor exists solely for isolated manager unit tests.
+#[cfg(any(unix, test))]
 #[derive(Clone)]
 pub(super) struct MachineNetworkLifecycleHandle {
     port_leases: nimbus_network::LocalPortLeaseAuthority,
     publications: super::publication_authority::MachinePublicationIntentStore,
 }
 
+#[cfg(any(unix, test))]
 impl MachineNetworkLifecycleHandle {
     pub(super) fn port_leases(&self) -> nimbus_network::LocalPortLeaseAuthority {
         self.port_leases.clone()
@@ -165,6 +167,7 @@ impl HostMachineNetworkAuthority {
         )
     }
 
+    #[cfg(any(unix, test))]
     pub(super) fn lifecycle_handle(&self) -> Result<MachineNetworkLifecycleHandle, Error> {
         Ok(MachineNetworkLifecycleHandle {
             port_leases: self.port_leases(),

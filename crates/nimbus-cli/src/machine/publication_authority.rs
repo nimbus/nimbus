@@ -8,7 +8,9 @@
 //! teaching `nimbus-network` about machines or transports.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write as _};
+use std::io;
+#[cfg(any(unix, test))]
+use std::io::Write as _;
 use std::net::{IpAddr, Ipv6Addr};
 use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
@@ -19,11 +21,13 @@ use fs2::FileExt;
 use nimbus::{Error, SandboxId, SandboxPortBinding, TenantId};
 use nimbus_machine::MachineForwarderAuthority;
 use nimbus_network::{
-    ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkPlanId, NetworkProviderHandle,
-    NetworkResourceId, PortBindRealm, PortBindTarget, PortBindingSpec, PortExposure,
-    PortIpv6Overlap, PortLeaseAccounting, PortLeaseFence, PortLeasePhase, PortLeaseRecoveryGuard,
-    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+    ListenerId, NetworkLeaseEpoch, NetworkPlanId, NetworkProviderHandle, NetworkResourceId,
+    PortBindRealm, PortBindTarget, PortBindingSpec, PortExposure, PortIpv6Overlap,
+    PortLeaseAccounting, PortLeaseFence, PortLeaseRequest, PortProtocol, PortPublicationIntent,
+    PortRequestMode,
 };
+#[cfg(any(unix, test))]
+use nimbus_network::{LocalPortLeaseAuthority, PortLeasePhase, PortLeaseRecoveryGuard};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use ulid::Ulid;
@@ -179,6 +183,7 @@ impl MachinePublicationIntentStore {
         })
     }
 
+    #[cfg(any(unix, test))]
     pub(super) fn mark_terminal(
         &self,
         plan_id: &NetworkPlanId,
@@ -205,6 +210,7 @@ impl MachinePublicationIntentStore {
         })
     }
 
+    #[cfg(any(unix, test))]
     pub(super) fn nonterminal_for_authority(
         &self,
         authority: &MachineForwarderAuthority,
@@ -238,6 +244,7 @@ impl MachinePublicationIntentStore {
         })
     }
 
+    #[cfg(any(unix, test))]
     fn mutate<T>(
         &self,
         operation: impl FnOnce(&mut MachinePublicationIntentBody) -> Result<T, Error>,
@@ -351,6 +358,7 @@ impl MachinePublicationIntentStore {
         Ok(envelope)
     }
 
+    #[cfg(any(unix, test))]
     fn publish(&self, revision: u64, body: &MachinePublicationIntentBody) -> Result<(), Error> {
         let envelope = MachinePublicationIntentEnvelope::new(revision, body.clone())?;
         let bytes = serde_json::to_vec_pretty(&envelope).map_err(|error| {
@@ -490,6 +498,7 @@ impl MachinePublicationIntentEnvelope {
         }
     }
 
+    #[cfg(any(unix, test))]
     fn new(revision: u64, body: MachinePublicationIntentBody) -> Result<Self, Error> {
         Ok(Self {
             magic: FORMAT_MAGIC.to_owned(),
@@ -537,10 +546,16 @@ fn validate_body(body: &MachinePublicationIntentBody) -> Result<(), Error> {
                 intent.plan_id
             )));
         }
+        intent.requests().map_err(|error| {
+            corrupt_error(format!(
+                "machine publication intent member {index} has invalid bindings: {error}"
+            ))
+        })?;
     }
     Ok(())
 }
 
+#[cfg(any(unix, test))]
 fn exact_intent_mut<'a>(
     body: &'a mut MachinePublicationIntentBody,
     plan_id: &NetworkPlanId,
@@ -626,12 +641,14 @@ fn corrupt_error(reason: String) -> Error {
     Error::PreconditionFailed(reason)
 }
 
+#[cfg(any(unix, test))]
 pub(super) struct MachinePublicationCleanup {
     store: MachinePublicationIntentStore,
     authority: LocalPortLeaseAuthority,
     plans: Vec<MachinePublicationPlanCleanup>,
 }
 
+#[cfg(any(unix, test))]
 impl MachinePublicationCleanup {
     pub(super) fn release_after_confirmed_provider_stop(self) -> Result<(), Error> {
         for plan in self.plans {
@@ -649,12 +666,14 @@ impl MachinePublicationCleanup {
     }
 }
 
+#[cfg(any(unix, test))]
 struct MachinePublicationPlanCleanup {
     intent: MachinePublicationIntent,
     requests: Vec<PortLeaseRequest>,
     recoveries: Vec<PortLeaseRecoveryGuard>,
 }
 
+#[cfg(any(unix, test))]
 pub(super) fn withdraw_machine_publications(
     store: MachinePublicationIntentStore,
     authority: LocalPortLeaseAuthority,
@@ -736,6 +755,7 @@ pub(super) fn ensure_no_fenced_machine_publications(
     )))
 }
 
+#[cfg(any(unix, test))]
 pub(super) fn authenticate_exact_durable_plan(
     expected: &[PortLeaseRequest],
     records: &[nimbus_network::PortLeaseRecord],
@@ -757,6 +777,7 @@ pub(super) fn authenticate_exact_durable_plan(
     Ok(())
 }
 
+#[cfg(any(unix, test))]
 pub(super) fn recover_dead_batch(
     authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
@@ -766,6 +787,7 @@ pub(super) fn recover_dead_batch(
         .map_err(port_authority_error)
 }
 
+#[cfg(any(unix, test))]
 pub(super) fn port_authority_error(error: impl std::fmt::Display) -> Error {
     Error::PreconditionFailed(format!(
         "parent machine publication authority rejected: {error}"
@@ -891,6 +913,39 @@ mod tests {
         assert_eq!(
             fs::read(&store.state_path).expect("tampered state should remain"),
             tampered,
+            "a failed read must not repair or rewrite corrupt authority"
+        );
+    }
+
+    #[test]
+    fn durable_binding_corruption_fails_closed_with_a_valid_checksum() {
+        let temp = TempDir::new().expect("temporary root should exist");
+        let store = MachinePublicationIntentStore::open(temp.path())
+            .expect("publication store should open");
+        let intent = store
+            .stage_service_attempt(
+                &tenant(),
+                "api",
+                &authority(),
+                &[SandboxPortBinding::tcp("http", 18_080, 8_080)],
+            )
+            .expect("attempt should stage");
+        let mut envelope: MachinePublicationIntentEnvelope =
+            serde_json::from_slice(&fs::read(&store.state_path).expect("state should read"))
+                .expect("state should decode");
+        envelope.body.intents[0].bindings[0].host_port = 0;
+        envelope.checksum = checksum(&envelope.body).expect("checksum should encode");
+        let corrupt = serde_json::to_vec_pretty(&envelope).expect("corruption should encode");
+        fs::write(&store.state_path, &corrupt).expect("corruption should write");
+
+        let error = store
+            .load_plan(&intent.plan_id)
+            .expect_err("invalid durable binding must fail closed");
+
+        assert!(error.to_string().contains("invalid bindings"), "{error}");
+        assert_eq!(
+            fs::read(&store.state_path).expect("corrupt state should remain"),
+            corrupt,
             "a failed read must not repair or rewrite corrupt authority"
         );
     }

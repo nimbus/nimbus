@@ -14,7 +14,7 @@ mod api;
 mod api;
 #[cfg(unix)]
 mod backend;
-#[cfg(not(unix))]
+#[cfg(all(not(unix), test))]
 #[path = "stub/backend.rs"]
 mod backend;
 #[cfg(unix)]

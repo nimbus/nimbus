@@ -193,6 +193,7 @@ pub(super) fn load_machine_config_if_exists(
 /// Provision-source preparation uses this before it owns the machine lock only
 /// to reject provider-managed networking. A host-managed result is never
 /// trusted until the authenticated locked snapshot is read again.
+#[cfg(any(unix, test))]
 pub(super) fn read_machine_config_snapshot_if_exists(
     path: &Path,
 ) -> Result<Option<MachineConfigRecord>, Error> {
@@ -215,6 +216,7 @@ pub(super) fn read_machine_config_snapshot_if_exists(
 /// Callers must hold the authenticated machine-record lock. This is a desired
 /// source snapshot, not observed process status; activation re-reads and
 /// compares it under the same lock before any machine effect.
+#[cfg(any(unix, test))]
 pub(super) fn load_machine_provision_source_snapshot(
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
@@ -388,6 +390,7 @@ pub(super) fn with_authenticated_default_machine_lock<T>(
 /// They authenticate the current-version config once before creating the lock
 /// path and again while holding the lock, but never convert a read failure into
 /// a filesystem mutation.
+#[cfg(any(unix, test))]
 pub(super) fn with_exact_authenticated_default_machine_lock<T>(
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
@@ -400,6 +403,7 @@ pub(super) fn with_exact_authenticated_default_machine_lock<T>(
     })
 }
 
+#[cfg(any(unix, test))]
 fn authenticate_machine_config_snapshot_if_exists(
     roots: &MachineRootLayout,
     network: &HostMachineNetworkAuthority,
