@@ -103,3 +103,8 @@ predicate. The review cadence permits no third review, and none ran.
 The site build still emits Astro's `markdown.gfm` and `markdown.smartypants`
 deprecation warning. AVR10 owns that low-priority cleanup. It does not affect
 AVR2 output or acceptance.
+
+The first hosted Docs run uploaded the preview and then received HTTP 503 from
+GitHub's comment API. Replacement run `32050785842` passed after service
+recovery. AVRF20 assigns bounded notification recovery to AVR11. AVR2 does not
+change the reviewed workflow.

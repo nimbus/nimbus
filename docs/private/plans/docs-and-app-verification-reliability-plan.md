@@ -102,6 +102,7 @@ Promote this plan to `active` only when every gate holds:
 | AVRF17 | HIGH, confirmed | Concurrent cases share platform authentication, discovery, and audit paths; a later server can replace the discovery record used by bare-local commands. | AVR7 |
 | AVRF18 | HIGH, confirmed | Repository bootstrap routing names six missing private routing, operating, local-development, adapter, and Convex-guidance documents. | AVR0 |
 | AVRF19 | LOW, confirmed | The docs build emits Astro's `markdown.gfm` and `markdown.smartypants` deprecation warning. | AVR10 |
+| AVRF20 | MEDIUM, confirmed | Docs run `32050695317` deployed its preview, then failed because the zero-retry GitHub comment step received HTTP 503. | AVR11 |
 
 ## Decisions
 
@@ -346,7 +347,12 @@ its predecessor PR is open or unmerged.
 - Acceptance: AVR reports 24/24 and self-test 24/24. All apps and anchors pass
   in serial and parallel modes. Cleanup passes. Local, minicloud, and hosted
   gates pass. GPT-5.6 Sol reviews the complete candidate in xhigh fast mode.
+- Acceptance: the docs preview writes its URL to the job summary. Comment
+  delivery uses bounded retries. An unavailable comment API cannot turn a
+  successful build and upload red, but the job keeps visible warning evidence.
 - Fail-before: the AVR0 baseline remains in the proof root.
+- Fail-before: docs run `32050695317` failed only in the zero-retry preview
+  comment step after a successful preview upload.
 - Verification: run the AVR11 command-contract row. Use
   `nimbus-autoreview --gate pre-pr --mode auto` only after the owner commits and
   freezes the candidate. Rerun one narrow correction review only when an accepted
@@ -434,3 +440,4 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | AVR2 | started | AVR1 is durable and all archival behavior is green. Map public network ownership and lifecycle claims to source, add the public page and source-map routes, then inspect every generated `llms` output. |
 | 2026-08-17 | AVR2 | candidate complete | Work commits `4ad5a2c1b`, `389734582`, and `d74bce443` publish the source-verified page and close all review findings. Proof: `proof/docs-and-app-verification-reliability/avr2.md`. AVR2 6/6; phase one 10/10; mutations 24/24; network verifier 39/39; docs 109; site 17/17; build 110 HTML; lint delta zero. Implementation PR 1 is next. |
 | 2026-08-17 | AVR2 | PR opened | Implementation PR 1 is [#275](https://github.com/nimbus/nimbus/pull/275). Head `ad7923682` started CI run `32050695309`, docs run `32050695317`, and CodeQL run `32050695320`. Hosted checks are in progress. |
+| 2026-08-17 | AVR2 | hosted finding | Docs run `32050695317` failed after preview upload because GitHub's incident returned HTTP 503 to the zero-retry comment step. Replacement run `32050785842` passed. AVRF20 routes bounded notification recovery to AVR11; AVR2 product scope stays frozen. |
