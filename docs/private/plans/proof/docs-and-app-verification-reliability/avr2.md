@@ -8,8 +8,9 @@ AVR2 implementation acceptance is complete. Nimbus now has a public,
 source-verified network control-plane page. The public overview, architecture
 index, sandbox page, server page, capability matrix, and source map use the
 same ownership model. The phase-one campaign stays in progress until hosted
-checks pass and the owner authorizes the merge. Then the owner reconciles
-current main.
+checks pass and the owner authorizes the merge. A hosted test correction is
+candidate-green locally and awaits its commit and replacement runs. Then the
+owner reconciles current main.
 
 | Checkpoint | Revision |
 | --- | --- |
@@ -81,6 +82,46 @@ the fence and then fails specifically with `self-test AVRC10: mutation did not
 fail closed`. This proves that the corrected test reaches the intended
 predicate. The review cadence permits no third review, and none ran.
 
+## Hosted CI correction
+
+Final-head CI run `32050937772` failed
+`listener_projection_failure_keeps_every_listener_active_and_retries` in the
+workspace-test shard. The exact test reproduced locally before any correction:
+zero passed and one failed at the assertion that projection recovery must not
+terminate the listener group.
+
+The fault injector was process-wide. After the second listener guard armed it,
+either the retained connectivity projection or concurrent router startup could
+consume the one-shot storage failure. When router startup won that race, the
+server correctly stopped. The projection driver then recovered all three rows,
+which made the test report the contradictory result.
+
+AVRF21 makes the test fault target the exact durable record that writes both
+the `listeners` and `ports` tables. Unscoped checks and unrelated tenant
+records cannot consume the arm. This preserves the production retry path and
+removes scheduler-dependent test identity.
+
+Local correction evidence is:
+
+- The exact test passes 1/1.
+- Fifty fresh test-process repetitions pass 50/50.
+- The complete listener-group suite passes 10/10.
+- The serialized `nimbus-server` lib suite passes 663 tests, ignores 35, and
+  fails none.
+- `cargo clippy -p nimbus-server --lib --tests -- -D warnings` passes.
+
+An unrestricted full libtest run separately reported 601 passed, 62 failed,
+and 35 ignored. Every sampled failure was `DuplicateProcessComposition` from
+managed tests racing the deliberate process-global network authority. The
+same binary is green when serialized, and hosted CI uses nextest process
+isolation. AVR11 owns AVRF22 and must correct the canonical local `make test`
+path. That correction must preserve the product-authority guard. It is separate
+from AVRF21.
+
+This hosted correction was not an autoreview finding. The phase already used
+its one full review and one permitted narrow correction review, so no third
+review runs.
+
 ## Verification evidence
 
 | Command or check | Result |
@@ -99,6 +140,12 @@ predicate. The review cadence permits no third review, and none ran.
 | Edited legacy-document lint delta | Pass; 310 diagnostics before and after, zero new diagnostics. |
 | Generated LLM private-fence inspection | Pass; all three files are clean. |
 | `git diff --check` | Pass. |
+| Exact hosted regression before correction | Expected failure; 0 passed, 1 failed. |
+| Exact hosted regression after correction | Pass; 1 passed, 0 failed. |
+| Fresh-process hosted-regression stress | Pass; 50/50. |
+| Complete listener-group suite | Pass; 10 passed, 0 failed. |
+| Serialized `nimbus-server` lib suite | Pass; 663 passed, 0 failed, 35 ignored. |
+| `nimbus-server` lib and test Clippy | Pass with `-D warnings`. |
 
 The site build still emits Astro's `markdown.gfm` and `markdown.smartypants`
 deprecation warning. AVR10 owns that low-priority cleanup. It does not affect

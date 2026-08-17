@@ -56,7 +56,7 @@ entry points. Every task runs its row and the focused commands in its plan body.
 | AVR3-AVR8 | `bash scripts/examples-verify-contract-test.sh --task <TASK>`; `bash scripts/verify-docs-app-verification.sh --task <TASK>`; task-focused Rust or live commands from the owner plan |
 | AVR9 | `bash scripts/examples-verify-contract-test.sh --task AVR9`; `bash scripts/examples-verify-benchmark.sh --serial-samples 3 --parallel-samples 5 --max-seconds 1200`; `bash scripts/verify-docs-app-verification.sh --task AVR9` |
 | AVR10 | `bash scripts/examples-verify-contract-test.sh --task AVR10`; `bash scripts/check-docs.sh`; `npm --prefix website run build`; `bash scripts/verify-nimbus-docs-site.sh`; technical-writing lint over every changed Markdown file |
-| AVR11 | `make ci`; `make examples-verify`; full AVR verifier and self-test; both docs gates; docs site build; `nimbus-autoreview --gate pre-pr --mode auto` once |
+| AVR11 | `make test`; `make ci`; `make examples-verify`; full AVR verifier and self-test; both docs gates; docs site build; `nimbus-autoreview --gate pre-pr --mode auto` once |
 | AVR12 | Full AVR verifier; both docs gates; `git diff --check`; final routing and archive searches |
 
 ## Numbered task actions
@@ -74,5 +74,5 @@ entry points. Every task runs its row and the focused commands in its plan body.
 | AVR8.1-AVR8.5 | Define the report schema. Write reports atomically. Redact credentials. Validate case and cleanup outcomes. Derive JUnit only from valid reports. |
 | AVR9.1-AVR9.6 | Verify host activity. Capture three serial samples. Add bounded scheduling. Drain after failure. Capture five parallel samples. Separate raw samples from the verdict. |
 | AVR10.1-AVR10.6 | Derive counts. State nine-app status. Separate push from polling. Document jobs and artifacts. Delete stale text. Record baseline-delta lint. |
-| AVR11.1-AVR11.9 | Confirm PR 2 merge. Reconcile current main. Run local and minicloud matrices. Run repository gates. Commit and freeze. Run one Sol review. Open PR 3. Resolve hosted failures. Merge only with owner authority. |
+| AVR11.1-AVR11.10 | Confirm PR 2 merge. Reconcile current main. Make the canonical Rust test entry point isolate process-global network-authority tests. Run local and minicloud matrices. Run repository gates. Commit and freeze. Run one Sol review. Open PR 3. Resolve hosted failures. Merge only with owner authority. |
 | AVR12.1-AVR12.6 | Confirm PR 3 merge. Reconcile and close prior rows. Archive the plan and retain proof. Replace active routing. Merge the cleanup PR. Remove only the clean merged worktree. |
