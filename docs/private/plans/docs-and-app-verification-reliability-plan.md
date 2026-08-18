@@ -3,8 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: attribute and commit the acceptance-green AVR11 candidate. Then run
-one Sol review, open PR 3, and complete hosted acceptance.
+Next action: commit the AVR11 proof checkpoint. Push the owner branch and open
+implementation PR 3. Complete hosted acceptance, and wait for owner authority
+before the merge.
 
 ## Outcome
 
@@ -139,7 +140,7 @@ contract records condition ownership, phase counts, and exact commands:
 | AVR8 | Emit canonical JSON and JUnit evidence with hashes, timings, assertions, and cleanup state. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr8.md`. Report 8/8; supervisor 2/2; fault and retry 7/7; AVRC21-AVRC22 2/2; mutations 24/24. The final live run passed 9 applications, 37 anchors, 12 JUnit tests, matching source digests, and clean removal in 83,725 ms. |
 | AVR9 | Add bounded parallel execution and meet the measured wall-clock target without coverage loss. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr9.md`. AVRC23 1/1; evaluator 5/5; scheduler 2/2; fault and retry 7/7; mutations 24/24. Three serial and five parallel minicloud samples passed 9 applications and 37 anchors. Medians were 112,403 and 67,066 ms; ratio 0.5967. |
 | AVR10 | Correct all example documentation, comments, counts, update semantics, and operator instructions. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr10.md`. Work commit `04a675b29`; AVRC24 1/1; manifest docs 6/6; UI 336/336; full verifier and mutations 24/24; docs 109 and 17/17; site build 110 pages; writing diagnostics changed from 18 to 10. |
-| AVR11 | Run local, minicloud, repository, docs, review, and hosted-CI acceptance, then close the third implementation pull request. | `in_progress` | All written pre-freeze acceptance is green: AVRC and mutation checks 24/24, local and minicloud matrices, repository and docs gates, formatting, diff, and writing lint. Attribute and freeze the candidate before its one review. |
+| AVR11 | Run local, minicloud, repository, docs, review, and hosted-CI acceptance, then close the third implementation pull request. | `in_progress` | Candidate `056c243bc` and correction commits `e8fc63489`, `9f3fba2da` are frozen. Full review 0.98 and narrow review 0.96 produced eight accepted findings, all closed. Final local and minicloud acceptance is green. Open PR 3. |
 | AVR12 | After the third implementation pull request merges, archive this plan through a cleanup pull request and remove its active routing. | `todo` | |
 
 ## Tasks
@@ -490,3 +491,5 @@ Append rows at the end. This section stays last.
 | 2026-08-18 | AVR11 | candidate validation | `make test` now composes the serialized runtime lane, Nextest workspace lane, and doctests. A new RustSec database update exposed vulnerable `h2` lines and yanked `spin` lines during `make ci`; the dirty candidate removes them with narrow local dependency patches. Focused blob 248/248, S3 20/20, storage 448/448 with 2 documented fixture skips, dependency policy, attribution, lock, and workspace-hack drift checks pass. Exact-tree repository and minicloud gates are next. |
 | 2026-08-18 | AVR11 | exact-tree acceptance | Final-tree `make test` and `make ci` passed. Local and minicloud each passed 9 applications and 37 anchors in serial and five-worker modes with matching source and exact cleanup. Minicloud also passed 662/662 server tests with 35 skips, and 43,652 source paths matched the owner worktree byte-for-byte. Finish the static gates, freeze, and one review. |
 | 2026-08-18 | AVR11 | pre-freeze acceptance | AVRC and mutation checks passed 24/24; docs passed 109 pages and 17/17 site conditions; the site build emitted 110 HTML pages; five changed Markdown files had zero writing diagnostics; format and diff checks passed. Attribute and commit the complete candidate before its one Sol review. |
+| 2026-08-18 | AVR11 | review correction | Candidate `056c243bc` is 8 commits ahead of current main and 0 behind. The GPT-5.6 Sol/xhigh/fast review scored 0.98 and reported six accepted findings: source snapshot flags, benchmark evidence binding, incomplete-case truth, worker cancellation, manifest-derived case count, and the website Node floor. Apply all six and run one narrow correction review. |
+| 2026-08-18 | AVR11 | candidate frozen | Commits `e8fc63489` and `9f3fba2da` close all six full-review findings and both narrow-review closure findings. The narrow GPT-5.6 Sol/xhigh/fast review scored 0.96. Local affected proofs, AVRC 24/24, mutations 24/24, and final-tree minicloud focused, serial 9/37, and five-worker 9/37 runs pass. No further review is due. Open PR 3. |

@@ -6,7 +6,7 @@ Work commit: `04a675b29483976073e5569ae2d6a120e828baf9`
 ## Result
 
 AVR10 makes the validated case manifest the source for application-verification
-documentation. The example README now reports nine cases and 37 smoke
+documentation. The example README now reports 9 cases and 37 smoke
 assertions. It distinguishes push, polling, and request-response behavior. It
 also gives the tested Node range, serial and bounded-parallel commands, result
 paths, retained-artifact instructions, and fail-closed recovery guidance.
@@ -29,7 +29,7 @@ The documentation renderer now uses this stack:
 | Starlight | 0.41.7 |
 | `starlight-llms-txt` | 0.11.0 |
 
-The package records the Astro runtime floor of Node.js 22.12. A clean Node.js
+The package records the locked runtime floor of Node.js 22.19. A clean Node.js
 22 install reported zero vulnerabilities. It built 110 pages without the
 deprecated Markdown-processor warning.
 
@@ -48,8 +48,8 @@ deprecated Markdown-processor warning.
 
 | Action | Result | Evidence |
 | --- | --- | --- |
-| AVR10.1 Derive counts. | Pass. | The documentation test reads `scripts/examples-verify-cases.json` and verifies nine table rows and 37 manifest assertions. |
-| AVR10.2 State the nine-app result. | Pass. | The example README states that all nine cases pass against a real Nimbus binary. |
+| AVR10.1 Derive counts. | Pass. | The documentation test reads `scripts/examples-verify-cases.json` and verifies 9 table rows and 37 manifest assertions. |
+| AVR10.2 State the nine-app result. | Pass. | The example README states that all 9 cases pass against a real Nimbus binary. |
 | AVR10.3 Separate update semantics. | Pass. | Each case has one manifest-matching `push`, `polling`, or `request-response` row. The prose limits each claim. |
 | AVR10.4 Document jobs and artifacts. | Pass. | Serial, five-worker, exact-selector, JSON, JUnit, and retained-artifact instructions match tested paths. |
 | AVR10.5 Delete stale text. | Pass. | The old partial-Convex and five-of-six claims are absent. The runner comment describes bounded execution. |
