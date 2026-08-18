@@ -85,8 +85,9 @@ extension-registry seam before the second concern edits `extensions.rs`.
   application verification. It keeps source unchanged and uses product-owned
   ports. It isolates temporary state, emits structured evidence, and runs nine
   apps with bounded parallelism. It consumes completed network and examples
-  decisions without reopening them. AVR8 delivered canonical JSON and JUnit
-  evidence. AVR9 now owns bounded parallel execution and measured time budgets.
+  decisions without reopening them. AVR9 met both measured time budgets with
+  unchanged coverage. AVR10 now owns example documentation, comments, counts,
+  update semantics, and operator instructions.
 - `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
   architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
   `SandboxBackend` router/dispatch seam with backend families

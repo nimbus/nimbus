@@ -66,44 +66,49 @@ async function readFailureReport(result) {
 }
 
 async function verifyRetainedFailure(cut, result) {
-  assert.notEqual(result.status, 0, `${cut} must make the runner red`);
-  assert.match(result.stderr, new RegExp(`injected examples verification fault at ${cut}`, "u"));
-  if (cut !== "after-run-root") assert.match(result.stdout, /source byte manifest matches/u);
   const retained = result.stderr.match(/run failure retained diagnostic artifacts: (.+)$/mu)?.[1];
-  assert(retained && path.isAbsolute(retained), `${cut} must report one retained artifact root`);
-  assert.equal((await fs.stat(retained)).isDirectory(), true);
-  const { report, resultRoot } = await readFailureReport(result);
-  assert.deepEqual(report.run.selectedCases, ["nimbus/tasks"]);
-  assert.equal(report.cases[0].observed.status, cut === "after-run-root" ? "not-run" : "failed");
+  const reportMatch = result.stdout.match(/^(.+\/report\.json)\|(.+\/junit\.xml)$/mu);
+  const resultRoot = reportMatch ? path.dirname(reportMatch[1]) : null;
+  try {
+    assert.notEqual(result.status, 0, `${cut} must make the runner red`);
+    assert.match(`${result.stdout}\n${result.stderr}`, new RegExp(`injected examples verification fault at ${cut}`, "u"));
+    if (cut !== "after-run-root") assert.match(result.stdout, /source byte manifest matches/u);
+    assert(retained && path.isAbsolute(retained), `${cut} must report one retained artifact root`);
+    assert.equal((await fs.stat(retained)).isDirectory(), true);
+    const { report } = await readFailureReport(result);
+    assert.deepEqual(report.run.selectedCases, ["nimbus/tasks"]);
+    assert.equal(report.cases[0].observed.status, cut === "after-run-root" ? "not-run" : "failed");
 
-  const statePath = path.join(retained, "network-authority", "networks", "control-plane", "state.json");
-  const state = await fs.readFile(statePath, "utf8").then(JSON.parse, () => null);
-  if (state) {
-    const phases = collectPhases(state);
-    assert(
-      phases.every((phase) => ["released", "failed"].includes(phase)),
-      `${cut} left an unsettled provider lease phase: ${phases.join(", ")}`,
-    );
-  }
+    const statePath = path.join(retained, "network-authority", "networks", "control-plane", "state.json");
+    const state = await fs.readFile(statePath, "utf8").then(JSON.parse, () => null);
+    if (state) {
+      const phases = collectPhases(state);
+      assert(
+        phases.every((phase) => ["released", "failed"].includes(phase)),
+        `${cut} left an unsettled provider lease phase: ${phases.join(", ")}`,
+      );
+    }
 
-  const caseRoot = path.join(retained, "cases", "nimbus-tasks");
-  if (await fs.stat(caseRoot).then(() => true, () => false)) {
-    const lifetime = JSON.parse(await fs.readFile(path.join(retained, "lifetime.json"), "utf8"));
-    const context = JSON.parse(await fs.readFile(path.join(caseRoot, "context.json"), "utf8"));
-    const relocated = (candidate) => path.join(retained, path.relative(lifetime.runRoot, candidate));
-    assert.equal(await fs.stat(relocated(context.discoveryPath)).then(() => true, () => false), false);
-    const records = await fs.readdir(relocated(context.processRoot));
-    assert.deepEqual(records, [], `${cut} must leave no managed process record`);
-    assert.equal(
-      await fs.stat(path.join(relocated(context.authRoot), "smoke.env")).then(() => true, () => false),
-      false,
-      `${cut} must scrub its smoke credential file before artifact retention`,
-    );
-    const serverLog = path.join(relocated(context.logRoot), "server.log");
-    if (await fs.stat(serverLog).then(() => true, () => false)) await assertReleasedAddress(serverLog);
+    const caseRoot = path.join(retained, "cases", "nimbus-tasks");
+    if (await fs.stat(caseRoot).then(() => true, () => false)) {
+      const lifetime = JSON.parse(await fs.readFile(path.join(retained, "lifetime.json"), "utf8"));
+      const context = JSON.parse(await fs.readFile(path.join(caseRoot, "context.json"), "utf8"));
+      const relocated = (candidate) => path.join(retained, path.relative(lifetime.runRoot, candidate));
+      assert.equal(await fs.stat(relocated(context.discoveryPath)).then(() => true, () => false), false);
+      const records = await fs.readdir(relocated(context.processRoot));
+      assert.deepEqual(records, [], `${cut} must leave no managed process record`);
+      assert.equal(
+        await fs.stat(path.join(relocated(context.authRoot), "smoke.env")).then(() => true, () => false),
+        false,
+        `${cut} must scrub its smoke credential file before artifact retention`,
+      );
+      const serverLog = path.join(relocated(context.logRoot), "server.log");
+      if (await fs.stat(serverLog).then(() => true, () => false)) await assertReleasedAddress(serverLog);
+    }
+  } finally {
+    if (retained) await fs.rm(retained, { recursive: true, force: true });
+    if (resultRoot) await fs.rm(resultRoot, { recursive: true, force: true });
   }
-  await fs.rm(retained, { recursive: true });
-  await fs.rm(resultRoot, { recursive: true });
 }
 
 async function verifyCredentialCleanupRetry(binary) {
@@ -120,19 +125,24 @@ async function verifyCredentialCleanupRetry(binary) {
     maxBuffer: 16 * 1024 * 1024,
   });
   if (result.error) throw result.error;
-  assert.notEqual(result.status, 0, "an injected credential deletion failure must make the runner red");
-  assert.match(result.stderr, /injected smoke credential deletion failure/u);
   const retained = result.stderr.match(/run failure retained diagnostic artifacts: (.+)$/mu)?.[1];
-  assert(retained && path.isAbsolute(retained), "credential cleanup retry must retain one artifact root");
-  const { report, resultRoot } = await readFailureReport(result);
-  assert.equal(report.cases[0].observed.status, "failed");
-  assert.equal(report.cases[0].cleanup.status, "failed");
-  const context = JSON.parse(await fs.readFile(path.join(retained, "cases", "nimbus-tasks", "context.json"), "utf8"));
-  const lifetime = JSON.parse(await fs.readFile(path.join(retained, "lifetime.json"), "utf8"));
-  const relocatedAuthRoot = path.join(retained, path.relative(lifetime.runRoot, context.authRoot));
-  assert.equal(await fs.stat(path.join(relocatedAuthRoot, "smoke.env")).then(() => true, () => false), false);
-  await fs.rm(retained, { recursive: true });
-  await fs.rm(resultRoot, { recursive: true });
+  const reportMatch = result.stdout.match(/^(.+\/report\.json)\|(.+\/junit\.xml)$/mu);
+  const resultRoot = reportMatch ? path.dirname(reportMatch[1]) : null;
+  try {
+    assert.notEqual(result.status, 0, "an injected credential deletion failure must make the runner red");
+    assert.match(`${result.stdout}\n${result.stderr}`, /injected smoke credential deletion failure/u);
+    assert(retained && path.isAbsolute(retained), "credential cleanup retry must retain one artifact root");
+    const { report } = await readFailureReport(result);
+    assert.equal(report.cases[0].observed.status, "failed");
+    assert.equal(report.cases[0].cleanup.status, "failed");
+    const context = JSON.parse(await fs.readFile(path.join(retained, "cases", "nimbus-tasks", "context.json"), "utf8"));
+    const lifetime = JSON.parse(await fs.readFile(path.join(retained, "lifetime.json"), "utf8"));
+    const relocatedAuthRoot = path.join(retained, path.relative(lifetime.runRoot, context.authRoot));
+    assert.equal(await fs.stat(path.join(relocatedAuthRoot, "smoke.env")).then(() => true, () => false), false);
+  } finally {
+    if (retained) await fs.rm(retained, { recursive: true, force: true });
+    if (resultRoot) await fs.rm(resultRoot, { recursive: true, force: true });
+  }
 }
 
 async function main() {

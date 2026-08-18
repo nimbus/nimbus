@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Boot each examples/ app against a fresh local server and run its smoke.
 #
-# Every app in the manifest below is verified independently and sequentially:
-# build the nimbus binary once, then for each app, optionally run its client
+# Every app in the manifest below is verified independently with bounded
+# scheduling: build the nimbus binary once, then for each app, optionally run its client
 # codegen script first (strictly before boot — running it against a live
 # server races the server's own watcher-free boot preflight, see the "3b"
 # follow-up recorded in the plan), boot the server on a fresh --data-dir,
@@ -19,6 +19,10 @@
 # contract through explicit and bare-local target resolution. Both forms must
 # return the same result JSON on stdout, keep their banners on stderr, and
 # preserve the silo and local-admin trust boundaries.
+
+# Each case process intentionally owns isolated copies of the server and report
+# lifecycle variables. The parent must not observe those per-case mutations.
+# shellcheck disable=SC2030,SC2031
 
 set -euo pipefail
 
@@ -131,6 +135,17 @@ if [[ "${RESULTS_ROOT}" != /* ]]; then
   exit 2
 fi
 ONLY="${NIMBUS_EXAMPLES_VERIFY_ONLY:-}"
+MAX_PARALLEL="${NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL:-1}"
+case "${MAX_PARALLEL}" in
+  ''|*[!0-9]*)
+    echo "NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL must be an integer from 1 through 9" >&2
+    exit 2
+    ;;
+esac
+if [ "${MAX_PARALLEL}" -lt 1 ] || [ "${MAX_PARALLEL}" -gt 9 ]; then
+  echo "NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL must be an integer from 1 through 9" >&2
+  exit 2
+fi
 CREDENTIAL_DELETE_FAILURES_REMAINING="${NIMBUS_EXAMPLES_VERIFY_CREDENTIAL_DELETE_FAILURES:-0}"
 case "${CREDENTIAL_DELETE_FAILURES_REMAINING}" in
   ''|*[!0-9]*)
@@ -182,6 +197,7 @@ SMOKE_ENV_FILE=""
 CURRENT_CASE_NAME=""
 CURRENT_CASE_SMOKE_LOG=""
 CURRENT_CASE_RECORDED=0
+CASE_WORKER_PIDS=()
 
 # The product owns each provider_assigned_port_lease and retained_listener.
 # This runner owns only the surrounding process, case roots, evidence, and
@@ -313,6 +329,160 @@ record_current_case() {
   CURRENT_CASE_SMOKE_LOG=""
 }
 
+finalize_case_process() {
+  local case_status=$?
+  local final_status="${case_status}"
+  local cleanup_status=0
+  local cleanup_report="passed"
+  trap - EXIT INT TERM
+  cleanup_server || cleanup_status=$?
+  if ! cleanup_smoke_credentials; then
+    cleanup_status=1
+  fi
+  if [ "${cleanup_status}" -ne 0 ]; then
+    cleanup_report="failed"
+    final_status=1
+  fi
+  if [ -n "${CURRENT_CASE_NAME}" ] && [ "${CURRENT_CASE_RECORDED}" -eq 0 ]; then
+    record_current_case "failed" "${case_status}" "${cleanup_report}" || final_status=1
+  fi
+  exit "${final_status}"
+}
+
+run_case_process() (
+  trap finalize_case_process EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  SERVER_PID=""
+  SERVER_URL=""
+  SERVER_LOG=""
+  SERVER_RECORD=""
+  SERVER_DISCOVERY_PATH=""
+  SERVER_ADMIN_TOKEN=""
+  SMOKE_ENV_FILE=""
+  CURRENT_CASE_NAME=""
+  CURRENT_CASE_SMOKE_LOG=""
+  CURRENT_CASE_RECORDED=0
+  IFS='|' read -r name workspace app_dir needs_codegen needs_app_dir_boot boot_env boot_flags smoke_env boot_mode smoke_command stdio_contract update_semantics surfaces <<<"$1"
+  run_one "${name}" "${workspace}" "${app_dir}" "${needs_codegen}" "${needs_app_dir_boot}" "${boot_env}" "${boot_flags}" "${smoke_env}" "${boot_mode}" "${smoke_command}" "${stdio_contract}" "${update_semantics}" "${surfaces}"
+)
+
+ACTIVE_CASE_PID=""
+WORKER_SIGNAL_STATUS=0
+on_worker_signal() {
+  local signal_status="$1"
+  trap - INT TERM
+  WORKER_SIGNAL_STATUS="${signal_status}"
+}
+
+case_log_path() {
+  local entry="$1" name
+  IFS='|' read -r name _ <<<"${entry}"
+  printf '%s/%s.log\n' "${SCHEDULER_LOG_ROOT}" "${name//\//-}"
+}
+
+claim_scheduler_failure() {
+  local name="$1" status="$2"
+  if mkdir "${SCHEDULER_FAILURE_ROOT}" 2>/dev/null; then
+    printf '%s\n' "${name}|${status}" >"${SCHEDULER_FAILURE_ROOT}/result.pipe"
+  fi
+}
+
+CLAIMED_ENTRY=""
+claim_next_scheduled_case() {
+  local index claim_path
+  CLAIMED_ENTRY=""
+  for ((index = 0; index < ${#SCHEDULED_APPS[@]}; index += 1)); do
+    claim_path="${SCHEDULER_CLAIM_ROOT}/${index}"
+    if mkdir "${claim_path}" 2>/dev/null; then
+      if [ -d "${SCHEDULER_FAILURE_ROOT}" ]; then
+        return 1
+      fi
+      CLAIMED_ENTRY="${SCHEDULED_APPS[${index}]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+run_worker_slot() {
+  local entry name log_path case_status
+  ACTIVE_CASE_PID=""
+  WORKER_SIGNAL_STATUS=0
+  trap 'on_worker_signal 130' INT
+  trap 'on_worker_signal 143' TERM
+  while true; do
+    if [ -d "${SCHEDULER_FAILURE_ROOT}" ]; then
+      return 0
+    fi
+    if ! claim_next_scheduled_case; then
+      return 0
+    fi
+    entry="${CLAIMED_ENTRY}"
+    IFS='|' read -r name _ <<<"${entry}"
+    log_path="$(case_log_path "${entry}")"
+    run_case_process "${entry}" >"${log_path}" 2>&1 &
+    ACTIVE_CASE_PID=$!
+    case_status=0
+    while kill -0 "${ACTIVE_CASE_PID}" 2>/dev/null; do
+      case_status=0
+      wait "${ACTIVE_CASE_PID}" || case_status=$?
+    done
+    ACTIVE_CASE_PID=""
+    if [ "${WORKER_SIGNAL_STATUS}" -ne 0 ]; then
+      return "${WORKER_SIGNAL_STATUS}"
+    fi
+    if [ "${case_status}" -ne 0 ]; then
+      claim_scheduler_failure "${name}" "${case_status}"
+      return "${case_status}"
+    fi
+  done
+}
+
+stop_case_workers() {
+  local pid status cleanup_status=0
+  for pid in ${CASE_WORKER_PIDS[@]+"${CASE_WORKER_PIDS[@]}"}; do
+    kill -TERM "${pid}" 2>/dev/null || true
+  done
+  for pid in ${CASE_WORKER_PIDS[@]+"${CASE_WORKER_PIDS[@]}"}; do
+    status=0
+    wait "${pid}" 2>/dev/null || status=$?
+    case "${status}" in
+      0|130|143) ;;
+      *) cleanup_status=1 ;;
+    esac
+  done
+  CASE_WORKER_PIDS=()
+  return "${cleanup_status}"
+}
+
+run_scheduled_cases() {
+  local worker_count="${MAX_PARALLEL}" slot pid worker_status=0 entry log_path failure_status=1
+  if [ "${worker_count}" -gt "${#SELECTED_APPS[@]}" ]; then
+    worker_count="${#SELECTED_APPS[@]}"
+  fi
+  mkdir -p "${SCHEDULER_LOG_ROOT}" "${SCHEDULER_CLAIM_ROOT}"
+  for ((slot = 0; slot < worker_count; slot += 1)); do
+    (run_worker_slot) &
+    CASE_WORKER_PIDS+=("$!")
+  done
+  for pid in ${CASE_WORKER_PIDS[@]+"${CASE_WORKER_PIDS[@]}"}; do
+    wait "${pid}" || worker_status=$?
+  done
+  CASE_WORKER_PIDS=()
+  for entry in "${SELECTED_APPS[@]}"; do
+    log_path="$(case_log_path "${entry}")"
+    if [ -f "${log_path}" ]; then
+      cat "${log_path}"
+    fi
+  done
+  if [ -f "${SCHEDULER_FAILURE_ROOT}/result.pipe" ]; then
+    IFS='|' read -r _ failure_status <"${SCHEDULER_FAILURE_ROOT}/result.pipe"
+    return "${failure_status}"
+  fi
+  return "${worker_status}"
+}
+
 finalize_examples_verification() {
   local run_status=$?
   local final_status="${run_status}"
@@ -323,6 +493,9 @@ finalize_examples_verification() {
   local source_status="matched"
   local case_cleanup_report="passed"
   trap - EXIT INT TERM
+  if [ "${#CASE_WORKER_PIDS[@]}" -gt 0 ] && ! stop_case_workers; then
+    cleanup_status=1
+  fi
   cleanup_server || cleanup_status=$?
   if ! cleanup_smoke_credentials; then
     cleanup_status=1
@@ -377,6 +550,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 FAULT_CUT="${NIMBUS_EXAMPLES_VERIFY_FAULT_CUT:-}"
+FAULT_CASE="${NIMBUS_EXAMPLES_VERIFY_FAULT_CASE:-}"
 case "${FAULT_CUT}" in
   ""|after-run-root|after-case-root|after-server-spawn|after-server-ready|during-smoke|before-server-stop) ;;
   *)
@@ -385,7 +559,8 @@ case "${FAULT_CUT}" in
     ;;
 esac
 fail_at_cut() {
-  if [ "${FAULT_CUT}" = "$1" ]; then
+  if [ "${FAULT_CUT}" = "$1" ] && \
+      { [ -z "${FAULT_CASE}" ] || [ "${FAULT_CASE}" = "${CURRENT_CASE_NAME}" ]; }; then
     echo "injected examples verification fault at $1" >&2
     return 97
   fi
@@ -847,6 +1022,10 @@ ensure_firebase_protobuf_stubs
 # Restrict to a single app by name for local debugging, e.g.
 # NIMBUS_EXAMPLES_VERIFY_ONLY=nimbus/tasks bash scripts/examples-verify.sh
 ONLY_MATCHED=0
+SELECTED_APPS=()
+SCHEDULED_LONG_APPS=()
+SCHEDULED_MEDIUM_APPS=()
+SCHEDULED_SHORT_APPS=()
 
 for entry in "${APPS[@]}"; do
   IFS='|' read -r name workspace app_dir needs_codegen needs_app_dir_boot boot_env boot_flags smoke_env boot_mode smoke_command stdio_contract update_semantics surfaces <<<"${entry}"
@@ -854,7 +1033,24 @@ for entry in "${APPS[@]}"; do
     continue
   fi
   ONLY_MATCHED=1
-  run_one "${name}" "${workspace}" "${app_dir}" "${needs_codegen}" "${needs_app_dir_boot}" "${boot_env}" "${boot_flags}" "${smoke_env}" "${boot_mode}" "${smoke_command}" "${stdio_contract}" "${update_semantics}" "${surfaces}"
+  SELECTED_APPS+=("${entry}")
+  if [ "${needs_codegen}" = "1" ] || [[ ",${surfaces}," = *",cloud-functions-http,"* ]]; then
+    SCHEDULED_LONG_APPS+=("${entry}")
+  elif [ "${boot_mode}" = "dev" ]; then
+    SCHEDULED_MEDIUM_APPS+=("${entry}")
+  else
+    SCHEDULED_SHORT_APPS+=("${entry}")
+  fi
+done
+SCHEDULED_APPS=()
+for entry in ${SCHEDULED_LONG_APPS[@]+"${SCHEDULED_LONG_APPS[@]}"}; do
+  SCHEDULED_APPS+=("${entry}")
+done
+for entry in ${SCHEDULED_MEDIUM_APPS[@]+"${SCHEDULED_MEDIUM_APPS[@]}"}; do
+  SCHEDULED_APPS+=("${entry}")
+done
+for entry in ${SCHEDULED_SHORT_APPS[@]+"${SCHEDULED_SHORT_APPS[@]}"}; do
+  SCHEDULED_APPS+=("${entry}")
 done
 
 # An ONLY value that matches nothing used to fall straight through the loop
@@ -870,5 +1066,11 @@ if [ -n "${ONLY}" ] && [ "${ONLY_MATCHED}" -eq 0 ]; then
   done
   exit 1
 fi
+
+SCHEDULER_LOG_ROOT="${DATA_ROOT}/scheduler-logs"
+SCHEDULER_FAILURE_ROOT="${DATA_ROOT}/scheduler-failure"
+SCHEDULER_CLAIM_ROOT="${DATA_ROOT}/scheduler-claims"
+echo "==> scheduling ${#SELECTED_APPS[@]} applications with max_parallel=${MAX_PARALLEL}"
+run_scheduled_cases
 
 echo "==> all examples verified"

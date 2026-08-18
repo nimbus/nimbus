@@ -120,11 +120,15 @@ NODE
         has .github/workflows/ci.yml 'target/examples-verify-results/.*/junit\.xml'
       ;;
     AVRC23)
-      has scripts/examples-verify-benchmark.sh 'serial-samples' &&
-        has scripts/examples-verify-benchmark.sh 'parallel-samples' &&
-        has scripts/examples-verify-benchmark.sh 'max-seconds' &&
-        has scripts/examples-verify.sh 'max_parallel' &&
-        has scripts/examples-verify.sh 'drain.*failure'
+      has scripts/examples-verify-benchmark.mjs 'function evaluateSamples' &&
+        has scripts/examples-verify-benchmark.mjs 'function validateEvidence' &&
+        has scripts/examples-verify-benchmark.mjs 'parallel-relative-budget' &&
+        has scripts/examples-verify-benchmark.mjs 'parallel-absolute-budget' &&
+        has scripts/examples-verify-benchmark-test.mjs 'busy_or_different_host_sample_is_invalid_not_failed' &&
+        has scripts/examples-verify-scheduler-test.mjs 'failure_drains_without_starting_later_cases' &&
+        has scripts/examples-verify-scheduler-test.mjs 'signal_drains_active_workers' &&
+        has scripts/examples-verify.sh 'NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL' &&
+        has scripts/examples-verify.sh 'SCHEDULER_FAILURE_ROOT'
       ;;
     AVRC24)
       grep -Rqs -- 'nine.*app' "${ROOT}/examples" &&
@@ -232,8 +236,10 @@ NODE
       printf '%s\n' 'Upload examples-verification reports' 'target/examples-verify-results/*/report.json' 'target/examples-verify-results/*/junit.xml' >"${root}/.github/workflows/ci.yml"
       ;;
     AVRC23)
-      printf '%s\n' '# --serial-samples --parallel-samples --max-seconds' >"${root}/scripts/examples-verify-benchmark.sh"
-      printf '%s\n' 'max_parallel=4' '# drain workers after failure' >"${root}/scripts/examples-verify.sh"
+      printf '%s\n' 'function evaluateSamples() {} function validateEvidence() {} parallel-relative-budget parallel-absolute-budget' >"${root}/scripts/examples-verify-benchmark.mjs"
+      printf '%s\n' 'busy_or_different_host_sample_is_invalid_not_failed' >"${root}/scripts/examples-verify-benchmark-test.mjs"
+      printf '%s\n' 'failure_drains_without_starting_later_cases signal_drains_active_workers' >"${root}/scripts/examples-verify-scheduler-test.mjs"
+      printf '%s\n' 'NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL SCHEDULER_FAILURE_ROOT' >"${root}/scripts/examples-verify.sh"
       ;;
     AVRC24)
       printf '%s\n' 'nine app checks use Node.js 22 and 24. push is distinct from polling. retained artifact instructions.' >"${root}/examples/app/README.md"
@@ -256,7 +262,7 @@ mutate_fixture() {
     AVRC20) printf '%s\n' '# shared state and best-effort cleanup' >"${root}/scripts/examples-verify.sh" ;;
     AVRC21) printf '%s\n' 'const schemaVersion = 1;' >"${root}/scripts/examples-verify-report.mjs" ;;
     AVRC22) printf '%s\n' 'const junit = true;' >"${root}/scripts/examples-verify-report.mjs" ;;
-    AVRC23) printf '%s\n' '# serial only' >"${root}/scripts/examples-verify-benchmark.sh" ;;
+    AVRC23) printf '%s\n' '# serial only' >"${root}/scripts/examples-verify-benchmark.mjs" ;;
     AVRC24) printf '%s\n' 'eight apps use Node.js 22. updates happen.' >"${root}/examples/app/README.md" ;;
   esac
 }
@@ -518,6 +524,11 @@ run_avr8_behavior_tests() {
   node "${ROOT}/scripts/examples-verify-supervisor-test.mjs"
 }
 
+run_avr9_behavior_tests() {
+  node "${ROOT}/scripts/examples-verify-benchmark-test.mjs"
+  node "${ROOT}/scripts/examples-verify-scheduler-test.mjs" --bin "${NIMBUS_EXAMPLES_VERIFY_BIN:-${ROOT}/target/debug/nimbus}"
+}
+
 usage() {
   printf 'usage: %s --task AVR3..AVR10 | --condition AVRC11..AVRC24 | --self-test-condition AVRC11..AVRC24\n' "$0" >&2
 }
@@ -545,6 +556,9 @@ case "${1:-}" in
     fi
     if [ "$2" = "AVR8" ]; then
       run_avr8_behavior_tests
+    fi
+    if [ "$2" = "AVR9" ]; then
+      run_avr9_behavior_tests
     fi
     ;;
   --condition)

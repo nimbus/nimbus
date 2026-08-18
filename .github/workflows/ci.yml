@@ -2563,6 +2563,7 @@ jobs:
       - name: Run examples-verify
         env:
           NIMBUS_EXAMPLES_VERIFY_BIN: ${{ github.workspace }}/target/ci-archive/nimbus
+          NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL: "5"
         run: make examples-verify
 
       - name: Upload examples-verification reports

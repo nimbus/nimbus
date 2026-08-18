@@ -12,6 +12,7 @@ const LIST_DELIMITER = ",";
 const UPDATE_SEMANTICS = new Set(["polling", "push", "request-response"]);
 const BOOT_MODES = new Set(["dev", "start"]);
 const SMOKE_COMMANDS = new Set(["node", "npm"]);
+const SOURCE_HASH_CONCURRENCY = 128;
 const SURFACE_ENV_KEYS = new Map([
   ["mongodb-wire", ["NIMBUS_MONGODB_URL"]],
   ["dynamodb-wire", [
@@ -460,8 +461,15 @@ async function buildSourceSnapshot({ manifestPath, repoRoot }) {
   let indexSha256 = null;
   if (probe.status === 0 && probe.stdout.toString("utf8").trim() === "true") {
     mode = "git";
-    sourcePaths = nulFields(git(repoRoot, ["ls-files", "--cached", "-z"]).stdout).sort();
     indexSha256 = digest(git(repoRoot, ["ls-files", "--stage", "-z"]).stdout);
+    sourcePaths = nulFields(git(repoRoot, [
+      "diff",
+      "--name-only",
+      "--no-ext-diff",
+      "--no-renames",
+      "-z",
+      "--",
+    ]).stdout).sort();
   } else {
     mode = "export";
     const manifestRelative = path.relative(repoRoot, manifestPath).replaceAll(path.sep, "/");
@@ -471,8 +479,18 @@ async function buildSourceSnapshot({ manifestPath, repoRoot }) {
     }
     sourcePaths = [...protectedPaths].sort();
   }
-  const entries = [];
-  for (const relativePath of sourcePaths) entries.push(await byteEntry(repoRoot, relativePath));
+  const entries = new Array(sourcePaths.length);
+  let cursor = 0;
+  await Promise.all(Array.from(
+    { length: Math.min(SOURCE_HASH_CONCURRENCY, sourcePaths.length) },
+    async () => {
+      while (cursor < sourcePaths.length) {
+        const index = cursor;
+        cursor += 1;
+        entries[index] = await byteEntry(repoRoot, sourcePaths[index]);
+      }
+    },
+  ));
   return { schemaVersion: 1, mode, indexSha256, entries };
 }
 
