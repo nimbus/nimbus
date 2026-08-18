@@ -14,6 +14,12 @@ graceful-settlement race that their rerun exposed. The examples runner now has
 one run lifetime owner and one process-group owner. Nimbus owns every listener
 and port lease.
 
+PR [#276](https://github.com/nimbus/nimbus/pull/276) merged as
+`b58ef8c35bb7478a9d31faa7b6d1d822d9215496` on 2026-08-18. Reconciliation
+commit `ec6d2414c` merged that current `main` into the owner branch while it
+preserved checkpoint `0c20bf17c`. The reconciled branch was zero commits behind
+`origin/main` before AVR8 started.
+
 Each run uses one network-state root. Each case uses separate application,
 data, control, authentication, discovery, audit, log, result, and process
 roots. Discovery accepts only the expected process identity and a loopback
@@ -100,8 +106,30 @@ CodeQL check `95575973966` reported four new alerts on PR #276. Commit
 | High: environment-file metadata and bytes used separate path operations. | The supervisor opens the owner-only file once without following links, validates the open handle, and reads through that handle. A linked credential file fails before child spawn. |
 | High: the workspace test checked a path and then read it by path. | The fixture reads links atomically or reads regular bytes through one open handle. |
 | High: the source-byte manifest checked a path and then read it by path. | The manifest reads a link directly or opens a non-link handle, validates the handle, and reads through it. A bounded retry fails closed when the path changes type. |
-| Medium: the product test derives a health URL from discovery bytes. | `readCaseDiscovery` requires the exact child PID, a loopback host, and a non-zero port before the request. A query-specific source annotation records that sanitizer boundary. |
+| Medium: the product test derives a health URL from discovery bytes. | `readCaseDiscovery` requires the exact child PID, a loopback host, and a non-zero port before the request. Alert 7036 was dismissed as `used in tests` with this exact evidence. |
 | Acceptance rerun: `before-server-stop` retained one lease in `withdrawing`. | The shutdown endpoint returned before durable settlement finished, and the process owner signaled too early. The owner now waits up to 10 seconds for natural exit before TERM/KILL fallback. The direct graceful-exit test and all seven runner cases pass. |
+
+The three race alerts closed after commit `9e9482ce8`. Alert 7036 is the
+test-only loopback probe described above. PR #276 has zero open code-scanning
+alerts.
+
+## Hosted pull-request evidence
+
+| Check | Result |
+| --- | --- |
+| CI run [`32092865987`](https://github.com/nimbus/nimbus/actions/runs/32092865987) | Pass on attempt 2. The current head has 54 successful checks and three expected skips. |
+| Examples Verify | Pass. The hosted job ran the nine-application lane from the downloaded Nimbus binary. |
+| CodeQL run [`32092866012`](https://github.com/nimbus/nimbus/actions/runs/32092866012) | Pass. JavaScript and Rust analyses completed. The pull request has zero open alerts. |
+| Docs run [`32092865978`](https://github.com/nimbus/nimbus/actions/runs/32092865978) | Pass. The docs site built and deployed. |
+| Desktop run [`32092865917`](https://github.com/nimbus/nimbus/actions/runs/32092865917) | Pass. The desktop UI smoke walk completed. |
+| Windows run [`32092865898`](https://github.com/nimbus/nimbus/actions/runs/32092865898) | Pass. The workspace cargo check completed. |
+| Merge result | PR #276 merged head `d5fa0117dcacf9fc54157207d057358d25be9aeb` as `b58ef8c35bb7478a9d31faa7b6d1d822d9215496`. Reconciliation commit `ec6d2414c` preserved the local recovery checkpoint and reached zero commits behind current main. |
+
+CI attempt 1 cancelled `Ptrcomp Cage` and both Node FaaS oracle jobs before
+their tests started. All three jobs exhausted their time budgets inside
+`apt-get update` while the Azure Ubuntu mirror stopped responding. Failed-job
+attempt 2 used fresh runners, cleared setup, and passed the real checks. AVRF26
+routes bounded package-setup recovery to AVR11.
 
 ## Rejected or interrupted runs
 

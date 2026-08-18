@@ -89,12 +89,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
   Future cluster transport stays in the deferred horizontal-scaling lane.
 - `docs-and-app-verification-reliability-plan.md` - `active` owner for network
   documentation, stable verifier contracts, plan archival, and fresh-checkout
-  application verification. It will keep source unchanged and use product-owned
-  ports. It will isolate temporary state and emit structured evidence. It will
-  run nine apps with bounded parallelism. It consumes completed network and
-  examples decisions without reopening them. The AVR0-AVR2 phase candidate is
-  open as PR #275. It must merge and reconcile before runner and performance
-  work starts.
+  application verification. It keeps source unchanged and uses product-owned
+  ports. It isolates temporary state, emits structured evidence, and runs nine
+  apps with bounded parallelism. It consumes completed network and examples
+  decisions without reopening them. AVR10 completed the source-derived example
+  and operator guidance. AVR11 now owns integrated local, minicloud, repository,
+  review, pull-request, and hosted acceptance.
 - `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
   architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
   `SandboxBackend` router/dispatch seam with backend families

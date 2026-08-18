@@ -1,0 +1,295 @@
+{
+  "schemaVersion": 1,
+  "kind": "nimbus.examples-verification-benchmark-sample",
+  "id": "serial-01",
+  "mode": "serial",
+  "maxParallel": 1,
+  "startedAt": "2026-08-18T08:16:17.252Z",
+  "completedAt": "2026-08-18T08:18:09.662Z",
+  "wallDurationMs": 112403,
+  "validity": {
+    "status": "valid",
+    "reasons": [],
+    "eligibilityMoment": "before-run"
+  },
+  "host": {
+    "before": {
+      "hostname": "minicloud",
+      "platform": "linux",
+      "release": "6.12.94+deb13-amd64",
+      "architecture": "x64",
+      "cpuCount": 4,
+      "cpuModels": [
+        "Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz"
+      ],
+      "totalMemoryBytes": 8246829056,
+      "nodeVersion": "v24.16.0"
+    },
+    "after": {
+      "hostname": "minicloud",
+      "platform": "linux",
+      "release": "6.12.94+deb13-amd64",
+      "architecture": "x64",
+      "cpuCount": 4,
+      "cpuModels": [
+        "Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz"
+      ],
+      "totalMemoryBytes": 8246829056,
+      "nodeVersion": "v24.16.0"
+    },
+    "activityBefore": {
+      "observedAt": "2026-08-18T08:16:17.250Z",
+      "eligible": true,
+      "reasons": [],
+      "loadAverage": [
+        4.62,
+        3.05,
+        2.92
+      ],
+      "loadPerCpu": 1.155,
+      "freeMemoryBytes": 7486148608,
+      "freeMemoryRatio": 0.9078462848157284,
+      "thresholds": {
+        "maxLoadPerCpu": 1.5,
+        "minFreeMemoryRatio": 0.05
+      },
+      "conflictingProcesses": []
+    },
+    "activityAfter": {
+      "observedAt": "2026-08-18T08:18:09.677Z",
+      "eligible": true,
+      "reasons": [],
+      "loadAverage": [
+        1.96,
+        2.51,
+        2.73
+      ],
+      "loadPerCpu": 0.49,
+      "freeMemoryBytes": 7475847168,
+      "freeMemoryRatio": 0.9065112204018504,
+      "thresholds": {
+        "maxLoadPerCpu": 1.5,
+        "minFreeMemoryRatio": 0.05
+      },
+      "conflictingProcesses": []
+    }
+  },
+  "reportPath": "runs/serial-01/nimbus-examples-verify.ay3fet-182094946ccd/report.json",
+  "junitPath": "runs/serial-01/nimbus-examples-verify.ay3fet-182094946ccd/junit.xml",
+  "reportId": "nimbus-examples-verify.ay3fet-182094946ccd",
+  "reportDurationMs": 112116,
+  "reportStatus": "passed",
+  "cleanupStatus": "passed",
+  "sourceStatus": "matched",
+  "coverage": [
+    {
+      "name": "nimbus/tasks",
+      "desiredAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ],
+      "observedAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ],
+      "surfaces": [
+        "native-http",
+        "websocket"
+      ],
+      "updateSemantics": "push"
+    },
+    {
+      "name": "nimbus/agent-chat",
+      "desiredAnchors": [
+        "agent-chat.converse",
+        "agent-chat.remember",
+        "agent-chat.recall",
+        "agent-chat.schedule"
+      ],
+      "observedAnchors": [
+        "agent-chat.converse",
+        "agent-chat.remember",
+        "agent-chat.recall",
+        "agent-chat.schedule"
+      ],
+      "surfaces": [
+        "convex-http",
+        "scheduler",
+        "websocket"
+      ],
+      "updateSemantics": "push"
+    },
+    {
+      "name": "nimbus/agent-worker",
+      "desiredAnchors": [
+        "agent-worker.enqueue",
+        "agent-worker.schedule"
+      ],
+      "observedAnchors": [
+        "agent-worker.enqueue",
+        "agent-worker.schedule"
+      ],
+      "surfaces": [
+        "convex-http",
+        "scheduler",
+        "websocket"
+      ],
+      "updateSemantics": "push"
+    },
+    {
+      "name": "convex/tasks",
+      "desiredAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ],
+      "observedAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ],
+      "surfaces": [
+        "convex-http",
+        "stdio-run",
+        "websocket"
+      ],
+      "updateSemantics": "push"
+    },
+    {
+      "name": "convex/runtimes",
+      "desiredAnchors": [
+        "digests.hashWithDefaultRuntime",
+        "nodeDigests.hashWithNodeRuntime",
+        "digests.list",
+        "shareIds.create"
+      ],
+      "observedAnchors": [
+        "digests.hashWithDefaultRuntime",
+        "nodeDigests.hashWithNodeRuntime",
+        "digests.list",
+        "shareIds.create"
+      ],
+      "surfaces": [
+        "convex-http",
+        "node-runtime",
+        "v8-runtime"
+      ],
+      "updateSemantics": "request-response"
+    },
+    {
+      "name": "firebase/tasks",
+      "desiredAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ],
+      "observedAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ],
+      "surfaces": [
+        "firestore-rest",
+        "websocket"
+      ],
+      "updateSemantics": "push"
+    },
+    {
+      "name": "mongodb/tasks",
+      "desiredAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ],
+      "observedAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ],
+      "surfaces": [
+        "mongodb-wire"
+      ],
+      "updateSemantics": "polling"
+    },
+    {
+      "name": "dynamodb/tasks",
+      "desiredAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ],
+      "observedAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ],
+      "surfaces": [
+        "dynamodb-wire"
+      ],
+      "updateSemantics": "polling"
+    },
+    {
+      "name": "cloud-functions/tasks",
+      "desiredAnchors": [
+        "tasks.create-triggers-derived-write",
+        "cloud-functions.http-handler-response"
+      ],
+      "observedAnchors": [
+        "tasks.create-triggers-derived-write",
+        "cloud-functions.http-handler-response"
+      ],
+      "surfaces": [
+        "cloud-functions-http",
+        "scheduler"
+      ],
+      "updateSemantics": "polling"
+    }
+  ],
+  "provenance": {
+    "binary": {
+      "sha256": "9f5377b610925d9d8bedf1edc0f1e95e30e8e0ced5ca50f8c16880c90eab9fab",
+      "version": "nimbus 0.1.45"
+    },
+    "manifest": {
+      "schemaVersion": 1,
+      "sha256": "9fd462b34d03d8af214f98aff26335636d7e89ee9af0221aa413bfac3c1c4a77"
+    },
+    "node": {
+      "version": "v24.16.0"
+    },
+    "sourceBeforeSha256": "c9527d75489f8f38b087c649bc44a584acd0168dd939bdeff2465579688ff2a7"
+  },
+  "ports": [
+    41051,
+    32869,
+    36071,
+    44153,
+    46403,
+    45819,
+    44603,
+    39731,
+    44263
+  ]
+}

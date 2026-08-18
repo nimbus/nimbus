@@ -1,0 +1,395 @@
+{
+  "schemaVersion": 1,
+  "kind": "nimbus.examples-verification",
+  "run": {
+    "id": "nimbus-examples-verify.ay3fet-182094946ccd",
+    "status": "passed",
+    "startedAt": "2026-08-18T08:16:17.376Z",
+    "completedAt": "2026-08-18T08:18:09.492Z",
+    "durationMs": 112116,
+    "exitCode": 0,
+    "selectedCases": [
+      "nimbus/tasks",
+      "nimbus/agent-chat",
+      "nimbus/agent-worker",
+      "convex/tasks",
+      "convex/runtimes",
+      "firebase/tasks",
+      "mongodb/tasks",
+      "dynamodb/tasks",
+      "cloud-functions/tasks"
+    ]
+  },
+  "provenance": {
+    "binary": {
+      "sha256": "9f5377b610925d9d8bedf1edc0f1e95e30e8e0ced5ca50f8c16880c90eab9fab",
+      "version": "nimbus 0.1.45"
+    },
+    "manifest": {
+      "schemaVersion": 1,
+      "sha256": "9fd462b34d03d8af214f98aff26335636d7e89ee9af0221aa413bfac3c1c4a77"
+    },
+    "node": {
+      "version": "v24.16.0"
+    },
+    "source": {
+      "beforeSha256": "c9527d75489f8f38b087c649bc44a584acd0168dd939bdeff2465579688ff2a7",
+      "afterSha256": "c9527d75489f8f38b087c649bc44a584acd0168dd939bdeff2465579688ff2a7",
+      "status": "matched"
+    }
+  },
+  "cases": [
+    {
+      "name": "nimbus/tasks",
+      "desired": {
+        "bootMode": "start",
+        "surfaces": [
+          "native-http",
+          "websocket"
+        ],
+        "updateSemantics": "push",
+        "expectedAnchors": [
+          "tasks.create",
+          "tasks.list",
+          "tasks.toggle",
+          "tasks.delete",
+          "tasks.live-update"
+        ]
+      },
+      "observed": {
+        "status": "passed",
+        "startedAt": "2026-08-18T08:18:03.306Z",
+        "completedAt": "2026-08-18T08:18:05.556Z",
+        "durationMs": 2250,
+        "exitCode": 0,
+        "endpoint": {
+          "protocol": "http",
+          "host": "127.0.0.1",
+          "port": 41051
+        },
+        "anchors": [
+          "tasks.create",
+          "tasks.list",
+          "tasks.toggle",
+          "tasks.delete",
+          "tasks.live-update"
+        ]
+      },
+      "cleanup": {
+        "status": "passed"
+      }
+    },
+    {
+      "name": "nimbus/agent-chat",
+      "desired": {
+        "bootMode": "start",
+        "surfaces": [
+          "convex-http",
+          "scheduler",
+          "websocket"
+        ],
+        "updateSemantics": "push",
+        "expectedAnchors": [
+          "agent-chat.converse",
+          "agent-chat.remember",
+          "agent-chat.recall",
+          "agent-chat.schedule"
+        ]
+      },
+      "observed": {
+        "status": "passed",
+        "startedAt": "2026-08-18T08:16:17.818Z",
+        "completedAt": "2026-08-18T08:16:35.965Z",
+        "durationMs": 18147,
+        "exitCode": 0,
+        "endpoint": {
+          "protocol": "http",
+          "host": "127.0.0.1",
+          "port": 32869
+        },
+        "anchors": [
+          "agent-chat.converse",
+          "agent-chat.remember",
+          "agent-chat.recall",
+          "agent-chat.schedule"
+        ]
+      },
+      "cleanup": {
+        "status": "passed"
+      }
+    },
+    {
+      "name": "nimbus/agent-worker",
+      "desired": {
+        "bootMode": "start",
+        "surfaces": [
+          "convex-http",
+          "scheduler",
+          "websocket"
+        ],
+        "updateSemantics": "push",
+        "expectedAnchors": [
+          "agent-worker.enqueue",
+          "agent-worker.schedule"
+        ]
+      },
+      "observed": {
+        "status": "passed",
+        "startedAt": "2026-08-18T08:16:36.125Z",
+        "completedAt": "2026-08-18T08:16:54.149Z",
+        "durationMs": 18024,
+        "exitCode": 0,
+        "endpoint": {
+          "protocol": "http",
+          "host": "127.0.0.1",
+          "port": 36071
+        },
+        "anchors": [
+          "agent-worker.enqueue",
+          "agent-worker.schedule"
+        ]
+      },
+      "cleanup": {
+        "status": "passed"
+      }
+    },
+    {
+      "name": "convex/tasks",
+      "desired": {
+        "bootMode": "start",
+        "surfaces": [
+          "convex-http",
+          "stdio-run",
+          "websocket"
+        ],
+        "updateSemantics": "push",
+        "expectedAnchors": [
+          "tasks.create",
+          "tasks.list",
+          "tasks.toggle",
+          "tasks.delete",
+          "tasks.live-update"
+        ]
+      },
+      "observed": {
+        "status": "passed",
+        "startedAt": "2026-08-18T08:16:54.274Z",
+        "completedAt": "2026-08-18T08:17:12.382Z",
+        "durationMs": 18108,
+        "exitCode": 0,
+        "endpoint": {
+          "protocol": "http",
+          "host": "127.0.0.1",
+          "port": 44153
+        },
+        "anchors": [
+          "tasks.create",
+          "tasks.list",
+          "tasks.toggle",
+          "tasks.delete",
+          "tasks.live-update"
+        ]
+      },
+      "cleanup": {
+        "status": "passed"
+      }
+    },
+    {
+      "name": "convex/runtimes",
+      "desired": {
+        "bootMode": "start",
+        "surfaces": [
+          "convex-http",
+          "node-runtime",
+          "v8-runtime"
+        ],
+        "updateSemantics": "request-response",
+        "expectedAnchors": [
+          "digests.hashWithDefaultRuntime",
+          "nodeDigests.hashWithNodeRuntime",
+          "digests.list",
+          "shareIds.create"
+        ]
+      },
+      "observed": {
+        "status": "passed",
+        "startedAt": "2026-08-18T08:17:12.556Z",
+        "completedAt": "2026-08-18T08:17:30.535Z",
+        "durationMs": 17979,
+        "exitCode": 0,
+        "endpoint": {
+          "protocol": "http",
+          "host": "127.0.0.1",
+          "port": 46403
+        },
+        "anchors": [
+          "digests.hashWithDefaultRuntime",
+          "nodeDigests.hashWithNodeRuntime",
+          "digests.list",
+          "shareIds.create"
+        ]
+      },
+      "cleanup": {
+        "status": "passed"
+      }
+    },
+    {
+      "name": "firebase/tasks",
+      "desired": {
+        "bootMode": "dev",
+        "surfaces": [
+          "firestore-rest",
+          "websocket"
+        ],
+        "updateSemantics": "push",
+        "expectedAnchors": [
+          "tasks.create",
+          "tasks.list",
+          "tasks.toggle",
+          "tasks.delete",
+          "tasks.live-update"
+        ]
+      },
+      "observed": {
+        "status": "passed",
+        "startedAt": "2026-08-18T08:17:49.763Z",
+        "completedAt": "2026-08-18T08:17:56.861Z",
+        "durationMs": 7098,
+        "exitCode": 0,
+        "endpoint": {
+          "protocol": "http",
+          "host": "127.0.0.1",
+          "port": 45819
+        },
+        "anchors": [
+          "tasks.create",
+          "tasks.list",
+          "tasks.toggle",
+          "tasks.delete",
+          "tasks.live-update"
+        ]
+      },
+      "cleanup": {
+        "status": "passed"
+      }
+    },
+    {
+      "name": "mongodb/tasks",
+      "desired": {
+        "bootMode": "dev",
+        "surfaces": [
+          "mongodb-wire"
+        ],
+        "updateSemantics": "polling",
+        "expectedAnchors": [
+          "tasks.create",
+          "tasks.list",
+          "tasks.toggle",
+          "tasks.delete",
+          "tasks.live-update"
+        ]
+      },
+      "observed": {
+        "status": "passed",
+        "startedAt": "2026-08-18T08:17:56.994Z",
+        "completedAt": "2026-08-18T08:18:00.013Z",
+        "durationMs": 3019,
+        "exitCode": 0,
+        "endpoint": {
+          "protocol": "http",
+          "host": "127.0.0.1",
+          "port": 44603
+        },
+        "anchors": [
+          "tasks.create",
+          "tasks.list",
+          "tasks.toggle",
+          "tasks.delete",
+          "tasks.live-update"
+        ]
+      },
+      "cleanup": {
+        "status": "passed"
+      }
+    },
+    {
+      "name": "dynamodb/tasks",
+      "desired": {
+        "bootMode": "dev",
+        "surfaces": [
+          "dynamodb-wire"
+        ],
+        "updateSemantics": "polling",
+        "expectedAnchors": [
+          "tasks.create",
+          "tasks.list",
+          "tasks.toggle",
+          "tasks.delete",
+          "tasks.live-update"
+        ]
+      },
+      "observed": {
+        "status": "passed",
+        "startedAt": "2026-08-18T08:18:00.191Z",
+        "completedAt": "2026-08-18T08:18:03.110Z",
+        "durationMs": 2919,
+        "exitCode": 0,
+        "endpoint": {
+          "protocol": "http",
+          "host": "127.0.0.1",
+          "port": 39731
+        },
+        "anchors": [
+          "tasks.create",
+          "tasks.list",
+          "tasks.toggle",
+          "tasks.delete",
+          "tasks.live-update"
+        ]
+      },
+      "cleanup": {
+        "status": "passed"
+      }
+    },
+    {
+      "name": "cloud-functions/tasks",
+      "desired": {
+        "bootMode": "dev",
+        "surfaces": [
+          "cloud-functions-http",
+          "scheduler"
+        ],
+        "updateSemantics": "polling",
+        "expectedAnchors": [
+          "tasks.create-triggers-derived-write",
+          "cloud-functions.http-handler-response"
+        ]
+      },
+      "observed": {
+        "status": "passed",
+        "startedAt": "2026-08-18T08:17:30.672Z",
+        "completedAt": "2026-08-18T08:17:49.584Z",
+        "durationMs": 18912,
+        "exitCode": 0,
+        "endpoint": {
+          "protocol": "http",
+          "host": "127.0.0.1",
+          "port": 44263
+        },
+        "anchors": [
+          "tasks.create-triggers-derived-write",
+          "cloud-functions.http-handler-response"
+        ]
+      },
+      "cleanup": {
+        "status": "passed"
+      }
+    }
+  ],
+  "cleanup": {
+    "status": "passed",
+    "exitCode": 0,
+    "artifactRetained": false,
+    "reason": "run resources removed"
+  }
+}

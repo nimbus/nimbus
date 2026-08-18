@@ -2563,7 +2563,19 @@ jobs:
       - name: Run examples-verify
         env:
           NIMBUS_EXAMPLES_VERIFY_BIN: ${{ github.workspace }}/target/ci-archive/nimbus
+          NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL: "5"
         run: make examples-verify
+
+      - name: Upload examples-verification reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: examples-verification-reports
+          path: |
+            target/examples-verify-results/*/report.json
+            target/examples-verify-results/*/junit.xml
+          if-no-files-found: error
+          retention-days: 14
 
   proof-helpers:
     name: Proof Helper Checks

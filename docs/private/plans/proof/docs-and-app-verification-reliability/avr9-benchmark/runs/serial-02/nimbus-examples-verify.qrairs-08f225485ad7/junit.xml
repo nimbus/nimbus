@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="nimbus.examples-verification" tests="12" failures="0" skipped="0" time="112.854">
+  <properties>
+    <property name="binary.sha256" value="9f5377b610925d9d8bedf1edc0f1e95e30e8e0ced5ca50f8c16880c90eab9fab"/>
+    <property name="manifest.sha256" value="9fd462b34d03d8af214f98aff26335636d7e89ee9af0221aa413bfac3c1c4a77"/>
+    <property name="source.status" value="matched"/>
+  </properties>
+  <testcase classname="examples" name="nimbus/tasks" time="2.179">
+  </testcase>
+  <testcase classname="examples" name="nimbus/agent-chat" time="18.104">
+  </testcase>
+  <testcase classname="examples" name="nimbus/agent-worker" time="18.106">
+  </testcase>
+  <testcase classname="examples" name="convex/tasks" time="18.194">
+  </testcase>
+  <testcase classname="examples" name="convex/runtimes" time="18.059">
+  </testcase>
+  <testcase classname="examples" name="firebase/tasks" time="7.056">
+  </testcase>
+  <testcase classname="examples" name="mongodb/tasks" time="2.992">
+  </testcase>
+  <testcase classname="examples" name="dynamodb/tasks" time="2.932">
+  </testcase>
+  <testcase classname="examples" name="cloud-functions/tasks" time="19.467">
+  </testcase>
+  <testcase classname="examples" name="run.outcome" time="0.000">
+  </testcase>
+  <testcase classname="examples" name="run.source" time="0.000">
+  </testcase>
+  <testcase classname="examples" name="run.cleanup" time="0.000">
+  </testcase>
+</testsuite>
