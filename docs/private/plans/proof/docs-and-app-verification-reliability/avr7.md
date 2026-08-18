@@ -6,9 +6,10 @@ Date: 2026-08-17
 
 AVR7 is complete in work commit
 `bd2a8a36496275e65672917f4e7d17983feff7a5` and review-correction commit
-`2215a57726a12abc59e475e05e60b949ee1afda2`. The examples runner now has one run
-lifetime owner and one process-group owner. Nimbus owns every listener and port
-lease.
+`2215a57726a12abc59e475e05e60b949ee1afda2`. Final correction commit
+`27331b1444a6a45096198574710d11620bc6ed87` registers the credential file with
+the same exit owner. The examples runner now has one run lifetime owner and one
+process-group owner. Nimbus owns every listener and port lease.
 
 Each run uses one network-state root. Each case uses separate application,
 data, control, authentication, discovery, audit, log, result, and process
@@ -50,7 +51,7 @@ and uses KILL only after the grace period.
 | `node scripts/examples-verify-workspace-test.mjs` | Pass. 9 top-level cases and all 9 preparation fixtures passed. The external-package case replaced a same-version source link with case-local bytes. |
 | `node scripts/examples-verify-lifetime-test.mjs` | Pass. 11/11 groups covered cross-case sentinels, concurrent binds, external binders, process trees, six cuts, cleanup retry, cross-filesystem retention retry, secret-free supervisor argv, artifact retention, post-spawn record failure, and corrupt records. |
 | `node scripts/examples-verify-product-lifetime-test.mjs` | Pass. 1/1 real-product concurrency case. Two servers shared one network authority, used distinct endpoints and tokens, shut down cleanly, and released both ports. |
-| `node scripts/examples-verify-runner-fault-test.mjs` | Pass. 6/6 real-runner cuts. Every cut was red, retained evidence, removed discovery and process records, released the observed socket, and left only terminal lease phases. |
+| `node scripts/examples-verify-runner-fault-test.mjs` | Pass. 7/7: six real-runner cuts plus one credential-deletion retry. Every case was red, retained evidence without credentials, removed discovery and process records, released the observed socket, and left only terminal lease phases. |
 | `bash scripts/examples-verify.sh` | Pass. All 9 applications and 37 smoke assertions passed. The Convex Tasks target-form contract also passed. Source bytes matched and no run artifact remained. |
 | `cargo test -p nimbus-network port_lease` | Pass. 120 passed, 0 failed, 128 filtered. |
 | `cargo test -p nimbus-server listener_lease` | Pass. 24 passed, 0 failed, 674 filtered. |
@@ -73,11 +74,18 @@ The complete AVR3-AVR7 candidate received one GPT-5.6 Sol review with xhigh
 reasoning and the fast service tier. The review scored `0.98` and reported three
 accepted findings.
 
+The one permitted narrow correction review used the same reviewer settings and
+scored `0.90`. It confirmed the three original corrections and found that the
+environment-file change introduced one defect. Commit `27331b144` fixes it. The
+affected proofs pass. The review cadence permits no further structured review
+for this item.
+
 | Finding | Disposition |
 | --- | --- |
 | P2: smoke credentials remained in the long-lived supervisor argv. | Fixed in `2215a5772`. The runner writes an owner-only environment file. The supervisor reads it after it validates its type, size, mode, and unique keys. An 11th lifetime test proves the child receives the value and the supervisor argv does not. |
 | P3: an EXDEV copy followed by source-removal failure made artifact retry impossible. | Fixed in `2215a5772`. An owner record identifies a completed destination. Retry validates the record, removes the source, and converges. The injected EXDEV and removal-failure test proves both the ambiguous state and retry. |
 | P3: the CLI reference omitted `--control-data-dir`. | Fixed in `2215a5772`. The `start` and `dev` tables now define its default and separate control-state purpose. Public docs gates and the site build pass. |
+| Narrow-review P2: an early exit or failed unlink could retain `smoke.env` with credentials. | Fixed in `27331b144`. The exit owner keeps the path until scrub and removal succeed. It runs before artifact promotion. The `during-smoke` cut proves early-exit scrubbing; an injected first-delete failure proves retry and red status. |
 
 ## Rejected or interrupted runs
 
