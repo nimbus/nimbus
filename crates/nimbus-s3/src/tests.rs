@@ -11,8 +11,8 @@ use nimbus_core::{
     CommitEntry, Error, Result, SequenceNumber, SystemWallClock, TenantId, WallClock,
 };
 use nimbus_storage::{
-    ObjectBlobLayout, ObjectChunkRef, ObjectManifest, ObjectManifestAttributes,
-    ObjectMultipartUpload,
+    ObjectBlobLayout, ObjectChunkRef, ObjectConditionOutcome, ObjectExpectedState, ObjectManifest,
+    ObjectManifestAttributes, ObjectMultipartUpload,
 };
 use s3s::auth::{Credentials, SecretKey};
 use s3s::dto::{
@@ -20,7 +20,7 @@ use s3s::dto::{
     ETagCondition, GetObjectInput, HeadObjectInput, ListObjectsV2Input, PutObjectInput, Range,
     StreamingBlob, UploadPartInput,
 };
-use s3s::{Body, S3, S3ErrorCode, S3Request};
+use s3s::{Body, S3, S3ErrorCode, S3Request, S3Result};
 
 use crate::checksum::ComputedChecksums;
 use crate::convex::{
@@ -29,6 +29,7 @@ use crate::convex::{
 };
 use crate::{
     AccessKeyRegistry, NimbusS3, S3ObjectMeta, S3TenantBlobs, S3TenantObjects, S3TenantResolver,
+    put_manifest_unconditional,
 };
 
 const ACCESS_KEY_A: &str = "AKIATESTANTA";
@@ -49,6 +50,9 @@ struct Inner {
     /// Counts calls to [`InMemoryBlobs::resolve`], so tests can assert that
     /// metadata-only operations never resolve (or create) blob-plane state.
     blob_resolutions: AtomicUsize,
+    /// Counts manifest writes that actually committed, so tests can assert
+    /// that a rejected condition consumed no commit at all.
+    manifest_commits: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -106,6 +110,12 @@ impl InMemoryBackend {
         self.inner.blob_resolutions.load(Ordering::SeqCst)
     }
 
+    /// Number of manifest writes that committed against this backend. A
+    /// rejected condition must not move this.
+    fn manifest_commits(&self) -> usize {
+        self.inner.manifest_commits.load(Ordering::SeqCst)
+    }
+
     fn convex_manifest_keys(&self, tenant: &TenantId) -> Vec<String> {
         self.inner
             .manifests
@@ -130,8 +140,8 @@ impl InMemoryBackend {
         &self,
         tenant: &TenantId,
         manifest: ObjectManifest,
-    ) -> Result<CommitEntry> {
-        self.meta(tenant).put_manifest(manifest).await
+    ) -> Result<Option<ObjectManifest>> {
+        put_manifest_unconditional(self.meta(tenant).as_ref(), manifest).await
     }
 
     async fn list_manifests(
@@ -190,25 +200,53 @@ struct InMemoryTenantMeta {
 
 #[async_trait]
 impl S3ObjectMeta for InMemoryTenantMeta {
-    async fn put_manifest(&self, manifest: ObjectManifest) -> Result<CommitEntry> {
+    async fn put_manifest_conditional(
+        &self,
+        manifest: ObjectManifest,
+        expected: Vec<ObjectExpectedState>,
+    ) -> Result<ObjectConditionOutcome> {
+        // Every real metadata call crosses to the tenant committer and awaits
+        // it. Yielding here keeps that property in the double: a caller that
+        // reads, decides, and then writes really can be overtaken between the
+        // two calls, which is the whole defect the conditional seam closes.
+        tokio::task::yield_now().await;
         if self.inner.fail_put_manifest.load(Ordering::SeqCst) {
             return Err(nimbus_core::Error::storage(
                 nimbus_core::StorageErrorKind::Unavailable,
                 "injected put_manifest failure",
             ));
         }
-        self.inner.manifests.lock().unwrap().insert(
-            (
-                self.tenant.clone(),
-                manifest.bucket.clone(),
-                manifest.key.clone(),
-            ),
-            manifest,
+        // One lock hold covers the read, the decision, and the write. This is
+        // the same exclusion the tenant committer actor gives the real path:
+        // no other writer at this key can land between the decision and the
+        // commit, so a condition decided here is decided against the state
+        // the write actually replaces.
+        let mut manifests = self.inner.manifests.lock().unwrap();
+        let slot = (
+            self.tenant.clone(),
+            manifest.bucket.clone(),
+            manifest.key.clone(),
         );
-        Ok(commit())
+        let current = manifests.get(&slot).cloned();
+        if let Some(unmet) =
+            ObjectExpectedState::first_unmet(&expected, current.as_ref().map(|m| m.etag.as_str()))
+        {
+            return Ok(ObjectConditionOutcome::Rejected {
+                unmet: unmet.clone(),
+                current,
+            });
+        }
+        let previous = manifests.insert(slot, manifest);
+        drop(manifests);
+        self.inner.manifest_commits.fetch_add(1, Ordering::SeqCst);
+        Ok(ObjectConditionOutcome::Committed {
+            commit: commit(),
+            previous,
+        })
     }
 
     async fn get_manifest(&self, bucket: &str, key: &str) -> Result<Option<ObjectManifest>> {
+        tokio::task::yield_now().await;
         Ok(self
             .inner
             .manifests
@@ -673,6 +711,285 @@ async fn conditional_requests_enforce_s3_etag_preconditions() {
         .await
         .expect("current If-Match should allow HEAD");
     assert_eq!(head.output.content_length, Some(7));
+}
+
+/// Issues one `PutObject` carrying write preconditions and returns the new
+/// `ETag`, or the S3 error the request was refused with.
+async fn conditional_put(
+    service: &NimbusS3,
+    key: &str,
+    bytes: &'static [u8],
+    if_match: Option<ETagCondition>,
+    if_none_match: Option<ETagCondition>,
+) -> S3Result<String> {
+    service
+        .put_object(req(
+            PutObjectInput {
+                bucket: BUCKET.to_string(),
+                key: key.to_string(),
+                body: Some(blob(bytes)),
+                content_length: Some(bytes.len() as i64),
+                if_match,
+                if_none_match,
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .map(|response| response.output.e_tag.expect("etag").into_value())
+}
+
+async fn read_object(service: &NimbusS3, key: &str) -> Bytes {
+    let response = service
+        .get_object(req(
+            GetObjectInput {
+                bucket: BUCKET.to_string(),
+                key: key.to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("object should be readable");
+    collect(response.output.body.expect("object body")).await
+}
+
+async fn head_etag(service: &NimbusS3, key: &str) -> String {
+    service
+        .head_object(req(
+            HeadObjectInput {
+                bucket: BUCKET.to_string(),
+                key: key.to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("object should be head-able")
+        .output
+        .e_tag
+        .expect("etag")
+        .into_value()
+}
+
+/// The four-write conditional shape, sequentially: create under
+/// `If-None-Match: *`, have a second create refused, update under the current
+/// `If-Match`, and have the now-stale `If-Match` refused.
+///
+/// Sequential coverage pins the response mapping and the surviving state. It
+/// cannot see the race the concurrent probe below covers — before the
+/// condition moved to the commit authority, this test passed while two
+/// concurrent creates at one key both succeeded.
+#[tokio::test]
+async fn conditional_put_probe_create_reject_update_reject_stale() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let service = service_with_backend(backend.clone());
+    let key = "probe.txt";
+
+    let created = conditional_put(&service, key, b"created", None, Some(ETagCondition::Any))
+        .await
+        .expect("If-None-Match: * must create an absent object");
+    assert_eq!(
+        read_object(&service, key).await,
+        Bytes::from_static(b"created")
+    );
+
+    let duplicate = conditional_put(&service, key, b"duplicate", None, Some(ETagCondition::Any))
+        .await
+        .expect_err("If-None-Match: * must refuse an existing object");
+    assert_eq!(duplicate.code(), &S3ErrorCode::PreconditionFailed);
+    assert_eq!(
+        read_object(&service, key).await,
+        Bytes::from_static(b"created")
+    );
+
+    let updated = conditional_put(
+        &service,
+        key,
+        b"updated",
+        Some(ETagCondition::ETag(ETag::Strong(created.clone()))),
+        None,
+    )
+    .await
+    .expect("the current If-Match must update the object");
+    assert_ne!(updated, created);
+    assert_eq!(
+        read_object(&service, key).await,
+        Bytes::from_static(b"updated")
+    );
+
+    let stale = conditional_put(
+        &service,
+        key,
+        b"stale writer",
+        Some(ETagCondition::ETag(ETag::Strong(created))),
+        None,
+    )
+    .await
+    .expect_err("a stale If-Match must be refused");
+    assert_eq!(stale.code(), &S3ErrorCode::PreconditionFailed);
+    assert_eq!(
+        read_object(&service, key).await,
+        Bytes::from_static(b"updated")
+    );
+    assert_eq!(
+        backend.manifest_commits(),
+        2,
+        "only the create and the update may consume a commit"
+    );
+}
+
+/// Many concurrent `If-None-Match: *` creates at one key must admit exactly
+/// one claimant.
+///
+/// This is the probe the sequential test cannot be: while the S3 surface read
+/// the manifest and then decided the precondition against that read, every
+/// claimant observed the key as absent and every claimant was admitted. The
+/// clauses now travel to the commit authority, which decides them against its
+/// own serialized read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn conditional_put_if_none_match_is_linearizable() {
+    const CLAIMANTS: usize = 100;
+    let backend = Arc::new(InMemoryBackend::default());
+    let service = service_with_backend(backend.clone());
+    let key = "linearizable.txt";
+
+    let mut claimants = Vec::with_capacity(CLAIMANTS);
+    for index in 0..CLAIMANTS {
+        let service = service.clone();
+        claimants.push(tokio::spawn(async move {
+            let body = Bytes::from(format!("claimant-{index:03}"));
+            let content_length = body.len() as i64;
+            service
+                .put_object(req(
+                    PutObjectInput {
+                        bucket: BUCKET.to_string(),
+                        key: key.to_string(),
+                        body: Some(StreamingBlob::from(Body::from(body.clone()))),
+                        content_length: Some(content_length),
+                        if_none_match: Some(ETagCondition::Any),
+                        ..Default::default()
+                    },
+                    ACCESS_KEY_A,
+                ))
+                .await
+                .map(|_| body)
+        }));
+    }
+
+    let mut admitted = Vec::new();
+    let mut refused = 0usize;
+    for claimant in claimants {
+        match claimant.await.expect("claimant task should not panic") {
+            Ok(body) => admitted.push(body),
+            Err(error) => {
+                assert_eq!(
+                    error.code(),
+                    &S3ErrorCode::PreconditionFailed,
+                    "a losing claimant must be refused with PreconditionFailed"
+                );
+                refused += 1;
+            }
+        }
+    }
+
+    assert_eq!(
+        admitted.len(),
+        1,
+        "exactly one of {CLAIMANTS} concurrent If-None-Match: * creates may be admitted"
+    );
+    assert_eq!(refused, CLAIMANTS - 1);
+    assert_eq!(
+        backend.manifest_commits(),
+        1,
+        "the refused claimants must consume no commit"
+    );
+    assert_eq!(
+        read_object(&service, key).await,
+        admitted[0],
+        "the stored object must be the admitted claimant's bytes"
+    );
+}
+
+/// A refused condition must leave no commit and no byte-plane damage.
+///
+/// The identical-bytes case is the dangerous one: both writers resolve to the
+/// same content hash, so the loser's cleanup is exactly what can delete the
+/// winner's object. The loser releases its hash only when the manifest the
+/// authority reports does not name it.
+#[tokio::test]
+async fn rejected_object_condition_has_no_commit_or_blob_effect() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let service = service_with_backend(backend.clone());
+    let store = backend.store(&tenant("tenant-a"));
+    let key = "rejected.txt";
+
+    let winner = conditional_put(&service, key, b"identical", None, Some(ETagCondition::Any))
+        .await
+        .expect("the first claimant must be admitted");
+    let commits_after_winner = backend.manifest_commits();
+
+    // Same bytes, same content hash: the loser must not release what the
+    // winner's manifest still names.
+    let loser = conditional_put(&service, key, b"identical", None, Some(ETagCondition::Any))
+        .await
+        .expect_err("the second claimant must be refused");
+    assert_eq!(loser.code(), &S3ErrorCode::PreconditionFailed);
+    assert_eq!(
+        backend.manifest_commits(),
+        commits_after_winner,
+        "a refused condition must consume no commit"
+    );
+    assert_eq!(
+        head_etag(&service, key).await,
+        winner,
+        "the head must not move"
+    );
+    assert!(
+        store
+            .has(&BlobHash::of(b"identical"))
+            .await
+            .expect("blob store should answer has"),
+        "the loser's cleanup must keep bytes the winning manifest retains"
+    );
+    assert_eq!(
+        read_object(&service, key).await,
+        Bytes::from_static(b"identical")
+    );
+
+    // Different bytes on a stale If-Match: nothing retains the new blob, so
+    // the refused write must not leave it behind either.
+    let stale = conditional_put(
+        &service,
+        key,
+        b"orphan bytes",
+        Some(ETagCondition::ETag(ETag::Strong("stale-etag".to_string()))),
+        None,
+    )
+    .await
+    .expect_err("a stale If-Match must be refused");
+    assert_eq!(stale.code(), &S3ErrorCode::PreconditionFailed);
+    assert_eq!(
+        backend.manifest_commits(),
+        commits_after_winner,
+        "a refused condition must consume no commit"
+    );
+    assert_eq!(
+        head_etag(&service, key).await,
+        winner,
+        "the head must not move"
+    );
+    assert!(
+        !store
+            .has(&BlobHash::of(b"orphan bytes"))
+            .await
+            .expect("blob store should answer has"),
+        "a refused write must release the blob no manifest retains"
+    );
+    assert_eq!(
+        read_object(&service, key).await,
+        Bytes::from_static(b"identical")
+    );
 }
 
 #[tokio::test]

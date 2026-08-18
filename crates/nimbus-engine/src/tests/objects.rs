@@ -8,7 +8,10 @@
 //! durable journal and coherent with subsequent document mutations.
 
 use super::*;
-use nimbus_storage::{ObjectChecksums, ObjectManifest, ObjectManifestAttributes};
+use nimbus_storage::{
+    ObjectChecksums, ObjectConditionOutcome, ObjectExpectedState, ObjectManifest,
+    ObjectManifestAttributes,
+};
 
 fn manifest_for(key: &str, etag: &str) -> ObjectManifest {
     let mut metadata = serde_json::Map::new();
@@ -57,7 +60,7 @@ async fn object_meta_writes_are_sequenced_journal_commits() {
 
     let baseline = runtime.durable_head();
     let commit = meta
-        .put_manifest(manifest_for("reports/summary.txt", "\"etag-1\""))
+        .put_manifest_unconditional(manifest_for("reports/summary.txt", "\"etag-1\""))
         .await
         .expect("manifest put should commit");
     assert_eq!(
@@ -126,7 +129,7 @@ async fn manifest_replace_preserves_creation_identity_and_delete_returns_previou
 
     let first = manifest_for("logs/app.txt", "\"etag-1\"");
     let document_id = first.document_id().expect("document id should derive");
-    meta.put_manifest(first)
+    meta.put_manifest_unconditional(first)
         .await
         .expect("first manifest put should commit");
     let stored_first = runtime
@@ -138,7 +141,7 @@ async fn manifest_replace_preserves_creation_identity_and_delete_returns_previou
         .expect("stored manifest should read")
         .expect("stored manifest should exist");
 
-    meta.put_manifest(manifest_for("logs/app.txt", "\"etag-2\""))
+    meta.put_manifest_unconditional(manifest_for("logs/app.txt", "\"etag-2\""))
         .await
         .expect("manifest replace should commit");
     let stored_second = runtime
@@ -266,7 +269,7 @@ async fn concurrent_object_and_document_writers_serialize_without_conflict() {
             for round in 0..ROUNDS {
                 if writer % 2 == 0 {
                     // Even writers hammer the same manifest key.
-                    meta.put_manifest(manifest_for(
+                    meta.put_manifest_unconditional(manifest_for(
                         "contended/key.txt",
                         &format!("\"etag-{writer}-{round}\""),
                     ))
@@ -313,5 +316,149 @@ async fn concurrent_object_and_document_writers_serialize_without_conflict() {
     assert!(
         survivor.etag.starts_with("\"etag-"),
         "surviving manifest must be one of the racing writers' images"
+    );
+}
+
+/// The committer actor, not the caller, decides an object condition.
+///
+/// Every claimant asks for `Absent` at one key. The actor reads, decides, and
+/// sequences under the same exclusion, so exactly one claimant commits and
+/// the rest are rejected without consuming a sequence, appending a journal
+/// record, or moving a watermark.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn object_meta_conditions_admit_one_concurrent_claimant() {
+    let data_dir = tempdir().expect("object condition tempdir should build");
+    let (engine, tenant_id) = engine_with_tenant(&data_dir, "object-meta-condition").await;
+    let runtime = engine
+        .registered_runtime_for_testing(&tenant_id)
+        .expect("tenant runtime should resolve");
+
+    let baseline = runtime.durable_head();
+    const CLAIMANTS: usize = 16;
+    let mut handles = Vec::new();
+    for claimant in 0..CLAIMANTS {
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        handles.push(tokio::spawn(async move {
+            let meta = engine
+                .tenant_object_meta(tenant_id)
+                .await
+                .expect("object meta handle should resolve");
+            meta.put_manifest_conditional(
+                manifest_for("claimed/key.txt", &format!("\"etag-{claimant}\"")),
+                vec![ObjectExpectedState::Absent],
+            )
+            .await
+            .expect("a decided condition is not an error")
+        }));
+    }
+
+    let mut committed = Vec::new();
+    let mut rejected = 0usize;
+    for handle in handles {
+        match handle.await.expect("claimant task should join") {
+            ObjectConditionOutcome::Committed { commit, previous } => {
+                assert!(
+                    previous.is_none(),
+                    "the admitted claimant must find the key absent"
+                );
+                committed.push(commit);
+            }
+            ObjectConditionOutcome::Rejected { unmet, current } => {
+                assert_eq!(unmet, ObjectExpectedState::Absent);
+                assert!(
+                    current.is_some(),
+                    "an Absent clause can only fail against a present row"
+                );
+                rejected += 1;
+            }
+        }
+    }
+
+    assert_eq!(
+        committed.len(),
+        1,
+        "exactly one of {CLAIMANTS} concurrent Absent claimants may commit"
+    );
+    assert_eq!(rejected, CLAIMANTS - 1);
+    assert_eq!(
+        runtime.durable_head(),
+        SequenceNumber(baseline.0 + 1),
+        "rejected conditions must consume no sequence"
+    );
+    assert_eq!(runtime.applied_head(), runtime.durable_head());
+
+    let records = runtime
+        .store
+        .read_durable_journal_from(SequenceNumber(baseline.0 + 1))
+        .expect("durable journal should read");
+    assert_eq!(
+        records.len(),
+        1,
+        "rejected conditions must append no journal record"
+    );
+    assert_eq!(records[0].sequence, committed[0].sequence);
+}
+
+/// An `ETag` clause is decided against the committer's own read, so a writer
+/// holding a stale `ETag` is rejected and the current row is returned to it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn object_meta_etag_condition_rejects_a_stale_writer() {
+    let data_dir = tempdir().expect("object etag condition tempdir should build");
+    let (engine, tenant_id) = engine_with_tenant(&data_dir, "object-meta-etag").await;
+    let runtime = engine
+        .registered_runtime_for_testing(&tenant_id)
+        .expect("tenant runtime should resolve");
+    let meta = engine
+        .tenant_object_meta(tenant_id.clone())
+        .await
+        .expect("object meta handle should resolve");
+
+    meta.put_manifest_unconditional(manifest_for("etag/key.txt", "\"etag-1\""))
+        .await
+        .expect("seed manifest should commit");
+    let current = meta
+        .put_manifest_conditional(
+            manifest_for("etag/key.txt", "\"etag-2\""),
+            vec![ObjectExpectedState::PresentWithEtag(
+                "\"etag-1\"".to_string(),
+            )],
+        )
+        .await
+        .expect("a decided condition is not an error");
+    let ObjectConditionOutcome::Committed { commit, previous } = current else {
+        panic!("the current ETag must be admitted");
+    };
+    assert_eq!(
+        previous.expect("replaced manifest").etag,
+        "\"etag-1\"",
+        "the authority must report the row it replaced"
+    );
+
+    let stale = meta
+        .put_manifest_conditional(
+            manifest_for("etag/key.txt", "\"etag-3\""),
+            vec![ObjectExpectedState::PresentWithEtag(
+                "\"etag-1\"".to_string(),
+            )],
+        )
+        .await
+        .expect("a decided condition is not an error");
+    let ObjectConditionOutcome::Rejected { unmet, current } = stale else {
+        panic!("a stale ETag must be rejected");
+    };
+    assert_eq!(
+        unmet,
+        ObjectExpectedState::PresentWithEtag("\"etag-1\"".to_string())
+    );
+    assert_eq!(
+        current.expect("current manifest").etag,
+        "\"etag-2\"",
+        "the authority must report the row it decided against"
+    );
+    assert_eq!(
+        runtime.durable_head(),
+        commit.sequence,
+        "the rejected write must consume no sequence"
     );
 }

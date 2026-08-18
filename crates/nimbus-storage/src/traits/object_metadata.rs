@@ -5,14 +5,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use nimbus_core::CommitEntry;
+
 use super::{TenantPointRead, TenantRangeScan};
-// Commit entries and point writes appear only on the test-only `*_direct`
-// seeding helpers: the metadata plane's production writer is the engine
-// committer, not this crate.
+// Point writes appear only on the test-only `*_direct` seeding helpers: the
+// metadata plane's production writer is the engine committer, not this crate.
 #[cfg(test)]
 use super::TenantPointWrite;
-#[cfg(test)]
-use nimbus_core::CommitEntry;
 
 /// Reserved table where object manifests are stored.
 ///
@@ -585,6 +584,81 @@ pub trait ObjectMetaRead {
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<ObjectMultipartUpload>>;
+}
+
+/// One state clause the authoritative committer evaluates against its own
+/// read of the current object row, before it assigns a sequence number.
+///
+/// A clause carries opaque `ETag` values only. Wire policy — header parsing,
+/// strong against weak comparison, and response mapping — belongs to the
+/// protocol surface that builds the clause, not to the commit authority that
+/// decides it.
+///
+/// There is deliberately no `Default`. A writer that omits a condition must
+/// say so by passing no clauses, so "unconditional" is always written down
+/// rather than inherited from a silent default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ObjectExpectedState {
+    /// The row must be absent.
+    Absent,
+    /// The row must be present, whatever `ETag` it carries.
+    Present,
+    /// The row must be present and carry exactly this opaque `ETag`.
+    PresentWithEtag(String),
+    /// The row must be absent, or present with a different opaque `ETag`.
+    AbsentOrEtagDiffers(String),
+}
+
+impl ObjectExpectedState {
+    /// Evaluates this clause against the current row's opaque `ETag`, or
+    /// `None` when the row is absent.
+    #[must_use]
+    pub fn holds_for(&self, current_etag: Option<&str>) -> bool {
+        match (self, current_etag) {
+            (Self::Absent, None) | (Self::Present, Some(_)) => true,
+            (Self::Absent, Some(_)) | (Self::Present | Self::PresentWithEtag(_), None) => false,
+            (Self::PresentWithEtag(expected), Some(current)) => expected == current,
+            (Self::AbsentOrEtagDiffers(_), None) => true,
+            (Self::AbsentOrEtagDiffers(rejected), Some(current)) => rejected != current,
+        }
+    }
+
+    /// Evaluates every clause in order and returns the first one that does
+    /// not hold. An empty clause list is an unconditional write.
+    #[must_use]
+    pub fn first_unmet<'a>(clauses: &'a [Self], current_etag: Option<&str>) -> Option<&'a Self> {
+        clauses
+            .iter()
+            .find(|clause| !clause.holds_for(current_etag))
+    }
+}
+
+/// What the commit authority decided for a conditional object-metadata write.
+///
+/// A rejected condition consumes no sequence number, appends no journal
+/// record, publishes no fan-out, and retains nothing in the byte plane: the
+/// authority returns [`ObjectConditionOutcome::Rejected`] before it reaches
+/// sequence assignment.
+#[derive(Clone, Debug)]
+pub enum ObjectConditionOutcome {
+    /// Every clause held, and the write committed.
+    Committed {
+        /// The commit the write produced.
+        commit: CommitEntry,
+        /// The manifest this write replaced, decoded from the authority's own
+        /// read. Callers use this — never a pre-read taken outside the
+        /// authority — to decide which blobs the superseded manifest released.
+        previous: Option<ObjectManifest>,
+    },
+    /// A clause did not hold. Nothing was written.
+    Rejected {
+        /// The first clause that did not hold.
+        unmet: ObjectExpectedState,
+        /// The manifest the authority observed when it decided. Callers use
+        /// this to decide whether a just-written blob is still retained by
+        /// the manifest that won.
+        current: Option<ObjectManifest>,
+    },
 }
 
 fn object_identity_matches_prefix(document: &Document, bucket: &str, prefix: &str) -> bool {

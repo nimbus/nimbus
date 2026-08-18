@@ -6,8 +6,9 @@ use nimbus_core::{
     TenantId, Timestamp, WriteOp, WriteOpType,
 };
 use nimbus_storage::{
-    OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectManifest, ObjectMultipartUpload,
-    multipart_upload_document_id, object_manifest_document_id,
+    OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectConditionOutcome, ObjectExpectedState,
+    ObjectManifest, ObjectMultipartUpload, multipart_upload_document_id,
+    object_manifest_document_id,
 };
 
 use super::Engine;
@@ -77,18 +78,40 @@ pub struct TenantObjectMeta {
 /// One object-metadata write, resolved to a document image inside the
 /// committer actor.
 enum ObjectMetaWrite {
-    PutManifest(Box<ObjectManifest>),
-    DeleteManifest { bucket: String, key: String },
+    PutManifest {
+        manifest: Box<ObjectManifest>,
+        /// Every clause the committer must find true before it assigns a
+        /// sequence. Empty means an unconditional write.
+        expected: Vec<ObjectExpectedState>,
+    },
+    DeleteManifest {
+        bucket: String,
+        key: String,
+    },
     PutMultipart(Box<ObjectMultipartUpload>),
-    DeleteMultipart { upload_id: String },
+    DeleteMultipart {
+        upload_id: String,
+    },
 }
 
 impl ObjectMetaWrite {
+    /// Expected-state clauses this write carries. Only manifest puts accept
+    /// conditions today; the other variants are unconditional by shape, not
+    /// by a silent default.
+    fn expected_state(&self) -> &[ObjectExpectedState] {
+        match self {
+            Self::PutManifest { expected, .. } => expected,
+            Self::DeleteManifest { .. } | Self::PutMultipart(_) | Self::DeleteMultipart { .. } => {
+                &[]
+            }
+        }
+    }
+
     /// Table plus document id the write addresses, and the new document image
     /// for puts (`None` for deletes).
     fn resolve_target(&self) -> Result<(TableName, DocumentId, Option<Document>)> {
         match self {
-            Self::PutManifest(manifest) => {
+            Self::PutManifest { manifest, .. } => {
                 let document = manifest.to_document()?;
                 Ok((document.table.clone(), document.id.clone(), Some(document)))
             }
@@ -118,17 +141,76 @@ enum ObjectMetaWriteOutcome {
     },
     /// Delete of an absent target: no sequence consumed, nothing committed.
     AbsentTarget,
+    /// An expected-state clause did not hold against the committer's own read.
+    /// No sequence consumed, no journal record, no fan-out, nothing written.
+    ConditionRejected {
+        unmet: ObjectExpectedState,
+        current: Option<Document>,
+    },
 }
 
 impl TenantObjectMeta {
-    pub async fn put_manifest(&self, manifest: ObjectManifest) -> Result<CommitEntry> {
+    /// Writes a manifest, but only if every clause in `expected` holds
+    /// against the committer's own read of the current row.
+    ///
+    /// The condition is decided inside the committer actor, before sequence
+    /// assignment, so it cannot interleave with another writer on the same
+    /// key. Pass an empty `expected` for an unconditional write; there is no
+    /// separate unconditional entry point, so every caller states which one
+    /// it wants.
+    pub async fn put_manifest_conditional(
+        &self,
+        manifest: ObjectManifest,
+        expected: Vec<ObjectExpectedState>,
+    ) -> Result<ObjectConditionOutcome> {
         match self
-            .commit_meta_write(ObjectMetaWrite::PutManifest(Box::new(manifest)))
+            .commit_meta_write(ObjectMetaWrite::PutManifest {
+                manifest: Box::new(manifest),
+                expected,
+            })
             .await?
         {
-            ObjectMetaWriteOutcome::Committed { commit, .. } => Ok(commit),
+            ObjectMetaWriteOutcome::Committed { commit, previous } => {
+                Ok(ObjectConditionOutcome::Committed {
+                    commit,
+                    previous: previous
+                        .as_ref()
+                        .map(ObjectManifest::from_document)
+                        .transpose()?,
+                })
+            }
+            ObjectMetaWriteOutcome::ConditionRejected { unmet, current } => {
+                Ok(ObjectConditionOutcome::Rejected {
+                    unmet,
+                    current: current
+                        .as_ref()
+                        .map(ObjectManifest::from_document)
+                        .transpose()?,
+                })
+            }
             ObjectMetaWriteOutcome::AbsentTarget => Err(Error::Internal(
-                "object manifest put must always commit".to_string(),
+                "object manifest put must always commit or reject its condition".to_string(),
+            )),
+        }
+    }
+
+    /// Writes a manifest with no expected state.
+    ///
+    /// Named rather than defaulted: a caller that wants an unconditional
+    /// write says so here, and a caller that needs a condition cannot reach
+    /// this entry point by forgetting to pass one.
+    ///
+    /// # Errors
+    /// Fails if the commit fails. A clause-free write cannot be rejected, so
+    /// a rejection is an internal contract violation.
+    pub async fn put_manifest_unconditional(
+        &self,
+        manifest: ObjectManifest,
+    ) -> Result<CommitEntry> {
+        match self.put_manifest_conditional(manifest, Vec::new()).await? {
+            ObjectConditionOutcome::Committed { commit, .. } => Ok(commit),
+            ObjectConditionOutcome::Rejected { .. } => Err(Error::Internal(
+                "a manifest write with no expected state cannot be rejected".to_string(),
             )),
         }
     }
@@ -163,6 +245,9 @@ impl TenantObjectMeta {
                 Ok(Some((commit, ObjectManifest::from_document(&previous)?)))
             }
             ObjectMetaWriteOutcome::AbsentTarget => Ok(None),
+            ObjectMetaWriteOutcome::ConditionRejected { .. } => Err(Error::Internal(
+                "manifest delete carries no condition and cannot be rejected".to_string(),
+            )),
         }
     }
 
@@ -187,6 +272,9 @@ impl TenantObjectMeta {
             ObjectMetaWriteOutcome::Committed { commit, .. } => Ok(commit),
             ObjectMetaWriteOutcome::AbsentTarget => Err(Error::Internal(
                 "multipart upload put must always commit".to_string(),
+            )),
+            ObjectMetaWriteOutcome::ConditionRejected { .. } => Err(Error::Internal(
+                "multipart upload put carries no condition and cannot be rejected".to_string(),
             )),
         }
     }
@@ -222,6 +310,9 @@ impl TenantObjectMeta {
                 )))
             }
             ObjectMetaWriteOutcome::AbsentTarget => Ok(None),
+            ObjectMetaWriteOutcome::ConditionRejected { .. } => Err(Error::Internal(
+                "multipart upload delete carries no condition and cannot be rejected".to_string(),
+            )),
         }
     }
 
@@ -302,6 +393,15 @@ fn commit_object_meta_write_in_actor(
     runtime.ensure_committer_lease_for_assignment()?;
     let (table, doc_id, current) = write.resolve_target()?;
     let previous = runtime.store.get(&table, &doc_id)?;
+    // Decided here, against the actor's own read, and before any sequence is
+    // assigned: a rejected condition leaves no sequence, no journal record,
+    // no fan-out, and nothing for the caller to clean up but its own blob.
+    if let Some(unmet) = evaluate_object_condition(write.expected_state(), previous.as_ref())? {
+        return Ok(ObjectMetaWriteOutcome::ConditionRejected {
+            unmet,
+            current: previous,
+        });
+    }
     let mut current = current;
     let op_type = match (&previous, &current) {
         (None, Some(_)) => WriteOpType::Insert,
@@ -395,6 +495,26 @@ fn commit_object_meta_write_in_actor(
             Err(error)
         }
     }
+}
+
+/// Returns the first expected-state clause that does not hold against
+/// `current`, or `None` when every clause holds.
+///
+/// Only manifest rows carry an `ETag`, so this decodes the current row only
+/// when at least one clause needs it. An empty clause list is an
+/// unconditional write and reads nothing.
+fn evaluate_object_condition(
+    expected: &[ObjectExpectedState],
+    current: Option<&Document>,
+) -> Result<Option<ObjectExpectedState>> {
+    if expected.is_empty() {
+        return Ok(None);
+    }
+    let current_etag = current
+        .map(ObjectManifest::from_document)
+        .transpose()?
+        .map(|manifest| manifest.etag);
+    Ok(ObjectExpectedState::first_unmet(expected, current_etag.as_deref()).cloned())
 }
 
 fn begin_object_meta_durable_recovery(
