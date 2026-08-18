@@ -107,6 +107,22 @@ runs:
         echo ".googlesource.com	TRUE	/	TRUE	2147483647	o	${GOOGLESOURCE_COOKIE}" >> ~/.gitcookies
         git config --global url."https://chromium.googlesource.com/a/".insteadOf "https://chromium.googlesource.com/"
 
+    # GitHub's Ubuntu image can route apt through an Azure regional mirror.
+    # A mirror outage previously held apt-get update until the whole job timed
+    # out. Keep the canonical archive fallback only, then bound every update.
+    - name: Configure resilient Ubuntu package mirror
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo bash scripts/ci/configure-ubuntu-apt-mirrors.sh /etc/apt/apt-mirrors.txt
+        if [[ -d /etc/apt/apt.conf.d ]]; then
+          printf '%s\n' \
+            'Acquire::Retries "3";' \
+            'Acquire::http::Timeout "20";' \
+            'Acquire::https::Timeout "20";' \
+            | sudo tee /etc/apt/apt.conf.d/99-nimbus-network-bounds >/dev/null
+        fi
+
     # CA1: Default Linux runners to mold. mold is 3-10x faster than the GNU
     # linker on large binaries. The linux-linker input lets known
     # OpenSSL-backed link lanes opt back to lld without open-coding
