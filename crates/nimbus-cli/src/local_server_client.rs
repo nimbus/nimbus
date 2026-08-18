@@ -2,8 +2,8 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use nimbus::Error;
-use nimbus_operator::{LocalServerPaths, load_local_admin_token};
-use nimbus_server::{ServerDiscoveryRecord, read_live_server_discovery};
+use nimbus_operator::{LOCAL_ADMIN_HEADER_NAME, LocalServerPaths, load_local_admin_token};
+use nimbus_server::read_live_server_discovery;
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -26,36 +26,19 @@ impl LocalServerHttpClient {
         paths: &LocalServerPaths,
         client: reqwest::Client,
     ) -> Result<Option<Self>, Error> {
-        let Some(discovery) = read_live_server_discovery(paths).map_err(|error| {
-            Error::Internal(format!("failed to inspect local server discovery: {error}"))
-        })?
-        else {
+        let Some(base_url) = discover_local_server_base_url(paths)? else {
             return Ok(None);
         };
-        Self::from_discovery(paths, discovery, client).map(Some)
-    }
-
-    fn from_discovery(
-        paths: &LocalServerPaths,
-        discovery: ServerDiscoveryRecord,
-        client: reqwest::Client,
-    ) -> Result<Self, Error> {
         let token = load_local_admin_token(paths)
             .map_err(|error| {
                 Error::PermissionDenied(format!("local admin token unavailable: {error}"))
             })?
             .token;
-        let connect_address =
-            normalize_loopback_connect_address(&discovery.address).map_err(|error| {
-                Error::Internal(format!(
-                    "failed to normalize local server discovery address: {error}"
-                ))
-            })?;
-        Ok(Self {
+        Ok(Some(Self {
             client,
-            base_url: format!("http://{connect_address}"),
+            base_url,
             token,
-        })
+        }))
     }
 
     pub(crate) fn base_url(&self) -> &str {
@@ -103,11 +86,7 @@ impl LocalServerHttpClient {
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
-        let path = path.trim_start_matches('/');
-        let mut request = self
-            .client
-            .request(method, format!("{}/{path}", self.base_url))
-            .bearer_auth(&self.token);
+        let mut request = self.request_builder(method, path);
         if let Some(body) = body {
             request = request.json(body);
         }
@@ -118,6 +97,31 @@ impl LocalServerHttpClient {
         })?;
         decode_response(response).await
     }
+
+    fn request_builder(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
+        let path = path.trim_start_matches('/');
+        self.client
+            .request(method, format!("{}/{path}", self.base_url))
+            .header(LOCAL_ADMIN_HEADER_NAME, &self.token)
+    }
+}
+
+pub(crate) fn discover_local_server_base_url(
+    paths: &LocalServerPaths,
+) -> Result<Option<String>, Error> {
+    let Some(discovery) = read_live_server_discovery(paths).map_err(|error| {
+        Error::Internal(format!("failed to inspect local server discovery: {error}"))
+    })?
+    else {
+        return Ok(None);
+    };
+    let connect_address =
+        normalize_loopback_connect_address(&discovery.address).map_err(|error| {
+            Error::Internal(format!(
+                "failed to normalize local server discovery address: {error}"
+            ))
+        })?;
+    Ok(Some(format!("http://{connect_address}")))
 }
 
 async fn decode_response<T>(response: reqwest::Response) -> Result<T, Error>
@@ -200,5 +204,33 @@ mod tests {
         let ipv6 = normalize_loopback_connect_address("[::]:3210")
             .expect("ipv6 wildcard address should normalize");
         assert_eq!(ipv6, "[::1]:3210");
+    }
+
+    #[test]
+    fn authenticated_local_requests_use_only_the_dedicated_admin_header() {
+        let client = LocalServerHttpClient {
+            client: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:3210".to_owned(),
+            token: "local-admin-token".to_owned(),
+        };
+
+        let request = client
+            .request_builder(Method::POST, "/api/tenants")
+            .build()
+            .expect("local request should build");
+
+        assert_eq!(
+            request
+                .headers()
+                .get(LOCAL_ADMIN_HEADER_NAME)
+                .and_then(|value| value.to_str().ok()),
+            Some("local-admin-token")
+        );
+        assert!(
+            !request
+                .headers()
+                .contains_key(reqwest::header::AUTHORIZATION),
+            "the host-admin credential must not occupy application Authorization"
+        );
     }
 }

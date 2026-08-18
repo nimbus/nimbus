@@ -1,0 +1,128 @@
+# AVR7 Per-Case Resource Lifetime
+
+Date: 2026-08-17
+
+## Result
+
+AVR7 is complete in work commit
+`bd2a8a36496275e65672917f4e7d17983feff7a5` and review-correction commit
+`2215a57726a12abc59e475e05e60b949ee1afda2`. Final correction commit
+`27331b1444a6a45096198574710d11620bc6ed87` registers the credential file with
+the same exit owner. Hosted correction commit
+`9e9482ce87f5f71776526940d9c4ea9c6b06a7b6` closes the CodeQL findings and the
+graceful-settlement race that their rerun exposed. The examples runner now has
+one run lifetime owner and one process-group owner. Nimbus owns every listener
+and port lease.
+
+Each run uses one network-state root. Each case uses separate application,
+data, control, authentication, discovery, audit, log, result, and process
+roots. Discovery accepts only the expected process identity and a loopback
+non-zero endpoint.
+
+The lifetime owner removes successful runs. It retains failed runs in an
+owner-only artifact root. A cleanup failure keeps the original root and makes
+the run fail. The process owner sends TERM to the full process group, waits,
+and uses KILL only after the grace period.
+
+## Fail-before evidence
+
+| Case | Result before AVR7 |
+| --- | --- |
+| Main listener | The shell opened port zero, read the assigned port, closed the socket, and passed the released port to Nimbus. Another binder could win that gap. |
+| Wire listeners | Dev-mode cases used the conventional MongoDB, DynamoDB, and S3 port preferences. The runner did not request provider-assigned sibling listeners. |
+| Operator state | Every case inherited the same host paths for authentication, discovery, audit, and configuration. |
+| Process lifetime | The shell tracked only the direct server PID. Cleanup used best-effort `kill` and `wait`, which did not own descendants. |
+| Temporary root | The runner created `DATA_ROOT` with `mktemp` and did not remove it on success. |
+| Failure evidence | The EXIT path did not retain one named artifact with process, listener, and cleanup state. |
+| Fault coverage | The runner had no cuts after root creation, case creation, process spawn, readiness, smoke start, or before stop. |
+
+## Acceptance ledger
+
+| Action | Result | Evidence |
+| --- | --- | --- |
+| AVR7.1 Inventory listeners. | Pass. | The manifest names each surface. Start cases disable unused listeners. Dev cases use their declared surfaces. The main and wire paths have named product owners. |
+| AVR7.2 Disable unused surfaces. | Pass. | Start adds each `--no-*` flag from the surface set. Dev planning preserves its adapter surface decisions. |
+| AVR7.3 Consume provider-assigned leases. | Pass. | Every boot passes `--port 0`. Dev treats this as provider-assigned-only for sibling listeners. The runner contains no socket probe or port allocator. |
+| AVR7.4 Define global and local roots. | Pass. | One run context creates the network root. Each case context creates distinct application and operator roots. Collision after identifier normalization fails closed. |
+| AVR7.5 Propagate case context. | Pass. | Server, codegen, smoke, and CLI subprocesses clear ambient `NIMBUS_*` values and receive the exact case paths. Wire values come only from validated Nimbus-owned `.env.local` keys. |
+| AVR7.6 Own process and cleanup state. | Pass. | Detached process groups have atomic records. Corrupt records fail before spawn. Record-write failure settles the unrecorded child. Graceful shutdown keeps the admin token out of command arguments. |
+
+## Verification evidence
+
+| Command or check | Result |
+| --- | --- |
+| `node scripts/examples-verify-workspace-test.mjs` | Pass. 9 top-level cases and all 9 preparation fixtures passed. The external-package case replaced a same-version source link with case-local bytes. |
+| `node scripts/examples-verify-lifetime-test.mjs` | Pass. 12/12 groups covered cross-case sentinels, concurrent binds, external binders, process trees, bounded graceful exit, six cuts, cleanup retry, cross-filesystem retention retry, secret-free supervisor argv, artifact retention, post-spawn record failure, and corrupt records. |
+| `node scripts/examples-verify-product-lifetime-test.mjs` | Pass. 1/1 real-product concurrency case. Two servers shared one network authority, used distinct endpoints and tokens, shut down cleanly, and released both ports. |
+| `node scripts/examples-verify-runner-fault-test.mjs` | Pass. 7/7: six real-runner cuts plus one credential-deletion retry. Every case was red, retained evidence without credentials, removed discovery and process records, released the observed socket, and left only terminal lease phases. |
+| `bash scripts/examples-verify.sh` | Pass. All 9 applications and 37 smoke assertions passed. The Convex Tasks target-form contract also passed. Source bytes matched and no run artifact remained. |
+| `cargo test -p nimbus-network port_lease` | Pass. 120 passed, 0 failed, 128 filtered. |
+| `cargo test -p nimbus-server listener_lease` | Pass. 24 passed, 0 failed, 674 filtered. |
+| `cargo test -p nimbus-cli` | Pass. 1,021 passed, 0 failed, 4 ignored. |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-system` | Pass. 85 passed, 0 failed. |
+| `make clippy` | Pass for the complete workspace. Only allowed vendored Brotli warnings appeared. |
+| `cargo fmt --all --check` | Pass. |
+| `bash scripts/examples-verify-contract-test.sh --task AVR7` | Pass. AVRC19-AVRC20 are 2/2 and the lifetime groups are 12/12. |
+| `bash scripts/verify-docs-app-verification.sh --through-phase 2` | Pass. AVRC01-AVRC20 are 20/20. |
+| `bash scripts/verify-docs-app-verification.sh --self-test` | Pass. All 24/24 mutations fail closed. |
+| Bash syntax, ShellCheck, and Node syntax | Pass with no diagnostics. |
+| `git diff --check` | Pass. |
+| Plan technical-writing lint | Pass with 0 diagnostics. |
+| Public docs | Pass. Link gate 109 pages; site verifier 17/17; website build 110 pages. `docs/reference/cli.md` stayed at its 5-diagnostic baseline. |
+| TruffleHog review preflight | Pass. No verified or unknown credential finding remained in the AVR3-AVR7 branch history. |
+
+## Structured review
+
+The complete AVR3-AVR7 candidate received one GPT-5.6 Sol review with xhigh
+reasoning and the fast service tier. The review scored `0.98` and reported three
+accepted findings.
+
+The one permitted narrow correction review used the same reviewer settings and
+scored `0.90`. It confirmed the three original corrections and found that the
+environment-file change introduced one defect. Commit `27331b144` fixes it. The
+affected proofs pass. The review cadence permits no further structured review
+for this item.
+
+| Finding | Disposition |
+| --- | --- |
+| P2: smoke credentials remained in the long-lived supervisor argv. | Fixed in `2215a5772`. The runner writes an owner-only environment file. The supervisor reads it after it validates its type, size, mode, and unique keys. An 11th lifetime test proves the child receives the value and the supervisor argv does not. |
+| P3: an EXDEV copy followed by source-removal failure made artifact retry impossible. | Fixed in `2215a5772`. An owner record identifies a completed destination. Retry validates the record, removes the source, and converges. The injected EXDEV and removal-failure test proves both the ambiguous state and retry. |
+| P3: the CLI reference omitted `--control-data-dir`. | Fixed in `2215a5772`. The `start` and `dev` tables now define its default and separate control-state purpose. Public docs gates and the site build pass. |
+| Narrow-review P2: an early exit or failed unlink could retain `smoke.env` with credentials. | Fixed in `27331b144`. The exit owner keeps the path until scrub and removal succeed. It runs before artifact promotion. The `during-smoke` cut proves early-exit scrubbing; an injected first-delete failure proves retry and red status. |
+
+## Hosted security findings
+
+CodeQL check `95575973966` reported four new alerts on PR #276. Commit
+`9e9482ce8` resolves them and the acceptance rerun that followed.
+
+| Alert | Disposition |
+| --- | --- |
+| High: environment-file metadata and bytes used separate path operations. | The supervisor opens the owner-only file once without following links, validates the open handle, and reads through that handle. A linked credential file fails before child spawn. |
+| High: the workspace test checked a path and then read it by path. | The fixture reads links atomically or reads regular bytes through one open handle. |
+| High: the source-byte manifest checked a path and then read it by path. | The manifest reads a link directly or opens a non-link handle, validates the handle, and reads through it. A bounded retry fails closed when the path changes type. |
+| Medium: the product test derives a health URL from discovery bytes. | `readCaseDiscovery` requires the exact child PID, a loopback host, and a non-zero port before the request. A query-specific source annotation records that sanitizer boundary. |
+| Acceptance rerun: `before-server-stop` retained one lease in `withdrawing`. | The shutdown endpoint returned before durable settlement finished, and the process owner signaled too early. The owner now waits up to 10 seconds for natural exit before TERM/KILL fallback. The direct graceful-exit test and all seven runner cases pass. |
+
+## Rejected or interrupted runs
+
+| Run | Disposition |
+| --- | --- |
+| First full nine-application run | The execution session vanished. The EXIT owner retained `nimbus-examples-verify.Ggn7Om` and left no process. This was interruption evidence, not a product failure. |
+| Second full run | `convex/runtimes` exposed a real linked-package capability-root defect. The case now copies same-version external packages into its own root. The focused case and two later full runs passed. |
+| Unscoped `cargo test -p nimbus-system` | Three external-provider tests refused absent pinned fixture URLs. The required local-mode environment produced 85/85. |
+| Custom `cargo clippy --all-features` | The V8 pointer-compression guard rejected a mixed shared artifact. The canonical `make clippy` gate passed. No alternate target or clean build was used. |
+| First structured-review preflight | The scanner found a credential-shaped synthetic MongoDB URI in an unpublished test commit. The fixture now constructs the URL from separate non-secret values, the local candidate history was rebuilt without the literal, and the scanner passed before Sol ran. |
+| Ambient Node.js 26 correction run | The required host preflight refused before application work. The installed Node.js 24 toolchain then passed all nine applications and 37 assertions. |
+
+After diagnosis, the task owner moved the retained application artifacts to the
+macOS Trash. This includes the hosted-rerun artifact at
+`/Users/jack/.Trash/nimbus-examples-verify.9flFqc-avr7-hosted`. The Trash keeps
+the move recoverable. No artifact remained under
+`target/examples-verify-artifacts` at closeout.
+
+## Residual boundary
+
+The runner remains serial and emits console evidence. AVR8 owns versioned JSON
+and JUnit evidence. AVR9 owns bounded scheduling and measured speed. AVR7 does
+not add forwarding, policy, network-provider effects, or another port
+authority.

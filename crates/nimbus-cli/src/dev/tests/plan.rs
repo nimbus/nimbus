@@ -52,6 +52,42 @@ fn dev_plan_uses_project_local_persistence_root() {
 }
 
 #[test]
+fn dev_plan_keeps_explicit_data_and_control_roots_distinct() {
+    let temp = tempdir().expect("tempdir should build");
+    create_source_root(temp.path(), "convex");
+
+    let plan = resolve_dev_plan(
+        parse_dev([
+            "nimbus",
+            "dev",
+            "--data-dir",
+            "./tenant-data",
+            "--control-data-dir",
+            "./control-data",
+        ]),
+        temp.path(),
+    )
+    .expect("dev plan should resolve distinct persistence roots");
+
+    assert_eq!(
+        plan.start_command.data_dir,
+        Some(temp.path().join("tenant-data"))
+    );
+    assert_eq!(
+        plan.start_command.control_data_dir,
+        Some(temp.path().join("control-data"))
+    );
+    assert!(
+        crate::wire_credentials::wire_credentials_path(&temp.path().join("control-data")).exists(),
+        "dev and start must share the control-root wire credential store"
+    );
+    assert!(
+        !crate::wire_credentials::wire_credentials_path(&temp.path().join("tenant-data")).exists(),
+        "tenant data must not gain a duplicate wire credential authority"
+    );
+}
+
+#[test]
 fn dev_plan_retains_every_advertised_wire_socket_until_start_handoff() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");
@@ -447,7 +483,7 @@ fn dev_plan_respects_explicit_app_and_data_dirs() {
 }
 
 #[test]
-fn dev_auto_discovers_compose_for_local_development() {
+fn compose_discovery_defaults_to_enabled() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");
     fs::write(
@@ -479,6 +515,34 @@ fn dev_auto_discovers_compose_for_local_development() {
             .map(|path| fs::canonicalize(path).unwrap())
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn compose_discovery_opt_out_performs_no_discovery() {
+    let temp = tempdir().expect("tempdir should build");
+    create_source_root(temp.path(), "convex");
+    fs::write(
+        temp.path().join("docker-compose.yaml"),
+        "services:\n  first:\n    image: busybox:latest\n",
+    )
+    .expect("first ambiguous Compose fixture should write");
+    fs::write(
+        temp.path().join("docker-compose.yml"),
+        "services:\n  second:\n    image: redis:7\n",
+    )
+    .expect("second ambiguous Compose fixture should write");
+    let nested_cwd = temp.path().join("convex");
+
+    let cli = Cli::try_parse_from(["nimbus", "dev", "--no-compose-discovery"])
+        .expect("the explicit Compose-discovery opt-out should parse");
+    let Command::Dev(command) = cli.command else {
+        panic!("dev subcommand should parse");
+    };
+    let plan = resolve_dev_plan(*command, &nested_cwd)
+        .expect("the opt-out must not inspect the ambiguous Compose project");
+
+    assert_eq!(plan.compose_selection, None);
+    assert_eq!(plan.start_command.compose_file, Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -535,7 +599,7 @@ services:
 }
 
 #[test]
-fn dev_start_and_compose_explicit_paths_override_auto_discovery() {
+fn explicit_compose_file_still_loads() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");
     fs::write(

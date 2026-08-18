@@ -6,8 +6,10 @@ fn cli_parses_dev_defaults() {
     assert_eq!(command.port, DEFAULT_DEV_PORT);
     assert_eq!(command.app_dir, None);
     assert_eq!(command.data_dir, None);
+    assert_eq!(command.control_data_dir, None);
     assert_eq!(command.network_state_dir, None);
     assert_eq!(command.compose_file, Vec::<PathBuf>::new());
+    assert!(!command.no_compose_discovery);
     assert!(!command.once);
     assert!(!command.skip_codegen);
     assert!(!command.debug_node_apis);
@@ -29,6 +31,8 @@ fn cli_parses_dev_overrides() {
         "./demo",
         "--data-dir",
         "./state",
+        "--control-data-dir",
+        "./control",
         "--network-state-dir",
         "/var/lib/nimbus/network",
         "--compose-file",
@@ -43,6 +47,7 @@ fn cli_parses_dev_overrides() {
     assert_eq!(command.port, 4567);
     assert_eq!(command.app_dir, Some(PathBuf::from("./demo")));
     assert_eq!(command.data_dir, Some(PathBuf::from("./state")));
+    assert_eq!(command.control_data_dir, Some(PathBuf::from("./control")));
     assert_eq!(
         command.network_state_dir,
         Some(PathBuf::from("/var/lib/nimbus/network"))
@@ -178,6 +183,28 @@ fn cli_parses_dev_multiple_compose_files_in_order() {
 }
 
 #[test]
+fn cli_parses_compose_discovery_opt_out() {
+    let command = parse_dev(["nimbus", "dev", "--no-compose-discovery"]);
+
+    assert!(command.no_compose_discovery);
+    assert_eq!(command.compose_file, Vec::<PathBuf>::new());
+}
+
+#[test]
+fn compose_discovery_opt_out_conflicts_with_explicit_file() {
+    let error = Cli::try_parse_from([
+        "nimbus",
+        "dev",
+        "--no-compose-discovery",
+        "--compose-file",
+        "./compose.yaml",
+    ])
+    .expect_err("the opt-out and an explicit Compose file must conflict");
+
+    assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+}
+
+#[test]
 fn dev_help_is_honest_about_watch_scope() {
     let error = Cli::try_parse_from(["nimbus", "dev", "--help"]).expect_err("help should render");
     assert_eq!(error.kind(), ErrorKind::DisplayHelp);
@@ -193,4 +220,5 @@ fn dev_help_is_honest_about_watch_scope() {
     assert!(rendered.contains("locally activates"));
     assert!(rendered.contains("runtime log multiplexing"));
     assert!(rendered.contains("COMPOSE_FILE"));
+    assert!(rendered.contains("--no-compose-discovery"));
 }

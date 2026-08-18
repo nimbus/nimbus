@@ -14,7 +14,7 @@ use crate::function_scaling::{
     FunctionScalingAdmissionEnvelope, FunctionScalingContext, admit_function_scaling_intent,
     load_config, load_optional_policy, resolve_function_scaling_intent,
 };
-use crate::local_server_client::LocalServerHttpClient;
+use crate::local_server_client::discover_local_server_base_url;
 use crate::target_context::{TargetContext, TargetContextKind, TargetSelector};
 
 #[derive(Debug, Args)]
@@ -260,14 +260,7 @@ async fn invoke_run_function(
             let paths = LocalServerPaths::resolve_for_current_platform().map_err(|error| {
                 Error::Internal(format!("failed to resolve local server paths: {error}"))
             })?;
-            let client = LocalServerHttpClient::discover(&paths, reqwest::Client::new())?
-                .ok_or_else(|| {
-                    Error::InvalidInput(
-                        "no running local Nimbus server was found; start one with `nimbus dev` or `nimbus start`, or pass a TARGET URL".to_string(),
-                    )
-                })?;
-            emit_run_target_banner(target, client.base_url());
-            client.post_json(&path, payload).await
+            invoke_local_run_function(target, &paths, &path, payload).await
         }
         TargetContextKind::RemoteUrl(base_url) => {
             emit_run_target_banner(target, base_url);
@@ -279,6 +272,21 @@ async fn invoke_run_function(
             invoke_remote_run_function(&base_url, &path, payload).await
         }
     }
+}
+
+async fn invoke_local_run_function(
+    target: &TargetContext,
+    paths: &LocalServerPaths,
+    path: &str,
+    payload: &Value,
+) -> Result<Value, Error> {
+    let base_url = discover_local_server_base_url(paths)?.ok_or_else(|| {
+        Error::InvalidInput(
+            "no running local Nimbus server was found; start one with `nimbus dev` or `nimbus start`, or pass a TARGET URL".to_string(),
+        )
+    })?;
+    emit_run_target_banner(target, &base_url);
+    invoke_remote_run_function(&base_url, path, payload).await
 }
 
 /// Print the resolved-target banner to stderr (never stdout, which carries the
@@ -353,11 +361,117 @@ async fn decode_run_function_response(response: reqwest::Response) -> Result<Val
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::{Arc, Mutex};
 
+    use axum::extract::{Request, State};
+    use axum::http::{StatusCode, header};
+    use axum::response::{IntoResponse, Response};
+    use axum::routing::post;
+    use axum::{Json, Router};
     use clap::Parser;
+    use nimbus_operator::{
+        LOCAL_ADMIN_HEADER_NAME, LocalServerPaths, load_or_create_local_admin_token,
+    };
+    use nimbus_server::ServerDiscoveryLease;
 
     use super::RunResource;
     use crate::{Cli, Command};
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct CapturedRunRequest {
+        path: String,
+        local_admin: Option<String>,
+        authorization: Option<String>,
+    }
+
+    #[derive(Clone)]
+    struct RunContractState {
+        requests: Arc<Mutex<Vec<CapturedRunRequest>>>,
+    }
+
+    fn sample_local_server_paths(root: &std::path::Path) -> LocalServerPaths {
+        LocalServerPaths {
+            auth_token_path: root.join("auth").join("token"),
+            server_discovery_path: root.join("run").join("server.json"),
+            audit_log_path: root.join("logs").join("access.jsonl"),
+        }
+    }
+
+    async fn run_contract_handler(
+        State(state): State<RunContractState>,
+        request: Request,
+    ) -> Response {
+        let local_admin = request
+            .headers()
+            .get(LOCAL_ADMIN_HEADER_NAME)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let authorization = request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let path = request.uri().path().to_owned();
+        state
+            .requests
+            .lock()
+            .expect("request capture should lock")
+            .push(CapturedRunRequest {
+                path: path.clone(),
+                local_admin: local_admin.clone(),
+                authorization: authorization.clone(),
+            });
+
+        if authorization.is_some() {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "error": { "message": "invalid application bearer" }
+                })),
+            )
+                .into_response();
+        }
+        if path != "/convex/demo/query" {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({
+                    "error": { "message": "caller cannot select this silo" }
+                })),
+            )
+                .into_response();
+        }
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({ "value": [{ "title": "same result" }] })),
+        )
+            .into_response()
+    }
+
+    async fn start_run_contract_server() -> (
+        String,
+        Arc<Mutex<Vec<CapturedRunRequest>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let state = RunContractState {
+            requests: Arc::clone(&requests),
+        };
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("run contract listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("run contract listener address should resolve");
+        let router = Router::new()
+            .route("/convex/{silo}/query", post(run_contract_handler))
+            .with_state(state);
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("run contract server should keep serving");
+        });
+        (format!("http://{address}"), requests, task)
+    }
 
     #[test]
     fn run_command_resolves_target() {
@@ -428,6 +542,160 @@ mod tests {
             context.source,
             crate::target_context::TargetContextSource::ImplicitLocalDefault
         );
+    }
+
+    #[tokio::test]
+    async fn isolated_legacy_admin_bearer_reproduces_fail_before_unauthorized() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let paths = sample_local_server_paths(temp.path());
+        let admin = load_or_create_local_admin_token(&paths)
+            .expect("isolated local admin token should initialize");
+        let (base_url, requests, server_task) = start_run_contract_server().await;
+        let address = base_url
+            .strip_prefix("http://")
+            .expect("fixture URL should have the HTTP scheme")
+            .parse()
+            .expect("fixture address should parse");
+        let discovery = ServerDiscoveryLease::acquire(&paths, address)
+            .expect("isolated discovery should initialize");
+        let payload = serde_json::json!({ "name": "tasks:list", "args": {} });
+
+        let response = reqwest::Client::new()
+            .post(format!("{base_url}/convex/demo/query"))
+            .bearer_auth(&admin.token)
+            .json(&payload)
+            .send()
+            .await
+            .expect("legacy local bearer request should send");
+        let error = super::decode_run_function_response(response)
+            .await
+            .expect_err("the old host-admin-as-application-bearer path must reproduce 401");
+
+        assert!(
+            matches!(error, nimbus::Error::PermissionDenied(_)),
+            "legacy credential collision should be unauthorized: {error}"
+        );
+        assert_eq!(
+            *requests.lock().expect("request capture should lock"),
+            vec![CapturedRunRequest {
+                path: "/convex/demo/query".to_owned(),
+                local_admin: None,
+                authorization: Some(format!("Bearer {}", admin.token)),
+            }]
+        );
+
+        drop(discovery);
+        server_task.abort();
+        let _ = server_task.await;
+    }
+
+    #[tokio::test]
+    async fn bare_local_target_matches_explicit_target() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let paths = sample_local_server_paths(temp.path());
+        let (base_url, requests, server_task) = start_run_contract_server().await;
+        let address = base_url
+            .strip_prefix("http://")
+            .expect("fixture URL should have the HTTP scheme")
+            .parse()
+            .expect("fixture address should parse");
+        let discovery = ServerDiscoveryLease::acquire(&paths, address)
+            .expect("local server discovery should initialize");
+        let payload = serde_json::json!({ "name": "tasks:list", "args": {} });
+        let path = "/convex/demo/query";
+
+        let explicit = super::invoke_remote_run_function(&base_url, path, &payload)
+            .await
+            .expect("explicit target should return a result");
+        let local_target = crate::target_context::TargetContext {
+            kind: crate::target_context::TargetContextKind::LocalDiscovery,
+            source: crate::target_context::TargetContextSource::ImplicitLocalDefault,
+        };
+        let local = super::invoke_local_run_function(&local_target, &paths, path, &payload)
+            .await
+            .expect("bare-local target should return a result");
+
+        assert_eq!(local, explicit);
+        assert_eq!(
+            *requests.lock().expect("request capture should lock"),
+            vec![
+                CapturedRunRequest {
+                    path: path.to_owned(),
+                    local_admin: None,
+                    authorization: None,
+                },
+                CapturedRunRequest {
+                    path: path.to_owned(),
+                    local_admin: None,
+                    authorization: None,
+                },
+            ]
+        );
+
+        drop(discovery);
+        server_task.abort();
+        let _ = server_task.await;
+    }
+
+    #[tokio::test]
+    async fn bare_local_target_rejects_wrong_silo_and_invalid_credentials() {
+        let temp = tempfile::tempdir().expect("tempdir should build");
+        let paths = sample_local_server_paths(temp.path());
+        let (base_url, requests, server_task) = start_run_contract_server().await;
+        let address = base_url
+            .strip_prefix("http://")
+            .expect("fixture URL should have the HTTP scheme")
+            .parse()
+            .expect("fixture address should parse");
+        let discovery = ServerDiscoveryLease::acquire(&paths, address)
+            .expect("local server discovery should initialize");
+        let target = crate::target_context::TargetContext {
+            kind: crate::target_context::TargetContextKind::LocalDiscovery,
+            source: crate::target_context::TargetContextSource::ImplicitLocalDefault,
+        };
+        let payload = serde_json::json!({ "name": "tasks:list", "args": {} });
+
+        let wrong_silo =
+            super::invoke_local_run_function(&target, &paths, "/convex/not-demo/query", &payload)
+                .await
+                .expect_err("local discovery must not authorize another silo");
+        assert!(
+            matches!(wrong_silo, nimbus::Error::PermissionDenied(_)),
+            "wrong-silo selection should fail closed: {wrong_silo}"
+        );
+
+        let response = reqwest::Client::new()
+            .post(format!("{base_url}/convex/demo/query"))
+            .bearer_auth("invalid.application.credential")
+            .json(&payload)
+            .send()
+            .await
+            .expect("invalid application credential request should send");
+        let invalid_credential = super::decode_run_function_response(response)
+            .await
+            .expect_err("an invalid application credential must fail closed");
+        assert!(
+            matches!(invalid_credential, nimbus::Error::PermissionDenied(_)),
+            "invalid application credential should fail closed: {invalid_credential}"
+        );
+
+        {
+            let captured = requests.lock().expect("request capture should lock");
+            assert_eq!(captured.len(), 2);
+            assert_eq!(captured[0].path, "/convex/not-demo/query");
+            assert_eq!(captured[0].local_admin, None);
+            assert_eq!(captured[0].authorization, None);
+            assert_eq!(captured[1].path, "/convex/demo/query");
+            assert_eq!(captured[1].local_admin, None);
+            assert_eq!(
+                captured[1].authorization.as_deref(),
+                Some("Bearer invalid.application.credential")
+            );
+        }
+
+        drop(discovery);
+        server_task.abort();
+        let _ = server_task.await;
     }
 
     #[test]

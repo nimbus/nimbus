@@ -1,0 +1,335 @@
+{
+  "schemaVersion": 1,
+  "sourceGuardPaths": [
+    "package.json",
+    "package-lock.json",
+    "compose.yaml"
+  ],
+  "ignoredAppPaths": [
+    ".nimbus",
+    "node_modules",
+    "dist",
+    "functions/lib"
+  ],
+  "cases": [
+    {
+      "name": "nimbus/tasks",
+      "workspace": "nimbus-tasks",
+      "appDir": "examples/nimbus/tasks",
+      "prepare": {
+        "codegen": false,
+        "inputs": [
+          "README.md",
+          "index.html",
+          "package.json",
+          "smoke.ts",
+          "src/app.css",
+          "src/main.ts",
+          "src/vite-env.d.ts",
+          "tsconfig.json",
+          "tsconfig.smoke.json",
+          "vite.config.ts"
+        ]
+      },
+      "boot": {
+        "mode": "start",
+        "needsAppDir": false,
+        "environment": [],
+        "flags": []
+      },
+      "smoke": {
+        "command": "npm",
+        "environment": ["NIMBUS_NATIVE_URL=${NIMBUS_URL}"],
+        "stdioContract": false
+      },
+      "surfaces": ["native-http", "websocket"],
+      "updateSemantics": "push"
+    },
+    {
+      "name": "nimbus/agent-chat",
+      "workspace": "nimbus-agent-chat",
+      "appDir": "examples/nimbus/agent-chat",
+      "prepare": {
+        "codegen": true,
+        "inputs": [
+          "README.md",
+          "index.html",
+          "nimbus/_generated/api.ts",
+          "nimbus/_generated/dataModel.d.ts",
+          "nimbus/_generated/scheduled_functions.ts",
+          "nimbus/_generated/server.ts",
+          "nimbus/agent.ts",
+          "nimbus/schema.ts",
+          "package.json",
+          "smoke.ts",
+          "src/App.tsx",
+          "src/app.css",
+          "src/main.tsx",
+          "src/vite-env.d.ts",
+          "tsconfig.json",
+          "tsconfig.smoke.json",
+          "vite.config.ts"
+        ]
+      },
+      "boot": {
+        "mode": "start",
+        "needsAppDir": true,
+        "environment": [
+          "NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team",
+          "NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team"
+        ],
+        "flags": []
+      },
+      "smoke": {
+        "command": "node",
+        "environment": ["NIMBUS_NATIVE_URL=${NIMBUS_URL}"],
+        "stdioContract": false
+      },
+      "surfaces": ["convex-http", "scheduler", "websocket"],
+      "updateSemantics": "push"
+    },
+    {
+      "name": "nimbus/agent-worker",
+      "workspace": "nimbus-agent-worker",
+      "appDir": "examples/nimbus/agent-worker",
+      "prepare": {
+        "codegen": true,
+        "inputs": [
+          "README.md",
+          "nimbus/_generated/api.ts",
+          "nimbus/_generated/dataModel.d.ts",
+          "nimbus/_generated/scheduled_functions.ts",
+          "nimbus/_generated/server.ts",
+          "nimbus/schema.ts",
+          "nimbus/worker.ts",
+          "package.json",
+          "run.ts",
+          "smoke.ts",
+          "tsconfig.json"
+        ]
+      },
+      "boot": {
+        "mode": "start",
+        "needsAppDir": true,
+        "environment": [
+          "NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team",
+          "NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team"
+        ],
+        "flags": []
+      },
+      "smoke": {
+        "command": "node",
+        "environment": ["NIMBUS_NATIVE_URL=${NIMBUS_URL}"],
+        "stdioContract": false
+      },
+      "surfaces": ["convex-http", "scheduler", "websocket"],
+      "updateSemantics": "push"
+    },
+    {
+      "name": "convex/tasks",
+      "workspace": "convex-tasks",
+      "appDir": "examples/convex/tasks",
+      "prepare": {
+        "codegen": true,
+        "inputs": [
+          "README.md",
+          "convex/_generated/api.ts",
+          "convex/_generated/dataModel.d.ts",
+          "convex/_generated/scheduled_functions.ts",
+          "convex/_generated/server.ts",
+          "convex/schema.ts",
+          "convex/tasks.ts",
+          "index.html",
+          "package.json",
+          "smoke.ts",
+          "src/App.tsx",
+          "src/app.css",
+          "src/main.tsx",
+          "src/vite-env.d.ts",
+          "tsconfig.json",
+          "tsconfig.smoke.json",
+          "vite.config.ts"
+        ]
+      },
+      "boot": {
+        "mode": "start",
+        "needsAppDir": true,
+        "environment": [
+          "NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team",
+          "NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team"
+        ],
+        "flags": []
+      },
+      "smoke": {
+        "command": "node",
+        "environment": ["NIMBUS_NATIVE_URL=${NIMBUS_URL}"],
+        "stdioContract": true
+      },
+      "surfaces": ["convex-http", "stdio-run", "websocket"],
+      "updateSemantics": "push"
+    },
+    {
+      "name": "convex/runtimes",
+      "workspace": "convex-runtimes",
+      "appDir": "examples/convex/runtimes",
+      "prepare": {
+        "codegen": true,
+        "inputs": [
+          "README.md",
+          "convex.json",
+          "convex/_generated/api.ts",
+          "convex/_generated/dataModel.d.ts",
+          "convex/_generated/scheduled_functions.ts",
+          "convex/_generated/server.ts",
+          "convex/digests.ts",
+          "convex/nodeDigests.ts",
+          "convex/schema.ts",
+          "convex/shareIds.ts",
+          "convex/tsconfig.json",
+          "package.json",
+          "scripts/vendor-external-packages.mjs",
+          "smoke.ts",
+          "tsconfig.smoke.json"
+        ]
+      },
+      "boot": {
+        "mode": "start",
+        "needsAppDir": true,
+        "environment": [
+          "NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team",
+          "NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team"
+        ],
+        "flags": []
+      },
+      "smoke": {
+        "command": "node",
+        "environment": ["NIMBUS_NATIVE_URL=${NIMBUS_URL}"],
+        "stdioContract": false
+      },
+      "surfaces": ["convex-http", "node-runtime", "v8-runtime"],
+      "updateSemantics": "request-response"
+    },
+    {
+      "name": "firebase/tasks",
+      "workspace": "firebase-tasks",
+      "appDir": "examples/firebase/tasks",
+      "prepare": {
+        "codegen": false,
+        "inputs": [
+          "README.md",
+          "index.html",
+          "package.json",
+          "smoke.ts",
+          "src/app.css",
+          "src/main.ts",
+          "src/vite-env.d.ts",
+          "tsconfig.json",
+          "tsconfig.smoke.json",
+          "vite.config.ts"
+        ]
+      },
+      "boot": {
+        "mode": "dev",
+        "needsAppDir": true,
+        "environment": [],
+        "flags": ["--no-compose-discovery"]
+      },
+      "smoke": {
+        "command": "npm",
+        "environment": ["NIMBUS_FIRESTORE_URL=${NIMBUS_URL}"],
+        "stdioContract": false
+      },
+      "surfaces": ["firestore-rest", "websocket"],
+      "updateSemantics": "push"
+    },
+    {
+      "name": "mongodb/tasks",
+      "workspace": "mongodb-tasks",
+      "appDir": "examples/mongodb/tasks",
+      "prepare": {
+        "codegen": false,
+        "inputs": [
+          "README.md",
+          "package.json",
+          "script.ts",
+          "smoke.ts",
+          "tsconfig.json"
+        ]
+      },
+      "boot": {
+        "mode": "dev",
+        "needsAppDir": true,
+        "environment": [],
+        "flags": ["--no-compose-discovery"]
+      },
+      "smoke": {
+        "command": "npm",
+        "environment": [],
+        "stdioContract": false
+      },
+      "surfaces": ["mongodb-wire"],
+      "updateSemantics": "polling"
+    },
+    {
+      "name": "dynamodb/tasks",
+      "workspace": "dynamodb-tasks",
+      "appDir": "examples/dynamodb/tasks",
+      "prepare": {
+        "codegen": false,
+        "inputs": [
+          "README.md",
+          "client.ts",
+          "package.json",
+          "script.ts",
+          "smoke.ts",
+          "tsconfig.json"
+        ]
+      },
+      "boot": {
+        "mode": "dev",
+        "needsAppDir": true,
+        "environment": [],
+        "flags": ["--no-compose-discovery"]
+      },
+      "smoke": {
+        "command": "npm",
+        "environment": [],
+        "stdioContract": false
+      },
+      "surfaces": ["dynamodb-wire"],
+      "updateSemantics": "polling"
+    },
+    {
+      "name": "cloud-functions/tasks",
+      "workspace": "cloud-functions-tasks",
+      "appDir": "examples/cloud-functions/tasks",
+      "prepare": {
+        "codegen": false,
+        "inputs": [
+          ".gitignore",
+          "README.md",
+          "firebase.json",
+          "functions/package.json",
+          "functions/src/index.ts",
+          "functions/tsconfig.json",
+          "package.json",
+          "smoke.ts",
+          "tsconfig.json"
+        ]
+      },
+      "boot": {
+        "mode": "dev",
+        "needsAppDir": true,
+        "environment": [],
+        "flags": ["--no-compose-discovery"]
+      },
+      "smoke": {
+        "command": "npm",
+        "environment": ["NIMBUS_CLOUD_FUNCTIONS_URL=${NIMBUS_URL}"],
+        "stdioContract": false
+      },
+      "surfaces": ["cloud-functions-http", "scheduler"],
+      "updateSemantics": "polling"
+    }
+  ]
+}

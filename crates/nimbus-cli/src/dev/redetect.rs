@@ -677,11 +677,13 @@ mod tests {
             port: 0,
             app_dir: None,
             compose_file: Vec::new(),
+            no_compose_discovery: false,
             once: false,
             skip_codegen: false,
             debug_node_apis: false,
             tail_logs: DevTailLogsMode::PauseOnSync,
             data_dir: None,
+            control_data_dir: None,
             network_state_dir: None,
             no_open: true,
         };

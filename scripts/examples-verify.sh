@@ -9,20 +9,16 @@
 # wait for /health, run the smoke, and stop the server before moving to the
 # next app.
 #
-# Every app boots via `nimbus start`, which performs no Compose
-# auto-discovery by default (the --compose-file doc comment in
-# crates/nimbus-cli/src/start/mod.rs: that is `nimbus dev`/`nimbus
-# compose`-only), so it does not need the compose.yaml sideline workaround
-# `nimbus dev` boots require elsewhere in this plan — except firebase/tasks
-# (see boot_mode below), which genuinely needs `nimbus dev` and so pays that
-# cost for just the one app.
+# The manifest selects `nimbus start` for main-listener cases and `nimbus dev`
+# for framework provisioning or generated wire credentials. Every dev case
+# passes the explicit Compose-discovery opt-out. All listeners use product
+# provider-assigned leases; the runner learns the main endpoint from exact
+# case-local discovery and wire endpoints from Nimbus-owned `.env.local` keys.
 #
 # The convex/tasks step also exercises the `nimbus run functions` process
-# stdio contract: spawn the real binary, capture stdout and stderr to
-# separate files, and assert stdout alone parses as the result JSON while
-# the resolved-target banner lands on stderr. It passes an explicit TARGET
-# URL rather than omitting TARGET — see check_run_stdio_contract() below for
-# why that is required, not a style choice.
+# contract through explicit and bare-local target resolution. Both forms must
+# return the same result JSON on stdout, keep their banners on stderr, and
+# preserve the silo and local-admin trust boundaries.
 
 set -euo pipefail
 
@@ -30,133 +26,266 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 NIMBUS_BIN="${NIMBUS_EXAMPLES_VERIFY_BIN:-${REPO_ROOT}/target/debug/nimbus}"
-# A fixed port (8080 was the previous default) risks a pre-existing,
-# unrelated local server already answering /health on that port — the lane
-# would then read green without ever exercising the binary under test. Bind
-# to an OS-assigned ephemeral port per run instead (same pattern as
-# scripts/nimbus-kv-conformance.sh); NIMBUS_EXAMPLES_VERIFY_PORT still
-# overrides it for anyone who wants a fixed port.
-PORT="${NIMBUS_EXAMPLES_VERIFY_PORT:-$(python3 - <<'PY'
-import socket
-sock = socket.socket()
-sock.bind(("127.0.0.1", 0))
-print(sock.getsockname()[1])
-sock.close()
-PY
-)}"
-NIMBUS_URL="http://127.0.0.1:${PORT}"
-DATA_ROOT="$(mktemp -d -t nimbus-examples-verify.XXXXXX)"
+NIMBUS_BIN_SUPPLIED=0
+if [ -n "${NIMBUS_EXAMPLES_VERIFY_BIN:-}" ]; then
+  NIMBUS_BIN_SUPPLIED=1
+fi
 
-# Manifest fields, pipe-delimited:
-#   name | workspace | app_dir | needs_codegen(0/1) | needs_app_dir_boot(0/1) | boot_env | boot_flags | smoke_env | boot_mode(start|dev)
-# needs_app_dir_boot: whether the boot command needs `--app-dir`. Under
-# `nimbus start` this means "does this app have a server-side functions
-# surface at all" (Convex/native SDK functions, or a Cloud Functions
-# bundle) — the plain document-CRUD apps (nimbus/tasks, mongodb/tasks,
-# dynamodb/tasks) have no `convex/`/`nimbus/`/`firebase.json` source and
-# boot preflight rejects `--app-dir` pointed at them with "No Convex or
-# Cloud Functions surface found"; they must boot with no --app-dir at all.
-# Under `nimbus dev` (firebase/tasks and cloud-functions/tasks, see
-# boot_mode) --app-dir instead drives adapter *detection*; for
-# firebase/tasks that computes the Firestore auto-tenant, for
-# cloud-functions/tasks it both registers the functions bundle and gets the
-# same auto-tenant as a side effect (dev always sets one, defaulting to
-# "demo" for any non-Firestore-client adapter).
-# boot_env / smoke_env: comma-separated KEY=VAL pairs, or "-" for none. Every
-# app whose smoke talks to the main HTTP listener carries an explicit
-# NIMBUS_NATIVE_URL/NIMBUS_FIRESTORE_URL/NIMBUS_CLOUD_FUNCTIONS_URL entry
-# pinned to ${NIMBUS_URL} (built from the resolved ephemeral PORT above) —
-# each smoke.ts's own "http://localhost:8080" fallback default only matched
-# by coincidence when PORT was hardcoded to 8080; it does not track PORT now
-# that PORT is resolved per run. mongodb/tasks and dynamodb/tasks are
-# unaffected: their smokes talk to separate wire-protocol listener ports
-# (27017/8000 by default), not the main HTTP PORT.
-# boot_flags: a single space-free extra CLI argument (KEY=VAL form), or "-".
-# boot_mode: "start" (default, no Compose auto-discovery, no sideline
-# needed) or "dev". firebase/tasks and cloud-functions/tasks are "dev"
-# apps: both send Firestore REST calls carrying a mock/emulator auth token,
-# and Firestore admission requires a cryptographically verified project
-# claim (the #24 gate,
-# crates/nimbus-firebase/src/project_tenant_registry.rs). The only local
-# bypass for that is `nimbus dev`'s auto-tenant handling
-# (crates/nimbus-cli/src/dev/plan.rs, unconditionally sets `auto_tenant`,
-# which crates/nimbus-cli/src/start/adapters/firebase.rs turns into the
-# Firebase emulator-token-verification bypass) — there is no equivalent
-# flag on `nimbus start`. This matches both apps' own README-documented
-# `nimbus dev` instructions. A "dev" boot pays the compose.yaml sideline
-# cost (see sideline_compose/restore_compose below) that "start" boots are
-# otherwise designed to avoid.
-# nimbus/agent-chat, nimbus/agent-worker, and convex/tasks are all
-# `nimbus/`- or `convex/`-source-rooted apps that dispatch through the same
-# Convex-style tenancy path, so all three need the EX3.7 dev-mode anonymous
-# team envs at boot (EX4.1/EX4.2 established this live for the first two;
-# EX3.7d for the third) or every mutation 403s with no bound team.
-CONVEX_DEV_TENANCY_ENV="NIMBUS_CONVEX_SILO_TEAMS=demo:demo-team,NIMBUS_CONVEX_ANONYMOUS_TEAM=demo-team"
+# Node.js >=22 <25 is the supported range. Node.js 22 and 24 are the tested
+# anchors. Reject an unsupported Node host before port allocation, temporary
+# state, generated prerequisites, Cargo, npm, or any application process.
+require_supported_node() {
+  local node_version node_major
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Node.js >=22 <25 is required (tested on Node.js 22 and 24); node was not found" >&2
+    return 1
+  fi
+  if ! node_version="$(node --version 2>/dev/null)"; then
+    echo "Node.js >=22 <25 is required (tested on Node.js 22 and 24); node --version failed" >&2
+    return 1
+  fi
+  node_major="${node_version#v}"
+  node_major="${node_major%%.*}"
+  case "${node_major}" in
+    ''|*[!0-9]*)
+      echo "unsupported Node.js version ${node_version}; require Node.js >=22 <25 (tested on Node.js 22 and 24)" >&2
+      return 1
+      ;;
+  esac
+  if [ "${node_major}" -lt 22 ] || [ "${node_major}" -ge 25 ]; then
+    echo "unsupported Node.js version ${node_version}; require Node.js >=22 <25 (tested on Node.js 22 and 24)" >&2
+    return 1
+  fi
+}
 
-APPS=(
-  "nimbus/tasks|nimbus-tasks|examples/nimbus/tasks|0|0|-|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
-  "nimbus/agent-chat|nimbus-agent-chat|examples/nimbus/agent-chat|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
-  "nimbus/agent-worker|nimbus-agent-worker|examples/nimbus/agent-worker|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
-  "convex/tasks|convex-tasks|examples/convex/tasks|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
-  "convex/runtimes|convex-runtimes|examples/convex/runtimes|1|1|${CONVEX_DEV_TENANCY_ENV}|-|NIMBUS_NATIVE_URL=${NIMBUS_URL}|start"
-  "firebase/tasks|firebase-tasks|examples/firebase/tasks|0|1|-|-|NIMBUS_FIRESTORE_URL=${NIMBUS_URL}|dev"
-  "mongodb/tasks|mongodb-tasks|examples/mongodb/tasks|0|0|NIMBUS_MONGODB_PASSWORD=nimbus|--mongodb-username=nimbus|NIMBUS_MONGODB_USERNAME=nimbus,NIMBUS_MONGODB_PASSWORD=nimbus|start"
-  "dynamodb/tasks|dynamodb-tasks|examples/dynamodb/tasks|0|0|-|--dynamodb-access-key=nimbus:nimbus:default|-|start"
-  "cloud-functions/tasks|cloud-functions-tasks|examples/cloud-functions/tasks|0|1|-|-|NIMBUS_CLOUD_FUNCTIONS_URL=${NIMBUS_URL}|dev"
-)
+# A supplied binary can skip generated build prerequisites and the Rust build,
+# but it must be an executable before the Make entry starts any generation.
+require_supplied_binary() {
+  if [ "${NIMBUS_BIN_SUPPLIED}" = "1" ] && [ ! -x "${NIMBUS_BIN}" ]; then
+    echo "supplied binary is missing or not executable: ${NIMBUS_BIN}" >&2
+    return 1
+  fi
+}
 
+run_host_preflight() {
+  require_supported_node
+  require_supplied_binary
+  if [ "${NIMBUS_BIN_SUPPLIED}" = "1" ]; then
+    printf 'supplied binary %s is executable; skip generated build prerequisites and the Rust build\n' "${NIMBUS_BIN}"
+  fi
+}
+
+run_host_preflight
+
+case "$#" in
+  0) ;;
+  1)
+    if [ "$1" = "--host-preflight" ]; then
+      exit 0
+    fi
+    echo "unknown argument: $1" >&2
+    exit 2
+    ;;
+  *)
+    echo "usage: $0 [--host-preflight]" >&2
+    exit 2
+    ;;
+esac
+
+# Direct invocation cannot generate a buildable binary from a tracked-files-
+# only checkout. Fail before work with the canonical Make recovery command.
+# The Make entry owns these fresh-checkout prerequisites under single-flight.
+require_fresh_checkout_prerequisites() {
+  local missing=()
+  if [ -x "${NIMBUS_BIN}" ]; then
+    return
+  fi
+  if [ ! -f "${REPO_ROOT}/packages/nimbus-ui/dist/index.html" ]; then
+    missing+=("packages/nimbus-ui/dist/index.html")
+  fi
+  if [ ! -f "${REPO_ROOT}/crates/nimbus-assets/embedded/packages/manifest.json" ]; then
+    missing+=("crates/nimbus-assets/embedded/packages/manifest.json")
+  fi
+  if [ "${#missing[@]}" -eq 0 ]; then
+    return
+  fi
+  echo "fresh-checkout prerequisites are missing for direct script invocation:" >&2
+  local path
+  for path in "${missing[@]}"; do
+    echo "  ${path}" >&2
+  done
+  echo "run the supported entry point: make examples-verify" >&2
+  return 1
+}
+
+require_fresh_checkout_prerequisites
+
+CASE_MANIFEST="${REPO_ROOT}/scripts/examples-verify-cases.json"
+WORKSPACE_ADAPTER="${REPO_ROOT}/scripts/examples-verify-workspace.mjs"
+LIFETIME_ADAPTER="${REPO_ROOT}/scripts/examples-verify-lifetime.mjs"
+PROCESS_SUPERVISOR="${REPO_ROOT}/scripts/examples-verify-supervisor.mjs"
+RUN_ROW="$(node "${LIFETIME_ADAPTER}" create-run --repo-root "${REPO_ROOT}")"
+IFS='|' read -r DATA_ROOT NETWORK_STATE_ROOT ARTIFACT_ROOT <<<"${RUN_ROW}"
+SOURCE_BYTE_SNAPSHOT="${DATA_ROOT}/source-bytes.before.json"
+CASE_ROWS="${DATA_ROOT}/cases.pipe"
+
+SOURCE_BYTE_CAPTURED=0
 SERVER_PID=""
+SERVER_URL=""
 SERVER_LOG=""
-COMPOSE_SIDELINE_PATH="${REPO_ROOT}/compose.yaml"
-COMPOSE_SIDELINED=0
+SERVER_RECORD=""
+SERVER_DISCOVERY_PATH=""
+SERVER_ADMIN_TOKEN=""
+SMOKE_ENV_FILE=""
+CREDENTIAL_DELETE_FAILURES_REMAINING="${NIMBUS_EXAMPLES_VERIFY_CREDENTIAL_DELETE_FAILURES:-0}"
 
-# Sideline/restore compose.yaml around a `nimbus dev` boot (see boot_mode in
-# the manifest comment above for why this is only needed for one app).
-sideline_compose() {
-  if [ -f "${COMPOSE_SIDELINE_PATH}" ]; then
-    mv "${COMPOSE_SIDELINE_PATH}" "${COMPOSE_SIDELINE_PATH}.smoke-bak"
-    COMPOSE_SIDELINED=1
-  fi
-}
+case "${CREDENTIAL_DELETE_FAILURES_REMAINING}" in
+  ''|*[!0-9]*)
+    echo "NIMBUS_EXAMPLES_VERIFY_CREDENTIAL_DELETE_FAILURES must be a non-negative integer" >&2
+    exit 2
+    ;;
+esac
 
-restore_compose() {
-  if [ "${COMPOSE_SIDELINED}" = "1" ]; then
-    mv "${COMPOSE_SIDELINE_PATH}.smoke-bak" "${COMPOSE_SIDELINE_PATH}"
-    COMPOSE_SIDELINED=0
-  fi
-}
-
+# The product owns each provider_assigned_port_lease and retained_listener.
+# This runner owns only the surrounding process, case roots, evidence, and
+# cancellation lifetime; it never scans, closes, or reallocates a port.
 cleanup_server() {
-  if [ -n "${SERVER_PID}" ] && kill -0 "${SERVER_PID}" 2>/dev/null; then
-    kill "${SERVER_PID}" 2>/dev/null || true
-    wait "${SERVER_PID}" 2>/dev/null || true
+  local cleanup_status=0
+  local pre_signal_timeout_ms=0
+  if [ -z "${SERVER_RECORD}" ]; then
+    return 0
+  fi
+
+  if [ -n "${SERVER_URL}" ] && [ -n "${SERVER_ADMIN_TOKEN}" ] && \
+      node "${PROCESS_SUPERVISOR}" status --record "${SERVER_RECORD}"; then
+    if ! printf '%s' "${SERVER_ADMIN_TOKEN}" | \
+        node "${LIFETIME_ADAPTER}" shutdown --url "${SERVER_URL}"; then
+      echo "server did not accept graceful shutdown; applying the owned process-group fallback" >&2
+    else
+      pre_signal_timeout_ms=10000
+    fi
+  fi
+  if ! node "${PROCESS_SUPERVISOR}" stop --record "${SERVER_RECORD}" \
+      --pre-signal-timeout-ms "${pre_signal_timeout_ms}"; then
+    cleanup_status=1
+  fi
+  if [ "${cleanup_status}" -ne 0 ]; then
+    return "${cleanup_status}"
+  fi
+  if [ -n "${SERVER_DISCOVERY_PATH}" ]; then
+    rm -f "${SERVER_DISCOVERY_PATH}"
   fi
   SERVER_PID=""
-  # Defense in depth: restore compose.yaml even on an unexpected abort
-  # mid-boot, so a failed run never leaves the repo in a sidelined state.
-  restore_compose
+  SERVER_URL=""
+  SERVER_LOG=""
+  SERVER_RECORD=""
+  SERVER_DISCOVERY_PATH=""
+  SERVER_ADMIN_TOKEN=""
+  return 0
 }
-trap cleanup_server EXIT
 
-# SIGKILL bypasses the EXIT trap above, so a prior run killed mid-`dev`-boot
-# (e.g. an operator's Ctrl-\, a CI job timeout using SIGKILL, or a `kill -9`)
-# can leave compose.yaml.smoke-bak on disk with compose.yaml missing. A
-# checkout in that state silently changes the meaning of every subsequent
-# `nimbus dev`/`compose` invocation in the repo, not just this lane. Heal it
-# at lane start, before anything else runs, rather than only guarding the
-# happy-path exit. The real fix is the recorded product follow-up (an
-# opt-out so `nimbus dev` skips Compose auto-discovery for a plain example
-# boot instead of needing this sideline dance at all — see the
-# "compose-auto-discovery-on-app-boot DX question" follow-up in
-# docs/private/plans/examples-and-target-resolution-plan.md); this is a
-# lane-local recovery, not that fix.
-heal_stranded_compose_sideline() {
-  if [ -f "${COMPOSE_SIDELINE_PATH}.smoke-bak" ] && [ ! -f "${COMPOSE_SIDELINE_PATH}" ]; then
-    echo "==> found compose.yaml.smoke-bak with no compose.yaml (a prior run was likely killed mid-boot); restoring compose.yaml before proceeding"
-    mv "${COMPOSE_SIDELINE_PATH}.smoke-bak" "${COMPOSE_SIDELINE_PATH}"
+cleanup_smoke_credentials() {
+  if [ -z "${SMOKE_ENV_FILE}" ]; then
+    return 0
+  fi
+  if [ "${CREDENTIAL_DELETE_FAILURES_REMAINING}" -gt 0 ]; then
+    CREDENTIAL_DELETE_FAILURES_REMAINING=$((CREDENTIAL_DELETE_FAILURES_REMAINING - 1))
+    echo "injected smoke credential deletion failure" >&2
+    return 1
+  fi
+  if [ -e "${SMOKE_ENV_FILE}" ] && ! : >"${SMOKE_ENV_FILE}"; then
+    echo "could not scrub the smoke credential file" >&2
+    return 1
+  fi
+  if ! rm -f "${SMOKE_ENV_FILE}"; then
+    echo "could not remove the smoke credential file" >&2
+    return 1
+  fi
+  SMOKE_ENV_FILE=""
+  return 0
+}
+
+capture_source_byte_manifest() {
+  node "${WORKSPACE_ADAPTER}" capture-source \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    --output "${SOURCE_BYTE_SNAPSHOT}"
+  SOURCE_BYTE_CAPTURED=1
+}
+
+verify_source_byte_manifest() {
+  node "${WORKSPACE_ADAPTER}" verify-source \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    --snapshot "${SOURCE_BYTE_SNAPSHOT}"
+}
+
+finalize_examples_verification() {
+  local run_status=$?
+  local final_status="${run_status}"
+  local cleanup_status=0
+  local lifetime_status=0
+  trap - EXIT INT TERM
+  cleanup_server || cleanup_status=$?
+  if ! cleanup_smoke_credentials; then
+    cleanup_status=1
+  fi
+  if [ "${SOURCE_BYTE_CAPTURED}" -eq 1 ] && ! verify_source_byte_manifest; then
+    final_status=1
+  fi
+  # A cleanup_failure must retain the original root and keep the run red.
+  node "${LIFETIME_ADAPTER}" finalize \
+    --repo-root "${REPO_ROOT}" \
+    --run-root "${DATA_ROOT}" \
+    --artifact-root "${ARTIFACT_ROOT}" \
+    --run-status "${final_status}" \
+    --cleanup-status "${cleanup_status}" || lifetime_status=$?
+  if [ "${lifetime_status}" -ne 0 ]; then
+    final_status="${lifetime_status}"
+  fi
+  exit "${final_status}"
+}
+
+trap finalize_examples_verification EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+FAULT_CUT="${NIMBUS_EXAMPLES_VERIFY_FAULT_CUT:-}"
+case "${FAULT_CUT}" in
+  ""|after-run-root|after-case-root|after-server-spawn|after-server-ready|during-smoke|before-server-stop) ;;
+  *)
+    echo "unknown NIMBUS_EXAMPLES_VERIFY_FAULT_CUT=${FAULT_CUT}" >&2
+    exit 2
+    ;;
+esac
+fail_at_cut() {
+  if [ "${FAULT_CUT}" = "$1" ]; then
+    echo "injected examples verification fault at $1" >&2
+    return 97
   fi
 }
-heal_stranded_compose_sideline
+fail_at_cut after-run-root
+
+# The validated manifest owns the nine application identities, declared source
+# inputs, boot behavior, smoke behavior, surfaces, and update semantics. The
+# runner copies only those inputs to a disposable workspace before codegen,
+# provisioning, boot, or smoke can write.
+if ! node "${WORKSPACE_ADAPTER}" emit-shell \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    >"${CASE_ROWS}"; then
+  exit 1
+fi
+APPS=()
+while IFS= read -r entry; do
+  APPS+=("${entry}")
+done <"${CASE_ROWS}"
+if [ "${#APPS[@]}" -ne 9 ]; then
+  echo "case manifest emitted ${#APPS[@]} rows; expected 9" >&2
+  exit 1
+fi
+
+capture_source_byte_manifest
 
 ensure_nimbus_binary() {
   if [ -x "${NIMBUS_BIN}" ]; then
@@ -196,25 +325,17 @@ ensure_firebase_protobuf_stubs() {
 }
 
 wait_for_health() {
-  local port="$1"
-  local attempt
-  for attempt in $(seq 1 60); do
-    if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-      echo "server process (pid ${SERVER_PID}) for port ${port} exited before becoming healthy" >&2
+  local discovered_url=""
+  for _ in $(seq 1 60); do
+    if ! node "${PROCESS_SUPERVISOR}" status --record "${SERVER_RECORD}"; then
+      echo "server process (pid ${SERVER_PID}) exited before becoming healthy" >&2
       return 1
     fi
-    if curl -fsS "http://127.0.0.1:${port}/health" 2>/dev/null | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
-      # The port was ephemeral-assigned to be free at bind-test time, but a
-      # TOCTOU race (or a leftover process on an operator-pinned
-      # NIMBUS_EXAMPLES_VERIFY_PORT) could still let something other than
-      # our own launched binary answer /health. Re-check the pid right
-      # after a successful curl: if it's already gone, the response did not
-      # come from the server this run just launched — treat that as a hard
-      # failure rather than a silent pass.
-      if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-        echo "health check on port ${port} succeeded but pid ${SERVER_PID} is no longer running — a different process answered /health on this port, not the binary under test" >&2
-        return 1
-      fi
+    if discovered_url="$(node "${LIFETIME_ADAPTER}" read-discovery \
+        --path "${SERVER_DISCOVERY_PATH}" --pid "${SERVER_PID}" 2>/dev/null)" && \
+        curl -fsS "${discovered_url}/health" 2>/dev/null | \
+          grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
+      SERVER_URL="${discovered_url}"
       return 0
     fi
     sleep 0.5
@@ -223,7 +344,7 @@ wait_for_health() {
 }
 
 # Populates the global ENV_ARGS array with "KEY=VAL" elements from a
-# comma-separated list, suitable for `env "${ENV_ARGS[@]}" <command>`.
+# comma-separated manifest field.
 # Pass "-" for an empty array.
 ENV_ARGS=()
 build_env_args() {
@@ -241,159 +362,333 @@ build_env_args() {
   IFS="${old_ifs}"
 }
 
-boot_server() {
-  local app_dir="$1" data_dir="$2" boot_flags="$3" boot_env="$4" needs_app_dir_boot="$5" boot_mode="$6"
-  local extra_flag=()
-  if [ "${boot_flags}" != "-" ]; then
-    extra_flag=("${boot_flags}")
+COMMAND_ENV_FLAGS=()
+build_command_env_flags() {
+  build_env_args "$1"
+  COMMAND_ENV_FLAGS=()
+  local pair
+  for pair in ${ENV_ARGS[@]+"${ENV_ARGS[@]}"}; do
+    COMMAND_ENV_FLAGS+=("--env" "${pair}")
+  done
+}
+
+FLAG_ARGS=()
+build_flag_args() {
+  FLAG_ARGS=()
+  local list="$1"
+  if [ "${list}" = "-" ]; then
+    return
   fi
+  local old_ifs="${IFS}"
+  IFS=','
+  local flag
+  for flag in ${list}; do
+    FLAG_ARGS+=("${flag}")
+  done
+  IFS="${old_ifs}"
+}
+
+boot_server() {
+  local app_dir="$1" boot_flags="$2" boot_env="$3" needs_app_dir_boot="$4" boot_mode="$5" surfaces="$6"
+  build_flag_args "${boot_flags}"
+  local extra_flag=(${FLAG_ARGS[@]+"${FLAG_ARGS[@]}"})
   if [ "${needs_app_dir_boot}" = "1" ]; then
     extra_flag+=("--app-dir" "${app_dir}")
   fi
-  build_env_args "${boot_env}"
+  build_command_env_flags "${boot_env}"
   local subcommand=(start)
   if [ "${boot_mode}" = "dev" ]; then
-    sideline_compose
     subcommand=(dev --no-open --once)
+  else
+    case ",${surfaces}," in *",mongodb-wire,"*) ;; *) extra_flag+=("--no-mongodb") ;; esac
+    case ",${surfaces}," in *",dynamodb-wire,"*) ;; *) extra_flag+=("--no-dynamodb") ;; esac
+    case ",${surfaces}," in *",s3-wire,"*) ;; *) extra_flag+=("--no-s3") ;; esac
+    case ",${surfaces}," in *",firestore-rest,"*) ;; *) extra_flag+=("--no-firestore") ;; esac
+    case ",${surfaces}," in *",cloudflare-http,"*) ;; *) extra_flag+=("--no-cloudflare") ;; esac
   fi
   # The `${ARR[@]+"${ARR[@]}"}` form (rather than a bare `"${ARR[@]}"`) is
   # required because bash 3.2 (macOS system bash) treats expanding an empty
   # array under `set -u` as an unbound-variable error; this form guards it.
-  env ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} "${NIMBUS_BIN}" "${subcommand[@]}" \
-    --port "${PORT}" \
-    --data-dir "${data_dir}" \
-    ${extra_flag[@]+"${extra_flag[@]}"} \
-    >"${SERVER_LOG}" 2>&1 &
-  SERVER_PID=$!
-  local health_status=0
-  wait_for_health "${PORT}" || health_status=$?
-  # Restore compose.yaml as soon as the boot has resolved (health or
-  # failure) rather than holding it sidelined for the smoke's whole
-  # duration — the sideline only needs to cover the compose
-  # auto-discovery window at startup.
-  if [ "${boot_mode}" = "dev" ]; then
-    restore_compose
+  SERVER_RECORD="${case_process_root}/server.json"
+  SERVER_DISCOVERY_PATH="${case_discovery_path}"
+  SERVER_LOG="${case_log_root}/server.log"
+  local spawn_status=0
+  SERVER_PID="$(node "${PROCESS_SUPERVISOR}" spawn \
+    --record "${SERVER_RECORD}" \
+    --log "${SERVER_LOG}" \
+    --clear-prefix NIMBUS_ \
+    ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
+    ${COMMAND_ENV_FLAGS[@]+"${COMMAND_ENV_FLAGS[@]}"} \
+    -- "${NIMBUS_BIN}" "${subcommand[@]}" \
+    --port 0 \
+    --data-dir "${case_data_root}" \
+    --control-data-dir "${case_control_root}" \
+    --network-state-dir "${NETWORK_STATE_ROOT}" \
+    ${extra_flag[@]+"${extra_flag[@]}"} )" || spawn_status=$?
+  if [ "${spawn_status}" -ne 0 ]; then
+    return "${spawn_status}"
   fi
+  fail_at_cut after-server-spawn || return $?
+  local health_status=0
+  wait_for_health || health_status=$?
   if [ "${health_status}" -ne 0 ]; then
     echo "server for ${app_dir} did not become healthy; log:" >&2
     cat "${SERVER_LOG}" >&2
     return 1
   fi
+  SERVER_ADMIN_TOKEN="$(node "${PROCESS_SUPERVISOR}" exec \
+    --cwd "${REPO_ROOT}" \
+    --clear-prefix NIMBUS_ \
+    ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
+    -- "${NIMBUS_BIN}" auth token 2>/dev/null)"
+  if [ -z "${SERVER_ADMIN_TOKEN}" ]; then
+    echo "server for ${app_dir} did not create a case-local admin token" >&2
+    return 1
+  fi
+  fail_at_cut after-server-ready || return $?
+}
+
+CASE_APP_DIR=""
+CASE_ENV_FLAGS=()
+create_case_context() {
+  local name="$1" workspace="$2" case_row
+  case_row="$(node "${LIFETIME_ADAPTER}" create-case \
+    --repo-root "${REPO_ROOT}" \
+    --run-root "${DATA_ROOT}" \
+    --artifact-root "${ARTIFACT_ROOT}" \
+    --name "${name}" \
+    --workspace "${workspace}")"
+  IFS='|' read -r _case_root case_home_root case_auth_root case_discovery_root \
+    case_discovery_path case_audit_root case_config_root case_windows_root \
+    case_app_root case_data_root case_control_root case_log_root \
+    case_result_root case_process_root <<<"${case_row}"
+  CASE_APP_DIR="${case_app_root}"
+  CASE_ENV_FLAGS=(
+    "--env" "HOME=${case_home_root}"
+    "--env" "TMPDIR=${case_discovery_root}"
+    "--env" "XDG_CONFIG_HOME=${case_config_root}"
+    "--env" "XDG_DATA_HOME=${case_auth_root}"
+    "--env" "XDG_STATE_HOME=${case_audit_root}"
+    "--env" "XDG_RUNTIME_DIR=${case_discovery_root}"
+    "--env" "LOCALAPPDATA=${case_windows_root}"
+    "--env" "USERPROFILE=${case_home_root}"
+    "--env" "NIMBUS_NETWORK_STATE_DIR=${NETWORK_STATE_ROOT}"
+    "--env" "NIMBUS_DATA_DIR=${case_data_root}"
+    "--env" "NIMBUS_CONTROL_DATA_DIR=${case_control_root}"
+  )
+}
+
+prepare_case_workspace() {
+  local name="$1" workspace="$2"
+  create_case_context "${name}" "${workspace}"
+  node "${WORKSPACE_ADAPTER}" prepare \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    --case "${name}" \
+    --destination "${CASE_APP_DIR}" \
+    >/dev/null
+}
+
+refresh_case_dependencies() {
+  local app_dir="$1"
+  node "${WORKSPACE_ADAPTER}" refresh-dependencies \
+    --destination "${app_dir}" \
+    >/dev/null
 }
 
 stop_server() {
-  if [ -n "${SERVER_PID}" ]; then
-    kill "${SERVER_PID}" 2>/dev/null || true
-    wait "${SERVER_PID}" 2>/dev/null || true
-    SERVER_PID=""
-  fi
+  cleanup_server
 }
 
-# EX5.1's required process-level stdio-contract check: spawn the real
-# `nimbus run` binary, capture stdout and stderr to separate files, assert
-# stdout alone parses as the result JSON and the resolved-target banner is
-# stderr-only. Runs against the already-booted convex/tasks server.
-#
-# Passes an explicit TARGET URL rather than relying on bare local discovery.
-# `nimbus run functions ...` with TARGET omitted resolves through
-# LocalDiscovery, which unconditionally attaches the on-disk local admin
-# token as a bearer (crates/nimbus-cli/src/local_server_client.rs); the
-# server's Convex-style auth verifier then 401s that bearer on every example
-# app because none configure convex/auth.config.ts
-# (crates/nimbus-convex/src/auth/verifier/identity.rs) — a genuine, systemic
-# nimbus-cli defect outside this plan's crates/** ownership, reproduced live
-# against both convex/tasks and nimbus/agent-worker. Passing the TARGET URL
-# explicitly instead routes through invoke_remote_run_function
-# (crates/nimbus-cli/src/run.rs), which sends no Authorization header at
-# all; the request lands anonymous, matching how the smoke.ts scripts' own
-# REST clients already succeed under the dev-mode anonymous-team bypass.
+# Spawn the real `nimbus run` binary through explicit and bare-local target
+# resolution. Each stdout must contain only result JSON. Each banner stays on
+# stderr, and both target forms must return the same value.
 check_run_stdio_contract() {
   local app_dir="$1" target_url="$2"
-  local stdout_file="${DATA_ROOT}/run-stdio-contract.stdout"
-  local stderr_file="${DATA_ROOT}/run-stdio-contract.stderr"
+  local explicit_stdout="${case_result_root}/run-stdio-contract.explicit.stdout"
+  local explicit_stderr="${case_result_root}/run-stdio-contract.explicit.stderr"
+  local local_stdout="${case_result_root}/run-stdio-contract.local.stdout"
+  local local_stderr="${case_result_root}/run-stdio-contract.local.stderr"
+  local wrong_silo_stdout="${case_result_root}/run-stdio-contract.wrong-silo.stdout"
+  local wrong_silo_stderr="${case_result_root}/run-stdio-contract.wrong-silo.stderr"
+  local invalid_auth_body="${case_result_root}/run-stdio-contract.invalid-auth.json"
 
   echo "    stdio-contract: nimbus run ${target_url} functions tasks:list"
-  if ! "${NIMBUS_BIN}" run "${target_url}" functions tasks:list \
+  if ! node "${PROCESS_SUPERVISOR}" exec --cwd "${app_dir}" \
+      --clear-prefix NIMBUS_ ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
+      -- "${NIMBUS_BIN}" run "${target_url}" functions tasks:list \
       --app "${app_dir}" --tenant demo \
-      >"${stdout_file}" 2>"${stderr_file}"; then
-    echo "FAIL stdio-contract: nimbus run functions tasks:list exited non-zero" >&2
+      >"${explicit_stdout}" 2>"${explicit_stderr}"; then
+    echo "FAIL stdio-contract: explicit nimbus run exited non-zero" >&2
     echo "--- stdout ---" >&2
-    cat "${stdout_file}" >&2
+    cat "${explicit_stdout}" >&2
     echo "--- stderr ---" >&2
-    cat "${stderr_file}" >&2
+    cat "${explicit_stderr}" >&2
     return 1
   fi
 
-  if ! node -e "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))" "${stdout_file}"; then
-    echo "FAIL stdio-contract: stdout did not parse as JSON" >&2
+  echo "    stdio-contract: nimbus run functions tasks:list (local discovery)"
+  if ! node "${PROCESS_SUPERVISOR}" exec --cwd "${app_dir}" \
+      --clear-prefix NIMBUS_ ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
+      -- "${NIMBUS_BIN}" run functions tasks:list \
+      --app "${app_dir}" --tenant demo \
+      >"${local_stdout}" 2>"${local_stderr}"; then
+    echo "FAIL stdio-contract: bare-local nimbus run exited non-zero" >&2
     echo "--- stdout ---" >&2
-    cat "${stdout_file}" >&2
-    return 1
-  fi
-
-  if ! grep -q "Running against" "${stderr_file}"; then
-    echo "FAIL stdio-contract: resolved-target banner missing from stderr" >&2
+    cat "${local_stdout}" >&2
     echo "--- stderr ---" >&2
-    cat "${stderr_file}" >&2
+    cat "${local_stderr}" >&2
     return 1
   fi
 
-  if grep -q "Running against" "${stdout_file}"; then
-    echo "FAIL stdio-contract: resolved-target banner leaked into stdout" >&2
+  if ! node -e '
+const fs = require("fs");
+const assert = require("assert");
+const explicit = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const local = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+assert.deepStrictEqual(local, explicit);
+' "${explicit_stdout}" "${local_stdout}"; then
+    echo "FAIL stdio-contract: explicit and bare-local JSON results differ" >&2
     return 1
   fi
 
-  echo "PASS stdio-contract: stdout is clean JSON, banner is stderr-only"
+  local stdout_file stderr_file
+  for stdout_file in "${explicit_stdout}" "${local_stdout}"; do
+    if grep -q "Running against" "${stdout_file}"; then
+      echo "FAIL stdio-contract: resolved-target banner leaked into ${stdout_file}" >&2
+      return 1
+    fi
+  done
+  for stderr_file in "${explicit_stderr}" "${local_stderr}"; do
+    if ! grep -q "Running against" "${stderr_file}"; then
+      echo "FAIL stdio-contract: resolved-target banner missing from ${stderr_file}" >&2
+      return 1
+    fi
+  done
+
+  if node "${PROCESS_SUPERVISOR}" exec --cwd "${app_dir}" \
+      --clear-prefix NIMBUS_ ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
+      -- "${NIMBUS_BIN}" run "${target_url}" functions tasks:list \
+      --app "${app_dir}" --tenant avr6-wrong-silo \
+      >"${wrong_silo_stdout}" 2>"${wrong_silo_stderr}"; then
+    echo "FAIL stdio-contract: an explicit target selected an unprovisioned silo" >&2
+    return 1
+  fi
+  if [ -s "${wrong_silo_stdout}" ]; then
+    echo "FAIL stdio-contract: wrong-silo refusal wrote result data to stdout" >&2
+    cat "${wrong_silo_stdout}" >&2
+    return 1
+  fi
+
+  local invalid_auth_status
+  invalid_auth_status="$(curl -sS -o "${invalid_auth_body}" -w '%{http_code}' \
+    -H 'content-type: application/json' \
+    -H 'authorization: Bearer invalid.avr6.application.credential' \
+    --data '{"name":"tasks:list","args":{}}' \
+    "${target_url}/convex/demo/query")"
+  if [ "${invalid_auth_status}" != "401" ]; then
+    echo "FAIL stdio-contract: invalid application credential returned HTTP ${invalid_auth_status}, expected 401" >&2
+    cat "${invalid_auth_body}" >&2
+    return 1
+  fi
+
+  echo "PASS stdio-contract: target forms match; stdio is clean; wrong silo and invalid application auth fail closed"
+}
+
+write_smoke_env_file() {
+  local name="$1" app_dir="$2" generated=""
+  generated="$(node "${WORKSPACE_ADAPTER}" emit-generated-env \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    --case "${name}" \
+    --destination "${app_dir}")"
+  case "${SERVER_ADMIN_TOKEN}" in
+    *$'\n'*|*$'\r'*)
+      echo "case-local admin token contains an invalid line break" >&2
+      return 1
+      ;;
+  esac
+  SMOKE_ENV_FILE="${case_auth_root}/smoke.env"
+  (
+    umask 077
+    {
+      printf 'NIMBUS_ADMIN_TOKEN=%s\n' "${SERVER_ADMIN_TOKEN}"
+      if [ -n "${generated}" ]; then
+        printf '%s\n' "${generated}"
+      fi
+    } >"${SMOKE_ENV_FILE}"
+  )
+  chmod 600 "${SMOKE_ENV_FILE}"
 }
 
 run_one() {
-  local name="$1" workspace="$2" app_dir="$3" needs_codegen="$4" needs_app_dir_boot="$5"
-  local boot_env="$6" boot_flags="$7" smoke_env="$8" boot_mode="$9"
+  local name="$1" workspace="$2" _source_app_dir="$3" needs_codegen="$4" needs_app_dir_boot="$5"
+  local boot_env="$6" boot_flags="$7" smoke_env="$8" boot_mode="$9" smoke_command="${10}"
+  local stdio_contract="${11}" _update_semantics="${12}" surfaces="${13}"
   echo "==> ${name}"
+
+  prepare_case_workspace "${name}" "${workspace}"
+  fail_at_cut after-case-root
+  local app_dir="${CASE_APP_DIR}"
 
   if [ "${needs_codegen}" = "1" ]; then
     echo "    codegen (before boot, avoids the live-server bundle race)"
-    npm run codegen -w "${workspace}"
+    node "${PROCESS_SUPERVISOR}" exec --cwd "${app_dir}" \
+      --clear-prefix NIMBUS_ ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
+      -- npm run codegen
   fi
 
-  local data_dir="${DATA_ROOT}/$(echo "${workspace}" | tr '/' '-')"
-  mkdir -p "${data_dir}"
-  SERVER_LOG="${data_dir}.server.log"
-
-  if ! boot_server "${app_dir}" "${data_dir}" "${boot_flags}" "${boot_env}" "${needs_app_dir_boot}" "${boot_mode}"; then
+  if ! boot_server "${app_dir}" "${boot_flags}" "${boot_env}" "${needs_app_dir_boot}" "${boot_mode}" "${surfaces}"; then
     exit 1
   fi
+  if [ "${needs_app_dir_boot}" = "1" ]; then
+    refresh_case_dependencies "${app_dir}"
+  fi
 
-  local admin_token=""
-  admin_token="$("${NIMBUS_BIN}" auth token 2>/dev/null || true)"
-
-  build_env_args "${smoke_env}"
+  smoke_env="${smoke_env//\$\{NIMBUS_URL\}/${SERVER_URL}}"
+  build_command_env_flags "${smoke_env}"
+  write_smoke_env_file "${name}" "${app_dir}"
+  fail_at_cut during-smoke
   local smoke_status=0
-  if [ "${needs_codegen}" = "1" ]; then
+  if [ "${smoke_command}" = "node" ]; then
     # Codegen already ran above; `npm run smoke` re-chains `codegen &&`,
     # which would redundantly re-trigger client codegen against a server
     # that already read the bundle once at its own boot preflight. Call
     # smoke.ts directly instead.
-    (cd "${app_dir}" && env NIMBUS_ADMIN_TOKEN="${admin_token}" ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
-      node --experimental-strip-types ./smoke.ts) || smoke_status=$?
+    node "${PROCESS_SUPERVISOR}" exec --cwd "${app_dir}" \
+      --clear-prefix NIMBUS_ \
+      ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
+      --env-file "${SMOKE_ENV_FILE}" \
+      ${COMMAND_ENV_FLAGS[@]+"${COMMAND_ENV_FLAGS[@]}"} \
+      -- node --experimental-strip-types ./smoke.ts || smoke_status=$?
   else
-    (env NIMBUS_ADMIN_TOKEN="${admin_token}" ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
-      npm run smoke -w "${workspace}") || smoke_status=$?
+    node "${PROCESS_SUPERVISOR}" exec --cwd "${app_dir}" \
+      --clear-prefix NIMBUS_ \
+      ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
+      --env-file "${SMOKE_ENV_FILE}" \
+      ${COMMAND_ENV_FLAGS[@]+"${COMMAND_ENV_FLAGS[@]}"} \
+      -- npm run smoke || smoke_status=$?
+  fi
+  if ! cleanup_smoke_credentials; then
+    echo "FAIL ${name}: smoke credentials did not settle" >&2
+    smoke_status=1
   fi
 
-  if [ "${smoke_status}" -eq 0 ] && [ "${name}" = "convex/tasks" ]; then
-    check_run_stdio_contract "${app_dir}" "http://127.0.0.1:${PORT}" || smoke_status=$?
+  if [ "${smoke_status}" -eq 0 ] && [ "${stdio_contract}" = "1" ]; then
+    check_run_stdio_contract "${app_dir}" "${SERVER_URL}" || smoke_status=$?
   fi
 
-  stop_server
+  local completed_server_log="${SERVER_LOG}"
+  fail_at_cut before-server-stop
+  stop_server || smoke_status=1
 
   if [ "${smoke_status}" -ne 0 ]; then
     echo "FAIL ${name}" >&2
     # A request-level smoke failure is invisible without the server's side of
     # the story; dump its log tail like the health-failure path already does.
-    if [ -f "${SERVER_LOG}" ]; then
+    if [ -f "${completed_server_log}" ]; then
       echo "server log tail for ${name}:" >&2
-      tail -n 60 "${SERVER_LOG}" >&2
+      tail -n 60 "${completed_server_log}" >&2
     fi
     exit "${smoke_status}"
   fi
@@ -409,12 +704,12 @@ ONLY="${NIMBUS_EXAMPLES_VERIFY_ONLY:-}"
 ONLY_MATCHED=0
 
 for entry in "${APPS[@]}"; do
-  IFS='|' read -r name workspace app_dir needs_codegen needs_app_dir_boot boot_env boot_flags smoke_env boot_mode <<<"${entry}"
+  IFS='|' read -r name workspace app_dir needs_codegen needs_app_dir_boot boot_env boot_flags smoke_env boot_mode smoke_command stdio_contract update_semantics surfaces <<<"${entry}"
   if [ -n "${ONLY}" ] && [ "${name}" != "${ONLY}" ]; then
     continue
   fi
   ONLY_MATCHED=1
-  run_one "${name}" "${workspace}" "${app_dir}" "${needs_codegen}" "${needs_app_dir_boot}" "${boot_env}" "${boot_flags}" "${smoke_env}" "${boot_mode}"
+  run_one "${name}" "${workspace}" "${app_dir}" "${needs_codegen}" "${needs_app_dir_boot}" "${boot_env}" "${boot_flags}" "${smoke_env}" "${boot_mode}" "${smoke_command}" "${stdio_contract}" "${update_semantics}" "${surfaces}"
 done
 
 # An ONLY value that matches nothing used to fall straight through the loop

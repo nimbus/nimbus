@@ -121,22 +121,46 @@ pub async fn record_system_event_async(
     correlation_id: Option<&str>,
 ) -> Result<()> {
     ensure_system_tenant_async(engine).await?;
+    let fields = system_event_fields(
+        source,
+        level,
+        category,
+        message,
+        data,
+        correlation_id,
+        unix_time_millis()?,
+    );
     engine
         .insert_document_async(
             system_tenant_id()?,
             SystemTable::Events.table_name()?,
-            object_fields(json!({
-                "source": source,
-                "level": level,
-                "category": category,
-                "message": message,
-                "data": data,
-                "correlationId": correlation_id,
-                "createdAt": unix_time_millis()?,
-            })),
+            fields,
         )
         .await?;
     Ok(())
+}
+
+fn system_event_fields(
+    source: &str,
+    level: &str,
+    category: &str,
+    message: &str,
+    data: Value,
+    correlation_id: Option<&str>,
+    created_at: u64,
+) -> Map<String, Value> {
+    let mut fields = object_fields(json!({
+        "source": source,
+        "level": level,
+        "category": category,
+        "message": message,
+        "data": data,
+        "createdAt": created_at,
+    }));
+    if let Some(correlation_id) = correlation_id {
+        fields.insert("correlationId".to_owned(), json!(correlation_id));
+    }
+    fields
 }
 
 #[derive(Clone)]
@@ -495,5 +519,33 @@ mod tests {
 
         assert_eq!(started_at_or_else(&missing, || Ok(7)).unwrap(), 7);
         assert_eq!(started_at_or_else(&invalid, || Ok(9)).unwrap(), 9);
+    }
+
+    #[test]
+    fn system_event_omits_absent_optional_correlation_id() {
+        let absent = system_event_fields(
+            "system",
+            "info",
+            "lifecycle",
+            "server shutdown requested",
+            json!({}),
+            None,
+            42,
+        );
+        assert!(
+            !absent.contains_key("correlationId"),
+            "an absent optional field must be omitted instead of written as schema-invalid null"
+        );
+
+        let present = system_event_fields(
+            "system",
+            "info",
+            "lifecycle",
+            "server shutdown requested",
+            json!({}),
+            Some("request-7"),
+            42,
+        );
+        assert_eq!(present.get("correlationId"), Some(&json!("request-7")));
     }
 }

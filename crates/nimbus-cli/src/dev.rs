@@ -58,6 +58,11 @@ pub(crate) struct DevCommand {
     #[arg(long)]
     pub(crate) compose_file: Vec<PathBuf>,
 
+    /// Skip `COMPOSE_FILE` and walk-up Compose discovery for this dev session.
+    /// Do not combine this option with `--compose-file`.
+    #[arg(long, default_value_t = false, conflicts_with = "compose_file")]
+    pub(crate) no_compose_discovery: bool,
+
     /// Run startup only, without the watched codegen loop.
     #[arg(long, default_value_t = false)]
     pub(crate) once: bool,
@@ -74,9 +79,14 @@ pub(crate) struct DevCommand {
     #[arg(long, value_enum, default_value_t = DevTailLogsMode::PauseOnSync)]
     pub(crate) tail_logs: DevTailLogsMode,
 
-    /// Shared local dev persistence root for tenant data and control state.
+    /// Local dev persistence root for tenant data.
     #[arg(long)]
     pub(crate) data_dir: Option<PathBuf>,
+
+    /// Optional local dev control-plane persistence root. Defaults to the
+    /// tenant data root when omitted.
+    #[arg(long)]
+    pub(crate) control_data_dir: Option<PathBuf>,
 
     /// Stable OS-node root for host-global network allocation authority.
     ///
