@@ -2,7 +2,12 @@
 
 import assert from "node:assert/strict";
 
-import { evaluateSamples } from "./examples-verify-benchmark.mjs";
+import {
+  evaluateSamples,
+  reportSampleEvidence,
+  validateSampleEvidence,
+} from "./examples-verify-benchmark.mjs";
+import { junit } from "./examples-verify-report.mjs";
 
 const request = {
   serialSamples: 3,
@@ -48,6 +53,52 @@ function passingSamples() {
     sample("parallel-04", "parallel", 45),
     sample("parallel-05", "parallel", 50),
   ];
+}
+
+function benchmarkReportFixture() {
+  const cases = [
+    { name: "first", surface: "native-http", updateSemantics: "push", port: 10_001 },
+    { name: "second", surface: "convex-http", updateSemantics: "polling", port: 10_002 },
+  ].map((item) => ({
+    name: item.name,
+    desired: {
+      bootMode: "start",
+      surfaces: [item.surface],
+      updateSemantics: item.updateSemantics,
+      expectedAnchors: [`${item.name}.pass`],
+    },
+    observed: {
+      status: "passed",
+      startedAt: "2026-08-18T00:00:01.000Z",
+      completedAt: "2026-08-18T00:00:02.000Z",
+      durationMs: 1_000,
+      exitCode: 0,
+      endpoint: { protocol: "http", host: "127.0.0.1", port: item.port },
+      anchors: [`${item.name}.pass`],
+    },
+    cleanup: { status: "passed" },
+  }));
+  return {
+    schemaVersion: 1,
+    kind: "nimbus.examples-verification",
+    run: {
+      id: "nimbus-examples-verify.benchmark-fixture",
+      status: "passed",
+      startedAt: "2026-08-18T00:00:00.000Z",
+      completedAt: "2026-08-18T00:00:03.000Z",
+      durationMs: 3_000,
+      exitCode: 0,
+      selectedCases: cases.map((item) => item.name),
+    },
+    provenance: {
+      binary: { sha256: "a".repeat(64), version: "nimbus 1" },
+      manifest: { schemaVersion: 1, sha256: "b".repeat(64) },
+      node: { version: "v24.0.0" },
+      source: { beforeSha256: "c".repeat(64), afterSha256: "c".repeat(64), status: "matched" },
+    },
+    cases,
+    cleanup: { status: "passed", exitCode: 0, artifactRetained: false, reason: "run resources removed" },
+  };
 }
 
 function passing_campaign_uses_medians_and_all_contracts() {
@@ -102,12 +153,42 @@ function duplicate_ports_fail_isolation() {
   assert.equal(result.checks.find((item) => item.name === "case-ports-are-distinct").status, "failed");
 }
 
+function referenced_report_and_junit_are_authoritative() {
+  const report = benchmarkReportFixture();
+  const evidence = {
+    ...sample("serial-01", "serial", 100),
+    ...reportSampleEvidence(report),
+    startedAt: "2026-08-18T00:00:00.000Z",
+    completedAt: "2026-08-18T00:00:03.000Z",
+    wallDurationMs: 3_000,
+  };
+  assert.equal(validateSampleEvidence(evidence, report, junit(report), "fixture"), evidence);
+
+  const tampered = structuredClone(evidence);
+  tampered.reportDurationMs = 1;
+  assert.throws(
+    () => validateSampleEvidence(tampered, report, junit(report), "fixture"),
+    /reportDurationMs contradicts its canonical report/u,
+  );
+  assert.throws(
+    () => validateSampleEvidence(evidence, report, `${junit(report)}<!-- tampered -->`, "fixture"),
+    /JUnit contradicts its canonical report/u,
+  );
+  const shortened = structuredClone(evidence);
+  shortened.wallDurationMs = 1;
+  assert.throws(
+    () => validateSampleEvidence(shortened, report, junit(report), "fixture"),
+    /wallDurationMs contradicts its timestamps/u,
+  );
+}
+
 const tests = [
   passing_campaign_uses_medians_and_all_contracts,
   busy_or_different_host_sample_is_invalid_not_failed,
   coverage_or_order_drift_fails,
   relative_and_absolute_budgets_fail_independently,
   duplicate_ports_fail_isolation,
+  referenced_report_and_junit_are_authoritative,
 ];
 
 let failed = 0;

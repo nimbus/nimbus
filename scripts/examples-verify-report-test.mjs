@@ -162,6 +162,30 @@ async function report_order_follows_manifest_selection() {
   assert.equal(ordered[1].observed.status, "not-run");
 }
 
+async function started_case_without_record_is_failed_not_skipped() {
+  const manifestCases = [desired("first"), desired("second")];
+  const completedAt = "2026-08-18T00:00:04.000Z";
+  const ordered = deterministicCases(
+    ["first", "second"],
+    manifestCases,
+    [caseRecord("first")],
+    {
+      caseStarts: [{
+        schemaVersion: 1,
+        name: "second",
+        startedAt: "2026-08-18T00:00:03.000Z",
+      }],
+      completedAt,
+      runExitCode: 0,
+    },
+  );
+  assert.equal(ordered[1].observed.status, "failed");
+  assert.equal(ordered[1].observed.exitCode, 1);
+  assert.equal(ordered[1].observed.startedAt, "2026-08-18T00:00:03.000Z");
+  assert.equal(ordered[1].observed.completedAt, completedAt);
+  assert.equal(ordered[1].cleanup.status, "failed");
+}
+
 async function success_junit_projection_is_deterministic() {
   const report = reportFixture();
   const first = junit(report);
@@ -206,6 +230,7 @@ const tests = [
   credential_redaction_is_recursive,
   interrupted_atomic_write_preserves_canonical_file,
   report_order_follows_manifest_selection,
+  started_case_without_record_is_failed_not_skipped,
   success_junit_projection_is_deterministic,
   failure_junit_projects_case_and_cleanup_truth,
   smoke_anchor_parser_keeps_only_contract_lines,

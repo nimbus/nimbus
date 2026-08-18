@@ -371,6 +371,22 @@ async function source_byte_manifest_detects_mutation_without_restore() {
   });
 }
 
+async function source_byte_manifest_rejects_index_hidden_mutation() {
+  for (const flag of ["--assume-unchanged", "--skip-worktree"]) {
+    await withSourceFixture(async ({ root, repoRoot, manifestPath }) => {
+      const relativePath = "apps/case-3/input.txt";
+      const snapshotPath = path.join(root, "before.json");
+      await captureSourceByteManifest({ manifestPath, repoRoot, outputPath: snapshotPath });
+      run("git", ["-C", repoRoot, "update-index", flag, relativePath]);
+      await fs.writeFile(path.join(repoRoot, relativePath), `hidden-by-${flag}\n`);
+      await assert.rejects(
+        verifySourceByteManifest({ manifestPath, repoRoot, snapshotPath }),
+        /source verification refuses Git index-hidden paths: apps\/case-3\/input\.txt/u,
+      );
+    });
+  }
+}
+
 const tests = [
   manifest_rejects_duplicate_or_incomplete_case,
   shell_rows_include_declared_surfaces,
@@ -381,6 +397,7 @@ const tests = [
   dirty_source_bytes_survive_failure,
   staged_source_bytes_survive_failure,
   source_byte_manifest_detects_mutation_without_restore,
+  source_byte_manifest_rejects_index_hidden_mutation,
 ];
 
 for (const test of tests) {

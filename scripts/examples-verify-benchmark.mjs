@@ -9,7 +9,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { validateReport, writeJsonAtomically } from "./examples-verify-report.mjs";
+import { junit, validateReport, writeJsonAtomically } from "./examples-verify-report.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -142,6 +142,38 @@ function provenanceEvidence(report) {
   };
 }
 
+export function reportSampleEvidence(report) {
+  validateReport(report);
+  return {
+    reportId: report.run.id,
+    reportDurationMs: report.run.durationMs,
+    reportStatus: report.run.status,
+    cleanupStatus: report.cleanup.status,
+    sourceStatus: report.provenance.source.status,
+    coverage: coverageEvidence(report),
+    provenance: provenanceEvidence(report),
+    ports: report.cases.map((item) => item.observed.endpoint?.port).filter(Number.isSafeInteger),
+  };
+}
+
+export function validateSampleEvidence(sample, report, junitText, label = "benchmark sample") {
+  const expected = reportSampleEvidence(report);
+  invariant(junitText === junit(report), `${label} JUnit contradicts its canonical report`);
+  for (const [key, value] of Object.entries(expected)) {
+    invariant(Object.hasOwn(sample, key), `${label}.${key} is missing`);
+    invariant(signature(sample[key]) === signature(value), `${label}.${key} contradicts its canonical report`);
+  }
+  invariant(Number.isFinite(Date.parse(sample.startedAt)), `${label}.startedAt is invalid`);
+  invariant(new Date(sample.startedAt).toISOString() === sample.startedAt, `${label}.startedAt is not canonical`);
+  invariant(Number.isFinite(Date.parse(sample.completedAt)), `${label}.completedAt is invalid`);
+  invariant(new Date(sample.completedAt).toISOString() === sample.completedAt, `${label}.completedAt is not canonical`);
+  const derivedWallDurationMs = Date.parse(sample.completedAt) - Date.parse(sample.startedAt);
+  invariant(derivedWallDurationMs >= 0, `${label} timestamps are reversed`);
+  invariant(sample.wallDurationMs === derivedWallDurationMs, `${label}.wallDurationMs contradicts its timestamps`);
+  invariant(sample.wallDurationMs >= report.run.durationMs, `${label}.wallDurationMs is shorter than its canonical report`);
+  return sample;
+}
+
 function check(name, passed, evidence) {
   return { name, status: passed ? "passed" : "failed", evidence };
 }
@@ -221,8 +253,8 @@ function reportPaths(stdout) {
 
 async function runSample({ id, mode, maxParallel, binary, benchmarkRoot, baselineFingerprint, maxSeconds, activity }) {
   const resultsRoot = path.join(benchmarkRoot, "runs", id);
-  const startedAt = new Date().toISOString();
-  const started = Date.now();
+  const startedMilliseconds = Date.now();
+  const startedAt = new Date(startedMilliseconds).toISOString();
   const result = spawnSync("bash", [RUNNER], {
     cwd: REPO_ROOT,
     env: {
@@ -235,7 +267,9 @@ async function runSample({ id, mode, maxParallel, binary, benchmarkRoot, baselin
     timeout: (maxSeconds * 1_000) + 120_000,
     maxBuffer: 64 * 1024 * 1024,
   });
-  const wallDurationMs = Date.now() - started;
+  const completedMilliseconds = Date.now();
+  const completedAt = new Date(completedMilliseconds).toISOString();
+  const wallDurationMs = completedMilliseconds - startedMilliseconds;
   if (result.error) throw result.error;
   invariant(result.status === 0, `${id} product verification failed with exit ${result.status}:\n${result.stdout}\n${result.stderr}`);
   const { reportPath, junitPath } = reportPaths(result.stdout);
@@ -244,12 +278,10 @@ async function runSample({ id, mode, maxParallel, binary, benchmarkRoot, baselin
   invariant(!relativeReportPath.startsWith("..") && !path.isAbsolute(relativeReportPath), `${id} report escaped the benchmark root`);
   invariant(!relativeJunitPath.startsWith("..") && !path.isAbsolute(relativeJunitPath), `${id} JUnit escaped the benchmark root`);
   const report = validateReport(JSON.parse(await fs.readFile(reportPath, "utf8")));
-  const junit = await fs.readFile(junitPath, "utf8");
-  invariant(/<testsuite\b/u.test(junit), `${id} JUnit is not a testsuite document`);
+  const junitText = await fs.readFile(junitPath, "utf8");
   invariant(report.run.status === "passed", `${id} report status is ${report.run.status}`);
   invariant(report.cleanup.status === "passed", `${id} cleanup status is ${report.cleanup.status}`);
   invariant(report.provenance.source.status === "matched", `${id} source status is ${report.provenance.source.status}`);
-  const completedAt = new Date().toISOString();
   const afterFingerprint = hostFingerprint();
   const fingerprintMatches = signature(afterFingerprint) === signature(baselineFingerprint);
   const sample = {
@@ -278,6 +310,7 @@ async function runSample({ id, mode, maxParallel, binary, benchmarkRoot, baselin
     provenance: provenanceEvidence(report),
     ports: report.cases.map((item) => item.observed.endpoint?.port).filter(Number.isSafeInteger),
   };
+  validateSampleEvidence(sample, report, junitText, id);
   await writeJsonAtomically(path.join(benchmarkRoot, "raw", `${id}.json`), sample);
   return sample;
 }
@@ -353,8 +386,9 @@ async function validateEvidence(verdictPath) {
     const junitPath = path.resolve(benchmarkRoot, sample.junitPath);
     invariant(reportPath.startsWith(`${benchmarkRoot}${path.sep}`), `${name} report escapes the evidence root`);
     invariant(junitPath.startsWith(`${benchmarkRoot}${path.sep}`), `${name} JUnit escapes the evidence root`);
-    validateReport(JSON.parse(await fs.readFile(reportPath, "utf8")));
-    invariant(/<testsuite\b/u.test(await fs.readFile(junitPath, "utf8")), `${name} JUnit is invalid`);
+    const report = validateReport(JSON.parse(await fs.readFile(reportPath, "utf8")));
+    const junitText = await fs.readFile(junitPath, "utf8");
+    validateSampleEvidence(sample, report, junitText, name);
     samples.push(sample);
   }
   const evaluation = evaluateSamples(samples, verdict.request);

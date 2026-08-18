@@ -366,14 +366,44 @@ function notRunCase(item) {
   };
 }
 
-export function deterministicCases(selectedCases, manifestCases, caseRecords) {
+function incompleteCase(item, start, completedAt, runExitCode) {
+  exactKeys(start, ["name", "schemaVersion", "startedAt"], `case start ${item.name}`);
+  invariant(start.schemaVersion === REPORT_SCHEMA_VERSION, `case start ${item.name} schema is invalid`);
+  invariant(start.name === item.name, `case start ${item.name} has crossed identity`);
+  validTimestamp(start.startedAt, `case start ${item.name}.startedAt`);
+  validTimestamp(completedAt, `case start ${item.name}.completedAt`);
+  return buildCaseRecord({
+    manifestCase: item,
+    startedAt: start.startedAt,
+    completedAt,
+    status: "failed",
+    exitCode: runExitCode === 0 ? 1 : runExitCode,
+    endpoint: null,
+    smokeOutput: "",
+    cleanupStatus: "failed",
+  });
+}
+
+export function deterministicCases(
+  selectedCases,
+  manifestCases,
+  caseRecords,
+  { caseStarts = [], completedAt = null, runExitCode = 1 } = {},
+) {
   const manifestByName = new Map(manifestCases.map((item) => [item.name, item]));
   const recordsByName = new Map(caseRecords.map((item) => [item.name, item]));
+  const startsByName = new Map(caseStarts.map((item) => [item.name, item]));
   invariant(recordsByName.size === caseRecords.length, "case records contain a duplicate name");
+  invariant(startsByName.size === caseStarts.length, "case starts contain a duplicate name");
   return selectedCases.map((name) => {
     const manifestCase = manifestByName.get(name);
     invariant(manifestCase, `selected case is not in the manifest: ${name}`);
-    return recordsByName.get(name) ?? notRunCase(manifestCase);
+    const record = recordsByName.get(name);
+    if (record) return record;
+    const start = startsByName.get(name);
+    return start
+      ? incompleteCase(manifestCase, start, completedAt, runExitCode)
+      : notRunCase(manifestCase);
   });
 }
 
@@ -614,12 +644,24 @@ async function finalizeReport(args) {
   const manifest = await loadValidatedManifest(state.manifestPath, state.repoRoot, { verifyInputs: false });
   const provenance = await readJson(path.join(resultRoot, "provenance.json"), "provenance");
   const caseRecords = [];
-  for (const name of state.selectedCases) {
-    const recordPath = path.join(resultRoot, "cases", `${safeSegment(name, "case name")}.json`);
-    if (await pathExists(recordPath)) caseRecords.push(await readJson(recordPath, "case result"));
-  }
-  const cases = deterministicCases(state.selectedCases, manifest.cases, caseRecords);
+  const caseStarts = [];
   const completedAt = new Date().toISOString();
+  for (const name of state.selectedCases) {
+    const caseId = safeSegment(name, "case name");
+    const recordPath = path.join(resultRoot, "cases", `${caseId}.json`);
+    if (await pathExists(recordPath)) caseRecords.push(await readJson(recordPath, "case result"));
+    const startPath = path.join(resultRoot, "case-start", `${caseId}.json`);
+    if (await pathExists(startPath)) {
+      const start = await readJson(startPath, "case start");
+      invariant(start.name === name, `case start ${name} has crossed identity`);
+      caseStarts.push(start);
+    }
+  }
+  const cases = deterministicCases(state.selectedCases, manifest.cases, caseRecords, {
+    caseStarts,
+    completedAt,
+    runExitCode,
+  });
   const cleanup = {
     status: lifetime.cleanupStatus,
     exitCode: lifetime.cleanupStatus === "passed" ? 0 : lifetime.status,

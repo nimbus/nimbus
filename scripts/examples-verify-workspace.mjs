@@ -453,6 +453,19 @@ function nulFields(buffer) {
   return buffer.toString("utf8").split("\0").filter(Boolean);
 }
 
+function rejectIndexHiddenSourcePaths(repoRoot) {
+  const hidden = [];
+  for (const record of nulFields(git(repoRoot, ["ls-files", "-v", "-z"]).stdout)) {
+    invariant(record.length >= 3 && record[1] === " ", "git ls-files returned an invalid source record");
+    const marker = record[0];
+    if (marker === "S" || /^[a-z]$/u.test(marker)) hidden.push(record.slice(2));
+  }
+  invariant(
+    hidden.length === 0,
+    `source verification refuses Git index-hidden paths: ${hidden.slice(0, 10).join(", ")}${hidden.length > 10 ? `, and ${hidden.length - 10} more` : ""}`,
+  );
+}
+
 async function buildSourceSnapshot({ manifestPath, repoRoot }) {
   const manifest = await loadValidatedManifest(manifestPath, repoRoot);
   const probe = git(repoRoot, ["rev-parse", "--is-inside-work-tree"], { allowFailure: true });
@@ -461,6 +474,7 @@ async function buildSourceSnapshot({ manifestPath, repoRoot }) {
   let indexSha256 = null;
   if (probe.status === 0 && probe.stdout.toString("utf8").trim() === "true") {
     mode = "git";
+    rejectIndexHiddenSourcePaths(repoRoot);
     indexSha256 = digest(git(repoRoot, ["ls-files", "--stage", "-z"]).stdout);
     sourcePaths = nulFields(git(repoRoot, [
       "diff",

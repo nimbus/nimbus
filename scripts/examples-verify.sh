@@ -370,6 +370,9 @@ on_worker_signal() {
   local signal_status="$1"
   trap - INT TERM
   WORKER_SIGNAL_STATUS="${signal_status}"
+  if [ -z "${ACTIVE_CASE_PID}" ]; then
+    exit "${signal_status}"
+  fi
 }
 
 case_log_path() {
@@ -389,10 +392,13 @@ CLAIMED_ENTRY=""
 claim_next_scheduled_case() {
   local index claim_path
   CLAIMED_ENTRY=""
+  if [ -d "${SCHEDULER_STOP_ROOT}" ]; then
+    return 1
+  fi
   for ((index = 0; index < ${#SCHEDULED_APPS[@]}; index += 1)); do
     claim_path="${SCHEDULER_CLAIM_ROOT}/${index}"
     if mkdir "${claim_path}" 2>/dev/null; then
-      if [ -d "${SCHEDULER_FAILURE_ROOT}" ]; then
+      if [ -d "${SCHEDULER_FAILURE_ROOT}" ] || [ -d "${SCHEDULER_STOP_ROOT}" ]; then
         return 1
       fi
       CLAIMED_ENTRY="${SCHEDULED_APPS[${index}]}"
@@ -409,10 +415,15 @@ run_worker_slot() {
   trap 'on_worker_signal 130' INT
   trap 'on_worker_signal 143' TERM
   while true; do
-    if [ -d "${SCHEDULER_FAILURE_ROOT}" ]; then
+    if [ "${WORKER_SIGNAL_STATUS}" -ne 0 ] || \
+        [ -d "${SCHEDULER_FAILURE_ROOT}" ] || \
+        [ -d "${SCHEDULER_STOP_ROOT}" ]; then
       return 0
     fi
     if ! claim_next_scheduled_case; then
+      return 0
+    fi
+    if [ "${WORKER_SIGNAL_STATUS}" -ne 0 ] || [ -d "${SCHEDULER_STOP_ROOT}" ]; then
       return 0
     fi
     entry="${CLAIMED_ENTRY}"
@@ -438,6 +449,7 @@ run_worker_slot() {
 
 stop_case_workers() {
   local pid status cleanup_status=0
+  mkdir -p "${SCHEDULER_STOP_ROOT}"
   for pid in ${CASE_WORKER_PIDS[@]+"${CASE_WORKER_PIDS[@]}"}; do
     kill -TERM "${pid}" 2>/dev/null || true
   done
@@ -1067,6 +1079,7 @@ fi
 SCHEDULER_LOG_ROOT="${DATA_ROOT}/scheduler-logs"
 SCHEDULER_FAILURE_ROOT="${DATA_ROOT}/scheduler-failure"
 SCHEDULER_CLAIM_ROOT="${DATA_ROOT}/scheduler-claims"
+SCHEDULER_STOP_ROOT="${DATA_ROOT}/scheduler-stop"
 echo "==> scheduling ${#SELECTED_APPS[@]} applications with max_parallel=${MAX_PARALLEL}"
 run_scheduled_cases
 

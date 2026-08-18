@@ -44,8 +44,8 @@ its apps, and stating exactly which of the surface's features it supports.
 
 ## Application verification
 
-The repository manifest defines nine application cases and 37 smoke
-assertions. All nine pass against a real Nimbus binary. The runner uses the
+The repository manifest defines 9 application cases and 37 smoke assertions.
+All 9 pass against a real Nimbus binary. The runner uses the
 following update semantics:
 
 | Case | Update mode | Meaning |

@@ -31,8 +31,9 @@ function test(name, body) {
 test("manifest-derived application documentation", () => {
   assert.equal(manifest.schemaVersion, 1);
   assert(Array.isArray(manifest.cases));
+  const caseCount = manifest.cases.length;
   const anchorCount = manifest.cases.reduce((total, item) => total + item.expectedAnchors.length, 0);
-  assert.match(examples, new RegExp(`nine application cases and ${anchorCount} smoke`, "u"));
+  assert.match(examples, new RegExp(`${caseCount} application cases and ${anchorCount} smoke`, "u"));
 });
 
 test("every case and update mode is documented", () => {

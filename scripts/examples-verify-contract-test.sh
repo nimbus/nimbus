@@ -128,10 +128,11 @@ NODE
         has scripts/examples-verify-scheduler-test.mjs 'failure_drains_without_starting_later_cases' &&
         has scripts/examples-verify-scheduler-test.mjs 'signal_drains_active_workers' &&
         has scripts/examples-verify.sh 'NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL' &&
-        has scripts/examples-verify.sh 'SCHEDULER_FAILURE_ROOT'
+        has scripts/examples-verify.sh 'SCHEDULER_FAILURE_ROOT' &&
+        has scripts/examples-verify.sh 'SCHEDULER_STOP_ROOT'
       ;;
     AVRC24)
-      has examples/README.md 'nine application cases' &&
+      has examples/README.md '9 application cases' &&
         has examples/README.md '37 smoke' &&
         has examples/README.md 'Node\.js.*22 and 24' &&
         has examples/README.md 'NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL' &&
@@ -245,11 +246,11 @@ NODE
       printf '%s\n' 'function evaluateSamples() {} function validateEvidence() {} parallel-relative-budget parallel-absolute-budget' >"${root}/scripts/examples-verify-benchmark.mjs"
       printf '%s\n' 'busy_or_different_host_sample_is_invalid_not_failed' >"${root}/scripts/examples-verify-benchmark-test.mjs"
       printf '%s\n' 'failure_drains_without_starting_later_cases signal_drains_active_workers' >"${root}/scripts/examples-verify-scheduler-test.mjs"
-      printf '%s\n' 'NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL SCHEDULER_FAILURE_ROOT' >"${root}/scripts/examples-verify.sh"
+      printf '%s\n' 'NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL SCHEDULER_FAILURE_ROOT SCHEDULER_STOP_ROOT' >"${root}/scripts/examples-verify.sh"
       ;;
     AVRC24)
       printf '%s\n' \
-        'nine application cases and 37 smoke assertions use Node.js 22 and 24.' \
+        '9 application cases and 37 smoke assertions use Node.js 22 and 24.' \
         'NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL' \
         'push means server-delivered changes; polling proves eventual visibility.' \
         'report.json and junit.xml; retained diagnostic artifact.' \

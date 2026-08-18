@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Renderer for nimbusdocs.com — Astro Starlight over docs/ content. Standalone npm project, deliberately not a workspace member.",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.19.0"
   },
   "scripts": {
     "dev": "astro dev",
