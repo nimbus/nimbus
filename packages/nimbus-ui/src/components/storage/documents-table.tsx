@@ -16,6 +16,12 @@ import type { DocumentOrder } from "./table-query";
 // action buttons — all of which sit inside the row.
 const INTERACTIVE = "button, a, input, label, [role='menuitem']";
 
+const PIN_L = "sticky z-10 bg-[var(--row-bg)]";
+const PIN_R = "sticky right-0 z-10 bg-[var(--row-bg)]";
+
+/** Rows shown while a page is in flight, matching PAGE_SIZE. */
+const SKELETON_ROWS = 25;
+
 type MenuState = {
   x: number;
   y: number;
@@ -31,7 +37,8 @@ export function DocumentsTable({
   page,
   columns,
   selected,
-  cursorStack,
+  pageNumber,
+  loading,
   order,
   indexBacked,
   onSort,
@@ -45,7 +52,9 @@ export function DocumentsTable({
   page: PageResponse;
   columns: string[];
   selected: Set<string>;
-  cursorStack: Array<string | null>;
+  pageNumber: number;
+  /** A page is in flight: show skeleton rows rather than another page's data. */
+  loading: boolean;
   order: DocumentOrder | null;
   indexBacked: Set<string>;
   onSort: (field: string) => void;
@@ -65,8 +74,6 @@ export function DocumentsTable({
   //
   // `--row-bg` carries the row's own background onto the pinned cells; without
   // it the scrolled columns would show straight through them.
-  const PIN_L = "sticky z-10 bg-[var(--row-bg)]";
-  const PIN_R = "sticky right-0 z-10 bg-[var(--row-bg)]";
 
   const pageIds = page.data.map((doc) => String(doc._id ?? ""));
   const selectedOnPage = pageIds.filter((id) => selected.has(id)).length;
@@ -135,9 +142,14 @@ export function DocumentsTable({
               <Th className={cn("left-0 w-px px-3", PIN_L)}>
                 <Checkbox
                   label="Select all on page"
-                  checked={allSelected}
-                  indeterminate={selectedOnPage > 0}
-                  onChange={onToggleAll}
+                  checked={!loading && allSelected}
+                  indeterminate={!loading && selectedOnPage > 0}
+                  // While a page is in flight the rows on screen are
+                  // placeholders: a select-all here would select the documents
+                  // of the page being replaced.
+                  onChange={(checked) => {
+                    if (!loading) onToggleAll(checked);
+                  }}
                   testid="documents-select-all"
                 />
               </Th>
@@ -167,125 +179,138 @@ export function DocumentsTable({
             </tr>
           </thead>
           <tbody>
-            {page.data.map((doc, index) => {
-              const id = String(doc._id ?? "");
-              const isSelected = selected.has(id);
-              return (
-                <tr
-                  key={id}
-                  ref={(el) => {
-                    rowRefs.current[index] = el;
-                  }}
-                  tabIndex={index === focusRow ? 0 : -1}
-                  aria-selected={isSelected}
-                  data-selected={isSelected || undefined}
-                  className={cn(
-                    "group h-9 cursor-pointer outline-none [&>td]:border-t [&>td]:border-app",
-                    "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[color:var(--nimbus-accent)]",
-                    isSelected
-                      ? // DESIGN.md:654 gives `--surface-2` the "selected rows"
-                        // job, with `--accent` as the selection identity in the
-                        // sanctioned left-bar form. The hover variant is
-                        // *replaced*, not stacked: emitted after the base
-                        // utilities, it would otherwise erase the selection cue
-                        // exactly while the operator is aiming at the row.
-                        "bg-surface-2 shadow-[inset_2px_0_0_var(--nimbus-accent)] [--row-bg:var(--nimbus-surface-2)]"
-                      : "[--row-bg:var(--nimbus-surface)] hover:bg-surface-2 hover:[--row-bg:var(--nimbus-surface-2)]",
-                  )}
-                  data-testid={`documents-row-${id}`}
-                  onFocus={() => setFocusRow(index)}
-                  onClick={(event: ReactMouseEvent<HTMLTableRowElement>) => {
-                    if ((event.target as HTMLElement).closest(INTERACTIVE)) {
-                      return;
-                    }
-                    onEdit(doc);
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    setMenu({
-                      x: event.clientX,
-                      y: event.clientY,
-                      doc,
-                      anchor: rowRefs.current[index],
-                    });
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowDown") {
-                      event.preventDefault();
-                      moveFocus(index, 1);
-                    } else if (event.key === "ArrowUp") {
-                      event.preventDefault();
-                      moveFocus(index, -1);
-                    } else if (
-                      (event.key === "Enter" || event.key === " ") &&
-                      event.target === event.currentTarget
-                    ) {
-                      event.preventDefault();
-                      onEdit(doc);
-                    } else if (
-                      event.key === "ContextMenu" ||
-                      (event.key === "F10" && event.shiftKey)
-                    ) {
-                      event.preventDefault();
-                      openMenuForRow(index, doc);
-                    }
-                  }}
-                >
-                  <Td className={cn("left-0 w-px px-3", PIN_L)}>
-                    <Checkbox
-                      label={`Select document ${shortId(id)}`}
-                      checked={isSelected}
-                      onChange={(checked) => onToggleOne(id, checked)}
-                      testid={`documents-select-${id}`}
-                    />
-                  </Td>
-                  {columns.map((col, i) => (
-                    <Td
-                      key={col}
+            {loading ? (
+              <SkeletonRows
+                rows={page.data.length > 0 ? page.data.length : SKELETON_ROWS}
+                columns={columns}
+              />
+            ) : null}
+            {loading
+              ? null
+              : page.data.map((doc, index) => {
+                  const id = String(doc._id ?? "");
+                  const isSelected = selected.has(id);
+                  return (
+                    <tr
+                      key={id}
+                      ref={(el) => {
+                        rowRefs.current[index] = el;
+                      }}
+                      tabIndex={index === focusRow ? 0 : -1}
+                      aria-selected={isSelected}
+                      data-selected={isSelected || undefined}
                       className={cn(
-                        "font-mono text-default",
-                        i === 0 && cn("left-[38px] border-r border-app", PIN_L),
+                        "group h-9 cursor-pointer outline-none [&>td]:border-t [&>td]:border-app",
+                        "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[color:var(--nimbus-accent)]",
+                        isSelected
+                          ? // DESIGN.md:654 gives `--surface-2` the "selected rows"
+                            // job, with `--accent` as the selection identity in the
+                            // sanctioned left-bar form. The hover variant is
+                            // *replaced*, not stacked: emitted after the base
+                            // utilities, it would otherwise erase the selection cue
+                            // exactly while the operator is aiming at the row.
+                            "bg-surface-2 shadow-[inset_2px_0_0_var(--nimbus-accent)] [--row-bg:var(--nimbus-surface-2)]"
+                          : "[--row-bg:var(--nimbus-surface)] hover:bg-surface-2 hover:[--row-bg:var(--nimbus-surface-2)]",
                       )}
+                      data-testid={`documents-row-${id}`}
+                      onFocus={() => setFocusRow(index)}
+                      onClick={(
+                        event: ReactMouseEvent<HTMLTableRowElement>,
+                      ) => {
+                        if (
+                          (event.target as HTMLElement).closest(INTERACTIVE)
+                        ) {
+                          return;
+                        }
+                        onEdit(doc);
+                      }}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setMenu({
+                          x: event.clientX,
+                          y: event.clientY,
+                          doc,
+                          anchor: rowRefs.current[index],
+                        });
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          moveFocus(index, 1);
+                        } else if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          moveFocus(index, -1);
+                        } else if (
+                          (event.key === "Enter" || event.key === " ") &&
+                          event.target === event.currentTarget
+                        ) {
+                          event.preventDefault();
+                          onEdit(doc);
+                        } else if (
+                          event.key === "ContextMenu" ||
+                          (event.key === "F10" && event.shiftKey)
+                        ) {
+                          event.preventDefault();
+                          openMenuForRow(index, doc);
+                        }
+                      }}
                     >
-                      <CellValue
-                        value={doc[col]}
-                        field={col}
-                        id={id}
-                        onExpand={() => onEdit(doc)}
-                      />
-                    </Td>
-                  ))}
-                  {/* Inline actions appear on hover and stay keyboard
+                      <Td className={cn("left-0 w-px px-3", PIN_L)}>
+                        <Checkbox
+                          label={`Select document ${shortId(id)}`}
+                          checked={isSelected}
+                          onChange={(checked) => onToggleOne(id, checked)}
+                          testid={`documents-select-${id}`}
+                        />
+                      </Td>
+                      {columns.map((col, i) => (
+                        <Td
+                          key={col}
+                          className={cn(
+                            "font-mono text-default",
+                            i === 0 &&
+                              cn("left-[38px] border-r border-app", PIN_L),
+                          )}
+                        >
+                          <CellValue
+                            value={doc[col]}
+                            field={col}
+                            id={id}
+                            onExpand={() => onEdit(doc)}
+                          />
+                        </Td>
+                      ))}
+                      {/* Inline actions appear on hover and stay keyboard
                       reachable — `opacity` keeps them in the tab order, and
                       `focus-within` reveals them when tabbed to. */}
-                  <Td
-                    align="right"
-                    className={cn(
-                      "w-px whitespace-nowrap border-l border-app",
-                      "opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
-                      PIN_R,
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onEdit(doc)}
-                      className="mr-2 rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
-                      data-testid={`documents-edit-${id}`}
-                    >
-                      edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDelete([id])}
-                      className="rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-danger hover:bg-surface"
-                      data-testid={`documents-delete-${id}`}
-                    >
-                      delete
-                    </button>
-                  </Td>
-                </tr>
-              );
-            })}
+                      <Td
+                        align="right"
+                        className={cn(
+                          "w-px whitespace-nowrap border-l border-app",
+                          "opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
+                          PIN_R,
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => onEdit(doc)}
+                          className="mr-2 rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+                          data-testid={`documents-edit-${id}`}
+                        >
+                          edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDelete([id])}
+                          className="rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-danger hover:bg-surface"
+                          data-testid={`documents-delete-${id}`}
+                        >
+                          delete
+                        </button>
+                      </Td>
+                    </tr>
+                  );
+                })}
           </tbody>
         </table>
       </div>
@@ -305,18 +330,24 @@ export function DocumentsTable({
         data-testid="documents-pagination"
       >
         <span className="tabular">
-          page {cursorStack.length} · {page.data.length} row
-          {page.data.length === 1 ? "" : "s"}
-          {selectedOnPage > 0 ? ` · ${selectedOnPage} selected` : ""}
+          page {pageNumber} ·{" "}
+          {loading ? (
+            "loading…"
+          ) : (
+            <>
+              {page.data.length} row{page.data.length === 1 ? "" : "s"}
+              {selectedOnPage > 0 ? ` · ${selectedOnPage} selected` : ""}
+            </>
+          )}
         </span>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onPrev}
-            disabled={cursorStack.length <= 1}
+            disabled={loading || pageNumber <= 1}
             className={cn(
               "rounded border border-app px-2 py-0.5 uppercase tracking-wide",
-              cursorStack.length <= 1
+              loading || pageNumber <= 1
                 ? "text-muted"
                 : "text-default hover:bg-surface",
             )}
@@ -327,10 +358,12 @@ export function DocumentsTable({
           <button
             type="button"
             onClick={onNext}
-            disabled={!page.has_more}
+            disabled={loading || !page.has_more}
             className={cn(
               "rounded border border-app px-2 py-0.5 uppercase tracking-wide",
-              !page.has_more ? "text-muted" : "text-default hover:bg-surface",
+              loading || !page.has_more
+                ? "text-muted"
+                : "text-default hover:bg-surface",
             )}
             data-testid="documents-next-page"
           >
@@ -339,6 +372,49 @@ export function DocumentsTable({
         </div>
       </div>
     </div>
+  );
+}
+
+// DESIGN.md:889 — a loading state preserves the table's geometry. These rows
+// carry the real column set at the real row height, so a page that arrives
+// shifts nothing, and no scope ever paints another scope's documents while it
+// waits. Deterministic widths keep the placeholder from animating on rerender.
+const BAR_WIDTHS = ["62%", "84%", "46%", "72%"];
+
+function SkeletonRows({ rows, columns }: { rows: number; columns: string[] }) {
+  return (
+    <>
+      {Array.from({ length: rows }, (_, row) => (
+        // biome-ignore lint/a11y/noAriaHiddenOnFocusable: a placeholder row carries no tabIndex, so it is not focusable — the pager is what announces the load
+        <tr
+          // biome-ignore lint/suspicious/noArrayIndexKey: placeholders have no identity beyond their position
+          key={row}
+          aria-hidden="true"
+          className="h-9 [--row-bg:var(--nimbus-surface)] [&>td]:border-t [&>td]:border-app"
+          data-testid="documents-skeleton-row"
+        >
+          <Td className={cn("left-0 w-px px-3", PIN_L)}>
+            <span className="block size-3.5 rounded-sm bg-surface-2" />
+          </Td>
+          {columns.map((col, i) => (
+            <Td
+              key={col}
+              className={cn(
+                i === 0 && cn("left-[38px] border-r border-app", PIN_L),
+              )}
+            >
+              <span
+                className="block h-2 rounded bg-surface-2"
+                style={{ width: BAR_WIDTHS[(row + i) % BAR_WIDTHS.length] }}
+              />
+            </Td>
+          ))}
+          <Td align="right" className={cn("w-px border-l border-app", PIN_R)}>
+            <span className="block h-2 w-10 rounded bg-surface-2" />
+          </Td>
+        </tr>
+      ))}
+    </>
   );
 }
 

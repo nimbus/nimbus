@@ -6,7 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { HttpResponse, http } from "msw";
+import { delay, HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import type { ReactNode } from "react";
 import {
@@ -105,16 +105,28 @@ beforeEach(() => {
   serveDocuments();
 });
 
-afterEach(() => {
-  useUiStore.setState({ activeTenant: null });
+afterEach(async () => {
+  // Clearing the tenant re-renders the still-mounted page and sends it down
+  // its no-tenant path, so the reset belongs inside `act` like any other
+  // state change a test makes.
+  await act(async () => {
+    useUiStore.setState({ activeTenant: null });
+  });
 });
 
 async function renderPage() {
   render(<Page />);
+  // The table mounts with skeleton rows, so waiting for it is not waiting for
+  // the page: the pager clears `loading` when the rows land and the
+  // discovered-field pass follows. Settling both here keeps every later
+  // interaction — and the teardown — from racing an update React would report
+  // as un-acted.
   await screen.findByTestId("documents-table");
-  // The rows paint one tick before the pager clears `loading` and the
-  // discovered-field pass lands. Settling those here keeps every later
-  // interaction from racing an update React would report as un-acted.
+  await waitFor(() =>
+    expect(screen.getByTestId("documents-pagination")).not.toHaveTextContent(
+      "loading…",
+    ),
+  );
   await act(async () => {});
 }
 
@@ -300,6 +312,140 @@ describe("document page query", () => {
 
     const empty = await screen.findByTestId("documents-empty");
     expect(empty).toHaveTextContent("No documents match the filter");
+  });
+});
+
+// Two pages keyed on the cursor in the request body, recording every `after`
+// the page actually put on the wire.
+function servePages(seen?: Array<string | null>) {
+  server.use(
+    http.post("*/api/tenants/:t/query/paginated", async ({ request }) => {
+      const body = (await request.json()) as { after: string | null };
+      seen?.push(body.after);
+      if (body.after === "c1") {
+        return HttpResponse.json({
+          data: [{ _id: "doc_c", author: "hopper", body: "third" }],
+          next_cursor: null,
+          has_more: false,
+        });
+      }
+      return HttpResponse.json({
+        data: DOCS,
+        next_cursor: "c1",
+        has_more: true,
+      });
+    }),
+  );
+}
+
+function lastSearch(prev: Record<string, unknown>): Record<string, unknown> {
+  const arg = navigateMock.mock.calls.at(-1)?.[0] as {
+    search: (p: Record<string, unknown>) => Record<string, unknown>;
+  };
+  return arg.search(prev);
+}
+
+describe("document page pagination", () => {
+  // URL is state: the page an operator is reading is part of the view they
+  // share and reload, not hidden component memory.
+  it("writes the next page's cursor into the URL", async () => {
+    const user = userEvent.setup();
+    servePages();
+    searchState.value = { panel: "schema" };
+    await renderPage();
+
+    await user.click(screen.getByTestId("documents-next-page"));
+    expect(lastSearch({ panel: "schema" })).toEqual({
+      panel: "schema",
+      cursors: ["c1"],
+    });
+  });
+
+  it("restores the page the URL names and pops back to the first", async () => {
+    const user = userEvent.setup();
+    const seen: Array<string | null> = [];
+    servePages(seen);
+    searchState.value = { cursors: ["c1"] };
+    await renderPage();
+
+    expect(seen).toEqual(["c1"]);
+    expect(screen.getByTestId("documents-pagination")).toHaveTextContent(
+      "page 2",
+    );
+    expect(screen.getByText("third")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("documents-prev-page"));
+    expect(lastSearch({ cursors: ["c1"] }).cursors).toBeUndefined();
+  });
+
+  // A cursor encodes the sort values it was minted under and is decoded
+  // against the query it is replayed with, so a sort change on page two must
+  // reset the position in the *same* URL write. Any gap between the two writes
+  // is a request that replays the old cursor under the new query.
+  it("drops the page position in the same navigation that changes the sort", async () => {
+    const user = userEvent.setup();
+    const seen: Array<string | null> = [];
+    servePages(seen);
+    searchState.value = { cursors: ["c1"] };
+    await renderPage();
+    expect(screen.getByTestId("documents-pagination")).toHaveTextContent(
+      "page 2",
+    );
+
+    await user.click(screen.getByTestId("documents-sort-author"));
+    const next = lastSearch({ cursors: ["c1"] });
+    expect(next).toMatchObject({ sort: "author", dir: "asc" });
+    expect(next.cursors).toBeUndefined();
+    // Nothing went out under the new sort carrying the old cursor.
+    expect(seen).toEqual(["c1"]);
+  });
+
+  it("drops the page position when a filter changes", async () => {
+    const user = userEvent.setup();
+    servePages();
+    searchState.value = { cursors: ["c1"] };
+    await renderPage();
+
+    await user.click(screen.getByTestId("documents-add-filter"));
+    await user.type(screen.getByTestId("documents-filter-value"), "ada");
+    await user.click(screen.getByTestId("documents-filter-apply"));
+
+    const next = lastSearch({ cursors: ["c1"] });
+    expect(next.filters).toEqual([{ field: "_id", op: "eq", value: "ada" }]);
+    expect(next.cursors).toBeUndefined();
+  });
+
+  // Rows belong to the scope that fetched them. Holding the previous scope's
+  // rows under the new header lets an operator read — and act on — documents
+  // attributed to the wrong tenant or table.
+  it("shows no rows from the previous scope while the next page loads", async () => {
+    servePages();
+    await renderPage();
+    expect(screen.getByTestId("documents-row-doc_a")).toBeInTheDocument();
+
+    server.use(
+      http.post("*/api/tenants/:t/query/paginated", async () => {
+        await delay(30);
+        return HttpResponse.json({
+          data: [{ _id: "doc_z", author: "other", body: "elsewhere" }],
+          next_cursor: null,
+          has_more: false,
+        });
+      }),
+    );
+    act(() => {
+      useUiStore.setState({ activeTenant: "other" });
+    });
+
+    expect(screen.queryByTestId("documents-row-doc_a")).not.toBeInTheDocument();
+    expect(screen.queryByText("first")).not.toBeInTheDocument();
+    // The table keeps its geometry rather than collapsing to a spinner.
+    expect(
+      screen.getAllByTestId("documents-skeleton-row").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByTestId("documents-sort-author")).toBeInTheDocument();
+
+    await screen.findByText("elsewhere");
   });
 });
 

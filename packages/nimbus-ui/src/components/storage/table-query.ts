@@ -6,6 +6,7 @@ import {
 } from "../../lib/api-mutations";
 import type { TableSchemaShape } from "../../lib/types/table";
 
+export type { DocumentFilter, DocumentOrder };
 /**
  * The document browser's query model.
  *
@@ -16,7 +17,6 @@ import type { TableSchemaShape } from "../../lib/types/table";
  * serves both the URL and the request body.
  */
 export { FILTER_OPS, type FilterOp };
-export type { DocumentFilter, DocumentOrder };
 
 export const FILTER_OP_LABEL: Record<FilterOp, string> = {
   eq: "=",

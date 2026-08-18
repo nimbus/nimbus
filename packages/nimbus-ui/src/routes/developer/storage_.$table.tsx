@@ -7,7 +7,6 @@ import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { EmptyState } from "../../components/empty-state";
-import { LoadingState } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { BulkToolbar } from "../../components/storage/bulk-toolbar";
 import { ColumnChooser } from "../../components/storage/column-chooser";
@@ -35,7 +34,11 @@ import { useDocumentPage } from "../../components/storage/use-document-page";
 import { documents } from "../../lib/api-mutations";
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
-import type { DocumentJson, TableDoc } from "../../lib/types/table";
+import type {
+  DocumentJson,
+  PageResponse,
+  TableDoc,
+} from "../../lib/types/table";
 import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/developer/storage_/$table")({
@@ -59,6 +62,7 @@ export const Route = createFileRoute("/developer/storage_/$table")({
             ? "asc"
             : undefined,
       filters: filters.length > 0 ? filters : undefined,
+      cursors: parseCursors(search.cursors),
     };
   },
   component: TableDocumentsPage,
@@ -69,9 +73,29 @@ type TableSearch = {
   sort?: string;
   dir?: "asc" | "desc";
   filters?: DocumentFilter[];
+  /** One cursor per page after the first — the pager's position. */
+  cursors?: string[];
 };
 
+// The whole stack travels, not just the current cursor: PREV walks back down
+// it, so a URL carrying only the current page would deep-link a view whose
+// PREV button is dead on reload.
+function parseCursors(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter(
+    (value): value is string => typeof value === "string" && value !== "",
+  );
+  return out.length > 0 ? out : undefined;
+}
+
 const NO_FILTERS: DocumentFilter[] = [];
+const NO_CURSORS: string[] = [];
+/** Stands in while the first page of a table is still in flight. */
+const EMPTY_PAGE: PageResponse = {
+  data: [],
+  next_cursor: null,
+  has_more: false,
+};
 /** IDs listed by name in the bulk-delete confirmation before it elides. */
 const CONFIRM_ID_PREVIEW = 5;
 
@@ -119,16 +143,31 @@ function TableDocumentsPage() {
     [search.sort, search.dir],
   );
 
+  const cursors = search.cursors ?? NO_CURSORS;
+  const setCursors = useCallback(
+    (next: string[]) => {
+      void navigate({
+        search: (prev: TableSearch) => ({
+          ...prev,
+          cursors: next.length > 0 ? next : undefined,
+        }),
+      });
+    },
+    [navigate],
+  );
+  const pager = useMemo(() => ({ cursors, setCursors }), [cursors, setCursors]);
+
   const {
     page,
     loading,
     pageError,
-    cursorStack,
+    pageNumber,
     refresh,
     onNext,
     onPrev,
     reset,
-  } = useDocumentPage(tenant, table, { filters, order });
+  } = useDocumentPage(tenant, table, { filters, order }, pager);
+  const tablePage = page ?? EMPTY_PAGE;
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showInsert, setShowInsert] = useState(false);
@@ -256,9 +295,15 @@ function TableDocumentsPage() {
     [navigate],
   );
 
+  // A cursor is decoded against the query that produced it, so a filter or
+  // sort change resets the position in the *same* navigation — one URL write,
+  // never a render where the new query and the old cursor coexist.
   const applyFilters = useCallback(
     (next: DocumentFilter[]) => {
-      patchSearch({ filters: next.length > 0 ? next : undefined });
+      patchSearch({
+        filters: next.length > 0 ? next : undefined,
+        cursors: undefined,
+      });
       setSelected(new Set());
     },
     [patchSearch],
@@ -266,7 +311,11 @@ function TableDocumentsPage() {
 
   const applyOrder = useCallback(
     (next: DocumentOrder | null) => {
-      patchSearch({ sort: next?.field, dir: next?.direction });
+      patchSearch({
+        sort: next?.field,
+        dir: next?.direction,
+        cursors: undefined,
+      });
       setPendingScanSort(null);
       setSelected(new Set());
     },
@@ -428,30 +477,18 @@ function TableDocumentsPage() {
               body="Documents scope to a tenant. Pick one from the top-nav selector to browse this table."
               testid="documents-empty"
             />
-          ) : loading && !page ? (
-            <LoadingState label="Loading documents…" />
           ) : pageError ? (
             <PageError message={pageError} onRetry={refresh} />
-          ) : !page || page.data.length === 0 ? (
-            filters.length > 0 ? (
-              <EmptyState
-                title="No documents match the filter"
-                body="Remove a filter chip above to widen the query, or insert a document that satisfies it."
-                testid="documents-empty"
-              />
-            ) : (
-              <EmptyState
-                title="No documents"
-                body={`Insert a document using the toolbar or POST /api/tenants/${tenant}/documents with body { table: "${table}", fields: {...} }.`}
-                testid="documents-empty"
-              />
-            )
-          ) : (
+          ) : loading || tablePage.data.length > 0 ? (
+            // A page in flight keeps the table mounted and paints skeleton
+            // rows: the header, the column widths and the pager stay put, and
+            // no row of the previous table survives under the new one.
             <DocumentsTable
-              page={page}
+              page={tablePage}
+              loading={loading}
               columns={columns}
               selected={selected}
-              cursorStack={cursorStack}
+              pageNumber={pageNumber}
               order={order}
               indexBacked={indexBacked}
               onSort={requestSort}
@@ -459,7 +496,7 @@ function TableDocumentsPage() {
                 setSelected(
                   checked
                     ? new Set(
-                        page.data
+                        tablePage.data
                           .map((d) => String(d._id ?? ""))
                           .filter(Boolean),
                       )
@@ -478,6 +515,18 @@ function TableDocumentsPage() {
               onDelete={handleDelete}
               onPrev={goPrev}
               onNext={goNext}
+            />
+          ) : filters.length > 0 ? (
+            <EmptyState
+              title="No documents match the filter"
+              body="Remove a filter chip above to widen the query, or insert a document that satisfies it."
+              testid="documents-empty"
+            />
+          ) : (
+            <EmptyState
+              title="No documents"
+              body={`Insert a document using the toolbar or POST /api/tenants/${tenant}/documents with body { table: "${table}", fields: {...} }.`}
+              testid="documents-empty"
             />
           )}
         </div>

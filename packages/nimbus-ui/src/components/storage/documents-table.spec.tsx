@@ -23,7 +23,8 @@ function renderTable(
     page: PAGE,
     columns: COLUMNS,
     selected: new Set<string>(),
-    cursorStack: [null] as Array<string | null>,
+    pageNumber: 1,
+    loading: false,
     order: null,
     indexBacked: new Set(["_id", "author"]),
     onSort: vi.fn(),
@@ -171,6 +172,55 @@ describe("DocumentsTable headers", () => {
     expect(screen.getByTestId("documents-sort-body")).toHaveAttribute(
       "title",
       expect.stringContaining("scans the table"),
+    );
+  });
+});
+
+// DESIGN.md:889 — a loading state preserves the table's geometry, and no row
+// of the previous page may be readable under the incoming page's header.
+describe("DocumentsTable loading", () => {
+  it("replaces the rows with skeletons while a page is in flight", () => {
+    renderTable({ loading: true });
+
+    expect(screen.getAllByTestId("documents-skeleton-row").length).toBe(
+      PAGE.data.length,
+    );
+    expect(screen.queryByTestId("documents-row-doc_a")).not.toBeInTheDocument();
+    expect(screen.queryByText("first")).not.toBeInTheDocument();
+    // The header and the pager stay: the table does not collapse and reflow.
+    expect(screen.getByTestId("documents-sort-author")).toBeInTheDocument();
+    expect(screen.getByTestId("documents-pagination")).toHaveTextContent(
+      "loading…",
+    );
+  });
+
+  it("falls back to a full page of skeletons when no rows are known yet", () => {
+    renderTable({
+      loading: true,
+      page: { data: [], next_cursor: null, has_more: false },
+    });
+    expect(
+      screen.getAllByTestId("documents-skeleton-row").length,
+    ).toBeGreaterThan(1);
+  });
+
+  it("freezes the pager and the select-all box while loading", async () => {
+    const user = userEvent.setup();
+    const props = renderTable({ loading: true, pageNumber: 2 });
+
+    expect(screen.getByTestId("documents-prev-page")).toBeDisabled();
+    expect(screen.getByTestId("documents-next-page")).toBeDisabled();
+    // Selecting "all" mid-fetch would select rows the operator cannot see.
+    const all = screen.getByTestId("documents-select-all");
+    expect(all).not.toBeChecked();
+    await user.click(all);
+    expect(props.onToggleAll).not.toHaveBeenCalled();
+  });
+
+  it("reports the page number the URL names", () => {
+    renderTable({ pageNumber: 3 });
+    expect(screen.getByTestId("documents-pagination")).toHaveTextContent(
+      "page 3",
     );
   });
 });

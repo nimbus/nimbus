@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pathname, searchText, contributed } = vi.hoisted(() => ({
@@ -74,7 +74,9 @@ function renderDrawer(props: {
   if (spec === null) {
     throw new Error("Expected the sub-drawer hook to contribute a spec.");
   }
-  return render(<>{spec.children as ReactNode}</>);
+  // The hook contributes a single element; the cast is what `render` needs to
+  // see, and a wrapping fragment would only hide it.
+  return render(spec.children as ReactElement);
 }
 
 beforeEach(() => {
