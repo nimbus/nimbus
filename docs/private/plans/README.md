@@ -48,6 +48,13 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   UI hygiene, doc/spec truth-ups, and the `nimbus-compute` extraction plus
   workload-identity decision records. Review-driven refactor and cleanup work
   should route through this plan's band ledgers while it is active.
+- `storage-integrity-contracts-plan.md` - `proposed`. Owns atomic object-metadata
+  conditions and explicit writer-effect decisions. It also owns one canonical
+  materialized position, provider qualification, and physical SQLite evidence.
+  It consumes the completed storage
+  unification campaigns and must precede HS work that exports storage
+  artifacts. Immutable epoch lineages, seals, and mixed-fleet reader rollout
+  remain with `horizontal-scaling-plan.md`.
 - `nimbus-runtime-tenant-isolation-plan.md` - `complete` in PR #227. Canonical
   runtime-owner identity, routing-versus-reuse-authority separation,
   owner-partitioned
