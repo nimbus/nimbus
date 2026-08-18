@@ -54,7 +54,14 @@ export const statePalette: Record<
   ok: { token: "--nimbus-success", glyph: "solid" },
   active: { token: "--nimbus-success", glyph: "solid" },
   connected: { token: "--nimbus-success", glyph: "solid" },
-  running: { token: "--nimbus-accent", glyph: "pulsing" },
+  /* Running owns `--running` (teal, hue 207), not `--accent`. In the warm
+     palette `--accent` is hue 70 and `--warning` — which carries NotReady and
+     Degraded — is hue 72, so binding Running to the accent painted two
+     semantically opposite states in one hue family, separated only by
+     lightness. `--running` is also palette-stable, where `--accent` shifts with
+     the brand, so a palette switch can no longer change what Running looks
+     like relative to Degraded. */
+  running: { token: "--nimbus-running", glyph: "pulsing" },
   starting: { token: "--nimbus-starting", glyph: "half" },
   provisioning: { token: "--nimbus-starting", glyph: "half" },
   restarting: { token: "--nimbus-starting", glyph: "half" },

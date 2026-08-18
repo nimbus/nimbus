@@ -119,7 +119,12 @@ function CommandRow({ command }: { command: string }) {
   }, [command]);
   return (
     <div className="mt-3 flex items-center gap-2 rounded border border-app bg-surface-2 px-2 py-1.5">
-      <code className="flex-1 truncate font-mono text-xs text-default">
+      {/*
+        The wrapper already carries the border, fill and padding, so this
+        opts out of the global bare-`code` chip rather than nesting a second
+        box inside the first.
+      */}
+      <code className="flex-1 truncate border-0 bg-transparent p-0 font-mono text-xs text-default">
         {command}
       </code>
       <button

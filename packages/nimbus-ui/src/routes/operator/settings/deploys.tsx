@@ -59,7 +59,13 @@ export function DeploysSection({
     <PageSection
       title="Deploys"
       testid="settings-deploys"
-      description="Active bundle, function inventory, deploy history, and bundle diff. Trigger new deploys with `nimbus deploy` from the CLI."
+      description={
+        <>
+          Active bundle, function inventory, deploy history, and bundle diff.
+          Trigger new deploys with{" "}
+          <code className="whitespace-nowrap">nimbus deploy</code> from the CLI.
+        </>
+      }
     >
       {bundles === undefined ? (
         <p className="text-sm text-muted">Loading bundles…</p>

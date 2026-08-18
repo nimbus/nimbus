@@ -456,7 +456,7 @@ function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
         </h2>
         <Link
           to="/developer/observability"
-          className="text-xs text-link hover:underline"
+          className="text-xs link-inline"
         >
           View all
         </Link>
@@ -615,7 +615,7 @@ function RecentRuns({ runs }: { runs: LoadingValue<AnyDoc[]> }) {
         </h2>
         <Link
           to="/developer/observability"
-          className="text-xs text-link hover:underline"
+          className="text-xs link-inline"
         >
           View all
         </Link>

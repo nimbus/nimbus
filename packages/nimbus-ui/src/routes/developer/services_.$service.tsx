@@ -307,7 +307,7 @@ function HealthTab({ service }: { service: ServiceDoc }) {
   );
 }
 
-function BundleTab({
+export function BundleTab({
   service,
   bundle,
 }: {
@@ -318,7 +318,13 @@ function BundleTab({
     return (
       <EmptyState
         title="No bundle attached"
-        body="This service has not been associated with a runtime bundle. Run `nimbus compose up` to register one."
+        body={
+          <>
+            This service has not been associated with a runtime bundle. Run{" "}
+            <code className="whitespace-nowrap">nimbus compose up</code> to
+            register one.
+          </>
+        }
       />
     );
   }

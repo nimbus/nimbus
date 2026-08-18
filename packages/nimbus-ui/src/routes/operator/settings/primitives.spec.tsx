@@ -42,4 +42,30 @@ describe("PageSection", () => {
       screen.getByRole("heading", { name: "Danger zone" }).className,
     ).toContain("text-danger");
   });
+
+  it("accepts a node description so commands are marked up, not backticked", () => {
+    // `description` was `string`, which forced callers to write markdown that
+    // then rendered as literal backticks.
+    render(
+      <PageSection
+        title="Deploys"
+        testid="d"
+        description={
+          <>
+            Trigger new deploys with <code>nimbus deploy</code>.
+          </>
+        }
+      >
+        <p>body</p>
+      </PageSection>,
+    );
+
+    const description = screen.getByTestId("d").querySelector("header p");
+    expect(description?.textContent).toBe(
+      "Trigger new deploys with nimbus deploy.",
+    );
+    expect(description?.querySelector("code")?.textContent).toBe(
+      "nimbus deploy",
+    );
+  });
 });

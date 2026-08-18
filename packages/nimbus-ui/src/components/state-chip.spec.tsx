@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import axe from "axe-core";
 import { describe, expect, it } from "vitest";
 
-import { StateChip } from "./state-chip";
+import { StateChip, statePalette } from "./state-chip";
 
 describe("StateChip", () => {
   it("renders the raw label when state is known", () => {
@@ -66,6 +66,26 @@ describe("StateChip", () => {
     const { container } = render(<StateChip state="running" />);
     const chip = container.querySelector("[data-state]");
     expect(chip).toHaveAttribute("data-glyph", "pulsing");
+  });
+
+  it("binds running to --running and never to the brand accent", () => {
+    expect(statePalette.running.token).toBe("--nimbus-running");
+    expect(statePalette.running.token).not.toBe("--nimbus-accent");
+  });
+
+  it("keeps no state on --accent, which the brand palette redefines", () => {
+    // DESIGN.md's state table names only semantic tokens. A state bound to
+    // --accent inherits the brand hue, which in the warm palette (hue 70)
+    // lands on top of --warning (hue 72) — Running and Degraded then differ
+    // by lightness alone.
+    const onAccent = Object.entries(statePalette)
+      .filter(([, entry]) => entry.token === "--nimbus-accent")
+      .map(([state]) => state);
+    expect(onAccent).toEqual([]);
+  });
+
+  it("gives running and degraded distinct tokens", () => {
+    expect(statePalette.running.token).not.toBe(statePalette.degraded.token);
   });
 
   it("uses a half-filled dot for starting", () => {

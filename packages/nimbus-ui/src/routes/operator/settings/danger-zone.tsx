@@ -126,7 +126,7 @@ function RotateTokenDialog({ onClose }: { onClose: () => void }) {
               onChange={(e) => setToken(e.target.value)}
               data-testid="settings-rotate-token"
               className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default focus:border-strong focus:outline-none"
-              placeholder="Paste the value of `nimbus token show`"
+              placeholder="Paste the token printed by nimbus token show"
             />
           </label>
           {error ? (

@@ -198,6 +198,9 @@ function NetworkPage() {
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         {routes === undefined ? (
+          // No `rowContentHeight`: `Td`'s 40px row floor already sizes the real
+          // and the placeholder rows alike (measured 40.00px in both states at
+          // 1440px), so the default content box is the matching one.
           <SkeletonRows
             columns={6}
             head={<RoutesTableHead />}

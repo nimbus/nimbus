@@ -57,12 +57,14 @@ export function SkeletonRows({
   head?: ReactNode;
   rows?: number;
   /**
-   * Height in pixels of the content box inside each cell. A loaded row is
-   * sized by the tallest control a cell carries, not by the text strut, so
-   * this is the knob that makes a skeleton row match a real one. Values
-   * measured against the live tables at 1440px, each within 0.4px of the
-   * loaded row: documents 22 (the default), tenant tables 21, schedules 18,
-   * machines 34 — machines is taller because its host-name cell wraps.
+   * Height in pixels of the content box inside each cell.
+   *
+   * Every table built from the canonical `Td` is floored at 40px by its
+   * `h-10`, leaving a 24px content box after `py-2`. So on those tables any
+   * value <= 24 renders an identical row and the default already matches --
+   * measured 0.00px delta on documents, tenant tables, schedules, machines,
+   * and network. Only pass this for a hand-rolled table that does not use
+   * `Td`, and measure the loaded row before choosing a number.
    */
   rowContentHeight?: number;
   label: string;

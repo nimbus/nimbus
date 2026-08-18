@@ -24,7 +24,7 @@ export function PageSection({
   children,
 }: {
   title: string;
-  description?: string;
+  description?: React.ReactNode;
   testid: string;
   tone?: "default" | "danger";
   framed?: boolean;

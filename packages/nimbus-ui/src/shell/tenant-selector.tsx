@@ -307,9 +307,12 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
                         </span>
                       ) : null}
                       {isActive ? (
+                        // Matches `Select`: the marker takes the active row's
+                        // tone. `text-brand` measured 2.48:1 on --surface in
+                        // the warm palette, failing at 11px.
                         <span
                           aria-hidden
-                          className="font-mono text-xs text-brand"
+                          className="font-mono text-xs text-default"
                         >
                           ●
                         </span>

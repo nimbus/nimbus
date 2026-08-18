@@ -4,7 +4,7 @@ import { useQuery } from "@nimbus/nimbus/react";
 import { api } from "../../../convex/_generated/api";
 import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
-import { LoadingState } from "../../components/loading-state";
+import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
@@ -113,8 +113,22 @@ function SchedulesPage() {
 }
 
 function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
-  if (jobs === undefined)
-    return <LoadingState label="Loading scheduled jobs…" />;
+  // Skeleton rows, not a centered spinner: the header, the panel and the 40px
+  // row rhythm all survive the load, so arriving jobs move nothing vertically.
+  // `table-auto` still re-proportions the columns on arrival. No
+  // `rowContentHeight` here or in `CronTable`: `Td`'s 40px row floor already
+  // sizes the real and the placeholder rows alike (measured 40.00px in both
+  // states).
+  if (jobs === undefined) {
+    return (
+      <SkeletonRows
+        columns={5}
+        head={<ScheduledTableHead />}
+        label="Loading scheduled jobs…"
+        testid="schedules-scheduled-loading"
+      />
+    );
+  }
   if (jobs.length === 0) {
     return (
       <EmptyState
@@ -129,15 +143,7 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
         className="w-full border-collapse text-sm"
         data-testid="schedules-scheduled-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
-          <tr>
-            <Th>Function</Th>
-            <Th>Status</Th>
-            <Th>Tenant</Th>
-            <Th>Scheduled</Th>
-            <Th>Duration</Th>
-          </tr>
-        </thead>
+        <ScheduledTableHead />
         <tbody>
           {jobs.map((job) => {
             const duration =
@@ -189,8 +195,31 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
   );
 }
 
+function ScheduledTableHead() {
+  return (
+    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+      <tr>
+        <Th>Function</Th>
+        <Th>Status</Th>
+        <Th>Tenant</Th>
+        <Th>Scheduled</Th>
+        <Th>Duration</Th>
+      </tr>
+    </thead>
+  );
+}
+
 function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
-  if (jobs === undefined) return <LoadingState label="Loading cron jobs…" />;
+  if (jobs === undefined) {
+    return (
+      <SkeletonRows
+        columns={6}
+        head={<CronTableHead />}
+        label="Loading cron jobs…"
+        testid="schedules-cron-loading"
+      />
+    );
+  }
   if (jobs.length === 0) {
     return (
       <EmptyState
@@ -205,16 +234,7 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
         className="w-full border-collapse text-sm"
         data-testid="schedules-cron-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
-          <tr>
-            <Th>Name</Th>
-            <Th>Function</Th>
-            <Th>Schedule</Th>
-            <Th>Status</Th>
-            <Th>Next run</Th>
-            <Th>Last run</Th>
-          </tr>
-        </thead>
+        <CronTableHead />
         <tbody>
           {jobs.map((job) => (
             <tr
@@ -259,5 +279,20 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function CronTableHead() {
+  return (
+    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+      <tr>
+        <Th>Name</Th>
+        <Th>Function</Th>
+        <Th>Schedule</Th>
+        <Th>Status</Th>
+        <Th>Next run</Th>
+        <Th>Last run</Th>
+      </tr>
+    </thead>
   );
 }

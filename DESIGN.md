@@ -640,8 +640,9 @@ sky for everyone.
 
 Colors are defined in OKLCH so light and dark perceptual lightness stay
 parity-matched. Semantic state tokens (`--success`, `--warning`, `--danger`,
-`--starting`, `--draining`, `--queued`, `--stale`, `--violet`) are stable
-across all palettes — "Running = green" holds in every theme.
+`--running`, `--starting`, `--draining`, `--queued`, `--stale`, `--violet`) are
+stable across all palettes — `Ready` is green and `Running` is teal in every
+theme, so a status never changes meaning when the palette does.
 
 Tokens that swap per palette (the default shown: Warm light / Night Blue
 dark; the Cool Blue light column lives in `globals.css` under
@@ -657,7 +658,7 @@ dark; the Cool Blue light column lives in `globals.css` under
 | `--text` | `oklch(20% 0.020 60)` | `oklch(91% 0.014 252)` | Primary text |
 | `--muted` | `oklch(53% 0.013 75)` | `oklch(67% 0.026 248)` | Secondary text |
 | `--brand` | `oklch(73% 0.17 65)` (`#F59E0B`) | `oklch(72% 0.17 248)` (`#60A5FA`) | Primary identity: active nav stripe, primary CTA fill, connection-state dot |
-| `--accent` | `oklch(80% 0.14 70)` (`#FFB84D`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Interactive feedback: focus ring, selection, `Running` state |
+| `--accent` | `oklch(80% 0.14 70)` (`#FFB84D`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Interactive feedback: focus ring and selection. Not a state colour — `Running` has its own `--running` |
 | `--link` | `oklch(62% 0.17 55)` (`#D97706`) | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
 
 Semantic tokens (stable across all palettes):
@@ -665,6 +666,7 @@ Semantic tokens (stable across all palettes):
 | Token | Light (OKLCH) | Dark (OKLCH) | Use |
 | --- | --- | --- | --- |
 | `--success` | `oklch(52% 0.14 145)` | `oklch(72% 0.16 145)` | `Ready`, `Healthy` |
+| `--running` | `oklch(60% 0.13 207)` | `oklch(85% 0.10 197)` | `Running` |
 | `--warning` | `oklch(65% 0.16 75)` | `oklch(78% 0.17 75)` | `Reconnecting`, `Degraded` |
 | `--starting` | `oklch(70% 0.17 50)` | `oklch(80% 0.18 50)` | `Starting`, `Provisioning` |
 | `--draining` | `oklch(55% 0.13 280)` | `oklch(72% 0.14 280)` | `Draining`, `Stopping` |
@@ -677,7 +679,7 @@ Rules:
 
 - **Three identity tokens, three different jobs.** `--brand` carries
   primary identity (active nav, primary CTA, dominant brand fill).
-  `--accent` is interactive feedback (focus, selection, `Running`).
+  `--accent` is interactive feedback (focus, selection).
   `--link` is hyperlinks. Never paint buttons with `--link`. Never paint
   active nav with `--accent` — that's `--brand`'s job.
 - **State colors are universal.** Status state colors do not vary by
@@ -914,7 +916,7 @@ State → token binding (mandatory; do not improvise mappings):
 | State | Token | Dot glyph |
 | --- | --- | --- |
 | `Ready`, `Healthy`, `OK`, `Active`, `Connected` | `--success` | ● solid |
-| `Running` | `--accent` | ● pulsing (respects `prefers-reduced-motion`) |
+| `Running` | `--running` | ● pulsing (respects `prefers-reduced-motion`) |
 | `Starting`, `Provisioning`, `Restarting` | `--starting` | ◐ half-filled |
 | `Draining`, `Stopping`, `Deleting` | `--draining` | ◐ half-filled |
 | `Queued`, `Pending` | `--queued` | ○ outline |

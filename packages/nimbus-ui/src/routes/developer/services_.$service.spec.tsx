@@ -33,9 +33,14 @@ vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
 
+import type { ServiceDoc } from "../../lib/types/service";
 import { useUiStore } from "../../store/ui-store";
 import { routeLoader, routeLoaderDeps } from "../../test/route-internals";
-import { Route, ServiceDetailLoaderError } from "./services_.$service";
+import {
+  BundleTab,
+  Route,
+  ServiceDetailLoaderError,
+} from "./services_.$service";
 
 type LoaderArgs = {
   params: { service: string };
@@ -156,5 +161,28 @@ describe("app/services/$service errorComponent", () => {
     );
     screen.getByTestId("storage-server-error-envelope-cta").click();
     expect(reset).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("app/services/$service bundle-tab copy", () => {
+  const withoutBundle = { _id: "svc-1", name: "api" } as unknown as ServiceDoc;
+
+  // The body string was authored as markdown, so the user read a literal `
+  // around the command. Commands are marked up as <code>.
+  it("marks the compose command up as <code> and leaks no backticks", () => {
+    const { container } = render(
+      <BundleTab service={withoutBundle} bundle={null} />,
+    );
+
+    const body = container.querySelector("p");
+    expect(body?.textContent).not.toContain("`");
+    expect(body?.textContent).toContain(
+      "Run nimbus compose up to register one.",
+    );
+
+    const command = body?.querySelector("code");
+    expect(command?.textContent).toBe("nimbus compose up");
+    // A wrapped multi-word command renders as two separate boxed fragments.
+    expect(command?.className).toContain("whitespace-nowrap");
   });
 });

@@ -75,4 +75,46 @@ describe("MachinesPage empty state", () => {
     );
     expect(toastMock).toHaveBeenCalledWith("Copied nimbus machine init");
   });
+
+  it("keeps the empty state distinct from the loading state", () => {
+    render(<MachinesPage />);
+    expect(screen.getByTestId("machines-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("machines-loading")).toBeNull();
+  });
 });
+
+describe("MachinesPage loading state", () => {
+  it("holds the table geometry with skeleton rows instead of a centered label", () => {
+    useQueryMock.mockReturnValue(undefined);
+    render(<MachinesPage />);
+
+    const loading = screen.getByTestId("machines-loading");
+    expect(
+      loading.querySelectorAll('[data-testid="skeleton-row"]'),
+    ).toHaveLength(8);
+    expect(loading.querySelectorAll("thead th")).toHaveLength(9);
+    // The header is what makes the swap invisible: it must survive the load.
+    expect(loading).toHaveTextContent("Provider");
+    expect(screen.queryByTestId("machines-empty")).toBeNull();
+  });
+
+  it("gives the skeleton the same header as the loaded table", () => {
+    useQueryMock.mockReturnValue(undefined);
+    const loading = render(<MachinesPage />);
+    const skeletonHeader = headerLabels(loading.container);
+    loading.unmount();
+
+    useQueryMock.mockReturnValue([
+      { _id: "m1", name: "default", state: "running" },
+    ]);
+    const loaded = render(<MachinesPage />);
+
+    expect(headerLabels(loaded.container)).toEqual(skeletonHeader);
+  });
+});
+
+function headerLabels(container: HTMLElement) {
+  return Array.from(container.querySelectorAll("thead th")).map((cell) =>
+    cell.textContent?.trim(),
+  );
+}

@@ -149,9 +149,9 @@ function ServicesSubDrawer({
         <p>No services declared.</p>
         <p className="mt-2">
           Author a <code>compose.yaml</code> and run{" "}
-          <code className="font-mono">nimbus compose up</code> to register
-          services for {activeTenant ? `tenant ${activeTenant}` : "this tenant"}
-          .
+          <code className="whitespace-nowrap">nimbus compose up</code> to
+          register services for{" "}
+          {activeTenant ? `tenant ${activeTenant}` : "this tenant"}.
         </p>
       </div>
     );
@@ -202,9 +202,15 @@ export function ServicesTable({
       <EmptyState
         title="No services"
         body={
-          activeTenant
-            ? "This tenant has no declared services. Add them to compose.yaml and run `nimbus compose up`."
-            : "No services declared across any tenant."
+          activeTenant ? (
+            <>
+              This tenant has no declared services. Add them to{" "}
+              <code>compose.yaml</code> and run{" "}
+              <code className="whitespace-nowrap">nimbus compose up</code>.
+            </>
+          ) : (
+            "No services declared across any tenant."
+          )
         }
         testid="services-empty"
       />

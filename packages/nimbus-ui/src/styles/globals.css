@@ -230,6 +230,24 @@
     letter-spacing: -0.01em;
   }
 
+  /* Inline code, per DESIGN.md ("monospace + subtle surface-2 background +
+     1px border"). This is a floor, not an override: Tailwind declares
+     `@layer theme, base, components, utilities`, so every utility a call site
+     already sets — `bg-surface-2`, `border border-app`, `rounded`, `px-1`,
+     `text-xs` — wins on layer order regardless of this selector's specificity.
+     Sites that style themselves are unchanged; sites that render a bare
+     `<code>` stop rendering as unmarked body text.
+     `:not(pre) >` keeps it off code blocks: shiki emits `<pre><code>`, and
+     the fallback in components/code-block.tsx is a bare `<pre>`, so neither
+     picks up a chip border. */
+  :not(pre) > code {
+    background: var(--nimbus-surface-2);
+    border: 1px solid var(--nimbus-border);
+    border-radius: 3px;
+    padding: 0 0.25em;
+    font-size: 0.9em;
+  }
+
   /* Hard requirement per DESIGN.md: numeric columns never reflow. */
   .tabular {
     font-variant-numeric: tabular-nums;
@@ -359,7 +377,10 @@
    the set that matches the app's data-theme. */
 .nimbus-code .shiki {
   margin: 0;
-  padding: 1rem;
+  /* 12px, matching both the `p-3` fallback <pre> in components/code-block.tsx
+     and DESIGN.md's "12px padding" for multi-line blocks, so the highlighted
+     and unhighlighted renderings are the same box. */
+  padding: 0.75rem;
   background-color: var(--shiki-light-bg);
 }
 .nimbus-code .shiki,

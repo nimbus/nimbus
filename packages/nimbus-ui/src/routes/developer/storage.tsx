@@ -3,8 +3,9 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
+import { Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
-import { LoadingState } from "../../components/loading-state";
+import { SkeletonRows } from "../../components/loading-state";
 import { TablesListTable } from "../../components/storage/tables-list-table";
 import { useTablesSubDrawer } from "../../components/storage/tables-sub-drawer";
 import { useTenantList } from "../../hooks/use-tenant-list";
@@ -86,7 +87,18 @@ function StoragePage() {
             />
           )
         ) : tables === undefined ? (
-          <LoadingState label="Loading tables…" />
+          // Skeleton rows, not a centered spinner: the header, the panel and
+          // the 40px row rhythm all survive the load, so arriving tables move
+          // nothing vertically. `table-auto` still re-proportions the columns
+          // on arrival — the bars are not the content it measures. No
+          // `rowContentHeight`: `Td`'s 40px row floor already sizes the real
+          // and the placeholder rows alike (measured 40.00px in both states).
+          <SkeletonRows
+            columns={5}
+            head={<TablesTableHead />}
+            label="Loading tables…"
+            testid="tenant-tables-loading"
+          />
         ) : tables.length === 0 ? (
           <EmptyState
             title="No tables"
@@ -98,5 +110,27 @@ function StoragePage() {
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * The Tables list header, declared here because the loading branch and the
+ * loaded table are owned by different files: `TablesListTable` renders the
+ * rows, this route renders the placeholder that has to match them. Keep the
+ * two column sets in step — the skeleton is only honest while it is.
+ */
+function TablesTableHead() {
+  return (
+    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+      <tr>
+        <Th>Table</Th>
+        <Th>Schema</Th>
+        <Th align="right">Rows</Th>
+        <Th>Last write</Th>
+        <Th align="right" className="w-px">
+          actions
+        </Th>
+      </tr>
+    </thead>
   );
 }

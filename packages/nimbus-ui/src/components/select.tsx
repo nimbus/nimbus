@@ -222,9 +222,14 @@ export function Select<T extends string>({
                     >
                       <span className="flex-1 truncate">{option.label}</span>
                       {isActive ? (
+                        // Carries the active row's own tone, not `text-brand`:
+                        // the brand hue rendered this 11px glyph at 2.48:1 on
+                        // --surface in the warm palette, under both the 4.5:1
+                        // text floor and the 3:1 non-text floor it qualifies
+                        // for as an aria-hidden state marker.
                         <span
                           aria-hidden
-                          className="font-mono text-xs text-brand"
+                          className="font-mono text-xs text-default"
                         >
                           ●
                         </span>

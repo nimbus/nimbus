@@ -7,7 +7,7 @@ import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
-import { LoadingState } from "../../components/loading-state";
+import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
@@ -122,7 +122,18 @@ function MachinesPage() {
           data-testid="machines-table-container"
         >
           {machines === undefined ? (
-            <LoadingState label="Loading machines…" />
+            // Skeleton rows, not a centered spinner: the header, the panel and
+            // the 40px row rhythm all survive the load, so arriving machines
+            // move nothing vertically. `table-auto` still re-proportions the
+            // nine columns on arrival. No `rowContentHeight`: `Td`'s 40px row
+            // floor already sizes the real and the placeholder rows alike
+            // (measured 40.00px in both states).
+            <SkeletonRows
+              columns={9}
+              head={<MachineTableHead />}
+              label="Loading machines…"
+              testid="machines-loading"
+            />
           ) : machines.length === 0 ? (
             <EmptyState
               title="No machines"
@@ -207,19 +218,7 @@ function MachineTable({
         className="w-full border-collapse text-sm"
         data-testid="machines-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
-          <tr>
-            <Th>Name</Th>
-            <Th>State</Th>
-            <Th>Provider</Th>
-            <Th>Kind</Th>
-            <Th className="text-right">CPU</Th>
-            <Th className="text-right">Memory</Th>
-            <Th className="text-right">Disk</Th>
-            <Th>Updated</Th>
-            <Th className="text-right">Actions</Th>
-          </tr>
-        </thead>
+        <MachineTableHead />
         <tbody>
           {machines.map((machine) => {
             const pendingAction = pending[machine._id];
@@ -319,6 +318,24 @@ function MachineTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function MachineTableHead() {
+  return (
+    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+      <tr>
+        <Th>Name</Th>
+        <Th>State</Th>
+        <Th>Provider</Th>
+        <Th>Kind</Th>
+        <Th className="text-right">CPU</Th>
+        <Th className="text-right">Memory</Th>
+        <Th className="text-right">Disk</Th>
+        <Th>Updated</Th>
+        <Th className="text-right">Actions</Th>
+      </tr>
+    </thead>
   );
 }
 

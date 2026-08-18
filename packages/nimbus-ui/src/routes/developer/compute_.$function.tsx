@@ -1,20 +1,21 @@
+import { useQuery } from "@nimbus/nimbus/react";
 import {
   createFileRoute,
   Link,
   useNavigate,
   useSearch,
 } from "@tanstack/react-router";
-import { useQuery } from "@nimbus/nimbus/react";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
-import { CodeBlock } from "../../components/code-block";
 import { CategoryChip } from "../../components/category-chip";
+import { CodeBlock } from "../../components/code-block";
 import { CopyChip } from "../../components/copy-chip";
+import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { FunctionRunner } from "../../components/function-runner/function-runner";
-import { LoadingState } from "../../components/loading-state";
+import { LoadingState, SkeletonRows } from "../../components/loading-state";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { useApiRead } from "../../hooks/use-api-read";
@@ -518,6 +519,9 @@ function SymbolLink({
   title?: string;
   testid: string;
 }) {
+  // A bordered chip, not an inline link: the border plus the hover fill carry
+  // the affordance, so this keeps `text-link` and stays off `.link-inline` —
+  // a resting underline inside a chip reads as a rendering defect.
   return (
     <Link
       to="/developer/compute/$function"
@@ -525,7 +529,7 @@ function SymbolLink({
       search={{ tab: "source" }}
       data-testid={testid}
       title={title}
-      className="rounded border border-app px-1.5 py-0.5 font-mono text-xs text-link hover:bg-surface-2 hover:underline"
+      className="rounded border border-app px-1.5 py-0.5 font-mono text-xs text-link hover:bg-surface-2"
     >
       {label}
     </Link>
@@ -589,14 +593,48 @@ function LogsTab({ fn }: { fn: FunctionDoc }) {
   );
 }
 
-function RunsTab({ fn }: { fn: FunctionDoc }) {
+/**
+ * Shared by the loaded table and its skeleton so the two cannot drift apart.
+ */
+function RunsTableHead() {
+  return (
+    <thead className="text-xs uppercase tracking-[0.14em] text-muted">
+      <tr>
+        <Th>Run ID</Th>
+        <Th>Status</Th>
+        <Th>Duration</Th>
+        <Th>Started</Th>
+      </tr>
+    </thead>
+  );
+}
+
+/** Exported for spec coverage of the loading / empty / loaded branches. */
+export function RunsTab({ fn }: { fn: FunctionDoc }) {
   const runs = useQuery(api.runs.recent, {
     bundleId: null,
     functionPath: fn.path ?? null,
     status: null,
     limit: 50,
   }) as RunDoc[] | undefined;
-  if (runs === undefined) return <LoadingState label="Loading runs…" />;
+  if (runs === undefined) {
+    // Keep the table mounted while the page is in flight: swapping the whole
+    // table out drops the header and the column widths, so the panel jumps
+    // once on load and again on data arrival.
+    return (
+      <div
+        className="h-full overflow-auto px-6 py-4"
+        data-testid="function-tab-runs"
+      >
+        <SkeletonRows
+          columns={4}
+          head={<RunsTableHead />}
+          label="Loading runs…"
+          testid="function-tab-runs-skeleton"
+        />
+      </div>
+    );
+  }
   if (runs.length === 0) {
     return (
       <EmptyState
@@ -611,29 +649,14 @@ function RunsTab({ fn }: { fn: FunctionDoc }) {
       data-testid="function-tab-runs"
     >
       <table className="w-full border-collapse text-sm">
-        <thead className="text-xs uppercase tracking-[0.14em] text-muted">
-          <tr>
-            <th className="border-b border-app px-3 py-2 text-left font-normal">
-              Run ID
-            </th>
-            <th className="border-b border-app px-3 py-2 text-left font-normal">
-              Status
-            </th>
-            <th className="border-b border-app px-3 py-2 text-left font-normal">
-              Duration
-            </th>
-            <th className="border-b border-app px-3 py-2 text-left font-normal">
-              Started
-            </th>
-          </tr>
-        </thead>
+        <RunsTableHead />
         <tbody>
           {runs.map((run) => (
             <tr
               key={run._id}
               className="border-t border-app hover:bg-surface-2"
             >
-              <td className="px-3 py-2">
+              <Td>
                 <Link
                   to="/developer/compute/runs/$runId"
                   params={{ runId: run._id }}
@@ -642,11 +665,11 @@ function RunsTab({ fn }: { fn: FunctionDoc }) {
                 >
                   {shortId(run._id, 12)}
                 </Link>
-              </td>
-              <td className="px-3 py-2">
+              </Td>
+              <Td>
                 <StateChip state={run.status} />
-              </td>
-              <td className="px-3 py-2">
+              </Td>
+              <Td>
                 {typeof run.durationMs === "number" ? (
                   <span className="tabular font-mono text-xs">
                     {formatDuration(run.durationMs)}
@@ -654,14 +677,14 @@ function RunsTab({ fn }: { fn: FunctionDoc }) {
                 ) : (
                   <span className="tabular text-muted">—</span>
                 )}
-              </td>
-              <td className="px-3 py-2">
+              </Td>
+              <Td>
                 {typeof run.startedAt === "number" ? (
                   <RelativeTime epochMs={run.startedAt} />
                 ) : (
                   <span className="tabular text-muted">—</span>
                 )}
-              </td>
+              </Td>
             </tr>
           ))}
         </tbody>
