@@ -62,9 +62,16 @@ curl -s -X POST http://localhost:8080/api/tenants \
 
 ## 5. Install the SDK
 
+The SDK ships inside the Nimbus binary rather than on the public npm
+registry. `nimbus packages provision` materializes it into the project and
+points `package.json` at the provisioned copy, so `npm install` resolves it
+from disk:
+
 ```bash
 mkdir agent-sandbox && cd agent-sandbox
-npm init -y && npm install @nimbus/nimbus
+npm init -y
+nimbus packages provision nimbus
+npm install
 ```
 
 ## 6. Create a sandbox and lease a session

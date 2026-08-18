@@ -54,10 +54,11 @@ Examples:
   nimbus dev --data-dir ./.nimbus/dev
   nimbus dev --no-compose-discovery
 
-P3 scope:
-  nimbus dev now watches nimbus/ or convex/ for debounced codegen reruns.
-  Use --once for startup only. Watched codegen locally activates generated
-  artifacts after validation. Live runtime log multiplexing is still pending.
+Watch mode:
+  nimbus dev watches nimbus/ or convex/ and reruns codegen on change, after a
+  debounce; regenerated artifacts activate locally once they validate. Use
+  --once to run codegen at startup only. Runtime log multiplexing is not
+  implemented yet, so --tail-logs selects a mode without streaming logs.
 
 Browser auto-open is suppressed automatically when $CI or $NO_BROWSER is
 set, when stdout is not a TTY, or when --no-open is passed; in those cases
@@ -651,6 +652,50 @@ mod tests {
         format_action_summary, format_hint, info_output_enabled, phase_output_enabled,
         progress_output_enabled, push_output_mode, render_table_with_options,
     };
+
+    /// Shipped help must read as product documentation. Internal plan phase
+    /// labels ("P3 scope:", "BPD5", …) leaked into `nimbus dev --help` once;
+    /// this scans every help constant in this file so they cannot return.
+    #[test]
+    fn help_constants_carry_no_internal_phase_labels() {
+        let Some(crate_root) = std::env::var_os("CARGO_MANIFEST_DIR").map(std::path::PathBuf::from)
+        else {
+            return;
+        };
+        let source = std::fs::read_to_string(crate_root.join("src/cli_ux.rs"))
+            .expect("cli_ux source should be readable");
+
+        for (index, line) in source.lines().enumerate() {
+            // Only the help/example string literals in this file, not the
+            // Rust code or the doc comments around them.
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            let labels = phase_label_candidates(line);
+            assert!(
+                labels.is_empty(),
+                "internal phase labels {labels:?} appear in user-facing help \
+                 at src/cli_ux.rs:{}: {line}",
+                index + 1,
+            );
+        }
+    }
+
+    /// Words shaped like an internal plan identifier: one to four capitals
+    /// followed by digits, standing alone (`P3`, `BPD5`, `K11P2`, `AVR5`).
+    fn phase_label_candidates(line: &str) -> Vec<String> {
+        line.split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|word| {
+                let letters = word.chars().take_while(char::is_ascii_uppercase).count();
+                let digits = word.chars().skip(letters).collect::<String>();
+                (1..=4).contains(&letters)
+                    && !digits.is_empty()
+                    && digits.chars().all(|c| c.is_ascii_digit())
+            })
+            .map(str::to_string)
+            .collect()
+    }
 
     #[test]
     fn format_action_summary_appends_newline() {
