@@ -62,7 +62,7 @@ semantic checkpoint, crash cut, digest, or failure rule.
 | AVR11.6 Commit and freeze. | Pass. | Candidate commit `056c243bced3798fa34c09e2851728afe5ca45f6` contains the complete acceptance-green AVR8-AVR11 tree. |
 | AVR11.7 Run one Sol review. | Pass. | The full Sol/xhigh/fast review scored 0.98 and produced six accepted findings. The one narrow correction review scored 0.96 and produced two accepted closure findings. Commits `e8fc63489` and `9f3fba2da` close all eight. No further review is due. |
 | AVR11.8 Open PR 3. | Pass. | Implementation PR [#277](https://github.com/nimbus/nimbus/pull/277) opened from candidate checkpoint `f81c6cb7a`. |
-| AVR11.9 Resolve hosted failures. | In progress. | Hosted acceptance is active on PR #277. |
+| AVR11.9 Resolve hosted failures. | In progress. | Desktop UI run `32148666875` exposed one stale gate path. Commit `358218c20` closes it. Replacement hosted acceptance remains active. |
 | AVR11.10 Merge with owner authority. | Pending. | The owner has not yet authorized this future merge. |
 
 ## Behavioral and Repository Evidence
@@ -243,6 +243,19 @@ The first minicloud server run used the default Nextest fanout. Its two
 failures reproduced alone, so reduced concurrency did not hide them. The
 accepted four-thread run passed the complete matrix after AVR11 corrected the
 two explicit test deadlines.
+
+## Hosted Acceptance
+
+Desktop UI Smoke run `32148666875` failed before its smoke walk. The grep gate
+allowed `operator/settings/hooks.ts`, but AVR10 renamed the wired support file
+to `operator/settings/-hooks.ts`. The route generator needs that prefix to keep
+support modules out of the route tree.
+
+Commit `358218c20` updates the allow-list to the current wired consumer. It also
+documents the intentional single-quoted child Bash for ShellCheck. The desktop
+gate, Bash syntax, ShellCheck, route codegen, and all 336 UI tests pass locally.
+No product endpoint, consumer, or UI behavior changed. Replacement hosted
+acceptance is active.
 
 ## Ownership Boundary
 
