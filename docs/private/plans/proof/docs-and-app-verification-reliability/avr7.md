@@ -14,6 +14,12 @@ graceful-settlement race that their rerun exposed. The examples runner now has
 one run lifetime owner and one process-group owner. Nimbus owns every listener
 and port lease.
 
+PR [#276](https://github.com/nimbus/nimbus/pull/276) merged as
+`b58ef8c35bb7478a9d31faa7b6d1d822d9215496` on 2026-08-18. Reconciliation
+commit `ec6d2414c` merged that current `main` into the owner branch while it
+preserved checkpoint `0c20bf17c`. The reconciled branch was zero commits behind
+`origin/main` before AVR8 started.
+
 Each run uses one network-state root. Each case uses separate application,
 data, control, authentication, discovery, audit, log, result, and process
 roots. Discovery accepts only the expected process identity and a loopback
@@ -117,7 +123,7 @@ alerts.
 | Docs run [`32092865978`](https://github.com/nimbus/nimbus/actions/runs/32092865978) | Pass. The docs site built and deployed. |
 | Desktop run [`32092865917`](https://github.com/nimbus/nimbus/actions/runs/32092865917) | Pass. The desktop UI smoke walk completed. |
 | Windows run [`32092865898`](https://github.com/nimbus/nimbus/actions/runs/32092865898) | Pass. The workspace cargo check completed. |
-| Merge state | Clean and mergeable at head `d5fa0117dcacf9fc54157207d057358d25be9aeb`. |
+| Merge result | PR #276 merged head `d5fa0117dcacf9fc54157207d057358d25be9aeb` as `b58ef8c35bb7478a9d31faa7b6d1d822d9215496`. Reconciliation commit `ec6d2414c` preserved the local recovery checkpoint and reached zero commits behind current main. |
 
 CI attempt 1 cancelled `Ptrcomp Cage` and both Node FaaS oracle jobs before
 their tests started. All three jobs exhausted their time budgets inside
