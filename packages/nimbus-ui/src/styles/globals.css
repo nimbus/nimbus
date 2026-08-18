@@ -357,24 +357,25 @@
     text-decoration-color: currentColor;
   }
 
-  /* The uppercase micro-label, in exactly two steps. `.label` is the content
-     tier: table column heads, field labels, section heads inside a panel.
-     `.label-chrome` is the shell tier: drawer and nav section heads, one
-     deliberate step wider and monospaced. Neither sets a colour — every call
-     site keeps its own `text-muted` / `text-danger` / computed tone class. */
+  /* The uppercase micro-label: field labels, section heads inside a panel.
+     It sets no colour — every call site keeps its own `text-muted` /
+     `text-danger` / computed tone class.
+
+     11px, not 10px. DESIGN.md's scale starts at 11px and this utility was the
+     only thing in the console below it, which put the console's smallest type
+     under its own floor: uppercase at wide tracking is already the hardest
+     shape to read, and the one instance that also carried a tone (`active` in
+     the palette picker) measured 2.2:1. 11px is what the ~50 micro-labels
+     that spell this treatment out inline already use, so the named form and
+     the inline form now render the same pixels.
+
+     A second tier (`.label-chrome`, same size at 0.18em and monospace) used to
+     sit here and never picked up a single call site. */
   .label {
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1.45;
     text-transform: uppercase;
     letter-spacing: 0.14em;
-  }
-
-  .label-chrome {
-    font-size: 10px;
-    line-height: 1.45;
-    text-transform: uppercase;
-    letter-spacing: 0.18em;
-    font-family: var(--font-mono);
   }
 }
 

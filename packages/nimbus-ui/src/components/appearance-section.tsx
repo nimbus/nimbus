@@ -96,7 +96,15 @@ export function AppearanceSection() {
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-sm text-default">{entry.label}</span>
                     {active ? (
-                      <span className="label font-mono text-brand">active</span>
+                      /* The card already says it is selected twice — a brand
+                         border and `aria-checked` — so this word does not need
+                         to carry the accent as well. Painted `text-brand` it
+                         measured 2.2:1 on the warm light palette, the worst
+                         contrast in the console, to restate what the border
+                         had already said. */
+                      <span className="label font-mono text-default">
+                        active
+                      </span>
                     ) : null}
                   </div>
                   <p className="text-xs text-muted">{entry.description}</p>
