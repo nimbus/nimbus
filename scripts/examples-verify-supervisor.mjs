@@ -228,16 +228,37 @@ export async function stopManagedProcess(
   await fs.rm(recordPath, { force: true });
 }
 
-export function execManagedProcess({ command, args = [], environment = {}, clearPrefixes = [], cwd }) {
-  const result = spawnSync(command, args, {
-    cwd,
-    env: childEnvironment(environment, clearPrefixes),
-    stdio: "inherit",
-    windowsHide: true,
-  });
-  if (result.error) throw result.error;
-  if (result.signal) throw new Error(`${command} terminated by ${result.signal}`);
-  return result.status ?? 1;
+export function execManagedProcess({
+  command,
+  args = [],
+  environment = {},
+  clearPrefixes = [],
+  cwd,
+  stdoutLog = null,
+  teeStdout = false,
+}) {
+  let stdoutDescriptor;
+  try {
+    if (stdoutLog) {
+      invariant(path.isAbsolute(stdoutLog), `stdout log path must be absolute: ${stdoutLog}`);
+      fsSync.mkdirSync(path.dirname(stdoutLog), { recursive: true, mode: 0o700 });
+      stdoutDescriptor = fsSync.openSync(stdoutLog, "wx", 0o600);
+    }
+    const result = spawnSync(command, args, {
+      cwd,
+      env: childEnvironment(environment, clearPrefixes),
+      stdio: stdoutDescriptor === undefined ? "inherit" : ["inherit", stdoutDescriptor, "inherit"],
+      windowsHide: true,
+    });
+    if (result.error) throw result.error;
+    if (result.signal) throw new Error(`${command} terminated by ${result.signal}`);
+    return result.status ?? 1;
+  } finally {
+    if (stdoutDescriptor !== undefined) fsSync.closeSync(stdoutDescriptor);
+    if (stdoutLog && teeStdout && fsSync.existsSync(stdoutLog)) {
+      process.stdout.write(fsSync.readFileSync(stdoutLog));
+    }
+  }
 }
 
 function repeatedOptions(args, name) {
@@ -252,9 +273,13 @@ function repeatedOptions(args, name) {
   return values;
 }
 
-function option(args, name) {
+function option(args, name, { required = true } = {}) {
   const index = args.indexOf(name);
-  invariant(index !== -1 && index + 1 < args.length, `${name} is required`);
+  if (index === -1) {
+    if (required) throw new Error(`${name} is required`);
+    return null;
+  }
+  invariant(index + 1 < args.length, `${name} requires a value`);
   return args[index + 1];
 }
 
@@ -336,6 +361,8 @@ async function main(args) {
       environment: await environmentOptions(args),
       clearPrefixes: repeatedOptions(args, "--clear-prefix"),
       cwd: option(args, "--cwd"),
+      stdoutLog: option(args, "--stdout-log", { required: false }),
+      teeStdout: args.includes("--tee-stdout"),
     });
     return;
   }

@@ -3,9 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: execute AVR8.1-AVR8.5. First capture the console-only fail-before
-evidence. Then define the canonical report schema, atomic writer, validator,
-credential redaction, and deterministic JUnit projection.
+Next action: execute AVR9.1-AVR9.6. First verify host activity and capture three
+serial samples. Then add bounded scheduling, drain after failure, and capture
+five parallel samples without changing coverage or report order.
 
 ## Outcome
 
@@ -137,8 +137,8 @@ contract records condition ownership, phase counts, and exact commands:
 | AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr5.md`. Work commit `02788d24b`; AVRC16-AVRC17 2/2; CLI 1,015 passed and 4 ignored; Clippy; live dev cases 7/7; docs 109 and 17/17. |
 | AVR6 | Reproduce and close, or disprove and remove, the bare-local target workaround. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr6.md`. Work commit `390bcaf27`; AVRC18 1/1; CLI 1,019 passed and 4 ignored; explicit and bare-local live results matched; wrong-silo and invalid-bearer checks failed closed. |
 | AVR7 | Give ports, child processes, temporary roots, logs, and cancellation one fail-closed lifetime owner. | `done` | Work `bd2a8a364`; review corrections `2215a5772`, `27331b144`; hosted correction `9e9482ce8`; proof: `proof/docs-and-app-verification-reliability/avr7.md`. PR [#276](https://github.com/nimbus/nimbus/pull/276) passed 54 hosted checks with 3 expected skips and zero open CodeQL alerts, then merged as `b58ef8c35`. Reconciliation commit `ec6d2414c` preserves the local recovery checkpoint on current `main`. |
-| AVR8 | Emit canonical JSON and JUnit evidence with hashes, timings, assertions, and cleanup state. | `in_progress` | Capture the console-only fail-before, then execute AVR8.1-AVR8.5. Require schema success/rejection, redaction, interrupted-write recovery, stable ordering, both JUnit projections, and AVRC21-AVRC22 `2/2`. |
-| AVR9 | Add bounded parallel execution and meet the measured wall-clock target without coverage loss. | `todo` | |
+| AVR8 | Emit canonical JSON and JUnit evidence with hashes, timings, assertions, and cleanup state. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr8.md`. Report 8/8; supervisor 2/2; fault and retry 7/7; AVRC21-AVRC22 2/2; mutations 24/24. The final live run passed 9 applications, 37 anchors, 12 JUnit tests, matching source digests, and clean removal in 83,725 ms. |
+| AVR9 | Add bounded parallel execution and meet the measured wall-clock target without coverage loss. | `in_progress` | Verify host activity, capture three serial samples, add bounded scheduling and failure drain, then capture five valid parallel samples. Preserve nine cases, 37 anchors, manifest order, and the 1,200-second absolute limit. |
 | AVR10 | Correct all example documentation, comments, counts, update semantics, and operator instructions. | `todo` | |
 | AVR11 | Run local, minicloud, repository, docs, review, and hosted-CI acceptance, then close the third implementation pull request. | `todo` | |
 | AVR12 | After the third implementation pull request merges, archive this plan through a cleanup pull request and remove its active routing. | `todo` | |
@@ -481,3 +481,5 @@ Append rows at the end. This section stays last.
 | 2026-08-18 | AVR7 | hosted candidate green | PR #276 head `d5fa0117d` passed 54 checks with three expected skips and zero open CodeQL alerts. CI run `32092865987` attempt 2 reran three jobs that timed out in the Azure package mirror and passed them on fresh runners. The PR reports a clean merge state. Owner merge authorization and current-main reconciliation remain. |
 | 2026-08-18 | AVR7 | completed | PR #276 merged as `b58ef8c35`. Reconciliation commit `ec6d2414c` merged current `origin/main` into the clean owner branch and preserved recovery checkpoint `0c20bf17c`; the branch then had zero commits behind current main. |
 | 2026-08-18 | AVR8 | started | AVR7 and implementation PR 2 are merged and reconciled. Capture the console-only fail-before, then implement the versioned report schema, atomic write and recovery, credential redaction, validation, and deterministic JUnit projection at the application-verification report seam. |
+| 2026-08-18 | AVR8 | completed | The report seam emits validated JSON and deterministic JUnit from manifest-ordered per-case records. Proof: `proof/docs-and-app-verification-reliability/avr8.md`. Report 8/8; supervisor 2/2; lifetime 12/12; fault and retry 7/7; AVRC21-AVRC22 2/2; mutations 24/24. The final Node.js 24 run passed nine applications and 37 anchors in 83,725 ms with matching source digests and clean removal. |
+| 2026-08-18 | AVR9 | started | AVR8 is durable and acceptance-green. Verify host activity, capture three serial samples, add bounded scheduling with drain-after-failure, then prove equal coverage, deterministic report order, isolation, and both time budgets across five valid parallel runs. |

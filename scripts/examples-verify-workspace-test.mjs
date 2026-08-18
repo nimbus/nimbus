@@ -67,6 +67,13 @@ async function manifest_rejects_duplicate_or_incomplete_case() {
     validateManifestValue(ambiguousFlag, { manifestPath: CASE_MANIFEST, repoRoot: REPO_ROOT }),
     /boot\.flags entry contains the list delimiter/u,
   );
+
+  const missingAnchors = structuredClone(source);
+  delete missingAnchors.cases[0].expectedAnchors;
+  await assert.rejects(
+    validateManifestValue(missingAnchors, { manifestPath: CASE_MANIFEST, repoRoot: REPO_ROOT }),
+    /expectedAnchors must be an array/u,
+  );
 }
 
 async function shell_rows_include_declared_surfaces() {
@@ -268,6 +275,7 @@ function fixtureCase(index) {
     smoke: { command: "npm", environment: [], stdioContract: false },
     surfaces: ["fixture"],
     updateSemantics: "request-response",
+    expectedAnchors: ["fixture.pass"],
   };
 }
 

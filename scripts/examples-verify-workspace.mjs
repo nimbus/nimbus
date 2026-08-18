@@ -134,6 +134,13 @@ function validateCaseShape(item, index) {
 
   shellListStrings(item.surfaces, `${label}.surfaces`);
   invariant(UPDATE_SEMANTICS.has(item.updateSemantics), `${label}.updateSemantics is invalid`);
+  uniqueStrings(item.expectedAnchors, `${label}.expectedAnchors`);
+  for (const anchor of item.expectedAnchors) {
+    invariant(
+      /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(anchor),
+      `${label}.expectedAnchors entry is invalid: ${anchor}`,
+    );
+  }
   invariant(!item.name.includes(SHELL_DELIMITER), `${label}.name is not shell-safe`);
   invariant(!item.workspace.includes(SHELL_DELIMITER), `${label}.workspace is not shell-safe`);
 }
@@ -492,9 +499,12 @@ function snapshotDifferences(expected, observed) {
   return differences;
 }
 
-export async function verifySourceByteManifest({ manifestPath, repoRoot, snapshotPath }) {
+export async function verifySourceByteManifest({ manifestPath, repoRoot, snapshotPath, observedOutputPath = null }) {
   const expected = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
   const observed = await buildSourceSnapshot({ manifestPath, repoRoot });
+  if (observedOutputPath) {
+    await fs.writeFile(observedOutputPath, `${JSON.stringify(observed, null, 2)}\n`, { flag: "wx" });
+  }
   const differences = snapshotDifferences(expected, observed);
   if (differences.length > 0) {
     throw new Error(`source byte manifest mismatch:\n  ${differences.join("\n  ")}`);
@@ -562,7 +572,12 @@ async function main() {
   }
   if (command === "verify-source") {
     invariant(options.snapshot, "verify-source requires --snapshot");
-    await verifySourceByteManifest({ manifestPath, repoRoot, snapshotPath: path.resolve(options.snapshot) });
+    await verifySourceByteManifest({
+      manifestPath,
+      repoRoot,
+      snapshotPath: path.resolve(options.snapshot),
+      observedOutputPath: options["observed-output"] ? path.resolve(options["observed-output"]) : null,
+    });
     console.log("source byte manifest matches");
     return;
   }

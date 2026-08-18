@@ -124,10 +124,52 @@ CASE_MANIFEST="${REPO_ROOT}/scripts/examples-verify-cases.json"
 WORKSPACE_ADAPTER="${REPO_ROOT}/scripts/examples-verify-workspace.mjs"
 LIFETIME_ADAPTER="${REPO_ROOT}/scripts/examples-verify-lifetime.mjs"
 PROCESS_SUPERVISOR="${REPO_ROOT}/scripts/examples-verify-supervisor.mjs"
+REPORT_ADAPTER="${REPO_ROOT}/scripts/examples-verify-report.mjs"
+RESULTS_ROOT="${NIMBUS_EXAMPLES_VERIFY_RESULTS_DIR:-${REPO_ROOT}/target/examples-verify-results}"
+if [[ "${RESULTS_ROOT}" != /* ]]; then
+  echo "NIMBUS_EXAMPLES_VERIFY_RESULTS_DIR must be an absolute path: ${RESULTS_ROOT}" >&2
+  exit 2
+fi
+ONLY="${NIMBUS_EXAMPLES_VERIFY_ONLY:-}"
+CREDENTIAL_DELETE_FAILURES_REMAINING="${NIMBUS_EXAMPLES_VERIFY_CREDENTIAL_DELETE_FAILURES:-0}"
+case "${CREDENTIAL_DELETE_FAILURES_REMAINING}" in
+  ''|*[!0-9]*)
+    echo "NIMBUS_EXAMPLES_VERIFY_CREDENTIAL_DELETE_FAILURES must be a non-negative integer" >&2
+    exit 2
+    ;;
+esac
+if [ -n "${ONLY}" ]; then
+  node "${REPORT_ADAPTER}" validate-selection \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    --only "${ONLY}"
+fi
 RUN_ROW="$(node "${LIFETIME_ADAPTER}" create-run --repo-root "${REPO_ROOT}")"
 IFS='|' read -r DATA_ROOT NETWORK_STATE_ROOT ARTIFACT_ROOT <<<"${RUN_ROW}"
 SOURCE_BYTE_SNAPSHOT="${DATA_ROOT}/source-bytes.before.json"
+SOURCE_BYTE_OBSERVED="${DATA_ROOT}/source-bytes.after.json"
 CASE_ROWS="${DATA_ROOT}/cases.pipe"
+REPORT_ONLY_ARGS=()
+if [ -n "${ONLY}" ]; then
+  REPORT_ONLY_ARGS=("--only" "${ONLY}")
+fi
+REPORT_ROOT=""
+if ! REPORT_ROOT="$(node "${REPORT_ADAPTER}" init \
+    --manifest "${CASE_MANIFEST}" \
+    --repo-root "${REPO_ROOT}" \
+    --run-root "${DATA_ROOT}" \
+    --results-root "${RESULTS_ROOT}" \
+    --binary "${NIMBUS_BIN}" \
+    ${REPORT_ONLY_ARGS[@]+"${REPORT_ONLY_ARGS[@]}"})"; then
+  node "${LIFETIME_ADAPTER}" finalize \
+    --repo-root "${REPO_ROOT}" \
+    --run-root "${DATA_ROOT}" \
+    --artifact-root "${ARTIFACT_ROOT}" \
+    --run-status 0 \
+    --cleanup-status 0 \
+    >/dev/null
+  exit 1
+fi
 
 SOURCE_BYTE_CAPTURED=0
 SERVER_PID=""
@@ -137,23 +179,49 @@ SERVER_RECORD=""
 SERVER_DISCOVERY_PATH=""
 SERVER_ADMIN_TOKEN=""
 SMOKE_ENV_FILE=""
-CREDENTIAL_DELETE_FAILURES_REMAINING="${NIMBUS_EXAMPLES_VERIFY_CREDENTIAL_DELETE_FAILURES:-0}"
-
-case "${CREDENTIAL_DELETE_FAILURES_REMAINING}" in
-  ''|*[!0-9]*)
-    echo "NIMBUS_EXAMPLES_VERIFY_CREDENTIAL_DELETE_FAILURES must be a non-negative integer" >&2
-    exit 2
-    ;;
-esac
+CURRENT_CASE_NAME=""
+CURRENT_CASE_SMOKE_LOG=""
+CURRENT_CASE_RECORDED=0
 
 # The product owns each provider_assigned_port_lease and retained_listener.
 # This runner owns only the surrounding process, case roots, evidence, and
 # cancellation lifetime; it never scans, closes, or reallocates a port.
 cleanup_server() {
   local cleanup_status=0
-  local pre_signal_timeout_ms=0
+  # A just-spawned Nimbus process can reserve durable listener authority before
+  # it installs its signal handler. Give bootstrap one bounded second before
+  # TERM so an immediate fault cut cannot strand that process-bound lease.
+  local pre_signal_timeout_ms=1000
   if [ -z "${SERVER_RECORD}" ]; then
     return 0
+  fi
+
+  # An immediate post-spawn fault can run cleanup before the normal readiness
+  # path has learned the endpoint and token. Recover those values from the
+  # same case-local discovery and authentication roots when startup completes
+  # within a bounded window. This keeps shutdown graceful without introducing
+  # another socket or credential authority.
+  if [ -z "${SERVER_URL}" ] && [ -n "${SERVER_DISCOVERY_PATH}" ] && [ -n "${SERVER_PID}" ]; then
+    local discovered_url=""
+    for _ in $(seq 1 40); do
+      if ! node "${PROCESS_SUPERVISOR}" status --record "${SERVER_RECORD}"; then
+        break
+      fi
+      if discovered_url="$(node "${LIFETIME_ADAPTER}" read-discovery \
+          --path "${SERVER_DISCOVERY_PATH}" --pid "${SERVER_PID}" 2>/dev/null)" && \
+          curl -fsS "${discovered_url}/health" >/dev/null 2>&1; then
+        SERVER_URL="${discovered_url}"
+        break
+      fi
+      sleep 0.05
+    done
+  fi
+  if [ -n "${SERVER_URL}" ] && [ -z "${SERVER_ADMIN_TOKEN}" ]; then
+    SERVER_ADMIN_TOKEN="$(node "${PROCESS_SUPERVISOR}" exec \
+      --cwd "${REPO_ROOT}" \
+      --clear-prefix NIMBUS_ \
+      ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
+      -- "${NIMBUS_BIN}" auth token 2>/dev/null)" || SERVER_ADMIN_TOKEN=""
   fi
 
   if [ -n "${SERVER_URL}" ] && [ -n "${SERVER_ADMIN_TOKEN}" ] && \
@@ -206,10 +274,12 @@ cleanup_smoke_credentials() {
 }
 
 capture_source_byte_manifest() {
-  node "${WORKSPACE_ADAPTER}" capture-source \
-    --manifest "${CASE_MANIFEST}" \
-    --repo-root "${REPO_ROOT}" \
-    --output "${SOURCE_BYTE_SNAPSHOT}"
+  if ! node "${WORKSPACE_ADAPTER}" capture-source \
+      --manifest "${CASE_MANIFEST}" \
+      --repo-root "${REPO_ROOT}" \
+      --output "${SOURCE_BYTE_SNAPSHOT}"; then
+    return 1
+  fi
   SOURCE_BYTE_CAPTURED=1
 }
 
@@ -217,7 +287,30 @@ verify_source_byte_manifest() {
   node "${WORKSPACE_ADAPTER}" verify-source \
     --manifest "${CASE_MANIFEST}" \
     --repo-root "${REPO_ROOT}" \
-    --snapshot "${SOURCE_BYTE_SNAPSHOT}"
+    --snapshot "${SOURCE_BYTE_SNAPSHOT}" \
+    --observed-output "${SOURCE_BYTE_OBSERVED}"
+}
+
+record_current_case() {
+  local status="$1" exit_code="$2" cleanup_status="$3" endpoint="${4:-}"
+  if [ -z "${CURRENT_CASE_NAME}" ] || [ "${CURRENT_CASE_RECORDED}" -eq 1 ]; then
+    return 0
+  fi
+  local endpoint_args=()
+  if [ -n "${endpoint}" ]; then
+    endpoint_args=("--endpoint" "${endpoint}")
+  fi
+  node "${REPORT_ADAPTER}" record-case \
+    --result-root "${REPORT_ROOT}" \
+    --case "${CURRENT_CASE_NAME}" \
+    --status "${status}" \
+    --exit-code "${exit_code}" \
+    --cleanup-status "${cleanup_status}" \
+    --smoke-log "${CURRENT_CASE_SMOKE_LOG}" \
+    ${endpoint_args[@]+"${endpoint_args[@]}"}
+  CURRENT_CASE_RECORDED=1
+  CURRENT_CASE_NAME=""
+  CURRENT_CASE_SMOKE_LOG=""
 }
 
 finalize_examples_verification() {
@@ -225,23 +318,56 @@ finalize_examples_verification() {
   local final_status="${run_status}"
   local cleanup_status=0
   local lifetime_status=0
+  local lifetime_json=""
+  local report_status=0
+  local source_status="matched"
+  local case_cleanup_report="passed"
   trap - EXIT INT TERM
   cleanup_server || cleanup_status=$?
   if ! cleanup_smoke_credentials; then
     cleanup_status=1
   fi
-  if [ "${SOURCE_BYTE_CAPTURED}" -eq 1 ] && ! verify_source_byte_manifest; then
+  if [ "${cleanup_status}" -ne 0 ]; then
+    case_cleanup_report="failed"
+  fi
+  if [ -n "${CURRENT_CASE_NAME}" ] && [ "${CURRENT_CASE_RECORDED}" -eq 0 ]; then
+    record_current_case "failed" "${run_status}" "${case_cleanup_report}" || final_status=1
+  fi
+  if [ "${SOURCE_BYTE_CAPTURED}" -eq 0 ]; then
+    capture_source_byte_manifest || final_status=1
+  fi
+  if ! verify_source_byte_manifest; then
+    source_status="mismatched"
+    final_status=1
+  fi
+  if ! node "${REPORT_ADAPTER}" stage-source \
+      --result-root "${REPORT_ROOT}" \
+      --source-before "${SOURCE_BYTE_SNAPSHOT}" \
+      --source-after "${SOURCE_BYTE_OBSERVED}" \
+      --source-status "${source_status}"; then
     final_status=1
   fi
   # A cleanup_failure must retain the original root and keep the run red.
-  node "${LIFETIME_ADAPTER}" finalize \
-    --repo-root "${REPO_ROOT}" \
-    --run-root "${DATA_ROOT}" \
-    --artifact-root "${ARTIFACT_ROOT}" \
-    --run-status "${final_status}" \
-    --cleanup-status "${cleanup_status}" || lifetime_status=$?
+  if lifetime_json="$(node "${LIFETIME_ADAPTER}" finalize \
+      --repo-root "${REPO_ROOT}" \
+      --run-root "${DATA_ROOT}" \
+      --artifact-root "${ARTIFACT_ROOT}" \
+      --run-status "${final_status}" \
+      --cleanup-status "${cleanup_status}")"; then
+    lifetime_status=0
+  else
+    lifetime_status=$?
+  fi
+  if ! printf '%s' "${lifetime_json}" | node "${REPORT_ADAPTER}" finalize \
+      --result-root "${REPORT_ROOT}" \
+      --run-exit-code "${final_status}"; then
+    report_status=1
+  fi
   if [ "${lifetime_status}" -ne 0 ]; then
     final_status="${lifetime_status}"
+  fi
+  if [ "${report_status}" -ne 0 ]; then
+    final_status="${report_status}"
   fi
   exit "${final_status}"
 }
@@ -627,7 +753,11 @@ run_one() {
   local stdio_contract="${11}" _update_semantics="${12}" surfaces="${13}"
   echo "==> ${name}"
 
+  node "${REPORT_ADAPTER}" begin-case --result-root "${REPORT_ROOT}" --case "${name}"
+  CURRENT_CASE_NAME="${name}"
+  CURRENT_CASE_RECORDED=0
   prepare_case_workspace "${name}" "${workspace}"
+  CURRENT_CASE_SMOKE_LOG="${case_result_root}/smoke.stdout.log"
   fail_at_cut after-case-root
   local app_dir="${CASE_APP_DIR}"
 
@@ -650,6 +780,7 @@ run_one() {
   write_smoke_env_file "${name}" "${app_dir}"
   fail_at_cut during-smoke
   local smoke_status=0
+  local case_cleanup_status="passed"
   if [ "${smoke_command}" = "node" ]; then
     # Codegen already ran above; `npm run smoke` re-chains `codegen &&`,
     # which would redundantly re-trigger client codegen against a server
@@ -659,6 +790,8 @@ run_one() {
       --clear-prefix NIMBUS_ \
       ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
       --env-file "${SMOKE_ENV_FILE}" \
+      --stdout-log "${CURRENT_CASE_SMOKE_LOG}" \
+      --tee-stdout \
       ${COMMAND_ENV_FLAGS[@]+"${COMMAND_ENV_FLAGS[@]}"} \
       -- node --experimental-strip-types ./smoke.ts || smoke_status=$?
   else
@@ -666,12 +799,15 @@ run_one() {
       --clear-prefix NIMBUS_ \
       ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
       --env-file "${SMOKE_ENV_FILE}" \
+      --stdout-log "${CURRENT_CASE_SMOKE_LOG}" \
+      --tee-stdout \
       ${COMMAND_ENV_FLAGS[@]+"${COMMAND_ENV_FLAGS[@]}"} \
       -- npm run smoke || smoke_status=$?
   fi
   if ! cleanup_smoke_credentials; then
     echo "FAIL ${name}: smoke credentials did not settle" >&2
     smoke_status=1
+    case_cleanup_status="failed"
   fi
 
   if [ "${smoke_status}" -eq 0 ] && [ "${stdio_contract}" = "1" ]; then
@@ -679,8 +815,18 @@ run_one() {
   fi
 
   local completed_server_log="${SERVER_LOG}"
+  local completed_server_url="${SERVER_URL}"
   fail_at_cut before-server-stop
-  stop_server || smoke_status=1
+  if ! stop_server; then
+    smoke_status=1
+    case_cleanup_status="failed"
+  fi
+
+  if [ "${smoke_status}" -eq 0 ]; then
+    record_current_case "passed" 0 "${case_cleanup_status}" "${completed_server_url}"
+  else
+    record_current_case "failed" "${smoke_status}" "${case_cleanup_status}" "${completed_server_url}"
+  fi
 
   if [ "${smoke_status}" -ne 0 ]; then
     echo "FAIL ${name}" >&2
@@ -700,7 +846,6 @@ ensure_firebase_protobuf_stubs
 
 # Restrict to a single app by name for local debugging, e.g.
 # NIMBUS_EXAMPLES_VERIFY_ONLY=nimbus/tasks bash scripts/examples-verify.sh
-ONLY="${NIMBUS_EXAMPLES_VERIFY_ONLY:-}"
 ONLY_MATCHED=0
 
 for entry in "${APPS[@]}"; do

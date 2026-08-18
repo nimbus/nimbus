@@ -100,14 +100,24 @@ NODE
         has scripts/examples-verify-lifetime.mjs 'sourceRunRoot'
       ;;
     AVRC21)
-      has scripts/examples-verify-report.mjs 'schemaVersion' &&
-        has scripts/examples-verify-report.mjs 'redact' &&
-        has scripts/examples-verify-report.mjs 'validate'
+      has scripts/examples-verify-report.mjs 'REPORT_SCHEMA_VERSION' &&
+        has scripts/examples-verify-report.mjs 'function redact' &&
+        has scripts/examples-verify-report.mjs 'function validateReport' &&
+        has scripts/examples-verify-report.mjs 'writeJsonAtomically' &&
+        has scripts/examples-verify-report-test.mjs 'schema_accepts_success_golden' &&
+        has scripts/examples-verify-report-test.mjs 'credential_redaction_is_recursive' &&
+        has scripts/examples-verify-report-test.mjs 'interrupted_atomic_write_preserves_canonical_file' &&
+        has scripts/examples-verify-cases.json '"expectedAnchors"' &&
+        has scripts/examples-verify.sh 'REPORT_ADAPTER'
       ;;
     AVRC22)
-      has scripts/examples-verify-report.mjs 'junit' &&
-        has scripts/examples-verify-report.mjs 'deterministic' &&
-        has scripts/examples-verify-report.mjs 'cleanup'
+      has scripts/examples-verify-report.mjs 'function junit' &&
+        has scripts/examples-verify-report.mjs 'function deterministicCases' &&
+        has scripts/examples-verify-report-test.mjs 'success_junit_projection_is_deterministic' &&
+        has scripts/examples-verify-report-test.mjs 'failure_junit_projects_case_and_cleanup_truth' &&
+        has .github/workflows/ci.yml 'Upload examples-verification reports' &&
+        has .github/workflows/ci.yml 'target/examples-verify-results/.*/report\.json' &&
+        has .github/workflows/ci.yml 'target/examples-verify-results/.*/junit\.xml'
       ;;
     AVRC23)
       has scripts/examples-verify-benchmark.sh 'serial-samples' &&
@@ -144,7 +154,7 @@ owner_for() {
 
 write_green_fixture() {
   local id="$1" root="$2"
-  mkdir -p "${root}/scripts" "${root}/crates/nimbus-cli/src/dev" "${root}/examples/app"
+  mkdir -p "${root}/scripts" "${root}/crates/nimbus-cli/src/dev" "${root}/examples/app" "${root}/.github/workflows"
   case "${id}" in
     AVRC11)
       printf '%s\n' \
@@ -211,10 +221,15 @@ NODE
       printf '%s\n' 'const sourceRunRoot = true;' >"${root}/scripts/examples-verify-lifetime.mjs"
       ;;
     AVRC21)
-      printf '%s\n' 'const schemaVersion = 1; function redact() {} function validate() {}' >"${root}/scripts/examples-verify-report.mjs"
+      printf '%s\n' 'const REPORT_SCHEMA_VERSION = 1; function redact() {} function validateReport() {} function writeJsonAtomically() {}' >"${root}/scripts/examples-verify-report.mjs"
+      printf '%s\n' 'schema_accepts_success_golden credential_redaction_is_recursive interrupted_atomic_write_preserves_canonical_file' >"${root}/scripts/examples-verify-report-test.mjs"
+      printf '%s\n' '{"expectedAnchors":["fixture.pass"]}' >"${root}/scripts/examples-verify-cases.json"
+      printf '%s\n' 'REPORT_ADAPTER=scripts/examples-verify-report.mjs' >"${root}/scripts/examples-verify.sh"
       ;;
     AVRC22)
-      printf '%s\n' 'const junit = true; // deterministic cleanup projection' >"${root}/scripts/examples-verify-report.mjs"
+      printf '%s\n' 'function junit() {} function deterministicCases() {}' >"${root}/scripts/examples-verify-report.mjs"
+      printf '%s\n' 'success_junit_projection_is_deterministic failure_junit_projects_case_and_cleanup_truth' >"${root}/scripts/examples-verify-report-test.mjs"
+      printf '%s\n' 'Upload examples-verification reports' 'target/examples-verify-results/*/report.json' 'target/examples-verify-results/*/junit.xml' >"${root}/.github/workflows/ci.yml"
       ;;
     AVRC23)
       printf '%s\n' '# --serial-samples --parallel-samples --max-seconds' >"${root}/scripts/examples-verify-benchmark.sh"
@@ -321,13 +336,19 @@ avr3_behavior_fail() {
 }
 
 run_avr3_behavior_tests() {
-  local tmp fixture runner output status major command marker make_marker
+  local tmp fixture runner output status major command marker make_marker real_node
   tmp="$(mktemp -d -t nimbus-avr3-contract.XXXXXX)"
+  tmp="$(cd "${tmp}" && pwd -P)"
   fixture="${tmp}/fixture"
   runner="${fixture}/scripts/examples-verify.sh"
   mkdir -p "${fixture}/scripts" "${fixture}/stub-bin" "${fixture}/tmp"
   cp "${ROOT}/scripts/examples-verify.sh" "${runner}"
+  cp "${ROOT}/scripts/examples-verify-cases.json" "${fixture}/scripts/examples-verify-cases.json"
+  cp "${ROOT}/scripts/examples-verify-lifetime.mjs" "${fixture}/scripts/examples-verify-lifetime.mjs"
+  cp "${ROOT}/scripts/examples-verify-report.mjs" "${fixture}/scripts/examples-verify-report.mjs"
+  cp "${ROOT}/scripts/examples-verify-workspace.mjs" "${fixture}/scripts/examples-verify-workspace.mjs"
   chmod +x "${runner}"
+  real_node="$(command -v node)"
 
   # The supported range accepts all in-range majors. Node.js 22 and 24 are
   # the acceptance anchors; 23 proves that this is a range, not a two-value
@@ -428,6 +449,15 @@ run_avr3_behavior_tests() {
   # A valid supplied binary bypasses both generated inputs and Cargo. Use an
   # invalid case selector to stop after preflight without starting an app.
   rm -f "${fixture}/stub-bin/python3" "${fixture}/stub-bin/mktemp"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    "if [ \"\${1:-}\" = \"--version\" ]; then" \
+    "  printf '%s\\n' 'v22.0.0'" \
+    '  exit 0' \
+    'fi' \
+    "exec '${real_node}' \"\$@\"" \
+    >"${fixture}/stub-bin/node"
+  chmod +x "${fixture}/stub-bin/node"
   mkdir -p "${fixture}/packages/firebase/src/gen/google/firestore/v1"
   : >"${fixture}/packages/firebase/src/gen/google/firestore/v1/firestore_pb.ts"
   marker="${tmp}/supplied-work.marker"
@@ -483,6 +513,11 @@ run_avr7_behavior_tests() {
   node "${ROOT}/scripts/examples-verify-lifetime-test.mjs"
 }
 
+run_avr8_behavior_tests() {
+  node "${ROOT}/scripts/examples-verify-report-test.mjs"
+  node "${ROOT}/scripts/examples-verify-supervisor-test.mjs"
+}
+
 usage() {
   printf 'usage: %s --task AVR3..AVR10 | --condition AVRC11..AVRC24 | --self-test-condition AVRC11..AVRC24\n' "$0" >&2
 }
@@ -507,6 +542,9 @@ case "${1:-}" in
     fi
     if [ "$2" = "AVR7" ]; then
       run_avr7_behavior_tests
+    fi
+    if [ "$2" = "AVR8" ]; then
+      run_avr8_behavior_tests
     fi
     ;;
   --condition)
