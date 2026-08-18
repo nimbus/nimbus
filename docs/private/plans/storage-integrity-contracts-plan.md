@@ -3,7 +3,7 @@
 Status: `active` | Owner: this plan | Created: 2026-08-18
 Baseline: main @ `8877eaff43a36d9606a1feaa0ab31d0377539d9d`
 Proof root: `proof/storage-integrity-contracts/`
-Next action: SIC0 authors the red verifier, the writer census, and the fail-before evidence.
+Next action: SIC1 carries typed object expected-state conditions into the tenant commit authority.
 
 ## Outcome
 
@@ -119,8 +119,8 @@ order. SIC6 and SIC7 require `Summary: 13 passed, 0 failed`.
 
 | ID | Task | Status | Evidence |
 |---|---|---|---|
-| SIC0 | Baseline: pin execution HEAD, author the 13-condition verifier red, inventory every writer and current fingerprint consumer, and capture fail-before evidence. No production behavior changes. | `in_progress` | |
-| SIC1 | Carry object expected-state conditions into the tenant commit authority and close concurrent `PutObject` precondition races. | `todo` | |
+| SIC0 | Baseline: pin execution HEAD, author the 13-condition verifier red, inventory every writer and current fingerprint consumer, and capture fail-before evidence. No production behavior changes. | `done` | `proof/storage-integrity-contracts/sic0.md`. Verifier `Summary: 0 passed, 13 failed`, exit 1. Both fail-before probes reproduced. `git diff -- crates packages` empty. Work commit `a2f34aec6`. |
+| SIC1 | Carry object expected-state conditions into the tenant commit authority and close concurrent `PutObject` precondition races. | `in_progress` | |
 | SIC2 | Apply atomic expected-state updates to multipart metadata and complete condition-failure cleanup and provider parity. | `todo` | |
 | SIC3 | Make cross-cutting commit effects explicit on every client and internal writer without defaults or opaque callbacks. | `todo` | |
 | SIC4 | Consolidate canonical fingerprints into one storage-owned materialized position and propagate it through every materialized artifact consumer. | `todo` | |
@@ -411,3 +411,4 @@ Append rows at the end. This section stays last.
 | Date | Item | Action | Evidence |
 |---|---|---|---|
 | 2026-08-18 | meta | authored | Proposed plan created from the celld storage review and current Nimbus storage inspection. Baseline `8877eaff43a36d9606a1feaa0ab31d0377539d9d`. No implementation started. |
+| 2026-08-18 | SIC0 | done | Verifier `verify.sh` authored red: `Summary: 0 passed, 13 failed`, exit 1 at `49884476d`. Census in `proof/storage-integrity-contracts/sic0.md` names three client routes, three composite `SqlCommitEffects` sites, eleven non-client writer families, five fingerprint producers, and seven consumer sites. Fail-before: both concurrent `If-None-Match: *` creates accepted; both concurrent `UploadPart` calls accepted with one part lost. Probes removed by saved-copy restore; `git diff -- crates packages` empty. Docs gate PASS. Commit `a2f34aec6`. Docs-only task, so no pull request per repository convention. |
