@@ -34,7 +34,7 @@ main. The merge had no conflict and changed no AVR product behavior.
 | Documentation structure | `109` pages are link-clean. The source map, private fence, and unique titles pass. |
 | Documentation site | `17/17` conditions green. |
 | Diff and archive searches | `git diff --check` passed. The active plan is absent, the archive and proof exist, the index has one archive route, and executable paths have no plan reference. |
-| Cleanup pull request | Pending. |
+| Cleanup pull request | [#278](https://github.com/nimbus/nimbus/pull/278) is open. Hosted checks and merge remain. |
 
 The technical-writing check found no diagnostic in the changed cleanup prose or
 the other four closeout files. It reports 44 older diagnostics in untouched

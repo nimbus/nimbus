@@ -1,7 +1,7 @@
 # Documentation and Application Verification Reliability Proofs
 
 Status: AVR0 through AVR11 are complete. PRs #275, #276, and #277 merged into
-main. AVR12 cleanup is in progress.
+main. AVR12 cleanup PR [#278](https://github.com/nimbus/nimbus/pull/278) is open.
 
 Owner: `docs/private/plans/archive/docs-and-app-verification-reliability-plan.md`
 
