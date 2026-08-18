@@ -8,8 +8,8 @@ use http::HeaderMap;
 use nimbus_blob::BlobHash;
 use nimbus_core::TenantId;
 use nimbus_storage::{
-    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMultipartPart,
-    ObjectMultipartUpload,
+    ObjectChunkRef, ObjectConditionOutcome, ObjectExpectedState, ObjectManifest,
+    ObjectManifestAttributes, ObjectMultipartPart, ObjectMultipartUpload,
 };
 use s3s::dto::ChecksumAlgorithm;
 use s3s::dto::{
@@ -24,7 +24,7 @@ use s3s::{Body, S3Error, S3ErrorCode, S3Request, S3Response, S3Result, TrailingH
 use serde_json::{Map, Value};
 
 use crate::auth::AccessKeyRegistry;
-use crate::backend::{S3TenantObjects, S3TenantResolver};
+use crate::backend::{S3TenantObjects, S3TenantResolver, put_manifest_unconditional};
 use crate::checksum::{ComputedChecksums, decode_md5_base64, multipart_etag};
 use crate::object_io;
 
@@ -107,16 +107,12 @@ impl s3s::S3 for NimbusS3 {
         computed.verify_content_md5(input.content_md5.as_deref())?;
         computed.verify_crc64nvme(checksum_crc64nvme.as_deref())?;
 
-        let previous = ctx
-            .meta
-            .get_manifest(&input.bucket, &input.key)
-            .await
-            .map_err(map_core_error)?;
-        verify_write_preconditions(
-            previous.as_ref(),
-            input.if_match.as_ref(),
-            input.if_none_match.as_ref(),
-        )?;
+        // The preconditions travel to the commit authority as expected-state
+        // clauses. This surface never reads the manifest and then decides
+        // against that read: two concurrent requests would both observe the
+        // pre-write state and both believe they won.
+        let expected =
+            write_condition_clauses(input.if_match.as_ref(), input.if_none_match.as_ref())?;
         let blobs = ctx.blobs().await.map_err(map_core_error)?;
         let hash = blobs.put(bytes).await.map_err(map_core_error)?;
         let manifest = match ObjectManifest::whole(
@@ -133,18 +129,29 @@ impl s3s::S3 for NimbusS3 {
         ) {
             Ok(manifest) => manifest,
             Err(error) => {
-                self.release_blob_unless_manifest_retains(&ctx, &hash, previous.as_ref())
+                self.release_uncommitted_blob(&ctx, &input.bucket, &input.key, &hash)
                     .await?;
                 return Err(map_core_error(error));
             }
         };
         let size = manifest.size;
         let retained = manifest.clone();
-        if let Err(error) = ctx.meta.put_manifest(manifest).await {
-            self.release_blob_unless_manifest_retains(&ctx, &hash, previous.as_ref())
-                .await?;
-            return Err(map_core_error(error));
-        }
+        let previous = match ctx.meta.put_manifest_conditional(manifest, expected).await {
+            Ok(ObjectConditionOutcome::Committed { previous, .. }) => previous,
+            Ok(ObjectConditionOutcome::Rejected { unmet, current }) => {
+                // Nothing was sequenced, journalled, or fanned out. The only
+                // residue is the blob this request just wrote, and it stays
+                // only if the manifest that won still names it.
+                self.release_blob_unless_manifest_retains(&ctx, &hash, current.as_ref())
+                    .await?;
+                return Err(condition_rejected(&unmet));
+            }
+            Err(error) => {
+                self.release_uncommitted_blob(&ctx, &input.bucket, &input.key, &hash)
+                    .await?;
+                return Err(map_core_error(error));
+            }
+        };
         if let Some(previous) = previous {
             self.release_manifest_blobs_except(&ctx, &previous, Some(&retained))
                 .await?;
@@ -550,13 +557,10 @@ impl s3s::S3 for NimbusS3 {
         )
         .map_err(map_core_error)?;
         let retained = manifest.clone();
-        let previous = ctx
-            .meta
-            .get_manifest(&input.bucket, &input.key)
-            .await
-            .map_err(map_core_error)?;
-        ctx.meta
-            .put_manifest(manifest)
+        // Unconditional by contract: CompleteMultipartUpload takes no
+        // preconditions. The superseded manifest comes back from the commit
+        // authority's own read, so blob cleanup never acts on a stale image.
+        let previous = put_manifest_unconditional(ctx.meta.as_ref(), manifest)
             .await
             .map_err(map_core_error)?;
         ctx.meta
@@ -655,6 +659,28 @@ impl NimbusS3 {
             .map_err(map_core_error)
     }
 
+    /// Releases a blob written for a manifest that never committed.
+    ///
+    /// Re-reads the authoritative manifest rather than trusting a pre-read:
+    /// a failed commit can still have become durable, and a concurrent writer
+    /// can have stored the identical bytes under the same content hash. The
+    /// blob goes only when the committed manifest does not name it.
+    async fn release_uncommitted_blob(
+        &self,
+        ctx: &S3TenantObjects,
+        bucket: &str,
+        key: &str,
+        hash: &BlobHash,
+    ) -> S3Result<()> {
+        let current = ctx
+            .meta
+            .get_manifest(bucket, key)
+            .await
+            .map_err(map_core_error)?;
+        self.release_blob_unless_manifest_retains(ctx, hash, current.as_ref())
+            .await
+    }
+
     async fn release_blob_unless_upload_retains(
         &self,
         ctx: &S3TenantObjects,
@@ -728,31 +754,62 @@ pub(crate) fn trailing_crc64nvme_from_headers(headers: &HeaderMap) -> S3Result<O
         })
 }
 
-fn verify_write_preconditions(
-    existing: Option<&ObjectManifest>,
+/// Translates the write preconditions on a request into expected-state
+/// clauses for the commit authority.
+///
+/// This is wire policy only — `ETag` syntax and RFC 9110 strong against weak
+/// comparison — and it reads no object state. Stored `ETag`s are always
+/// strong ([`manifest_etag`]), which is what lets both comparisons reduce to
+/// an opaque-value clause:
+///
+/// + `If-Match: *` requires the row to be present.
+/// + `If-Match: "v"` requires the row to carry exactly `v`. Strong comparison
+///   against a strong stored `ETag` is opaque-value equality.
+/// + `If-Match: W/"v"` can never match a strong stored `ETag` under strong
+///   comparison, so it fails here. The answer does not depend on any object
+///   state, so deciding it on this side is not a read-then-write race.
+/// + `If-None-Match: *` requires the row to be absent.
+/// + `If-None-Match: "v"` or `W/"v"` requires the row to be absent or to
+///   carry something other than `v`; weak comparison ignores the strength
+///   marker and compares the opaque value.
+fn write_condition_clauses(
     if_match: Option<&ETagCondition>,
     if_none_match: Option<&ETagCondition>,
-) -> S3Result<()> {
-    let current = existing.map(manifest_etag);
-    if let Some(condition) = if_match
-        && !current
-            .as_ref()
-            .is_some_and(|etag| etag_condition_matches(condition, etag, true))
-    {
-        return Err(precondition_failed(
-            "If-Match did not match the current ETag",
-        ));
+) -> S3Result<Vec<ObjectExpectedState>> {
+    let mut clauses = Vec::new();
+    if let Some(condition) = if_match {
+        if condition.is_any() {
+            clauses.push(ObjectExpectedState::Present);
+        } else {
+            let expected = condition
+                .as_etag()
+                .and_then(ETag::as_strong)
+                .ok_or_else(|| precondition_failed("If-Match did not match the current ETag"))?;
+            clauses.push(ObjectExpectedState::PresentWithEtag(expected.to_string()));
+        }
     }
-    if let Some(condition) = if_none_match
-        && current
-            .as_ref()
-            .is_some_and(|etag| etag_condition_matches(condition, etag, false))
-    {
-        return Err(precondition_failed(
-            "If-None-Match matched the current ETag",
-        ));
+    if let Some(condition) = if_none_match {
+        if condition.is_any() {
+            clauses.push(ObjectExpectedState::Absent);
+        } else if let Some(etag) = condition.as_etag() {
+            clauses.push(ObjectExpectedState::AbsentOrEtagDiffers(
+                etag.value().to_string(),
+            ));
+        }
     }
-    Ok(())
+    Ok(clauses)
+}
+
+/// Maps the clause the commit authority found unmet onto its S3 response.
+fn condition_rejected(unmet: &ObjectExpectedState) -> S3Error {
+    match unmet {
+        ObjectExpectedState::Present | ObjectExpectedState::PresentWithEtag(_) => {
+            precondition_failed("If-Match did not match the current ETag")
+        }
+        ObjectExpectedState::Absent | ObjectExpectedState::AbsentOrEtagDiffers(_) => {
+            precondition_failed("If-None-Match matched the current ETag")
+        }
+    }
 }
 
 fn verify_read_preconditions(

@@ -1,0 +1,620 @@
+npm run typecheck --workspaces --if-present
+
+> convex@0.1.45 typecheck
+> node ./src/selftest.mjs --typecheck-only
+
+
+> firebase@0.1.45 typecheck
+> npm run codegen:proto && node ./src/selftest.mjs --typecheck-only
+
+
+> firebase@0.1.45 codegen:proto
+> node ./src/codegen-protos.mjs
+
+(node:40843) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40842) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40841) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40840) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40839) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40847) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40850) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40849) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40851) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40848) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40886) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40889) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40888) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40885) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:40887) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+> @nimbus/nimbus@0.1.45 typecheck
+> node ./src/selftest.mjs --typecheck-only
+
+  ✓ capability segregation package surface contract verified
+
+> nimbus-ui@0.1.45 typecheck
+> npm run codegen && tsc -p tsconfig.json --noEmit
+
+
+> nimbus-ui@0.1.45 codegen
+> node ../codegen/src/cli.mjs --app . && node scripts/generate-routes.mjs
+
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/compute-views.ts" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/-compute-views.ts" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/graph-view.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/-graph-view.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/machine-detail.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/-machine-detail.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/machine-types.ts" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/-machine-types.ts" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/use-machine-actions.ts" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/-use-machine-actions.ts" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/observability/runs.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/observability/-runs.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/observability/logs.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/observability/-logs.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/observability/types.ts" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/observability/-types.ts" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/danger-zone.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/-danger-zone.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/deploys.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/-deploys.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/configuration.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/-configuration.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/integrations.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/-integrations.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/hooks.ts" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/-hooks.ts" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/types.ts" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/-types.ts" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/primitives.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/-primitives.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/server-info.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/-server-info.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/observability/_filters.tsx" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/developer/observability/-_filters.tsx" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+Warning: Route file "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/sub-drawer.ts" does not export a Route. This file will not be included in the route tree.
+
+If this file is not intended to be a route, you can exclude it using one of these options:
+  1. Rename the file to "/Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui/src/routes/operator/settings/-sub-drawer.ts" (prefix with "-")
+  2. Use 'routeFileIgnorePattern' in your config to match this file
+
+Current configuration:
+  routeFileIgnorePrefix: "-"
+  routeFileIgnorePattern: "\.spec\.(ts|tsx)$"
+[nimbus-ui] route tree generated
+
+> @nimbus/codegen@0.1.45 typecheck
+> node ./src/selftest.mjs --typecheck-only
+
+
+> @nimbus/mongodb@0.1.45 typecheck
+> node ./src/selftest.mjs --typecheck-only
+
+  ✓ package.json exports verified
+  ✓ typecheck passed
+
+> @nimbus/dynamodb@0.1.45 typecheck
+> node ./src/selftest.mjs --typecheck-only
+
+  ✓ package.json exports verified
+  ✓ typecheck passed
+
+> typecheck
+> npm run codegen && tsc -p convex/tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+
+
+> codegen
+> node ./scripts/vendor-external-packages.mjs && convex codegen --app .
+
+vendor-external-packages: staged nanoid@3.3.12 locally (from /Users/jack/src/github.com/nimbus/nimbus/node_modules/nanoid)
+
+> typecheck
+> npm run codegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+
+
+> codegen
+> convex codegen --app .
+
+
+> typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> typecheck
+> tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+
+
+> typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> typecheck
+> tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+
+
+> typecheck
+> npm run codegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+
+
+> codegen
+> nimbus-codegen --app .
+
+
+> typecheck
+> npm run codegen && tsc -p tsconfig.json --noEmit
+
+
+> codegen
+> nimbus-codegen --app .
+
+npm run test --workspaces --if-present
+
+> convex@0.1.45 test
+> node ./src/selftest.mjs
+
+
+> firebase@0.1.45 test
+> npm run codegen:proto && node ./src/selftest.mjs
+
+
+> firebase@0.1.45 codegen:proto
+> node ./src/codegen-protos.mjs
+
+(node:48010) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48006) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48009) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48008) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48007) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48452) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48449) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48451) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48453) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48450) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48741) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48739) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48743) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48742) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:48740) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+> @nimbus/nimbus@0.1.45 test
+> node ./src/selftest.mjs
+
+  ✓ capability segregation package surface contract verified
+  ✓ rest_client_route_parity verified (24 routes)
+
+> nimbus-ui@0.1.45 test
+> vitest run
+
+
+ RUN  v4.1.6 /Users/jack/src/github.com/nimbus/nimbus/packages/nimbus-ui
+
+Error: socket hang up
+    at _destroy (node:_http_client:987:15)
+    at onSocketNT (node:_http_client:1013:5)
+    at processTicksAndRejections (node:internal/process/task_queues:91:21) {
+  code: 'ECONNRESET'
+}
+
+ Test Files  51 passed (51)
+      Tests  336 passed (336)
+   Start at  13:46:11
+   Duration  7.28s (transform 3.86s, setup 11.47s, import 11.38s, tests 7.37s, environment 26.68s)
+
+
+> @nimbus/codegen@0.1.45 test
+> node ./src/selftest.mjs
+
+runtime remap fixtures: ok (4 cases)
+
+> @nimbus/mongodb@0.1.45 test
+> node ./src/selftest.mjs
+
+  ✓ package.json exports verified
+  ✓ ESM bundle built (575 bytes)
+  ✓ mongoUri builder tests passed
+  ✓ typecheck passed
+
+> @nimbus/dynamodb@0.1.45 test
+> node ./src/selftest.mjs
+
+  ✓ package.json exports verified
+  ✓ ESM bundle built (692 bytes)
+  ✓ connection-helper tests passed
+  ✓ typecheck passed
+
+> test
+> npm run codegen && tsc -p tsconfig.json --noEmit
+
+
+> codegen
+> convex codegen --app .
+
+
+> test
+> npm run codegen && tsc -p tsconfig.json --noEmit
+
+
+> codegen
+> convex codegen --app .
+
+
+> test
+> npm run codegen && tsc -p tsconfig.json --noEmit
+
+
+> codegen
+> convex codegen --app .
+
+
+> test
+> npm run typecheck
+
+
+> typecheck
+> npm run codegen && tsc -p convex/tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+
+
+> codegen
+> node ./scripts/vendor-external-packages.mjs && convex codegen --app .
+
+
+> test
+> npm run codegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+
+
+> codegen
+> convex codegen --app .
+
+
+> test
+> tsc -p tsconfig.json --noEmit
+
+
+> test
+> npm run codegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+
+
+> codegen
+> nimbus-codegen --app .
+
+
+> test
+> npm run codegen && tsc -p tsconfig.json --noEmit
+
+
+> codegen
+> nimbus-codegen --app .
+
+bash -n scripts/verify-tenant-lifecycle-callers.sh
+bash scripts/verify-tenant-lifecycle-callers.sh
+tenant-lifecycle-production-source: self-test pass (4 cases)
+tenant-lifecycle-callers: pass (12 classified synchronous/internal call sites)
+bash -n scripts/ppsc-seed-farm.sh
+bash -n scripts/verify-ppsc-seed-farm-helper.sh
+bash scripts/verify-ppsc-seed-farm-helper.sh
+PPSC seed-farm helper: profile selection, zero-test rejection, and child exit propagation passed
+bash -n scripts/verify-elle-serializability.sh
+bash -n scripts/verify-elle-serializability-helper.sh
+bash scripts/verify-elle-serializability-helper.sh
+Elle proof helper: selection/checksums/download bounds/UNVERIFIED/exit propagation passed
+bash -n scripts/external-provider-fixture.sh
+bash -n scripts/test-external-providers.sh
+bash -n scripts/verify-external-provider-fixture-helper.sh
+bash scripts/verify-external-provider-fixture-helper.sh
+external provider fixture helper tests: PASS (selection/readiness/exit/logs/cleanup/signal/keep/reuse/ownership/runtime/ports/URLs/zero-tests/focused-filter)
+bash -n scripts/verify-mutation-committer-arm.sh
+bash scripts/verify-mutation-committer-arm.sh
+mutation-committer-arm: immutable selection verified
+bash -n scripts/collect-sqlcipher-proof-bundles.sh
+bash -n scripts/collect-nimbus-machine-guest-proof.sh
+bash -n scripts/collect-nimbus-machine-service-proof.sh
+bash -n scripts/collect-nimbus-homebrew-cask-proof.sh
+bash -n scripts/prove-linux-cgroup-memory-limit.sh
+bash -n scripts/verify-tenant-isolation-conformance.sh
+bash -n scripts/verify-runtime-tenant-isolation.sh
+bash scripts/verify-runtime-tenant-isolation.sh
+Nimbus runtime tenant-isolation static gate
+
+ok 1 - adapter registries do not own RuntimeExecutor fields
+ok 2 - production adapters do not construct runtime executors
+ok 3 - adapter registries do not own canonical runtime governor or policy
+ok 4 - compute state owns the canonical RuntimeManager
+ok 5 - compute projects canonical base limits into adapter execution requirements
+ok 6 - retained-state keys do not use an optional tenant label as ownership
+ok 7 - runtime owner IDs carry an owner class
+ok 8 - runtime owner IDs carry an opaque stable subject
+ok 9 - runtime owner IDs carry a nonzero incarnation
+ok 10 - compute does not allocate a parallel tenant-owner incarnation
+ok 11 - tenant owners are lowered only by the compute RuntimeManager
+ok 12 - routing affinity never constructs runtime owners
+ok 13 - bundle loading never derives runtime owners from bundle tenant metadata
+ok 14 - every mutable retained pool kind requires the common owner lease guard
+ok 15 - executor admission invokes the common retained-state guard
+ok 16 - Bun/JSC invokes the common retained-state guard before backend entry
+ok 17 - Bun/JSC retained mode remains non-product-selectable
+ok 18 - startup snapshots and anchors do not consume tenant or invocation ownership state
+ok 19 - the NodeFull anchor uses the platform-owned virtual anchor bundle
+
+runtime tenant-isolation static gate: 19 passed, 0 failed
+bash -n scripts/verify-artifact-provenance.sh
+bash -n scripts/verify-bun-jsc-runtime-contract.sh
+bash -n scripts/verify-bun-jsc-in-process-lockdown.sh
+bash -n scripts/bun-jsc-adapter-contract.sh
+bash -n scripts/build-bun-jsc-adapter-artifacts.sh
+bash -n scripts/package-bun-jsc-adapter.sh
+bash -n scripts/verify-bun-jsc-adapter-package.sh
+bash -n scripts/verify-bun-jsc-adapter-package-helper.sh
+bash -n scripts/verify-bun-jsc-release-assets.sh
+bash -n scripts/verify-bun-jsc-release-assets-helper.sh
+bash -n scripts/render-release-oci-image-report.sh
+bash -n scripts/verify-release-oci-image-report.sh
+bash -n scripts/nimbus-release-rust-features.sh
+bash -n scripts/verify-node-full-substrate-realm.sh
+bash -n scripts/verify-runtime-execution-classification.sh
+bash -n scripts/verify-profile-aware-isolate-runtime-crossover.sh
+bash -n scripts/verify-release-oci-image-assets.sh
+bash -n scripts/smoke-release-oci-image.sh
+bash -n scripts/verify-release-oci-image-helper.sh
+bash -n scripts/verify-release-oci-image-build-helper.sh
+bash -n scripts/verify-release-oci-image-live.sh
+bash -n scripts/verify-release-oci-image-live-helper.sh
+bash -n scripts/verify-bun-jsc-installed-package-proof.sh
+bash -n scripts/build-linux-release-packages.sh
+bash -n scripts/verify-build-linux-release-packages-helper.sh
+bash -n scripts/verify-collect-sqlcipher-proof-bundles-helper.sh
+bash -n scripts/verify-nimbus-machine-guest-proof-helper.sh
+bash -n scripts/verify-nimbus-machine-service-proof-helper.sh
+bash -n scripts/verify-nimbus-homebrew-cask-proof-helper.sh
+bash -n scripts/install.sh
+bash -n scripts/verify-install.sh
+bash -n scripts/verify-install-helper.sh
+bash scripts/verify-collect-sqlcipher-proof-bundles-helper.sh
+downloaded 2 SQLCipher proof artifact(s) into /var/folders/kw/d608x5pn4cq73rz78ztl92cw0000gn/T/nimbus-sqlcipher-proof-helper.1pEt0h/output
+verified: sqlcipher proof bundle collector discovers and downloads matching artifacts
+bash scripts/verify-nimbus-machine-guest-proof-helper.sh
+verified: nimbus machine guest proof helper captured deterministic guest-image evidence
+bash scripts/verify-nimbus-machine-service-proof-helper.sh
+verified: nimbus machine service proof helper captured deterministic forwarded-service evidence
+bash scripts/verify-nimbus-homebrew-cask-proof-helper.sh
+verified: nimbus homebrew cask proof helper captures the packaged macOS release-asset contract with bundled-first gvproxy and vfkit helpers deterministically
+bash scripts/verify-bun-jsc-adapter-package-helper.sh
+verified: Bun/JSC adapter package helper accepts a good fixture with SBOM/provenance and rejects missing library, bad checksum, checksum subject spoofing, missing evidence, bad evidence checksum, wrong provenance subject, bad manifest, unsafe modes, wrong exports, and native leaks
+bash scripts/verify-bun-jsc-release-assets-helper.sh
+verified: Bun/JSC release asset helper accepts absent-optional and good assets with SBOM/provenance, rejects missing required assets, bad release checksums, checksum subject spoofing, unknown platforms, and tampered adapter packages
+bash scripts/verify-release-oci-image-helper.sh
+verified: release OCI image helper covers image definition, license evidence, least-permission workflow wiring, deterministic report rendering, release identity asset validation, stdout/stderr logging evidence, and smoke contract
+bash scripts/verify-release-oci-image-live-helper.sh
+verified: live OCI image verifier accepts complete release fixtures with optional adapter assets and rejects missing LICENSE or unchecksummed release assets with stubbed GitHub evidence
+bash scripts/verify-build-linux-release-packages-helper.sh
+verified: linux package builder rendered deterministic nimbus/nimbus-libkrun/nimbus-crun/nimbus-bun-jsc-adapter deb/rpm manifests with package license and copyright files (nfpm not installed; package build skipped)
+bash scripts/verify-install-helper.sh
+Checking script syntax...
+  [pass] install.sh bash syntax
+  [pass] verify-install.sh bash syntax
+  [pass] install.sh POSIX sh syntax (dash)
+  [pass] install.sh getting-started output uses nimbus start
+  [pass] install.sh carries release license pointer
+
+Checking help output...
+  [pass] install.sh --help shows usage
+  [pass] install.sh --help documents --version
+  [pass] install.sh --help documents --dry-run
+  [pass] install.sh --help documents --uninstall
+  [pass] install.sh --help documents --libkrun-version
+  [pass] install.sh --help documents --with-bun-jsc
+  [pass] install.sh --help documents attestation enforcement
+
+Checking argument parsing...
+  [pass] install.sh rejects unknown options
+  [pass] install.sh --version requires value
+  [pass] install.sh --libkrun-version requires value
+
+Checking checksum enforcement...
+  [pass] verify_file_checksum accepts matching manifest entry
+  [pass] verify_file_checksum rejects missing manifest entry
+  [pass] verify_file_checksum rejects checksum subject spoofing
+
+Checking Bun/JSC adapter installer hardening...
+  [pass] Bun/JSC installer archive layout requires SBOM/SLSA evidence
+  [pass] Bun/JSC installer verifies manifest, evidence, exports, and native loader policy
+
+Checking macOS bundled-helper resolver parity...
+  [pass] install.sh resolve_macos_bundled_helper probes the canonical stage order
+  [pass] verify-install.sh resolve_macos_bundled_helper_path probes the canonical stage order
+  [pass] install.sh and verify-install.sh macOS helper resolvers stay in lockstep
+
+Checking mocked platform behavior...
+  [pass] dry-run uses GITHUB_TOKEN for nimbus GitHub API lookup
+  [pass] Linux dry-run avoids fork latest lookups
+  [pass] Linux dry-run uses validated VMM tuple
+  [pass] Linux dry-run shows optional Bun/JSC adapter install
+  [pass] macOS dry-run avoids GitHub API lookup
+  [pass] macOS dry-run warns about ignored Linux-only flags
+  [pass] macOS current install with bundled helpers skips without network
+  [pass] macOS uninstall removes direct-install bundled helpers
+
+Checking dry-run output...
+  [pass] dry-run shows install plan
+  [pass] dry-run shows platform
+  [pass] dry-run shows nimbus path
+  [pass] dry-run indicates no changes made
+
+Checking platform-specific dry-run...
+  [pass] macOS dry-run mentions Homebrew
+  [pass] macOS dry-run mentions krunkit
+  [pass] macOS dry-run mentions gvproxy
+
+Checking verification script...
+  [info] verify-install.sh passed (components present)
+  [pass] verify-install.sh reports host.os
+  [pass] verify-install.sh reports host.arch
+  [pass] verify-install.sh reports result
+  [pass] verify-install.sh reports optional Bun/JSC adapter state
+
+Checking uninstall dry-run...
+  [pass] uninstall dry-run indicates no changes
+  [pass] uninstall dry-run describes removal
+
+verified: install script helper passed 44 tests

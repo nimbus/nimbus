@@ -1,0 +1,42 @@
+$ cargo test -p nimbus-s3 conditional_ -- --nocapture
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.98s
+     Running unittests src/lib.rs (target/debug/deps/nimbus_s3-1e190a279b541004)
+
+running 3 tests
+test tests::conditional_put_probe_create_reject_update_reject_stale ... ok
+test tests::conditional_requests_enforce_s3_etag_preconditions ... ok
+test tests::conditional_put_if_none_match_is_linearizable ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+rc=0
+
+$ cargo test -p nimbus-engine object_meta -- --nocapture
+test tests::objects::object_meta_etag_condition_rejects_a_stale_writer ... ok
+test tests::objects::object_meta_conditions_admit_one_concurrent_claimant ... ok
+test tests::objects::object_meta_writes_are_sequenced_journal_commits ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 672 filtered out; finished in 0.42s
+
+     Running tests/loom_handoff.rs (target/debug/deps/loom_handoff-2d421ce07d900f39)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+rc=0
+
+$ cargo test -p nimbus-storage object_meta -- --nocapture
+running 8 tests
+test tests::object_meta::object_manifest_rejects_malformed_chunk_layout ... ok
+test tests::object_meta::object_meta_store_persists_through_sqlite ... ok
+test tests::object_meta::object_meta_store_round_trips_manifest_through_redb ... ok
+test tests::object_meta::object_meta_store_rejects_invalid_keys_before_document_write ... ok
+test tests::object_meta::object_meta_store_round_trips_multipart_upload_through_redb ... ok
+test tests::object_meta::object_meta_store_lists_by_prefix_and_deletes_through_redb ... ok
+test tests::object_meta::object_meta_store_isolates_buckets_for_the_same_key ... ok
+test tests::object_meta::object_meta_store_updates_existing_manifest_atomically_through_redb ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 297 filtered out; finished in 0.17s
+
+rc=0
