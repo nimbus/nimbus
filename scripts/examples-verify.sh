@@ -558,22 +558,31 @@ assert.deepStrictEqual(local, explicit);
   echo "PASS stdio-contract: target forms match; stdio is clean; wrong silo and invalid application auth fail closed"
 }
 
-GENERATED_ENV_FLAGS=()
-load_generated_env_flags() {
-  local name="$1" app_dir="$2" generated="" pair
-  GENERATED_ENV_FLAGS=()
+SMOKE_ENV_FILE=""
+write_smoke_env_file() {
+  local name="$1" app_dir="$2" generated=""
   generated="$(node "${WORKSPACE_ADAPTER}" emit-generated-env \
     --manifest "${CASE_MANIFEST}" \
     --repo-root "${REPO_ROOT}" \
     --case "${name}" \
     --destination "${app_dir}")"
-  if [ -z "${generated}" ]; then
-    return
-  fi
-  while IFS= read -r pair; do
-    [ -n "${pair}" ] || continue
-    GENERATED_ENV_FLAGS+=("--env" "${pair}")
-  done <<<"${generated}"
+  case "${SERVER_ADMIN_TOKEN}" in
+    *$'\n'*|*$'\r'*)
+      echo "case-local admin token contains an invalid line break" >&2
+      return 1
+      ;;
+  esac
+  SMOKE_ENV_FILE="${case_auth_root}/smoke.env"
+  (
+    umask 077
+    {
+      printf 'NIMBUS_ADMIN_TOKEN=%s\n' "${SERVER_ADMIN_TOKEN}"
+      if [ -n "${generated}" ]; then
+        printf '%s\n' "${generated}"
+      fi
+    } >"${SMOKE_ENV_FILE}"
+  )
+  chmod 600 "${SMOKE_ENV_FILE}"
 }
 
 run_one() {
@@ -602,7 +611,7 @@ run_one() {
 
   smoke_env="${smoke_env//\$\{NIMBUS_URL\}/${SERVER_URL}}"
   build_command_env_flags "${smoke_env}"
-  load_generated_env_flags "${name}" "${app_dir}"
+  write_smoke_env_file "${name}" "${app_dir}"
   fail_at_cut during-smoke
   local smoke_status=0
   if [ "${smoke_command}" = "node" ]; then
@@ -613,19 +622,22 @@ run_one() {
     node "${PROCESS_SUPERVISOR}" exec --cwd "${app_dir}" \
       --clear-prefix NIMBUS_ \
       ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
-      --env "NIMBUS_ADMIN_TOKEN=${SERVER_ADMIN_TOKEN}" \
+      --env-file "${SMOKE_ENV_FILE}" \
       ${COMMAND_ENV_FLAGS[@]+"${COMMAND_ENV_FLAGS[@]}"} \
-      ${GENERATED_ENV_FLAGS[@]+"${GENERATED_ENV_FLAGS[@]}"} \
       -- node --experimental-strip-types ./smoke.ts || smoke_status=$?
   else
     node "${PROCESS_SUPERVISOR}" exec --cwd "${app_dir}" \
       --clear-prefix NIMBUS_ \
       ${CASE_ENV_FLAGS[@]+"${CASE_ENV_FLAGS[@]}"} \
-      --env "NIMBUS_ADMIN_TOKEN=${SERVER_ADMIN_TOKEN}" \
+      --env-file "${SMOKE_ENV_FILE}" \
       ${COMMAND_ENV_FLAGS[@]+"${COMMAND_ENV_FLAGS[@]}"} \
-      ${GENERATED_ENV_FLAGS[@]+"${GENERATED_ENV_FLAGS[@]}"} \
       -- npm run smoke || smoke_status=$?
   fi
+  if ! rm -f "${SMOKE_ENV_FILE}"; then
+    echo "FAIL ${name}: could not remove the smoke credential file" >&2
+    smoke_status=1
+  fi
+  SMOKE_ENV_FILE=""
 
   if [ "${smoke_status}" -eq 0 ] && [ "${stdio_contract}" = "1" ]; then
     check_run_stdio_contract "${app_dir}" "${SERVER_URL}" || smoke_status=$?

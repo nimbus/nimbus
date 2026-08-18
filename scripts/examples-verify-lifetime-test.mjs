@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   createCaseContext,
   createRunContext,
   finalizeRunContext,
+  moveToArtifacts,
   readCaseDiscovery,
 } from "./examples-verify-lifetime.mjs";
 import {
@@ -17,6 +20,8 @@ import {
   spawnManagedProcess,
   stopManagedProcess,
 } from "./examples-verify-supervisor.mjs";
+
+const SUPERVISOR_PATH = fileURLToPath(new URL("./examples-verify-supervisor.mjs", import.meta.url));
 
 async function pathExists(candidate) {
   return await fs.lstat(candidate).then(() => true, () => false);
@@ -306,6 +311,86 @@ async function cleanup_retry_converges_after_retained_failure() {
   });
 }
 
+async function cross_filesystem_retention_retry_converges_after_source_removal_failure() {
+  await temporaryCampaign(async ({ repoRoot, tempRoot, artifactRoot }) => {
+    const run = await createRunContext({ repoRoot, tempRoot, artifactRoot });
+    await fs.writeFile(path.join(run.runRoot, "failure.log"), "retained evidence\n");
+    let removeAttempts = 0;
+    const crossFilesystemRename = async (source, destination) => {
+      if (source === run.runRoot) {
+        const error = new Error("injected cross-filesystem rename");
+        error.code = "EXDEV";
+        throw error;
+      }
+      await fs.rename(source, destination);
+    };
+    const failFirstSourceRemoval = async (candidate, options) => {
+      if (candidate === run.runRoot && removeAttempts++ === 0) {
+        const error = new Error("injected source removal failure");
+        error.code = "EPERM";
+        throw error;
+      }
+      await fs.rm(candidate, options);
+    };
+
+    await assert.rejects(
+      moveToArtifacts(run, {
+        rename: crossFilesystemRename,
+        remove: failFirstSourceRemoval,
+      }),
+      /injected source removal failure/u,
+    );
+    const destination = path.join(artifactRoot, path.basename(run.runRoot));
+    assert.equal(await pathExists(run.runRoot), true);
+    assert.equal(await pathExists(destination), true);
+
+    assert.equal(await moveToArtifacts(run), destination);
+    assert.equal(await pathExists(run.runRoot), false);
+    assert.equal(await fs.readFile(path.join(destination, "failure.log"), "utf8"), "retained evidence\n");
+  });
+}
+
+async function supervisor_environment_file_keeps_secret_values_out_of_argv() {
+  await temporaryCampaign(async ({ root }) => {
+    const environmentPath = path.join(root, "smoke.env");
+    const outputPath = path.join(root, "child-environment.txt");
+    const secretValue = `private-value-${process.pid}`;
+    await fs.writeFile(environmentPath, `NIMBUS_AVR7_SECRET=${secretValue}\n`, { mode: 0o600 });
+    const fixture = [
+      "const fs = require('node:fs');",
+      "fs.writeFileSync(process.argv[1], process.env.NIMBUS_AVR7_SECRET || 'missing');",
+      "setTimeout(() => {}, 250);",
+    ].join("");
+    const supervisor = spawn(process.execPath, [
+      SUPERVISOR_PATH,
+      "exec",
+      "--cwd",
+      root,
+      "--clear-prefix",
+      "NIMBUS_",
+      "--env-file",
+      environmentPath,
+      "--",
+      process.execPath,
+      "-e",
+      fixture,
+      outputPath,
+    ], { stdio: "ignore" });
+    const exit = new Promise((resolve, reject) => {
+      supervisor.once("error", reject);
+      supervisor.once("exit", resolve);
+    });
+    assert.equal(
+      supervisor.spawnargs.some((argument) => argument.includes(secretValue)),
+      false,
+      "the supervisor argv must contain only the environment-file path, never its values",
+    );
+    await waitForFile(outputPath);
+    assert.equal(await fs.readFile(outputPath, "utf8"), secretValue);
+    assert.equal(await exit, 0);
+  });
+}
+
 async function failed_run_retains_artifact_without_live_resources() {
   await temporaryCampaign(async ({ repoRoot, tempRoot, artifactRoot }) => {
     const run = await createRunContext({ repoRoot, tempRoot, artifactRoot });
@@ -328,7 +413,9 @@ const tests = [
   process_tree_cleanup_stops_descendants,
   six_fault_cuts_release_active_resources,
   cleanup_retry_converges_after_retained_failure,
+  cross_filesystem_retention_retry_converges_after_source_removal_failure,
   failed_run_retains_artifact_without_live_resources,
+  supervisor_environment_file_keeps_secret_values_out_of_argv,
   process_spawn_record_failure_settles_unrecorded_child,
   corrupt_process_record_fails_before_spawn,
 ];

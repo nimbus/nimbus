@@ -17,7 +17,9 @@ function parseEnvironmentEntry(entry) {
   invariant(separator > 0, `environment entry must be KEY=value: ${entry}`);
   const key = entry.slice(0, separator);
   invariant(/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key), `environment key is invalid: ${key}`);
-  return [key, entry.slice(separator + 1)];
+  const value = entry.slice(separator + 1);
+  invariant(!value.includes("\0") && !value.includes("\n") && !value.includes("\r"), `environment value is invalid: ${key}`);
+  return [key, value];
 }
 
 function childEnvironment(environment, clearPrefixes) {
@@ -255,8 +257,27 @@ function commandAfterSeparator(args) {
   return [args[separator + 1], args.slice(separator + 2)];
 }
 
-function environmentOptions(args) {
-  return Object.fromEntries(repeatedOptions(args, "--env").map(parseEnvironmentEntry));
+async function environmentOptions(args) {
+  const entries = repeatedOptions(args, "--env").map(parseEnvironmentEntry);
+  for (const environmentPath of repeatedOptions(args, "--env-file")) {
+    invariant(path.isAbsolute(environmentPath), `environment file path must be absolute: ${environmentPath}`);
+    const stat = await fs.stat(environmentPath);
+    invariant(stat.isFile(), `environment file must be a regular file: ${environmentPath}`);
+    if (process.platform !== "win32") {
+      invariant((stat.mode & 0o077) === 0, `environment file must be owner-only: ${environmentPath}`);
+    }
+    const contents = await fs.readFile(environmentPath, "utf8");
+    invariant(Buffer.byteLength(contents) <= 65_536, `environment file is too large: ${environmentPath}`);
+    for (const line of contents.split(/\r?\n/u)) {
+      if (line.length > 0) entries.push(parseEnvironmentEntry(line));
+    }
+  }
+  const environment = {};
+  for (const [key, value] of entries) {
+    invariant(!Object.hasOwn(environment, key), `environment key is duplicated: ${key}`);
+    environment[key] = value;
+  }
+  return environment;
 }
 
 async function main(args) {
@@ -268,7 +289,7 @@ async function main(args) {
       logPath: option(args, "--log"),
       command,
       args: commandArgs,
-      environment: environmentOptions(args),
+      environment: await environmentOptions(args),
       clearPrefixes: repeatedOptions(args, "--clear-prefix"),
     });
     console.log(pid);
@@ -287,13 +308,13 @@ async function main(args) {
     process.exitCode = execManagedProcess({
       command,
       args: commandArgs,
-      environment: environmentOptions(args),
+      environment: await environmentOptions(args),
       clearPrefixes: repeatedOptions(args, "--clear-prefix"),
       cwd: option(args, "--cwd"),
     });
     return;
   }
-  throw new Error("usage: examples-verify-supervisor.mjs spawn|stop|status|exec ...");
+  throw new Error("usage: examples-verify-supervisor.mjs spawn|stop|status|exec [--env-file PATH] ...");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

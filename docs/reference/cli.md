@@ -65,6 +65,7 @@ Most-used flags:
 | `--allow-network` | — | `false` | Opt in to binding a non-loopback interface; requires an explicitly rotated local admin token (`nimbus auth rotate-admin`). |
 | `--cors-allow-origin` | `NIMBUS_CORS_ALLOW_ORIGINS` | loopback only | Additional allowed browser origin for CORS (repeatable; env var is comma-separated). Exact match; wildcards rejected. |
 | `--data-dir` | `NIMBUS_DATA_DIR` | `./data` | Local data directory for embedded tenant databases and, by default, the control plane. |
+| `--control-data-dir` | `NIMBUS_CONTROL_DATA_DIR` | value of `--data-dir` | Local control-plane directory. Set it to keep control state separate from tenant data. |
 | `--tenant-provider` | `NIMBUS_TENANT_PROVIDER` | `sqlite` | Tenant persistence provider: `sqlite`, `libsql-replica`, `redb`, `postgres`, or `mysql`. |
 | `--config` | `NIMBUS_CONFIG` | unset | Optional YAML or JSON config file; CLI flags override env vars, which override file values. Without it, Nimbus also auto-discovers `./nimbus.yaml`. |
 
@@ -118,7 +119,8 @@ a restart. The server keeps serving even when no adapter is detected.
 | --- | --- | --- | --- |
 | `--port` | — | `3210` | Port to listen on. |
 | `--app-dir` | — | auto-detected | App directory containing an adapter source root. |
-| `--data-dir` | — | `<app-dir>/.nimbus/dev` | Shared local dev persistence root for tenant data and control state. |
+| `--data-dir` | — | `<app-dir>/.nimbus/dev` | Local dev persistence root for tenant data. It also holds control state unless `--control-data-dir` is set. |
+| `--control-data-dir` | — | value of `--data-dir` | Local dev control-plane directory. Set it to keep control state separate from tenant data. |
 | `--compose-file` | `COMPOSE_FILE` | discovered | Ordered Compose file list for local service dependencies; repeat to merge overlays. |
 | `--no-compose-discovery` | — | `false` | Ignore `COMPOSE_FILE` and skip walk-up Compose discovery for this session. This flag conflicts with `--compose-file`. |
 | `--once` | — | `false` | Run startup only, without the watched codegen loop. |

@@ -7,6 +7,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const SHELL_DELIMITER = "|";
+const ARTIFACT_MARKER = ".nimbus-artifact.json";
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -33,6 +34,16 @@ function absolute(candidate, label) {
 async function makeOwnerOnly(directory) {
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   if (process.platform !== "win32") await fs.chmod(directory, 0o700);
+}
+
+async function pathExists(candidate) {
+  try {
+    await fs.lstat(candidate);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function runContextFromPaths({ runRoot, artifactRoot, repoRoot }) {
@@ -206,12 +217,39 @@ async function readStdinSecret() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function moveToArtifacts(run) {
+async function writeArtifactMarker(run) {
+  await fs.writeFile(
+    path.join(run.runRoot, ARTIFACT_MARKER),
+    `${JSON.stringify({ schemaVersion: 1, sourceRunRoot: run.runRoot }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+}
+
+async function assertMatchingArtifact(destination, run) {
+  let marker;
+  try {
+    marker = JSON.parse(await fs.readFile(path.join(destination, ARTIFACT_MARKER), "utf8"));
+  } catch (error) {
+    throw new Error(`cannot verify existing artifact destination ${destination}: ${error.message}`, { cause: error });
+  }
+  invariant(marker.schemaVersion === 1, `artifact destination has unsupported schemaVersion: ${destination}`);
+  invariant(marker.sourceRunRoot === run.runRoot, `artifact destination belongs to another run: ${destination}`);
+}
+
+export async function moveToArtifacts(
+  run,
+  { rename = fs.rename, remove = fs.rm } = {},
+) {
   await makeOwnerOnly(run.artifactRoot);
   const destination = path.join(run.artifactRoot, path.basename(run.runRoot));
-  invariant(!await fs.lstat(destination).then(() => true, () => false), `artifact destination already exists: ${destination}`);
+  if (await pathExists(destination)) {
+    await assertMatchingArtifact(destination, run);
+    if (await pathExists(run.runRoot)) await remove(run.runRoot, { recursive: true });
+    return destination;
+  }
+  await writeArtifactMarker(run);
   try {
-    await fs.rename(run.runRoot, destination);
+    await rename(run.runRoot, destination);
   } catch (error) {
     if (error?.code !== "EXDEV") throw error;
     const staging = `${destination}.${process.pid}.${Date.now()}.stage`;
@@ -222,8 +260,8 @@ async function moveToArtifacts(run) {
         force: false,
         errorOnExist: true,
       });
-      await fs.rename(staging, destination);
-      await fs.rm(run.runRoot, { recursive: true });
+      await rename(staging, destination);
+      await remove(run.runRoot, { recursive: true });
     } catch (copyError) {
       await fs.rm(staging, { recursive: true, force: true });
       throw copyError;

@@ -94,7 +94,10 @@ NODE
     AVRC20)
       has scripts/examples-verify.sh 'NIMBUS_NETWORK_STATE_DIR' &&
         has scripts/examples-verify.sh 'case_(auth|discovery|audit|app|data|control|log)_root' &&
-        has scripts/examples-verify.sh 'cleanup_failure.*retain'
+        has scripts/examples-verify.sh 'cleanup_failure.*retain' &&
+        has scripts/examples-verify.sh '--env-file.*SMOKE_ENV_FILE' &&
+        lacks scripts/examples-verify.sh '--env[[:space:]]+"NIMBUS_ADMIN_TOKEN=' &&
+        has scripts/examples-verify-lifetime.mjs 'sourceRunRoot'
       ;;
     AVRC21)
       has scripts/examples-verify-report.mjs 'schemaVersion' &&
@@ -204,6 +207,8 @@ NODE
       ;;
     AVRC20)
       printf '%s\n' 'NIMBUS_NETWORK_STATE_DIR=/run/global' 'case_auth_root case_discovery_root case_audit_root case_app_root case_data_root case_control_root case_log_root' '# cleanup_failure must retain evidence' >"${root}/scripts/examples-verify.sh"
+      printf '%s\n' "--env-file \"\${SMOKE_ENV_FILE}\"" >>"${root}/scripts/examples-verify.sh"
+      printf '%s\n' 'const sourceRunRoot = true;' >"${root}/scripts/examples-verify-lifetime.mjs"
       ;;
     AVRC21)
       printf '%s\n' 'const schemaVersion = 1; function redact() {} function validate() {}' >"${root}/scripts/examples-verify-report.mjs"
