@@ -1,0 +1,40 @@
+### SIC1 fail-before (engine)
+### The condition is decided on a read taken outside the committer actor,
+### then the write is submitted unconditionally.
+
+$ cargo test -p nimbus-engine object_meta -- --nocapture
+   |
+46 |         data: &mut [u16],
+   |               ^^^^^^^^^^ the lifetime is elided here
+...
+51 |     ) -> CDF {
+   |          ^^^ the same lifetime is hidden here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+51 |     ) -> CDF<'_> {
+   |             ++++
+
+warning: `brotli` (lib) generated 16 warnings (run `cargo fix --lib -p brotli` to apply 2 suggestions)
+   Compiling nimbus-engine v0.1.45 (/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 45.72s
+     Running unittests src/lib.rs (target/debug/deps/nimbus_engine-d4c60f56afcfe821)
+
+running 3 tests
+
+thread 'tests::objects::object_meta_conditions_admit_one_concurrent_claimant' (70085697) panicked at crates/nimbus-engine/src/tests/objects.rs:361:17:
+the admitted claimant must find the key absent
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::objects::object_meta_conditions_admit_one_concurrent_claimant ... FAILED
+test tests::objects::object_meta_writes_are_sequenced_journal_commits ... ok
+test tests::objects::object_meta_etag_condition_rejects_a_stale_writer ... ok
+
+failures:
+
+failures:
+    tests::objects::object_meta_conditions_admit_one_concurrent_claimant
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 672 filtered out; finished in 0.59s
+
+error: test failed, to rerun pass `-p nimbus-engine --lib`
