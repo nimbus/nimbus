@@ -16,6 +16,8 @@ const DEFAULT_FIREBASE_FUNCTIONS_CODEBASE: &str = "default";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Adapter {
+    /// Nimbus-native functions in `nimbus/`, authored against `@nimbus/nimbus`.
+    Nimbus,
     Convex,
     CloudFunctions,
 }
@@ -23,6 +25,7 @@ pub(crate) enum Adapter {
 impl Adapter {
     pub(crate) fn from_cli_arg(s: &str) -> Option<Adapter> {
         match s {
+            "nimbus" => Some(Self::Nimbus),
             "convex" => Some(Self::Convex),
             "cloud-functions" => Some(Self::CloudFunctions),
             _ => None,
@@ -31,6 +34,7 @@ impl Adapter {
 
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::Nimbus => "nimbus",
             Self::Convex => "convex",
             Self::CloudFunctions => "cloud-functions",
         }
@@ -38,17 +42,19 @@ impl Adapter {
 
     pub(crate) fn needs_node_dependencies(self) -> bool {
         match self {
-            Self::Convex | Self::CloudFunctions => true,
+            Self::Nimbus | Self::Convex | Self::CloudFunctions => true,
         }
     }
 
     /// The embedded-package provision target for this adapter's scaffold, or
     /// `None` when the scaffold declares no binary-provisioned Nimbus packages.
-    /// Convex apps depend on the `file:`-provisioned `convex` closure; Cloud
-    /// Functions uses developer-supplied Firebase SDKs from the registry, so
-    /// it has nothing to provision from the binary.
+    /// Native apps depend on the `file:`-provisioned `@nimbus/nimbus` closure
+    /// and Convex apps on the `convex` one; Cloud Functions uses
+    /// developer-supplied Firebase SDKs from the registry, so it has nothing to
+    /// provision from the binary.
     pub(crate) fn provision_target(self) -> Option<&'static str> {
         match self {
+            Self::Nimbus => Some("nimbus"),
             Self::Convex => Some("convex"),
             Self::CloudFunctions => None,
         }

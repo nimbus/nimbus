@@ -5,6 +5,14 @@ use crate::node_runtime;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DevAdapter {
+    /// A Nimbus-native app: functions in `nimbus/`, authored against
+    /// `@nimbus/nimbus`. Separate from `Convex` because the two roots resolve
+    /// to different package namespaces — codegen emits `@nimbus/nimbus/server`
+    /// imports here, so provisioning the Convex compatibility package instead
+    /// would wire the app to a package its sources never import.
+    Nimbus {
+        source_root: PathBuf,
+    },
     Convex {
         source_root: PathBuf,
     },
@@ -21,6 +29,7 @@ pub(super) enum DevAdapter {
 impl DevAdapter {
     pub(super) fn name(&self) -> &'static str {
         match self {
+            Self::Nimbus { .. } => node_runtime::Adapter::Nimbus.name(),
             Self::Convex { .. } => node_runtime::Adapter::Convex.name(),
             Self::CloudFunctions { .. } => node_runtime::Adapter::CloudFunctions.name(),
             Self::FirestoreClient => "firestore-client",
@@ -29,7 +38,9 @@ impl DevAdapter {
 
     pub(super) fn source_roots(&self) -> &[PathBuf] {
         match self {
-            Self::Convex { source_root } => std::slice::from_ref(source_root),
+            Self::Nimbus { source_root } | Self::Convex { source_root } => {
+                std::slice::from_ref(source_root)
+            }
             Self::CloudFunctions { source_roots } => source_roots,
             Self::FirestoreClient => &[],
         }
@@ -37,6 +48,7 @@ impl DevAdapter {
 
     pub(super) fn needs_node_dependencies(&self) -> bool {
         match self {
+            Self::Nimbus { .. } => node_runtime::Adapter::Nimbus.needs_node_dependencies(),
             Self::Convex { .. } => node_runtime::Adapter::Convex.needs_node_dependencies(),
             Self::CloudFunctions { .. } => {
                 node_runtime::Adapter::CloudFunctions.needs_node_dependencies()
@@ -53,6 +65,7 @@ impl DevAdapter {
     /// only behind the fail-closed import scan in `dev.rs`.
     pub(super) fn provision_target(&self) -> Option<&'static str> {
         match self {
+            Self::Nimbus { .. } => node_runtime::Adapter::Nimbus.provision_target(),
             Self::Convex { .. } => node_runtime::Adapter::Convex.provision_target(),
             Self::CloudFunctions { .. } => node_runtime::Adapter::CloudFunctions.provision_target(),
             Self::FirestoreClient => None,
@@ -61,7 +74,9 @@ impl DevAdapter {
 
     pub(super) fn npm_install_dirs(&self, app_dir: &Path) -> Vec<PathBuf> {
         match self {
-            Self::Convex { .. } | Self::FirestoreClient => vec![app_dir.to_path_buf()],
+            Self::Nimbus { .. } | Self::Convex { .. } | Self::FirestoreClient => {
+                vec![app_dir.to_path_buf()]
+            }
             Self::CloudFunctions { source_roots } => source_roots.clone(),
         }
     }
@@ -93,7 +108,7 @@ pub(super) fn detect_dev_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter
 
     let nimbus_root = app_dir.join("nimbus");
     if nimbus_root.is_dir() {
-        return Ok(Some(DevAdapter::Convex {
+        return Ok(Some(DevAdapter::Nimbus {
             source_root: nimbus_root,
         }));
     }

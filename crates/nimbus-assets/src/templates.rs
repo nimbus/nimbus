@@ -7,6 +7,15 @@ pub mod convex {
         include_str!("../embedded/templates/convex/package.json.tmpl");
 }
 
+pub mod nimbus {
+    pub const SCHEMA_TS: &str = include_str!("../embedded/templates/nimbus/nimbus/schema.ts");
+    pub const MESSAGES_TS: &str = include_str!("../embedded/templates/nimbus/nimbus/messages.ts");
+    pub const GITIGNORE: &str = include_str!("../embedded/templates/nimbus/gitignore");
+    pub const TSCONFIG_JSON: &str = include_str!("../embedded/templates/nimbus/tsconfig.json");
+    pub const PACKAGE_JSON_TMPL: &str =
+        include_str!("../embedded/templates/nimbus/package.json.tmpl");
+}
+
 pub mod cloud_functions {
     pub const FIREBASE_JSON: &str =
         include_str!("../embedded/templates/cloud-functions/firebase.json");
@@ -34,7 +43,7 @@ pub mod machine {
 
 #[cfg(test)]
 mod tests {
-    use super::{cloud_functions, convex, machine};
+    use super::{cloud_functions, convex, machine, nimbus};
 
     #[test]
     fn init_templates_are_available() {
@@ -42,6 +51,21 @@ mod tests {
         assert!(convex::PACKAGE_JSON_TMPL.contains("{{PROJECT_NAME}}"));
         assert!(cloud_functions::FIREBASE_JSON.contains("functions"));
         assert!(cloud_functions::FUNCTIONS_PACKAGE_JSON_TMPL.contains("{{PROJECT_NAME}}"));
+        assert!(nimbus::SCHEMA_TS.contains("defineSchema"));
+        assert!(nimbus::PACKAGE_JSON_TMPL.contains("{{PROJECT_NAME}}"));
+    }
+
+    /// The native scaffold must author against the Nimbus SDK, not the Convex
+    /// compatibility package: a `convex` specifier here would scaffold a
+    /// project the native provision target cannot satisfy.
+    #[test]
+    fn native_templates_import_the_nimbus_sdk() {
+        assert!(nimbus::SCHEMA_TS.contains("@nimbus/nimbus/server"));
+        assert!(nimbus::SCHEMA_TS.contains("@nimbus/nimbus/values"));
+        assert!(nimbus::MESSAGES_TS.contains("@nimbus/nimbus/values"));
+        assert!(!nimbus::SCHEMA_TS.contains("\"convex/"));
+        assert!(!nimbus::MESSAGES_TS.contains("\"convex/"));
+        assert!(nimbus::TSCONFIG_JSON.contains("\"nimbus\""));
     }
 
     #[test]

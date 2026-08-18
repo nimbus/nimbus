@@ -51,9 +51,15 @@ fn dev_plan_prefers_native_source_root_for_watch_when_both_exist() {
 
     assert_eq!(
         plan.adapter,
-        Some(DevAdapter::Convex {
+        Some(DevAdapter::Nimbus {
             source_root: plan.app_dir.join("nimbus"),
         })
+    );
+    assert_eq!(
+        plan.adapter.as_ref().and_then(DevAdapter::provision_target),
+        Some("nimbus"),
+        "a native source root provisions the Nimbus SDK, not the Convex \
+         compatibility package"
     );
 }
 
