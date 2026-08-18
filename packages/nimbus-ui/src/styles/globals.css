@@ -97,14 +97,21 @@
        3.84:1 on --surface, 3.47:1 on --bg, 3.42:1 on --surface-2. */
     --nimbus-focus: oklch(62% 0.17 55);
 
-    /* Semantic state — stable across palettes for consistent affordances. */
+    /* Semantic state — stable across palettes for consistent affordances.
+
+       --warning and --danger are set from the *darkest* light ground, not from
+       --surface. --surface in every light palette is pure white, so a token
+       tuned against it clears AA on the one ground that flatters it and fails
+       on the warm canvas and on --surface-2, which is where a panel actually
+       paints. Both were a shade too light for that: 4.24:1 and 4.21:1 on
+       --surface-2 against a 4.5:1 floor. */
     --nimbus-success: oklch(52% 0.14 145);
-    --nimbus-warning: oklch(56% 0.15 72); /* 4.77:1 on --surface (was 3.31:1) */
+    --nimbus-warning: oklch(54.5% 0.15 72); /* 4.52:1 on --surface-2 */
     --nimbus-running: oklch(60% 0.13 207); /* 3.60:1 on --surface */
     --nimbus-starting: oklch(70% 0.17 50);
     --nimbus-draining: oklch(55% 0.13 280);
     --nimbus-queued: oklch(60% 0.020 240);
-    --nimbus-danger: oklch(58% 0.20 25);
+    --nimbus-danger: oklch(56% 0.20 25); /* 4.59:1 on --surface-2 */
     --nimbus-stale: oklch(50% 0.012 240);
     --nimbus-violet: oklch(55% 0.18 295);
   }

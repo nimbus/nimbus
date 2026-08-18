@@ -131,8 +131,16 @@ describe("palette token contrast", () => {
     }
   });
 
-  // These are painted on panels, tables and popovers, i.e. on --surface.
-  it.each(COMBOS)("%s: text tokens clear AA on --surface", (_, t) => {
+  // Every backdrop, not just --surface. The check used to read "these are
+  // painted on panels, tables and popovers, i.e. on --surface", and --surface
+  // in warm light is pure white, which is the most forgiving ground in the
+  // console. Nothing stops a call site from putting the same token on the
+  // canvas, and /operator/settings does: its unavailable-section text is
+  // --danger on --bg, where a browser measured 4.3:1 while this gate reported
+  // a pass against white. A semantic text token has to clear AA everywhere it
+  // can land, which is what the --link check above already assumed.
+  it.each(COMBOS)("%s: text tokens clear AA on every backdrop", (_, t) => {
+    const short: string[] = [];
     for (const token of [
       "--nimbus-muted",
       "--nimbus-warning",
@@ -140,10 +148,16 @@ describe("palette token contrast", () => {
       "--nimbus-danger",
       "--nimbus-link",
     ]) {
-      expect(contrast(t[token], t["--nimbus-surface"])).toBeGreaterThanOrEqual(
-        4.5,
-      );
+      for (const backdrop of BACKDROPS) {
+        const ratio = contrast(t[token], t[backdrop]);
+        if (ratio < 4.5) {
+          short.push(`${token} on ${backdrop} — ${ratio.toFixed(2)}:1`);
+        }
+      }
     }
+    // Named rather than counted: a failure has to say which token is illegible
+    // on which ground, or the next person re-derives it by hand.
+    expect(short).toEqual([]);
   });
 
   // WCAG 2.2 SC 1.4.11: 3:1 for focus indicators and meaningful graphics.

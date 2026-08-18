@@ -659,19 +659,23 @@ dark; the Cool Blue light column lives in `globals.css` under
 | `--muted` | `oklch(53% 0.013 75)` | `oklch(67% 0.026 248)` | Secondary text |
 | `--brand` | `oklch(73% 0.17 65)` (`#F59E0B`) | `oklch(72% 0.17 248)` (`#60A5FA`) | Primary identity: active nav stripe, primary CTA fill, connection-state dot |
 | `--accent` | `oklch(80% 0.14 70)` (`#FFB84D`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Interactive feedback: focus ring and selection. Not a state colour — `Running` has its own `--running` |
-| `--link` | `oklch(62% 0.17 55)` (`#D97706`) | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
+| `--link` | `oklch(55% 0.17 52)` | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
 
 Semantic tokens (stable across all palettes):
+
+Every light value here is set against `--surface-2`, the darkest ground a
+light palette paints text on — not against `--surface`, which is pure white in
+all three light palettes and clears AA for colours that fail everywhere else.
 
 | Token | Light (OKLCH) | Dark (OKLCH) | Use |
 | --- | --- | --- | --- |
 | `--success` | `oklch(52% 0.14 145)` | `oklch(72% 0.16 145)` | `Ready`, `Healthy` |
 | `--running` | `oklch(60% 0.13 207)` | `oklch(85% 0.10 197)` | `Running` |
-| `--warning` | `oklch(65% 0.16 75)` | `oklch(78% 0.17 75)` | `Reconnecting`, `Degraded` |
+| `--warning` | `oklch(54.5% 0.15 72)` | `oklch(78% 0.17 75)` | `Reconnecting`, `Degraded` |
 | `--starting` | `oklch(70% 0.17 50)` | `oklch(80% 0.18 50)` | `Starting`, `Provisioning` |
 | `--draining` | `oklch(55% 0.13 280)` | `oklch(72% 0.14 280)` | `Draining`, `Stopping` |
 | `--queued` | `oklch(60% 0.020 240)` | `oklch(70% 0.020 240)` | `Queued`, `Pending` |
-| `--danger` | `oklch(58% 0.20 25)` | `oklch(70% 0.20 25)` | `Failed`, destructive |
+| `--danger` | `oklch(56% 0.20 25)` | `oklch(70% 0.20 25)` | `Failed`, destructive |
 | `--stale` | `oklch(50% 0.012 240)` | `oklch(60% 0.012 240)` | Disconnected/stale (strikethrough) |
 | `--violet` | `oklch(55% 0.18 295)` | `oklch(75% 0.16 295)` | Functions/runs only |
 
