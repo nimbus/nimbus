@@ -80,7 +80,7 @@ function NodesPage() {
       <NodeCard status={statusLv} />
 
       <section className="flex flex-col gap-2">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+        <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
           Hosted on this node
         </h2>
         <div
@@ -154,7 +154,7 @@ function NodeCard({ status }: { status: LoadingValue<SystemStatus> }) {
               )
             }
           </LoadingCell>
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+          <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
             local host · standalone
           </span>
         </div>
@@ -233,7 +233,7 @@ function Field({
 }) {
   const body = (
     <>
-      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+      <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
         {label}
       </span>
       <span className="font-mono text-sm text-default">{children}</span>
@@ -269,7 +269,7 @@ function Cell({
 }) {
   return (
     <div className="flex flex-col gap-1 bg-surface px-3 py-2">
-      <span className="text-[10px] uppercase tracking-[0.14em] text-muted">
+      <span className="text-xs uppercase tracking-[0.14em] text-muted">
         {label}
       </span>
       <span className="font-mono text-sm text-default">{children}</span>

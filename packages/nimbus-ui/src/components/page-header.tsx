@@ -34,7 +34,12 @@ export function PageHeader({
         >
           {title}
         </h1>
-        {subtitle ? <p className="text-sm text-muted">{subtitle}</p> : null}
+        {/* Cap the measure: subtitles run 130-170 characters and would
+            otherwise set a single ~145-character line at 1440px and keep
+            growing. `EmptyState` already caps its body the same way. */}
+        {subtitle ? (
+          <p className="max-w-[68ch] text-sm text-muted">{subtitle}</p>
+        ) : null}
       </div>
       {trailing ? <div className="shrink-0">{trailing}</div> : null}
     </header>

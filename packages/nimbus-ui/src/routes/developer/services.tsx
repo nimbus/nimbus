@@ -118,7 +118,7 @@ function ScopeChip({ activeTenant }: { activeTenant: string | null }) {
   if (activeTenant === null) return null;
   return (
     <span
-      className="inline-flex items-center gap-1 rounded border border-app px-2 py-0.5 font-mono text-[10px] text-muted"
+      className="inline-flex items-center gap-1 rounded border border-app px-2 py-0.5 font-mono text-xs text-muted"
       data-testid="services-scope"
     >
       <span className="uppercase tracking-wide">tenant</span>
@@ -177,7 +177,7 @@ function ServicesSubDrawer({
               {svc.name ?? shortId(svc._id, 12)}
             </span>
             {svc.state ? (
-              <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+              <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
                 {svc.state}
               </span>
             ) : null}
@@ -199,23 +199,24 @@ export function ServicesTable({
 }) {
   if (services.length === 0) {
     return (
-      <div className="flex h-32 flex-col items-center justify-center gap-1 text-center">
-        <span className="font-mono text-sm text-default">No services</span>
-        <span className="max-w-md text-xs text-muted">
-          {activeTenant
+      <EmptyState
+        title="No services"
+        body={
+          activeTenant
             ? "This tenant has no declared services. Add them to compose.yaml and run `nimbus compose up`."
-            : "No services declared across any tenant."}
-        </span>
-      </div>
+            : "No services declared across any tenant."
+        }
+        testid="services-empty"
+      />
     );
   }
   return (
     <div className="overflow-auto">
       <table
-        className="w-full border-collapse text-sm"
+        className="w-full border-collapse text-base"
         data-testid="services-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
+        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
           <tr>
             <Th>Name</Th>
             <Th>Kind</Th>
@@ -249,29 +250,17 @@ export function ServicesTable({
                   </Link>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs uppercase tracking-wide text-muted">
+                  <span className="font-mono uppercase tracking-wide text-muted">
                     {svc.kind ?? "—"}
                   </span>
                 </Td>
                 <Td>
                   <StateChip state={svc.state} />
                 </Td>
-                {showTenantColumn ? (
-                  <Td>
-                    <span className="font-mono text-xs text-default">
-                      {svc.tenantId ?? "—"}
-                    </span>
-                  </Td>
-                ) : null}
-                <Td>
-                  <span className="font-mono text-xs text-default">
-                    {svc.machineId ?? "—"}
-                  </span>
-                </Td>
-                <Td>
-                  <span className="font-mono text-xs text-muted">
-                    {endpoints.length}
-                  </span>
+                {showTenantColumn ? <Td mono>{svc.tenantId ?? "—"}</Td> : null}
+                <Td mono>{svc.machineId ?? "—"}</Td>
+                <Td mono className="text-muted">
+                  {endpoints.length}
                 </Td>
                 <Td>
                   {typeof svc._updateTime === "number" ? (

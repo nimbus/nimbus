@@ -105,7 +105,7 @@ function SummaryChip({ services }: { services: ServiceDoc[] }) {
   }
   return (
     <span
-      className="whitespace-nowrap font-mono text-[11px] text-muted"
+      className="whitespace-nowrap font-mono text-xs text-muted"
       data-testid="admin-services-summary"
     >
       {services.length} service{services.length === 1 ? "" : "s"} ·{" "}
@@ -147,7 +147,7 @@ function AdminServicesSubDrawer({ services }: { services: ServiceDoc[] }) {
     <ul className="flex flex-col gap-2 px-2 py-2">
       {grouped.map(([tenant, items]) => (
         <li key={tenant} className="flex flex-col gap-px">
-          <div className="px-2 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+          <div className="px-2 pb-1 pt-2 font-mono text-xs uppercase tracking-[0.18em] text-muted">
             {tenant}
           </div>
           {items.map((svc) => (
@@ -164,7 +164,7 @@ function AdminServicesSubDrawer({ services }: { services: ServiceDoc[] }) {
                 {svc.name ?? shortId(svc._id, 12)}
               </span>
               {svc.state ? (
-                <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
                   {svc.state}
                 </span>
               ) : null}

@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
 
 import { api } from "../../../convex/_generated/api";
+import { CategoryChip } from "../../components/category-chip";
 import { CopyChip } from "../../components/copy-chip";
 import { LoadingCell } from "../../components/loading-cell";
 import { PageHeader } from "../../components/page-header";
@@ -68,13 +69,9 @@ function OverviewPage() {
     limit: 20,
   }) as AnyDoc[] | undefined;
 
-  const tenantIdSet = new Set<string>();
-  for (const doc of services ?? []) {
-    if (typeof doc.tenantId === "string") tenantIdSet.add(doc.tenantId);
-  }
-  for (const doc of tables ?? []) {
-    if (typeof doc.tenantId === "string") tenantIdSet.add(doc.tenantId);
-  }
+  const serviceTenantIds = distinctTenantIds(services);
+  const tableTenantIds = distinctTenantIds(tables);
+  const tenantIdSet = new Set([...serviceTenantIds, ...tableTenantIds]);
 
   return (
     <section
@@ -95,6 +92,16 @@ function OverviewPage() {
         tables={toLoadingValue(tables, conn)}
         runs={toLoadingValue(runs, conn)}
         tenantCount={tenantIdSet.size}
+        tenantSubline={
+          services === undefined
+            ? undefined
+            : `${serviceTenantIds.size} with services`
+        }
+        tableSubline={
+          tables === undefined
+            ? undefined
+            : `across ${tableTenantIds.size} ${tableTenantIds.size === 1 ? "tenant" : "tenants"}`
+        }
       />
 
       <div
@@ -106,6 +113,14 @@ function OverviewPage() {
       </div>
     </section>
   );
+}
+
+function distinctTenantIds(docs: AnyDoc[] | undefined): Set<string> {
+  const ids = new Set<string>();
+  for (const doc of docs ?? []) {
+    if (typeof doc.tenantId === "string") ids.add(doc.tenantId);
+  }
+  return ids;
 }
 
 function useConnSnapshot(): ConnectionSnapshot {
@@ -135,10 +150,15 @@ function TopStrip({ status }: { status: SystemStatusDoc | undefined }) {
   const health = status?.health ?? (status === null ? "unknown" : "—");
   const startedAt =
     typeof status?.startedAt === "number" ? status.startedAt : null;
+  // `shrink-0` below is load-bearing. This grid is a flex child of a column
+  // that overflows once the activity feeds fill up, and `overflow-hidden`
+  // means flexbox can shrink it to a hairline without leaving any visual cue
+  // that the health header was removed. The page container already scrolls
+  // (`overflow-y-auto`); let it, rather than eating the strip.
   return (
     <div
       data-testid="overview-top-strip"
-      className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-app bg-surface-2 md:grid-cols-4"
+      className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-md border border-app bg-surface-2 md:grid-cols-4"
     >
       <Cell label="Server">
         <StateChip state={health} />
@@ -193,7 +213,7 @@ function Cell({
 }) {
   return (
     <div className="flex flex-col gap-1 bg-surface px-3 py-2">
-      <span className="text-[10px] uppercase tracking-[0.14em] text-muted">
+      <span className="text-xs uppercase tracking-[0.14em] text-muted">
         {label}
       </span>
       <span className="text-sm">{children}</span>
@@ -208,6 +228,8 @@ function ResourceCountsGrid({
   tables,
   runs,
   tenantCount,
+  tenantSubline,
+  tableSubline,
 }: {
   machines: LoadingValue<AnyDoc[]>;
   services: LoadingValue<AnyDoc[]>;
@@ -215,6 +237,8 @@ function ResourceCountsGrid({
   tables: LoadingValue<AnyDoc[]>;
   runs: LoadingValue<AnyDoc[]>;
   tenantCount: number;
+  tenantSubline?: React.ReactNode;
+  tableSubline?: React.ReactNode;
 }) {
   return (
     <div
@@ -240,14 +264,14 @@ function ResourceCountsGrid({
         testid="overview-count-tenants"
         docs={{ kind: "ok", value: [] }}
         explicitTotal={tenantCount}
-        groupBy={null}
+        subline={tenantSubline}
         to="/developer/storage"
       />
       <CountPanel
         title="Tables"
         testid="overview-count-tables"
         docs={tables}
-        groupBy={null}
+        subline={tableSubline}
         to="/developer/storage"
       />
       <CountPanel
@@ -255,6 +279,7 @@ function ResourceCountsGrid({
         testid="overview-count-functions"
         docs={functions}
         groupBy="kind"
+        groupKind="category"
         to="/developer/compute"
       />
       <CountPanel
@@ -268,18 +293,34 @@ function ResourceCountsGrid({
   );
 }
 
+/**
+ * One count tile. The second line is either a breakdown of the counted
+ * documents (`groupBy`) or a caller-supplied fact (`subline`) — never a
+ * sentence apologising for the absence of a breakdown a tile was never
+ * built to have. Tenants and tables have no lifecycle state, so "No state
+ * breakdown" was reporting the absence of something that cannot exist.
+ *
+ * `groupKind` decides the badge. A state gets a labeled dot from the
+ * DESIGN.md token table; a category (function kind, adapter, backend) gets
+ * a filled pill. Routing a category through `StateChip` is what made the
+ * landing page read "? QUERY 3   ? MUTATION 3".
+ */
 function CountPanel({
   title,
   testid,
   docs,
   groupBy,
+  groupKind = "state",
+  subline,
   to,
   explicitTotal,
 }: {
   title: string;
   testid: string;
   docs: LoadingValue<AnyDoc[]>;
-  groupBy: string | null;
+  groupBy?: string;
+  groupKind?: "state" | "category";
+  subline?: React.ReactNode;
   to:
     | "/operator/machines"
     | "/developer/compute"
@@ -311,18 +352,37 @@ function CountPanel({
           )}
         </span>
       </div>
-      <CountPanelBreakdown docs={docs} groupBy={groupBy} />
+      {/* The slot keeps its line whatever it holds — dash, sentence, dots,
+          or the slightly taller category pills — so all six tiles and both
+          grid rows stay the same height. */}
+      <div
+        className="flex min-h-5 items-center"
+        data-testid={`${testid}-subline`}
+      >
+        <CountPanelSubline
+          docs={docs}
+          groupBy={groupBy}
+          groupKind={groupKind}
+          subline={subline}
+        />
+      </div>
     </Link>
   );
 }
 
-function CountPanelBreakdown({
+function CountPanelSubline({
   docs,
   groupBy,
+  groupKind,
+  subline,
 }: {
   docs: LoadingValue<AnyDoc[]>;
-  groupBy: string | null;
+  groupBy?: string;
+  groupKind: "state" | "category";
+  subline?: React.ReactNode;
 }) {
+  // Connection state outranks both paths: a tile whose query has not landed
+  // must not present a stale breakdown or a confident subline.
   if (docs.kind === "loading") {
     return <span className="text-xs text-muted">Loading…</span>;
   }
@@ -340,21 +400,37 @@ function CountPanelBreakdown({
       </span>
     );
   }
-  const breakdown = groupBy ? groupCount(docs.value, groupBy) : [];
-  if (breakdown.length === 0) {
-    return <span className="text-xs text-muted">No state breakdown</span>;
+  if (groupBy === undefined) {
+    if (subline === undefined) return <Dash />;
+    return <span className="text-xs text-muted">{subline}</span>;
   }
+  const breakdown = groupCount(docs.value, groupBy);
+  // Groupable but genuinely empty. The count already says zero; DESIGN.md
+  // allows the em dash at row scope, and it costs no reading.
+  if (breakdown.length === 0) return <Dash />;
   return (
     <ul className="flex flex-wrap gap-1.5">
       {breakdown.map(([key, count]) => (
         <li key={key} className="inline-flex items-center gap-1">
-          <StateChip state={key} />
+          {groupKind === "category" ? (
+            <CategoryChip value={key} />
+          ) : (
+            <StateChip state={key} />
+          )}
           <span className="tabular font-mono text-xs text-default">
             {count}
           </span>
         </li>
       ))}
     </ul>
+  );
+}
+
+function Dash() {
+  return (
+    <span className="text-xs text-muted" aria-hidden="true">
+      —
+    </span>
   );
 }
 
@@ -372,7 +448,7 @@ function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
   return (
     <section
       data-testid="overview-events"
-      className="flex flex-col rounded-md border border-app bg-surface"
+      className="flex min-h-[200px] flex-col rounded-md border border-app bg-surface"
     >
       <header className="flex items-baseline justify-between border-b border-app px-3 py-2">
         <h2 className="text-xs uppercase tracking-[0.14em] text-muted">
@@ -387,7 +463,12 @@ function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
       </header>
       <FeedBody
         value={events}
-        emptyMessage="No events recorded yet — the feed updates live."
+        testid="overview-events"
+        empty={{
+          title: "No events recorded yet",
+          body: "Server, scheduler, and function activity streams here live.",
+          action: { label: "Open Compute", to: "/developer/compute" },
+        }}
         renderItems={(items) => (
           <ul className="divide-y divide-app">
             {items.slice(0, 20).map((event) => (
@@ -400,39 +481,89 @@ function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
   );
 }
 
+type FeedEmpty = {
+  title: string;
+  body: string;
+  action: { label: string; to: "/developer/compute" };
+};
+
+/**
+ * The two feeds sit in a stretched two-column grid, so the shorter card is
+ * handed the taller one's height whether it has content or not. Rather than
+ * un-stretching the grid — which only moves the ragged edge, since the events
+ * feed shows 20 rows and the runs feed 10 — the non-list branches fill the
+ * frame they are given and centre in it. A centred two-line message with a
+ * next action reads as a deliberate empty state; the same words pinned to the
+ * top-left of a tall empty box read as a list that failed to load.
+ */
 function FeedBody({
   value,
-  emptyMessage,
+  empty,
+  testid,
   renderItems,
 }: {
   value: LoadingValue<AnyDoc[]>;
-  emptyMessage: string;
+  empty: FeedEmpty;
+  testid: string;
   renderItems: (items: AnyDoc[]) => React.ReactNode;
 }) {
   if (value.kind === "loading") {
-    return <p className="px-3 py-4 text-xs text-muted">Loading…</p>;
+    return <FeedNotice>Loading…</FeedNotice>;
   }
   if (value.kind === "offline") {
     return (
-      <p
-        className="px-3 py-4 text-xs text-muted"
-        title="Disconnected — stream resumes on reconnect"
-      >
+      <FeedNotice title="Disconnected — stream resumes on reconnect">
         offline · live feed paused
-      </p>
+      </FeedNotice>
     );
   }
   if (value.kind === "error") {
     return (
-      <p className="px-3 py-4 text-xs text-danger" title={value.message}>
+      <FeedNotice title={value.message} tone="danger">
         {value.message}
-      </p>
+      </FeedNotice>
     );
   }
   if (value.value.length === 0) {
-    return <p className="px-3 py-4 text-xs text-muted">{emptyMessage}</p>;
+    return (
+      <div
+        className="flex flex-1 flex-col items-center justify-center gap-1 px-3 py-6 text-center"
+        data-testid={`${testid}-empty`}
+      >
+        <p className="text-xs text-default">{empty.title}</p>
+        <p className="max-w-[40ch] text-xs text-muted">{empty.body}</p>
+        <Link
+          to={empty.action.to}
+          className="mt-2 rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default"
+          data-testid={`${testid}-empty-cta`}
+        >
+          {empty.action.label}
+        </Link>
+      </div>
+    );
   }
   return <>{renderItems(value.value)}</>;
+}
+
+function FeedNotice({
+  children,
+  title,
+  tone = "muted",
+}: {
+  children: React.ReactNode;
+  title?: string;
+  tone?: "muted" | "danger";
+}) {
+  return (
+    <p
+      className={`flex flex-1 items-center justify-center px-3 py-6 text-center text-xs ${
+        tone === "danger" ? "text-danger" : "text-muted"
+      }`}
+      title={title}
+    >
+      {children}
+    </p>
+  );
 }
 
 function EventRow({ event }: { event: AnyDoc }) {
@@ -476,7 +607,7 @@ function RecentRuns({ runs }: { runs: LoadingValue<AnyDoc[]> }) {
   return (
     <section
       data-testid="overview-runs"
-      className="flex flex-col rounded-md border border-app bg-surface"
+      className="flex min-h-[200px] flex-col rounded-md border border-app bg-surface"
     >
       <header className="flex items-baseline justify-between border-b border-app px-3 py-2">
         <h2 className="text-xs uppercase tracking-[0.14em] text-muted">
@@ -491,7 +622,12 @@ function RecentRuns({ runs }: { runs: LoadingValue<AnyDoc[]> }) {
       </header>
       <FeedBody
         value={runs}
-        emptyMessage="No runs yet — invoke a function to populate this list."
+        testid="overview-runs"
+        empty={{
+          title: "No runs yet",
+          body: "A run is recorded each time a query, mutation, or action executes.",
+          action: { label: "Open Compute", to: "/developer/compute" },
+        }}
         renderItems={(items) => (
           <ul className="divide-y divide-app">
             {items.slice(0, 10).map((run) => (

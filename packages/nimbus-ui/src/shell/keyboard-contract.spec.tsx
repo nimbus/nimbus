@@ -13,8 +13,8 @@ vi.mock("@tanstack/react-router", () => ({
   }) => select({ location: { pathname: pathnameRef.current } }),
 }));
 
-import { KeyboardContract } from "./keyboard-contract";
 import { useUiStore } from "../store/ui-store";
+import { KeyboardContract } from "./keyboard-contract";
 import { resolveLensView } from "./system-tenant-lens";
 
 function setPathname(path: string) {
@@ -25,7 +25,6 @@ function resetUi() {
   useUiStore.setState({
     paletteOpen: false,
     lensOpen: false,
-    actionMenuOpen: false,
     paletteOpener: null,
     lensOpener: null,
   });
@@ -70,5 +69,46 @@ describe("KeyboardContract", () => {
     expect(useUiStore.getState().paletteOpen).toBe(true);
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     expect(useUiStore.getState().paletteOpen).toBe(false);
+  });
+
+  describe("the / shortcut", () => {
+    function mountSearch(kind: string): HTMLInputElement {
+      const input = document.createElement("input");
+      input.setAttribute("data-inline-search", kind);
+      document.body.append(input);
+      return input;
+    }
+
+    it("focuses the drawer filter when the route has no filter of its own", () => {
+      const drawer = mountSearch("drawer");
+      render(<KeyboardContract />);
+      fireEvent.keyDown(window, { key: "/" });
+      expect(document.activeElement).toBe(drawer);
+      drawer.remove();
+    });
+
+    it("prefers the page filter over the drawer filter", () => {
+      // The sub-drawer precedes page content in the DOM, so a plain
+      // document-order lookup would always pick the wrong input.
+      const drawer = mountSearch("drawer");
+      const primary = mountSearch("primary");
+      render(<KeyboardContract />);
+      fireEvent.keyDown(window, { key: "/" });
+      expect(document.activeElement).toBe(primary);
+      drawer.remove();
+      primary.remove();
+    });
+
+    it("leaves / alone while the user is typing", () => {
+      const drawer = mountSearch("drawer");
+      const typing = document.createElement("input");
+      document.body.append(typing);
+      typing.focus();
+      render(<KeyboardContract />);
+      fireEvent.keyDown(typing, { key: "/" });
+      expect(document.activeElement).toBe(typing);
+      drawer.remove();
+      typing.remove();
+    });
   });
 });

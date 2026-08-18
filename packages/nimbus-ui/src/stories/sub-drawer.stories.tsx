@@ -35,7 +35,7 @@ function FakeSubDrawerHost({
       className="flex h-[420px] w-64 shrink-0 flex-col border-r border-app bg-surface"
     >
       <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-app px-3">
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+        <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
           {spec.title}
         </span>
       </header>
@@ -112,7 +112,12 @@ const STATIC_SPEC: StaticSubDrawerSpec = {
     { id: "tenants", label: "Tenants", to: "/operator/tenants", count: 4 },
     { id: "tables", label: "Tables", to: "/operator/tables", count: 17 },
     { id: "documents", label: "Documents", to: "/operator/documents" },
-    { id: "indexes", label: "Indexes", to: "/operator/indexes", disabled: true },
+    {
+      id: "indexes",
+      label: "Indexes",
+      to: "/operator/indexes",
+      disabled: true,
+    },
   ],
 };
 
@@ -136,7 +141,7 @@ const DYNAMIC_SPEC: DynamicSubDrawerSpec = {
             <span className="flex-1 truncate font-mono text-xs">
               {svc.label}
             </span>
-            <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+            <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
               {svc.state}
             </span>
           </a>

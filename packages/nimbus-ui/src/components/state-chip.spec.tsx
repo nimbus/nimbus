@@ -92,6 +92,35 @@ describe("StateChip", () => {
     );
   });
 
+  it.each([
+    ["restarting", "half"],
+    ["deleting", "half"],
+  ])("names the in-flight lifecycle state %s with a transitional %s dot", (state, glyph) => {
+    const { container } = render(<StateChip state={state} />);
+    const chip = container.querySelector("[data-state]");
+    expect(chip).toHaveAttribute("data-state", state);
+    expect(chip).toHaveAttribute("data-glyph", glyph);
+  });
+
+  it("names a created machine with the stopped-family outline dot", () => {
+    const { container } = render(<StateChip state="created" />);
+    expect(container.querySelector("[data-state]")).toHaveAttribute(
+      "data-glyph",
+      "outline",
+    );
+  });
+
+  it.each([
+    "connected",
+    "offline",
+  ])("names the connection state %s so StateDot and StateChip agree", (state) => {
+    const { container } = render(<StateChip state={state} />);
+    expect(container.querySelector("[data-state]")).toHaveAttribute(
+      "data-state",
+      state,
+    );
+  });
+
   it("renders ? glyph for unknown", () => {
     const { container } = render(<StateChip state="quantum" />);
     expect(container.querySelector("[data-state]")).toHaveAttribute(

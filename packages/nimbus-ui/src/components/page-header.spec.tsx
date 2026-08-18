@@ -15,6 +15,16 @@ describe("PageHeader", () => {
     expect(screen.getByText("Outer dev VMs")).toBeInTheDocument();
   });
 
+  it("caps the subtitle measure so long prose stays readable", () => {
+    const { container } = render(
+      <PageHeader
+        title="Services"
+        subtitle="Long-running processes with their own lifecycle: they start with the server, restart on failure, and expose health over the local socket."
+      />,
+    );
+    expect(container.querySelector("p")).toHaveClass("max-w-[68ch]");
+  });
+
   it("omits the subtitle paragraph when none is given", () => {
     const { container } = render(<PageHeader title="Network" />);
     expect(container.querySelector("p")).toBeNull();

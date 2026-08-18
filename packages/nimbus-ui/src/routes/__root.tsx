@@ -79,13 +79,23 @@ function ShellLayout() {
   );
 }
 
-function useLastRouteTracker() {
+export function useLastRouteTracker() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // A location that matches no route must not become the view's remembered
+  // route: persisting it makes the dead end self-restoring on the next reload
+  // and on every view switch.
+  const isNotFound = useRouterState({
+    select: (s) =>
+      s.matches.some(
+        (match) => match.status === "notFound" || match.globalNotFound === true,
+      ),
+  });
   const setLastView = useUiStore((s) => s.setLastView);
   useEffect(() => {
     const view = viewFromPathname(pathname);
-    persistLastRouteForView(view, pathname);
+    if (!isNotFound) {
+      persistLastRouteForView(view, pathname);
+    }
     setLastView(view);
-  }, [pathname, setLastView]);
+  }, [pathname, isNotFound, setLastView]);
 }
-

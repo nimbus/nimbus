@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pathnameRef, navigateMock } = vi.hoisted(() => ({
@@ -49,18 +55,17 @@ describe("TenantSelector", () => {
         screen.getByTestId("tenant-selector-option-acme"),
       ).toBeInTheDocument();
     });
-    expect(
-      screen.getByTestId("tenant-selector-option-acme"),
-    ).toHaveAttribute("data-active", "true");
+    expect(screen.getByTestId("tenant-selector-option-acme")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
   });
 
   it("falls back to Create tenant when developer mode has zero tenants", async () => {
     mockTenants([]);
     render(<TenantSelector mode={{ kind: "developer" }} />);
     await waitFor(() => {
-      expect(
-        screen.getByTestId("tenant-selector-create"),
-      ).toBeInTheDocument();
+      expect(screen.getByTestId("tenant-selector-create")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByTestId("tenant-selector-create"));
     expect(navigateMock).toHaveBeenCalledWith(
@@ -85,7 +90,13 @@ describe("TenantSelector", () => {
   it("operator-filter mode prepends 'All tenants' and navigates with ?tenant=", async () => {
     mockTenants(["acme", "beta"]);
     render(
-      <TenantSelector mode={{ kind: "operator-filter", currentFilter: null }} />,
+      <TenantSelector
+        mode={{
+          kind: "operator-filter",
+          currentFilter: null,
+          unavailable: false,
+        }}
+      />,
     );
     fireEvent.click(screen.getByTestId("tenant-selector-trigger"));
     await waitFor(() => {
@@ -102,6 +113,81 @@ describe("TenantSelector", () => {
     );
   });
 
+  it("moves focus to the menu when it opens", async () => {
+    mockTenants(["acme", "beta"]);
+    render(<TenantSelector mode={{ kind: "developer" }} />);
+    fireEvent.click(screen.getByTestId("tenant-selector-trigger"));
+    const menu = await screen.findByTestId("tenant-selector-menu");
+    // The menu is a sibling of the trigger, so without this focus move its
+    // keydown handler never receives a key event and the whole menu is
+    // keyboard-dead.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(menu);
+    });
+  });
+
+  it("opens from the trigger on ArrowDown without closing again", async () => {
+    mockTenants(["acme", "beta"]);
+    render(<TenantSelector mode={{ kind: "developer" }} />);
+    const trigger = screen.getByTestId("tenant-selector-trigger");
+    trigger.focus();
+    // preventDefault matters: the browser synthesizes a click from an
+    // unprevented Enter/Space on a button, which would re-run the toggle and
+    // close the menu in the same tick.
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(
+      await screen.findByTestId("tenant-selector-menu"),
+    ).toBeInTheDocument();
+  });
+
+  it("tracks the focused option with aria-activedescendant", async () => {
+    mockTenants(["acme", "beta"]);
+    render(<TenantSelector mode={{ kind: "developer" }} />);
+    fireEvent.click(screen.getByTestId("tenant-selector-trigger"));
+    const menu = await screen.findByTestId("tenant-selector-menu");
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("tenant-selector-option-acme"),
+      ).toBeInTheDocument();
+    });
+    const first = menu.getAttribute("aria-activedescendant");
+    expect(first).toBeTruthy();
+    expect(document.getElementById(first as string)).toBe(
+      screen.getByTestId("tenant-selector-option-acme"),
+    );
+    fireEvent.keyDown(menu, { key: "End" });
+    const last = menu.getAttribute("aria-activedescendant");
+    expect(document.getElementById(last as string)).toBe(
+      screen.getByTestId("tenant-selector-option-beta"),
+    );
+    fireEvent.keyDown(menu, { key: "Home" });
+    expect(menu.getAttribute("aria-activedescendant")).toBe(first);
+  });
+
+  it("renders an inert trigger when the filter is unavailable", async () => {
+    mockTenants(["acme", "beta"]);
+    render(
+      <TenantSelector
+        mode={{
+          kind: "operator-filter",
+          currentFilter: null,
+          unavailable: true,
+        }}
+      />,
+    );
+    const trigger = screen.getByTestId("tenant-selector-trigger");
+    expect(trigger).toBeDisabled();
+    expect(trigger).toHaveAttribute("data-unavailable", "true");
+    expect(
+      screen.getByTestId("tenant-selector-coming-soon"),
+    ).toBeInTheDocument();
+    fireEvent.click(trigger);
+    await act(async () => {});
+    expect(
+      screen.queryByTestId("tenant-selector-menu"),
+    ).not.toBeInTheDocument();
+  });
+
   it("arrow-key navigation cycles option focus and Enter selects", async () => {
     mockTenants(["acme", "beta"]);
     render(<TenantSelector mode={{ kind: "developer" }} />);
@@ -112,13 +198,15 @@ describe("TenantSelector", () => {
         screen.getByTestId("tenant-selector-option-acme"),
       ).toBeInTheDocument();
     });
-    expect(
-      screen.getByTestId("tenant-selector-option-acme"),
-    ).toHaveAttribute("data-focused", "true");
+    expect(screen.getByTestId("tenant-selector-option-acme")).toHaveAttribute(
+      "data-focused",
+      "true",
+    );
     fireEvent.keyDown(menu, { key: "ArrowDown" });
-    expect(
-      screen.getByTestId("tenant-selector-option-beta"),
-    ).toHaveAttribute("data-focused", "true");
+    expect(screen.getByTestId("tenant-selector-option-beta")).toHaveAttribute(
+      "data-focused",
+      "true",
+    );
     fireEvent.keyDown(menu, { key: "Enter" });
     expect(useUiStore.getState().activeTenant).toBe("beta");
   });
@@ -149,9 +237,9 @@ describe("TenantSelector", () => {
     render(<TenantSelector mode={{ kind: "developer" }} />);
     fireEvent.click(screen.getByTestId("tenant-selector-trigger"));
     await waitFor(() => {
-      expect(
-        screen.getByTestId("tenant-selector-error"),
-      ).toHaveTextContent("boom");
+      expect(screen.getByTestId("tenant-selector-error")).toHaveTextContent(
+        "boom",
+      );
     });
   });
 
@@ -159,7 +247,11 @@ describe("TenantSelector", () => {
     mockTenants(["acme", "beta"]);
     render(
       <TenantSelector
-        mode={{ kind: "operator-filter", currentFilter: "beta" }}
+        mode={{
+          kind: "operator-filter",
+          currentFilter: "beta",
+          unavailable: false,
+        }}
       />,
     );
     await act(async () => {});

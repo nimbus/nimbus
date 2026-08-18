@@ -75,7 +75,39 @@ beforeEach(() => {
 
 afterEach(() => {
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
+
+// The global setup stubs matchMedia to always miss, so every other test in this
+// file runs at the desktop tier. This narrows the viewport for the tier tests.
+function stubTablet() {
+  vi.stubGlobal(
+    "matchMedia",
+    (query: string) =>
+      ({
+        matches: query.includes("1023px"),
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }) as unknown as MediaQueryList,
+  );
+}
+
+const DYNAMIC_SPEC: SubDrawerSpec = {
+  kind: "dynamic",
+  title: "Tenants",
+  search: { placeholder: "Filter tenants" },
+  children: <div data-testid="dynamic-body" />,
+};
+
+function renderSubDrawer(spec: SubDrawerSpec = DYNAMIC_SPEC) {
+  return render(
+    <SubDrawerProvider>
+      <Contributor spec={spec} />
+      <SubDrawer />
+    </SubDrawerProvider>,
+  );
+}
 
 describe("SubDrawer", () => {
   it("renders nothing when no contributor mounts", () => {
@@ -151,7 +183,9 @@ describe("SubDrawer", () => {
     const spec: SubDrawerSpec = {
       kind: "static",
       title: "Network",
-      items: [{ id: "routes", label: "Routes", to: "/operator/network/routes" }],
+      items: [
+        { id: "routes", label: "Routes", to: "/operator/network/routes" },
+      ],
     };
     render(
       <SubDrawerProvider>
@@ -243,14 +277,12 @@ describe("SubDrawer", () => {
       "data-collapsed",
       "true",
     );
-    expect(screen.getByTestId("sub-drawer-rail-item-functions")).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-    expect(screen.getByTestId("sub-drawer-rail-item-sandboxes")).toHaveAttribute(
-      "data-active",
-      "false",
-    );
+    expect(
+      screen.getByTestId("sub-drawer-rail-item-functions"),
+    ).toHaveAttribute("data-active", "true");
+    expect(
+      screen.getByTestId("sub-drawer-rail-item-sandboxes"),
+    ).toHaveAttribute("data-active", "false");
     fireEvent.click(screen.getByTestId("sub-drawer-rail-item-sandboxes"));
     expect(onSandboxes).toHaveBeenCalledTimes(1);
     // switching sub-view from the rail does not expand the drawer
@@ -312,9 +344,10 @@ describe("SubDrawer", () => {
         <SubDrawer />
       </SubDrawerProvider>,
     );
-    expect(
-      screen.getByTestId("sub-drawer-item-environment"),
-    ).toHaveAttribute("data-active", "false");
+    expect(screen.getByTestId("sub-drawer-item-environment")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
     expect(screen.getByTestId("sub-drawer-item-secrets")).toHaveAttribute(
       "data-active",
       "true",
@@ -353,5 +386,43 @@ describe("SubDrawer", () => {
     expect(screen.getByTestId("sub-drawer")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("toggle"));
     expect(screen.queryByTestId("sub-drawer")).toBeNull();
+  });
+  describe("below the desktop tier", () => {
+    it("shows the rail without a sheet even when the stored state is open", () => {
+      stubTablet();
+      useUiStore.setState({ subDrawerOpen: true });
+      renderSubDrawer();
+      // The sheet is modal. Honoring a stored desktop preference here would
+      // drop a scrim over the content the moment the viewport narrows.
+      expect(screen.getByTestId("sub-drawer")).toHaveAttribute(
+        "data-collapsed",
+        "true",
+      );
+      expect(screen.queryByTestId("sub-drawer-overlay")).toBeNull();
+      expect(screen.queryByTestId("sub-drawer-scrim")).toBeNull();
+    });
+
+    it("opens an overlay sheet on an explicit expand", () => {
+      stubTablet();
+      useUiStore.setState({ subDrawerOpen: true });
+      renderSubDrawer();
+      fireEvent.click(screen.getByTestId("sub-drawer-toggle"));
+      expect(screen.getByTestId("sub-drawer-overlay")).toBeInTheDocument();
+      expect(screen.getByTestId("sub-drawer-scrim")).toBeInTheDocument();
+      // The rail stays in flow beneath the sheet, so dismissing it still
+      // leaves a visible way back.
+      expect(screen.getByTestId("sub-drawer")).toBeInTheDocument();
+    });
+
+    it("never writes the desktop preference when expanding at tablet width", () => {
+      stubTablet();
+      useUiStore.setState({ subDrawerOpen: true });
+      renderSubDrawer();
+      fireEvent.click(screen.getByTestId("sub-drawer-toggle"));
+      expect(useUiStore.getState().subDrawerOpen).toBe(true);
+      expect(
+        window.localStorage.getItem("nimbus-ui:sub-drawer-open"),
+      ).toBeNull();
+    });
   });
 });

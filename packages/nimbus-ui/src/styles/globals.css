@@ -14,8 +14,9 @@
      mono  → Monochrome (light) / Reverse Mono (dark)      — minimal/enterprise
    The default is the "sky cycle": golden daylight, night-blue dark. Dark mode
    is Night Blue for every palette except mono (Reverse Mono).
-   Semantic state colors (success/warning/danger/starting/draining/queued/stale)
-   stay constant across palettes so "Running = green" everywhere.
+   Semantic state colors (success/warning/danger/running/starting/draining/
+   queued/stale) stay constant across palettes: Ready is green and Running is
+   teal in every theme, so a status never changes meaning when the palette does.
 */
 @theme {
   --font-sans:
@@ -57,10 +58,12 @@
   --color-brand: var(--nimbus-brand);
   --color-on-brand: var(--nimbus-on-brand);
   --color-accent: var(--nimbus-accent);
+  --color-focus: var(--nimbus-focus);
   --color-link: var(--nimbus-link);
 
   --color-success: var(--nimbus-success);
   --color-warning: var(--nimbus-warning);
+  --color-running: var(--nimbus-running);
   --color-starting: var(--nimbus-starting);
   --color-draining: var(--nimbus-draining);
   --color-queued: var(--nimbus-queued);
@@ -85,11 +88,19 @@
     --nimbus-brand: oklch(73% 0.17 65);      /* #F59E0B — amber-500 */
     --nimbus-on-brand: oklch(20% 0.020 60); /* ink on amber */
     --nimbus-accent: oklch(80% 0.14 70);     /* #FFB84D */
-    --nimbus-link: oklch(62% 0.17 55);       /* #D97706 — Golden Hour primary */
+    /* Golden Hour, darkened from oklch(62% …) to clear WCAG AA as body text:
+       5.14:1 on --surface, 4.64:1 on --bg, 4.57:1 on --surface-2. Links render
+       at 11–12px everywhere in the console, so 4.5:1 is the binding floor. */
+    --nimbus-link: oklch(55% 0.17 52);
+    /* Focus is its own token, not --accent: the ring must clear the 3:1
+       non-text floor (WCAG 2.2 SC 1.4.11), which --accent misses at 1.91:1.
+       3.84:1 on --surface, 3.47:1 on --bg, 3.42:1 on --surface-2. */
+    --nimbus-focus: oklch(62% 0.17 55);
 
     /* Semantic state — stable across palettes for consistent affordances. */
     --nimbus-success: oklch(52% 0.14 145);
-    --nimbus-warning: oklch(65% 0.16 75);
+    --nimbus-warning: oklch(56% 0.15 72); /* 4.77:1 on --surface (was 3.31:1) */
+    --nimbus-running: oklch(60% 0.13 207); /* 3.60:1 on --surface */
     --nimbus-starting: oklch(70% 0.17 50);
     --nimbus-draining: oklch(55% 0.13 280);
     --nimbus-queued: oklch(60% 0.020 240);
@@ -112,6 +123,9 @@
     --nimbus-on-brand: oklch(100% 0 0);     /* white on blue */
     --nimbus-accent: oklch(70% 0.13 207);    /* #06B6D4 — brand teal (cyan-500) */
     --nimbus-link: oklch(54% 0.22 264);      /* #2563EB — Cool Blue primary-dark */
+    /* --accent is 2.51:1 — too pale for a focus ring. Same teal, darkened:
+       4.42:1 on --surface, 3.99:1 on --bg, 3.93:1 on --surface-2. */
+    --nimbus-focus: oklch(54% 0.15 210);
   }
 
   /* Dark mode (Night Blue) — default dark for every palette except mono. */
@@ -130,9 +144,14 @@
     --nimbus-on-brand: oklch(13% 0.026 263);/* ink on light blue */
     --nimbus-accent: oklch(85% 0.10 197);    /* #67E8F9 — brand teal gradient hi */
     --nimbus-link: oklch(82% 0.11 247);      /* #93C5FD */
+    /* Dark accents already clear 3:1 by a wide margin (12.1:1 night blue,
+       11.7:1 reverse mono), so the ring stays on --accent in both dark
+       palettes — the var() resolves against whichever accent won here. */
+    --nimbus-focus: var(--nimbus-accent);
 
     --nimbus-success: oklch(72% 0.16 145);
     --nimbus-warning: oklch(78% 0.17 75);
+    --nimbus-running: oklch(85% 0.10 197);
     --nimbus-starting: oklch(80% 0.18 50);
     --nimbus-draining: oklch(72% 0.14 280);
     --nimbus-queued: oklch(70% 0.020 240);
@@ -153,8 +172,16 @@
 
     --nimbus-brand: oklch(20% 0.014 263);    /* #111827 — ink as brand */
     --nimbus-on-brand: oklch(100% 0 0);     /* white on ink */
-    --nimbus-accent: oklch(44% 0.012 258);   /* #4B5563 — mid gray */
-    --nimbus-link: oklch(27% 0.014 261);     /* #1F2937 */
+    /* Lifted off --muted, which it used to equal byte-for-byte (1.00:1) —
+       that collapsed focus, selection and every accent-bound state into the
+       same grey as secondary text. 4.65:1 on --surface, 1.67:1 vs --muted. */
+    --nimbus-accent: oklch(56% 0.014 258);
+    --nimbus-focus: var(--nimbus-accent);
+    /* Mono is deliberately chromaless, so a link cannot be identified by hue.
+       It carries the ink colour and takes its identity from the underline
+       (.link-inline below) — never from a grey shift that would read as
+       disabled text. */
+    --nimbus-link: var(--nimbus-text);
   }
 
   /* Mono palette, Dark mode (Reverse Mono) */
@@ -170,7 +197,7 @@
     --nimbus-brand: oklch(100% 0 0);         /* #FFFFFF — white as brand */
     --nimbus-on-brand: oklch(17% 0.018 263);/* ink on white */
     --nimbus-accent: oklch(87% 0.012 257);   /* #D1D5DB */
-    --nimbus-link: oklch(91% 0.008 257);     /* #E5E7EB */
+    --nimbus-link: var(--nimbus-text);       /* see mono light: underline, not hue */
   }
 
   /* Warm palette, Light mode = the :root default above; Warm dark mode =
@@ -209,9 +236,29 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--nimbus-accent);
+    outline: 2px solid var(--nimbus-focus);
     outline-offset: 2px;
     border-radius: 4px;
+  }
+
+  /* Vestibular-safety backstop for the whole console, so a new `animate-*` or
+     `transition-*` cannot ship ignoring the preference. It is a net, not a
+     licence: fix each offender at its call site too.
+     Measured under an emulated `reduce` — a loaded page drops from 2 running
+     animations to 0, and an unguarded indefinite indicator (`animate-pulse`)
+     comes to rest at opacity 1, because `animation-fill-mode` stays `none` and
+     the element reverts to its base style instead of freezing mid-cycle. So a
+     per-site `motion-reduce:animate-none` documents intent; it is not what
+     makes the pulse stop. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 
   /* Checkbox (components/checkbox.tsx). The platform control paints an
@@ -264,6 +311,45 @@
 
   ::selection {
     background: color-mix(in oklch, var(--nimbus-accent) 30%, transparent);
+  }
+}
+
+@layer components {
+  /* Inline prose hyperlink. The resting underline — not the colour — is what
+     identifies it, so the affordance survives the chromaless mono palette and
+     satisfies WCAG 1.4.1 (never colour alone). Reserve this for links inside a
+     line of text; a bordered chip that happens to navigate keeps `text-link`
+     plus its border, where a resting underline would read as a defect. */
+  .link-inline {
+    color: var(--nimbus-link);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+    text-decoration-color: color-mix(in oklch, currentColor 40%, transparent);
+  }
+
+  .link-inline:hover {
+    text-decoration-color: currentColor;
+  }
+
+  /* The uppercase micro-label, in exactly two steps. `.label` is the content
+     tier: table column heads, field labels, section heads inside a panel.
+     `.label-chrome` is the shell tier: drawer and nav section heads, one
+     deliberate step wider and monospaced. Neither sets a colour — every call
+     site keeps its own `text-muted` / `text-danger` / computed tone class. */
+  .label {
+    font-size: 10px;
+    line-height: 1.45;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+
+  .label-chrome {
+    font-size: 10px;
+    line-height: 1.45;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-family: var(--font-mono);
   }
 }
 

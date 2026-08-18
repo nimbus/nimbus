@@ -106,9 +106,7 @@ describe("SchemaPanel", () => {
     ).toBeInTheDocument();
     expect(dropped).toBe(false);
 
-    fireEvent.click(
-      screen.getByTestId("documents-drop-schema-dialog-confirm"),
-    );
+    fireEvent.click(screen.getByTestId("documents-drop-schema-dialog-confirm"));
     await waitFor(() => expect(dropped).toBe(true));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
   });

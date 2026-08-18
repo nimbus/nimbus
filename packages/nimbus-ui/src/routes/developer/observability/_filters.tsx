@@ -43,16 +43,20 @@ export function FilterInput({
   return (
     <label
       htmlFor={id}
-      className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted"
+      className="flex min-w-0 items-center gap-1.5 text-xs uppercase tracking-wide text-muted"
     >
-      <span>{label}</span>
+      <span className="shrink-0">{label}</span>
       <input
         id={id}
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default placeholder:text-muted focus-visible:border-strong"
+        // A text input's intrinsic width is derived from its `size` attribute
+        // (~20ch) and, as a flex item, `min-width: auto` pins it there. Left
+        // unbounded, four filters plus the action cluster overflow the toolbar
+        // and the trailing controls get clipped away with no scrollbar.
+        className="w-[14ch] min-w-0 rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default placeholder:text-muted focus-visible:border-strong"
         data-testid={testid}
       />
     </label>

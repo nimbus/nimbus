@@ -18,7 +18,7 @@ export function IndexPanel({
     >
       <PanelHeader title="Indexes" onClose={onClose} />
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3">
-        <p className="font-mono text-[11px] text-muted">
+        <p className="font-mono text-xs text-muted">
           Read-only view derived from the table schema. Index REST endpoints
           (create/drop) ship after the native index API lands.
         </p>
@@ -34,7 +34,7 @@ export function IndexPanel({
             className="w-full border-collapse text-xs"
             data-testid="documents-indexes-table"
           >
-            <thead className="text-[10px] uppercase tracking-wide text-muted">
+            <thead className="text-xs uppercase tracking-wide text-muted">
               <tr>
                 <th className="px-2 py-1 text-left">Name</th>
                 <th className="px-2 py-1 text-left">Fields</th>

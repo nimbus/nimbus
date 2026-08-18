@@ -1,11 +1,11 @@
+import { CategoryChip } from "../../../components/category-chip";
 import { CopyChip } from "../../../components/copy-chip";
 import { StateChip } from "../../../components/state-chip";
-import { StateDot } from "../../../components/state-dot";
 import { RelativeTime, Uptime } from "../../../components/time";
 import { UpgradePopover } from "../../../components/upgrade-popover";
 import { useStalenessContext } from "../../../hooks/use-staleness";
 import type { LoadingValue } from "../../../shell/loading-value";
-import { Cell, Definition, DefinitionList, SectionCard } from "./primitives";
+import { Cell, Definition, DefinitionList, PageSection } from "./primitives";
 import type {
   EncryptionStatus,
   LicenseSnapshot,
@@ -119,7 +119,7 @@ export function ServerInfoSection({
         : (encryptionSnap.enabled ?? false);
   const encryptedFamilies = encryptionSnap?.encrypted_families ?? [];
   return (
-    <SectionCard
+    <PageSection
       title="Server"
       testid="settings-server-info"
       description="Version, uptime, listen address, storage backend, encryption, and health."
@@ -168,39 +168,39 @@ export function ServerInfoSection({
             {storageBackend}
           </span>
         </Definition>
+        {/*
+          Encryption at rest is a configuration flag, not a lifecycle. A state
+          dot asserts "this thing is in this state right now", so spending the
+          connected/offline vocabulary on a boolean setting drains the meaning
+          out of the dots that do report health. The value reads as plain
+          on/off, and the families it covers are categories, so they take the
+          categorical pill.
+        */}
         <Definition label="Encryption">
           {encryptionEnabled === "loading" ? (
-            <span className="inline-flex items-center gap-1.5 text-muted">
-              <StateDot state="reconnecting" />
-              loading…
-            </span>
+            <span className="font-mono text-xs text-muted">loading…</span>
           ) : encryptionEnabled === "error" ? (
             <span
-              className="inline-flex items-center gap-1.5 text-danger"
+              className="font-mono text-xs text-danger"
               data-testid="settings-encryption-unavailable"
             >
-              <StateDot state="offline" />
               unavailable
             </span>
           ) : encryptionEnabled ? (
             <span
-              className="inline-flex items-center gap-1.5 font-mono text-xs text-default"
+              className="inline-flex flex-wrap items-center gap-1.5 font-mono text-xs text-default"
               data-testid="settings-encryption-enabled"
             >
-              <StateDot state="connected" />
               on
-              {encryptedFamilies.length > 0 ? (
-                <span className="ml-1 text-muted">
-                  · {encryptedFamilies.join(", ")}
-                </span>
-              ) : null}
+              {encryptedFamilies.map((family) => (
+                <CategoryChip key={family} value={family} />
+              ))}
             </span>
           ) : (
             <span
-              className="inline-flex items-center gap-1.5 font-mono text-xs text-muted"
+              className="font-mono text-xs text-muted"
               data-testid="settings-encryption-off"
             >
-              <StateDot state="offline" />
               off
             </span>
           )}
@@ -209,7 +209,7 @@ export function ServerInfoSection({
           <UpdatesValue />
         </Definition>
       </DefinitionList>
-    </SectionCard>
+    </PageSection>
   );
 }
 
@@ -234,14 +234,30 @@ function UpdatesValue() {
     );
   }
 
+  // Version freshness is not a lifecycle state either, so it takes neither
+  // StateChip's closed vocabulary nor a state dot. It reads as the plain
+  // sentence it is, instead of being the one chip in the console whose label
+  // is tinted.
   if (state === "upgraded") {
     return (
-      <StateChip state="ok" className="data-[state=ok]:text-success" showDot />
+      <span
+        data-testid="settings-updates-upgraded"
+        className="font-mono text-xs text-default"
+      >
+        Updated to {info.latest}
+      </span>
     );
   }
 
   if (state === "hidden" || !info.available || !info.latest) {
-    return <StateChip state="ok" showDot />;
+    return (
+      <span
+        data-testid="settings-updates-current"
+        className="font-mono text-xs text-default"
+      >
+        up to date
+      </span>
+    );
   }
 
   const open = state === "confirming";

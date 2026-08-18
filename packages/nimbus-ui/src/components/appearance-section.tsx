@@ -4,32 +4,11 @@ import { cn } from "../lib/cn";
 import {
   PALETTES,
   type Palette,
+  type Theme,
   type ThemeMode,
   useUiStore,
 } from "../store/ui-store";
 import { SegmentedControl } from "./segmented-control";
-
-type PaletteSwatch = {
-  brand: string;
-  accent: string;
-  surface: string;
-  text: string;
-};
-
-const PALETTE_SWATCHES: Record<Palette, { light: PaletteSwatch; dark: PaletteSwatch }> = {
-  blue: {
-    light: { brand: "#3B82F6", accent: "#06B6D4", surface: "#F8FAFC", text: "#0F172A" },
-    dark: { brand: "#60A5FA", accent: "#67E8F9", surface: "#0B1220", text: "#E2E8F0" },
-  },
-  mono: {
-    light: { brand: "#111827", accent: "#4B5563", surface: "#F9FAFB", text: "#111827" },
-    dark: { brand: "#FFFFFF", accent: "#D1D5DB", surface: "#111827", text: "#FFFFFF" },
-  },
-  warm: {
-    light: { brand: "#F59E0B", accent: "#FFB84D", surface: "#FFFAF2", text: "#0F172A" },
-    dark: { brand: "#FBBF24", accent: "#FDBA74", surface: "#1C1410", text: "#FBF5E8" },
-  },
-};
 
 const MODE_OPTIONS: ReadonlyArray<{
   value: ThemeMode;
@@ -67,16 +46,14 @@ export function AppearanceSection() {
           Appearance
         </h2>
         <p className="text-xs text-muted">
-          Pick a mode and color theme. Each theme pairs a light and dark
-          variant from the Nimbus brand palette.
+          Pick a mode and color theme. Each theme pairs a light and dark variant
+          from the Nimbus brand palette.
         </p>
       </header>
 
       <div className="flex flex-col gap-5">
         <div>
-          <h3 className="mb-2 text-[10px] uppercase tracking-[0.14em] text-muted">
-            Mode
-          </h3>
+          <h3 className="label mb-2 text-muted">Mode</h3>
           <SegmentedControl<ThemeMode>
             label="Theme mode"
             value={themeMode}
@@ -87,9 +64,7 @@ export function AppearanceSection() {
         </div>
 
         <div>
-          <h3 className="mb-2 text-[10px] uppercase tracking-[0.14em] text-muted">
-            Color theme
-          </h3>
+          <h3 className="label mb-2 text-muted">Color theme</h3>
           <div
             role="radiogroup"
             aria-label="Color theme"
@@ -98,7 +73,6 @@ export function AppearanceSection() {
           >
             {PALETTES.map((entry) => {
               const active = palette === entry.id;
-              const swatch = PALETTE_SWATCHES[entry.id][resolvedTheme];
               return (
                 <button
                   key={entry.id}
@@ -115,46 +89,84 @@ export function AppearanceSection() {
                       : "border-app hover:bg-surface-2",
                   )}
                 >
-                  <PaletteSwatchRow swatch={swatch} />
+                  <PaletteSwatchRow
+                    palette={entry.id}
+                    resolvedTheme={resolvedTheme}
+                  />
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-sm text-default">{entry.label}</span>
                     {active ? (
-                      <span
-                        className="font-mono text-[10px] uppercase tracking-[0.14em]"
-                        style={{ color: "var(--nimbus-brand)" }}
-                      >
-                        active
-                      </span>
+                      <span className="label font-mono text-brand">active</span>
                     ) : null}
                   </div>
-                  <p className="text-[11px] text-muted">{entry.description}</p>
+                  <p className="text-xs text-muted">{entry.description}</p>
                 </button>
               );
             })}
           </div>
+          {resolvedTheme === "dark" ? (
+            <p
+              className="mt-2 text-xs text-muted"
+              data-testid="appearance-palette-dark-note"
+            >
+              Dark mode is Night Blue for Warm and Blue — their swatches match
+              on purpose. Only Mono has its own dark variant. The palette you
+              pick here still sets your light-mode identity.
+            </p>
+          ) : null}
         </div>
       </div>
     </section>
   );
 }
 
-function PaletteSwatchRow({ swatch }: { swatch: PaletteSwatch }) {
+/* The swatch is a live probe of the cascade, not a transcription of it: the
+   wrapper carries `data-palette` + `data-theme` so `globals.css` re-declares
+   the `--nimbus-*` tokens inside it, exactly as it does on <html>. Hand-copied
+   hexes drifted from the tokens and previewed a Warm dark theme that does not
+   exist; this cannot.
+
+   Both attributes are required. `data-palette` alone is correct in light mode
+   only — under a dark <html>, `[data-palette="blue"]` and
+   `[data-palette="mono"]` would win over the inherited dark tokens and preview
+   the *light* variant. With `data-theme` mirrored, source order gives Night
+   Blue for warm and blue, and the two-attribute selector gives Reverse Mono.
+
+   The tokens must be `--nimbus-*`, not `--color-*`: `@theme inline` inlines
+   its values into generated utilities and emits no `--color-*` custom
+   property, so `var(--color-surface)` resolves to nothing here. */
+function PaletteSwatchRow({
+  palette,
+  resolvedTheme,
+}: {
+  palette: Palette;
+  resolvedTheme: Theme;
+}) {
   return (
     <div
+      data-palette={palette}
+      data-theme={resolvedTheme}
+      data-testid={`appearance-swatch-${palette}`}
       className="flex h-12 overflow-hidden rounded border border-app"
+      style={{ background: "var(--nimbus-surface)" }}
       aria-hidden
     >
-      <div className="flex-1" style={{ background: swatch.surface }} />
-      <div
-        className="flex w-12 flex-col"
-        style={{ background: swatch.surface }}
-      >
-        <div className="h-1/2" style={{ background: swatch.brand }} />
-        <div className="h-1/2" style={{ background: swatch.accent }} />
+      <div className="flex-1" />
+      <div className="flex w-12 flex-col">
+        <div
+          className="h-1/2"
+          data-testid={`appearance-swatch-${palette}-brand`}
+          style={{ background: "var(--nimbus-brand)" }}
+        />
+        <div
+          className="h-1/2"
+          data-testid={`appearance-swatch-${palette}-accent`}
+          style={{ background: "var(--nimbus-accent)" }}
+        />
       </div>
       <div
-        className="flex w-6 items-center justify-center text-[10px] font-semibold"
-        style={{ background: swatch.surface, color: swatch.text }}
+        className="flex w-6 items-center justify-center text-xs font-semibold"
+        style={{ color: "var(--nimbus-text)" }}
       >
         Aa
       </div>

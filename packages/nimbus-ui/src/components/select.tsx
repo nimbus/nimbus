@@ -149,7 +149,7 @@ export function Select<T extends string>({
   return (
     <label
       htmlFor={buttonId}
-      className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted"
+      className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted"
     >
       <span>{label}</span>
       <span className="relative inline-flex">
@@ -224,7 +224,7 @@ export function Select<T extends string>({
                       {isActive ? (
                         <span
                           aria-hidden
-                          className="font-mono text-[10px] text-brand"
+                          className="font-mono text-xs text-brand"
                         >
                           ●
                         </span>

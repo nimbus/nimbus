@@ -6,6 +6,8 @@ import {
   formatMemory,
   formatRelativeTime,
   formatUptime,
+  looksLikeEpochMs,
+  shortHash,
   shortId,
 } from "./format";
 
@@ -98,16 +100,63 @@ describe("formatDuration", () => {
 });
 
 describe("shortId", () => {
-  it("returns the original value when shorter than length+2", () => {
+  it("returns the original value when it already fits", () => {
     expect(shortId("abc")).toBe("abc");
   });
 
-  it("truncates to the requested prefix when longer", () => {
-    expect(shortId("01ABCDEFGHIJKLMN", 7)).toBe("01ABCDE");
+  it("elides the middle so the tail stays visible", () => {
+    // ULIDs share a long time-ordered prefix, so a front truncation renders
+    // every id in a table identically. Keep both ends.
+    expect(shortId("01ABCDEFGHIJKLMN", 7)).toBe("01A\u2026LMN");
+  });
+
+  it("keeps ids distinguishable when the prefix is shared", () => {
+    const a = shortId("01M0APVQZ8K3M6DAYN");
+    const b = shortId("01M0APVQZ8K3PMMMDZ");
+    expect(a).not.toBe(b);
+  });
+
+  it("never exceeds the requested length", () => {
+    expect(shortId("0123456789", 4)).toHaveLength(4);
+    expect(shortId("01ABCDEFGHIJKLMN", 7)).toHaveLength(7);
   });
 
   it("honors a custom length", () => {
-    expect(shortId("0123456789", 4)).toBe("0123");
+    expect(shortId("0123456789", 4)).toBe("01\u20269");
+  });
+});
+
+describe("shortHash", () => {
+  it("returns the original value when it already fits", () => {
+    expect(shortHash("abc123")).toBe("abc123");
+  });
+
+  it("takes a leading prefix, because hash prefixes are the identifier", () => {
+    expect(shortHash("a".repeat(64), 12)).toBe("a".repeat(12));
+  });
+});
+
+describe("looksLikeEpochMs", () => {
+  it("accepts plausible millisecond timestamps on time-named fields", () => {
+    expect(looksLikeEpochMs("_creationTime", 1_755_529_000_000)).toBe(true);
+    expect(looksLikeEpochMs("at", 1_755_529_000_000)).toBe(true);
+    expect(looksLikeEpochMs("updatedAt", 1_755_529_000_000)).toBe(true);
+    expect(looksLikeEpochMs("expires_at", 1_755_529_000_000)).toBe(true);
+  });
+
+  it("rejects time-named fields whose value is out of epoch-ms range", () => {
+    expect(looksLikeEpochMs("at", 42)).toBe(false);
+    expect(looksLikeEpochMs("at", 1_755_529_000)).toBe(false);
+  });
+
+  it("rejects plausible values on fields that do not name a time", () => {
+    expect(looksLikeEpochMs("bytes", 1_755_529_000_000)).toBe(false);
+    expect(looksLikeEpochMs("balance", 1_755_529_000_000)).toBe(false);
+  });
+
+  it("rejects non-integers", () => {
+    expect(looksLikeEpochMs("at", 1_755_529_000_000.5)).toBe(false);
+    expect(looksLikeEpochMs("at", Number.NaN)).toBe(false);
   });
 });
 

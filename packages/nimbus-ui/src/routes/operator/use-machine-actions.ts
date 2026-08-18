@@ -7,7 +7,10 @@ import type { MachineDoc } from "./machine-types";
 export type LifecycleAction = "start" | "stop" | "restart" | "delete";
 
 // State a machine optimistically shows while its lifecycle request is in
-// flight, before the reactive query reports the settled state.
+// flight, before the reactive query reports the settled state. Every value
+// here must resolve to a named state in `components/state-chip.tsx`, or the
+// row answers a lifecycle click with a question mark; `use-machine-actions.spec.tsx`
+// locks the two files together.
 export const OPTIMISTIC_STATES: Record<LifecycleAction, string> = {
   start: "starting",
   stop: "stopping",
@@ -15,24 +18,47 @@ export const OPTIMISTIC_STATES: Record<LifecycleAction, string> = {
   delete: "deleting",
 };
 
+// The machine states this page branches on, grouped by the actions they
+// allow. Named arrays instead of inline `||` chains so a test can enumerate
+// every state the console can display and assert the badge can name it.
+const LIVE_STATES = ["running", "ready", "ok"] as const;
+const FAULTED_STATES = ["failed", "error"] as const;
+const HALTED_STATES = ["stopped", "created", "idle", "pending"] as const;
+const IN_FLIGHT_STATES = [
+  "starting",
+  "restarting",
+  "stopping",
+  "deleting",
+] as const;
+
+export const BRANCHED_MACHINE_STATES: readonly string[] = [
+  ...LIVE_STATES,
+  ...FAULTED_STATES,
+  ...HALTED_STATES,
+  ...IN_FLIGHT_STATES,
+];
+
+function includes(states: readonly string[], value: string): boolean {
+  return states.includes(value);
+}
+
 // Which lifecycle actions are offered for a machine in a given state.
 export function actionsForState(state: string | undefined): LifecycleAction[] {
   const value = (state ?? "").toLowerCase();
-  if (value === "running" || value === "ready" || value === "ok") {
+  if (includes(LIVE_STATES, value)) {
     return ["stop", "restart"];
   }
-  if (value === "failed" || value === "error") {
+  if (includes(FAULTED_STATES, value)) {
     return ["start", "restart", "delete"];
   }
-  if (
-    value === "stopped" ||
-    value === "created" ||
-    value === "idle" ||
-    value === "pending"
-  ) {
+  if (includes(HALTED_STATES, value)) {
     return ["start", "delete"];
   }
-  if (value === "starting" || value === "restarting" || value === "stopping") {
+  // A lifecycle request is in flight. Offer nothing rather than a row of
+  // buttons that would race the one already running — `deleting` included,
+  // which used to fall through to the catch-all below and render Start /
+  // Stop / Restart / Delete for a machine on its way out.
+  if (includes(IN_FLIGHT_STATES, value)) {
     return [];
   }
   return ["start", "stop", "restart", "delete"];

@@ -56,7 +56,7 @@ export function Breadcrumb({
               value={segment.copyValue}
               hideUntilHover
               testid={`breadcrumb-copy-${idx}`}
-              className="text-[10px]"
+              className="text-xs"
             >
               copy
             </CopyChip>

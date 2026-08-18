@@ -81,11 +81,7 @@ export function UpgradePopover({
                     onClick={() => {
                       void onUpdate();
                     }}
-                    className="rounded px-2 py-1 text-xs text-default"
-                    style={{
-                      background: "var(--nimbus-brand)",
-                      color: "var(--nimbus-on-brand, white)",
-                    }}
+                    className="rounded bg-brand px-2 py-1 text-xs text-on-brand"
                   >
                     Update
                   </button>
@@ -96,11 +92,7 @@ export function UpgradePopover({
                     onClick={() => {
                       void onCopyCommand();
                     }}
-                    className="rounded px-2 py-1 text-xs text-default"
-                    style={{
-                      background: "var(--nimbus-brand)",
-                      color: "var(--nimbus-on-brand, white)",
-                    }}
+                    className="rounded bg-brand px-2 py-1 text-xs text-on-brand"
                   >
                     Copy command
                   </button>
@@ -151,7 +143,7 @@ function FallbackRow({ url }: { url: string }) {
         href={url}
         target="_blank"
         rel="noreferrer"
-        className="underline hover:text-default"
+        className="link-inline"
         data-testid="upgrade-popover-fallback-link"
       >
         install docs

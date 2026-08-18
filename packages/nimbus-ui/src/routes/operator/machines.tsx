@@ -1,6 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
@@ -19,15 +20,24 @@ import {
 import { MachineDetail } from "./machine-detail";
 import type { MachineDoc } from "./machine-types";
 import {
+  actionsForState,
   type LifecycleAction,
   OPTIMISTIC_STATES,
-  actionsForState,
   useMachineActions,
 } from "./use-machine-actions";
 
 export const Route = createFileRoute("/operator/machines")({
   component: MachinesPage,
 });
+
+const MACHINE_INIT_COMMAND = "nimbus machine init";
+
+function copyMachineInitCommand() {
+  navigator.clipboard.writeText(MACHINE_INIT_COMMAND).then(
+    () => toast(`Copied ${MACHINE_INIT_COMMAND}`),
+    () => toast.error("Failed to copy command"),
+  );
+}
 
 function MachinesPage() {
   const machines = useQuery(api.machines.list, {
@@ -62,7 +72,7 @@ function MachinesPage() {
                   className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
                 >
                   <span className="flex-1 truncate">{machine.name}</span>
-                  <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                  <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
                     {machine.state}
                   </span>
                 </a>
@@ -116,7 +126,17 @@ function MachinesPage() {
           ) : machines.length === 0 ? (
             <EmptyState
               title="No machines"
-              body="Machines are the outer dev VM on macOS and Windows. Run `nimbus machine init` to create one — it appears here in real time. Pure-Linux nodes run sandboxes directly and have none."
+              body={
+                <>
+                  Machines are the outer dev VM on macOS and Windows. Run{" "}
+                  <code className="whitespace-nowrap rounded border border-app bg-surface-2 px-1 font-mono text-default">
+                    {MACHINE_INIT_COMMAND}
+                  </code>{" "}
+                  to create one — it appears here in real time. Pure-Linux nodes
+                  run sandboxes directly and have none.
+                </>
+              }
+              cta={{ label: "Copy command", onClick: copyMachineInitCommand }}
               testid="machines-empty"
             />
           ) : (
@@ -187,7 +207,7 @@ function MachineTable({
         className="w-full border-collapse text-sm"
         data-testid="machines-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
+        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
           <tr>
             <Th>Name</Th>
             <Th>State</Th>
@@ -237,7 +257,7 @@ function MachineTable({
                     <StateChip state={optimisticState} />
                     {error ? (
                       <span
-                        className="font-mono text-[11px] text-danger"
+                        className="font-mono text-xs text-danger"
                         data-testid={`machines-error-${machine.name}`}
                       >
                         {error}
@@ -329,7 +349,7 @@ function ActionButton({
       aria-busy={busy || undefined}
       data-testid={`machines-action-${action}-${machineName}`}
       className={cn(
-        "rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide",
+        "rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
         "disabled:cursor-not-allowed disabled:opacity-50",
         tone,
       )}

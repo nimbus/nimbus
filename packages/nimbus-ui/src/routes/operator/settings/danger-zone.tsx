@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { system } from "../../../lib/api-mutations";
-import { DialogShell, SectionCard } from "./primitives";
+import { DialogShell, PageSection } from "./primitives";
 
 export function DangerZoneSection() {
   const [rotateOpen, setRotateOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
   return (
-    <SectionCard
+    <PageSection
       title="Session lifecycle"
       testid="settings-danger-zone"
       description="Rotate the local admin token, or shut down the running server. Both actions invalidate the current session."
       tone="danger"
+      framed
     >
       <div className="flex flex-wrap items-center gap-3">
         <button
@@ -41,7 +42,7 @@ export function DangerZoneSection() {
       {shutdownOpen ? (
         <ShutdownDialog onClose={() => setShutdownOpen(false)} />
       ) : null}
-    </SectionCard>
+    </PageSection>
   );
 }
 

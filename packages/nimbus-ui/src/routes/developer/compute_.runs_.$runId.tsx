@@ -180,7 +180,7 @@ function Field({
 }) {
   return (
     <div className="flex flex-col gap-1" data-testid={testid}>
-      <span className="text-[10px] uppercase tracking-wide text-muted">
+      <span className="text-xs uppercase tracking-wide text-muted">
         {label}
       </span>
       {children}
@@ -234,7 +234,7 @@ function TraceWaterfall({
       data-testid="run-detail-trace"
     >
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+        <h2 className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
           Trace timing
         </h2>
         <span className="font-mono tabular text-xs text-muted">
@@ -307,7 +307,7 @@ function WaterfallBar({
   };
   return (
     <div
-      className="grid grid-cols-[10rem_1fr_5rem] items-center gap-3 font-mono text-[11px]"
+      className="grid grid-cols-[10rem_1fr_5rem] items-center gap-3 font-mono text-xs"
       data-testid={testid}
     >
       <span className="truncate text-default" title={label}>
@@ -339,13 +339,13 @@ function CorrelatedEvents({
       data-testid="run-detail-events"
     >
       <div className="flex items-baseline justify-between border-b border-app px-4 py-3">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+        <h2 className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
           Correlated events
         </h2>
         <Link
           to="/developer/observability"
           search={{ tab: "logs", correlationId: runId }}
-          className="font-mono text-[10px] uppercase tracking-wide text-muted hover:text-default focus-visible:text-default"
+          className="font-mono text-xs uppercase tracking-wide text-muted hover:text-default focus-visible:text-default"
           data-testid="run-detail-open-logs"
         >
           open in logs →
@@ -370,7 +370,7 @@ function CorrelatedEvents({
                 epochMs={event.createdAt ?? event._creationTime ?? 0}
               />
               <StateChip state={event.level ?? "info"} />
-              <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+              <span className="font-mono text-xs uppercase tracking-wide text-muted">
                 {event.source ?? "—"}
                 {event.category ? ` · ${event.category}` : ""}
               </span>
@@ -399,7 +399,7 @@ function ErrorPanel({
       className="rounded-md border border-danger bg-surface p-4"
       data-testid="run-detail-error"
     >
-      <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.14em] text-danger">
+      <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.14em] text-danger">
         Error
       </h2>
       {location ? (
@@ -408,14 +408,14 @@ function ErrorPanel({
             to="/developer/compute/$function"
             params={{ function: functionPath }}
             search={{ tab: "source", line }}
-            className="mb-2 inline-block rounded border border-danger px-2 py-0.5 font-mono text-[11px] text-danger hover:bg-surface-2"
+            className="mb-2 inline-block rounded border border-danger px-2 py-0.5 font-mono text-xs text-danger hover:bg-surface-2"
             data-testid="run-detail-error-location"
           >
             at {location} ↗
           </Link>
         ) : (
           <span
-            className="mb-2 inline-block font-mono text-[11px] text-danger"
+            className="mb-2 inline-block font-mono text-xs text-danger"
             data-testid="run-detail-error-location"
           >
             at {location}
@@ -443,7 +443,7 @@ function Panel({
       className="rounded-md border border-app bg-surface p-4"
       data-testid={testid}
     >
-      <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+      <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.14em] text-muted">
         {title}
       </h2>
       <p className="font-mono text-xs text-muted">{empty}</p>
@@ -464,14 +464,14 @@ function RunNotFound() {
       >
         <p className="font-mono text-sm text-default">Run not found</p>
         <p className="max-w-md text-xs text-muted">
-          No run with id <code className="font-mono text-default">{runId}</code>.
-          It may have been pruned, or the correlation id does not point to a run
-          record.
+          No run with id <code className="font-mono text-default">{runId}</code>
+          . It may have been pruned, or the correlation id does not point to a
+          run record.
         </p>
         <Link
           to="/developer/observability"
           search={{ tab: "runs" }}
-          className="mt-2 rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+          className="mt-2 rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
           data-testid="run-detail-back"
         >
           ← all runs

@@ -166,7 +166,7 @@ function ServiceDetailPage() {
             {displayName}
           </h1>
           {service.kind ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
+            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-muted">
               {service.kind}
             </span>
           ) : null}
@@ -370,7 +370,7 @@ function BundleTab({
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-3">
-      <span className="w-32 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+      <span className="w-32 font-mono text-xs uppercase tracking-[0.18em] text-muted">
         {label}
       </span>
       <span className="font-mono text-xs text-default">{value}</span>
@@ -427,7 +427,7 @@ function DetailSubDrawer({
                 {svc.name ?? shortId(svc._id, 12)}
               </span>
               {svc.state ? (
-                <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
                   {svc.state}
                 </span>
               ) : null}
@@ -454,7 +454,7 @@ function ServiceNotFound() {
       </span>
       <Link
         to="/developer/services"
-        className="rounded border border-app px-3 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
       >
         ← back to services
       </Link>

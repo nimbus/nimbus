@@ -1,3 +1,4 @@
+import { Dialog } from "@base-ui/react/dialog";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronsLeft, ChevronsRight, type LucideIcon } from "lucide-react";
 import {
@@ -10,6 +11,7 @@ import {
 } from "react";
 import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
+import { useViewportTier, type ViewportTier } from "./use-viewport-tier";
 
 // Background double-click toggles collapse; ignore double-clicks that land on an
 // interactive element (links, buttons, inputs) so they keep their own behavior.
@@ -109,65 +111,44 @@ export function useContributeSubDrawer(spec: SubDrawerSpec | null) {
 
 export function SubDrawer() {
   const ctx = useContext(SubDrawerContext);
-  const open = useUiStore((s) => s.subDrawerOpen);
-  const setSubDrawerOpen = useUiStore((s) => s.setSubDrawerOpen);
-  const toggleSubDrawer = useUiStore((s) => s.toggleSubDrawer);
+  const { open, overlay, setOpen, toggle } = useSubDrawerDisplay();
   const spec = ctx?.spec ?? null;
   const search = ctx?.search ?? "";
   const setSearch = ctx?.setSearch ?? (() => {});
   if (!spec) return null;
 
-  // Collapsed: a thin rail with an expand toggle (mirrors the primary drawer).
-  // The panel is never fully removed, so it is always reachable again.
-  if (!open) {
+  if (!open || overlay) {
     return (
-      <aside
-        aria-label={spec.title}
-        data-testid="sub-drawer"
-        data-kind={spec.kind}
-        data-collapsed="true"
-        onDoubleClick={(e) => {
-          if (!isInteractiveTarget(e.target)) toggleSubDrawer();
-        }}
-        className="flex h-full w-8 shrink-0 flex-col gap-1 border-r border-app bg-surface py-2"
-      >
-        <button
-          type="button"
-          onClick={() => setSubDrawerOpen(true)}
-          aria-label="Expand sub-drawer"
-          title="Expand sub-drawer"
-          data-testid="sub-drawer-toggle"
-          className="flex h-7 w-full items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
-        >
-          <ChevronsRight size={12} aria-hidden />
-        </button>
-        {spec.railItems?.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={item.onSelect}
-              aria-label={item.label}
-              aria-current={item.active ? "page" : undefined}
-              title={item.label}
-              data-testid={`sub-drawer-rail-item-${item.id}`}
-              data-active={item.active ? "true" : "false"}
-              className={cn(
-                "flex h-8 w-full items-center justify-center border-l-2 border-transparent text-muted transition-colors hover:bg-surface-2 hover:text-default",
-                item.active && "bg-surface-2 text-default",
-              )}
-              style={
-                item.active
-                  ? { borderLeftColor: "var(--nimbus-brand)" }
-                  : undefined
-              }
-            >
-              <Icon size={14} aria-hidden />
-            </button>
-          );
-        })}
-      </aside>
+      <>
+        <SubDrawerRail
+          spec={spec}
+          onExpand={() => setOpen(true)}
+          onToggle={toggle}
+        />
+        {overlay && open ? (
+          <Dialog.Root open onOpenChange={(next) => setOpen(next)} modal>
+            <Dialog.Portal>
+              <Dialog.Backdrop
+                data-testid="sub-drawer-scrim"
+                className="fixed inset-0 z-40 bg-black/50"
+              />
+              <Dialog.Popup
+                aria-label={spec.title}
+                data-testid="sub-drawer-overlay"
+                data-kind={spec.kind}
+                className="fixed bottom-[var(--statusbar-height)] left-8 top-10 z-50 flex w-64 flex-col border-r border-app bg-surface shadow-lg outline-none"
+              >
+                <SubDrawerPanelBody
+                  spec={spec}
+                  search={search}
+                  setSearch={setSearch}
+                  onCollapse={() => setOpen(false)}
+                />
+              </Dialog.Popup>
+            </Dialog.Portal>
+          </Dialog.Root>
+        ) : null}
+      </>
     );
   }
 
@@ -178,17 +159,152 @@ export function SubDrawer() {
       data-kind={spec.kind}
       data-collapsed="false"
       onDoubleClick={(e) => {
-        if (!isInteractiveTarget(e.target)) toggleSubDrawer();
+        if (!isInteractiveTarget(e.target)) toggle();
       }}
       className="flex h-full w-64 shrink-0 flex-col border-r border-app bg-surface"
     >
+      <SubDrawerPanelBody
+        spec={spec}
+        search={search}
+        setSearch={setSearch}
+        onCollapse={() => setOpen(false)}
+      />
+    </aside>
+  );
+}
+
+// Below the desktop tier the expanded panel is an overlay sheet rather than a
+// second in-flow column, so the content area keeps its width. The rail stays in
+// flow underneath it: an overlay whose only dismissal is the scrim would leave
+// no visible way back once closed.
+//
+// The sheet is modal, so entering the tier must not open it — a stored desktop
+// preference would otherwise drop a scrim over the content on arrival. Below
+// desktop the panel starts closed and only an explicit expand opens it, and
+// that choice is tagged with the tier it was made in so returning to desktop
+// restores the operator's real preference untouched.
+function useSubDrawerDisplay(): {
+  open: boolean;
+  overlay: boolean;
+  setOpen: (next: boolean) => void;
+  toggle: () => void;
+} {
+  const tier = useViewportTier();
+  const stored = useUiStore((s) => s.subDrawerOpen);
+  const setSubDrawerOpen = useUiStore((s) => s.setSubDrawerOpen);
+  const toggleSubDrawer = useUiStore((s) => s.toggleSubDrawer);
+  const [override, setOverride] = useState<{
+    tier: ViewportTier;
+    value: boolean;
+  } | null>(null);
+  const overlay = tier !== "desktop";
+  const active = override?.tier === tier ? override.value : null;
+  const open = overlay ? (active ?? false) : stored;
+  const setOpen = (next: boolean) => {
+    if (overlay) {
+      setOverride({ tier, value: next });
+      return;
+    }
+    setOverride(null);
+    setSubDrawerOpen(next);
+  };
+  return {
+    open,
+    overlay,
+    setOpen,
+    toggle: () => {
+      if (overlay) {
+        setOverride({ tier, value: !open });
+        return;
+      }
+      setOverride(null);
+      toggleSubDrawer();
+    },
+  };
+}
+
+// Collapsed: a thin rail with an expand toggle (mirrors the primary drawer).
+// The panel is never fully removed, so it is always reachable again.
+function SubDrawerRail({
+  spec,
+  onExpand,
+  onToggle,
+}: {
+  spec: SubDrawerSpec;
+  onExpand: () => void;
+  onToggle: () => void;
+}) {
+  return (
+    <aside
+      aria-label={spec.title}
+      data-testid="sub-drawer"
+      data-kind={spec.kind}
+      data-collapsed="true"
+      onDoubleClick={(e) => {
+        if (!isInteractiveTarget(e.target)) onToggle();
+      }}
+      className="flex h-full w-8 shrink-0 flex-col gap-1 border-r border-app bg-surface py-2"
+    >
+      <button
+        type="button"
+        onClick={onExpand}
+        aria-label="Expand sub-drawer"
+        title="Expand sub-drawer"
+        data-testid="sub-drawer-toggle"
+        className="flex h-7 w-full items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
+      >
+        <ChevronsRight size={12} aria-hidden />
+      </button>
+      {spec.railItems?.map((item) => {
+        const Icon = item.icon;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={item.onSelect}
+            aria-label={item.label}
+            aria-current={item.active ? "page" : undefined}
+            title={item.label}
+            data-testid={`sub-drawer-rail-item-${item.id}`}
+            data-active={item.active ? "true" : "false"}
+            className={cn(
+              "flex h-8 w-full items-center justify-center border-l-2 border-transparent text-muted transition-colors hover:bg-surface-2 hover:text-default",
+              item.active && "bg-surface-2 text-default",
+            )}
+            style={
+              item.active
+                ? { borderLeftColor: "var(--nimbus-brand)" }
+                : undefined
+            }
+          >
+            <Icon size={14} aria-hidden />
+          </button>
+        );
+      })}
+    </aside>
+  );
+}
+
+function SubDrawerPanelBody({
+  spec,
+  search,
+  setSearch,
+  onCollapse,
+}: {
+  spec: SubDrawerSpec;
+  search: string;
+  setSearch: (next: string) => void;
+  onCollapse: () => void;
+}) {
+  return (
+    <>
       <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-app px-3">
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+        <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
           {spec.title}
         </span>
         <button
           type="button"
-          onClick={() => setSubDrawerOpen(false)}
+          onClick={onCollapse}
           aria-label="Collapse sub-drawer"
           title="Collapse sub-drawer"
           data-testid="sub-drawer-toggle"
@@ -205,7 +321,12 @@ export function SubDrawer() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder={spec.search.placeholder}
             data-testid="sub-drawer-search"
-            className="h-7 w-full rounded-md border border-app bg-canvas px-2 text-xs text-default placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-[color:var(--nimbus-brand)]"
+            // `drawer` marks this as the fallback target for the `/` shortcut;
+            // a page-level filter claims `primary` and wins. No focus styling
+            // of its own — `--brand` is identity, `--accent` is focus, and the
+            // global :focus-visible rule already paints the accent ring.
+            data-inline-search="drawer"
+            className="h-7 w-full rounded-md border border-app bg-canvas px-2 text-xs text-default placeholder:text-muted"
           />
         </div>
       ) : null}
@@ -216,7 +337,7 @@ export function SubDrawer() {
           spec.children
         )}
       </div>
-    </aside>
+    </>
   );
 }
 

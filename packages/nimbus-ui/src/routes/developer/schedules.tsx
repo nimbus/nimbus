@@ -129,7 +129,7 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
         className="w-full border-collapse text-sm"
         data-testid="schedules-scheduled-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
+        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
           <tr>
             <Th>Function</Th>
             <Th>Status</Th>
@@ -205,7 +205,7 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
         className="w-full border-collapse text-sm"
         data-testid="schedules-cron-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
+        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
           <tr>
             <Th>Name</Th>
             <Th>Function</Th>

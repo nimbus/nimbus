@@ -79,6 +79,37 @@ describe("nav-entries", () => {
     }
   });
 
+  it("gives every tenant-scoped entry a count query that accepts tenantId", () => {
+    const scoped = [...DEVELOPER_NAV_ENTRIES, ...OPERATOR_NAV_ENTRIES].filter(
+      (e) => e.tenantScoped,
+    );
+    expect(scoped.map((e) => e.id)).toEqual([
+      "services",
+      "schedules",
+      "storage",
+    ]);
+    for (const entry of scoped) {
+      // The drawer substitutes the active tenant into these args. A scoped
+      // entry whose query has no tenantId arg would be rejected at read time.
+      expect(entry.count).not.toBeNull();
+      expect(entry.count?.args).toHaveProperty("tenantId");
+    }
+  });
+
+  it("scopes every developer count whose query accepts tenantId", () => {
+    // The Developer console promises tenant scope, so a badge there may only be
+    // server-wide when the underlying query has no tenantId to pass. Operator
+    // counts are deliberately server-wide and are not covered by this rule.
+    for (const entry of DEVELOPER_NAV_ENTRIES) {
+      if (entry.count === null) continue;
+      const scopable = Object.hasOwn(entry.count.args as object, "tenantId");
+      expect({ id: entry.id, scoped: entry.tenantScoped === true }).toEqual({
+        id: entry.id,
+        scoped: scopable,
+      });
+    }
+  });
+
   it("uses non-query count sources for nodes and tenants", () => {
     const byId = (id: string) => OPERATOR_NAV_ENTRIES.find((e) => e.id === id);
     expect(byId("nodes")?.count).toBeNull();

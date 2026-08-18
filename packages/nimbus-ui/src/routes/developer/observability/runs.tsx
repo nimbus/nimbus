@@ -1,11 +1,12 @@
-import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { api } from "../../../../convex/_generated/api";
+import { CategoryChip } from "../../../components/category-chip";
 import { CopyChip } from "../../../components/copy-chip";
-import { StateChip } from "../../../components/state-chip";
 import { Td, Th } from "../../../components/data-table";
+import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
 import { formatDuration, shortId } from "../../../lib/format";
 import { FilterInput, FilterSelect } from "./_filters";
@@ -40,7 +41,7 @@ export function RunsTab({ search }: { search: ObservabilitySearch }) {
     >
       <AdapterHonesty />
       <div
-        className="grid grid-cols-[auto_auto_1fr] items-center gap-2"
+        className="flex flex-wrap items-center gap-2"
         data-testid="observability-run-filters"
       >
         <FilterSelect
@@ -62,13 +63,13 @@ export function RunsTab({ search }: { search: ObservabilitySearch }) {
           onChange={(v) => setSearch({ functionPath: v || undefined })}
           testid="observability-filter-run-function"
         />
-        <div className="flex justify-end">
+        <div className="ml-auto flex justify-end">
           <button
             type="button"
             onClick={() =>
               setSearch({ status: undefined, functionPath: undefined })
             }
-            className="rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+            className="rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
             data-testid="observability-run-filter-clear"
           >
             clear
@@ -131,7 +132,7 @@ function RunsTable({ runs }: { runs: RunDoc[] | undefined }) {
         className="w-full border-collapse text-sm"
         data-testid="observability-runs-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
+        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
           <tr>
             <Th>Function</Th>
             <Th>Status</Th>
@@ -162,9 +163,7 @@ function RunsTable({ runs }: { runs: RunDoc[] | undefined }) {
                 <StateChip state={run.status} />
               </Td>
               <Td>
-                <span className="font-mono text-xs uppercase tracking-wide text-muted">
-                  {run.kind ?? "—"}
-                </span>
+                <CategoryChip value={run.kind} />
               </Td>
               <Td align="right" mono>
                 {formatDuration(run.durationMs)}

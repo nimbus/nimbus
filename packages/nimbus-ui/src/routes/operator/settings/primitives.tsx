@@ -1,27 +1,48 @@
 import { useEffect, useRef } from "react";
 
-export function SectionCard({
+import { cn } from "../../../lib/cn";
+
+/**
+ * A settings page section: a titled header rule plus its content.
+ *
+ * DESIGN.md's do-not list keeps page sections out of decorative cards — cards
+ * are for repeated items, small metrics, modals, and genuinely framed tools.
+ * A section therefore separates itself with a header rule, not a box, so the
+ * tables, lists, and repeated cards *inside* it are the only frames the eye
+ * has to read.
+ *
+ * `framed` is the exception, not the default: pass it only where the frame
+ * carries meaning, as the danger zone's hazard boundary does around the
+ * shutdown and token-rotation controls.
+ */
+export function PageSection({
   title,
   description,
   testid,
   tone,
+  framed = false,
   children,
 }: {
   title: string;
   description?: string;
   testid: string;
   tone?: "default" | "danger";
+  framed?: boolean;
   children: React.ReactNode;
 }) {
-  const borderClass = tone === "danger" ? "border-danger/40" : "border-app";
+  const danger = tone === "danger";
+  const ruleClass = danger ? "border-danger/40" : "border-app";
   return (
     <section
       data-testid={testid}
-      className={`rounded-md border ${borderClass} bg-surface p-4`}
+      className={cn(
+        "flex flex-col gap-3",
+        framed && `rounded-md border p-4 ${ruleClass}`,
+      )}
     >
-      <header className="mb-3">
+      <header className={cn("border-b pb-2", ruleClass)}>
         <h2
-          className="text-sm text-default"
+          className={cn("text-sm", danger ? "text-danger" : "text-default")}
           style={{ fontSize: "var(--text-base)" }}
         >
           {title}
@@ -60,7 +81,7 @@ export function Definition({
 }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <dt className="text-[10px] uppercase tracking-[0.14em] text-muted">
+      <dt className="text-xs uppercase tracking-[0.14em] text-muted">
         {label}
       </dt>
       <dd className="text-sm text-default">{children}</dd>
@@ -77,7 +98,7 @@ export function Cell({
 }) {
   return (
     <div className="flex flex-col gap-1 bg-surface px-3 py-2">
-      <span className="text-[10px] uppercase tracking-[0.14em] text-muted">
+      <span className="text-xs uppercase tracking-[0.14em] text-muted">
         {label}
       </span>
       <span className="text-sm">{children}</span>

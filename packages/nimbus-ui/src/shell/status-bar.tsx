@@ -1,8 +1,13 @@
-import { useNimbus, useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
+import {
+  useNimbus,
+  useNimbusConnectionState,
+  useQuery,
+} from "@nimbus/nimbus/react";
 
 import { api } from "../../convex/_generated/api";
 import { CopyChip } from "../components/copy-chip";
 import { Kbd } from "../components/kbd";
+import { type StateKind, statePalette } from "../components/state-chip";
 import { type ConnState, StateDot } from "../components/state-dot";
 import { UpgradePopover } from "../components/upgrade-popover";
 import { useStalenessContext } from "../hooks/use-staleness";
@@ -56,6 +61,10 @@ export function StatusBar() {
           <Kbd>{metaGlyph}</Kbd>
           <Kbd>K</Kbd>
           <span className="text-muted">palette</span>
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Kbd>/</Kbd>
+          <span className="text-muted">filter</span>
         </span>
       </span>
       {/* Right: connection status, server URL, version (the info that matters,
@@ -121,7 +130,7 @@ function VersionSlot({
           data-testid="status-version-upgrading"
           className="inline-flex items-center gap-1.5"
         >
-          <UpgradeDot tone="starting" />
+          <UpgradeDot tone="upgrading" />
           <span className="text-default">
             Updating to {targetLatest ?? info.latest}…
           </span>
@@ -140,7 +149,7 @@ function VersionSlot({
           data-testid="status-version-upgraded"
           className="inline-flex items-center gap-1.5"
         >
-          <UpgradeDot tone="success" />
+          <UpgradeDot tone="upgraded" />
           <span className="text-default">{baseValue}</span>
         </span>
       </>
@@ -172,7 +181,7 @@ function VersionSlot({
           onCopyCommand={copyCommand}
           trigger={
             <>
-              <UpgradeDot tone="accent" />
+              <UpgradeDot tone="available" />
               <span className="text-default">v{currentVersion}</span>
               <span className="text-muted">·</span>
               <span className="text-default">update to {info.latest} →</span>
@@ -184,21 +193,42 @@ function VersionSlot({
   );
 }
 
-function UpgradeDot({ tone }: { tone: "accent" | "starting" | "success" }) {
-  const color =
-    tone === "accent"
-      ? "var(--nimbus-brand)"
-      : tone === "starting"
-        ? "var(--nimbus-starting)"
-        : "var(--nimbus-success)";
+// Upgrade tones are states, so the colour comes from the shared `statePalette`
+// in components/state-chip.tsx. A private tone->colour table here was the third
+// copy of that binding in the console, after StateChip and StateDot; three
+// tables owning one vocabulary is how they drift apart.
+//
+// The prop names the upgrade state rather than a colour. A tone called
+// "accent" that painted `--brand` is precisely how the drift started:
+// `--brand` is identity and has no entry in the state table, while an upgrade
+// that is offered but not applied is genuinely `pending`.
+//
+// No tone pulses. DESIGN.md grants the pulse to `Running` alone, and a
+// permanent pulse in the always-on-screen footer is the opposite of calm.
+const UPGRADE_TONES = {
+  available: "pending",
+  upgrading: "starting",
+  upgraded: "ready",
+} as const satisfies Record<string, StateKind>;
+
+export type UpgradeTone = keyof typeof UPGRADE_TONES;
+
+function UpgradeDot({ tone }: { tone: UpgradeTone }) {
+  const kind = UPGRADE_TONES[tone];
   return (
     <span
       aria-hidden
-      className={`inline-block size-2 rounded-full ${tone === "starting" ? "animate-pulse" : ""}`}
-      style={{ background: color }}
+      data-state={kind}
+      className="inline-block size-2 rounded-full"
+      style={{ background: `var(${statePalette[kind].token})` }}
     />
   );
 }
+
+// Exported for the drift-lock test: it asserts every tone resolves to a real
+// entry in the shared table, so a renamed or deleted StateKind fails here
+// instead of silently falling back to an unknown-state glyph.
+export const UPGRADE_TONE_KINDS = UPGRADE_TONES;
 
 function Divider() {
   return (

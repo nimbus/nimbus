@@ -74,7 +74,7 @@ export function SchemaPanel({
     >
       <PanelHeader title="Schema" onClose={onClose} />
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3">
-        <p className="font-mono text-[11px] text-muted">
+        <p className="font-mono text-xs text-muted">
           Replace the schema by editing this JSON and saving. Drop removes
           enforcement (the table still keeps its documents).
         </p>
@@ -100,7 +100,7 @@ export function SchemaPanel({
             onClick={() => setConfirmDrop(true)}
             disabled={deleting || !schema}
             className={cn(
-              "rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide",
+              "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide",
               deleting || !schema
                 ? "text-muted"
                 : "text-danger hover:bg-surface-2",
@@ -114,7 +114,7 @@ export function SchemaPanel({
             onClick={() => void save()}
             disabled={saving}
             className={cn(
-              "rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide",
+              "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide",
               saving ? "text-muted" : "text-default hover:bg-surface-2",
             )}
             data-testid="documents-schema-save"

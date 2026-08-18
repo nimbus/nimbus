@@ -202,7 +202,7 @@ function TenantsPage() {
               type="submit"
               disabled={creating || !newTenant.trim()}
               className={cn(
-                "rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide",
+                "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide",
                 creating || !newTenant.trim()
                   ? "text-muted"
                   : "text-default hover:bg-surface",
@@ -251,7 +251,7 @@ function TenantsPage() {
               className="w-full border-collapse text-sm"
               data-testid="storage-tenants-table"
             >
-              <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
+              <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
                 <tr>
                   <Th>Tenant</Th>
                   <Th align="right">Tables</Th>
@@ -298,7 +298,7 @@ function TenantsPage() {
                         onClick={() => setConfirmTenant(row.tenantId)}
                         disabled={deletingTenant === row.tenantId}
                         className={cn(
-                          "rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide",
+                          "rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
                           deletingTenant === row.tenantId
                             ? "text-muted"
                             : "text-danger hover:bg-surface-2",

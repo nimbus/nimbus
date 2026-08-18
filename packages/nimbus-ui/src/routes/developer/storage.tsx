@@ -1,20 +1,14 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
-import { useMemo } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
-import { CopyChip } from "../../components/copy-chip";
-import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { LoadingState } from "../../components/loading-state";
-import { RelativeTime } from "../../components/time";
+import { TablesListTable } from "../../components/storage/tables-list-table";
+import { useTablesSubDrawer } from "../../components/storage/tables-sub-drawer";
 import { useTenantList } from "../../hooks/use-tenant-list";
 import type { TableDoc } from "../../lib/types/table";
-import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
 import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/developer/storage")({
@@ -32,78 +26,9 @@ function StoragePage() {
   const hasTenants =
     tenantList.kind === "loaded" ? tenantList.tenants.length > 0 : undefined;
 
-  const sortedTables = (tables ?? [])
-    .slice()
-    .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-
-  const spec = useMemo<SubDrawerSpec>(() => {
-    return {
-      kind: "dynamic",
-      title: "Tables",
-      search: { placeholder: "Filter tables" },
-      children: !tenant ? (
-        <div className="px-3 py-6 text-xs text-muted">
-          {hasTenants === false ? (
-            <>
-              <p>No tenants yet.</p>
-              <p className="mt-2">
-                Click{" "}
-                <code className="font-mono text-default">+ CREATE TENANT</code>{" "}
-                in the top nav to create one. Tables and documents scope to a
-                tenant.
-              </p>
-            </>
-          ) : (
-            <>
-              <p>Select a tenant.</p>
-              <p className="mt-2">
-                Pick a tenant from the top-nav selector to see its tables.
-              </p>
-            </>
-          )}
-        </div>
-      ) : tables === undefined ? (
-        <div className="px-3 py-3 text-xs text-muted">
-          <span aria-hidden>·</span>
-          <span className="sr-only">loading</span>
-        </div>
-      ) : sortedTables.length === 0 ? (
-        <div className="px-3 py-6 text-xs text-muted">
-          <p>No tables yet.</p>
-          <p className="mt-2">
-            Insert a document or call{" "}
-            <code className="font-mono">ctx.db.insert</code> to materialize one.
-          </p>
-        </div>
-      ) : (
-        <ul className="flex flex-col gap-px px-2 py-2">
-          {sortedTables.map((table) => {
-            const name = table.name ?? table._id;
-            return (
-              <li key={table._id}>
-                <Link
-                  to="/developer/storage/$table"
-                  params={{ table: name }}
-                  data-testid={`sub-drawer-item-dev-${name}`}
-                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
-                >
-                  <span className="flex-1 truncate font-mono text-xs">
-                    {name}
-                  </span>
-                  {typeof table.rowCount === "number" ? (
-                    <span className="tabular font-mono text-[10px] text-muted">
-                      {table.rowCount}
-                    </span>
-                  ) : null}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      ),
-    };
-  }, [tenant, tables, sortedTables, hasTenants]);
-  useContributeSubDrawer(spec);
+  // Shared with the table detail route, so the Tables list stays beside the
+  // documents instead of vanishing on drill-in.
+  useTablesSubDrawer({ tenant, tables, hasTenants });
 
   return (
     <section
@@ -162,72 +87,14 @@ function StoragePage() {
           )
         ) : tables === undefined ? (
           <LoadingState label="Loading tables…" />
-        ) : sortedTables.length === 0 ? (
+        ) : tables.length === 0 ? (
           <EmptyState
             title="No tables"
             body={`Insert a document via POST /api/tenants/${tenant}/documents or call ctx.db.insert("<table>", ...) from a registered function. Tables appear here as soon as they receive their first write.`}
             testid="tenant-tables-empty"
           />
         ) : (
-          <div className="overflow-auto">
-            <table
-              className="w-full border-collapse text-sm"
-              data-testid="tenant-tables-table"
-            >
-              <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
-                <tr>
-                  <Th>Table</Th>
-                  <Th>Schema</Th>
-                  <Th align="right">Rows</Th>
-                  <Th>Last write</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedTables.map((table) => {
-                  const name = table.name ?? table._id;
-                  return (
-                    <tr
-                      key={table._id}
-                      className="border-t border-app hover:bg-surface-2"
-                      data-testid={`tenant-table-row-${name}`}
-                    >
-                      <Td>
-                        <Link
-                          to="/developer/storage/$table"
-                          params={{ table: name }}
-                          className="font-mono text-default hover:underline"
-                          data-testid={`tenant-table-link-${name}`}
-                        >
-                          {name}
-                        </Link>
-                        <span className="ml-2 align-middle">
-                          <CopyChip
-                            label="table name"
-                            value={name}
-                            hideUntilHover
-                            testid={`tenant-table-copy-${name}`}
-                          >
-                            copy
-                          </CopyChip>
-                        </span>
-                      </Td>
-                      <Td mono>{table.schema ? "defined" : "any"}</Td>
-                      <Td align="right" mono>
-                        {table.rowCount ?? 0}
-                      </Td>
-                      <Td>
-                        {table.lastWriteAt ? (
-                          <RelativeTime epochMs={table.lastWriteAt} />
-                        ) : (
-                          <span className="text-muted">never</span>
-                        )}
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <TablesListTable tables={tables} />
         )}
       </div>
     </section>

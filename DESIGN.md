@@ -913,16 +913,27 @@ State → token binding (mandatory; do not improvise mappings):
 
 | State | Token | Dot glyph |
 | --- | --- | --- |
-| `Ready`, `Healthy` | `--success` | ● solid |
+| `Ready`, `Healthy`, `OK`, `Active`, `Connected` | `--success` | ● solid |
 | `Running` | `--accent` | ● pulsing (respects `prefers-reduced-motion`) |
-| `Starting`, `Provisioning` | `--starting` | ◐ half-filled |
-| `Draining`, `Stopping` | `--draining` | ◐ half-filled |
+| `Starting`, `Provisioning`, `Restarting` | `--starting` | ◐ half-filled |
+| `Draining`, `Stopping`, `Deleting` | `--draining` | ◐ half-filled |
 | `Queued`, `Pending` | `--queued` | ○ outline |
 | `NotReady`, `Degraded`, `Reconnecting` | `--warning` | ● solid |
-| `Stopped` | `--muted` | ○ outline |
-| `Failed`, `Crashed` | `--danger` | ● solid |
+| `Stopped`, `Created`, `Idle` | `--muted` | ○ outline |
+| `Failed`, `Crashed`, `Offline` | `--danger` | ● solid |
 | `Stale` (post-disconnect) | `--stale` | ● solid + label strikethrough |
 | `Unknown` | `--muted` | ? glyph |
+
+Each row is a state *family*. Names after the first are aliases that fold onto
+that family — they do not get their own tone. Add a new state by folding it onto
+the family it belongs to; introduce a new row only when the state is genuinely a
+new lifecycle position, and give it a token from the table above.
+
+Any state string the console can produce but this table omits renders as
+`Unknown` — a literal `?`. That is the correct failure mode (it reads as "the
+console lost track of this resource"), which makes an unlisted state a visible
+bug rather than a silent miscolour. Lock the two sides together with a test that
+asserts every state a route or hook can emit renders a non-`?` glyph.
 
 Categorical (filled pill, monospace label, 11px):
 

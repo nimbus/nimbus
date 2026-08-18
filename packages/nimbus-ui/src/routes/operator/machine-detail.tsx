@@ -155,7 +155,7 @@ export function MachineDetail({
               return (
                 <li
                   key={evt._id}
-                  className="flex items-baseline gap-2 font-mono text-[11px]"
+                  className="flex items-baseline gap-2 font-mono text-xs"
                 >
                   <StateChip state={evt.level ?? "info"} showDot={false} />
                   <span className="flex-1 truncate text-default">
@@ -181,7 +181,7 @@ function Section({
 }) {
   return (
     <section className="flex flex-col gap-1.5">
-      <h3 className="text-[10px] uppercase tracking-[0.14em] text-muted">
+      <h3 className="text-xs uppercase tracking-[0.14em] text-muted">
         {title}
       </h3>
       <div className="flex flex-col gap-1">{children}</div>
@@ -198,7 +198,7 @@ function KvRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="font-mono text-[11px] uppercase tracking-wide text-muted">
+      <span className="font-mono text-xs uppercase tracking-wide text-muted">
         {label}
       </span>
       <span className="min-w-0 text-right">{children}</span>

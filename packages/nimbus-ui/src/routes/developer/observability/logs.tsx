@@ -1,5 +1,5 @@
-import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   type MouseEvent as ReactMouseEvent,
   useCallback,
@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { api } from "../../../../convex/_generated/api";
+import { Td, Th } from "../../../components/data-table";
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
 import { cn } from "../../../lib/cn";
@@ -170,8 +171,11 @@ function LogFilterBar({
   onClear: () => void;
 }) {
   return (
+    // Wrap rather than clip: the toolbar's ancestor is `overflow-hidden`, so a
+    // grid whose tracks cannot compress pushes the action cluster out of the
+    // viewport with no scrollbar to recover it.
     <div
-      className="grid grid-cols-[auto_auto_auto_auto_1fr] items-center gap-2"
+      className="flex flex-wrap items-center gap-2"
       data-testid="observability-log-filters"
     >
       <FilterSelect
@@ -209,12 +213,12 @@ function LogFilterBar({
         onChange={(v) => setSearch({ correlationId: v || undefined })}
         testid="observability-filter-correlation"
       />
-      <div className="flex items-center justify-end gap-2">
+      <div className="ml-auto flex items-center gap-2">
         {paused ? (
           <button
             type="button"
             onClick={onResume}
-            className="rounded border border-danger px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-danger hover:bg-surface-2"
+            className="rounded border border-danger px-2 py-1 font-mono text-xs uppercase tracking-wide text-danger hover:bg-surface-2"
             data-testid="observability-log-resume"
           >
             paused · resume
@@ -237,7 +241,7 @@ function LogFilterBar({
         <button
           type="button"
           onClick={onClear}
-          className="rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+          className="rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
           data-testid="observability-filter-clear"
         >
           clear
@@ -268,7 +272,7 @@ function Toggle({
       aria-checked={value}
       onClick={() => onChange(!value)}
       className={cn(
-        "rounded border px-2 py-1 font-mono text-[11px] uppercase tracking-wide",
+        "rounded border px-2 py-1 font-mono text-xs uppercase tracking-wide",
         value
           ? "border-strong bg-surface text-default"
           : "border-app text-muted hover:bg-surface hover:text-default",
@@ -369,44 +373,88 @@ function LogStream({
       className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface"
       data-testid="observability-log-stream"
     >
-      <ul className="divide-y divide-app">
-        {events.map((event) => {
-          const correlationId = event.correlationId ?? undefined;
-          return (
-            <li key={event._id}>
-              <article
+      {/*
+        Fixed tracks, not per-row intrinsic sizing: a log reader scans down a
+        constant left edge, so time / level / source / message / run must start
+        at the same x on every line regardless of that line's content.
+      */}
+      <table
+        className="w-full table-fixed border-collapse text-xs"
+        data-testid="observability-log-table"
+      >
+        <colgroup>
+          <col className="w-[88px]" />
+          <col className="w-[92px]" />
+          <col className="w-[220px]" />
+          <col />
+          <col className="w-[112px]" />
+        </colgroup>
+        <thead className="sticky top-0 z-10 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+          <tr className="h-8">
+            <Th align="right" className="py-1.5">
+              Time
+            </Th>
+            <Th className="py-1.5">Level</Th>
+            <Th className="py-1.5">Source</Th>
+            <Th className="py-1.5">Message</Th>
+            <Th className="py-1.5">Run</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((event) => {
+            const correlationId = event.correlationId ?? undefined;
+            const source = `${event.source ?? "—"}${event.category ? ` · ${event.category}` : ""}`;
+            const message = event.message ?? "(no message)";
+            return (
+              <tr
+                key={event._id}
                 onContextMenu={(e) => handleContextMenu(e, correlationId)}
                 aria-label={`Log entry${correlationId ? `, correlation ${shortId(correlationId, 8)}` : ""}: ${event.message ?? ""}`}
                 data-testid={`observability-log-row-${event._id}`}
-                className={cn(
-                  "grid grid-cols-[auto_auto_auto_1fr_auto] items-baseline gap-2 px-3 py-1.5 text-xs",
-                  "hover:bg-surface-2",
-                )}
+                // h-9 pins every row at the dense band's 36px. Cells truncate
+                // rather than wrap, so the height is exact, not a minimum that
+                // a long source or message can push past.
+                className={cn("h-9 border-t border-app", "hover:bg-surface-2")}
               >
-                <RelativeTime
-                  epochMs={event.createdAt ?? event._creationTime ?? 0}
-                />
-                <StateChip state={event.level ?? "info"} />
-                <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
-                  {event.source ?? "—"}
-                  {event.category ? ` · ${event.category}` : ""}
-                </span>
-                <span className="font-mono text-default truncate">
-                  {event.message ?? "(no message)"}
-                </span>
-                {correlationId ? (
-                  <CorrelationBadge
-                    correlationId={correlationId}
-                    eventId={event._id}
+                <Td align="right" className="whitespace-nowrap py-1.5">
+                  <RelativeTime
+                    epochMs={event.createdAt ?? event._creationTime ?? 0}
                   />
-                ) : (
-                  <span className="tabular text-muted">—</span>
-                )}
-              </article>
-            </li>
-          );
-        })}
-      </ul>
+                </Td>
+                <Td className="py-1.5">
+                  <StateChip state={event.level ?? "info"} />
+                </Td>
+                <Td className="py-1.5">
+                  <span
+                    title={source}
+                    className="block truncate font-mono text-xs uppercase tracking-wide text-muted"
+                  >
+                    {source}
+                  </span>
+                </Td>
+                <Td className="py-1.5">
+                  <span
+                    title={message}
+                    className="block truncate font-mono text-default"
+                  >
+                    {message}
+                  </span>
+                </Td>
+                <Td className="py-1.5">
+                  {correlationId ? (
+                    <CorrelationBadge
+                      correlationId={correlationId}
+                      eventId={event._id}
+                    />
+                  ) : (
+                    <span className="tabular text-muted">—</span>
+                  )}
+                </Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
       {menu ? (
         <div
           role="menu"
@@ -450,7 +498,7 @@ function CorrelationBadge({
       <Link
         to="/developer/compute/runs/$runId"
         params={{ runId: correlationId }}
-        className="inline-flex items-center gap-1 rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default focus-visible:bg-surface-2 focus-visible:text-default"
+        className="inline-flex items-center gap-1 rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default focus-visible:bg-surface-2 focus-visible:text-default"
         data-testid={`observability-log-jump-${eventId}`}
         aria-label={`Jump to run ${correlationId}`}
         title={`Jump to run ${correlationId}`}

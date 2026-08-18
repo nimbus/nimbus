@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useNimbus: () => ({ url: "http://localhost:9000" }),
@@ -13,9 +13,19 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: () => ({ version: "0.1.0", buildHash: "abcdef0" }),
 }));
 
+const { snapshotRef } = vi.hoisted(() => ({
+  snapshotRef: {
+    current: { state: "hidden", info: null, targetLatest: null } as {
+      state: string;
+      info: unknown;
+      targetLatest: string | null;
+    },
+  },
+}));
+
 vi.mock("../hooks/use-staleness", () => ({
   useStalenessContext: () => ({
-    snapshot: { state: "hidden", info: null, targetLatest: null },
+    snapshot: snapshotRef.current,
     isLocal: false,
     hasDesktopBridge: false,
     openPopover: vi.fn(),
@@ -25,7 +35,42 @@ vi.mock("../hooks/use-staleness", () => ({
   }),
 }));
 
-import { StatusBar } from "./status-bar";
+import type { VersionInfo } from "../api/system";
+import { statePalette } from "../components/state-chip";
+import { StatusBar, UPGRADE_TONE_KINDS, type UpgradeTone } from "./status-bar";
+
+beforeEach(() => {
+  snapshotRef.current = { state: "hidden", info: null, targetLatest: null };
+});
+
+const UPGRADE_STATES: Array<[UpgradeTone, string, string]> = [
+  ["available", "available", "status-version-available"],
+  ["upgrading", "upgrading", "status-version-upgrading"],
+  ["upgraded", "upgraded", "status-version-upgraded"],
+];
+
+// The available/confirming rows mount UpgradePopover, which reads the whole
+// VersionInfo, so the fixture has to be complete rather than just `latest`.
+const VERSION_INFO: VersionInfo = {
+  current: "0.1.0",
+  latest: "0.2.0",
+  available: true,
+  url: "https://example.invalid/releases/v0.2.0",
+  publishedAt: "2026-08-01T00:00:00Z",
+  host: "localhost",
+  checkStatus: "fresh",
+  upgrade: {
+    method: "brew",
+    command: "brew upgrade nimbus",
+    needsSudo: false,
+    interactive: false,
+    fallbackUrl: "https://example.invalid/INSTALL.md",
+  },
+};
+
+function showUpgrade(state: string) {
+  snapshotRef.current = { state, info: VERSION_INFO, targetLatest: "0.2.0" };
+}
 
 describe("StatusBar", () => {
   it("shows the connection status", () => {
@@ -50,5 +95,41 @@ describe("StatusBar", () => {
   it("no longer renders a tenant slot in the footer", () => {
     render(<StatusBar />);
     expect(screen.queryByTestId("status-tenant")).toBeNull();
+  });
+  describe("UpgradeDot", () => {
+    it.each(
+      UPGRADE_STATES,
+    )("takes the %s colour from the shared state palette, not a private copy", (tone, snapshotState, testid) => {
+      showUpgrade(snapshotState);
+      render(<StatusBar />);
+      // Scoped to the version slot: the connection StateDot also carries
+      // data-state and sits earlier in the bar.
+      const slot = screen.getByTestId(testid);
+      const dot = slot.querySelector("[data-state]") as HTMLElement;
+      const kind = UPGRADE_TONE_KINDS[tone];
+      expect(dot.dataset.state).toBe(kind);
+      expect(dot.style.background).toBe(`var(${statePalette[kind].token})`);
+    });
+
+    it.each(
+      UPGRADE_STATES,
+    )("never animates the %s dot: the footer is always on screen", (_tone, snapshotState) => {
+      showUpgrade(snapshotState);
+      const { container } = render(<StatusBar />);
+      expect(container.innerHTML).not.toMatch(/animate-/);
+    });
+
+    // Drift lock: every tone must name a real entry in the shared table, so a
+    // renamed or deleted StateKind fails here instead of silently degrading to
+    // the unknown-state glyph the way a private table would.
+    it("maps every tone to a live state-palette entry", () => {
+      const tones = Object.keys(UPGRADE_TONE_KINDS) as UpgradeTone[];
+      expect(tones).toHaveLength(3);
+      for (const tone of tones) {
+        const entry = statePalette[UPGRADE_TONE_KINDS[tone]];
+        expect(entry).toBeDefined();
+        expect(entry.glyph).not.toBe("question");
+      }
+    });
   });
 });

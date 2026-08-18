@@ -1,18 +1,34 @@
 import { cn } from "../lib/cn";
 
-type StateKind =
+/**
+ * Every state the console can name. The DESIGN.md badge table fixes the
+ * token and glyph per state *family*; the extra members here are aliases
+ * that fold onto one of those families (`ok` onto Ready/Healthy,
+ * `restarting` onto Starting/Provisioning, `deleting` onto
+ * Draining/Stopping, and so on).
+ *
+ * A state string the UI can produce but this union omits renders as
+ * `unknown` — a literal `?` glyph — which reads as "the console lost track
+ * of this resource". Anything a route or a hook can put on screen belongs
+ * here.
+ */
+export type StateKind =
   | "ready"
   | "healthy"
   | "ok"
   | "active"
+  | "connected"
   | "running"
   | "starting"
   | "provisioning"
+  | "restarting"
   | "pending"
   | "queued"
   | "draining"
   | "stopping"
+  | "deleting"
   | "stopped"
+  | "created"
   | "idle"
   | "notready"
   | "degraded"
@@ -23,12 +39,13 @@ type StateKind =
   | "failed"
   | "crashed"
   | "danger"
+  | "offline"
   | "stale"
   | "unknown";
 
 type Glyph = "solid" | "pulsing" | "half" | "outline" | "question";
 
-const palette: Record<
+export const statePalette: Record<
   StateKind,
   { token: string; glyph: Glyph; strike?: boolean }
 > = {
@@ -36,14 +53,18 @@ const palette: Record<
   healthy: { token: "--nimbus-success", glyph: "solid" },
   ok: { token: "--nimbus-success", glyph: "solid" },
   active: { token: "--nimbus-success", glyph: "solid" },
+  connected: { token: "--nimbus-success", glyph: "solid" },
   running: { token: "--nimbus-accent", glyph: "pulsing" },
   starting: { token: "--nimbus-starting", glyph: "half" },
   provisioning: { token: "--nimbus-starting", glyph: "half" },
+  restarting: { token: "--nimbus-starting", glyph: "half" },
   draining: { token: "--nimbus-draining", glyph: "half" },
   stopping: { token: "--nimbus-draining", glyph: "half" },
+  deleting: { token: "--nimbus-draining", glyph: "half" },
   pending: { token: "--nimbus-queued", glyph: "outline" },
   queued: { token: "--nimbus-queued", glyph: "outline" },
   stopped: { token: "--nimbus-muted", glyph: "outline" },
+  created: { token: "--nimbus-muted", glyph: "outline" },
   idle: { token: "--nimbus-muted", glyph: "outline" },
   notready: { token: "--nimbus-warning", glyph: "solid" },
   degraded: { token: "--nimbus-warning", glyph: "solid" },
@@ -54,14 +75,19 @@ const palette: Record<
   failed: { token: "--nimbus-danger", glyph: "solid" },
   crashed: { token: "--nimbus-danger", glyph: "solid" },
   danger: { token: "--nimbus-danger", glyph: "solid" },
+  offline: { token: "--nimbus-danger", glyph: "solid" },
   stale: { token: "--nimbus-stale", glyph: "solid", strike: true },
   unknown: { token: "--nimbus-muted", glyph: "question" },
 };
 
+export function resolveStateKind(value: string | null | undefined): StateKind {
+  return resolveKind(value);
+}
+
 function resolveKind(value: string | null | undefined): StateKind {
   if (!value) return "unknown";
   const key = value.toLowerCase().replace(/[-_\s]/g, "");
-  if (key in palette) return key as StateKind;
+  if (key in statePalette) return key as StateKind;
   if (key.startsWith("err")) return "error";
   if (key === "info" || key === "debug" || key === "trace") return "idle";
   return "unknown";
@@ -72,7 +98,7 @@ function StateGlyph({ glyph, color }: { glyph: Glyph; color: string }) {
     return (
       <span
         aria-hidden
-        className="inline-flex size-2 items-center justify-center font-mono text-[10px] leading-none"
+        className="inline-flex size-2 items-center justify-center font-mono text-xs leading-none"
         style={{ color }}
       >
         ?
@@ -128,13 +154,13 @@ export function StateChip({
   showDot?: boolean;
 }) {
   const kind = resolveKind(state);
-  const entry = palette[kind];
+  const entry = statePalette[kind];
   const colorVar = `var(${entry.token})`;
   const label = state ?? "—";
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wide tabular text-default",
+        "inline-flex items-center gap-1.5 font-mono text-xs uppercase tracking-wide tabular text-default",
         className,
       )}
       data-state={kind}

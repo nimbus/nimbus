@@ -10,6 +10,7 @@ import { useMemo } from "react";
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CodeBlock } from "../../components/code-block";
+import { CategoryChip } from "../../components/category-chip";
 import { CopyChip } from "../../components/copy-chip";
 import { EmptyState } from "../../components/empty-state";
 import { FunctionRunner } from "../../components/function-runner/function-runner";
@@ -157,16 +158,8 @@ function FunctionDetailPage() {
           >
             {functionPath}
           </h1>
-          {fn?.kind ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
-              {fn.kind}
-            </span>
-          ) : null}
-          {fn?.adapter ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
-              {fn.adapter}
-            </span>
-          ) : null}
+          {fn?.kind ? <CategoryChip value={fn.kind} /> : null}
+          {fn?.adapter ? <CategoryChip value={fn.adapter} /> : null}
           {fn?.lastStatus ? <StateChip state={fn.lastStatus} /> : null}
           {bundle?.sha256 ? (
             <CopyChip
@@ -286,7 +279,7 @@ function StatisticsTab({
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-3">
-      <span className="w-32 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+      <span className="w-32 font-mono text-xs uppercase tracking-[0.18em] text-muted">
         {label}
       </span>
       <span className="font-mono text-xs text-default">{value}</span>
@@ -318,7 +311,9 @@ type SourceReady = {
   calledBy: CalledByEdge[] | null;
   typeInfo: TypeHint[] | null;
 };
-type SourceValue = { kind: "present"; ready: SourceReady } | { kind: "missing" };
+type SourceValue =
+  | { kind: "present"; ready: SourceReady }
+  | { kind: "missing" };
 
 type RawSource = {
   source?: string;
@@ -398,7 +393,7 @@ function SourceTab({
       className="flex h-full flex-col overflow-hidden"
       data-testid="function-tab-source"
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-app bg-surface-2 px-6 py-1.5 font-mono text-[10px] uppercase tracking-wide text-muted">
+      <div className="flex shrink-0 items-center gap-2 border-b border-app bg-surface-2 px-6 py-1.5 font-mono text-xs uppercase tracking-wide text-muted">
         <span>{modulePath}</span>
         {ready.digest ? (
           <span className="ml-auto normal-case" title={ready.digest}>
@@ -457,7 +452,7 @@ function SymbolsBar({
     >
       {analysis.exports.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+          <span className="font-mono text-xs uppercase tracking-wide text-muted">
             defines
           </span>
           {analysis.exports.map((symbol) => {
@@ -480,7 +475,7 @@ function SymbolsBar({
       ) : null}
       {analysis.references.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+          <span className="font-mono text-xs uppercase tracking-wide text-muted">
             calls
           </span>
           {analysis.references.map((reference) => (
@@ -495,7 +490,7 @@ function SymbolsBar({
       ) : null}
       {callers.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+          <span className="font-mono text-xs uppercase tracking-wide text-muted">
             called by
           </span>
           {callers.map((caller) => (
@@ -530,7 +525,7 @@ function SymbolLink({
       search={{ tab: "source" }}
       data-testid={testid}
       title={title}
-      className="rounded border border-app px-1.5 py-0.5 font-mono text-[11px] text-link hover:bg-surface-2 hover:underline"
+      className="rounded border border-app px-1.5 py-0.5 font-mono text-xs text-link hover:bg-surface-2 hover:underline"
     >
       {label}
     </Link>
@@ -577,7 +572,7 @@ function LogsTab({ fn }: { fn: FunctionDoc }) {
             className="rounded border border-app bg-surface-2 px-3 py-2 font-mono text-xs"
           >
             <div className="flex items-baseline gap-3">
-              <span className="text-[10px] uppercase tracking-wide text-muted">
+              <span className="text-xs uppercase tracking-wide text-muted">
                 {ev.level ?? "info"}
               </span>
               <span className="text-default">{ev.message ?? ""}</span>
@@ -616,7 +611,7 @@ function RunsTab({ fn }: { fn: FunctionDoc }) {
       data-testid="function-tab-runs"
     >
       <table className="w-full border-collapse text-sm">
-        <thead className="text-[10px] uppercase tracking-[0.14em] text-muted">
+        <thead className="text-xs uppercase tracking-[0.14em] text-muted">
           <tr>
             <th className="border-b border-app px-3 py-2 text-left font-normal">
               Run ID
@@ -706,7 +701,7 @@ function NotFound({ path }: { path: string }) {
       </span>
       <Link
         to="/developer/compute"
-        className="rounded border border-app px-3 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
       >
         ← back to compute
       </Link>

@@ -28,7 +28,9 @@ export function CategoryChip({
     <span
       className={cn(
         "inline-flex items-center rounded border border-app bg-surface-2 px-1.5 py-0.5",
-        "font-mono text-[11px] uppercase tracking-wide text-muted",
+        // `leading-none` pins the pill to a known 17px so a row of pills and
+        // a row of 8px state dots occupy the same reserved line.
+        "font-mono text-xs leading-none uppercase tracking-wide text-muted",
         className,
       )}
       data-category={label.toLowerCase()}

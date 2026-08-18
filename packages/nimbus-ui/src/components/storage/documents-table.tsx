@@ -1,18 +1,40 @@
+import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
+import { type MouseEvent as ReactMouseEvent, useRef, useState } from "react";
+import { toast } from "sonner";
+
 import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import type { DocumentJson, PageResponse } from "../../lib/types/table";
 import { Checkbox } from "../checkbox";
 import { Td, Th } from "../data-table";
 import { CellValue } from "./cell-value";
+import { RowContextMenu, type RowMenuItem } from "./row-context-menu";
+import type { DocumentOrder } from "./table-query";
+
+// Anything that handles its own click. A row click must not hijack the
+// checkbox, the `_id` copy chip, a container-value chip, or the row's own
+// action buttons — all of which sit inside the row.
+const INTERACTIVE = "button, a, input, label, [role='menuitem']";
+
+type MenuState = {
+  x: number;
+  y: number;
+  doc: DocumentJson;
+  anchor: HTMLElement | null;
+};
 
 // The scrollable document grid plus its cursor pager. Purely presentational:
-// selection, editing, and deletion are lifted to callbacks so the page
-// component keeps ownership of that state.
+// selection, editing, deletion, and the query live with the page component, so
+// this file owns only the grid's own interaction surface — sort clicks, row
+// activation, the context menu, and roving focus.
 export function DocumentsTable({
   page,
   columns,
   selected,
   cursorStack,
+  order,
+  indexBacked,
+  onSort,
   onToggleAll,
   onToggleOne,
   onEdit,
@@ -24,6 +46,9 @@ export function DocumentsTable({
   columns: string[];
   selected: Set<string>;
   cursorStack: Array<string | null>;
+  order: DocumentOrder | null;
+  indexBacked: Set<string>;
+  onSort: (field: string) => void;
   onToggleAll: (checked: boolean) => void;
   onToggleOne: (id: string, checked: boolean) => void;
   onEdit: (doc: DocumentJson) => void;
@@ -47,6 +72,57 @@ export function DocumentsTable({
   const selectedOnPage = pageIds.filter((id) => selected.has(id)).length;
   const allSelected = pageIds.length > 0 && selectedOnPage === pageIds.length;
 
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  // ARIA grid roving tabindex: one row is in the tab order at a time. Giving
+  // all 25 rows `tabIndex={0}` would inject 25 stops into the page's tab order,
+  // which is worse for keyboard users than having none.
+  const [focusRow, setFocusRow] = useState(0);
+  const rowRefs = useRef<Array<HTMLTableRowElement | null>>([]);
+
+  const moveFocus = (from: number, delta: number) => {
+    const next = Math.min(Math.max(from + delta, 0), page.data.length - 1);
+    setFocusRow(next);
+    rowRefs.current[next]?.focus();
+  };
+
+  const openMenuForRow = (index: number, doc: DocumentJson) => {
+    const el = rowRefs.current[index];
+    const rect = el?.getBoundingClientRect();
+    // A keyboard-raised menu has no pointer position — `clientX`/`clientY` are
+    // 0,0 — so anchor it to the focused row's box instead.
+    setMenu({
+      x: rect ? rect.left + 24 : 0,
+      y: rect ? rect.bottom : 0,
+      doc,
+      anchor: el ?? null,
+    });
+  };
+
+  const menuItems = (doc: DocumentJson): RowMenuItem[] => {
+    const id = String(doc._id ?? "");
+    return [
+      { id: "edit", label: "Edit document", onSelect: () => onEdit(doc) },
+      {
+        id: "copy-id",
+        label: "Copy _id",
+        hint: shortId(id, 10),
+        onSelect: () => void copyText(id, "document id"),
+      },
+      {
+        id: "copy-json",
+        label: "Copy document JSON",
+        onSelect: () =>
+          void copyText(JSON.stringify(doc, null, 2), "document JSON"),
+      },
+      {
+        id: "delete",
+        label: "Delete document",
+        danger: true,
+        onSelect: () => onDelete([id]),
+      },
+    ];
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex-1 overflow-auto">
@@ -54,7 +130,7 @@ export function DocumentsTable({
           className="w-full border-separate border-spacing-0 text-base"
           data-testid="documents-table"
         >
-          <thead className="sticky top-0 z-20 [--row-bg:var(--nimbus-surface-2)] text-[10px] uppercase tracking-[0.14em] text-muted">
+          <thead className="sticky top-0 z-20 [--row-bg:var(--nimbus-surface-2)] text-xs uppercase tracking-[0.14em] text-muted">
             <tr className="bg-surface-2">
               <Th className={cn("left-0 w-px px-3", PIN_L)}>
                 <Checkbox
@@ -74,7 +150,12 @@ export function DocumentsTable({
                       : undefined
                   }
                 >
-                  {col}
+                  <SortHeader
+                    field={col}
+                    order={order}
+                    indexed={indexBacked.has(col)}
+                    onSort={onSort}
+                  />
                 </Th>
               ))}
               <Th
@@ -86,23 +167,74 @@ export function DocumentsTable({
             </tr>
           </thead>
           <tbody>
-            {page.data.map((doc) => {
+            {page.data.map((doc, index) => {
               const id = String(doc._id ?? "");
+              const isSelected = selected.has(id);
               return (
                 <tr
                   key={id}
+                  ref={(el) => {
+                    rowRefs.current[index] = el;
+                  }}
+                  tabIndex={index === focusRow ? 0 : -1}
+                  aria-selected={isSelected}
+                  data-selected={isSelected || undefined}
                   className={cn(
-                    "group h-9 [&>td]:border-t [&>td]:border-app",
-                    selected.has(id)
-                      ? "bg-surface-2 [--row-bg:var(--nimbus-surface-2)]"
+                    "group h-9 cursor-pointer outline-none [&>td]:border-t [&>td]:border-app",
+                    "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[color:var(--nimbus-accent)]",
+                    isSelected
+                      ? // DESIGN.md:654 gives `--surface-2` the "selected rows"
+                        // job, with `--accent` as the selection identity in the
+                        // sanctioned left-bar form. The hover variant is
+                        // *replaced*, not stacked: emitted after the base
+                        // utilities, it would otherwise erase the selection cue
+                        // exactly while the operator is aiming at the row.
+                        "bg-surface-2 shadow-[inset_2px_0_0_var(--nimbus-accent)] [--row-bg:var(--nimbus-surface-2)]"
                       : "[--row-bg:var(--nimbus-surface)] hover:bg-surface-2 hover:[--row-bg:var(--nimbus-surface-2)]",
                   )}
                   data-testid={`documents-row-${id}`}
+                  onFocus={() => setFocusRow(index)}
+                  onClick={(event: ReactMouseEvent<HTMLTableRowElement>) => {
+                    if ((event.target as HTMLElement).closest(INTERACTIVE)) {
+                      return;
+                    }
+                    onEdit(doc);
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setMenu({
+                      x: event.clientX,
+                      y: event.clientY,
+                      doc,
+                      anchor: rowRefs.current[index],
+                    });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      moveFocus(index, 1);
+                    } else if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      moveFocus(index, -1);
+                    } else if (
+                      (event.key === "Enter" || event.key === " ") &&
+                      event.target === event.currentTarget
+                    ) {
+                      event.preventDefault();
+                      onEdit(doc);
+                    } else if (
+                      event.key === "ContextMenu" ||
+                      (event.key === "F10" && event.shiftKey)
+                    ) {
+                      event.preventDefault();
+                      openMenuForRow(index, doc);
+                    }
+                  }}
                 >
                   <Td className={cn("left-0 w-px px-3", PIN_L)}>
                     <Checkbox
                       label={`Select document ${shortId(id)}`}
-                      checked={selected.has(id)}
+                      checked={isSelected}
                       onChange={(checked) => onToggleOne(id, checked)}
                       testid={`documents-select-${id}`}
                     />
@@ -115,7 +247,12 @@ export function DocumentsTable({
                         i === 0 && cn("left-[38px] border-r border-app", PIN_L),
                       )}
                     >
-                      <CellValue value={doc[col]} field={col} id={id} />
+                      <CellValue
+                        value={doc[col]}
+                        field={col}
+                        id={id}
+                        onExpand={() => onEdit(doc)}
+                      />
                     </Td>
                   ))}
                   {/* Inline actions appear on hover and stay keyboard
@@ -132,7 +269,7 @@ export function DocumentsTable({
                     <button
                       type="button"
                       onClick={() => onEdit(doc)}
-                      className="mr-2 rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+                      className="mr-2 rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
                       data-testid={`documents-edit-${id}`}
                     >
                       edit
@@ -140,7 +277,7 @@ export function DocumentsTable({
                     <button
                       type="button"
                       onClick={() => onDelete([id])}
-                      className="rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-danger hover:bg-surface"
+                      className="rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-danger hover:bg-surface"
                       data-testid={`documents-delete-${id}`}
                     >
                       delete
@@ -152,8 +289,19 @@ export function DocumentsTable({
           </tbody>
         </table>
       </div>
+      {menu ? (
+        <RowContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={`Document ${shortId(String(menu.doc._id ?? ""))} actions`}
+          items={menuItems(menu.doc)}
+          restoreFocus={menu.anchor}
+          onClose={() => setMenu(null)}
+          testid="documents-row-menu"
+        />
+      ) : null}
       <div
-        className="flex items-center justify-between border-t border-app bg-surface-2 px-3 py-2 font-mono text-[11px] text-muted"
+        className="flex items-center justify-between border-t border-app bg-surface-2 px-3 py-2 font-mono text-xs text-muted"
         data-testid="documents-pagination"
       >
         <span className="tabular">
@@ -192,4 +340,65 @@ export function DocumentsTable({
       </div>
     </div>
   );
+}
+
+// Headers used to be inert text. A sort control belongs on the header itself,
+// and DESIGN.md:269 wants index use visible: an index-backed column carries a
+// brand dot, everything else routes through the page's scan confirmation.
+function SortHeader({
+  field,
+  order,
+  indexed,
+  onSort,
+}: {
+  field: string;
+  order: DocumentOrder | null;
+  indexed: boolean;
+  onSort: (field: string) => void;
+}) {
+  const active = order?.field === field;
+  const Icon = !active
+    ? ChevronsUpDown
+    : order.direction === "asc"
+      ? ArrowUp
+      : ArrowDown;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(field)}
+      aria-label={`Sort by ${field}`}
+      title={
+        indexed
+          ? `Sort by ${field} — index-backed`
+          : `Sort by ${field} — no index leads with this field, so sorting scans the table`
+      }
+      className="group/sort flex w-full items-center gap-1 uppercase tracking-[0.14em] text-muted hover:text-default"
+      data-testid={`documents-sort-${field}`}
+      data-active={active ? "true" : "false"}
+    >
+      <span className={cn("truncate", active && "text-default")}>{field}</span>
+      {indexed ? (
+        <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-brand" />
+      ) : null}
+      <Icon
+        size={11}
+        aria-hidden
+        className={cn(
+          "shrink-0",
+          active
+            ? "text-default"
+            : "opacity-0 transition-opacity group-hover/sort:opacity-60",
+        )}
+      />
+    </button>
+  );
+}
+
+async function copyText(value: string, label: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast(`Copied ${label}`);
+  } catch {
+    toast.error(`Failed to copy ${label}`);
+  }
 }

@@ -184,6 +184,7 @@ function FunctionsView({
         testid="compute-functions-toolbar"
       >
         <FilterChips
+          ariaLabel="Filter by kind"
           allLabel="all kinds"
           options={kinds}
           active={kind}
@@ -213,7 +214,7 @@ function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
   if (bundles === undefined) {
     return (
       <span
-        className="font-mono text-[11px] text-muted"
+        className="font-mono text-xs text-muted"
         data-testid="compute-bundles-loading"
       >
         bundles: loading…
@@ -223,7 +224,7 @@ function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
   const active = bundles.filter((b) => b.status === "active").length;
   return (
     <span
-      className="font-mono text-[11px] text-muted"
+      className="font-mono text-xs text-muted"
       data-testid="compute-bundles"
     >
       {bundles.length} bundle{bundles.length === 1 ? "" : "s"}
@@ -298,13 +299,21 @@ function Toolbar({
   );
 }
 
+// Toggle buttons, not tabs. The set is data-derived and each chip filters the
+// list in place rather than swapping a tabpanel, so a labelled group of
+// `aria-pressed` buttons is the honest contract — and native Tab/Space/Enter is
+// its complete keyboard behavior, with no roving tabindex or arrow keys
+// promised. SegmentedControl (DESIGN.md's canonical exclusive-choice control)
+// does not apply: it is scoped to fixed sets of ≤4 options.
 function FilterChips({
+  ariaLabel,
   allLabel,
   options,
   active,
   onChange,
   testidPrefix,
 }: {
+  ariaLabel: string;
   allLabel: string;
   options: string[];
   active: string | null;
@@ -312,7 +321,8 @@ function FilterChips({
   testidPrefix: string;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-1" role="tablist">
+    <fieldset className="flex min-w-0 flex-wrap items-center gap-1">
+      <legend className="sr-only">{ariaLabel}</legend>
       <Chip
         label={allLabel}
         active={active === null}
@@ -328,7 +338,7 @@ function FilterChips({
           testid={`${testidPrefix}-${opt}`}
         />
       ))}
-    </div>
+    </fieldset>
   );
 }
 
@@ -346,12 +356,11 @@ function Chip({
   return (
     <button
       type="button"
-      role="tab"
-      aria-selected={active}
+      aria-pressed={active}
       onClick={onClick}
       data-testid={testid}
       className={cn(
-        "rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide",
+        "rounded border px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
         active
           ? "border-strong bg-surface text-default"
           : "border-app text-muted hover:bg-surface hover:text-default",

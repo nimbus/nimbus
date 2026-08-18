@@ -1,7 +1,7 @@
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
 import type { LoadingValue } from "../../../shell/loading-value";
-import { Definition, DefinitionList, SectionCard } from "./primitives";
+import { Definition, DefinitionList, PageSection } from "./primitives";
 import type {
   LicenseSnapshot,
   RuntimeDiagnostics,
@@ -18,8 +18,7 @@ export function ConfigurationSection({
   license: LoadingValue<LicenseSnapshot>;
   status: SystemStatusDoc | undefined;
 }) {
-  const diagnosticsSnap =
-    diagnostics.kind === "ok" ? diagnostics.value : null;
+  const diagnosticsSnap = diagnostics.kind === "ok" ? diagnostics.value : null;
   const diagnosticsState: "loading" | "error" | "ok" =
     diagnostics.kind === "loading"
       ? "loading"
@@ -47,7 +46,7 @@ export function ConfigurationSection({
     : null;
   const licenseWarnings = licenseSnap?.warnings ?? [];
   return (
-    <SectionCard
+    <PageSection
       title="Configuration"
       testid="settings-configuration"
       description="Runtime limits, runtime lanes, license entitlements, auth provider, adapter enablement, and storage topology."
@@ -226,7 +225,7 @@ export function ConfigurationSection({
           ) : null}
         </div>
       </div>
-    </SectionCard>
+    </PageSection>
   );
 }
 
@@ -237,7 +236,7 @@ function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
       data-testid="settings-runtime-lanes"
     >
       <table className="min-w-full border-collapse text-left text-xs">
-        <thead className="bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
+        <thead className="bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
           <tr>
             <th className="px-2 py-2 font-normal">Lane</th>
             <th className="px-2 py-2 font-normal">Backend</th>
@@ -265,7 +264,7 @@ function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
                       {lane.lane_name}
                     </span>
                     {lane.default_lane ? (
-                      <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+                      <span className="font-mono text-xs uppercase tracking-wide text-muted">
                         default lane
                       </span>
                     ) : null}
@@ -276,7 +275,7 @@ function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
                     <span className="font-mono text-xs text-default">
                       {limits.runtime_backend ?? "—"}
                     </span>
-                    <span className="font-mono text-[10px] text-muted">
+                    <span className="font-mono text-xs text-muted">
                       {limits.compatibility_target ?? "—"}
                     </span>
                   </div>
@@ -291,11 +290,11 @@ function RuntimeLaneTable({ lanes }: { lanes: RuntimeLaneDiagnostics[] }) {
                     <span className="font-mono text-xs text-default">
                       {artifact?.status ?? "—"}
                     </span>
-                    <span className="font-mono text-[10px] text-muted">
+                    <span className="font-mono text-xs text-muted">
                       {artifact?.source ?? "—"}
                     </span>
                     {artifactRef ? (
-                      <span className="font-mono text-[10px] text-muted">
+                      <span className="font-mono text-xs text-muted">
                         {artifactRef}
                       </span>
                     ) : null}
