@@ -15,7 +15,7 @@ import { EmptyState } from "../../components/empty-state";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
-import { shortId } from "../../lib/format";
+import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
@@ -177,7 +177,7 @@ function ServiceDetailPage() {
               value={bundle.sha256}
               testid="service-detail-bundle"
             >
-              {shortId(bundle.sha256, 12)}
+              {shortHash(bundle.sha256, 12)}
             </CopyChip>
           ) : null}
         </header>
@@ -200,7 +200,7 @@ function ServiceDetailPage() {
               className={cn(
                 "flex items-center px-3 py-2 font-mono text-xs uppercase tracking-wide",
                 isActive
-                  ? "border-b-2 border-[color:var(--color-brand)] text-default"
+                  ? "border-b-2 border-[color:var(--nimbus-brand)] text-default"
                   : "text-muted hover:text-default",
               )}
             >
@@ -344,7 +344,7 @@ function BundleTab({
               value={bundle.sha256}
               testid="service-bundle-sha"
             >
-              {shortId(bundle.sha256, 16)}
+              {shortHash(bundle.sha256, 16)}
             </CopyChip>
           ) : (
             "—"

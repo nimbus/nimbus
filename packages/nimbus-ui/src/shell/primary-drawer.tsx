@@ -100,7 +100,7 @@ function DrawerEntry({
             ? "bg-surface-2 text-default"
             : "text-muted hover:bg-surface-2 hover:text-default",
         )}
-        style={active ? { borderLeftColor: "var(--color-brand)" } : undefined}
+        style={active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined}
         aria-current={active ? "page" : undefined}
         aria-label={collapsed ? entry.label : undefined}
         data-testid={`nav-${entry.id}`}

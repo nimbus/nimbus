@@ -266,7 +266,7 @@ function UpdatesValue() {
             <span
               aria-hidden
               className="inline-block size-2 rounded-full"
-              style={{ background: "var(--color-brand)" }}
+              style={{ background: "var(--nimbus-brand)" }}
             />
             {info.latest} available — Update
           </span>

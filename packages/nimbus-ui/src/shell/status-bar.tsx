@@ -187,10 +187,10 @@ function VersionSlot({
 function UpgradeDot({ tone }: { tone: "accent" | "starting" | "success" }) {
   const color =
     tone === "accent"
-      ? "var(--color-brand)"
+      ? "var(--nimbus-brand)"
       : tone === "starting"
-        ? "var(--color-starting)"
-        : "var(--color-success)";
+        ? "var(--nimbus-starting)"
+        : "var(--nimbus-success)";
   return (
     <span
       aria-hidden

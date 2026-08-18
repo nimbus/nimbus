@@ -3,9 +3,9 @@ import { cn } from "../lib/cn";
 export type ConnState = "connected" | "reconnecting" | "offline";
 
 const palette: Record<ConnState, { color: string; label: string }> = {
-  connected: { color: "var(--color-success)", label: "Connected" },
-  reconnecting: { color: "var(--color-warning)", label: "Reconnecting" },
-  offline: { color: "var(--color-danger)", label: "Offline" },
+  connected: { color: "var(--nimbus-success)", label: "Connected" },
+  reconnecting: { color: "var(--nimbus-warning)", label: "Reconnecting" },
+  offline: { color: "var(--nimbus-danger)", label: "Offline" },
 };
 
 export function StateDot({

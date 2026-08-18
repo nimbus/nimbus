@@ -23,7 +23,7 @@ export class AppErrorBoundary extends Component<
       return (
         <div
           role="alert"
-          className="flex h-full items-center justify-center bg-app text-default"
+          className="flex h-full items-center justify-center bg-canvas text-default"
           data-testid="error-boundary"
         >
           <div className="w-[480px] rounded-md border bg-surface p-4 border-app">

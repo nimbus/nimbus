@@ -44,7 +44,7 @@ function ShellLayout() {
       <KeyboardContract />
       <StalenessProvider>
         <SubDrawerProvider>
-          <div className="flex h-screen flex-col bg-app text-default">
+          <div className="flex h-screen flex-col bg-canvas text-default">
             <TopNav />
             <div className="flex min-h-0 flex-1">
               <PrimaryDrawer />
@@ -66,9 +66,9 @@ function ShellLayout() {
           offset="calc(var(--statusbar-height) + 12px)"
           toastOptions={{
             style: {
-              background: "var(--color-surface)",
-              color: "var(--color-text)",
-              border: "1px solid var(--color-border)",
+              background: "var(--nimbus-surface)",
+              color: "var(--nimbus-text)",
+              border: "1px solid var(--nimbus-border)",
               fontFamily: "var(--font-mono)",
               fontSize: "12px",
             },

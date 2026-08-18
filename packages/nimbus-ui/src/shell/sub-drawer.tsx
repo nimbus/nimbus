@@ -159,7 +159,7 @@ export function SubDrawer() {
               )}
               style={
                 item.active
-                  ? { borderLeftColor: "var(--color-brand)" }
+                  ? { borderLeftColor: "var(--nimbus-brand)" }
                   : undefined
               }
             >
@@ -205,7 +205,7 @@ export function SubDrawer() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder={spec.search.placeholder}
             data-testid="sub-drawer-search"
-            className="h-7 w-full rounded-md border border-app bg-app px-2 text-xs text-default placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand)]"
+            className="h-7 w-full rounded-md border border-app bg-canvas px-2 text-xs text-default placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-[color:var(--nimbus-brand)]"
           />
         </div>
       ) : null}
@@ -268,7 +268,7 @@ function SubDrawerStaticList({
                     : "text-muted hover:bg-surface-2 hover:text-default",
               )}
               style={
-                active ? { borderLeftColor: "var(--color-brand)" } : undefined
+                active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined
               }
             >
               <span className="flex-1 truncate">{item.label}</span>

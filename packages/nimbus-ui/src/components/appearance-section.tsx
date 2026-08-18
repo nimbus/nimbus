@@ -121,7 +121,7 @@ export function AppearanceSection() {
                     {active ? (
                       <span
                         className="font-mono text-[10px] uppercase tracking-[0.14em]"
-                        style={{ color: "var(--color-brand)" }}
+                        style={{ color: "var(--nimbus-brand)" }}
                       >
                         active
                       </span>

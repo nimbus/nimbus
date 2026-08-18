@@ -34,103 +34,143 @@
   --statusbar-height: 1.75rem;
 }
 
+/* Bridge the palette into Tailwind's colour namespace.
+   `@theme inline` makes each name a real theme key, so Tailwind generates the
+   base utility *and every variant of it* — `hover:bg-surface-2`,
+   `aria-selected:text-default`, `divide-app`, `bg-danger/10`. Hand-writing
+   these as plain classes in `@layer components` (what this file used to do)
+   produces the base class only: Tailwind cannot generate a variant of a class
+   it does not know about, so 184 `hover:` / `focus-visible:` / `aria-selected:`
+   usages across the console silently emitted nothing.
+   `inline` keeps the utilities pointing at `var(--nimbus-*)`, which the
+   `[data-theme]` / `[data-palette]` blocks below re-declare — so a palette
+   switch restyles the whole app without regenerating any CSS. */
+@theme inline {
+  --color-canvas: var(--nimbus-bg);
+  --color-surface: var(--nimbus-surface);
+  --color-surface-2: var(--nimbus-surface-2);
+  --color-app: var(--nimbus-border);
+  --color-strong: var(--nimbus-border-strong);
+  --color-default: var(--nimbus-text);
+  --color-muted: var(--nimbus-muted);
+
+  --color-brand: var(--nimbus-brand);
+  --color-on-brand: var(--nimbus-on-brand);
+  --color-accent: var(--nimbus-accent);
+  --color-link: var(--nimbus-link);
+
+  --color-success: var(--nimbus-success);
+  --color-warning: var(--nimbus-warning);
+  --color-starting: var(--nimbus-starting);
+  --color-draining: var(--nimbus-draining);
+  --color-queued: var(--nimbus-queued);
+  --color-danger: var(--nimbus-danger);
+  --color-stale: var(--nimbus-stale);
+  --color-violet: var(--nimbus-violet);
+}
+
 @layer base {
   /* Defaults: Warm palette, Light mode (golden daylight — sky-cycle default) */
   :root {
     color-scheme: light;
 
-    --color-bg: oklch(96.5% 0.020 82);
-    --color-surface: oklch(100% 0 0);
-    --color-surface-2: oklch(96% 0.025 82);
-    --color-border: oklch(90% 0.025 82);
-    --color-border-strong: oklch(82% 0.040 78);
-    --color-text: oklch(20% 0.020 60);
-    --color-muted: oklch(53% 0.013 75);
+    --nimbus-bg: oklch(96.5% 0.020 82);
+    --nimbus-surface: oklch(100% 0 0);
+    --nimbus-surface-2: oklch(96% 0.025 82);
+    --nimbus-border: oklch(90% 0.025 82);
+    --nimbus-border-strong: oklch(82% 0.040 78);
+    --nimbus-text: oklch(20% 0.020 60);
+    --nimbus-muted: oklch(53% 0.013 75);
 
-    --color-brand: oklch(73% 0.17 65);      /* #F59E0B — amber-500 */
-    --color-accent: oklch(80% 0.14 70);     /* #FFB84D */
-    --color-link: oklch(62% 0.17 55);       /* #D97706 — Golden Hour primary */
+    --nimbus-brand: oklch(73% 0.17 65);      /* #F59E0B — amber-500 */
+    --nimbus-on-brand: oklch(20% 0.020 60); /* ink on amber */
+    --nimbus-accent: oklch(80% 0.14 70);     /* #FFB84D */
+    --nimbus-link: oklch(62% 0.17 55);       /* #D97706 — Golden Hour primary */
 
     /* Semantic state — stable across palettes for consistent affordances. */
-    --color-success: oklch(52% 0.14 145);
-    --color-warning: oklch(65% 0.16 75);
-    --color-starting: oklch(70% 0.17 50);
-    --color-draining: oklch(55% 0.13 280);
-    --color-queued: oklch(60% 0.020 240);
-    --color-danger: oklch(58% 0.20 25);
-    --color-stale: oklch(50% 0.012 240);
-    --color-violet: oklch(55% 0.18 295);
+    --nimbus-success: oklch(52% 0.14 145);
+    --nimbus-warning: oklch(65% 0.16 75);
+    --nimbus-starting: oklch(70% 0.17 50);
+    --nimbus-draining: oklch(55% 0.13 280);
+    --nimbus-queued: oklch(60% 0.020 240);
+    --nimbus-danger: oklch(58% 0.20 25);
+    --nimbus-stale: oklch(50% 0.012 240);
+    --nimbus-violet: oklch(55% 0.18 295);
   }
 
   /* Blue palette, Light mode (Cool Blue — explicit cool alternative) */
   [data-palette="blue"] {
-    --color-bg: oklch(96.5% 0.008 248);
-    --color-surface: oklch(100% 0 0);
-    --color-surface-2: oklch(96% 0.008 248);
-    --color-border: oklch(91% 0.013 252);
-    --color-border-strong: oklch(82% 0.020 250);
-    --color-text: oklch(20% 0.035 263);
-    --color-muted: oklch(48% 0.028 255);
+    --nimbus-bg: oklch(96.5% 0.008 248);
+    --nimbus-surface: oklch(100% 0 0);
+    --nimbus-surface-2: oklch(96% 0.008 248);
+    --nimbus-border: oklch(91% 0.013 252);
+    --nimbus-border-strong: oklch(82% 0.020 250);
+    --nimbus-text: oklch(20% 0.035 263);
+    --nimbus-muted: oklch(48% 0.028 255);
 
-    --color-brand: oklch(62% 0.20 258);     /* #3B82F6 — Cool Blue primary */
-    --color-accent: oklch(70% 0.13 207);    /* #06B6D4 — brand teal (cyan-500) */
-    --color-link: oklch(54% 0.22 264);      /* #2563EB — Cool Blue primary-dark */
+    --nimbus-brand: oklch(62% 0.20 258);     /* #3B82F6 — Cool Blue primary */
+    --nimbus-on-brand: oklch(100% 0 0);     /* white on blue */
+    --nimbus-accent: oklch(70% 0.13 207);    /* #06B6D4 — brand teal (cyan-500) */
+    --nimbus-link: oklch(54% 0.22 264);      /* #2563EB — Cool Blue primary-dark */
   }
 
   /* Dark mode (Night Blue) — default dark for every palette except mono. */
   [data-theme="dark"] {
     color-scheme: dark;
 
-    --color-bg: oklch(13% 0.026 263);
-    --color-surface: oklch(19% 0.030 258);
-    --color-surface-2: oklch(24% 0.030 258);
-    --color-border: oklch(32% 0.030 258);
-    --color-border-strong: oklch(40% 0.030 258);
-    --color-text: oklch(91% 0.014 252);
-    --color-muted: oklch(67% 0.026 248);
+    --nimbus-bg: oklch(13% 0.026 263);
+    --nimbus-surface: oklch(19% 0.030 258);
+    --nimbus-surface-2: oklch(24% 0.030 258);
+    --nimbus-border: oklch(32% 0.030 258);
+    --nimbus-border-strong: oklch(40% 0.030 258);
+    --nimbus-text: oklch(91% 0.014 252);
+    --nimbus-muted: oklch(67% 0.026 248);
 
-    --color-brand: oklch(72% 0.17 248);     /* #60A5FA — Night Blue primary */
-    --color-accent: oklch(85% 0.10 197);    /* #67E8F9 — brand teal gradient hi */
-    --color-link: oklch(82% 0.11 247);      /* #93C5FD */
+    --nimbus-brand: oklch(72% 0.17 248);     /* #60A5FA — Night Blue primary */
+    --nimbus-on-brand: oklch(13% 0.026 263);/* ink on light blue */
+    --nimbus-accent: oklch(85% 0.10 197);    /* #67E8F9 — brand teal gradient hi */
+    --nimbus-link: oklch(82% 0.11 247);      /* #93C5FD */
 
-    --color-success: oklch(72% 0.16 145);
-    --color-warning: oklch(78% 0.17 75);
-    --color-starting: oklch(80% 0.18 50);
-    --color-draining: oklch(72% 0.14 280);
-    --color-queued: oklch(70% 0.020 240);
-    --color-danger: oklch(70% 0.20 25);
-    --color-stale: oklch(60% 0.012 240);
-    --color-violet: oklch(75% 0.16 295);
+    --nimbus-success: oklch(72% 0.16 145);
+    --nimbus-warning: oklch(78% 0.17 75);
+    --nimbus-starting: oklch(80% 0.18 50);
+    --nimbus-draining: oklch(72% 0.14 280);
+    --nimbus-queued: oklch(70% 0.020 240);
+    --nimbus-danger: oklch(70% 0.20 25);
+    --nimbus-stale: oklch(60% 0.012 240);
+    --nimbus-violet: oklch(75% 0.16 295);
   }
 
   /* Mono palette, Light mode (Monochrome) */
   [data-palette="mono"] {
-    --color-bg: oklch(96.5% 0.006 257);
-    --color-surface: oklch(100% 0 0);
-    --color-surface-2: oklch(96% 0.005 257);
-    --color-border: oklch(91% 0.008 257);
-    --color-border-strong: oklch(82% 0.010 257);
-    --color-text: oklch(20% 0.014 263);
-    --color-muted: oklch(44% 0.012 258);
+    --nimbus-bg: oklch(96.5% 0.006 257);
+    --nimbus-surface: oklch(100% 0 0);
+    --nimbus-surface-2: oklch(96% 0.005 257);
+    --nimbus-border: oklch(91% 0.008 257);
+    --nimbus-border-strong: oklch(82% 0.010 257);
+    --nimbus-text: oklch(20% 0.014 263);
+    --nimbus-muted: oklch(44% 0.012 258);
 
-    --color-brand: oklch(20% 0.014 263);    /* #111827 — ink as brand */
-    --color-accent: oklch(44% 0.012 258);   /* #4B5563 — mid gray */
-    --color-link: oklch(27% 0.014 261);     /* #1F2937 */
+    --nimbus-brand: oklch(20% 0.014 263);    /* #111827 — ink as brand */
+    --nimbus-on-brand: oklch(100% 0 0);     /* white on ink */
+    --nimbus-accent: oklch(44% 0.012 258);   /* #4B5563 — mid gray */
+    --nimbus-link: oklch(27% 0.014 261);     /* #1F2937 */
   }
 
   /* Mono palette, Dark mode (Reverse Mono) */
   [data-palette="mono"][data-theme="dark"] {
-    --color-bg: oklch(17% 0.018 263);
-    --color-surface: oklch(22% 0.018 261);
-    --color-surface-2: oklch(28% 0.014 258);
-    --color-border: oklch(36% 0.013 258);
-    --color-border-strong: oklch(44% 0.012 258);
-    --color-text: oklch(100% 0 0);
-    --color-muted: oklch(70% 0.013 256);
+    --nimbus-bg: oklch(17% 0.018 263);
+    --nimbus-surface: oklch(22% 0.018 261);
+    --nimbus-surface-2: oklch(28% 0.014 258);
+    --nimbus-border: oklch(36% 0.013 258);
+    --nimbus-border-strong: oklch(44% 0.012 258);
+    --nimbus-text: oklch(100% 0 0);
+    --nimbus-muted: oklch(70% 0.013 256);
 
-    --color-brand: oklch(100% 0 0);         /* #FFFFFF — white as brand */
-    --color-accent: oklch(87% 0.012 257);   /* #D1D5DB */
-    --color-link: oklch(91% 0.008 257);     /* #E5E7EB */
+    --nimbus-brand: oklch(100% 0 0);         /* #FFFFFF — white as brand */
+    --nimbus-on-brand: oklch(17% 0.018 263);/* ink on white */
+    --nimbus-accent: oklch(87% 0.012 257);   /* #D1D5DB */
+    --nimbus-link: oklch(91% 0.008 257);     /* #E5E7EB */
   }
 
   /* Warm palette, Light mode = the :root default above; Warm dark mode =
@@ -144,8 +184,8 @@
 
   body {
     margin: 0;
-    background: var(--color-bg);
-    color: var(--color-text);
+    background: var(--nimbus-bg);
+    color: var(--nimbus-text);
     font-family: var(--font-sans);
     font-size: var(--text-md);
     line-height: 1.5;
@@ -169,69 +209,64 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--nimbus-accent);
     outline-offset: 2px;
     border-radius: 4px;
   }
 
+  /* Checkbox (components/checkbox.tsx). The platform control paints an
+     unchecked box as a light fill, which reads as *checked* on a dark surface,
+     so the console draws its own box from theme tokens. */
+  .nimbus-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    margin: 0;
+    position: relative;
+    border: 1px solid var(--nimbus-border-strong);
+    border-radius: 3px;
+    background: var(--nimbus-surface);
+    transition:
+      background-color 100ms ease,
+      border-color 100ms ease;
+  }
+
+  .nimbus-checkbox:hover:not(:checked):not(:indeterminate) {
+    border-color: var(--nimbus-brand);
+  }
+
+  .nimbus-checkbox:checked,
+  .nimbus-checkbox:indeterminate {
+    background: var(--nimbus-brand);
+    border-color: var(--nimbus-brand);
+  }
+
+  .nimbus-checkbox:checked::after {
+    content: "";
+    position: absolute;
+    left: 3.5px;
+    top: 0.5px;
+    width: 4px;
+    height: 8px;
+    border: solid var(--nimbus-surface);
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+  }
+
+  .nimbus-checkbox:indeterminate::after {
+    content: "";
+    position: absolute;
+    left: 2.5px;
+    top: 5.5px;
+    width: 7px;
+    height: 1.5px;
+    background: var(--nimbus-surface);
+  }
+
   ::selection {
-    background: color-mix(in oklch, var(--color-accent) 30%, transparent);
+    background: color-mix(in oklch, var(--nimbus-accent) 30%, transparent);
   }
 }
 
-@layer components {
-  .bg-app {
-    background: var(--color-bg);
-  }
-  .bg-surface {
-    background: var(--color-surface);
-  }
-  .bg-surface-2 {
-    background: var(--color-surface-2);
-  }
-  .text-default {
-    color: var(--color-text);
-  }
-  .text-muted {
-    color: var(--color-muted);
-  }
-  .border-app {
-    border-color: var(--color-border);
-  }
-  .border-strong {
-    border-color: var(--color-border-strong);
-  }
-  .text-brand {
-    color: var(--color-brand);
-  }
-  .bg-brand {
-    background: var(--color-brand);
-  }
-  .border-brand {
-    border-color: var(--color-brand);
-  }
-  .text-accent {
-    color: var(--color-accent);
-  }
-  .bg-accent {
-    background: var(--color-accent);
-  }
-  .text-link {
-    color: var(--color-link);
-  }
-  .text-success {
-    color: var(--color-success);
-  }
-  .text-warning {
-    color: var(--color-warning);
-  }
-  .text-danger {
-    color: var(--color-danger);
-  }
-  .text-violet {
-    color: var(--color-violet);
-  }
-}
 
 /* Shiki dual-theme code blocks (see components/code-block.tsx). With
    defaultColor:false, shiki emits --shiki-light / --shiki-dark CSS vars; pick
@@ -257,7 +292,7 @@
 .nimbus-code .shiki span[data-typed] {
   cursor: help;
   text-decoration: underline dotted
-    color-mix(in oklch, var(--color-muted) 55%, transparent);
+    color-mix(in oklch, var(--nimbus-muted) 55%, transparent);
   text-underline-offset: 3px;
 }
 
@@ -266,6 +301,6 @@
 .nimbus-code .shiki .line[data-highlighted-line] {
   display: inline-block;
   width: 100%;
-  background: color-mix(in oklch, var(--color-danger) 18%, transparent);
-  box-shadow: inset 2px 0 0 var(--color-danger);
+  background: color-mix(in oklch, var(--nimbus-danger) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--nimbus-danger);
 }

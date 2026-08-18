@@ -18,7 +18,7 @@ import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { useApiRead } from "../../hooks/use-api-read";
 import { cn } from "../../lib/cn";
-import { formatDuration, shortId } from "../../lib/format";
+import { formatDuration, shortHash, shortId } from "../../lib/format";
 import type { FunctionDoc } from "../../lib/types/function";
 import { buildFunctionTree } from "../../shell/function-tree";
 import { FunctionTreeView } from "../../shell/function-tree-view";
@@ -174,7 +174,7 @@ function FunctionDetailPage() {
               value={bundle.sha256}
               testid="function-detail-bundle"
             >
-              {shortId(bundle.sha256, 12)}
+              {shortHash(bundle.sha256, 12)}
             </CopyChip>
           ) : null}
         </header>
@@ -197,7 +197,7 @@ function FunctionDetailPage() {
               className={cn(
                 "flex items-center px-3 py-2 font-mono text-xs uppercase tracking-wide",
                 isActive
-                  ? "border-b-2 border-[color:var(--color-brand)] text-default"
+                  ? "border-b-2 border-[color:var(--nimbus-brand)] text-default"
                   : "text-muted hover:text-default",
               )}
             >
@@ -257,7 +257,7 @@ function StatisticsTab({
         label="Bundle"
         value={
           bundle?.sha256 ? (
-            <span className="font-mono">{shortId(bundle.sha256, 16)}</span>
+            <span className="font-mono">{shortHash(bundle.sha256, 16)}</span>
           ) : (
             "—"
           )

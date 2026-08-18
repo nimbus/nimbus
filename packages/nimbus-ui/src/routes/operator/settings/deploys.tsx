@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { CopyChip } from "../../../components/copy-chip";
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
-import { formatRelativeTime, shortId } from "../../../lib/format";
+import { formatRelativeTime, shortHash } from "../../../lib/format";
 import { Definition, DefinitionList, SectionCard } from "./primitives";
 import type { BundleDoc, FunctionDoc } from "./types";
 
@@ -110,7 +110,7 @@ export function DeploysSection({
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => toggle(id)}
-                      aria-label={`Select bundle ${shortId(b.sha256 ?? id)}`}
+                      aria-label={`Select bundle ${shortHash(b.sha256 ?? id)}`}
                       data-testid={`settings-deploys-row-${b.sha256 ?? id}`}
                     />
                     <StateChip state={b.status ?? "—"} />
@@ -120,7 +120,7 @@ export function DeploysSection({
                       testid={`settings-deploys-sha-${b.sha256 ?? id}`}
                     >
                       <span className="font-mono text-xs">
-                        {shortId(b.sha256 ?? id, 12)}
+                        {shortHash(b.sha256 ?? id, 12)}
                       </span>
                     </CopyChip>
                     <span className="font-mono text-xs text-muted">
@@ -266,7 +266,7 @@ function DiffPanel({
     >
       <header className="mb-2 flex items-baseline justify-between">
         <h3 className="text-xs uppercase tracking-[0.14em] text-muted">
-          Diff: {shortId(a?.sha256 ?? "")} → {shortId(b?.sha256 ?? "")}
+          Diff: {shortHash(a?.sha256 ?? "")} → {shortHash(b?.sha256 ?? "")}
         </h3>
         <button
           type="button"

@@ -140,7 +140,7 @@ function ComputeDrawer({
                 : "text-muted hover:bg-surface-2 hover:text-default",
             )}
             style={
-              active ? { borderLeftColor: "var(--color-brand)" } : undefined
+              active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined
             }
           >
             <Icon size={14} aria-hidden className="shrink-0" />
@@ -290,7 +290,7 @@ function Toolbar({
           onChange={(e) => onSearch(e.target.value)}
           placeholder={placeholder}
           data-testid={testid ? `${testid}-search` : undefined}
-          className="h-7 w-56 rounded border border-app bg-surface pl-7 pr-2 font-mono text-xs text-default placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand)]"
+          className="h-7 w-56 rounded border border-app bg-surface pl-7 pr-2 font-mono text-xs text-default placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-[color:var(--nimbus-brand)]"
         />
       </div>
       {children}

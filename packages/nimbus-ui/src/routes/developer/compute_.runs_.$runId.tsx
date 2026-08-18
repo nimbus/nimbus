@@ -301,9 +301,9 @@ function WaterfallBar({
     Math.max(0.5, (widthMs / safeTotal) * 100),
   );
   const tones: Record<typeof tone, string> = {
-    ok: "bg-[color-mix(in_oklch,var(--color-success)_70%,transparent)]",
-    muted: "bg-[color-mix(in_oklch,var(--color-muted)_50%,transparent)]",
-    error: "bg-[color-mix(in_oklch,var(--color-danger)_75%,transparent)]",
+    ok: "bg-[color-mix(in_oklch,var(--nimbus-success)_70%,transparent)]",
+    muted: "bg-[color-mix(in_oklch,var(--nimbus-muted)_50%,transparent)]",
+    error: "bg-[color-mix(in_oklch,var(--nimbus-danger)_75%,transparent)]",
   };
   return (
     <div

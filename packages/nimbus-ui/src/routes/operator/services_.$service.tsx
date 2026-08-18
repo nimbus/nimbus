@@ -15,7 +15,7 @@ import { CopyChip } from "../../components/copy-chip";
 import { EmptyState } from "../../components/empty-state";
 import { StateChip } from "../../components/state-chip";
 import { cn } from "../../lib/cn";
-import { shortId } from "../../lib/format";
+import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
@@ -177,7 +177,7 @@ function AdminServiceDetailPage() {
               value={bundle.sha256}
               testid="admin-service-detail-bundle"
             >
-              {shortId(bundle.sha256, 12)}
+              {shortHash(bundle.sha256, 12)}
             </CopyChip>
           ) : null}
         </header>
@@ -200,7 +200,7 @@ function AdminServiceDetailPage() {
               className={cn(
                 "flex items-center px-3 py-2 font-mono text-xs",
                 isActive
-                  ? "border-b-2 border-[color:var(--color-brand)] text-default"
+                  ? "border-b-2 border-[color:var(--nimbus-brand)] text-default"
                   : "text-muted hover:text-default",
               )}
             >
