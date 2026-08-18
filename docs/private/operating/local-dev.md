@@ -43,6 +43,11 @@ make ci
 dependency policy, Rust tests, required verification harnesses, JavaScript
 build/typecheck/tests, and proof helpers.
 
+`make test` runs the same three Rust lanes as CI. The runtime lane owns V8
+process-global isolation. The non-runtime workspace lane uses Nextest, which
+runs each test in a separate process. This keeps the single Nimbus network
+composition local to one test process. The third lane runs workspace doctests.
+
 ## Focused iteration
 
 After the generated prerequisites exist, use the smallest command that proves

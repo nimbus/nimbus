@@ -137,9 +137,16 @@ verify-loom-handoff:
 clippy: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
 	$(SINGLE_FLIGHT) --key cargo-clippy-workspace -- cargo clippy --workspace --all-targets -- -D warnings
 
-# Run Rust tests
+# Run the canonical Rust suite through the same owned lanes as CI. Nextest runs
+# each non-runtime test in its own process, so tests that create the one
+# process-global network composition cannot overlap inside one libtest binary.
+# The runtime lane retains its separate documented V8-global isolation, and the
+# docs lane preserves doctest coverage. Recursive Make calls run in recipe order
+# even when the caller enables parallel Make jobs.
 test: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
-	$(SINGLE_FLIGHT) --key cargo-test-workspace -- cargo test --workspace
+	+$(MAKE) test-rust-runtime
+	+$(MAKE) test-rust-workspace
+	+$(MAKE) test-rust-docs
 
 # Run the CI runtime Rust test bucket. No UI prereq: nimbus-runtime has
 # zero workspace deps (per CLAUDE.md), so cargo test -p nimbus-runtime

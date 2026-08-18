@@ -41,6 +41,12 @@ Use `make verify-harness SURFACE=<surface>` for a required focused harness and
 one case. Nightly harnesses and live external-provider lanes are additional
 evidence, not substitutes for required checks.
 
+`make test` composes the isolated runtime lane, the Nextest non-runtime
+workspace lane, and workspace doctests. Nextest gives each non-runtime test a
+separate process. Tests can therefore prove that Nimbus rejects a second
+in-process network composition without competing with unrelated tests in the
+same binary.
+
 ## Fresh-checkout and single-flight rules
 
 Make targets own generated UI and embedded-package prerequisites. Use them for
