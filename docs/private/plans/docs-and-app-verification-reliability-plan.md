@@ -3,9 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: AVR7 work commit `bd2a8a364` and its proof are candidate-green.
-Commit this checkpoint. Then run the one Sol/xhigh/fast review for the complete
-AVR3-AVR7 phase and resolve only accepted findings before implementation PR 2.
+Next action: AVR7 work commit `bd2a8a364` and review-correction commit
+`2215a5772` are candidate-green. Run the one narrow Sol/xhigh/fast correction
+review for the three accepted findings, then publish implementation PR 2.
 
 ## Outcome
 
@@ -135,7 +135,7 @@ contract records condition ownership, phase counts, and exact commands:
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr4.md`. Work commit `827877d06`; AVRC13-AVRC15 3/3; 6/6 behavior tests; nine preparation fixtures; mutations 24/24; 14/14 live assertions across three execution shapes. |
 | AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr5.md`. Work commit `02788d24b`; AVRC16-AVRC17 2/2; CLI 1,015 passed and 4 ignored; Clippy; live dev cases 7/7; docs 109 and 17/17. |
 | AVR6 | Reproduce and close, or disprove and remove, the bare-local target workaround. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr6.md`. Work commit `390bcaf27`; AVRC18 1/1; CLI 1,019 passed and 4 ignored; explicit and bare-local live results matched; wrong-silo and invalid-bearer checks failed closed. |
-| AVR7 | Give ports, child processes, temporary roots, logs, and cancellation one fail-closed lifetime owner. | `in_progress` | Candidate work commit `bd2a8a364`; proof: `proof/docs-and-app-verification-reliability/avr7.md`. Lifetime 9/9; product 1/1; runner cuts 6/6; all nine apps and 37 assertions; network 120; server 24; CLI 1,021 with 4 ignored; system 85; phase 20/20; mutations 24/24; Clippy and static gates green. Phase review, hosted PR, merge, and reconciliation remain. |
+| AVR7 | Give ports, child processes, temporary roots, logs, and cancellation one fail-closed lifetime owner. | `in_progress` | Work `bd2a8a364`; review correction `2215a5772`; proof: `proof/docs-and-app-verification-reliability/avr7.md`. Lifetime 11/11; product 1/1; runner cuts 6/6; all nine apps and 37 assertions; network 120; server 24; CLI 1,021 with 4 ignored; system 85; phase 20/20; mutations 24/24; Clippy and static gates green. Narrow correction review, hosted PR, merge, and reconciliation remain. |
 | AVR8 | Emit canonical JSON and JUnit evidence with hashes, timings, assertions, and cleanup state. | `todo` | |
 | AVR9 | Add bounded parallel execution and meet the measured wall-clock target without coverage loss. | `todo` | |
 | AVR10 | Correct all example documentation, comments, counts, update semantics, and operator instructions. | `todo` | |
@@ -473,3 +473,4 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | AVR6 | completed | Work commit `390bcaf27` separates host-admin discovery from application auth. Proof: `proof/docs-and-app-verification-reliability/avr6.md`. AVRC18 1/1; run tests 11/11; CLI 1,019 passed and 4 ignored; live Tasks 5/5 with equal JSON and clean stdio; all four PR #238/#239 trust regressions passed. |
 | 2026-08-17 | AVR7 | started | Inventory each runner resource owner and capture fail-before evidence for port races, cross-case operator-state reads, child-process leaks, fault cuts, cleanup retry, and retained failure artifacts. |
 | 2026-08-17 | AVR7 | candidate complete | Work commit `bd2a8a364` gives each port, process group, root, log, credential, discovery record, and cleanup result one owner. Proof: `proof/docs-and-app-verification-reliability/avr7.md`. AVR7 2/2; phase 20/20; mutations 24/24; lifetime 9/9; product 1/1; runner cuts 6/6; nine live apps and 37 assertions; affected Rust, Clippy, format, syntax, and static gates pass. Implementation PR 2 review is next. |
+| 2026-08-17 | AVR7 | review correction candidate | Sol/xhigh/fast review `0.98` found three accepted defects. Commit `2215a5772` removes credentials from supervisor argv, makes EXDEV artifact retention retryable, and documents the control-data root. Lifetime 11/11, nine live apps and 37 assertions, phase 20/20, mutations 24/24, docs 109 and 17/17, and site build 110 are green. One narrow correction review is next. |
