@@ -198,9 +198,16 @@ export async function spawnManagedProcess({
   return child.pid;
 }
 
-export async function stopManagedProcess(recordPath, { gracefulTimeoutMs = 5_000, killTimeoutMs = 2_000 } = {}) {
+export async function stopManagedProcess(
+  recordPath,
+  { preSignalTimeoutMs = 0, gracefulTimeoutMs = 5_000, killTimeoutMs = 2_000 } = {},
+) {
+  invariant(Number.isSafeInteger(preSignalTimeoutMs) && preSignalTimeoutMs >= 0, "pre-signal timeout must be non-negative");
   const record = await readProcessRecord(recordPath, { missing: "null" });
   if (!record) return;
+  if (preSignalTimeoutMs > 0 && await isProcessGroupLive(record.pid)) {
+    await waitForStop(record.pid, preSignalTimeoutMs);
+  }
   if (await isProcessGroupLive(record.pid)) {
     try {
       await signalGroup(record.pid, "SIGTERM");
@@ -251,6 +258,15 @@ function option(args, name) {
   return args[index + 1];
 }
 
+function integerOption(args, name, fallback) {
+  const index = args.indexOf(name);
+  if (index === -1) return fallback;
+  invariant(index + 1 < args.length, `${name} requires a value`);
+  const value = Number(args[index + 1]);
+  invariant(Number.isSafeInteger(value) && value >= 0, `${name} must be a non-negative integer`);
+  return value;
+}
+
 function commandAfterSeparator(args) {
   const separator = args.indexOf("--");
   invariant(separator !== -1 && separator + 1 < args.length, "managed command must follow --");
@@ -261,12 +277,19 @@ async function environmentOptions(args) {
   const entries = repeatedOptions(args, "--env").map(parseEnvironmentEntry);
   for (const environmentPath of repeatedOptions(args, "--env-file")) {
     invariant(path.isAbsolute(environmentPath), `environment file path must be absolute: ${environmentPath}`);
-    const stat = await fs.stat(environmentPath);
-    invariant(stat.isFile(), `environment file must be a regular file: ${environmentPath}`);
-    if (process.platform !== "win32") {
-      invariant((stat.mode & 0o077) === 0, `environment file must be owner-only: ${environmentPath}`);
+    const flags = fsSync.constants.O_RDONLY | (fsSync.constants.O_NOFOLLOW ?? 0);
+    const handle = await fs.open(environmentPath, flags);
+    let contents;
+    try {
+      const stat = await handle.stat();
+      invariant(stat.isFile(), `environment file must be a regular file: ${environmentPath}`);
+      if (process.platform !== "win32") {
+        invariant((stat.mode & 0o077) === 0, `environment file must be owner-only: ${environmentPath}`);
+      }
+      contents = await handle.readFile("utf8");
+    } finally {
+      await handle.close();
     }
-    const contents = await fs.readFile(environmentPath, "utf8");
     invariant(Buffer.byteLength(contents) <= 65_536, `environment file is too large: ${environmentPath}`);
     for (const line of contents.split(/\r?\n/u)) {
       if (line.length > 0) entries.push(parseEnvironmentEntry(line));
@@ -296,7 +319,9 @@ async function main(args) {
     return;
   }
   if (action === "stop") {
-    await stopManagedProcess(option(args, "--record"));
+    await stopManagedProcess(option(args, "--record"), {
+      preSignalTimeoutMs: integerOption(args, "--pre-signal-timeout-ms", 0),
+    });
     return;
   }
   if (action === "status") {

@@ -45,6 +45,9 @@ async function waitForProductDiscovery(context, pid, timeoutMs = 30_000) {
   while (Date.now() < deadline) {
     try {
       const discovery = await readCaseDiscovery(context.discoveryPath, pid);
+      // The discovery reader requires the exact child PID, a loopback host,
+      // and a non-zero port before this test makes its local health request.
+      // codeql[js/file-access-to-http]
       const response = await fetch(`${discovery.url}/health`);
       if (response.ok && (await response.json()).ok === true) return discovery;
     } catch (error) {

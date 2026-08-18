@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -259,6 +259,32 @@ async function process_tree_cleanup_stops_descendants() {
   });
 }
 
+async function pre_signal_wait_allows_graceful_process_exit() {
+  await temporaryCampaign(async ({ repoRoot, tempRoot, artifactRoot }) => {
+    const run = await createRunContext({ repoRoot, tempRoot, artifactRoot });
+    const context = await createCaseContext(run, { name: "graceful-exit", workspace: "graceful-exit" });
+    const processRecord = path.join(context.processRoot, "server-process.json");
+    const signalMarker = path.join(context.processRoot, "signal.marker");
+    const fixture = [
+      "const fs = require('node:fs');",
+      "process.on('SIGTERM', () => fs.writeFileSync(process.argv[1], 'signaled'));",
+      "setTimeout(() => process.exit(0), 250);",
+    ].join("");
+    const pid = await spawnManagedProcess({
+      recordPath: processRecord,
+      logPath: path.join(context.logRoot, "graceful-exit.log"),
+      command: process.execPath,
+      args: ["-e", fixture, signalMarker],
+    });
+    assert.equal(await isManagedProcessLive(pid), true);
+    await stopManagedProcess(processRecord, { preSignalTimeoutMs: 2_000 });
+    assert.equal(await isManagedProcessLive(pid), false);
+    assert.equal(await pathExists(signalMarker), false, "the owner must not signal a process that exits inside the grace bound");
+    assert.equal(await pathExists(processRecord), false);
+    await finalizeRunContext(run, { runStatus: 0, cleanupStatus: 0 });
+  });
+}
+
 async function six_fault_cuts_release_active_resources() {
   const cuts = [
     "after-run-root",
@@ -388,6 +414,27 @@ async function supervisor_environment_file_keeps_secret_values_out_of_argv() {
     await waitForFile(outputPath);
     assert.equal(await fs.readFile(outputPath, "utf8"), secretValue);
     assert.equal(await exit, 0);
+
+    if (process.platform !== "win32") {
+      const linkedEnvironmentPath = path.join(root, "linked-smoke.env");
+      const linkedOutputPath = path.join(root, "linked-child-environment.txt");
+      await fs.symlink(environmentPath, linkedEnvironmentPath);
+      const rejected = spawnSync(process.execPath, [
+        SUPERVISOR_PATH,
+        "exec",
+        "--cwd",
+        root,
+        "--env-file",
+        linkedEnvironmentPath,
+        "--",
+        process.execPath,
+        "-e",
+        "require('node:fs').writeFileSync(process.argv[1], 'spawned')",
+        linkedOutputPath,
+      ], { encoding: "utf8" });
+      assert.notEqual(rejected.status, 0, "a linked credential file must fail before child spawn");
+      assert.equal(await pathExists(linkedOutputPath), false);
+    }
   });
 }
 
@@ -411,6 +458,7 @@ const tests = [
   two_cases_bind_concurrently_with_distinct_discovery,
   external_binder_cannot_satisfy_case_discovery,
   process_tree_cleanup_stops_descendants,
+  pre_signal_wait_allows_graceful_process_exit,
   six_fault_cuts_release_active_resources,
   cleanup_retry_converges_after_retained_failure,
   cross_filesystem_retention_retry_converges_after_source_removal_failure,

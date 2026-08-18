@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -158,9 +159,19 @@ async function generated_environment_reads_only_validated_nimbus_keys() {
 }
 
 async function fileBytes(filePath) {
-  const stat = await fs.lstat(filePath);
-  if (stat.isSymbolicLink()) return Buffer.from(`symlink\0${await fs.readlink(filePath)}`);
-  return fs.readFile(filePath);
+  try {
+    return Buffer.from(`symlink\0${await fs.readlink(filePath)}`);
+  } catch (error) {
+    if (!["EINVAL", "UNKNOWN"].includes(error?.code)) throw error;
+  }
+  const flags = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+  const handle = await fs.open(filePath, flags);
+  try {
+    assert.equal((await handle.stat()).isFile(), true, `source path is not a file: ${filePath}`);
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
 }
 
 async function all_nine_preparation_fixtures() {

@@ -151,6 +151,7 @@ esac
 # cancellation lifetime; it never scans, closes, or reallocates a port.
 cleanup_server() {
   local cleanup_status=0
+  local pre_signal_timeout_ms=0
   if [ -z "${SERVER_RECORD}" ]; then
     return 0
   fi
@@ -160,9 +161,12 @@ cleanup_server() {
     if ! printf '%s' "${SERVER_ADMIN_TOKEN}" | \
         node "${LIFETIME_ADAPTER}" shutdown --url "${SERVER_URL}"; then
       echo "server did not accept graceful shutdown; applying the owned process-group fallback" >&2
+    else
+      pre_signal_timeout_ms=10000
     fi
   fi
-  if ! node "${PROCESS_SUPERVISOR}" stop --record "${SERVER_RECORD}"; then
+  if ! node "${PROCESS_SUPERVISOR}" stop --record "${SERVER_RECORD}" \
+      --pre-signal-timeout-ms "${pre_signal_timeout_ms}"; then
     cleanup_status=1
   fi
   if [ "${cleanup_status}" -ne 0 ]; then

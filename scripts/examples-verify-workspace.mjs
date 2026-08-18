@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -395,14 +396,35 @@ function digest(value) {
 
 async function byteEntry(repoRoot, relativePath) {
   const absolute = resolveWithin(repoRoot, relativePath, "source byte path");
-  const stat = await fs.lstat(absolute).catch(() => null);
-  if (!stat) return { path: relativePath, kind: "missing", sha256: digest("missing\0") };
-  if (stat.isSymbolicLink()) {
-    const target = await fs.readlink(absolute);
-    return { path: relativePath, kind: "symlink", sha256: digest(`symlink\0${target}`) };
+  const flags = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const target = await fs.readlink(absolute);
+      return { path: relativePath, kind: "symlink", sha256: digest(`symlink\0${target}`) };
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return { path: relativePath, kind: "missing", sha256: digest("missing\0") };
+      }
+      if (!["EINVAL", "UNKNOWN"].includes(error?.code)) throw error;
+    }
+    let handle;
+    try {
+      handle = await fs.open(absolute, flags);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return { path: relativePath, kind: "missing", sha256: digest("missing\0") };
+      }
+      if (error?.code === "ELOOP") continue;
+      throw error;
+    }
+    try {
+      invariant((await handle.stat()).isFile(), `source byte path is not a file: ${relativePath}`);
+      return { path: relativePath, kind: "file", sha256: digest(await handle.readFile()) };
+    } finally {
+      await handle.close();
+    }
   }
-  invariant(stat.isFile(), `source byte path is not a file: ${relativePath}`);
-  return { path: relativePath, kind: "file", sha256: digest(await fs.readFile(absolute)) };
+  throw new Error(`source byte path changed type while reading: ${relativePath}`);
 }
 
 function git(repoRoot, args, { allowFailure = false } = {}) {
