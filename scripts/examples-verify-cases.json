@@ -257,17 +257,14 @@
         ]
       },
       "boot": {
-        "mode": "start",
-        "needsAppDir": false,
-        "environment": ["NIMBUS_MONGODB_PASSWORD=nimbus"],
-        "flags": ["--mongodb-username=nimbus"]
+        "mode": "dev",
+        "needsAppDir": true,
+        "environment": [],
+        "flags": ["--no-compose-discovery"]
       },
       "smoke": {
         "command": "npm",
-        "environment": [
-          "NIMBUS_MONGODB_USERNAME=nimbus",
-          "NIMBUS_MONGODB_PASSWORD=nimbus"
-        ],
+        "environment": [],
         "stdioContract": false
       },
       "surfaces": ["mongodb-wire"],
@@ -289,10 +286,10 @@
         ]
       },
       "boot": {
-        "mode": "start",
-        "needsAppDir": false,
+        "mode": "dev",
+        "needsAppDir": true,
         "environment": [],
-        "flags": ["--dynamodb-access-key=nimbus:nimbus:default"]
+        "flags": ["--no-compose-discovery"]
       },
       "smoke": {
         "command": "npm",

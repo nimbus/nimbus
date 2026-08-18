@@ -474,6 +474,10 @@ run_avr4_behavior_tests() {
   node "${ROOT}/scripts/examples-verify-workspace-test.mjs"
 }
 
+run_avr7_behavior_tests() {
+  node "${ROOT}/scripts/examples-verify-lifetime-test.mjs"
+}
+
 usage() {
   printf 'usage: %s --task AVR3..AVR10 | --condition AVRC11..AVRC24 | --self-test-condition AVRC11..AVRC24\n' "$0" >&2
 }
@@ -495,6 +499,9 @@ case "${1:-}" in
     fi
     if [ "$2" = "AVR4" ]; then
       run_avr4_behavior_tests
+    fi
+    if [ "$2" = "AVR7" ]; then
+      run_avr7_behavior_tests
     fi
     ;;
   --condition)

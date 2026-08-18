@@ -6,6 +6,7 @@ fn cli_parses_dev_defaults() {
     assert_eq!(command.port, DEFAULT_DEV_PORT);
     assert_eq!(command.app_dir, None);
     assert_eq!(command.data_dir, None);
+    assert_eq!(command.control_data_dir, None);
     assert_eq!(command.network_state_dir, None);
     assert_eq!(command.compose_file, Vec::<PathBuf>::new());
     assert!(!command.no_compose_discovery);
@@ -30,6 +31,8 @@ fn cli_parses_dev_overrides() {
         "./demo",
         "--data-dir",
         "./state",
+        "--control-data-dir",
+        "./control",
         "--network-state-dir",
         "/var/lib/nimbus/network",
         "--compose-file",
@@ -44,6 +47,7 @@ fn cli_parses_dev_overrides() {
     assert_eq!(command.port, 4567);
     assert_eq!(command.app_dir, Some(PathBuf::from("./demo")));
     assert_eq!(command.data_dir, Some(PathBuf::from("./state")));
+    assert_eq!(command.control_data_dir, Some(PathBuf::from("./control")));
     assert_eq!(
         command.network_state_dir,
         Some(PathBuf::from("/var/lib/nimbus/network"))

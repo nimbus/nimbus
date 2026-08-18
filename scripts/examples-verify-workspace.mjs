@@ -7,9 +7,24 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SHELL_DELIMITER = "|";
+const LIST_DELIMITER = ",";
 const UPDATE_SEMANTICS = new Set(["polling", "push", "request-response"]);
 const BOOT_MODES = new Set(["dev", "start"]);
 const SMOKE_COMMANDS = new Set(["node", "npm"]);
+const SURFACE_ENV_KEYS = new Map([
+  ["mongodb-wire", ["NIMBUS_MONGODB_URL"]],
+  ["dynamodb-wire", [
+    "NIMBUS_DYNAMODB_ENDPOINT",
+    "NIMBUS_DYNAMODB_ACCESS_KEY_ID",
+    "NIMBUS_DYNAMODB_SECRET_ACCESS_KEY",
+  ]],
+  ["s3-wire", [
+    "NIMBUS_S3_ENDPOINT",
+    "NIMBUS_S3_REGION",
+    "NIMBUS_S3_ACCESS_KEY_ID",
+    "NIMBUS_S3_SECRET_ACCESS_KEY",
+  ]],
+]);
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -40,8 +55,16 @@ function uniqueStrings(values, label, { allowEmpty = false } = {}) {
   return values;
 }
 
+function shellListStrings(values, label, options = {}) {
+  uniqueStrings(values, label, options);
+  for (const value of values) {
+    invariant(!value.includes(LIST_DELIMITER), `${label} entry contains the list delimiter: ${value}`);
+  }
+  return values;
+}
+
 function environmentEntries(values, label) {
-  uniqueStrings(values, label, { allowEmpty: true });
+  shellListStrings(values, label, { allowEmpty: true });
   for (const value of values) {
     invariant(/^[A-Z][A-Z0-9_]*=.+$/u.test(value), `${label} entry must be KEY=value: ${value}`);
   }
@@ -101,14 +124,14 @@ function validateCaseShape(item, index) {
   invariant(BOOT_MODES.has(item.boot.mode), `${label}.boot.mode must be dev or start`);
   invariant(typeof item.boot.needsAppDir === "boolean", `${label}.boot.needsAppDir must be a boolean`);
   environmentEntries(item.boot.environment, `${label}.boot.environment`);
-  uniqueStrings(item.boot.flags, `${label}.boot.flags`, { allowEmpty: true });
+  shellListStrings(item.boot.flags, `${label}.boot.flags`, { allowEmpty: true });
 
   invariant(item.smoke && typeof item.smoke === "object", `${label}.smoke must be an object`);
   invariant(SMOKE_COMMANDS.has(item.smoke.command), `${label}.smoke.command must be node or npm`);
   environmentEntries(item.smoke.environment, `${label}.smoke.environment`);
   invariant(typeof item.smoke.stdioContract === "boolean", `${label}.smoke.stdioContract must be a boolean`);
 
-  uniqueStrings(item.surfaces, `${label}.surfaces`);
+  shellListStrings(item.surfaces, `${label}.surfaces`);
   invariant(UPDATE_SEMANTICS.has(item.updateSemantics), `${label}.updateSemantics is invalid`);
   invariant(!item.name.includes(SHELL_DELIMITER), `${label}.name is not shell-safe`);
   invariant(!item.workspace.includes(SHELL_DELIMITER), `${label}.workspace is not shell-safe`);
@@ -158,7 +181,7 @@ export async function loadValidatedManifest(manifestPath, repoRoot, options = {}
 }
 
 function listField(values) {
-  return values.length === 0 ? "-" : values.join(",");
+  return values.length === 0 ? "-" : values.join(LIST_DELIMITER);
 }
 
 export function caseShellRows(manifest) {
@@ -175,7 +198,71 @@ export function caseShellRows(manifest) {
     item.smoke.command,
     item.smoke.stdioContract ? "1" : "0",
     item.updateSemantics,
+    listField(item.surfaces),
   ].join(SHELL_DELIMITER));
+}
+
+function parseNimbusOwnedEnv(content) {
+  const values = new Map();
+  for (const line of content.split(/\r?\n/u)) {
+    if (!line.startsWith("NIMBUS_")) continue;
+    const separator = line.indexOf("=");
+    invariant(separator > 0, "Nimbus-owned .env.local entry must be KEY=value");
+    const key = line.slice(0, separator);
+    invariant(/^[A-Z][A-Z0-9_]*$/u.test(key), `invalid Nimbus-owned environment key: ${key}`);
+    invariant(!values.has(key), `duplicate Nimbus-owned environment key: ${key}`);
+    const value = line.slice(separator + 1);
+    invariant(value.length > 0 && !value.includes("\0"), `${key} must have a non-empty value`);
+    values.set(key, value);
+  }
+  return values;
+}
+
+function requireLoopbackEndpoint(value, key, protocols) {
+  let endpoint;
+  try {
+    endpoint = new URL(value);
+  } catch (error) {
+    throw new Error(`${key} must be an absolute URL`, { cause: error });
+  }
+  invariant(protocols.includes(endpoint.protocol), `${key} has unsupported protocol ${endpoint.protocol}`);
+  invariant(
+    ["127.0.0.1", "::1", "[::1]", "localhost"].includes(endpoint.hostname),
+    `${key} must name a loopback host`,
+  );
+  invariant(Number(endpoint.port) > 0 && Number(endpoint.port) <= 65_535, `${key} must name a non-zero port`);
+  return endpoint;
+}
+
+export async function generatedCaseEnvironment({ manifestPath, repoRoot, caseName, destination }) {
+  const manifest = await loadValidatedManifest(manifestPath, repoRoot);
+  const item = manifest.cases.find((candidate) => candidate.name === caseName);
+  invariant(item, `unknown case: ${caseName}`);
+  const expected = item.surfaces.flatMap((surface) => SURFACE_ENV_KEYS.get(surface) ?? []);
+  if (expected.length === 0) return [];
+
+  const destinationRoot = path.resolve(destination);
+  const envPath = resolveWithin(destinationRoot, ".env.local", `${caseName} generated environment`);
+  const values = parseNimbusOwnedEnv(await fs.readFile(envPath, "utf8"));
+  for (const key of expected) invariant(values.has(key), `${caseName} .env.local is missing ${key}`);
+
+  const environment = new Map(expected.map((key) => [key, values.get(key)]));
+  if (values.has("NIMBUS_MONGODB_URL")) {
+    const endpoint = requireLoopbackEndpoint(
+      values.get("NIMBUS_MONGODB_URL"),
+      "NIMBUS_MONGODB_URL",
+      ["mongodb:"],
+    );
+    invariant(endpoint.username.length > 0 && endpoint.password.length > 0, "NIMBUS_MONGODB_URL must include credentials");
+    environment.set("NIMBUS_MONGODB_HOST", endpoint.hostname);
+    environment.set("NIMBUS_MONGODB_PORT", endpoint.port);
+    environment.set("NIMBUS_MONGODB_USERNAME", decodeURIComponent(endpoint.username));
+    environment.set("NIMBUS_MONGODB_PASSWORD", decodeURIComponent(endpoint.password));
+  }
+  for (const key of ["NIMBUS_DYNAMODB_ENDPOINT", "NIMBUS_S3_ENDPOINT"]) {
+    if (environment.has(key)) requireLoopbackEndpoint(environment.get(key), key, ["http:", "https:"]);
+  }
+  return [...environment.entries()].map(([key, value]) => `${key}=${value}`);
 }
 
 async function verifyDeclaredDependencies(sourceRoot, inputs, dependencyRoot, caseName) {
@@ -434,6 +521,16 @@ async function main() {
     invariant(options.destination, "refresh-dependencies requires --destination");
     const linked = await refreshProvisionedDependencies({ destination: options.destination });
     console.log(`linked ${linked} provisioned dependencies`);
+    return;
+  }
+  if (command === "emit-generated-env") {
+    invariant(options.case && options.destination, "emit-generated-env requires --case and --destination");
+    for (const entry of await generatedCaseEnvironment({
+      manifestPath,
+      repoRoot,
+      caseName: options.case,
+      destination: options.destination,
+    })) console.log(entry);
     return;
   }
   if (command === "capture-source") {

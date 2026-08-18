@@ -8,7 +8,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  caseShellRows,
   captureSourceByteManifest,
+  generatedCaseEnvironment,
   loadValidatedManifest,
   prepareCaseWorkspace,
   refreshProvisionedDependencies,
@@ -57,6 +59,102 @@ async function manifest_rejects_duplicate_or_incomplete_case() {
     validateManifestValue(unsafeAppDir, { manifestPath: CASE_MANIFEST, repoRoot: REPO_ROOT }),
     /appDir is not shell-safe/u,
   );
+
+  const ambiguousFlag = structuredClone(source);
+  ambiguousFlag.cases[0].boot.flags = ["--first,--second"];
+  await assert.rejects(
+    validateManifestValue(ambiguousFlag, { manifestPath: CASE_MANIFEST, repoRoot: REPO_ROOT }),
+    /boot\.flags entry contains the list delimiter/u,
+  );
+}
+
+async function shell_rows_include_declared_surfaces() {
+  const manifest = await loadValidatedManifest(CASE_MANIFEST, REPO_ROOT);
+  const rows = caseShellRows(manifest);
+  assert.equal(rows.length, 9);
+  const mongo = rows.find((row) => row.startsWith("mongodb/tasks|"));
+  assert.equal(mongo.split("|").at(-1), "mongodb-wire");
+}
+
+async function generated_environment_reads_only_validated_nimbus_keys() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-avr7-env-"));
+  try {
+    const mongo = path.join(root, "mongo");
+    const mongoUrl = new URL("mongodb://127.0.0.1:43123/");
+    mongoUrl.username = "nimbus";
+    mongoUrl.password = "fixture-password";
+    await fs.mkdir(mongo);
+    await fs.writeFile(
+      path.join(mongo, ".env.local"),
+      [
+        "USER_OWNED=must-not-escape",
+        "NIMBUS_DEPLOYMENT=local:fixture",
+        `NIMBUS_MONGODB_URL=${mongoUrl}`,
+        "",
+      ].join("\n"),
+    );
+    assert.deepEqual(
+      await generatedCaseEnvironment({
+        manifestPath: CASE_MANIFEST,
+        repoRoot: REPO_ROOT,
+        caseName: "mongodb/tasks",
+        destination: mongo,
+      }),
+      [
+        `NIMBUS_MONGODB_URL=${mongoUrl}`,
+        "NIMBUS_MONGODB_HOST=127.0.0.1",
+        "NIMBUS_MONGODB_PORT=43123",
+        "NIMBUS_MONGODB_USERNAME=nimbus",
+        "NIMBUS_MONGODB_PASSWORD=fixture-password",
+      ],
+    );
+
+    const dynamo = path.join(root, "dynamo");
+    await fs.mkdir(dynamo);
+    await fs.writeFile(
+      path.join(dynamo, ".env.local"),
+      [
+        "NIMBUS_DYNAMODB_ENDPOINT=http://127.0.0.1:43234",
+        "NIMBUS_DYNAMODB_ACCESS_KEY_ID=access",
+        "NIMBUS_DYNAMODB_SECRET_ACCESS_KEY=secret",
+        "",
+      ].join("\n"),
+    );
+    assert.deepEqual(
+      await generatedCaseEnvironment({
+        manifestPath: CASE_MANIFEST,
+        repoRoot: REPO_ROOT,
+        caseName: "dynamodb/tasks",
+        destination: dynamo,
+      }),
+      [
+        "NIMBUS_DYNAMODB_ENDPOINT=http://127.0.0.1:43234",
+        "NIMBUS_DYNAMODB_ACCESS_KEY_ID=access",
+        "NIMBUS_DYNAMODB_SECRET_ACCESS_KEY=secret",
+      ],
+    );
+
+    await fs.writeFile(
+      path.join(dynamo, ".env.local"),
+      [
+        "NIMBUS_DYNAMODB_ENDPOINT=http://example.com:43234",
+        "NIMBUS_DYNAMODB_ACCESS_KEY_ID=access",
+        "NIMBUS_DYNAMODB_SECRET_ACCESS_KEY=secret",
+        "",
+      ].join("\n"),
+    );
+    await assert.rejects(
+      generatedCaseEnvironment({
+        manifestPath: CASE_MANIFEST,
+        repoRoot: REPO_ROOT,
+        caseName: "dynamodb/tasks",
+        destination: dynamo,
+      }),
+      /must name a loopback host/u,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 }
 
 async function fileBytes(filePath) {
@@ -106,6 +204,44 @@ async function all_nine_preparation_fixtures() {
       }
       console.log(`PASS prepare_case_workspace ${item.name}`);
     }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}
+
+async function external_package_vendor_replaces_same_version_symlink() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "nimbus-avr7-external-package-"));
+  try {
+    const appRoot = path.join(root, "app");
+    const packageRoot = path.join(root, "shared", "nanoid");
+    await fs.mkdir(path.join(appRoot, "scripts"), { recursive: true });
+    await fs.mkdir(path.join(appRoot, "node_modules"), { recursive: true });
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(packageRoot, "package.json"),
+      `${JSON.stringify({ name: "nanoid", version: "3.3.12", main: "index.js" })}\n`,
+    );
+    await fs.writeFile(path.join(packageRoot, "index.js"), "module.exports = () => 'fixture';\n");
+    await fs.writeFile(
+      path.join(appRoot, "convex.json"),
+      `${JSON.stringify({ node: { externalPackages: ["nanoid"] } })}\n`,
+    );
+    const vendorScript = path.join(appRoot, "scripts", "vendor-external-packages.mjs");
+    await fs.copyFile(
+      path.join(REPO_ROOT, "examples", "convex", "runtimes", "scripts", "vendor-external-packages.mjs"),
+      vendorScript,
+    );
+    const localPackage = path.join(appRoot, "node_modules", "nanoid");
+    await fs.symlink(packageRoot, localPackage, "dir");
+
+    run(process.execPath, [vendorScript], { cwd: appRoot });
+
+    const localStat = await fs.lstat(localPackage);
+    assert.equal(localStat.isDirectory(), true);
+    assert.equal(localStat.isSymbolicLink(), false, "same-version source link must become case-local bytes");
+    assert.notEqual(await fs.realpath(localPackage), await fs.realpath(packageRoot));
+    assert.equal(await fs.readFile(path.join(localPackage, "index.js"), "utf8"), "module.exports = () => 'fixture';\n");
+    assert.equal((await fs.stat(packageRoot)).isDirectory(), true, "vendoring must not change the source package");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -218,7 +354,10 @@ async function source_byte_manifest_detects_mutation_without_restore() {
 
 const tests = [
   manifest_rejects_duplicate_or_incomplete_case,
+  shell_rows_include_declared_surfaces,
+  generated_environment_reads_only_validated_nimbus_keys,
   all_nine_preparation_fixtures,
+  external_package_vendor_replaces_same_version_symlink,
   dirty_source_bytes_survive_success,
   dirty_source_bytes_survive_failure,
   staged_source_bytes_survive_failure,

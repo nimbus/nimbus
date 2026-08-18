@@ -9,13 +9,13 @@ const WIRE_CREDENTIALS_FILE_NAME: &str = "wire-credentials.json";
 const MONGODB_DEV_USERNAME: &str = "nimbus";
 
 /// Generated credentials for the wire-protocol listeners (MongoDB SCRAM,
-/// DynamoDB/S3 SigV4), persisted per data dir so connection strings survive
+/// DynamoDB/S3 SigV4), persisted per control root so connection strings survive
 /// restarts (decision D5) and shared by `nimbus dev` and `nimbus start`
-/// (decision D7) — both commands load-or-generate the same store, so the
-/// same data dir always speaks with the same secrets. Rotation = delete
-/// the file and restart: a running session keeps serving with the
-/// credentials it loaded at boot, and the next boot generates a fresh
-/// set and refreshes the Nimbus-owned `.env.local` keys.
+/// (decision D7) — both commands load-or-generate the same control-root
+/// store, so the same node control plane always speaks with the same secrets.
+/// Rotation means deleting the file and restarting. A running session keeps
+/// the credentials it loaded at boot. The next boot generates a fresh set and
+/// refreshes the Nimbus-owned `.env.local` keys.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WireCredentials {
     pub(crate) mongodb_username: String,
@@ -26,16 +26,16 @@ pub(crate) struct WireCredentials {
     pub(crate) s3_secret_access_key: String,
 }
 
-pub(crate) fn wire_credentials_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(WIRE_CREDENTIALS_FILE_NAME)
+pub(crate) fn wire_credentials_path(control_root: &Path) -> PathBuf {
+    control_root.join(WIRE_CREDENTIALS_FILE_NAME)
 }
 
-/// Load the persisted wire credentials for `data_dir`, generating and
+/// Load the persisted wire credentials for `control_root`, generating and
 /// persisting a fresh set (owner-only file mode) when none exist yet. A
 /// malformed store is an error, not a silent regeneration: regenerating
 /// would invalidate credentials an app's `.env.local` may still carry.
-pub(crate) fn load_or_generate(data_dir: &Path) -> io::Result<WireCredentials> {
-    let path = wire_credentials_path(data_dir);
+pub(crate) fn load_or_generate(control_root: &Path) -> io::Result<WireCredentials> {
+    let path = wire_credentials_path(control_root);
     match std::fs::read_to_string(&path) {
         Ok(content) => serde_json::from_str(&content).map_err(|error| {
             io::Error::new(

@@ -52,6 +52,42 @@ fn dev_plan_uses_project_local_persistence_root() {
 }
 
 #[test]
+fn dev_plan_keeps_explicit_data_and_control_roots_distinct() {
+    let temp = tempdir().expect("tempdir should build");
+    create_source_root(temp.path(), "convex");
+
+    let plan = resolve_dev_plan(
+        parse_dev([
+            "nimbus",
+            "dev",
+            "--data-dir",
+            "./tenant-data",
+            "--control-data-dir",
+            "./control-data",
+        ]),
+        temp.path(),
+    )
+    .expect("dev plan should resolve distinct persistence roots");
+
+    assert_eq!(
+        plan.start_command.data_dir,
+        Some(temp.path().join("tenant-data"))
+    );
+    assert_eq!(
+        plan.start_command.control_data_dir,
+        Some(temp.path().join("control-data"))
+    );
+    assert!(
+        crate::wire_credentials::wire_credentials_path(&temp.path().join("control-data")).exists(),
+        "dev and start must share the control-root wire credential store"
+    );
+    assert!(
+        !crate::wire_credentials::wire_credentials_path(&temp.path().join("tenant-data")).exists(),
+        "tenant data must not gain a duplicate wire credential authority"
+    );
+}
+
+#[test]
 fn dev_plan_retains_every_advertised_wire_socket_until_start_handoff() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");

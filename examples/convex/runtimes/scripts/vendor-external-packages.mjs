@@ -54,10 +54,11 @@ async function vendorPackage(packageName) {
   }
 
   const sourceVersion = (await readJson(path.join(sourceDir, "package.json"))).version;
+  const localStat = await fs.lstat(localDir).catch(() => null);
   const localVersion = await readJson(path.join(localDir, "package.json"))
     .then((manifest) => manifest.version)
     .catch(() => null);
-  if (localVersion === sourceVersion) {
+  if (localStat?.isDirectory() && !localStat.isSymbolicLink() && localVersion === sourceVersion) {
     return;
   }
 

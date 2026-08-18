@@ -12,12 +12,11 @@ use crate::wire_credentials::{WireCredentials, load_or_generate};
 
 use super::surfaces::WireSurfaces;
 
-/// A resolved wire-listener port under the D4 policy: a *detected* surface
-/// prefers its conventional port (stable, recognizable connection strings)
-/// and falls back to an ephemeral port when it is busy; an *undetected*
-/// surface always binds an ephemeral port, so dev never squats a
-/// conventional port the app isn't using — a real `mongod` beside a
-/// pure-Convex app sees zero interference.
+/// A resolved wire-listener port under the D4 policy. A normal dev session's
+/// detected surface prefers its conventional port and falls back when busy.
+/// An undetected surface, or every surface in a provider-assigned-only
+/// session, binds an ephemeral port. The Nimbus-owned `.env.local` file is the
+/// observed endpoint authority for detected surfaces.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct WireListenerPort {
     pub(super) port: u16,
@@ -205,49 +204,61 @@ impl WirePlan {
 
 pub(super) fn resolve_wire_plan(
     surfaces: WireSurfaces,
-    data_dir: &Path,
+    credential_root: &Path,
     network_authority: LocalNetworkAuthority,
+    provider_assigned_only: bool,
 ) -> io::Result<PreparedWirePlan> {
     resolve_wire_plan_with_listeners(
         surfaces,
-        data_dir,
+        credential_root,
         PreboundServerListeners::new(network_authority),
+        provider_assigned_only,
     )
 }
 
 #[cfg(test)]
 pub(super) fn reconstruct_direct_wire_plan_for_test(
     surfaces: WireSurfaces,
-    data_dir: &Path,
+    credential_root: &Path,
+    provider_assigned_only: bool,
 ) -> io::Result<PreparedWirePlan> {
     resolve_wire_plan_with_listeners(
         surfaces,
-        data_dir,
-        PreboundServerListeners::reconstruct_direct(data_dir)?,
+        credential_root,
+        PreboundServerListeners::reconstruct_direct(credential_root)?,
+        provider_assigned_only,
     )
 }
 
 fn resolve_wire_plan_with_listeners(
     surfaces: WireSurfaces,
-    data_dir: &Path,
+    credential_root: &Path,
     mut listeners: PreboundServerListeners,
+    provider_assigned_only: bool,
 ) -> io::Result<PreparedWirePlan> {
-    let credentials = load_or_generate(data_dir)?;
+    let credentials = load_or_generate(credential_root)?;
     let result = (|| {
         let mongodb_port = prepare_wire_listener(
             &mut listeners,
             "mongodb",
             surfaces.mongodb,
             MONGODB_CONVENTIONAL_PORT,
+            provider_assigned_only,
         )?;
         let dynamodb_port = prepare_wire_listener(
             &mut listeners,
             "dynamodb",
             surfaces.dynamodb,
             DYNAMODB_CONVENTIONAL_PORT,
+            provider_assigned_only,
         )?;
-        let s3_port =
-            prepare_wire_listener(&mut listeners, "s3", surfaces.s3, S3_CONVENTIONAL_PORT)?;
+        let s3_port = prepare_wire_listener(
+            &mut listeners,
+            "s3",
+            surfaces.s3,
+            S3_CONVENTIONAL_PORT,
+            provider_assigned_only,
+        )?;
         Ok(WirePlan {
             mongodb_port,
             dynamodb_port,
@@ -292,8 +303,9 @@ fn prepare_wire_listener(
     adapter_name: &str,
     detected: bool,
     conventional: u16,
+    provider_assigned_only: bool,
 ) -> io::Result<WireListenerPort> {
-    if detected {
+    if detected && !provider_assigned_only {
         let requested = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), conventional);
         match bind_and_retain_wire_listener(
             listeners,
@@ -319,7 +331,7 @@ fn prepare_wire_listener(
     )?;
     Ok(WireListenerPort {
         port,
-        conventional_fallback: detected,
+        conventional_fallback: detected && !provider_assigned_only,
     })
 }
 
@@ -377,9 +389,16 @@ fn prepare_test_wire_listener(
     data_dir: &Path,
     detected: bool,
     conventional: u16,
+    provider_assigned_only: bool,
 ) -> io::Result<(WireListenerPort, PreboundServerListeners)> {
     let mut listeners = PreboundServerListeners::reconstruct_direct(data_dir)?;
-    let port = prepare_wire_listener(&mut listeners, "mongodb", detected, conventional)?;
+    let port = prepare_wire_listener(
+        &mut listeners,
+        "mongodb",
+        detected,
+        conventional,
+        provider_assigned_only,
+    )?;
     Ok((port, listeners))
 }
 
@@ -400,7 +419,7 @@ fn provider_assigned_fixture(
     data_dir: &Path,
 ) -> io::Result<(WireListenerPort, PreboundServerListeners)> {
     let (resolved, listeners) =
-        prepare_test_wire_listener(data_dir, false, MONGODB_CONVENTIONAL_PORT)?;
+        prepare_test_wire_listener(data_dir, false, MONGODB_CONVENTIONAL_PORT, false)?;
     Ok((
         WireListenerPort {
             port: resolved.port,
@@ -448,6 +467,7 @@ mod tests {
             surfaces(true, true, true),
             &root.path().join("dev"),
             authority.clone(),
+            false,
         )
         .expect("all dev sibling listeners should prepare");
         for port in [
@@ -514,7 +534,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let free = test_free_port().expect("select a free test port");
         let (resolved, listeners) =
-            prepare_test_wire_listener(temp.path(), true, free).expect("prepare listener");
+            prepare_test_wire_listener(temp.path(), true, free, false).expect("prepare listener");
         assert_eq!(resolved.port, free);
         assert!(!resolved.conventional_fallback);
         assert_port_is_still_held(resolved.port);
@@ -528,7 +548,8 @@ mod tests {
         let blocked_port = blocker.local_addr().expect("blocker addr").port();
 
         let (resolved, listeners) =
-            prepare_test_wire_listener(temp.path(), true, blocked_port).expect("prepare fallback");
+            prepare_test_wire_listener(temp.path(), true, blocked_port, false)
+                .expect("prepare fallback");
         assert!(resolved.conventional_fallback);
         assert_ne!(resolved.port, blocked_port);
         assert_port_is_still_held(resolved.port);
@@ -563,9 +584,28 @@ mod tests {
         let conventional = blocker.local_addr().expect("blocker addr").port();
 
         let (resolved, listeners) =
-            prepare_test_wire_listener(temp.path(), false, conventional).expect("prepare listener");
+            prepare_test_wire_listener(temp.path(), false, conventional, false)
+                .expect("prepare listener");
         assert_ne!(resolved.port, conventional);
         assert!(!resolved.conventional_fallback);
+        assert_port_is_still_held(resolved.port);
+        close_test_listeners(listeners);
+    }
+
+    #[test]
+    fn provider_assigned_only_skips_conventional_port_for_detected_surface() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let blocker = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("blocker");
+        let conventional = blocker.local_addr().expect("blocker addr").port();
+
+        let (resolved, listeners) =
+            prepare_test_wire_listener(temp.path(), true, conventional, true)
+                .expect("prepare provider-assigned detected listener");
+        assert_ne!(resolved.port, conventional);
+        assert!(
+            !resolved.conventional_fallback,
+            "provider-assigned-only selection is deliberate, not a fallback"
+        );
         assert_port_is_still_held(resolved.port);
         close_test_listeners(listeners);
     }

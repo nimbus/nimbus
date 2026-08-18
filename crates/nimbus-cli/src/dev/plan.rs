@@ -122,6 +122,11 @@ fn resolve_dev_plan_inner(
         .as_deref()
         .map(|path| resolve_unchecked_path(path, cwd))
         .unwrap_or_else(|| app_dir.join(".nimbus").join("dev"));
+    let control_data_dir = command
+        .control_data_dir
+        .as_deref()
+        .map(|path| resolve_unchecked_path(path, cwd))
+        .unwrap_or_else(|| data_dir.clone());
     let local_url = format!("http://localhost:{}/", command.port);
     let deploy_admin_token = generate_dev_deploy_token();
     // A Firestore client app addresses `projects/{projectId}` directly, and
@@ -147,16 +152,17 @@ fn resolve_dev_plan_inner(
         Some(DevAdapter::FirestoreClient) | None => None,
         _ => Some(app_dir.clone()),
     };
-    // The wire plan owns dev's port policy (D4: detected surfaces prefer
-    // conventional ports, undetected go ephemeral) and the shared persisted
-    // credentials (D5); the start command below serves exactly those
-    // endpoints so `.env.local` and the run banner stay truthful.
+    // The wire plan owns dev's port policy. Normal sessions keep D4
+    // conventional preference for detected surfaces; `--port 0` is an
+    // explicit hermetic-session signal that makes every sibling listener
+    // provider-assigned too. The start command below serves the retained
+    // sockets, so `.env.local` remains the observed endpoint authority.
     let prepared_network = staged_network
         .map(|staged| {
             PreparedLocalNetworkComposition::prepare(
                 staged,
                 compose_selection.as_ref(),
-                &data_dir,
+                &control_data_dir,
                 nimbus_tenant::TenantIsolationMode::LocalDevelopment,
                 nimbus_server::nimbus_owned_workload_ingress_registration(),
             )
@@ -164,9 +170,18 @@ fn resolve_dev_plan_inner(
         })
         .transpose()?;
     let prepared_wire = match prepared_network.as_ref() {
-        Some(prepared) => resolve_wire_plan(wire_surfaces, &data_dir, prepared.authority())?,
+        Some(prepared) => resolve_wire_plan(
+            wire_surfaces,
+            &control_data_dir,
+            prepared.authority(),
+            command.port == 0,
+        )?,
         #[cfg(test)]
-        None => reconstruct_direct_wire_plan_for_test(wire_surfaces, &data_dir)?,
+        None => reconstruct_direct_wire_plan_for_test(
+            wire_surfaces,
+            &control_data_dir,
+            command.port == 0,
+        )?,
         #[cfg(not(test))]
         None => unreachable!("production dev planning requires a manager-derived authority"),
     };
@@ -203,7 +218,7 @@ fn resolve_dev_plan_inner(
             wire.credentials.s3_access_key_id, wire.credentials.s3_secret_access_key, auto_tenant
         )],
         data_dir: Some(data_dir.clone()),
-        control_data_dir: Some(data_dir.clone()),
+        control_data_dir: Some(control_data_dir),
         network_state_dir: prepared_network
             .as_ref()
             .map(|prepared| prepared.authority().state_root().to_path_buf()),

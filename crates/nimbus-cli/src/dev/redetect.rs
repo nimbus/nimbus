@@ -683,6 +683,7 @@ mod tests {
             debug_node_apis: false,
             tail_logs: DevTailLogsMode::PauseOnSync,
             data_dir: None,
+            control_data_dir: None,
             network_state_dir: None,
             no_open: true,
         };
