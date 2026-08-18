@@ -6,6 +6,7 @@ import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
+import { ScrollRegion } from "../../components/scroll-region";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { formatDuration, shortId } from "../../lib/format";
@@ -138,7 +139,7 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
     );
   }
   return (
-    <div className="h-full overflow-auto">
+    <ScrollRegion label="Scheduled jobs" className="h-full">
       <table
         className="w-full border-collapse text-sm"
         data-testid="schedules-scheduled-table"
@@ -191,7 +192,7 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
           })}
         </tbody>
       </table>
-    </div>
+    </ScrollRegion>
   );
 }
 
@@ -229,7 +230,7 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
     );
   }
   return (
-    <div className="h-full overflow-auto">
+    <ScrollRegion label="Cron jobs" className="h-full">
       <table
         className="w-full border-collapse text-sm"
         data-testid="schedules-cron-table"
@@ -278,7 +279,7 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
           ))}
         </tbody>
       </table>
-    </div>
+    </ScrollRegion>
   );
 }
 

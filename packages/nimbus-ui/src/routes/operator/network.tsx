@@ -7,6 +7,7 @@ import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
+import { ScrollRegion } from "../../components/scroll-region";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import {
@@ -301,7 +302,7 @@ function RoutesTable({ routes }: { routes: RouteDoc[] }) {
   const { ref, overflowing } = useHorizontalOverflow<HTMLDivElement>();
   return (
     <div className="relative h-full">
-      <div ref={ref} className="h-full overflow-auto">
+      <ScrollRegion ref={ref} label="Routes" className="h-full">
         <table
           className="w-full border-collapse text-base"
           data-testid="network-routes-table"
@@ -368,7 +369,7 @@ function RoutesTable({ routes }: { routes: RouteDoc[] }) {
             })}
           </tbody>
         </table>
-      </div>
+      </ScrollRegion>
       {overflowing ? (
         <div
           aria-hidden

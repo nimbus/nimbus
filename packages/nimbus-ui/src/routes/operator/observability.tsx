@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { api } from "../../../convex/_generated/api";
 import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
+import { ScrollRegion } from "../../components/scroll-region";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { shortId } from "../../lib/format";
@@ -222,8 +223,9 @@ function LogList({ events }: { events: EventDoc[] | undefined }) {
     );
   }
   return (
-    <div
-      className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface"
+    <ScrollRegion
+      label="Event log"
+      className="min-h-0 flex-1 rounded-md border border-app bg-surface"
       data-testid="admin-observability-logs"
     >
       <ul className="divide-y divide-app">
@@ -248,7 +250,7 @@ function LogList({ events }: { events: EventDoc[] | undefined }) {
           </li>
         ))}
       </ul>
-    </div>
+    </ScrollRegion>
   );
 }
 
