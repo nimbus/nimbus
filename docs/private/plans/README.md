@@ -87,14 +87,13 @@ extension-registry seam before the second concern edits `extensions.rs`.
   The only outgoing workspace edge remains `nimbus-network -> nimbus-core`.
   Concrete effects stay with sandbox, server, KV, machine, proxy, and node.
   Future cluster transport stays in the deferred horizontal-scaling lane.
-- `docs-and-app-verification-reliability-plan.md` - `active` owner for network
-  documentation, stable verifier contracts, plan archival, and fresh-checkout
-  application verification. It keeps source unchanged and uses product-owned
-  ports. It isolates temporary state, emits structured evidence, and runs nine
-  apps with bounded parallelism. It consumes completed network and examples
-  decisions without reopening them. AVR10 completed the source-derived example
-  and operator guidance. AVR11 now owns integrated local, minicloud, repository,
-  review, pull-request, and hosted acceptance.
+- `archive/docs-and-app-verification-reliability-plan.md` - `cleanup candidate,
+  AVR0-AVR11 done`. This is the closing record for source-verified network
+  documentation and hermetic application verification. The shipped lane keeps
+  tracked source bytes unchanged and owns every temporary resource. It consumes
+  product-assigned ports and emits validated JSON and JUnit evidence. It runs
+  all nine applications with bounded parallelism. Final evidence stays in
+  `proof/docs-and-app-verification-reliability/`.
 - `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
   architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
   `SandboxBackend` router/dispatch seam with backend families
