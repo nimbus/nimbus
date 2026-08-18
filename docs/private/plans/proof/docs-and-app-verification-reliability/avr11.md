@@ -1,7 +1,7 @@
 # AVR11 Integrated Acceptance
 
 Date: 2026-08-18
-Status: candidate frozen. PR and hosted acceptance pending.
+Status: PR #277 open. Hosted acceptance in progress.
 
 ## Result
 
@@ -61,8 +61,8 @@ semantic checkpoint, crash cut, digest, or failure rule.
 | AVR11.5 Run repository gates. | Pass. | Final-tree `make ci` exited zero after format, Clippy, deny, Rust, harness, JavaScript, and proof-helper gates. |
 | AVR11.6 Commit and freeze. | Pass. | Candidate commit `056c243bced3798fa34c09e2851728afe5ca45f6` contains the complete acceptance-green AVR8-AVR11 tree. |
 | AVR11.7 Run one Sol review. | Pass. | The full Sol/xhigh/fast review scored 0.98 and produced six accepted findings. The one narrow correction review scored 0.96 and produced two accepted closure findings. Commits `e8fc63489` and `9f3fba2da` close all eight. No further review is due. |
-| AVR11.8 Open PR 3. | Pending. | No PR exists for the AVR8-AVR11 candidate yet. |
-| AVR11.9 Resolve hosted failures. | Pending. | Hosted acceptance starts after PR 3 opens. |
+| AVR11.8 Open PR 3. | Pass. | Implementation PR [#277](https://github.com/nimbus/nimbus/pull/277) opened from candidate checkpoint `f81c6cb7a`. |
+| AVR11.9 Resolve hosted failures. | In progress. | Hosted acceptance is active on PR #277. |
 | AVR11.10 Merge with owner authority. | Pending. | The owner has not yet authorized this future merge. |
 
 ## Behavioral and Repository Evidence
