@@ -42,12 +42,20 @@ const BAR_WIDTHS = ["w-3/4", "w-1/2", "w-2/3", "w-5/12", "w-7/12"] as const;
  *
  * The table itself is `aria-hidden`; the adjacent live region announces the
  * label once instead of N empty rows.
+ *
+ * The placeholder bars are sized in percentages, so they add nothing to a
+ * column's intrinsic width: under auto layout the skeleton's columns are the
+ * widths the header alone asks for. A table whose body is wider than its
+ * header therefore lands its columns somewhere else once the data arrives.
+ * Such a table declares a column plan with `Th`'s `width` and passes `fixed`
+ * here, and both states resolve to the same grid.
  */
 export function SkeletonRows({
   columns,
   head,
   rows = 8,
   rowContentHeight = 22,
+  fixed = false,
   label,
   testid,
   className,
@@ -56,6 +64,12 @@ export function SkeletonRows({
   /** The caller's `<thead>` element, rendered verbatim. */
   head?: ReactNode;
   rows?: number;
+  /**
+   * Lay the placeholder out with `table-fixed`, matching a loaded table that
+   * declares its columns on the header. Pass it wherever the loaded table is
+   * fixed, or the two disagree about where the columns sit.
+   */
+  fixed?: boolean;
   /**
    * Height in pixels of the content box inside each cell.
    *
@@ -76,7 +90,10 @@ export function SkeletonRows({
       <span role="status" className="sr-only">
         {label}
       </span>
-      <table aria-hidden className="w-full border-collapse text-sm">
+      <table
+        aria-hidden
+        className={cn("w-full border-collapse text-sm", fixed && "table-fixed")}
+      >
         {head}
         <tbody className="animate-pulse motion-reduce:animate-none">
           {Array.from({ length: rows }, (_, row) => (

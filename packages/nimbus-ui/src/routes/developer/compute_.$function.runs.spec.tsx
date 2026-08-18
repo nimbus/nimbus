@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -53,6 +53,33 @@ describe("RunsTab loading state", () => {
     const tables = container.querySelectorAll("table");
     expect(tables).toHaveLength(1);
     expect(tables[0].querySelector("table")).toBeNull();
+  });
+
+  it("resolves both states to the same column plan", () => {
+    // The header carries the widths and both states render the header, so the
+    // plan cannot drift; what a test can still catch is one of the two tables
+    // losing `table-fixed`, which silently returns it to content sizing.
+    const plan = (node: HTMLElement) => {
+      const table = node.querySelector("table");
+      return {
+        fixed: table?.className.includes("table-fixed") ?? false,
+        widths: Array.from(node.querySelectorAll("th")).map(
+          (th) => th.style.width,
+        ),
+      };
+    };
+
+    useQueryMock.mockReturnValue(undefined);
+    const loading = plan(render(<RunsTab fn={fn} />).container);
+    cleanup();
+    useQueryMock.mockReturnValue([
+      { _id: "runs:1", status: "ok", durationMs: 4, startedAt: 1 },
+    ]);
+    const loaded = plan(render(<RunsTab fn={fn} />).container);
+
+    expect(loading.widths).toEqual(["29%", "21%", "26%", "24%"]);
+    expect(loaded).toEqual(loading);
+    expect(loaded.fixed).toBe(true);
   });
 
   it("shows the empty state, not skeletons, once an empty result lands", () => {

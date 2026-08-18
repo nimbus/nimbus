@@ -20,14 +20,23 @@ import { cn } from "../lib/cn";
  * property behaves as a minimum. It pins every row to the same 40px dense
  * step whether or not the row carries action buttons, and still lets a row
  * grow when a cell stacks an error under its value.
+ *
+ * `width` declares a column's share of the table under `table-fixed`. Put it
+ * on the header, not the body cells: a table's header component is the one
+ * artefact its skeleton and its loaded state both render, so a column plan
+ * declared there is the same plan in both and the two cannot fall out of
+ * alignment. See `SkeletonRows`' `fixed` prop.
  */
 export function Th({
   children,
   align = "left",
+  width,
   className,
 }: {
   children: ReactNode;
   align?: "left" | "right";
+  /** CSS width for the column, honoured under `table-fixed`. */
+  width?: string;
   className?: string;
 }) {
   return (
@@ -37,6 +46,7 @@ export function Th({
         align === "right" ? "text-right" : "text-left",
         className,
       )}
+      style={width ? { width } : undefined}
     >
       {children}
     </th>

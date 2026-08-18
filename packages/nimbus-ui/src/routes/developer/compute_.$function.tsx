@@ -594,16 +594,25 @@ function LogsTab({ fn }: { fn: FunctionDoc }) {
 }
 
 /**
- * Shared by the loaded table and its skeleton so the two cannot drift apart.
+ * Shared by the loaded table and its skeleton so the two cannot drift apart,
+ * and the one place the column plan is written.
+ *
+ * Runs is the console's only table whose body is wider than its header -- a
+ * mono run id, a status chip -- so it is the only one whose columns landed
+ * somewhere else once the data arrived (measured: Status moved 50.89px at
+ * 1280 and 61.72px at 1440). The shares below are the widths auto layout was
+ * already choosing, to the nearest whole percent, so the loaded table looks
+ * the same and the skeleton now agrees with it. Both states set `table-fixed`
+ * for the plan to take effect.
  */
 function RunsTableHead() {
   return (
     <thead className="text-xs uppercase tracking-[0.14em] text-muted">
       <tr>
-        <Th>Run ID</Th>
-        <Th>Status</Th>
-        <Th>Duration</Th>
-        <Th>Started</Th>
+        <Th width="29%">Run ID</Th>
+        <Th width="21%">Status</Th>
+        <Th width="26%">Duration</Th>
+        <Th width="24%">Started</Th>
       </tr>
     </thead>
   );
@@ -627,7 +636,9 @@ export function RunsTab({ fn }: { fn: FunctionDoc }) {
         data-testid="function-tab-runs"
       >
         <SkeletonRows
+          className="min-w-[420px]"
           columns={4}
+          fixed
           head={<RunsTableHead />}
           label="Loading runs…"
           testid="function-tab-runs-skeleton"
@@ -648,7 +659,7 @@ export function RunsTab({ fn }: { fn: FunctionDoc }) {
       className="h-full overflow-auto px-6 py-4"
       data-testid="function-tab-runs"
     >
-      <table className="w-full border-collapse text-sm">
+      <table className="w-full min-w-[420px] table-fixed border-collapse text-sm">
         <RunsTableHead />
         <tbody>
           {runs.map((run) => (
