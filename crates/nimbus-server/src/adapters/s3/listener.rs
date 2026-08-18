@@ -25,6 +25,7 @@ use nimbus_s3::convex::{
 use nimbus_s3::{NimbusS3, S3ObjectMeta, S3TenantBlobs, S3TenantObjects, S3TenantResolver};
 use nimbus_storage::{
     ObjectConditionOutcome, ObjectExpectedState, ObjectManifest, ObjectMultipartUpload,
+    ObjectUploadConditionOutcome, ObjectUploadExpectedState,
 };
 use s3s::service::S3ServiceBuilder;
 use s3s::{Body, HttpError};
@@ -154,19 +155,28 @@ impl S3ObjectMeta for EngineObjectMeta {
             .await
     }
 
-    async fn put_multipart_upload(&self, upload: ObjectMultipartUpload) -> Result<CommitEntry> {
-        self.0.put_multipart_upload(upload).await
+    async fn put_multipart_upload_conditional(
+        &self,
+        upload: ObjectMultipartUpload,
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome> {
+        self.0
+            .put_multipart_upload_conditional(upload, expected)
+            .await
     }
 
     async fn get_multipart_upload(&self, upload_id: &str) -> Result<Option<ObjectMultipartUpload>> {
         self.0.get_multipart_upload(upload_id.to_string()).await
     }
 
-    async fn delete_multipart_upload(
+    async fn delete_multipart_upload_conditional(
         &self,
         upload_id: &str,
-    ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>> {
-        self.0.delete_multipart_upload(upload_id.to_string()).await
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome> {
+        self.0
+            .delete_multipart_upload_conditional(upload_id.to_string(), expected)
+            .await
     }
 
     async fn list_multipart_uploads(

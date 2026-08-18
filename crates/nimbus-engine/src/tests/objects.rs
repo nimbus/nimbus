@@ -211,10 +211,20 @@ async fn multipart_upload_writes_commit_and_roundtrip() {
     )
     .expect("upload should build");
     let baseline = runtime.durable_head();
-    let commit = meta
-        .put_multipart_upload(upload)
+    let observed = upload.observed_state();
+    let commit = match meta
+        .put_multipart_upload_conditional(
+            upload,
+            vec![nimbus_storage::ObjectUploadExpectedState::Absent],
+        )
         .await
-        .expect("multipart put should commit");
+        .expect("multipart put should commit")
+    {
+        nimbus_storage::ObjectUploadConditionOutcome::Committed { commit, .. } => commit,
+        nimbus_storage::ObjectUploadConditionOutcome::Rejected { .. } => {
+            panic!("a create against an absent upload must not be rejected")
+        }
+    };
     assert_eq!(commit.sequence, SequenceNumber(baseline.0 + 1));
     assert_eq!(
         commit.writes[0].table.as_str(),
@@ -228,11 +238,19 @@ async fn multipart_upload_writes_commit_and_roundtrip() {
         .expect("multipart upload should exist");
     assert_eq!(read_back.key, "big/file.bin");
 
-    let (delete_commit, removed) = meta
-        .delete_multipart_upload("upload-0001".to_string())
+    let (delete_commit, removed) = match meta
+        .delete_multipart_upload_conditional("upload-0001".to_string(), vec![observed])
         .await
         .expect("multipart delete should commit")
-        .expect("multipart delete should find the upload");
+    {
+        nimbus_storage::ObjectUploadConditionOutcome::Committed { commit, previous } => (
+            commit,
+            previous.expect("multipart delete should find the upload"),
+        ),
+        nimbus_storage::ObjectUploadConditionOutcome::Rejected { .. } => {
+            panic!("a delete fenced on the observed revision must not be rejected")
+        }
+    };
     assert_eq!(removed.upload_id, "upload-0001");
     assert_eq!(
         delete_commit.sequence,

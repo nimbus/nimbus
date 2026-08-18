@@ -12,13 +12,14 @@ use nimbus_core::{
 };
 use nimbus_storage::{
     ObjectBlobLayout, ObjectChunkRef, ObjectConditionOutcome, ObjectExpectedState, ObjectManifest,
-    ObjectManifestAttributes, ObjectMultipartUpload,
+    ObjectManifestAttributes, ObjectMultipartUpload, ObjectUploadConditionOutcome,
+    ObjectUploadExpectedState,
 };
 use s3s::auth::{Credentials, SecretKey};
 use s3s::dto::{
-    ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart, CreateMultipartUploadInput, ETag,
-    ETagCondition, GetObjectInput, HeadObjectInput, ListObjectsV2Input, PutObjectInput, Range,
-    StreamingBlob, UploadPartInput,
+    ChecksumAlgorithm, CompleteMultipartUploadInput, CompletedMultipartUpload, CompletedPart,
+    CreateMultipartUploadInput, ETag, ETagCondition, GetObjectInput, HeadObjectInput,
+    ListObjectsV2Input, PutObjectInput, Range, StreamingBlob, UploadPartInput,
 };
 use s3s::{Body, S3, S3ErrorCode, S3Request, S3Result};
 
@@ -114,6 +115,25 @@ impl InMemoryBackend {
     /// rejected condition must not move this.
     fn manifest_commits(&self) -> usize {
         self.inner.manifest_commits.load(Ordering::SeqCst)
+    }
+
+    /// Part numbers the durable upload record holds, in order. Reads the
+    /// backing map directly so the assertion does not depend on the surface
+    /// under test.
+    fn durable_part_numbers(&self, tenant: &TenantId, upload_id: &str) -> Vec<u32> {
+        self.inner
+            .uploads
+            .lock()
+            .unwrap()
+            .get(&(tenant.clone(), upload_id.to_string()))
+            .map(|upload| {
+                upload
+                    .parts
+                    .iter()
+                    .map(|part| part.part_number)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
     }
 
     fn convex_manifest_keys(&self, tenant: &TenantId) -> Vec<String> {
@@ -292,22 +312,49 @@ impl S3ObjectMeta for InMemoryTenantMeta {
         Ok(manifests)
     }
 
-    async fn put_multipart_upload(&self, upload: ObjectMultipartUpload) -> Result<CommitEntry> {
+    async fn put_multipart_upload_conditional(
+        &self,
+        upload: ObjectMultipartUpload,
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome> {
+        // Yields before the decision so a concurrent writer at the same
+        // upload id interleaves here, where a read-then-write surface would
+        // already have lost a part.
+        tokio::task::yield_now().await;
         if self.inner.fail_put_multipart_upload.load(Ordering::SeqCst) {
             return Err(nimbus_core::Error::storage(
                 nimbus_core::StorageErrorKind::Unavailable,
                 "injected put_multipart_upload failure",
             ));
         }
-        self.inner
-            .uploads
-            .lock()
-            .unwrap()
-            .insert((self.tenant.clone(), upload.upload_id.clone()), upload);
-        Ok(commit())
+        // One lock hold covers the read, the decision, and the write, which is
+        // the exclusion the tenant committer actor gives the real path.
+        let mut uploads = self.inner.uploads.lock().unwrap();
+        let slot = (self.tenant.clone(), upload.upload_id.clone());
+        let current = uploads.get(&slot).cloned();
+        if let Some(unmet) = ObjectUploadExpectedState::first_unmet(
+            &expected,
+            current.as_ref().map(|upload| upload.revision),
+        ) {
+            return Ok(ObjectUploadConditionOutcome::Rejected {
+                unmet: unmet.clone(),
+                current,
+            });
+        }
+        let previous = uploads.insert(slot, upload);
+        drop(uploads);
+        Ok(ObjectUploadConditionOutcome::Committed {
+            commit: commit(),
+            previous,
+        })
     }
 
     async fn get_multipart_upload(&self, upload_id: &str) -> Result<Option<ObjectMultipartUpload>> {
+        // Yields so a concurrent caller can observe the same upload image that
+        // this one just read. A read-modify-write that decides outside the
+        // authority loses a part here; one that carries its expected revision
+        // into the write does not.
+        tokio::task::yield_now().await;
         Ok(self
             .inner
             .uploads
@@ -317,17 +364,30 @@ impl S3ObjectMeta for InMemoryTenantMeta {
             .cloned())
     }
 
-    async fn delete_multipart_upload(
+    async fn delete_multipart_upload_conditional(
         &self,
         upload_id: &str,
-    ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>> {
-        Ok(self
-            .inner
-            .uploads
-            .lock()
-            .unwrap()
-            .remove(&(self.tenant.clone(), upload_id.to_string()))
-            .map(|upload| (commit(), upload)))
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome> {
+        tokio::task::yield_now().await;
+        let mut uploads = self.inner.uploads.lock().unwrap();
+        let slot = (self.tenant.clone(), upload_id.to_string());
+        let current = uploads.get(&slot).cloned();
+        if let Some(unmet) = ObjectUploadExpectedState::first_unmet(
+            &expected,
+            current.as_ref().map(|upload| upload.revision),
+        ) {
+            return Ok(ObjectUploadConditionOutcome::Rejected {
+                unmet: unmet.clone(),
+                current,
+            });
+        }
+        let previous = uploads.remove(&slot);
+        drop(uploads);
+        Ok(ObjectUploadConditionOutcome::Committed {
+            commit: commit(),
+            previous,
+        })
     }
 
     async fn list_multipart_uploads(
@@ -395,6 +455,11 @@ fn req<T>(input: T, access_key: &str) -> S3Request<T> {
 
 fn blob(bytes: &'static [u8]) -> StreamingBlob {
     StreamingBlob::from(Body::from(Bytes::from_static(bytes)))
+}
+
+/// Same as [`blob`], for bodies a test computes at runtime.
+fn blob_owned(bytes: Vec<u8>) -> StreamingBlob {
+    StreamingBlob::from(Body::from(Bytes::from(bytes)))
 }
 
 async fn collect(body: StreamingBlob) -> Bytes {
@@ -1671,5 +1736,196 @@ async fn head_object_and_list_objects_v2_never_resolve_blob_plane_state() {
         backend.blob_resolutions(),
         0,
         "ListObjectsV2 must never resolve blob-plane state"
+    );
+}
+
+/// Every `UploadPart` that the service accepts must survive in the durable
+/// upload record. Distinct part numbers do not conflict with each other, so a
+/// concurrent batch must retain all of them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_upload_parts_preserve_all_accepted_parts() {
+    const PARTS: u32 = 8;
+
+    let backend = Arc::new(InMemoryBackend::default());
+    let service = Arc::new(service_with_backend(backend.clone()));
+    let created = service
+        .create_multipart_upload(req(
+            CreateMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: "large/concurrent.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("create multipart should succeed");
+    let upload_id = created.output.upload_id.expect("upload id");
+
+    let mut tasks = Vec::with_capacity(PARTS as usize);
+    for part_number in 1..=PARTS {
+        let service = Arc::clone(&service);
+        let upload_id = upload_id.clone();
+        tasks.push(tokio::spawn(async move {
+            let bytes = format!("part-{part_number:04}").into_bytes();
+            let len = bytes.len() as i64;
+            service
+                .upload_part(req(
+                    UploadPartInput {
+                        bucket: BUCKET.to_string(),
+                        key: "large/concurrent.txt".to_string(),
+                        upload_id,
+                        part_number: part_number as i32,
+                        body: Some(blob_owned(bytes)),
+                        content_length: Some(len),
+                        ..Default::default()
+                    },
+                    ACCESS_KEY_A,
+                ))
+                .await
+                .map(|_| part_number)
+        }));
+    }
+
+    let mut accepted = Vec::new();
+    for task in tasks {
+        if let Ok(part_number) = task.await.expect("upload part task should not panic") {
+            accepted.push(part_number);
+        }
+    }
+    accepted.sort_unstable();
+    assert_eq!(
+        accepted,
+        (1..=PARTS).collect::<Vec<_>>(),
+        "every distinct part number must be accepted"
+    );
+
+    assert_eq!(
+        backend.durable_part_numbers(&tenant("tenant-a"), &upload_id),
+        accepted,
+        "every accepted part must survive in the durable upload record"
+    );
+}
+
+/// A completion or an abort that fenced on an upload image another request
+/// has already advanced must be rejected, and the rejection must leave the
+/// upload row and every accepted part exactly as the winner left them.
+#[tokio::test]
+async fn stale_multipart_fence_is_rejected_without_losing_parts() {
+    let backend = Arc::new(InMemoryBackend::default());
+    let service = service_with_backend(backend.clone());
+    let created = service
+        .create_multipart_upload(req(
+            CreateMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: "large/stale.txt".to_string(),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("create multipart should succeed");
+    let upload_id = created.output.upload_id.expect("upload id");
+
+    for part_number in 1..=2_i32 {
+        service
+            .upload_part(req(
+                UploadPartInput {
+                    bucket: BUCKET.to_string(),
+                    key: "large/stale.txt".to_string(),
+                    upload_id: upload_id.clone(),
+                    part_number,
+                    body: Some(blob_owned(format!("part-{part_number}").into_bytes())),
+                    content_length: Some(6),
+                    ..Default::default()
+                },
+                ACCESS_KEY_A,
+            ))
+            .await
+            .expect("upload part should succeed");
+    }
+
+    let meta = backend.meta(&tenant("tenant-a"));
+    let current = meta
+        .get_multipart_upload(&upload_id)
+        .await
+        .expect("upload read should succeed")
+        .expect("upload should exist");
+    assert_eq!(current.parts.len(), 2);
+    let stale = ObjectUploadExpectedState::AtRevision(current.revision - 1);
+
+    // A stale abort or completion consumes nothing.
+    match meta
+        .delete_multipart_upload_conditional(&upload_id, vec![stale.clone()])
+        .await
+        .expect("a stale delete must decide, not fail")
+    {
+        ObjectUploadConditionOutcome::Rejected { unmet, current } => {
+            assert_eq!(unmet, stale);
+            assert_eq!(
+                current
+                    .expect("the row must survive a rejection")
+                    .parts
+                    .len(),
+                2
+            );
+        }
+        ObjectUploadConditionOutcome::Committed { .. } => {
+            panic!("a delete fenced on a superseded revision must not commit")
+        }
+    }
+
+    // A stale merge does not overwrite the parts the winner published.
+    let mut stale_image = current.clone();
+    stale_image.parts.truncate(1);
+    stale_image.revision = current.revision;
+    match meta
+        .put_multipart_upload_conditional(stale_image, vec![stale.clone()])
+        .await
+        .expect("a stale put must decide, not fail")
+    {
+        ObjectUploadConditionOutcome::Rejected { unmet, .. } => assert_eq!(unmet, stale),
+        ObjectUploadConditionOutcome::Committed { .. } => {
+            panic!("a merge fenced on a superseded revision must not commit")
+        }
+    }
+    assert_eq!(
+        backend.durable_part_numbers(&tenant("tenant-a"), &upload_id),
+        vec![1, 2],
+        "a rejected fence must leave every accepted part in place"
+    );
+
+    // The current image still completes, so the rejection cost nothing.
+    let completed = service
+        .complete_multipart_upload(req(
+            CompleteMultipartUploadInput {
+                bucket: BUCKET.to_string(),
+                key: "large/stale.txt".to_string(),
+                upload_id: upload_id.clone(),
+                multipart_upload: Some(CompletedMultipartUpload {
+                    parts: Some(
+                        current
+                            .parts
+                            .iter()
+                            .map(|part| CompletedPart {
+                                part_number: Some(part.part_number as i32),
+                                e_tag: Some(ETag::Strong(part.etag.clone())),
+                                ..Default::default()
+                            })
+                            .collect(),
+                    ),
+                }),
+                ..Default::default()
+            },
+            ACCESS_KEY_A,
+        ))
+        .await
+        .expect("completion on the current image should succeed");
+    assert!(completed.output.e_tag.is_some());
+    assert!(
+        meta.get_multipart_upload(&upload_id)
+            .await
+            .expect("upload read should succeed")
+            .is_none(),
+        "completion must consume the upload row"
     );
 }

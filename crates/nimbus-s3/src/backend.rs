@@ -5,6 +5,7 @@ use nimbus_blob::BlobStore;
 use nimbus_core::{CommitEntry, Error, Result, TenantId};
 use nimbus_storage::{
     ObjectConditionOutcome, ObjectExpectedState, ObjectManifest, ObjectMultipartUpload,
+    ObjectUploadConditionOutcome, ObjectUploadExpectedState,
 };
 
 /// One tenant's byte-plane accessor plus named-metadata handle, resolved once
@@ -83,12 +84,28 @@ pub trait S3ObjectMeta: Send + Sync + 'static {
         limit: usize,
     ) -> Result<Vec<ObjectManifest>>;
 
-    async fn put_multipart_upload(&self, upload: ObjectMultipartUpload) -> Result<CommitEntry>;
+    /// Writes a multipart-upload row, but only if every clause in `expected`
+    /// holds against the commit authority's own read.
+    ///
+    /// There is no unconditional sibling, for the reason
+    /// [`put_manifest_conditional`](Self::put_manifest_conditional) gives.
+    /// `UploadPart` merges a part into the whole upload record, so an
+    /// unconditional write here does not overwrite one field — it discards
+    /// every part another request committed since this one read the row.
+    async fn put_multipart_upload_conditional(
+        &self,
+        upload: ObjectMultipartUpload,
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome>;
     async fn get_multipart_upload(&self, upload_id: &str) -> Result<Option<ObjectMultipartUpload>>;
-    async fn delete_multipart_upload(
+    /// Removes a multipart-upload row, but only if every clause in `expected`
+    /// holds. Completion and abort each consume an upload they already read,
+    /// so both fence the delete on that read.
+    async fn delete_multipart_upload_conditional(
         &self,
         upload_id: &str,
-    ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>>;
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome>;
     async fn list_multipart_uploads(
         &self,
         bucket: &str,

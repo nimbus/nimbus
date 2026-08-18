@@ -7,8 +7,8 @@ use nimbus_core::{
 };
 use nimbus_storage::{
     OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectConditionOutcome, ObjectExpectedState,
-    ObjectManifest, ObjectMultipartUpload, multipart_upload_document_id,
-    object_manifest_document_id,
+    ObjectManifest, ObjectMultipartUpload, ObjectUploadConditionOutcome, ObjectUploadExpectedState,
+    multipart_upload_document_id, object_manifest_document_id,
 };
 
 use super::Engine;
@@ -88,21 +88,45 @@ enum ObjectMetaWrite {
         bucket: String,
         key: String,
     },
-    PutMultipart(Box<ObjectMultipartUpload>),
+    PutMultipart {
+        upload: Box<ObjectMultipartUpload>,
+        /// Every clause the committer must find true before it assigns a
+        /// sequence. Empty means an unconditional write.
+        expected: Vec<ObjectUploadExpectedState>,
+    },
     DeleteMultipart {
         upload_id: String,
+        expected: Vec<ObjectUploadExpectedState>,
     },
 }
 
+/// The clause list a write carries, tagged by the row concept it addresses.
+///
+/// Manifests are conditioned on an opaque `ETag`, uploads on a revision. Two
+/// concepts, two clause vocabularies, one committer that decides both before
+/// it assigns a sequence.
+enum ObjectMetaCondition<'a> {
+    Manifest(&'a [ObjectExpectedState]),
+    Upload(&'a [ObjectUploadExpectedState]),
+}
+
+/// The first clause that did not hold, tagged the same way.
+enum ObjectMetaUnmet {
+    Manifest(ObjectExpectedState),
+    Upload(ObjectUploadExpectedState),
+}
+
 impl ObjectMetaWrite {
-    /// Expected-state clauses this write carries. Only manifest puts accept
-    /// conditions today; the other variants are unconditional by shape, not
-    /// by a silent default.
-    fn expected_state(&self) -> &[ObjectExpectedState] {
+    /// Expected-state clauses this write carries, in the vocabulary of the
+    /// row it addresses. Manifest deletes are unconditional by shape, not by
+    /// a silent default: `CompleteMultipartUpload` and `DeleteObject` take no
+    /// preconditions on the wire.
+    fn condition(&self) -> ObjectMetaCondition<'_> {
         match self {
-            Self::PutManifest { expected, .. } => expected,
-            Self::DeleteManifest { .. } | Self::PutMultipart(_) | Self::DeleteMultipart { .. } => {
-                &[]
+            Self::PutManifest { expected, .. } => ObjectMetaCondition::Manifest(expected),
+            Self::DeleteManifest { .. } => ObjectMetaCondition::Manifest(&[]),
+            Self::PutMultipart { expected, .. } | Self::DeleteMultipart { expected, .. } => {
+                ObjectMetaCondition::Upload(expected)
             }
         }
     }
@@ -120,11 +144,11 @@ impl ObjectMetaWrite {
                 object_manifest_document_id(bucket, key)?,
                 None,
             )),
-            Self::PutMultipart(upload) => {
+            Self::PutMultipart { upload, .. } => {
                 let document = upload.to_document()?;
                 Ok((document.table.clone(), document.id.clone(), Some(document)))
             }
-            Self::DeleteMultipart { upload_id } => Ok((
+            Self::DeleteMultipart { upload_id, .. } => Ok((
                 TableName::new(OBJECT_MULTIPART_TABLE)?,
                 multipart_upload_document_id(upload_id)?,
                 None,
@@ -144,7 +168,7 @@ enum ObjectMetaWriteOutcome {
     /// An expected-state clause did not hold against the committer's own read.
     /// No sequence consumed, no journal record, no fan-out, nothing written.
     ConditionRejected {
-        unmet: ObjectExpectedState,
+        unmet: ObjectMetaUnmet,
         current: Option<Document>,
     },
 }
@@ -180,6 +204,11 @@ impl TenantObjectMeta {
                 })
             }
             ObjectMetaWriteOutcome::ConditionRejected { unmet, current } => {
+                let ObjectMetaUnmet::Manifest(unmet) = unmet else {
+                    return Err(Error::Internal(
+                        "a manifest write can only be rejected by a manifest clause".to_string(),
+                    ));
+                };
                 Ok(ObjectConditionOutcome::Rejected {
                     unmet,
                     current: current
@@ -264,17 +293,66 @@ impl TenantObjectMeta {
             .await
     }
 
-    pub async fn put_multipart_upload(&self, upload: ObjectMultipartUpload) -> Result<CommitEntry> {
+    /// Writes a multipart-upload row, but only if every clause in `expected`
+    /// holds against the committer's own read of the current row.
+    ///
+    /// `UploadPart` has no conditional headers on the wire, so this is the
+    /// only place a multipart merge can be fenced. The caller states the
+    /// revision it merged onto; the committer decides against its own read,
+    /// before sequence assignment, and the caller reloads and re-merges when
+    /// the row has moved on.
+    ///
+    /// # Errors
+    /// Rejects the write as an internal contract violation when the image's
+    /// revision is not the successor of the revision its clause names. A
+    /// merge that does not advance the revision would let the next writer
+    /// merge onto an image it never observed.
+    pub async fn put_multipart_upload_conditional(
+        &self,
+        upload: ObjectMultipartUpload,
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome> {
+        if let [clause] = expected.as_slice()
+            && upload.revision != clause.successor_revision()
+        {
+            return Err(Error::Internal(format!(
+                "a fenced multipart write must publish revision {}, not {}",
+                clause.successor_revision(),
+                upload.revision
+            )));
+        }
         match self
-            .commit_meta_write(ObjectMetaWrite::PutMultipart(Box::new(upload)))
+            .commit_meta_write(ObjectMetaWrite::PutMultipart {
+                upload: Box::new(upload),
+                expected,
+            })
             .await?
         {
-            ObjectMetaWriteOutcome::Committed { commit, .. } => Ok(commit),
+            ObjectMetaWriteOutcome::Committed { commit, previous } => {
+                Ok(ObjectUploadConditionOutcome::Committed {
+                    commit,
+                    previous: previous
+                        .as_ref()
+                        .map(ObjectMultipartUpload::from_document)
+                        .transpose()?,
+                })
+            }
+            ObjectMetaWriteOutcome::ConditionRejected { unmet, current } => {
+                let ObjectMetaUnmet::Upload(unmet) = unmet else {
+                    return Err(Error::Internal(
+                        "a multipart write can only be rejected by an upload clause".to_string(),
+                    ));
+                };
+                Ok(ObjectUploadConditionOutcome::Rejected {
+                    unmet,
+                    current: current
+                        .as_ref()
+                        .map(ObjectMultipartUpload::from_document)
+                        .transpose()?,
+                })
+            }
             ObjectMetaWriteOutcome::AbsentTarget => Err(Error::Internal(
-                "multipart upload put must always commit".to_string(),
-            )),
-            ObjectMetaWriteOutcome::ConditionRejected { .. } => Err(Error::Internal(
-                "multipart upload put carries no condition and cannot be rejected".to_string(),
+                "multipart upload put must always commit or reject its condition".to_string(),
             )),
         }
     }
@@ -290,12 +368,37 @@ impl TenantObjectMeta {
             .await
     }
 
-    pub async fn delete_multipart_upload(
+    /// Removes a multipart-upload row, but only if every clause in
+    /// `expected` holds against the committer's own read.
+    ///
+    /// `CompleteMultipartUpload` and `AbortMultipartUpload` both consume an
+    /// upload they have already read. Fencing the delete on that read is what
+    /// stops either one from discarding a part that landed in between.
+    ///
+    /// A fenced delete of an absent row is a rejection, not a silent success:
+    /// [`ObjectUploadExpectedState::AtRevision`] does not hold for an absent
+    /// row, so the committer refuses it before sequence assignment.
+    ///
+    /// # Errors
+    /// Fails when the caller passes no clauses. Every multipart delete
+    /// consumes an upload the caller already read, so it always has a
+    /// revision to fence on; a clause-free delete would silently discard
+    /// whatever landed after that read.
+    pub async fn delete_multipart_upload_conditional(
         &self,
         upload_id: String,
-    ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>> {
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome> {
+        if expected.is_empty() {
+            return Err(Error::Internal(
+                "a multipart delete must name the revision it observed".to_string(),
+            ));
+        }
         match self
-            .commit_meta_write(ObjectMetaWrite::DeleteMultipart { upload_id })
+            .commit_meta_write(ObjectMetaWrite::DeleteMultipart {
+                upload_id,
+                expected,
+            })
             .await?
         {
             ObjectMetaWriteOutcome::Committed { commit, previous } => {
@@ -304,15 +407,28 @@ impl TenantObjectMeta {
                         "committed multipart delete must carry the removed document".to_string(),
                     )
                 })?;
-                Ok(Some((
+                Ok(ObjectUploadConditionOutcome::Committed {
                     commit,
-                    ObjectMultipartUpload::from_document(&previous)?,
-                )))
+                    previous: Some(ObjectMultipartUpload::from_document(&previous)?),
+                })
             }
-            ObjectMetaWriteOutcome::AbsentTarget => Ok(None),
-            ObjectMetaWriteOutcome::ConditionRejected { .. } => Err(Error::Internal(
-                "multipart upload delete carries no condition and cannot be rejected".to_string(),
+            ObjectMetaWriteOutcome::AbsentTarget => Err(Error::Internal(
+                "a multipart delete must name the revision it observed".to_string(),
             )),
+            ObjectMetaWriteOutcome::ConditionRejected { unmet, current } => {
+                let ObjectMetaUnmet::Upload(unmet) = unmet else {
+                    return Err(Error::Internal(
+                        "a multipart delete can only be rejected by an upload clause".to_string(),
+                    ));
+                };
+                Ok(ObjectUploadConditionOutcome::Rejected {
+                    unmet,
+                    current: current
+                        .as_ref()
+                        .map(ObjectMultipartUpload::from_document)
+                        .transpose()?,
+                })
+            }
         }
     }
 
@@ -396,7 +512,7 @@ fn commit_object_meta_write_in_actor(
     // Decided here, against the actor's own read, and before any sequence is
     // assigned: a rejected condition leaves no sequence, no journal record,
     // no fan-out, and nothing for the caller to clean up but its own blob.
-    if let Some(unmet) = evaluate_object_condition(write.expected_state(), previous.as_ref())? {
+    if let Some(unmet) = evaluate_object_condition(write.condition(), previous.as_ref())? {
         return Ok(ObjectMetaWriteOutcome::ConditionRejected {
             unmet,
             current: previous,
@@ -500,21 +616,42 @@ fn commit_object_meta_write_in_actor(
 /// Returns the first expected-state clause that does not hold against
 /// `current`, or `None` when every clause holds.
 ///
-/// Only manifest rows carry an `ETag`, so this decodes the current row only
-/// when at least one clause needs it. An empty clause list is an
-/// unconditional write and reads nothing.
+/// Decodes the current row only when at least one clause needs it. An empty
+/// clause list is an unconditional write and reads nothing.
 fn evaluate_object_condition(
-    expected: &[ObjectExpectedState],
+    condition: ObjectMetaCondition<'_>,
     current: Option<&Document>,
-) -> Result<Option<ObjectExpectedState>> {
-    if expected.is_empty() {
-        return Ok(None);
+) -> Result<Option<ObjectMetaUnmet>> {
+    match condition {
+        ObjectMetaCondition::Manifest(expected) => {
+            if expected.is_empty() {
+                return Ok(None);
+            }
+            let current_etag = current
+                .map(ObjectManifest::from_document)
+                .transpose()?
+                .map(|manifest| manifest.etag);
+            Ok(
+                ObjectExpectedState::first_unmet(expected, current_etag.as_deref())
+                    .cloned()
+                    .map(ObjectMetaUnmet::Manifest),
+            )
+        }
+        ObjectMetaCondition::Upload(expected) => {
+            if expected.is_empty() {
+                return Ok(None);
+            }
+            let current_revision = current
+                .map(ObjectMultipartUpload::from_document)
+                .transpose()?
+                .map(|upload| upload.revision);
+            Ok(
+                ObjectUploadExpectedState::first_unmet(expected, current_revision)
+                    .cloned()
+                    .map(ObjectMetaUnmet::Upload),
+            )
+        }
     }
-    let current_etag = current
-        .map(ObjectManifest::from_document)
-        .transpose()?
-        .map(|manifest| manifest.etag);
-    Ok(ObjectExpectedState::first_unmet(expected, current_etag.as_deref()).cloned())
 }
 
 fn begin_object_meta_durable_recovery(
