@@ -45,8 +45,9 @@ function parseTab(value: unknown): AdminObservabilityTab | undefined {
 }
 
 // The sub-drawer is the only Logs/Runs/Events/Errors switch on this surface.
-// Unavailable sub-views carry the "soon" marker in their own label so the
-// dimmed state explains itself without a second, duplicate tab strip.
+// It renders the "coming soon" chip for any item marked `disabled`, so the
+// state explains itself without a second, duplicate tab strip -- and without
+// each caller spelling the marker into its own label.
 const ADMIN_OBSERVABILITY_ITEMS = [
   {
     id: "logs",
@@ -66,7 +67,7 @@ const ADMIN_OBSERVABILITY_ITEMS = [
   },
   {
     id: "events",
-    label: "Events · soon",
+    label: "Events",
     to: "/operator/observability",
     search: { tab: "events" },
     disabled: true,
@@ -74,7 +75,7 @@ const ADMIN_OBSERVABILITY_ITEMS = [
   },
   {
     id: "errors",
-    label: "Errors · soon",
+    label: "Errors",
     to: "/operator/observability",
     search: { tab: "errors" },
     disabled: true,

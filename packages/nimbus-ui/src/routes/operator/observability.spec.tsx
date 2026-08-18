@@ -77,13 +77,18 @@ describe("operator observability sub-view switching", () => {
     );
   });
 
-  it("marks unavailable sub-views in their own label", () => {
+  it("names unavailable sub-views plainly and marks them with `disabled`", () => {
     const disabled = ADMIN_OBSERVABILITY_SUB_DRAWER.items.filter(
       (item) => item.disabled,
     );
-    expect(disabled.map((item) => item.label)).toEqual([
-      "Events · soon",
-      "Errors · soon",
-    ]);
+    // The label is the name of the view, nothing else. The marker used to be
+    // spelled into the label here ("Events · soon"), which put the disabled
+    // state in the one place a screen reader reads as the link text and left
+    // every other caller free to invent its own suffix. The drawer renders the
+    // shared coming-soon chip from `disabled` instead.
+    expect(disabled.map((item) => item.label)).toEqual(["Events", "Errors"]);
+    for (const item of ADMIN_OBSERVABILITY_SUB_DRAWER.items) {
+      expect(item.label).not.toMatch(/soon/i);
+    }
   });
 });

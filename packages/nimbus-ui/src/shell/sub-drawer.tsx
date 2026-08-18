@@ -372,6 +372,51 @@ function SubDrawerStaticList({
     <ul className="flex flex-col gap-px px-2 py-2">
       {items.map((item) => {
         const active = isItemActive(location, item);
+        const row = cn(
+          "flex h-8 items-center gap-2 rounded-md border-l-2 border-transparent px-2 text-sm",
+          item.disabled
+            ? "text-muted"
+            : active
+              ? "bg-surface-2 text-default"
+              : "text-muted hover:bg-surface-2 hover:text-default",
+        );
+        const label = <span className="flex-1 truncate">{item.label}</span>;
+        /* A sub-view that does not exist yet is not a link. Rendering it as
+           one and blocking the mouse with `pointer-events-none` left it in the
+           tab order and still activatable by Enter -- and because the view is
+           unbuilt, the router then dropped the `tab` search param and landed
+           the user on a different view than the one they chose. A span with
+           `aria-disabled` cannot be reached or fired at all, and announces the
+           state rather than only looking dim.
+
+           Same treatment as `DisabledTab` on the observability tab strip and
+           the operator tenant filter: the chip carries the state, not opacity.
+           `opacity-60` composited over `--muted` measures 2.42:1 in warm
+           light and 3.17:1 at its best, so in all six combinations the one
+           label explaining what is coming was the hardest text in the drawer
+           to read. */
+        if (item.disabled) {
+          return (
+            <li key={item.id}>
+              <span
+                aria-disabled="true"
+                data-testid={`sub-drawer-item-${item.id}`}
+                data-active="false"
+                title={`${item.label} — coming soon`}
+                className={cn(row, "cursor-not-allowed")}
+              >
+                {label}
+                <span
+                  aria-hidden
+                  className="inline-flex items-center rounded border border-app bg-surface-2 px-1.5 py-0.5 font-mono text-xs leading-none uppercase tracking-wide text-muted"
+                  data-testid={`sub-drawer-item-${item.id}-coming-soon`}
+                >
+                  coming soon
+                </span>
+              </span>
+            </li>
+          );
+        }
         return (
           <li key={item.id}>
             <Link
@@ -380,19 +425,12 @@ function SubDrawerStaticList({
               aria-current={active ? "page" : undefined}
               data-testid={`sub-drawer-item-${item.id}`}
               data-active={active ? "true" : "false"}
-              className={cn(
-                "flex h-8 items-center gap-2 rounded-md border-l-2 border-transparent px-2 text-sm",
-                item.disabled
-                  ? "pointer-events-none text-muted opacity-60"
-                  : active
-                    ? "bg-surface-2 text-default"
-                    : "text-muted hover:bg-surface-2 hover:text-default",
-              )}
+              className={row}
               style={
                 active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined
               }
             >
-              <span className="flex-1 truncate">{item.label}</span>
+              {label}
               {typeof item.count === "number" ? (
                 <span className="tabular font-mono text-xs text-muted">
                   {item.count}

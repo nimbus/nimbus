@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Box } from "lucide-react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -424,5 +425,80 @@ describe("SubDrawer", () => {
         window.localStorage.getItem("nimbus-ui:sub-drawer-open"),
       ).toBeNull();
     });
+  });
+});
+
+/**
+ * A disabled item points at a sub-view that does not exist yet.
+ *
+ * It used to render as a real `<Link>` dimmed with `pointer-events-none`,
+ * which only guards the mouse: the anchor kept its place in the tab order and
+ * still fired on Enter. And because the target view is unbuilt, the router
+ * dropped the item's `tab` search param and landed on a different view than
+ * the label named -- keyboard users were routed somewhere they did not ask
+ * for, silently.
+ */
+describe("SubDrawer disabled items", () => {
+  const SPEC: SubDrawerSpec = {
+    kind: "static",
+    title: "Observability",
+    items: [
+      { id: "logs", label: "Logs", to: "/operator/observability" },
+      {
+        id: "events",
+        label: "Events",
+        to: "/operator/observability",
+        disabled: true,
+      },
+    ],
+  };
+
+  function renderSpec() {
+    setPathname("/operator/observability");
+    render(
+      <SubDrawerProvider>
+        <Contributor spec={SPEC} />
+        <SubDrawer />
+      </SubDrawerProvider>,
+    );
+  }
+
+  it("is not a link and is not in the tab order", async () => {
+    const user = userEvent.setup();
+    renderSpec();
+    const events = screen.getByTestId("sub-drawer-item-events");
+    const logs = screen.getByTestId("sub-drawer-item-logs");
+
+    expect(events.tagName).not.toBe("A");
+    expect(events).not.toHaveAttribute("href");
+    expect(events).toHaveAttribute("aria-disabled", "true");
+    expect(events).not.toHaveAttribute("tabindex");
+
+    // Tab order, not `focus()`: jsdom happily focuses any element you ask it
+    // to, so only sequential navigation answers the question a keyboard user
+    // is actually asking. Events sits directly after Logs in the list, so it
+    // is the very next stop if it is still a link.
+    logs.focus();
+    await user.tab();
+    expect(document.activeElement).not.toBe(events);
+
+    // The enabled sibling is still a link, so the difference is the disabled
+    // state and not a broken renderer.
+    expect(logs.tagName).toBe("A");
+  });
+
+  it("carries the shared coming-soon chip rather than the label text", () => {
+    renderSpec();
+    const chip = screen.getByTestId("sub-drawer-item-events-coming-soon");
+
+    expect(chip).toHaveTextContent("coming soon");
+    // Hidden from the accessibility tree: `aria-disabled` on the row already
+    // announces the state, so the chip would be a duplicate.
+    expect(chip).toHaveAttribute("aria-hidden");
+    // The label itself stays clean -- no "· soon" suffix baked into the route
+    // that each caller has to remember to write.
+    expect(screen.getByTestId("sub-drawer-item-events")).toHaveTextContent(
+      /^Eventscoming soon$/,
+    );
   });
 });
