@@ -180,6 +180,20 @@ function referenced_report_and_junit_are_authoritative() {
     () => validateSampleEvidence(shortened, report, junit(report), "fixture"),
     /wallDurationMs contradicts its timestamps/u,
   );
+  const shifted = structuredClone(evidence);
+  shifted.startedAt = "2026-08-18T01:00:00.000Z";
+  shifted.completedAt = "2026-08-18T01:00:03.000Z";
+  assert.throws(
+    () => validateSampleEvidence(shifted, report, junit(report), "fixture"),
+    /startedAt is later than its canonical report/u,
+  );
+  const endedEarly = structuredClone(evidence);
+  endedEarly.startedAt = "2026-08-17T23:59:59.000Z";
+  endedEarly.completedAt = "2026-08-18T00:00:02.000Z";
+  assert.throws(
+    () => validateSampleEvidence(endedEarly, report, junit(report), "fixture"),
+    /completedAt is earlier than its canonical report/u,
+  );
 }
 
 const tests = [

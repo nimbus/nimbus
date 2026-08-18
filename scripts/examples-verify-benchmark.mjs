@@ -170,6 +170,14 @@ export function validateSampleEvidence(sample, report, junitText, label = "bench
   const derivedWallDurationMs = Date.parse(sample.completedAt) - Date.parse(sample.startedAt);
   invariant(derivedWallDurationMs >= 0, `${label} timestamps are reversed`);
   invariant(sample.wallDurationMs === derivedWallDurationMs, `${label}.wallDurationMs contradicts its timestamps`);
+  invariant(
+    Date.parse(sample.startedAt) <= Date.parse(report.run.startedAt),
+    `${label}.startedAt is later than its canonical report`,
+  );
+  invariant(
+    Date.parse(sample.completedAt) >= Date.parse(report.run.completedAt),
+    `${label}.completedAt is earlier than its canonical report`,
+  );
   invariant(sample.wallDurationMs >= report.run.durationMs, `${label}.wallDurationMs is shorter than its canonical report`);
   return sample;
 }
