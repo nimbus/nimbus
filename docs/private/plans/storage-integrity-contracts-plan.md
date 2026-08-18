@@ -3,7 +3,7 @@
 Status: `active` | Owner: this plan | Created: 2026-08-18
 Baseline: main @ `8877eaff43a36d9606a1feaa0ab31d0377539d9d`
 Proof root: `proof/storage-integrity-contracts/`
-Next action: SIC1 carries typed object expected-state conditions into the tenant commit authority.
+Next action: SIC2 carries expected-state conditions into multipart metadata writes.
 
 ## Outcome
 
@@ -73,13 +73,20 @@ edits the same seams. Protect unrelated dirty files. Start SIC0 on a fresh
 
 | ID | Classification | Evidence | Owning task |
 |---|---|---|---|
-| F1 | critical / confirmed | S3 preconditions are decided before unconditional metadata put. | SIC1 |
+| F1 | critical / resolved | S3 preconditions are decided before unconditional metadata put. Closed by SIC1: the expected state travels with the write and the committer actor decides it before sequence assignment. | SIC1 |
 | F2 | high / confirmed | Multipart read-modify-write can lose concurrent parts. | SIC2 |
 | F3 | medium / confirmed | U5 covers three composite paths, not direct/internal writers. | SIC3 |
 | F4 | medium / confirmed | Storage and engine duplicate snapshot hashing. Shadow binds only sequence. | SIC4 |
 | F5 | medium / confirmed | Provider guarantees have no complete qualification matrix. | SIC5 |
 | F6 | medium / high confidence | Physical SQLite durability cases are not a named gate. | SIC6 |
 | F7 | deferred / confirmed | Seals and reader floors have no active consumer. | `horizontal-scaling-plan.md` |
+
+## Blockers
+
+| ID | Raised | Blocks | Detail |
+|---|---|---|---|
+| B1 | SIC1 | `make ci` (deny lane only) | RUSTSEC-2026-0258, h2 unbounded empty DATA frames, low severity, against transitive `h2 0.3.27`. `advisories FAILED, bans ok, licenses ok, sources ok`. Pre-existing on `main`: SIC1 changed no manifest and no lockfile. h2 0.3.27 is the newest 0.3.x; the fix lands only in 0.4.16, which needs `hyper` 0.14 → 1.x. `hyper` 0.14 is pinned by `libsql 0.9.30` and by `x509-parser 0.15.1` through the deno fork. That dependency move is outside this campaign. Not silenced with a `deny.toml` ignore. Every other `ci-required` lane runs and is reported per task. |
+| B2 | SIC1 | local `make test-rust-workspace` only | Two host conditions make the local workspace lane report failures that hosted CI does not see, and both must be excluded before a local red is read as a regression. First, `nimbus-cli` machine lifecycle tests are not hermetic: `try_run_lifecycle_command_via_live_server` resolves `LocalServerPaths` from the real host `$TMPDIR/nimbus/server.json`, not from the test's `TempDir`, so a `nimbus` server running on the developer's machine receives the test's lifecycle command. Second, `nimbus-sandbox` and `nimbus-server` process-harness cases carry wall-clock bounds that a fully loaded machine exceeds. Attribution evidence lives in `proof/storage-integrity-contracts/sic1-attribution.txt`. Fixing test hermeticity is outside this campaign's seams. |
 
 ## Decisions
 
@@ -112,6 +119,8 @@ per fixed condition and ends `Summary: N passed, M failed`.
 | 12 | every provider has a complete, non-skipping semantic qualification row | SIC5 |
 | 13 | test-only disk-full, sync/WAL, and process-loss cases preserve the last acknowledged position | SIC6 |
 
+SIC1 corrected `verify.sh`: the original invocations used `cargo test -q`, which puts libtest in terse mode, so no `^test NAME ... ok` line is ever printed and every test condition would have reported a vacuous failure.
+
 SIC0 records a red baseline. SIC1 through SIC5 make conditions 1–12 green in
 order. SIC6 and SIC7 require `Summary: 13 passed, 0 failed`.
 
@@ -120,7 +129,7 @@ order. SIC6 and SIC7 require `Summary: 13 passed, 0 failed`.
 | ID | Task | Status | Evidence |
 |---|---|---|---|
 | SIC0 | Baseline: pin execution HEAD, author the 13-condition verifier red, inventory every writer and current fingerprint consumer, and capture fail-before evidence. No production behavior changes. | `done` | `proof/storage-integrity-contracts/sic0.md`. Verifier `Summary: 0 passed, 13 failed`, exit 1. Both fail-before probes reproduced. `git diff -- crates packages` empty. Work commit `a2f34aec6`. |
-| SIC1 | Carry object expected-state conditions into the tenant commit authority and close concurrent `PutObject` precondition races. | `in_progress` | |
+| SIC1 | Carry object expected-state conditions into the tenant commit authority and close concurrent `PutObject` precondition races. | `done` | `proof/storage-integrity-contracts/sic1.md`. Verifier conditions 1–5 green, `Summary: 5 passed, 8 failed` (6–13 owned by SIC2–SIC6). `nimbus-s3` 23 passed, `nimbus-engine object_meta` 3 passed, `nimbus-storage object_meta` 8 passed. Fail-before reproduced at both seams: S3 admitted 75 of 100 concurrent claimants; the engine probe failed with the decision outside the actor. Every other `ci-required` lane green: runtime 517 passed, docs 0 failed, harness pass, JS 336 passed, proof helpers pass. The 20 workspace-lane failures are host state, attributed in the proof. Work commit `ed3585eec`, proof commit `f24759a8f`. Blockers B1 and B2 recorded. |
 | SIC2 | Apply atomic expected-state updates to multipart metadata and complete condition-failure cleanup and provider parity. | `todo` | |
 | SIC3 | Make cross-cutting commit effects explicit on every client and internal writer without defaults or opaque callbacks. | `todo` | |
 | SIC4 | Consolidate canonical fingerprints into one storage-owned materialized position and propagate it through every materialized artifact consumer. | `todo` | |
@@ -412,3 +421,4 @@ Append rows at the end. This section stays last.
 |---|---|---|---|
 | 2026-08-18 | meta | authored | Proposed plan created from the celld storage review and current Nimbus storage inspection. Baseline `8877eaff43a36d9606a1feaa0ab31d0377539d9d`. No implementation started. |
 | 2026-08-18 | SIC0 | done | Verifier `verify.sh` authored red: `Summary: 0 passed, 13 failed`, exit 1 at `49884476d`. Census in `proof/storage-integrity-contracts/sic0.md` names three client routes, three composite `SqlCommitEffects` sites, eleven non-client writer families, five fingerprint producers, and seven consumer sites. Fail-before: both concurrent `If-None-Match: *` creates accepted; both concurrent `UploadPart` calls accepted with one part lost. Probes removed by saved-copy restore; `git diff -- crates packages` empty. Docs gate PASS. Commit `a2f34aec6`. Docs-only task, so no pull request per repository convention. |
+| 2026-08-18 | SIC1 | done | Conditions now travel with the write. `ObjectExpectedState` and `ObjectConditionOutcome` live in `nimbus-storage/src/traits/object_metadata.rs` with no `Default`. `commit_object_meta_write_in_actor` calls `evaluate_object_condition` against its own read and before `let sequence = SequenceNumber`, so a refused write takes no sequence, no journal record, and no fan-out. `S3ObjectMeta::put_manifest` is replaced by `put_manifest_conditional`; unconditional writes name `put_manifest_unconditional`. `nimbus-s3` keeps only ETag syntax and the RFC 9110 strong/weak reduction. Blob release now consults the authority's current manifest, not a stale pre-read. Fail-before: S3 `left: 75, right: 1`; engine `the admitted claimant must find the key absent`. Verifier `Summary: 5 passed, 8 failed` with 1–5 green. `cargo fmt --all --check` clean, `make clippy` clean. `make ci` fails in the `deny` lane only on pre-existing RUSTSEC-2026-0258 (blocker B1); every other `ci-required` lane green. Work commit `ed3585eec`, proof commit `f24759a8f`. Proof `proof/storage-integrity-contracts/sic1.md`. |
