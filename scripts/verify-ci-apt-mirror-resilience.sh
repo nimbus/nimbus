@@ -30,18 +30,25 @@ bash "${helper}" "${azure_only}"
   fail "Azure-only fixture was not replaced with the canonical archive"
 
 mixed="${fixture_root}/mixed.txt"
-printf '%s\n' \
-  "${archive_mirror}" \
-  "${azure_mirror}/" \
-  "https://example.invalid/ubuntu/" > "${mixed}"
+printf '%s\t%s\n' "${azure_mirror}/" 'priority:1' > "${mixed}"
+printf '%s\t%s\n' "${archive_mirror}" 'priority:2' >> "${mixed}"
+printf '%s\n' "https://example.invalid/ubuntu/" >> "${mixed}"
 bash "${helper}" "${mixed}"
-[[ "$(grep -Fxc "${archive_mirror}" "${mixed}")" == "1" ]] ||
+[[ "$(grep -cF "${archive_mirror}" "${mixed}")" == "1" ]] ||
   fail "canonical archive was not de-duplicated"
+grep -Fq $'https://archive.ubuntu.com/ubuntu/\tpriority:2' "${mixed}" ||
+  fail "canonical archive priority attribute was not preserved"
 grep -Fxq 'https://example.invalid/ubuntu/' "${mixed}" ||
   fail "unrelated mirrors were not preserved"
 if grep -Fq 'azure.archive.ubuntu.com' "${mixed}"; then
   fail "Azure regional mirror remained after failover"
 fi
+
+attributed_only="${fixture_root}/attributed-only.txt"
+printf '%s\t%s\n' "${azure_mirror}/" 'priority:1' > "${attributed_only}"
+bash "${helper}" "${attributed_only}"
+grep -Fq $'https://archive.ubuntu.com/ubuntu/\tpriority:1' "${attributed_only}" ||
+  fail "replacement archive did not preserve the runner mirror priority attribute"
 
 unchanged="${fixture_root}/unchanged.txt"
 unchanged_expected="${fixture_root}/unchanged-expected.txt"

@@ -6,14 +6,22 @@
 set -euo pipefail
 
 mirrors_file="${1:-/etc/apt/apt-mirrors.txt}"
-archive_mirror="${NIMBUS_UBUNTU_ARCHIVE_MIRROR:-https://archive.ubuntu.com/ubuntu/}"
+archive_mirror="https://archive.ubuntu.com/ubuntu/"
 
 if [[ ! -f "${mirrors_file}" ]]; then
   exit 0
 fi
 
-if ! grep -Eq '^https?://azure\.archive\.ubuntu\.com/ubuntu/?$' "${mirrors_file}"; then
+azure_pattern='^https?://azure\.archive\.ubuntu\.com/ubuntu/?([[:space:]].*)?$'
+archive_pattern='^https://archive\.ubuntu\.com/ubuntu/?([[:space:]].*)?$'
+
+if ! grep -Eq "${azure_pattern}" "${mirrors_file}"; then
   exit 0
+fi
+
+archive_present=0
+if grep -Eq "${archive_pattern}" "${mirrors_file}"; then
+  archive_present=1
 fi
 
 tmp_file="$(mktemp "${mirrors_file}.tmp.XXXXXX")"
@@ -22,18 +30,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
-awk -v replacement="${archive_mirror}" '
-  $0 == replacement {
-    if (!replacement_seen) {
+awk -v archive_present="${archive_present}" -v replacement="${archive_mirror}" '
+  /^https:\/\/archive\.ubuntu\.com\/ubuntu\/?([[:space:]].*)?$/ {
+    if (!archive_seen) {
       print
-      replacement_seen = 1
+      archive_seen = 1
     }
     next
   }
-  /^https?:\/\/azure\.archive\.ubuntu\.com\/ubuntu\/?$/ {
-    if (!replacement_seen) {
-      print replacement
-      replacement_seen = 1
+  /^https?:\/\/azure\.archive\.ubuntu\.com\/ubuntu\/?([[:space:]].*)?$/ {
+    if (!archive_present && !archive_seen) {
+      sub(/^https?:\/\/azure\.archive\.ubuntu\.com\/ubuntu\/?/, replacement)
+      print
+      archive_seen = 1
     }
     next
   }
