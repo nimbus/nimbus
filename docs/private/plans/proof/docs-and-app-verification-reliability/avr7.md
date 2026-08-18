@@ -8,8 +8,11 @@ AVR7 is complete in work commit
 `bd2a8a36496275e65672917f4e7d17983feff7a5` and review-correction commit
 `2215a57726a12abc59e475e05e60b949ee1afda2`. Final correction commit
 `27331b1444a6a45096198574710d11620bc6ed87` registers the credential file with
-the same exit owner. The examples runner now has one run lifetime owner and one
-process-group owner. Nimbus owns every listener and port lease.
+the same exit owner. Hosted correction commit
+`9e9482ce87f5f71776526940d9c4ea9c6b06a7b6` closes the CodeQL findings and the
+graceful-settlement race that their rerun exposed. The examples runner now has
+one run lifetime owner and one process-group owner. Nimbus owns every listener
+and port lease.
 
 Each run uses one network-state root. Each case uses separate application,
 data, control, authentication, discovery, audit, log, result, and process
@@ -49,7 +52,7 @@ and uses KILL only after the grace period.
 | Command or check | Result |
 | --- | --- |
 | `node scripts/examples-verify-workspace-test.mjs` | Pass. 9 top-level cases and all 9 preparation fixtures passed. The external-package case replaced a same-version source link with case-local bytes. |
-| `node scripts/examples-verify-lifetime-test.mjs` | Pass. 11/11 groups covered cross-case sentinels, concurrent binds, external binders, process trees, six cuts, cleanup retry, cross-filesystem retention retry, secret-free supervisor argv, artifact retention, post-spawn record failure, and corrupt records. |
+| `node scripts/examples-verify-lifetime-test.mjs` | Pass. 12/12 groups covered cross-case sentinels, concurrent binds, external binders, process trees, bounded graceful exit, six cuts, cleanup retry, cross-filesystem retention retry, secret-free supervisor argv, artifact retention, post-spawn record failure, and corrupt records. |
 | `node scripts/examples-verify-product-lifetime-test.mjs` | Pass. 1/1 real-product concurrency case. Two servers shared one network authority, used distinct endpoints and tokens, shut down cleanly, and released both ports. |
 | `node scripts/examples-verify-runner-fault-test.mjs` | Pass. 7/7: six real-runner cuts plus one credential-deletion retry. Every case was red, retained evidence without credentials, removed discovery and process records, released the observed socket, and left only terminal lease phases. |
 | `bash scripts/examples-verify.sh` | Pass. All 9 applications and 37 smoke assertions passed. The Convex Tasks target-form contract also passed. Source bytes matched and no run artifact remained. |
@@ -59,7 +62,7 @@ and uses KILL only after the grace period.
 | `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-system` | Pass. 85 passed, 0 failed. |
 | `make clippy` | Pass for the complete workspace. Only allowed vendored Brotli warnings appeared. |
 | `cargo fmt --all --check` | Pass. |
-| `bash scripts/examples-verify-contract-test.sh --task AVR7` | Pass. AVRC19-AVRC20 are 2/2 and the lifetime groups are 11/11. |
+| `bash scripts/examples-verify-contract-test.sh --task AVR7` | Pass. AVRC19-AVRC20 are 2/2 and the lifetime groups are 12/12. |
 | `bash scripts/verify-docs-app-verification.sh --through-phase 2` | Pass. AVRC01-AVRC20 are 20/20. |
 | `bash scripts/verify-docs-app-verification.sh --self-test` | Pass. All 24/24 mutations fail closed. |
 | Bash syntax, ShellCheck, and Node syntax | Pass with no diagnostics. |
@@ -87,6 +90,19 @@ for this item.
 | P3: the CLI reference omitted `--control-data-dir`. | Fixed in `2215a5772`. The `start` and `dev` tables now define its default and separate control-state purpose. Public docs gates and the site build pass. |
 | Narrow-review P2: an early exit or failed unlink could retain `smoke.env` with credentials. | Fixed in `27331b144`. The exit owner keeps the path until scrub and removal succeed. It runs before artifact promotion. The `during-smoke` cut proves early-exit scrubbing; an injected first-delete failure proves retry and red status. |
 
+## Hosted security findings
+
+CodeQL check `95575973966` reported four new alerts on PR #276. Commit
+`9e9482ce8` resolves them and the acceptance rerun that followed.
+
+| Alert | Disposition |
+| --- | --- |
+| High: environment-file metadata and bytes used separate path operations. | The supervisor opens the owner-only file once without following links, validates the open handle, and reads through that handle. A linked credential file fails before child spawn. |
+| High: the workspace test checked a path and then read it by path. | The fixture reads links atomically or reads regular bytes through one open handle. |
+| High: the source-byte manifest checked a path and then read it by path. | The manifest reads a link directly or opens a non-link handle, validates the handle, and reads through it. A bounded retry fails closed when the path changes type. |
+| Medium: the product test derives a health URL from discovery bytes. | `readCaseDiscovery` requires the exact child PID, a loopback host, and a non-zero port before the request. A query-specific source annotation records that sanitizer boundary. |
+| Acceptance rerun: `before-server-stop` retained one lease in `withdrawing`. | The shutdown endpoint returned before durable settlement finished, and the process owner signaled too early. The owner now waits up to 10 seconds for natural exit before TERM/KILL fallback. The direct graceful-exit test and all seven runner cases pass. |
+
 ## Rejected or interrupted runs
 
 | Run | Disposition |
@@ -98,9 +114,11 @@ for this item.
 | First structured-review preflight | The scanner found a credential-shaped synthetic MongoDB URI in an unpublished test commit. The fixture now constructs the URL from separate non-secret values, the local candidate history was rebuilt without the literal, and the scanner passed before Sol ran. |
 | Ambient Node.js 26 correction run | The required host preflight refused before application work. The installed Node.js 24 toolchain then passed all nine applications and 37 assertions. |
 
-After diagnosis, the task owner moved the two retained application artifacts
-to the macOS Trash. The Trash keeps the move recoverable. No artifact remained
-under `target/examples-verify-artifacts` at closeout.
+After diagnosis, the task owner moved the retained application artifacts to the
+macOS Trash. This includes the hosted-rerun artifact at
+`/Users/jack/.Trash/nimbus-examples-verify.9flFqc-avr7-hosted`. The Trash keeps
+the move recoverable. No artifact remained under
+`target/examples-verify-artifacts` at closeout.
 
 ## Residual boundary
 

@@ -3,10 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: implementation PR
-[#276](https://github.com/nimbus/nimbus/pull/276) contains the candidate. Verify
-all hosted checks, resolve only evidence-backed failures, and wait for owner
-merge authorization.
+Next action: push hosted-security correction `9e9482ce8` to implementation PR
+[#276](https://github.com/nimbus/nimbus/pull/276). Verify that all four CodeQL
+alerts close and every hosted check passes before owner merge authorization.
 
 ## Outcome
 
@@ -136,7 +135,7 @@ contract records condition ownership, phase counts, and exact commands:
 | AVR4 | Replace in-place app preparation with a validated case manifest and disposable workspaces. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr4.md`. Work commit `827877d06`; AVRC13-AVRC15 3/3; 6/6 behavior tests; nine preparation fixtures; mutations 24/24; 14/14 live assertions across three execution shapes. |
 | AVR5 | Add an explicit Compose-discovery opt-out and delete the tracked-file sideline. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr5.md`. Work commit `02788d24b`; AVRC16-AVRC17 2/2; CLI 1,015 passed and 4 ignored; Clippy; live dev cases 7/7; docs 109 and 17/17. |
 | AVR6 | Reproduce and close, or disprove and remove, the bare-local target workaround. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr6.md`. Work commit `390bcaf27`; AVRC18 1/1; CLI 1,019 passed and 4 ignored; explicit and bare-local live results matched; wrong-silo and invalid-bearer checks failed closed. |
-| AVR7 | Give ports, child processes, temporary roots, logs, and cancellation one fail-closed lifetime owner. | `in_progress` | Work `bd2a8a364`; corrections `2215a5772` and `27331b144`; PR [#276](https://github.com/nimbus/nimbus/pull/276); proof: `proof/docs-and-app-verification-reliability/avr7.md`. Lifetime 11/11; product 1/1; six cuts plus credential cleanup retry 7/7; all nine apps and 37 assertions; phase 20/20; mutations 24/24. Hosted checks, merge, and reconciliation remain. |
+| AVR7 | Give ports, child processes, temporary roots, logs, and cancellation one fail-closed lifetime owner. | `in_progress` | Work `bd2a8a364`; review corrections `2215a5772`, `27331b144`; hosted correction `9e9482ce8`; PR [#276](https://github.com/nimbus/nimbus/pull/276); proof: `proof/docs-and-app-verification-reliability/avr7.md`. Lifetime 12/12; product 1/1; six cuts plus credential cleanup retry 7/7; all nine apps and 37 assertions; phase 20/20; mutations 24/24. Hosted checks, merge, and reconciliation remain. |
 | AVR8 | Emit canonical JSON and JUnit evidence with hashes, timings, assertions, and cleanup state. | `todo` | |
 | AVR9 | Add bounded parallel execution and meet the measured wall-clock target without coverage loss. | `todo` | |
 | AVR10 | Correct all example documentation, comments, counts, update semantics, and operator instructions. | `todo` | |
@@ -477,3 +476,4 @@ Append rows at the end. This section stays last.
 | 2026-08-17 | AVR7 | review correction candidate | Sol/xhigh/fast review `0.98` found three accepted defects. Commit `2215a5772` removes credentials from supervisor argv, makes EXDEV artifact retention retryable, and documents the control-data root. Lifetime 11/11, nine live apps and 37 assertions, phase 20/20, mutations 24/24, docs 109 and 17/17, and site build 110 are green. One narrow correction review is next. |
 | 2026-08-17 | AVR7 | review complete | The one narrow Sol/xhigh/fast correction review scored `0.90`. It accepted the three original corrections and found one introduced credential-file cleanup defect. Commit `27331b144` registers the file with the exit owner, scrubs before retention, and retries deletion. Six cuts plus cleanup retry pass 7/7; all nine apps and 37 assertions, AVR7 2/2, phase 20/20, and mutations 24/24 pass. No further review is due. |
 | 2026-08-17 | AVR7 | PR opened | Implementation PR [#276](https://github.com/nimbus/nimbus/pull/276) contains the frozen AVR3-AVR7 candidate. Hosted checks, owner-authorized merge, and current-main reconciliation remain. |
+| 2026-08-17 | AVR7 | hosted correction | CodeQL check `95575973966` found three file-use races and one loopback-test data-flow alert. Commit `9e9482ce8` uses stable open handles, rejects linked credential files, records the validated loopback suppression, and gives graceful server exit a bounded pre-signal window. Lifetime 12/12, product 1/1, runner 7/7, all nine apps and 37 assertions, phase 20/20, and mutations 24/24 pass. |
