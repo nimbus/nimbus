@@ -12,7 +12,18 @@ import { formatDuration, shortId } from "../../../lib/format";
 import { FilterInput, FilterSelect } from "./-filters";
 import type { ObservabilitySearch, RunDoc } from "./-types";
 
-const RUN_STATUSES = ["ok", "error", "running", "queued"] as const;
+/**
+ * Every value the server can write into `runs.status`.
+ *
+ * A run row is only written *after* the invocation returns — the status is
+ * `result.is_ok() ? "ok" : "error"` at the four Convex function handlers
+ * (crates/nimbus-server/src/adapters/convex/handlers/function_routes/
+ * {queries,mutations,actions}.rs), through the single writer
+ * `record_run_async` (crates/nimbus-system/src/records/run.rs). There is no
+ * in-flight row, so `running` and `queued` were filter options that could
+ * only ever return "No runs".
+ */
+export const RUN_STATUSES = ["ok", "error"] as const;
 
 export function RunsTab({ search }: { search: ObservabilitySearch }) {
   const navigate = useNavigate({ from: "/developer/observability" });

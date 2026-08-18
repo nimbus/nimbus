@@ -225,7 +225,11 @@ describe("states the server can write into a record", () => {
       "crates/nimbus-machine/src/state.rs",
       ["uninitialized", "stopped", "starting", "running", "failed"],
     ],
-    ["runs", "crates/nimbus-system/src/records/scheduler.rs", ["ok", "error"]],
+    [
+      "runs",
+      "convex/handlers/function_routes/{queries,mutations,actions}.rs",
+      ["ok", "error"],
+    ],
   ];
 
   for (const [subject, source, states] of VOCABULARIES) {
