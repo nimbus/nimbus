@@ -1,0 +1,17 @@
+storage integrity contracts verification
+========================================
+  FAIL  1. typed object condition types  [ObjectExpectedState/ObjectConditionOutcome absent from crates/nimbus-storage/src/traits/object_metadata.rs]
+  FAIL  2. condition crosses S3ObjectMeta  [put_manifest_conditional missing from crates/nimbus-s3/src/backend.rs, or crates/nimbus-s3/src/service.rs still calls verify_write_preconditions]
+  FAIL  3. actor decides before sequencing  [evaluate_object_condition absent from, or ordered after sequence assignment in, crates/nimbus-engine/src/engine/objects.rs]
+  FAIL  4. sequential + concurrent conditional probes  [conditional_put_probe_create_reject_update_reject_stale=0 conditional_put_if_none_match_is_linearizable=0 exit=0]
+  FAIL  5. rejection has no commit or blob effect  [no test matching 'rejected_object_condition_has_no_commit_or_blob_effect' ran in nimbus-s3 (vacuous filter)]
+  FAIL  6. concurrent multipart writes preserve every accepted part  [no test matching 'concurrent_upload_parts_preserve_all_accepted_parts' ran in nimbus-s3 (vacuous filter)]
+  FAIL  7. all storage writers are inventoried  [no test matching 'all_storage_writers_declare_their_commit_effects' ran in nimbus-storage (vacuous filter)]
+  FAIL  8. an omitted effect fails the ownership gate  [no test matching 'omitted_commit_effect_fails_the_ownership_matrix' ran in nimbus-storage (vacuous filter)]
+  FAIL  9. one canonical digest  [MaterializedPosition missing from crates/nimbus-storage/src/store/journal_snapshot.rs, or the engine canonicalizer still exists in crates/nimbus-engine/src/verification.rs]
+  FAIL  10. divergence + ordering tests  [divergence=0 ordering=0 exit=0]
+  FAIL  11. materialized consumers bind the position  [shadow=0 pitr=0 exits=0/0]
+  FAIL  12. provider qualification matrix is complete  [no test matching 'provider_contract_matrix_is_complete' ran in nimbus-storage (vacuous filter)]
+  FAIL  13. physical SQLite durability faults  [0/4 cases passed, exit=0]
+========================================
+Summary: 0 passed, 13 failed
