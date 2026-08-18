@@ -11,7 +11,7 @@ vi.mock("../../../hooks/use-staleness", () => ({
   }),
 }));
 
-import { ServerInfoSection } from "./server-info";
+import { ServerInfoSection } from "./-server-info";
 
 const status = { details: { listenAddress: "127.0.0.1:3210" } };
 

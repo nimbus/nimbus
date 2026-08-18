@@ -43,7 +43,14 @@
         "stdioContract": false
       },
       "surfaces": ["native-http", "websocket"],
-      "updateSemantics": "push"
+      "updateSemantics": "push",
+      "expectedAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ]
     },
     {
       "name": "nimbus/agent-chat",
@@ -86,7 +93,13 @@
         "stdioContract": false
       },
       "surfaces": ["convex-http", "scheduler", "websocket"],
-      "updateSemantics": "push"
+      "updateSemantics": "push",
+      "expectedAnchors": [
+        "agent-chat.converse",
+        "agent-chat.remember",
+        "agent-chat.recall",
+        "agent-chat.schedule"
+      ]
     },
     {
       "name": "nimbus/agent-worker",
@@ -123,7 +136,11 @@
         "stdioContract": false
       },
       "surfaces": ["convex-http", "scheduler", "websocket"],
-      "updateSemantics": "push"
+      "updateSemantics": "push",
+      "expectedAnchors": [
+        "agent-worker.enqueue",
+        "agent-worker.schedule"
+      ]
     },
     {
       "name": "convex/tasks",
@@ -166,7 +183,14 @@
         "stdioContract": true
       },
       "surfaces": ["convex-http", "stdio-run", "websocket"],
-      "updateSemantics": "push"
+      "updateSemantics": "push",
+      "expectedAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ]
     },
     {
       "name": "convex/runtimes",
@@ -207,7 +231,13 @@
         "stdioContract": false
       },
       "surfaces": ["convex-http", "node-runtime", "v8-runtime"],
-      "updateSemantics": "request-response"
+      "updateSemantics": "request-response",
+      "expectedAnchors": [
+        "digests.hashWithDefaultRuntime",
+        "nodeDigests.hashWithNodeRuntime",
+        "digests.list",
+        "shareIds.create"
+      ]
     },
     {
       "name": "firebase/tasks",
@@ -240,7 +270,14 @@
         "stdioContract": false
       },
       "surfaces": ["firestore-rest", "websocket"],
-      "updateSemantics": "push"
+      "updateSemantics": "push",
+      "expectedAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ]
     },
     {
       "name": "mongodb/tasks",
@@ -268,7 +305,14 @@
         "stdioContract": false
       },
       "surfaces": ["mongodb-wire"],
-      "updateSemantics": "polling"
+      "updateSemantics": "polling",
+      "expectedAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ]
     },
     {
       "name": "dynamodb/tasks",
@@ -297,7 +341,14 @@
         "stdioContract": false
       },
       "surfaces": ["dynamodb-wire"],
-      "updateSemantics": "polling"
+      "updateSemantics": "polling",
+      "expectedAnchors": [
+        "tasks.create",
+        "tasks.list",
+        "tasks.toggle",
+        "tasks.delete",
+        "tasks.live-update"
+      ]
     },
     {
       "name": "cloud-functions/tasks",
@@ -329,7 +380,11 @@
         "stdioContract": false
       },
       "surfaces": ["cloud-functions-http", "scheduler"],
-      "updateSemantics": "polling"
+      "updateSemantics": "polling",
+      "expectedAnchors": [
+        "tasks.create-triggers-derived-write",
+        "cloud-functions.http-handler-response"
+      ]
     }
   ]
 }

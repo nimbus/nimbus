@@ -69,8 +69,8 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-import { Route } from "./tenants";
 import { routeComponent, routeLoader } from "../../test/route-internals";
+import { Route } from "./tenants";
 
 type LoaderResult =
   | { kind: "ok"; tenants: string[]; tables: unknown[] }

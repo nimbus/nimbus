@@ -42,16 +42,52 @@ single server, or a cluster — the resource kind is invisible to the command.
 Each adapter directory has its own `README.md` explaining the surface, listing
 its apps, and stating exactly which of the surface's features it supports.
 
-**The shared `tasks` example.** Every adapter directory above has a `tasks/`
-app implementing the shared [`tasks` spec](specs/tasks.md) for its supported
-subset, each with a smoke script that asserts the spec's flow anchors. Five of
-the six verify fully green against a live server today; the Convex app's smoke
-is partially verified — `tasks.create`/`tasks.list` PASS anonymously, while
-`tasks.toggle`/`tasks.delete` are blocked by pre-existing, unrelated
-`nimbus dev` runtime bugs (not this app, not a gate) tracked separately (see
-[`convex/README.md`](convex/README.md)). The per-surface demos that predate
-`tasks` (the Convex apps' `messages` collection, and so on) are left in place
-alongside it — see each adapter's `README.md` for its full app list.
+## Application verification
+
+The repository manifest defines 9 application cases and 37 smoke assertions.
+All 9 pass against a real Nimbus binary. The runner uses the
+following update semantics:
+
+| Case | Update mode | Meaning |
+| --- | --- | --- |
+| `nimbus/tasks` | `push` | A WebSocket subscription receives the change. |
+| `nimbus/agent-chat` | `push` | A live subscription receives scheduled work. |
+| `nimbus/agent-worker` | `push` | A live subscription receives worker progress. |
+| `convex/tasks` | `push` | A reactive query receives the change. |
+| `convex/runtimes` | `request-response` | The case compares direct function results. |
+| `firebase/tasks` | `push` | Firestore `onSnapshot` receives the change. |
+| `mongodb/tasks` | `polling` | Repeated reads observe the change. |
+| `dynamodb/tasks` | `polling` | Repeated scans observe the change. |
+| `cloud-functions/tasks` | `polling` | Repeated reads observe the derived trigger write. |
+
+`push` proves server-delivered change notification. `polling` proves eventual
+visibility through repeated reads and does not claim subscription support.
+`request-response` has no asynchronous update contract.
+
+Run the complete lane with a supported Node.js version (`>=22 <25`). Nimbus
+tests Node.js 22 and 24:
+
+```bash
+make examples-verify
+NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL=5 make examples-verify
+NIMBUS_EXAMPLES_VERIFY_ONLY=convex/tasks make examples-verify
+```
+
+The default is one worker for serial diagnosis. Set
+`NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL` from 1 through 9 for bounded parallel
+work. Each case gets an isolated workspace and operator-state roots. Nimbus
+providers assign its ports. The runner fails if source bytes change or cleanup
+does not finish.
+
+Each run writes `report.json` and `junit.xml` under
+`target/examples-verify-results/<run-id>/`. On failure, stderr names one
+retained diagnostic artifact with case logs and cleanup state. The runner
+removes credentials before retention. Do not use Git reset, clean, or checkout
+commands to recover from a failed test.
+
+Every adapter directory above has a `tasks/` app for its supported subset of
+the shared [`tasks` spec](specs/tasks.md). The per-surface demos remain beside
+those apps. Each adapter README lists its complete set.
 
 Run these examples in place, from a checkout of this repository. Copy-out
 behavior varies by app until the `nimbus init --example` scaffolder ships:
@@ -71,7 +107,7 @@ an unresolved dependency. Read the warning in
 Apps that implement the same canonical app (for example `tasks`) share one
 behavior spec under [`specs/`](specs/): the schema, the flows, and the
 observable assertions each adapter's app is checked against. The spec is the
-contract; each adapter directory says which parts of it that surface supports.
+contract. Each adapter directory says which parts of it that surface supports.
 
 ## Provisioning caveat
 

@@ -5,8 +5,8 @@ import {
   type StaticSubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
-import { LogsTab } from "./observability/logs";
-import { RunsTab } from "./observability/runs";
+import { LogsTab } from "./observability/-logs";
+import { RunsTab } from "./observability/-runs";
 import {
   ACTIVE_OBSERVABILITY_TABS,
   type ActiveObservabilityTab,
@@ -16,7 +16,7 @@ import {
   parseBool,
   parseString,
   parseTab,
-} from "./observability/types";
+} from "./observability/-types";
 
 export const Route = createFileRoute("/developer/observability")({
   validateSearch: (search: Record<string, unknown>): ObservabilitySearch => ({
@@ -61,7 +61,7 @@ export const OBSERVABILITY_SUB_DRAWER = {
   ],
 } as const satisfies StaticSubDrawerSpec<ObservabilityTab>;
 
-export type { ObservabilityTab } from "./observability/types";
+export type { ObservabilityTab } from "./observability/-types";
 
 function ObservabilityPage() {
   useContributeSubDrawer(OBSERVABILITY_SUB_DRAWER);

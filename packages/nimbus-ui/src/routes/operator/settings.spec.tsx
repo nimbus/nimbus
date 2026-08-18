@@ -29,23 +29,23 @@ vi.mock("../../shell/sub-drawer", () => ({
 vi.mock("../../components/appearance-section", () => ({
   AppearanceSection: () => <div data-testid="stub-appearance" />,
 }));
-vi.mock("./settings/configuration", () => ({
+vi.mock("./settings/-configuration", () => ({
   ConfigurationSection: () => <div data-testid="stub-configuration" />,
 }));
-vi.mock("./settings/danger-zone", () => ({
+vi.mock("./settings/-danger-zone", () => ({
   DangerZoneSection: () => <div data-testid="stub-danger-zone" />,
 }));
-vi.mock("./settings/deploys", () => ({
+vi.mock("./settings/-deploys", () => ({
   DeploysSection: () => <div data-testid="stub-deploys" />,
 }));
-vi.mock("./settings/integrations", () => ({
+vi.mock("./settings/-integrations", () => ({
   IntegrationsSection: () => <div data-testid="stub-integrations" />,
 }));
-vi.mock("./settings/server-info", () => ({
+vi.mock("./settings/-server-info", () => ({
   ServerInfoSection: () => <div data-testid="stub-server-info" />,
   TenantHeaderStrip: () => <div data-testid="stub-tenant-header" />,
 }));
-vi.mock("./settings/hooks", () => ({
+vi.mock("./settings/-hooks", () => ({
   useEncryptionStatus: () => undefined,
   useLicenseSnapshot: () => undefined,
   useRuntimeDiagnostics: () => undefined,
@@ -53,7 +53,7 @@ vi.mock("./settings/hooks", () => ({
 
 import { routeComponent } from "../../test/route-internals";
 import { parseSettingsSection, Route, type SettingsSection } from "./settings";
-import { ADMIN_SETTINGS_SUB_DRAWER } from "./settings/sub-drawer";
+import { ADMIN_SETTINGS_SUB_DRAWER } from "./settings/-sub-drawer";
 
 const SettingsPage = routeComponent(Route);
 

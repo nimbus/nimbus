@@ -279,6 +279,7 @@ export async function finalizeRunContext(run, { runStatus, cleanupStatus }) {
   if (cleanupStatus !== 0) {
     return {
       status: cleanupStatus,
+      cleanupStatus: "failed",
       retainedPath: run.runRoot,
       reason: "cleanup failure retained the original run root",
     };
@@ -287,15 +288,17 @@ export async function finalizeRunContext(run, { runStatus, cleanupStatus }) {
     if (runStatus !== 0) {
       return {
         status: runStatus,
+        cleanupStatus: "passed",
         retainedPath: await moveToArtifacts(run),
         reason: "run failure retained diagnostic artifacts",
       };
     }
     await fs.rm(run.runRoot, { recursive: true });
-    return { status: 0, retainedPath: null, reason: "run resources removed" };
+    return { status: 0, cleanupStatus: "passed", retainedPath: null, reason: "run resources removed" };
   } catch (error) {
     return {
       status: 1,
+      cleanupStatus: "failed",
       retainedPath: run.runRoot,
       reason: `cleanup failure retained the original run root: ${error.message}`,
     };
@@ -377,6 +380,7 @@ async function main(args) {
       runStatus: Number(option(args, "--run-status")),
       cleanupStatus: Number(option(args, "--cleanup-status")),
     });
+    console.log(JSON.stringify(result));
     if (result.retainedPath) console.error(`${result.reason}: ${result.retainedPath}`);
     process.exitCode = result.status;
     return;

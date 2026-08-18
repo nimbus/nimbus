@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { PageSection } from "./primitives";
+import { PageSection } from "./-primitives";
 
 describe("PageSection", () => {
   it("separates with a header rule instead of a decorative card", () => {

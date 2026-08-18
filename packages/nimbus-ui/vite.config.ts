@@ -3,7 +3,10 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 
-import { ROUTE_FILE_IGNORE_PATTERN } from "./scripts/route-ignore-pattern.mjs";
+import {
+  ROUTE_FILE_IGNORE_PATTERN,
+  ROUTE_FILE_IGNORE_PREFIX,
+} from "./scripts/route-ignore-pattern.mjs";
 
 const proxyTarget = process.env.NIMBUS_UI_PROXY;
 
@@ -17,6 +20,7 @@ export default defineConfig({
       autoCodeSplitting: true,
       routesDirectory: "src/routes",
       generatedRouteTree: "src/route-tree.gen.ts",
+      routeFileIgnorePrefix: ROUTE_FILE_IGNORE_PREFIX,
       routeFileIgnorePattern: ROUTE_FILE_IGNORE_PATTERN,
     }),
     react(),

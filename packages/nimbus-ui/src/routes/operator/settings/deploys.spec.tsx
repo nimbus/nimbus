@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { DeploysSection } from "./deploys";
+import { DeploysSection } from "./-deploys";
 
 describe("DeploysSection copy", () => {
   // The section description was authored as markdown and dropped into a text

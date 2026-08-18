@@ -26,8 +26,8 @@ vi.mock("@nimbus/nimbus/react", () => ({
   useQuery: (..._args: unknown[]) => useQueryMock(),
 }));
 
-import { LogsTab } from "./logs";
-import type { EventDoc } from "./types";
+import { LogsTab } from "./-logs";
+import type { EventDoc } from "./-types";
 
 const events: EventDoc[] = [
   {

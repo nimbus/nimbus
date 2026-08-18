@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
 import { useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
 import { CategoryChip } from "../../components/category-chip";
@@ -454,10 +454,7 @@ function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
         <h2 className="text-xs uppercase tracking-[0.14em] text-muted">
           Recent events
         </h2>
-        <Link
-          to="/developer/observability"
-          className="text-xs link-inline"
-        >
+        <Link to="/developer/observability" className="text-xs link-inline">
           View all
         </Link>
       </header>
@@ -613,10 +610,7 @@ function RecentRuns({ runs }: { runs: LoadingValue<AnyDoc[]> }) {
         <h2 className="text-xs uppercase tracking-[0.14em] text-muted">
           Recent runs
         </h2>
-        <Link
-          to="/developer/observability"
-          className="text-xs link-inline"
-        >
+        <Link to="/developer/observability" className="text-xs link-inline">
           View all
         </Link>
       </header>

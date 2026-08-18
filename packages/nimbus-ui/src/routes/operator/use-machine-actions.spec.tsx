@@ -6,7 +6,7 @@ import {
   actionsForState,
   BRANCHED_MACHINE_STATES,
   OPTIMISTIC_STATES,
-} from "./use-machine-actions";
+} from "./-use-machine-actions";
 
 // The machines table renders `<StateChip state={optimisticState} />`, where
 // `optimisticState` is either a real machine state or one this hook invents

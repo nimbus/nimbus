@@ -5,7 +5,7 @@ vi.mock("sonner", () => ({
   toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }),
 }));
 
-import { DangerZoneSection } from "./danger-zone";
+import { DangerZoneSection } from "./-danger-zone";
 
 describe("DangerZoneSection copy", () => {
   // A placeholder is an HTML attribute, so it cannot hold a <code> element.

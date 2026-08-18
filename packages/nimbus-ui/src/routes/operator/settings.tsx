@@ -6,23 +6,23 @@ import { AppearanceSection } from "../../components/appearance-section";
 import { EmptyState } from "../../components/empty-state";
 import { PageHeader } from "../../components/page-header";
 import { useContributeSubDrawer } from "../../shell/sub-drawer";
-import { ConfigurationSection } from "./settings/configuration";
-import { DangerZoneSection } from "./settings/danger-zone";
-import { DeploysSection } from "./settings/deploys";
+import { ConfigurationSection } from "./settings/-configuration";
+import { DangerZoneSection } from "./settings/-danger-zone";
+import { DeploysSection } from "./settings/-deploys";
 import {
   useEncryptionStatus,
   useLicenseSnapshot,
   useRuntimeDiagnostics,
-} from "./settings/hooks";
-import { IntegrationsSection } from "./settings/integrations";
-import { ServerInfoSection, TenantHeaderStrip } from "./settings/server-info";
-import { ADMIN_SETTINGS_SUB_DRAWER } from "./settings/sub-drawer";
+} from "./settings/-hooks";
+import { IntegrationsSection } from "./settings/-integrations";
+import { ServerInfoSection, TenantHeaderStrip } from "./settings/-server-info";
+import { ADMIN_SETTINGS_SUB_DRAWER } from "./settings/-sub-drawer";
 import type {
   AdapterCapabilityDoc,
   BundleDoc,
   FunctionDoc,
   SystemStatusDoc,
-} from "./settings/types";
+} from "./settings/-types";
 
 // The sub-drawer's seven sub-pages are the section space: the route validates
 // exactly the ids the menu can produce. `settings.spec.tsx` asserts the two
