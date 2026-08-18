@@ -16,8 +16,8 @@ import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
 import { cn } from "../../../lib/cn";
 import { shortId } from "../../../lib/format";
-import { FilterInput, FilterSelect } from "./_filters";
-import type { EventDoc, ObservabilitySearch } from "./types";
+import { FilterInput, FilterSelect } from "./-filters";
+import type { EventDoc, ObservabilitySearch } from "./-types";
 
 const LEVELS = ["error", "warn", "info", "debug", "trace"] as const;
 

@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
 import { machines } from "../../lib/api-mutations";
-import type { MachineDoc } from "./machine-types";
+import type { MachineDoc } from "./-machine-types";
 
 export type LifecycleAction = "start" | "stop" | "restart" | "delete";
 

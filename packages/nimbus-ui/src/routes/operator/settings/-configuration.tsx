@@ -1,13 +1,13 @@
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
 import type { LoadingValue } from "../../../shell/loading-value";
-import { Definition, DefinitionList, SectionCard } from "./primitives";
+import { Definition, DefinitionList, SectionCard } from "./-primitives";
 import type {
   LicenseSnapshot,
   RuntimeDiagnostics,
   RuntimeLaneDiagnostics,
   SystemStatusDoc,
-} from "./types";
+} from "./-types";
 
 export function ConfigurationSection({
   diagnostics,

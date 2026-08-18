@@ -5,12 +5,12 @@ import { RelativeTime, Uptime } from "../../../components/time";
 import { UpgradePopover } from "../../../components/upgrade-popover";
 import { useStalenessContext } from "../../../hooks/use-staleness";
 import type { LoadingValue } from "../../../shell/loading-value";
-import { Cell, Definition, DefinitionList, SectionCard } from "./primitives";
+import { Cell, Definition, DefinitionList, SectionCard } from "./-primitives";
 import type {
   EncryptionStatus,
   LicenseSnapshot,
   SystemStatusDoc,
-} from "./types";
+} from "./-types";
 
 export function TenantHeaderStrip({
   status,

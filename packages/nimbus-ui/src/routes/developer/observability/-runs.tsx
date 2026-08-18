@@ -8,8 +8,8 @@ import { StateChip } from "../../../components/state-chip";
 import { Td, Th } from "../../../components/data-table";
 import { RelativeTime } from "../../../components/time";
 import { formatDuration, shortId } from "../../../lib/format";
-import { FilterInput, FilterSelect } from "./_filters";
-import type { ObservabilitySearch, RunDoc } from "./types";
+import { FilterInput, FilterSelect } from "./-filters";
+import type { ObservabilitySearch, RunDoc } from "./-types";
 
 const RUN_STATUSES = ["ok", "error", "running", "queued"] as const;
 

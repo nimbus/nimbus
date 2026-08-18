@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { SectionCard } from "./primitives";
-import type { AdapterCapabilityDoc } from "./types";
+import { SectionCard } from "./-primitives";
+import type { AdapterCapabilityDoc } from "./-types";
 
 const ADAPTERS = [
   { id: "convex", label: "Convex" },

@@ -4,7 +4,7 @@ import type {
   EncryptionStatus,
   LicenseSnapshot,
   RuntimeDiagnostics,
-} from "./types";
+} from "./-types";
 
 // The settings page's three one-shot debug reads. Each is a `useApiRead` over
 // its `/debug/*` endpoint, reporting the console's shared `LoadingValue<T>`.

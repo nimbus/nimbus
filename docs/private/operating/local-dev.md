@@ -93,7 +93,8 @@ Do not recover a test run with `git reset`, `git clean`, or checkout-based
 restoration. A test owns and removes its temporary state. If it cannot clean
 up, it must fail and retain a named diagnostic artifact.
 
-The current application verification lane contains known source-mutation and
-resource-lifetime gaps. [`../plans/README.md`](../plans/README.md) routes the
-active owner and acceptance criteria. Do not copy its transitional workarounds
-into new scripts.
+The application verification lane enforces source-byte preservation, isolated
+case state, product-assigned listener leases, complete cleanup, and structured
+results. See [`verification.md`](verification.md) for worker, report, and
+retained-artifact instructions. [`../plans/README.md`](../plans/README.md)
+routes the active owner and acceptance criteria.

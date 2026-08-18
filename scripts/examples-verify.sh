@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 # Boot each examples/ app against a fresh local server and run its smoke.
 #
-# Every app in the manifest below is verified independently with bounded
-# scheduling: build the nimbus binary once, then for each app, optionally run its client
-# codegen script first (strictly before boot — running it against a live
-# server races the server's own watcher-free boot preflight, see the "3b"
-# follow-up recorded in the plan), boot the server on a fresh --data-dir,
-# wait for /health, run the smoke, and stop the server before moving to the
-# next app.
+# Every app in the validated manifest is independent. The bounded scheduler
+# builds Nimbus once. Each case can then run client codegen before boot, start a
+# server with fresh state, wait for health, run smoke assertions, and stop its
+# owned process. Codegen never runs against a live server for the same app.
 #
 # The manifest selects `nimbus start` for main-listener cases and `nimbus dev`
 # for framework provisioning or generated wire credentials. Every dev case

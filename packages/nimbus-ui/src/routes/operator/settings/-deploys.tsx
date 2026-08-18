@@ -3,8 +3,8 @@ import { CopyChip } from "../../../components/copy-chip";
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
 import { formatRelativeTime, shortId } from "../../../lib/format";
-import { Definition, DefinitionList, SectionCard } from "./primitives";
-import type { BundleDoc, FunctionDoc } from "./types";
+import { Definition, DefinitionList, SectionCard } from "./-primitives";
+import type { BundleDoc, FunctionDoc } from "./-types";
 
 export function DeploysSection({
   bundles,

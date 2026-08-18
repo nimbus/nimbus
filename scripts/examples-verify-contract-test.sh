@@ -131,10 +131,16 @@ NODE
         has scripts/examples-verify.sh 'SCHEDULER_FAILURE_ROOT'
       ;;
     AVRC24)
-      grep -Rqs -- 'nine.*app' "${ROOT}/examples" &&
-        grep -Rqs -- 'Node\.js.*22.*24' "${ROOT}/examples" &&
-        grep -Rqs -- 'push.*poll\|poll.*push' "${ROOT}/examples" &&
-        grep -Rqs -- 'retained.*artifact\|artifact.*retain' "${ROOT}/examples"
+      has examples/README.md 'nine application cases' &&
+        has examples/README.md '37 smoke' &&
+        has examples/README.md 'Node\.js.*22 and 24' &&
+        has examples/README.md 'NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL' &&
+        has examples/README.md 'push.*server-delivered' &&
+        has examples/README.md 'polling.*eventual' &&
+        has examples/README.md 'report\.json.*junit\.xml' &&
+        has examples/README.md 'retained diagnostic artifact' &&
+        has scripts/examples-verify-docs-test.mjs 'manifest-derived application documentation' &&
+        lacks examples/README.md 'partially verified|Five of the six'
       ;;
     *)
       return 2
@@ -158,7 +164,7 @@ owner_for() {
 
 write_green_fixture() {
   local id="$1" root="$2"
-  mkdir -p "${root}/scripts" "${root}/crates/nimbus-cli/src/dev" "${root}/examples/app" "${root}/.github/workflows"
+  mkdir -p "${root}/scripts" "${root}/crates/nimbus-cli/src/dev" "${root}/examples" "${root}/.github/workflows"
   case "${id}" in
     AVRC11)
       printf '%s\n' \
@@ -242,7 +248,13 @@ NODE
       printf '%s\n' 'NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL SCHEDULER_FAILURE_ROOT' >"${root}/scripts/examples-verify.sh"
       ;;
     AVRC24)
-      printf '%s\n' 'nine app checks use Node.js 22 and 24. push is distinct from polling. retained artifact instructions.' >"${root}/examples/app/README.md"
+      printf '%s\n' \
+        'nine application cases and 37 smoke assertions use Node.js 22 and 24.' \
+        'NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL' \
+        'push means server-delivered changes; polling proves eventual visibility.' \
+        'report.json and junit.xml; retained diagnostic artifact.' \
+        >"${root}/examples/README.md"
+      printf '%s\n' '// manifest-derived application documentation' >"${root}/scripts/examples-verify-docs-test.mjs"
       ;;
   esac
 }
@@ -263,7 +275,7 @@ mutate_fixture() {
     AVRC21) printf '%s\n' 'const schemaVersion = 1;' >"${root}/scripts/examples-verify-report.mjs" ;;
     AVRC22) printf '%s\n' 'const junit = true;' >"${root}/scripts/examples-verify-report.mjs" ;;
     AVRC23) printf '%s\n' '# serial only' >"${root}/scripts/examples-verify-benchmark.mjs" ;;
-    AVRC24) printf '%s\n' 'eight apps use Node.js 22. updates happen.' >"${root}/examples/app/README.md" ;;
+    AVRC24) printf '%s\n' 'eight apps use Node.js 22. updates happen.' >"${root}/examples/README.md" ;;
   esac
 }
 
@@ -529,6 +541,22 @@ run_avr9_behavior_tests() {
   node "${ROOT}/scripts/examples-verify-scheduler-test.mjs" --bin "${NIMBUS_EXAMPLES_VERIFY_BIN:-${ROOT}/target/debug/nimbus}"
 }
 
+run_avr10_behavior_tests() {
+  local output status=0
+  node "${ROOT}/scripts/examples-verify-docs-test.mjs" --repo-root "${ROOT}"
+  output="$(npm --prefix "${ROOT}" run codegen -w nimbus-ui 2>&1)" || status=$?
+  if [ "${status}" -ne 0 ]; then
+    printf '%s\n' "${output}" >&2
+    return "${status}"
+  fi
+  if grep -q 'Warning: Route file' <<<"${output}"; then
+    printf '%s\n' "${output}" >&2
+    printf '%s\n' 'FAIL UI route codegen emitted support-file warnings' >&2
+    return 1
+  fi
+  printf '%s\n' 'PASS UI route codegen emitted no support-file warnings'
+}
+
 usage() {
   printf 'usage: %s --task AVR3..AVR10 | --condition AVRC11..AVRC24 | --self-test-condition AVRC11..AVRC24\n' "$0" >&2
 }
@@ -559,6 +587,9 @@ case "${1:-}" in
     fi
     if [ "$2" = "AVR9" ]; then
       run_avr9_behavior_tests
+    fi
+    if [ "$2" = "AVR10" ]; then
+      run_avr10_behavior_tests
     fi
     ;;
   --condition)

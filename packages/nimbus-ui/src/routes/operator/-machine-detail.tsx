@@ -6,7 +6,7 @@ import { CopyChip } from "../../components/copy-chip";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { formatMemory, shortId } from "../../lib/format";
-import type { EventDoc, MachineDoc } from "./machine-types";
+import type { EventDoc, MachineDoc } from "./-machine-types";
 
 // Right-hand inspector for a selected machine: status, resources, bound
 // services, and the recent machine events filtered to this machine.

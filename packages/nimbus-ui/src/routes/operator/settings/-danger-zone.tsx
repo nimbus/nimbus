@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { system } from "../../../lib/api-mutations";
-import { DialogShell, SectionCard } from "./primitives";
+import { DialogShell, SectionCard } from "./-primitives";
 
 export function DangerZoneSection() {
   const [rotateOpen, setRotateOpen] = useState(false);

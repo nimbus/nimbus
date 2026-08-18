@@ -85,12 +85,18 @@ result.
 
 ## Application verification
 
-Use `make examples-verify` for the current live application lane. The active
-documentation and application verification plan owns its current gaps. They
-affect fresh-checkout prerequisites, source immutability, listener ownership,
-operator-state isolation, evidence, cleanup, and run time.
-Treat its console pass as application smoke evidence only. Do not describe it
-as hermetic or concurrency-safe.
+Use `make examples-verify` for the nine-case live application lane. It requires
+Node.js `>=22 <25`. Repository gates test Node.js 22 and 24. The default runs
+one case at a time for diagnosis. Use bounded parallel execution when you need
+the complete lane faster:
+
+```bash
+NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL=5 make examples-verify
+NIMBUS_EXAMPLES_VERIFY_ONLY=convex/tasks make examples-verify
+```
+
+`NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL` accepts 1 through 9. CI uses five. The
+case selector accepts one exact name from `scripts/examples-verify-cases.json`.
 
 A reliable application run must:
 
@@ -103,6 +109,17 @@ A reliable application run must:
 - fail when cleanup is incomplete.
 - emit validated machine-readable results that separate intended assertions,
   observed outcomes, and cleanup status.
+
+Successful runs leave `report.json` and `junit.xml` under
+`target/examples-verify-results/<run-id>/`. A failed run prints one absolute
+`retained diagnostic artifacts` path on stderr. Inspect its case logs,
+process records, network lease state, source comparison, and cleanup result.
+The retained tree does not contain a smoke credential file. Do not delete it
+until you record the first causal error and the final cleanup state.
+
+The manifest records `push`, `polling`, or `request-response` for each case.
+Push means that a subscription receives a change. Polling means that repeated
+reads observe a change. It does not prove subscription support.
 
 [`../plans/README.md`](../plans/README.md) routes the active owner and its exact
 verifier contract.
