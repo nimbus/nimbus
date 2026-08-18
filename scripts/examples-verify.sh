@@ -136,6 +136,15 @@ SERVER_LOG=""
 SERVER_RECORD=""
 SERVER_DISCOVERY_PATH=""
 SERVER_ADMIN_TOKEN=""
+SMOKE_ENV_FILE=""
+CREDENTIAL_DELETE_FAILURES_REMAINING="${NIMBUS_EXAMPLES_VERIFY_CREDENTIAL_DELETE_FAILURES:-0}"
+
+case "${CREDENTIAL_DELETE_FAILURES_REMAINING}" in
+  ''|*[!0-9]*)
+    echo "NIMBUS_EXAMPLES_VERIFY_CREDENTIAL_DELETE_FAILURES must be a non-negative integer" >&2
+    exit 2
+    ;;
+esac
 
 # The product owns each provider_assigned_port_lease and retained_listener.
 # This runner owns only the surrounding process, case roots, evidence, and
@@ -171,6 +180,27 @@ cleanup_server() {
   return 0
 }
 
+cleanup_smoke_credentials() {
+  if [ -z "${SMOKE_ENV_FILE}" ]; then
+    return 0
+  fi
+  if [ "${CREDENTIAL_DELETE_FAILURES_REMAINING}" -gt 0 ]; then
+    CREDENTIAL_DELETE_FAILURES_REMAINING=$((CREDENTIAL_DELETE_FAILURES_REMAINING - 1))
+    echo "injected smoke credential deletion failure" >&2
+    return 1
+  fi
+  if [ -e "${SMOKE_ENV_FILE}" ] && ! : >"${SMOKE_ENV_FILE}"; then
+    echo "could not scrub the smoke credential file" >&2
+    return 1
+  fi
+  if ! rm -f "${SMOKE_ENV_FILE}"; then
+    echo "could not remove the smoke credential file" >&2
+    return 1
+  fi
+  SMOKE_ENV_FILE=""
+  return 0
+}
+
 capture_source_byte_manifest() {
   node "${WORKSPACE_ADAPTER}" capture-source \
     --manifest "${CASE_MANIFEST}" \
@@ -193,6 +223,9 @@ finalize_examples_verification() {
   local lifetime_status=0
   trap - EXIT INT TERM
   cleanup_server || cleanup_status=$?
+  if ! cleanup_smoke_credentials; then
+    cleanup_status=1
+  fi
   if [ "${SOURCE_BYTE_CAPTURED}" -eq 1 ] && ! verify_source_byte_manifest; then
     final_status=1
   fi
@@ -558,7 +591,6 @@ assert.deepStrictEqual(local, explicit);
   echo "PASS stdio-contract: target forms match; stdio is clean; wrong silo and invalid application auth fail closed"
 }
 
-SMOKE_ENV_FILE=""
 write_smoke_env_file() {
   local name="$1" app_dir="$2" generated=""
   generated="$(node "${WORKSPACE_ADAPTER}" emit-generated-env \
@@ -633,11 +665,10 @@ run_one() {
       ${COMMAND_ENV_FLAGS[@]+"${COMMAND_ENV_FLAGS[@]}"} \
       -- npm run smoke || smoke_status=$?
   fi
-  if ! rm -f "${SMOKE_ENV_FILE}"; then
-    echo "FAIL ${name}: could not remove the smoke credential file" >&2
+  if ! cleanup_smoke_credentials; then
+    echo "FAIL ${name}: smoke credentials did not settle" >&2
     smoke_status=1
   fi
-  SMOKE_ENV_FILE=""
 
   if [ "${smoke_status}" -eq 0 ] && [ "${stdio_contract}" = "1" ]; then
     check_run_stdio_contract "${app_dir}" "${SERVER_URL}" || smoke_status=$?

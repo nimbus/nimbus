@@ -75,9 +75,39 @@ async function verifyRetainedFailure(cut, result) {
     assert.equal(await fs.stat(relocated(context.discoveryPath)).then(() => true, () => false), false);
     const records = await fs.readdir(relocated(context.processRoot));
     assert.deepEqual(records, [], `${cut} must leave no managed process record`);
+    assert.equal(
+      await fs.stat(path.join(relocated(context.authRoot), "smoke.env")).then(() => true, () => false),
+      false,
+      `${cut} must scrub its smoke credential file before artifact retention`,
+    );
     const serverLog = path.join(relocated(context.logRoot), "server.log");
     if (await fs.stat(serverLog).then(() => true, () => false)) await assertReleasedAddress(serverLog);
   }
+  await fs.rm(retained, { recursive: true });
+}
+
+async function verifyCredentialCleanupRetry(binary) {
+  const result = spawnSync("bash", [RUNNER], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      NIMBUS_EXAMPLES_VERIFY_BIN: binary,
+      NIMBUS_EXAMPLES_VERIFY_ONLY: "nimbus/tasks",
+      NIMBUS_EXAMPLES_VERIFY_CREDENTIAL_DELETE_FAILURES: "1",
+    },
+    encoding: "utf8",
+    timeout: 60_000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  assert.notEqual(result.status, 0, "an injected credential deletion failure must make the runner red");
+  assert.match(result.stderr, /injected smoke credential deletion failure/u);
+  const retained = result.stderr.match(/run failure retained diagnostic artifacts: (.+)$/mu)?.[1];
+  assert(retained && path.isAbsolute(retained), "credential cleanup retry must retain one artifact root");
+  const context = JSON.parse(await fs.readFile(path.join(retained, "cases", "nimbus-tasks", "context.json"), "utf8"));
+  const lifetime = JSON.parse(await fs.readFile(path.join(retained, "lifetime.json"), "utf8"));
+  const relocatedAuthRoot = path.join(retained, path.relative(lifetime.runRoot, context.authRoot));
+  assert.equal(await fs.stat(path.join(relocatedAuthRoot, "smoke.env")).then(() => true, () => false), false);
   await fs.rm(retained, { recursive: true });
 }
 
@@ -101,7 +131,9 @@ async function main() {
     await verifyRetainedFailure(cut, result);
     console.log(`PASS runner_fault_cut_${cut.replaceAll("-", "_")}`);
   }
-  console.log(`Summary: ${CUTS.length} passed, 0 failed`);
+  await verifyCredentialCleanupRetry(binary);
+  console.log("PASS runner_credential_cleanup_retry");
+  console.log(`Summary: ${CUTS.length + 1} passed, 0 failed`);
 }
 
 main().catch((error) => {
