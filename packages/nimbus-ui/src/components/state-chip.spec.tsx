@@ -191,3 +191,46 @@ describe("StateChip", () => {
     ).toEqual([]);
   });
 });
+
+// The console renders whatever string the server wrote into the record, so
+// these four vocabularies are the badge's real input domain. Nothing else in
+// the JS tree names them — they are declared in Rust — and a state missing
+// from the palette does not fail a type check or log a warning: the row just
+// renders `?`, the "console lost track of this resource" glyph, on a resource
+// the server is perfectly sure about. `completed` shipped that way, so a
+// finished scheduled job read `? completed`.
+describe("states the server can write into a record", () => {
+  const glyphFor = (state: string): string | null => {
+    const { container } = render(<StateChip state={state} />);
+    return (
+      container.querySelector("[data-state]")?.getAttribute("data-glyph") ??
+      null
+    );
+  };
+
+  // Source of truth is Rust, cited so the next reader can re-derive the list:
+  const VOCABULARIES: Array<[string, string, string[]]> = [
+    [
+      "scheduled jobs",
+      "crates/nimbus-system/src/records/scheduler.rs",
+      ["pending", "completed", "failed"],
+    ],
+    [
+      "cron jobs",
+      "crates/nimbus-system/src/records/scheduler.rs",
+      ["active", "paused"],
+    ],
+    [
+      "machines",
+      "crates/nimbus-machine/src/state.rs",
+      ["uninitialized", "stopped", "starting", "running", "failed"],
+    ],
+    ["runs", "crates/nimbus-system/src/records/scheduler.rs", ["ok", "error"]],
+  ];
+
+  for (const [subject, source, states] of VOCABULARIES) {
+    it.each(states)(`names ${subject} state %s (${source})`, (state) => {
+      expect(glyphFor(state)).not.toBe("question");
+    });
+  }
+});

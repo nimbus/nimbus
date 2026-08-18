@@ -915,13 +915,13 @@ State → token binding (mandatory; do not improvise mappings):
 
 | State | Token | Dot glyph |
 | --- | --- | --- |
-| `Ready`, `Healthy`, `OK`, `Active`, `Connected` | `--success` | ● solid |
+| `Ready`, `Healthy`, `OK`, `Active`, `Connected`, `Completed` | `--success` | ● solid |
 | `Running` | `--running` | ● pulsing (respects `prefers-reduced-motion`) |
 | `Starting`, `Provisioning`, `Restarting` | `--starting` | ◐ half-filled |
 | `Draining`, `Stopping`, `Deleting` | `--draining` | ◐ half-filled |
 | `Queued`, `Pending` | `--queued` | ○ outline |
 | `NotReady`, `Degraded`, `Reconnecting` | `--warning` | ● solid |
-| `Stopped`, `Created`, `Idle` | `--muted` | ○ outline |
+| `Stopped`, `Created`, `Idle`, `Paused`, `Uninitialized` | `--muted` | ○ outline |
 | `Failed`, `Crashed`, `Offline` | `--danger` | ● solid |
 | `Stale` (post-disconnect) | `--stale` | ● solid + label strikethrough |
 | `Unknown` | `--muted` | ? glyph |

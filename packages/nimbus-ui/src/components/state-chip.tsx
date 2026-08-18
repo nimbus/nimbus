@@ -10,7 +10,16 @@ import { cn } from "../lib/cn";
  * A state string the UI can produce but this union omits renders as
  * `unknown` — a literal `?` glyph — which reads as "the console lost track
  * of this resource". Anything a route or a hook can put on screen belongs
- * here.
+ * here, including every state the server can write into a record:
+ *
+ * - scheduled jobs: `pending` | `completed` | `failed`
+ * - cron jobs: `active` | `paused`
+ * - machines: `uninitialized` | `stopped` | `starting` | `running` | `failed`
+ * - runs: `ok` | `error`
+ *
+ * `completed`, `paused` and `uninitialized` were missing, so a finished
+ * scheduled job read `? completed` on /developer/schedules. The server
+ * vocabularies are locked against this table in state-chip.spec.tsx.
  */
 export type StateKind =
   | "ready"
@@ -18,6 +27,7 @@ export type StateKind =
   | "ok"
   | "active"
   | "connected"
+  | "completed"
   | "running"
   | "starting"
   | "provisioning"
@@ -30,6 +40,8 @@ export type StateKind =
   | "stopped"
   | "created"
   | "idle"
+  | "paused"
+  | "uninitialized"
   | "notready"
   | "degraded"
   | "reconnecting"
@@ -54,6 +66,10 @@ export const statePalette: Record<
   ok: { token: "--nimbus-success", glyph: "solid" },
   active: { token: "--nimbus-success", glyph: "solid" },
   connected: { token: "--nimbus-success", glyph: "solid" },
+  /* A scheduled job that ran to completion is the terminal success of a
+     run, so it folds onto the Ready/OK family rather than earning a row of
+     its own. */
+  completed: { token: "--nimbus-success", glyph: "solid" },
   /* Running owns `--running` (teal, hue 207), not `--accent`. In the warm
      palette `--accent` is hue 70 and `--warning` — which carries NotReady and
      Degraded — is hue 72, so binding Running to the accent painted two
@@ -73,6 +89,10 @@ export const statePalette: Record<
   stopped: { token: "--nimbus-muted", glyph: "outline" },
   created: { token: "--nimbus-muted", glyph: "outline" },
   idle: { token: "--nimbus-muted", glyph: "outline" },
+  /* Paused (a disabled cron) and uninitialized (a machine with no host yet)
+     are both "exists, not doing anything", which is the Stopped family. */
+  paused: { token: "--nimbus-muted", glyph: "outline" },
+  uninitialized: { token: "--nimbus-muted", glyph: "outline" },
   notready: { token: "--nimbus-warning", glyph: "solid" },
   degraded: { token: "--nimbus-warning", glyph: "solid" },
   reconnecting: { token: "--nimbus-warning", glyph: "solid" },
