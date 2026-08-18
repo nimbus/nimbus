@@ -109,7 +109,7 @@ Promote this plan to `active` only when every gate holds:
 | AVRF23 | LOW, confirmed | The fresh UI prerequisite emits 18 route-file warnings for support modules under `packages/nimbus-ui/src/routes`, which hides useful verification output. | AVR10 |
 | AVRF24 | MEDIUM, resolved | A whole-directory `node_modules` link let case provisioning remove owner-worktree package links. The AVR4 adapter now owns real case-local scope and `.bin` directories and links only their entries. | AVR4 |
 | AVRF25 | LOW, confirmed | `docs/reference/cli.md` and `docs/source-map.md` have an 85-diagnostic pre-existing technical-writing baseline. AVR5 additions are delta-clean. | AVR10 |
-| AVRF26 | MEDIUM, confirmed | Three hosted jobs exhausted their time budgets in `apt-get update` when the Azure Ubuntu mirror stopped responding. A failed-job rerun on fresh runners passed. | AVR11 |
+| AVRF26 | HIGH, resolved | Hosted runs reproduced Azure regional Ubuntu mirror stalls before project code ran. PR #280 removed that mirror from the official priority list, bounded apt network waits, passed 50 checks with three expected skips, and merged as `437c2a185`. | AVR11, AVR12 |
 
 ## Decisions
 
@@ -141,7 +141,7 @@ contract records condition ownership, phase counts, and exact commands:
 | AVR9 | Add bounded parallel execution and meet the measured wall-clock target without coverage loss. | `done` | Proof: `../proof/docs-and-app-verification-reliability/avr9.md`. AVRC23 1/1; evaluator 5/5; scheduler 2/2; fault and retry 7/7; mutations 24/24. Three serial and five parallel minicloud samples passed 9 applications and 37 anchors. Medians were 112,403 and 67,066 ms; ratio 0.5967. |
 | AVR10 | Correct all example documentation, comments, counts, update semantics, and operator instructions. | `done` | Proof: `../proof/docs-and-app-verification-reliability/avr10.md`. Work commit `04a675b29`; AVRC24 1/1; manifest docs 6/6; UI 336/336; full verifier and mutations 24/24; docs 109 and 17/17; site build 110 pages; writing diagnostics changed from 18 to 10. |
 | AVR11 | Run local, minicloud, repository, docs, review, and hosted-CI acceptance, then close the third implementation pull request. | `done` | PR [#277](https://github.com/nimbus/nimbus/pull/277) passed 54 hosted checks with 3 expected skips and merged as `c9b551a30`. Reconciliation commit `d7c178523` preserves checkpoint `a2f49170d` and current-main storage-plan work. |
-| AVR12 | After the third implementation pull request merges, archive this plan through a cleanup pull request and remove its active routing. | `in_progress` | Cleanup PR [#278](https://github.com/nimbus/nimbus/pull/278) is open. The archive, routing replacement, AVR 24/24, mutation 24/24, docs 109, site 17/17, diff, and archive searches pass. Hosted checks, merge, and clean worktree removal remain. |
+| AVR12 | After the third implementation pull request merges, archive this plan through a cleanup pull request and remove its active routing. | `in_progress` | Cleanup PR [#278](https://github.com/nimbus/nimbus/pull/278) is open. Its first hosted run exposed the resolved Azure mirror defect. Remediation PR #280 passed 50 checks with three expected skips and merged as `437c2a185`; the cleanup branch reconciled it. Archive, routing, AVR 24/24, mutation 24/24, docs 109, site 17/17, diff, and archive searches pass. Replacement hosted checks, merge, and clean worktree removal remain. |
 
 ## Tasks
 
