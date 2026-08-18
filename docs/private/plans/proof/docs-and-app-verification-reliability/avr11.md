@@ -255,7 +255,11 @@ Commit `358218c20` updates the allow-list to the current wired consumer. It also
 documents the intentional single-quoted child Bash for ShellCheck. The desktop
 gate, Bash syntax, ShellCheck, route codegen, and all 336 UI tests pass locally.
 No product endpoint, consumer, or UI behavior changed. Replacement hosted
-acceptance is active.
+acceptance passed at head `897bff403`: 54 checks succeeded, 3 nightly/profile
+lanes skipped as expected, and no check failed or remained pending. CI run
+`32149119033`, Docs `32149119052`, CodeQL `32149118959`, Desktop UI
+`32149119101`, and Windows `32149118977` passed. GitHub reports PR #277 clean
+and mergeable. The only remaining AVR11 action is the owner-authorized merge.
 
 ## Ownership Boundary
 
