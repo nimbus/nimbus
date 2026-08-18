@@ -259,7 +259,9 @@ acceptance passed at head `897bff403`: 54 checks succeeded, 3 nightly/profile
 lanes skipped as expected, and no check failed or remained pending. CI run
 `32149119033`, Docs `32149119052`, CodeQL `32149118959`, Desktop UI
 `32149119101`, and Windows `32149118977` passed. GitHub reports PR #277 clean
-and mergeable. The only remaining AVR11 action is the owner-authorized merge.
+and mergeable. The owner-authorized PR merged as `c9b551a30`. Reconciliation
+commit `d7c178523` preserves local checkpoint `a2f49170d` and the independent
+storage-integrity plan from current main. AVR11 is complete.
 
 ## Ownership Boundary
 

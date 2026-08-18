@@ -3,9 +3,9 @@
 Status: `active` | Owner: this plan | Created: 2026-08-17.
 Baseline: main @ 82bdcf2db5f7e021bdf701cab13f60e6e138c2cf.
 Proof root: `proof/docs-and-app-verification-reliability/`.
-Next action: PR 3, #277, is hosted-green and clean at reviewed head
-`897bff403`. Wait for owner authority before merge, then reconcile current main
-and start AVR12 cleanup.
+Next action: execute AVR12. Archive this plan, retain its proof root, replace
+active routing with the completed retrospective, run the cleanup gates, and
+open the cleanup pull request.
 
 ## Outcome
 
@@ -140,8 +140,8 @@ contract records condition ownership, phase counts, and exact commands:
 | AVR8 | Emit canonical JSON and JUnit evidence with hashes, timings, assertions, and cleanup state. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr8.md`. Report 8/8; supervisor 2/2; fault and retry 7/7; AVRC21-AVRC22 2/2; mutations 24/24. The final live run passed 9 applications, 37 anchors, 12 JUnit tests, matching source digests, and clean removal in 83,725 ms. |
 | AVR9 | Add bounded parallel execution and meet the measured wall-clock target without coverage loss. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr9.md`. AVRC23 1/1; evaluator 5/5; scheduler 2/2; fault and retry 7/7; mutations 24/24. Three serial and five parallel minicloud samples passed 9 applications and 37 anchors. Medians were 112,403 and 67,066 ms; ratio 0.5967. |
 | AVR10 | Correct all example documentation, comments, counts, update semantics, and operator instructions. | `done` | Proof: `proof/docs-and-app-verification-reliability/avr10.md`. Work commit `04a675b29`; AVRC24 1/1; manifest docs 6/6; UI 336/336; full verifier and mutations 24/24; docs 109 and 17/17; site build 110 pages; writing diagnostics changed from 18 to 10. |
-| AVR11 | Run local, minicloud, repository, docs, review, and hosted-CI acceptance, then close the third implementation pull request. | `in_progress` | PR [#277](https://github.com/nimbus/nimbus/pull/277) is clean and mergeable at reviewed head `897bff403`. Local and minicloud acceptance is green. Hosted acceptance passed 54 checks with 3 expected skips. Owner-authorized merge and reconciliation remain. |
-| AVR12 | After the third implementation pull request merges, archive this plan through a cleanup pull request and remove its active routing. | `todo` | |
+| AVR11 | Run local, minicloud, repository, docs, review, and hosted-CI acceptance, then close the third implementation pull request. | `done` | PR [#277](https://github.com/nimbus/nimbus/pull/277) passed 54 hosted checks with 3 expected skips and merged as `c9b551a30`. Reconciliation commit `d7c178523` preserves checkpoint `a2f49170d` and current-main storage-plan work. |
+| AVR12 | After the third implementation pull request merges, archive this plan through a cleanup pull request and remove its active routing. | `in_progress` | PR #277 is merged and reconciled. Archive, routing replacement, cleanup gates, and cleanup PR remain. |
 
 ## Tasks
 
@@ -496,3 +496,5 @@ Append rows at the end. This section stays last.
 | 2026-08-18 | AVR11 | PR opened | Implementation PR [#277](https://github.com/nimbus/nimbus/pull/277) opened from candidate checkpoint `f81c6cb7a`. Hosted checks and owner-authorized merge remain. |
 | 2026-08-18 | AVR11 | hosted correction | Desktop UI run `32148666875` found the AVR10 settings support-file rename missing from one grep allow-list. Commit `358218c20` updates that exact path and documents its ShellCheck exception. The gate, ShellCheck, route codegen, and UI 336/336 pass. |
 | 2026-08-18 | AVR11 | hosted candidate green | PR #277 head `897bff403` passed 54 checks with 3 expected skips and zero failures. CI run `32149119033`, Docs `32149119052`, CodeQL `32149118959`, Desktop UI `32149119101`, and Windows `32149118977` passed. The PR is clean and mergeable. Owner merge authority remains. |
+| 2026-08-18 | AVR11 | completed | Owner-authorized PR #277 merged as `c9b551a30`. Reconciliation commit `d7c178523` combines the durable hosted-green checkpoint with current main and preserves the independent storage-integrity plan. |
+| 2026-08-18 | AVR12 | started | Implementation PR 3 is merged and reconciled. Move the complete control plane to the archive, retain proof, replace active routing, run the AVR12 gates, and open the cleanup PR. |
