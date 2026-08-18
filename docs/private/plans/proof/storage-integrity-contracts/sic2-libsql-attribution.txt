@@ -1,0 +1,80 @@
+SIC2 — attribution of the CI failure in External Provider Integration Tests (libsql)
+PR #284, run 32187152244, job 95883198053
+
+Failing test
+------------
+nimbus-engine tests::libsql_replica_provider::ppsc::libsql_ppsc_seeded_journal_differential
+slot (15/53), 15.778s
+
+  thread '...' panicked at crates/nimbus-engine/src/tests/ppsc/commit_faults.rs:36:9:
+  PPSC seed 11 step 19 tenant tenant-11-hot route QueuedJournal
+  did not reach durable-before-publish within 5s
+
+Job summary: 53 tests run: 52 passed, 1 failed, 1157 skipped (88.174s)
+
+Why this is not a SIC2 regression
+---------------------------------
+1. No mechanism. The assertion is a 5s wall-clock bound on the QueuedJournal
+   route reaching the DURABLE_BEFORE_PUBLISH fault point. The SIC2 branch diff
+   against base b6b89c871 touches no journal, queued-journal, sequence,
+   write_core, store_core, or commit_effects file:
+
+     crates/nimbus-engine/src/engine/objects.rs
+     crates/nimbus-engine/src/tests/objects.rs
+     crates/nimbus-s3/src/backend.rs
+     crates/nimbus-s3/src/service.rs
+     crates/nimbus-s3/src/tests.rs
+     crates/nimbus-server/src/adapters/s3/listener.rs
+     crates/nimbus-storage/src/lib.rs
+     crates/nimbus-storage/src/tests/object_meta.rs
+     crates/nimbus-storage/src/traits/mod.rs
+     crates/nimbus-storage/src/traits/object_metadata.rs
+
+   The engine change is confined to the object-metadata route. This test
+   performs no object-metadata and no S3 work.
+
+2. The same test fails on main without SIC2. Run 32072991210, job 95528415227,
+   main @ 520dba9fb, 2026-08-17:
+
+     TIMEOUT [135.017s] (15/53) nimbus-engine
+       tests::libsql_replica_provider::ppsc::libsql_ppsc_seeded_journal_differential
+     Summary: 53 tests run: 52 passed, 1 timed out, 1153 skipped
+
+   Identical test, identical slot, one day before this branch existed.
+
+3. The same object-metadata code is green on the other two remote providers in
+   this run: External Provider Integration Tests (mysql) pass, (postgres) pass.
+
+4. The seeded-journal machinery itself is green on this branch: PPSC Seed Farm
+   shards 1/4, 2/4, 3/4 and 4/4 all pass.
+
+Class: wall-clock bound against a containerized remote provider, the same class
+as blocker B2. Recorded, not silenced. The bound was not widened and the test
+was not skipped.
+
+5. Local reproduction on the SIC2 branch passes against a real libsql container.
+
+     make test-external-provider PROVIDER=libsql \
+       TEST_FILTER='test(libsql_ppsc_seeded_journal_differential)'
+
+     PASS [56.103s] (1/1) nimbus-engine
+       tests::libsql_replica_provider::ppsc::libsql_ppsc_seeded_journal_differential
+     Summary [56.107s] 1 test run: 1 passed (1 slow), 1209 skipped
+     MAKE_RC=0
+
+   nextest marks the run "1 slow". A test that needs 56s wall clock, and whose
+   internal assertion allows a route 5s to reach a fault point, is bounded well
+   inside its own margin on a loaded shared runner. That is the failure mode CI
+   observed, and it is the same class as the main-branch timeout in item 2.
+
+Conclusion
+----------
+CONFIRMED not a SIC2 regression. Evidence is fourfold: no code path connects the
+diff to the assertion, the identical test fails on main without the branch, the
+same object-metadata code is green on mysql and postgres in the same run, and the
+test passes on this branch against a real libsql container locally.
+
+6. Re-run of the same job on the same commit is green.
+   `gh run rerun 32187152244 --failed` re-ran External Provider Integration
+   Tests (libsql) against the identical tree and it passed. Nothing in the
+   repository changed between the red and the green result.
