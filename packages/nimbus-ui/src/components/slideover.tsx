@@ -113,7 +113,7 @@ export function Slideover({
         // tabIndex -1 so the panel itself can take programmatic focus on open;
         // outline-none so that lands without painting a ring on the whole panel.
         tabIndex={-1}
-        className="relative flex h-full w-[480px] flex-col gap-2 border-l border-app bg-bg p-4 shadow-xl outline-none"
+        className="relative flex h-full w-[480px] flex-col gap-2 border-l border-app bg-surface p-4 shadow-xl outline-none"
         data-testid={testid}
       >
         <PanelHeader title={title} onClose={onClose} />
