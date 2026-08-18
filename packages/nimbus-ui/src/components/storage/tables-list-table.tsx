@@ -79,7 +79,7 @@ export function TablesListTable({ tables }: { tables: TableDoc[] }) {
   };
 
   return (
-    <div className="overflow-auto">
+    <div className="h-full overflow-auto">
       <table
         className="w-full border-collapse text-sm"
         data-testid="tenant-tables-table"

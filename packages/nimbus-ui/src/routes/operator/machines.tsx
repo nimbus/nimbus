@@ -213,7 +213,7 @@ function MachineTable({
   onAction: (machine: MachineDoc, action: LifecycleAction) => void;
 }) {
   return (
-    <div className="overflow-auto">
+    <div className="h-full overflow-auto">
       <table
         className="w-full border-collapse text-sm"
         data-testid="machines-table"

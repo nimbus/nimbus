@@ -138,7 +138,7 @@ function ScheduledTable({ jobs }: { jobs: ScheduledJobDoc[] | undefined }) {
     );
   }
   return (
-    <div className="overflow-auto">
+    <div className="h-full overflow-auto">
       <table
         className="w-full border-collapse text-sm"
         data-testid="schedules-scheduled-table"
@@ -229,7 +229,7 @@ function CronTable({ jobs }: { jobs: CronJobDoc[] | undefined }) {
     );
   }
   return (
-    <div className="overflow-auto">
+    <div className="h-full overflow-auto">
       <table
         className="w-full border-collapse text-sm"
         data-testid="schedules-cron-table"

@@ -217,7 +217,7 @@ export function ServicesTable({
     );
   }
   return (
-    <div className="overflow-auto">
+    <div className="h-full overflow-auto">
       <table
         className="w-full border-collapse text-base"
         data-testid="services-table"

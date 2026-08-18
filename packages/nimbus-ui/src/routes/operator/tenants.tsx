@@ -271,7 +271,7 @@ function TenantsPage() {
             testid="storage-empty"
           />
         ) : (
-          <div className="overflow-auto">
+          <div className="h-full overflow-auto">
             <table
               className="w-full border-collapse text-sm"
               data-testid="storage-tenants-table"
