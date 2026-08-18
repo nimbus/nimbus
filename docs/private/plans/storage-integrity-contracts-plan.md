@@ -3,7 +3,7 @@
 Status: `active` | Owner: this plan | Created: 2026-08-18
 Baseline: main @ `8877eaff43a36d9606a1feaa0ab31d0377539d9d`
 Proof root: `proof/storage-integrity-contracts/`
-Next action: SIC2 carries expected-state conditions into multipart metadata writes.
+Next action: SIC2 carries expected-state conditions into multipart metadata writes. Branch `codex/sic-sic2` is cut; next is the fail-before reproduction.
 
 ## Outcome
 
@@ -130,7 +130,7 @@ order. SIC6 and SIC7 require `Summary: 13 passed, 0 failed`.
 |---|---|---|---|
 | SIC0 | Baseline: pin execution HEAD, author the 13-condition verifier red, inventory every writer and current fingerprint consumer, and capture fail-before evidence. No production behavior changes. | `done` | `proof/storage-integrity-contracts/sic0.md`. Verifier `Summary: 0 passed, 13 failed`, exit 1. Both fail-before probes reproduced. `git diff -- crates packages` empty. Work commit `a2f34aec6`. |
 | SIC1 | Carry object expected-state conditions into the tenant commit authority and close concurrent `PutObject` precondition races. | `done` | `proof/storage-integrity-contracts/sic1.md`. Verifier conditions 1–5 green, `Summary: 5 passed, 8 failed` (6–13 owned by SIC2–SIC6). `nimbus-s3` 23 passed, `nimbus-engine object_meta` 3 passed, `nimbus-storage object_meta` 8 passed. Fail-before reproduced at both seams: S3 admitted 75 of 100 concurrent claimants; the engine probe failed with the decision outside the actor. Every other `ci-required` lane green: runtime 517 passed, docs 0 failed, harness pass, JS 336 passed, proof helpers pass. The 20 workspace-lane failures are host state, attributed in the proof. Work commit `ed3585eec`, proof commit `f24759a8f`. Pre-PR autoreview gate clean (codex `gpt-5.6-sol` high, 0 accepted findings). Pull request #281. Blockers B1 and B2 recorded. |
-| SIC2 | Apply atomic expected-state updates to multipart metadata and complete condition-failure cleanup and provider parity. | `todo` | |
+| SIC2 | Apply atomic expected-state updates to multipart metadata and complete condition-failure cleanup and provider parity. | `in_progress` | Branch `codex/sic-sic2`, cut from `b6b89c871` after SIC1 merged. |
 | SIC3 | Make cross-cutting commit effects explicit on every client and internal writer without defaults or opaque callbacks. | `todo` | |
 | SIC4 | Consolidate canonical fingerprints into one storage-owned materialized position and propagate it through every materialized artifact consumer. | `todo` | |
 | SIC5 | Establish the complete provider semantic qualification matrix and shared conformance scenarios. | `todo` | |
