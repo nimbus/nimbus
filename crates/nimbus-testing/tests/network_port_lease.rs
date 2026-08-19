@@ -11,13 +11,17 @@ use nimbus_network::{
     PortLeasePhase, PortLeaseRecoveryAttempt, PortLeaseRequest, PortProtocol, PortRequestMode,
 };
 use nimbus_process_harness::{
-    ContentionOutcome, ProcessRoleSpec, SubprocessCrashCutHarness, TwoProcessContentionHarness,
-    run_contention_child, run_crash_cut_child, run_crash_recovery_child,
+    ContentionOutcome, PortWindow, ProcessRoleSpec, SubprocessCrashCutHarness,
+    TwoProcessContentionHarness, run_contention_child, run_crash_cut_child,
+    run_crash_recovery_child,
 };
 
 const CHILD_TEST: &str = "network_port_lease_child";
 const RECOVERY_CHILD_TEST: &str = "network_port_lease_recovery_child";
 const MODE_ENV: &str = "NIMBUS_NETWORK_PORT_LEASE_TEST_MODE";
+const LISTENER_PORT_ENV: &str = "NIMBUS_NETWORK_PORT_LEASE_LISTENER_PORT";
+/// Reservation fixtures address this port as a number only. Nothing binds it,
+/// so it stays a plain constant rather than a claimed window port.
 const PORT: u16 = 41_473;
 const ACTIVE_LISTENER_BOUNDARY: &str = "network.port-lease.active-listener-owned";
 const RECOVERED_LISTENER_OBSERVATION: &str = "kernel-free:lease-released:replacement-reserved";
@@ -155,12 +159,18 @@ fn two_real_processes_same_request_get_exactly_one_bind_attempt_claim() {
 #[test]
 fn fresh_process_reconciles_a_dead_process_owned_listener_before_port_reuse() {
     let root = tempfile::tempdir().expect("state root should exist");
+    // The crash child binds this port; the recovery child re-binds the same
+    // number once the parent has killed that owner. This parent holds the
+    // window across the kill, so the replacement bind proves the dead owner's
+    // socket is gone rather than racing an unrelated process for it.
+    let ports = PortWindow::claim();
     SubprocessCrashCutHarness::new(Duration::from_secs(5))
         .run(
             root.path(),
             ACTIVE_LISTENER_BOUNDARY,
             RECOVERED_LISTENER_OBSERVATION,
-            recovery_child("active-listener-owner", "crash-active-listener"),
+            recovery_child("active-listener-owner", "crash-active-listener")
+                .env(LISTENER_PORT_ENV, ports.port(0).to_string()),
             recovery_child("fresh-listener-reconciler", "recover-active-listener"),
         )
         .unwrap_or_else(|error| panic!("dead-listener recovery failed: {error}"));
@@ -296,7 +306,15 @@ fn network_port_lease_recovery_child() {
                 .map_err(|error| {
                     format!("failed to claim crash-owned bind and lifetime: {error}")
                 })?;
-            let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            // The request stays provider-assigned: the lease still adopts
+            // whatever port the socket reports. Only the number's source
+            // changes, from an ephemeral pick nobody owns after this process
+            // dies to a port the parent's window keeps claimed.
+            let fixture_port: u16 = std::env::var(LISTENER_PORT_ENV)
+                .map_err(|error| format!("missing crash-owned listener port: {error}"))?
+                .parse()
+                .map_err(|error| format!("invalid crash-owned listener port: {error}"))?;
+            let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, fixture_port))
                 .map_err(|error| format!("failed to bind crash-owned listener: {error}"))?;
             let actual_port = NonZeroU16::new(
                 listener

@@ -264,9 +264,11 @@ impl ReadinessProbeProvider for FixedReadinessProbeProvider {
 
 #[cfg(test)]
 mod tests {
-    use std::net::TcpListener;
+    use std::net::{Ipv4Addr, TcpListener};
     use std::thread;
     use std::time::Instant;
+
+    use nimbus_process_harness::PortWindow;
 
     use super::*;
 
@@ -578,8 +580,13 @@ mod tests {
     #[test]
     fn real_tcp_probe_reports_ready_and_refused() {
         let provider = SocketReadinessProbeProvider;
-        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
-        let address = listener.local_addr().expect("listener address");
+        // The window deliberately outlives the listener. The second probe
+        // asserts that this exact address refuses a connection once the
+        // listener is gone, so nothing else may take the port in between and
+        // answer Ready in its place.
+        let window = PortWindow::claim();
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, window.port(0)));
+        let listener = TcpListener::bind(address).expect("listener should bind");
         assert_eq!(
             provider.probe(ReadinessProbeTarget::Tcp(address), Duration::from_secs(1)),
             ReadinessProbeObservation::Ready

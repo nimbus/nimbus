@@ -1,7 +1,8 @@
 //! Exact container-runner handoff and effect-receipt recovery proofs.
 
 use super::support::*;
-use super::unused_loopback_port;
+
+use nimbus_process_harness::PortWindow;
 
 use crate::backends::conmon::creator::CreatorAttemptReceipt;
 use crate::backends::oci::command::CommandSpec;
@@ -17,19 +18,31 @@ mod fresh_process;
 fn prepared_runner_fixture(
     root: &std::path::Path,
     id: &str,
-) -> (ContainerSandboxBackend, ContainerSandboxManifest) {
+) -> (
+    PortWindow,
+    ContainerSandboxBackend,
+    ContainerSandboxManifest,
+) {
     prepared_runner_fixture_with_spec(root, id, &sample_spec())
 }
 
+/// Returns the claimed window with the fixture. Callers start the egress proxy
+/// on the one-port range below after this constructor returns, so the claim has
+/// to outlive it.
 fn prepared_runner_fixture_with_spec(
     root: &std::path::Path,
     id: &str,
     spec: &crate::spec::SandboxSpec,
-) -> (ContainerSandboxBackend, ContainerSandboxManifest) {
+) -> (
+    PortWindow,
+    ContainerSandboxBackend,
+    ContainerSandboxManifest,
+) {
     let mut config =
         ContainerSandboxBackendConfig::plan_only(root.join("bundles"), root.join("state"));
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let pep_port = unused_loopback_port();
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     config.published_port_range = pep_port..=pep_port;
     config.netavark_path = PathBuf::from("/usr/bin/true");
     let backend = ContainerSandboxBackend::new(config);
@@ -48,7 +61,7 @@ fn prepared_runner_fixture_with_spec(
     backend
         .write_runner_manifest_pointer(&plan.manifest)
         .expect("prepared runner pointer should publish after its manifest");
-    (backend, plan.manifest)
+    (port_window, backend, plan.manifest)
 }
 
 fn exact_present_command(id: &SandboxId, creator_attempt: Option<&str>) -> CommandSpec {
@@ -82,11 +95,12 @@ fn runtime_observed_effect_fixture(
     observed_attempt: Option<&str>,
     retire_publication_batch: bool,
 ) -> (
+    PortWindow,
     ContainerSandboxBackend,
     ContainerSandboxManifest,
     super::super::runner::RunnerHandoffGuard,
 ) {
-    let (backend, mut manifest) = prepared_runner_fixture_with_spec(root, id, spec);
+    let (port_window, backend, mut manifest) = prepared_runner_fixture_with_spec(root, id, spec);
     manifest.conmon_launch.state_command =
         exact_present_command(&manifest.handle.id, observed_attempt);
     backend
@@ -132,7 +146,7 @@ fn runtime_observed_effect_fixture(
     backend
         .write_manifest(&manifest)
         .expect("complete post-launch manifest should become durable");
-    (backend, manifest, handoff)
+    (port_window, backend, manifest, handoff)
 }
 
 #[test]
@@ -211,7 +225,7 @@ fn effects_started_rejects_substituted_handoff_generation() {
 fn exact_present_effect_promotes_once_without_replaying_launch() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let creator_attempt = "runner-recovery-present-creator";
-    let (backend, mut manifest, handoff) = runtime_observed_effect_fixture(
+    let (_port_window, backend, mut manifest, handoff) = runtime_observed_effect_fixture(
         temp_dir.path(),
         "runner-recovery-present",
         &sample_spec(),
@@ -251,7 +265,7 @@ fn assert_runtime_observed_creator_attempt_rejected(
     observed_attempt: Option<&str>,
 ) {
     let expected_attempt = "runner-recovery-expected-creator";
-    let (backend, mut manifest, handoff) = runtime_observed_effect_fixture(
+    let (_port_window, backend, mut manifest, handoff) = runtime_observed_effect_fixture(
         root,
         id,
         &sample_spec(),
@@ -324,12 +338,15 @@ fn runtime_observed_rejects_substituted_creator_attempt() {
 fn live_promotion_rejects_nonempty_terminal_no_effect_port_batch() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let creator_attempt = "runner-recovery-terminal-port-creator";
+    // The batch below must stay terminal with no effect, so this window keeps
+    // the published port out of every other test process for the whole proof.
+    let binding_window = PortWindow::claim();
     let spec = sample_spec().with_port_binding(SandboxPortBinding::tcp(
         "terminal-no-effect",
-        unused_loopback_port(),
+        binding_window.port(0),
         8080,
     ));
-    let (backend, mut manifest, handoff) = runtime_observed_effect_fixture(
+    let (_port_window, backend, mut manifest, handoff) = runtime_observed_effect_fixture(
         temp_dir.path(),
         "runner-recovery-terminal-port-batch",
         &spec,
@@ -380,7 +397,7 @@ fn published_present_effect_fixture(
     super::super::runner::RunnerHandoffGuard,
 ) {
     let creator_attempt = "runner-recovery-published-result-creator";
-    let (backend, mut manifest, handoff) = runtime_observed_effect_fixture(
+    let (_port_window, backend, mut manifest, handoff) = runtime_observed_effect_fixture(
         root,
         id,
         &sample_spec(),
@@ -509,7 +526,7 @@ fn lifecycle_published_anchor_survives_mutable_lifecycle_evolution() {
 #[test]
 fn exact_absence_compensates_and_replays_with_terminal_bytes() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let (backend, mut manifest) =
+    let (_port_window, backend, mut manifest) =
         prepared_runner_fixture(temp_dir.path(), "runner-recovery-absent");
     mark_runtime_absent_for_cleanup(&mut manifest);
     backend
@@ -556,7 +573,7 @@ fn exact_absence_compensates_and_replays_with_terminal_bytes() {
 #[test]
 fn ambiguous_effect_observation_preserves_exact_handoff_and_manifest() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let (backend, mut manifest) =
+    let (_port_window, backend, mut manifest) =
         prepared_runner_fixture(temp_dir.path(), "runner-recovery-ambiguous");
     manifest.conmon_launch.state_command = ambiguous_runtime_command();
     backend

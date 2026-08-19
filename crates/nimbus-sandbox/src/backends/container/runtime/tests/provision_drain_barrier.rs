@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
-use std::net::TcpListener;
+use std::net::{Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+
+use nimbus_process_harness::PortWindow;
 
 use super::support::*;
 use super::teardown::state::ContainerDrainProgress;
@@ -16,17 +18,20 @@ struct ExecuteProvisionFixture {
     spec: SandboxSpec,
     attempt: crate::SandboxExecutionAttemptId,
     plan: crate::SandboxProvisionNetworkPlan,
+    /// Held until a test is ready for the attachment to bind the PEP port.
     pep_reservation: Option<TcpListener>,
+    /// Owns the tripwire port above, so releasing the tripwire hands the port
+    /// to the egress proxy and to nothing else.
+    _port_window: PortWindow,
 }
 
 impl ExecuteProvisionFixture {
     fn reserved(label: &str) -> Self {
         let root = tempfile::tempdir().expect("temporary root should exist");
-        let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
-        let pep_port = pep_reservation
-            .local_addr()
-            .expect("PEP tripwire should report its address")
-            .port();
+        let port_window = PortWindow::claim();
+        let pep_port = port_window.port(0);
+        let pep_reservation =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, pep_port)).expect("PEP tripwire should bind");
         let mut config = ContainerSandboxBackendConfig::under_root(root.path());
         config.node_network_supernet = "127.0.0.0/24".to_owned();
         config.published_port_range = pep_port..=pep_port;
@@ -51,6 +56,7 @@ impl ExecuteProvisionFixture {
             attempt,
             plan,
             pep_reservation: Some(pep_reservation),
+            _port_window: port_window,
         }
     }
 
@@ -77,28 +83,26 @@ struct MachinePublicationFixture {
     forwarder: crate::backends::oci::network::OciMachinePortForwarderConfig,
     _published_reservation: TcpListener,
     _forwarder_listener: TcpListener,
+    _port_window: PortWindow,
 }
 
 impl MachinePublicationFixture {
     fn attached(label: &str) -> Self {
         let root = tempfile::tempdir().expect("temporary root should exist");
-        let published_reservation =
-            TcpListener::bind("127.0.0.1:0").expect("published tripwire should bind");
-        let published_port = published_reservation
-            .local_addr()
-            .expect("published tripwire should report its address")
-            .port();
-        let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
-        let pep_port = pep_reservation
-            .local_addr()
-            .expect("PEP tripwire should report its address")
-            .port();
-        let forwarder_listener =
-            TcpListener::bind("127.0.0.1:0").expect("forwarder tripwire should bind");
-        let forwarder_port = forwarder_listener
-            .local_addr()
-            .expect("forwarder tripwire should report its address")
-            .port();
+        // Offset 0 is the published binding, offset 1 the PEP range, offset 2
+        // the forwarder endpoint. The published and forwarder tripwires stay
+        // live for the whole fixture, which is what proves a closed drain
+        // published no listener.
+        let port_window = PortWindow::claim();
+        let published_port = port_window.port(0);
+        let pep_port = port_window.port(1);
+        let forwarder_port = port_window.port(2);
+        let published_reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, published_port))
+            .expect("published tripwire should bind");
+        let pep_reservation =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, pep_port)).expect("PEP tripwire should bind");
+        let forwarder_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, forwarder_port))
+            .expect("forwarder tripwire should bind");
         let forwarder = sample_forwarder(forwarder_port);
         let mut config = ContainerSandboxBackendConfig::under_root(root.path());
         config.start_mode = ContainerStartMode::PlanOnly;
@@ -135,6 +139,7 @@ impl MachinePublicationFixture {
             forwarder,
             _published_reservation: published_reservation,
             _forwarder_listener: forwarder_listener,
+            _port_window: port_window,
         }
     }
 }

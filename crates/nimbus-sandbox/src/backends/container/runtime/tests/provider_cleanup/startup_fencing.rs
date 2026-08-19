@@ -634,7 +634,10 @@ fn startup_reconciliation_failure_keeps_natural_exit_inspection_read_only() {
     ));
     let injected: Arc<OciSegmentAllocator> = recorder;
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    let proxy_port = unused_loopback_port();
+    // The claim holds the one-port PEP range until this proof ends, so the
+    // proxy started below binds the exact port the range names.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
     config.published_port_range = proxy_port..=proxy_port;
     let mut backend = ContainerSandboxBackend::with_segment_allocator(config, injected);
     let mut manifest = backend
@@ -728,7 +731,10 @@ fn startup_reconciliation_failure_keeps_restart_eligible_inspection_read_only() 
     ));
     let injected: Arc<OciSegmentAllocator> = recorder.clone();
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    let proxy_port = unused_loopback_port();
+    // The claim holds the one-port PEP range until this proof ends, so the
+    // proxy started below binds the exact port the range names.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
     config.published_port_range = proxy_port..=proxy_port;
     let mut backend = ContainerSandboxBackend::with_segment_allocator(config, injected);
     let mut manifest = backend

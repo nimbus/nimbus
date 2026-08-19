@@ -7029,6 +7029,7 @@ dependencies = [
  "http 1.4.2",
  "nimbus-core",
  "nimbus-egress",
+ "nimbus-process-harness",
  "pingora-core",
  "pingora-http",
  "pingora-proxy",

@@ -6,6 +6,7 @@ use crate::backends::oci::port_lease::{
     OciPortProvider, claim_bind_plan_member_attempt_with_lifetime,
 };
 use nimbus_network::{LocalPortLeaseAuthority, PortLeaseEffectScope, PortLeasePhase};
+use nimbus_process_harness::PortWindow;
 use std::sync::Arc;
 
 fn sample_execution_attempt_id(id: &SandboxId) -> crate::SandboxExecutionAttemptId {
@@ -96,11 +97,10 @@ fn activation_finalizes_private_tsi_bundle_with_authenticated_attachment_address
 #[test]
 fn server_ingress_targets_retain_launch_claim_after_provider_adoption() {
     let root = TempDir::new().expect("temporary root should exist");
-    let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
-    let pep_port = pep_reservation
-        .local_addr()
-        .expect("PEP tripwire should report its port")
-        .port();
+    // The claimed window owns this port for the whole test, so the PEP binds
+    // it for real without another test process taking the number first.
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     let mut config = KrunSandboxBackendConfig::under_root(root.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = pep_port..=pep_port;
@@ -175,7 +175,6 @@ fn server_ingress_targets_retain_launch_claim_after_provider_adoption() {
             )
             .expect("fixture should realize the private attachment");
     }
-    drop(pep_reservation);
     backend
         .start_planned_provision_pep(&manifest, &reservation_claim)
         .expect("fixture PEP should become ready");
@@ -750,11 +749,10 @@ fn reservation_preserves_compiler_identities_without_binding_or_routability() {
 #[test]
 fn krun_attach_uses_compiler_planned_pep_authority() {
     let root = TempDir::new().expect("temporary root should exist");
-    let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
-    let pep_port = pep_reservation
-        .local_addr()
-        .expect("PEP tripwire should report its port")
-        .port();
+    // The claimed window owns this port for the whole test, so the PEP binds
+    // it for real without another test process taking the number first.
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     let mut config = KrunSandboxBackendConfig::under_root(root.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = pep_port..=pep_port;
@@ -789,7 +787,6 @@ fn krun_attach_uses_compiler_planned_pep_authority() {
         &nimbus_network::PortLeaseId::for_listener(&expected_listener)
     );
     assert_eq!(pep_request.plan_id(), Some(network_plan.plan_id()));
-    drop(pep_reservation);
 
     backend
         .start_planned_provision_pep(
@@ -818,11 +815,10 @@ fn krun_attach_uses_compiler_planned_pep_authority() {
 #[test]
 fn krun_owner_reopened_attach_recovers_dead_compiler_planned_pep_owner() {
     let root = TempDir::new().expect("temporary root should exist");
-    let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
-    let pep_port = pep_reservation
-        .local_addr()
-        .expect("PEP tripwire should report its port")
-        .port();
+    // The claimed window owns this port for the whole test, which is what lets
+    // the restarted backend rebind the exact port the dead owner released.
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     let mut config = KrunSandboxBackendConfig::under_root(root.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = pep_port..=pep_port;
@@ -903,7 +899,6 @@ fn krun_owner_reopened_attach_recovers_dead_compiler_planned_pep_owner() {
         .expect("planned PEP assignment should persist")
         .port_lease
         .clone();
-    drop(pep_reservation);
     backend
         .start_planned_provision_pep(&manifest, &reservation_claim)
         .expect("initial compiler-planned PEP should start");

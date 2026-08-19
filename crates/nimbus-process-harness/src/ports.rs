@@ -204,8 +204,8 @@ mod tests {
         let windows: Vec<PortWindow> = (0..8).map(|_| PortWindow::claim()).collect();
         for (index, window) in windows.iter().enumerate() {
             for other in &windows[index + 1..] {
-                let disjoint = whole(&window).end() < whole(other).start()
-                    || whole(other).end() < whole(&window).start();
+                let disjoint = whole(window).end() < whole(other).start()
+                    || whole(other).end() < whole(window).start();
                 assert!(
                     disjoint,
                     "windows {:?} and {:?} overlap",

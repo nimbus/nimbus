@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use nimbus_engine::Engine;
+use nimbus_process_harness::PortWindow;
 use nimbus_server::{MongoDbAuthConfig, MongoDbConfig, ServeOptions, serve};
 use nimbus_testing::EngineFixture;
 use tokio::net::{TcpListener, TcpStream};
@@ -17,13 +18,21 @@ pub(crate) const TEST_PASSWORD: &str = "spec-password";
 pub struct SpecTestFixture {
     _fixture: EngineFixture<Engine>,
     _server: JoinHandle<std::io::Result<()>>,
+    /// Holds the claimed host-port window for as long as the adapter serves on
+    /// it. Dropping the window would release the claim while the listener is
+    /// still bound.
+    _ports: PortWindow,
     pub addr: SocketAddr,
 }
 
 impl SpecTestFixture {
     pub async fn new() -> Self {
         let fixture = EngineFixture::new(|path| Engine::new(path));
-        let adapter_port = reserve_loopback_port().await;
+        // The adapter performs the real bind inside the spawned `serve` task,
+        // so the port has to belong to this process from here until the
+        // fixture drops rather than merely be free at this instant.
+        let ports = PortWindow::claim();
+        let adapter_port = ports.port(0);
         let addr = SocketAddr::from(([127, 0, 0, 1], adapter_port));
         let http_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let server = tokio::spawn(serve(
@@ -40,6 +49,7 @@ impl SpecTestFixture {
         Self {
             _fixture: fixture,
             _server: server,
+            _ports: ports,
             addr,
         }
     }
@@ -49,16 +59,6 @@ impl Drop for SpecTestFixture {
     fn drop(&mut self) {
         self._server.abort();
     }
-}
-
-async fn reserve_loopback_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("ephemeral listener should bind");
-    listener
-        .local_addr()
-        .expect("ephemeral listener address should resolve")
-        .port()
 }
 
 async fn wait_for_tcp_port(addr: SocketAddr, server: &JoinHandle<std::io::Result<()>>) {

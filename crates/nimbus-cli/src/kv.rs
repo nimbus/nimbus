@@ -344,6 +344,7 @@ mod tests {
     use nimbus_network::{
         LocalNetworkManagerError, LocalNetworkStateStore, PortLeaseError, PortLeasePhase,
     };
+    use nimbus_process_harness::PortWindow;
     use nimbus_server::PreboundServerListeners;
     use tokio::sync::{Mutex, MutexGuard};
 
@@ -619,10 +620,13 @@ mod tests {
         let fixture = tempfile::tempdir().expect("fixture root should exist");
         let composition = prepare_standalone_kv_network(Some(fixture.path()))
             .expect("standalone composition should initialize");
-        let selector =
-            StdTcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port selector should bind");
-        let addr = selector.local_addr().expect("port should resolve");
-        drop(selector);
+        // The window holds this port against every other process for the whole
+        // case, so the kernel bind at the end can only fail if the losing KV
+        // binder really touched the socket. The serial lock above orders the
+        // other KV network tests in this process; it says nothing about the
+        // rest of the machine.
+        let port_window = PortWindow::claim();
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port_window.port(0)));
 
         let server = PreboundServerListeners::new(composition.authority());
         let prepared_server = server
