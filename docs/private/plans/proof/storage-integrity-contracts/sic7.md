@@ -133,7 +133,7 @@ pass, 0 fail, 3 skipping.
 | `bash scripts/check-docs.sh` | `PASS — 109 pages link-clean, source map resolves, private fence intact, titles unique` |
 | `cargo fmt --all --check` | clean |
 | `make clippy` | clean |
-| `make ci` | workspace lane `7438 tests run: 7437 passed (5 slow, 1 leaky), 1 failed, 108 skipped`; all other lanes green |
+| `make ci` | workspace lane `7453 tests run: 7452 passed (4 slow, 2 leaky), 1 failed, 108 skipped`; all other lanes green |
 | `cargo test -p nimbus-storage sqlite_physical_durability` | 5 passed, 0 failed, 1 ignored |
 | `autoreview --gate pre-pr --mode auto` | see §6 |
 
@@ -162,8 +162,11 @@ PASS  13. physical SQLite durability faults pass (4 cases)
 a 1s wall-clock point-in-time-restore budget on the **redb** path. Re-run three
 times in isolation on the same checkout: ok, ok, ok, at 1.75s, 1.66s, and 1.64s
 of total test time with the budgeted step well inside its bound. It fails only
-under 7438-test concurrency. This is blocker **B2**, already recorded by SIC4,
-SIC5, and SIC6 against the same case. No bound was widened and no test was
+under full-workspace concurrency, and it is the only `FAIL` line in the whole
+log (`grep -c '^ *FAIL ' == 1`). An earlier `make ci` on the same code, run
+before the closeout, reported `7438 tests run: 7437 passed, 1 failed` with this
+identical case as its only failure. This is blocker **B2**, already recorded by
+SIC4, SIC5, and SIC6 against the same case. No bound was widened and no test was
 skipped. This task changes no code, so it cannot have caused it.
 
 ### Skipped dependencies
