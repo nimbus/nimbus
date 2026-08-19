@@ -74,6 +74,28 @@ describe("AppErrorBoundary", () => {
     );
   });
 
+  // happy-dom does no layout, so the utility class is the only observable a
+  // unit test can read here. Measured in Chromium against the console's own
+  // built stylesheet, with a realistic message ("TypeError: Cannot read
+  // properties of undefined (reading 'machines')"): the copy chip is
+  // `truncate`, which gave the card a 486.8px min-content floor — wider than
+  // its own 480px — so flex-shrink had nothing to give and the card hung 45px
+  // off each edge at a 390px viewport and 80px off each edge at 320px. Capping
+  // the specified width drops that floor with it: 351px and 288px measured,
+  // fully on screen, and still 480px at 1440px.
+  it("keeps the crash card inside a phone viewport", () => {
+    render(
+      <AppErrorBoundary>
+        <Shell />
+      </AppErrorBoundary>,
+    );
+    const classes = screen
+      .getByTestId("error-boundary-card")
+      .className.split(/\s+/);
+    expect(classes).toContain("w-[min(480px,90vw)]");
+    expect(classes).not.toContain("w-[480px]");
+  });
+
   it("copies the failing path alongside the error", async () => {
     render(
       <AppErrorBoundary>

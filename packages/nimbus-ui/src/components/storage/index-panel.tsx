@@ -17,11 +17,15 @@ export function IndexPanel({
       // so in a window under ~564px the panel kept all 420px and the row's
       // `overflow-hidden` cut off its right edge — the close button included —
       // leaving no way to dismiss it. `min-w-0` lets the panel go below its
-      // min-content width so it stays whole and closeable at any width. The
-      // schema panel it alternates with in the same toolbar carries the same
-      // constraint, and the documents table beside both still yields its space
-      // first, because its `flex-1` basis of 0 absorbs no shrink.
-      className="flex w-[420px] min-w-0 flex-col overflow-hidden rounded-md border border-app bg-surface"
+      // min-content width so it stays whole and closeable at any width. It
+      // spans the row until the row can afford 320 + 16 gap + 420 = 756px,
+      // because the table's `min-w-[20rem]` floor leaves an inspector beside
+      // it only 6px at a 390px viewport, and the row stacks the two below
+      // that. The schema panel it alternates with in the same toolbar carries
+      // the identical pair of constraints; `storage_.$table.tsx` owns the
+      // `documents-row` container this query is measured against, and with no
+      // such container in scope the rule never matches and `w-full` stands.
+      className="@min-[756px]/documents-row:w-[420px] flex w-full min-w-0 flex-col overflow-hidden rounded-md border border-app bg-surface"
       data-testid="documents-indexes-panel"
     >
       <PanelHeader title="Indexes" onClose={onClose} />

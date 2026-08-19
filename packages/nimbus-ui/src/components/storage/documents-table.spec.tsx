@@ -136,7 +136,12 @@ describe("DocumentsTable rows", () => {
   it("leaves the console-wide focus outline alone", () => {
     renderTable();
     const row = screen.getByTestId("documents-row-doc_a");
-    expect(row.className).not.toMatch(/(^|:)outline-none/);
+    // Anchored on whitespace as well as on `:` and the start of the string.
+    // `(^|:)outline-none` reads a variant prefix but walks straight past a
+    // bare `outline-none` between two other utilities, which is the form the
+    // regression would actually take. The trailing guard keeps a longer
+    // utility that merely starts with the same letters from matching.
+    expect(row.className).not.toMatch(/(^|[\s:])outline-none(?![\w-])/);
     expect(row.className).not.toMatch(/ring-\[color:var\(--nimbus-/);
     // Lifted over the neighbouring rows' pinned cells (`z-10`), which would
     // otherwise cover the ring where it is drawn in their 2px band, and under

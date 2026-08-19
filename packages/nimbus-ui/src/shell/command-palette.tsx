@@ -1,5 +1,5 @@
 import { useQuery } from "@nimbus/nimbus/react";
-import { useNavigate, useRouterState } from "@tanstack/react-router";
+import { useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
 import { Command } from "cmdk";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -88,6 +88,7 @@ export function CommandPalette() {
   const setOpen = useUiStore((s) => s.setPaletteOpen);
   const setLensOpen = useUiStore((s) => s.setLensOpen);
   const navigate = useNavigate();
+  const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const view = viewFromPathname(pathname);
   const [mode, setMode] = useState<Mode>("navigate");
@@ -115,13 +116,20 @@ export function CommandPalette() {
           },
         ]
       : []),
+    // Refetches in place — the same `router.invalidate()` the retry buttons and
+    // the per-page reload controls use. A `window.location.reload()` here read
+    // as "refresh" but tore the SPA down: the socket dropped and reconnected,
+    // and every piece of view state the label never mentioned went with it —
+    // drawer collapse, the storage query bar's filters, each route's local
+    // state. No `⌘ R` hint any more either: that chord belongs to the browser
+    // and still hard-reloads, so advertising it here would name a shortcut for
+    // a different action.
     {
       id: "refresh-current-view",
       label: "Refresh current view",
-      hint: `${metaGlyph} R`,
       perform: () => {
         setOpen(false);
-        window.location.reload();
+        void router.invalidate();
       },
     },
   ];
@@ -176,7 +184,13 @@ export function CommandPalette() {
                   ? "Run an action…"
                   : "Filter the current view…"
             }
-            className="h-7 flex-1 bg-transparent text-sm outline-none placeholder:text-muted text-default"
+            // No `outline-none`: this is a real text input, and the
+            // console-wide `:focus-visible` outline is its only focus cue. The
+            // autofocus on open hides the gap in the common path, but tabbing
+            // to the mode toggle and back left nothing to see. The outline is
+            // taken, never repainted here — a ring bound at the call site is
+            // how four of them drifted onto `--accent`, at 1.71:1.
+            className="h-7 flex-1 bg-transparent text-sm placeholder:text-muted text-default"
             data-testid="command-palette-input"
           />
           <ModeToggle current={mode} onChange={setMode} />

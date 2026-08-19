@@ -57,7 +57,35 @@ class ShellErrorBoundary extends Component<Props, State> {
         className="flex h-full items-center justify-center bg-canvas text-default"
         data-testid="error-boundary"
       >
-        <div className="w-[480px] rounded-md border bg-surface p-4 border-app">
+        {/* A bare `w-[480px]` hung off BOTH edges of a phone viewport —
+            measured -80px left / 400px right in a 320px window — on the one
+            screen that exists because the shell already failed.
+
+            It could not shrink out of it. The chip below overrides the shared
+            `max-w-[28ch]` with `max-w-full`, so its `truncate` (and the
+            `white-space:nowrap` inside it) is all that bounds a long message,
+            and that pushes the card's min-content past its own 480px —
+            486.8px for a representative TypeError against the built
+            stylesheet, and it keeps growing with the message. A flex item's
+            automatic minimum is min(specified-size-suggestion,
+            content-size-suggestion), so once the content suggestion clears
+            480px the minimum sticks at 480px and flex-shrink has nothing left
+            to give. The control that proves the chip is the cause: in a
+            reduced repro the identical card WITHOUT the chip has a 67.6px
+            min-content and shrinks to 320px happily, while with it the
+            min-content is 728.9px and the card will not move.
+
+            Capping the specified width therefore drops the floor with it:
+            the specified suggestion becomes 288px and the minimum follows.
+            Measured 288px at a 320px viewport and 351px at 390px,
+            fully on screen, still 480px at 1440px. `max-w-full` would work too
+            by clamping the content suggestion instead (min-content becomes the
+            viewport); 90vw is chosen over it so the card keeps a gutter and
+            still reads as a card rather than a full-bleed band. */}
+        <div
+          className="w-[min(480px,90vw)] rounded-md border bg-surface p-4 border-app"
+          data-testid="error-boundary-card"
+        >
           <div className="text-sm font-mono uppercase tracking-wider text-danger">
             Error
           </div>

@@ -121,23 +121,30 @@ export function ColumnChooser({
                   >
                     {field}
                   </span>
+                  {/*
+                    DESIGN.md:877 — 32px square. The row is a fixed `h-8`, so
+                    the box fills the row's full height without growing it, and
+                    the glyph is centred rather than padded: padding inside a
+                    fixed box shrinks the glyph's cell instead of widening the
+                    target.
+                  */}
                   <button
                     type="button"
                     aria-label={`Move ${field} left`}
                     disabled={!isVisible || index <= 1}
                     onClick={() => onMove(field, -1)}
-                    className="text-muted hover:text-default disabled:opacity-30"
+                    className="flex h-8 w-8 items-center justify-center rounded text-muted hover:text-default disabled:opacity-30"
                   >
-                    <ChevronUp size={12} aria-hidden />
+                    <ChevronUp size={14} aria-hidden />
                   </button>
                   <button
                     type="button"
                     aria-label={`Move ${field} right`}
                     disabled={!isVisible || index === visible.length - 1}
                     onClick={() => onMove(field, 1)}
-                    className="text-muted hover:text-default disabled:opacity-30"
+                    className="flex h-8 w-8 items-center justify-center rounded text-muted hover:text-default disabled:opacity-30"
                   >
-                    <ChevronDown size={12} aria-hidden />
+                    <ChevronDown size={14} aria-hidden />
                   </button>
                 </li>
               );

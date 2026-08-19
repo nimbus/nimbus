@@ -5,7 +5,11 @@ import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
-import { StateChip } from "../../components/state-chip";
+import {
+  resolveStateKind,
+  StateChip,
+  statePalette,
+} from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
@@ -91,6 +95,7 @@ function RunDetailBody({
       <TraceWaterfall
         startedAt={startedAt}
         duration={duration}
+        status={run.status}
         events={events}
       />
       <CorrelatedEvents events={events} runId={runId} />
@@ -191,10 +196,12 @@ function Field({
 function TraceWaterfall({
   startedAt,
   duration,
+  status,
   events,
 }: {
   startedAt: number | undefined;
   duration: number | null;
+  status: string | undefined;
   events: EventDoc[];
 }) {
   const spans = useMemo(() => {
@@ -242,12 +249,15 @@ function TraceWaterfall({
         </span>
       </div>
       <div className="space-y-2">
+        {/* The run's own span reports the run's own status. It was pinned to
+            `ok`, so a failed run painted itself success-green above the very
+            events that failed it. */}
         <WaterfallBar
           label="run"
           offsetMs={0}
           widthMs={total}
           total={total}
-          tone="ok"
+          state={status}
           testid="run-detail-trace-bar"
         />
         {spans.length === 0 ? (
@@ -265,11 +275,7 @@ function TraceWaterfall({
               offsetMs={span.offsetMs}
               widthMs={Math.max(2, total * 0.02)}
               total={total}
-              tone={
-                (span.level ?? "info").toLowerCase() === "error"
-                  ? "error"
-                  : "muted"
-              }
+              state={span.level ?? "info"}
               testid={`run-detail-trace-span-${span.id}`}
             />
           ))
@@ -279,19 +285,58 @@ function TraceWaterfall({
   );
 }
 
+type WaterfallTone = "ok" | "muted" | "error";
+
+const toneFills: Record<WaterfallTone, string> = {
+  ok: "bg-[color-mix(in_oklch,var(--nimbus-success)_70%,transparent)]",
+  muted: "bg-[color-mix(in_oklch,var(--nimbus-muted)_50%,transparent)]",
+  error: "bg-[color-mix(in_oklch,var(--nimbus-danger)_75%,transparent)]",
+};
+
+/**
+ * A bar's fill is a status color, and DESIGN.md rules that color is never the
+ * only signal. Each status tone therefore also carries a glyph the eye can
+ * separate by *shape* — ✓ against ✗, the way `StateChip` separates its states
+ * — and that glyph names its state to assistive tech. `muted` is the absence
+ * of a status rather than a status, so it claims neither a glyph nor a name.
+ *
+ * A full `StateChip` per row was rejected: the waterfall is a dense trace and
+ * an uppercase state word on every row would out-weigh the bars it annotates.
+ */
+const toneMarkers: Record<
+  WaterfallTone,
+  { glyph: string; token: string } | null
+> = {
+  ok: { glyph: "✓", token: "--nimbus-success" },
+  muted: null,
+  error: { glyph: "✗", token: "--nimbus-danger" },
+};
+
+/**
+ * Resolve any state string the server can write — a run `status`, an event
+ * `level` — onto the three bar tones, through the same palette the chips
+ * read. A state the palette calls danger can then never paint a success bar.
+ */
+function toneForState(state: string | null | undefined): WaterfallTone {
+  const { token } = statePalette[resolveStateKind(state)];
+  if (token === "--nimbus-danger") return "error";
+  if (token === "--nimbus-success") return "ok";
+  return "muted";
+}
+
 function WaterfallBar({
   label,
   offsetMs,
   widthMs,
   total,
-  tone,
+  state,
   testid,
 }: {
   label: string;
   offsetMs: number;
   widthMs: number;
   total: number;
-  tone: "ok" | "muted" | "error";
+  state: string | null | undefined;
   testid: string;
 }) {
   const safeTotal = total > 0 ? total : 1;
@@ -300,22 +345,32 @@ function WaterfallBar({
     100 - leftPct,
     Math.max(0.5, (widthMs / safeTotal) * 100),
   );
-  const tones: Record<typeof tone, string> = {
-    ok: "bg-[color-mix(in_oklch,var(--nimbus-success)_70%,transparent)]",
-    muted: "bg-[color-mix(in_oklch,var(--nimbus-muted)_50%,transparent)]",
-    error: "bg-[color-mix(in_oklch,var(--nimbus-danger)_75%,transparent)]",
-  };
+  const tone = toneForState(state);
+  const marker = toneMarkers[tone];
   return (
     <div
       className="grid grid-cols-[10rem_1fr_5rem] items-center gap-3 font-mono text-xs"
       data-testid={testid}
     >
-      <span className="truncate text-default" title={label}>
-        {label}
+      {/* The glyph sits outside the truncating span so a long label can never
+          clip the row's only non-color signal. */}
+      <span className="flex min-w-0 items-center gap-1.5" title={label}>
+        {marker ? (
+          <span
+            role="img"
+            aria-label={state ?? tone}
+            className="shrink-0 leading-none"
+            style={{ color: `var(${marker.token})` }}
+            data-testid={`${testid}-marker`}
+          >
+            {marker.glyph}
+          </span>
+        ) : null}
+        <span className="truncate text-default">{label}</span>
       </span>
       <div className="relative h-3 rounded-full bg-surface-2">
         <div
-          className={cn("absolute top-0 h-3 rounded-full", tones[tone])}
+          className={cn("absolute top-0 h-3 rounded-full", toneFills[tone])}
           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
         />
       </div>

@@ -17,4 +17,29 @@ describe("IndexPanel", () => {
     // min-w-0 is what lets a flex item shrink below its min-content width.
     expect(panel.className).toContain("min-w-0");
   });
+
+  // The other half of the same fix, and identical to the schema panel's: once
+  // the documents table took its own `min-w-[20rem]` floor, the inspector
+  // beside it became the side that yields. A browser measurement of the real
+  // flex row put it at 6px wide on a 390px viewport; spanning the row until it
+  // can afford 320 + 16 + 420 = 756px, with the row stacking below that, reads
+  // 342px there and 420px once the row clears the threshold.
+  //
+  // The threshold is measured against the `documents-row` container on the
+  // page section rather than the viewport, because the shell's drawers take
+  // 80px to 480px in between and no single viewport breakpoint fits both.
+  //
+  // happy-dom performs no layout, so the utility class is the only observable
+  // here. `w-[420px]` must be absent rather than merely outranked: conflicting
+  // width utilities are settled by stylesheet order, not by class-list order.
+  it("spans the row until it can afford 420px beside the table", () => {
+    render(<IndexPanel schema={null} onClose={() => {}} />);
+    const classes = screen
+      .getByTestId("documents-indexes-panel")
+      .className.split(" ");
+    expect(classes).toContain("w-full");
+    expect(classes).toContain("@min-[756px]/documents-row:w-[420px]");
+    expect(classes).not.toContain("w-[420px]");
+    expect(classes).not.toContain("lg:w-[420px]");
+  });
 });

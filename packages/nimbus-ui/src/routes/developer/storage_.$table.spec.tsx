@@ -333,4 +333,52 @@ describe("document table column floor", () => {
     // panel is open.
     expect(classes).toContain("flex-1");
   });
+
+  /**
+   * The floor above fixed the table and moved the starvation onto the
+   * inspector: the table stopped yielding, so the panel became the side that
+   * goes to nothing. Side-by-side costs 320px (the floor) + 16px (`gap-4`) +
+   * 420px (the panel) = 756px of row width, and a browser measurement of the
+   * real flex row read the panel at 6px on a 390px viewport, where the row has
+   * 342px of content width.
+   *
+   * 756px is measured against the row's own container rather than the
+   * viewport. A media query cannot see this row: the shell's drawers sit
+   * between the viewport and the page and take 80px collapsed or 480px
+   * expanded, so one viewport width yields row widths 400px apart. `lg` was
+   * the closest single number and still starved the panel to 160px at a
+   * 1024px viewport with both drawers open, and to 416px at 1280px -- both
+   * measured. Against the container those cases stack correctly instead.
+   *
+   * happy-dom performs no layout and evaluates no container query, so the
+   * direction utility is the only observable a test here can read back.
+   */
+  it("stacks the inspector under the table until the row can afford it", () => {
+    renderPage();
+
+    const row = screen.getByTestId("documents-table-column").parentElement;
+    const classes = row?.className.split(" ") ?? [];
+    expect(classes).toContain("flex-col");
+    expect(classes).toContain("@min-[756px]/documents-row:flex-row");
+    // A viewport variant here is the specific regression to guard: it reads
+    // correct but cannot see the drawers.
+    expect(classes).not.toContain("lg:flex-row");
+    // The panel half is inseparable from this: a stacking row whose panel is
+    // still a fixed 420px just clips it horizontally instead. Asserted on the
+    // panels themselves in schema-panel.spec.tsx and index-panel.spec.tsx.
+    expect(classes).toContain("overflow-hidden");
+  });
+
+  // The container the two panels' `@min-[756px]/documents-row:` queries name.
+  // It lives here, they live in components/storage, and nothing in the type
+  // system connects the two -- if this class is dropped the queries silently
+  // stop matching and both panels stay full-width at every size.
+  it("declares the documents-row container the panels query", () => {
+    renderPage();
+
+    const classes = screen
+      .getByTestId("page-table-documents")
+      .className.split(" ");
+    expect(classes).toContain("@container/documents-row");
+  });
 });

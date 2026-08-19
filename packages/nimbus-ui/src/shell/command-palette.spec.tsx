@@ -1,19 +1,25 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { pathnameRef, navigateMock, useQueryMock, tenantListRef } = vi.hoisted(
-  () => ({
-    pathnameRef: { current: "/developer/compute" },
-    navigateMock: vi.fn(),
-    useQueryMock: vi.fn(),
-    tenantListRef: {
-      current: { kind: "loaded", tenants: [{ id: "acme", backend: "sqlite" }] },
-    },
-  }),
-);
+const {
+  pathnameRef,
+  navigateMock,
+  invalidateMock,
+  useQueryMock,
+  tenantListRef,
+} = vi.hoisted(() => ({
+  pathnameRef: { current: "/developer/compute" },
+  navigateMock: vi.fn(),
+  invalidateMock: vi.fn(),
+  useQueryMock: vi.fn(),
+  tenantListRef: {
+    current: { kind: "loaded", tenants: [{ id: "acme", backend: "sqlite" }] },
+  },
+}));
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
+  useRouter: () => ({ invalidate: invalidateMock }),
   useRouterState: ({
     select,
   }: {
@@ -48,6 +54,7 @@ const ROWS: Record<string, Array<Record<string, unknown>>> = {
 beforeEach(() => {
   pathnameRef.current = "/developer/compute";
   navigateMock.mockReset();
+  invalidateMock.mockReset().mockResolvedValue(undefined);
   window.localStorage.clear();
   useQueryMock.mockReset();
   useQueryMock.mockImplementation((ref: { name: string }, args: unknown) =>
@@ -148,6 +155,53 @@ describe("CommandPalette", () => {
       ([ref]) => ref.name === "tables:list",
     );
     expect(tableCall?.[1]).toBe("skip");
+  });
+
+  // The palette's one text field cancelled the console-wide outline and put
+  // nothing in its place. `autoFocus` masks that on open; tab to the mode
+  // toggle and back and the caret is the only thing left saying where focus
+  // is. Vitest runs with `css: false`, so there is no cascade here to measure —
+  // what this holds is that the input does not opt out of the outline the base
+  // layer paints, and that it names no other token in its place. The
+  // repo-wide version of the rule lives in styles/contrast.spec.ts.
+  it("keeps the console-wide focus outline on the palette input", () => {
+    render(<CommandPalette />);
+    const input = screen.getByTestId("command-palette-input");
+    // Anchored on whitespace as well as on `:` and the start of the string:
+    // the two precedents for this assertion (documents-table.spec.tsx,
+    // query-bar.spec.tsx) match `(^|:)outline-none`, which reads a variant
+    // prefix but walks straight past a bare `outline-none` sitting between two
+    // other utilities — which is exactly the form this input carried.
+    expect(input.className).not.toMatch(/(^|[\s:])outline-none(?![\w-])/);
+    for (const [, token] of input.className.matchAll(
+      /var\((--nimbus-[a-z0-9-]+)\)/g,
+    )) {
+      expect(token).toBe("--nimbus-focus");
+    }
+  });
+
+  // "Refresh current view" used to call window.location.reload(), which is a
+  // different action than the one it names: the socket drops, and the drawer
+  // state and the query bar's filters go with it.
+  it("refreshes the view in place rather than reloading the app", () => {
+    const reload = vi.fn();
+    const location = Object.getOwnPropertyDescriptor(window, "location");
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, reload },
+      configurable: true,
+    });
+    try {
+      render(<CommandPalette />);
+      fireEvent.click(screen.getByTestId("palette-mode-run"));
+      fireEvent.click(
+        screen.getByTestId("palette-action-Refresh current view"),
+      );
+      expect(invalidateMock).toHaveBeenCalledTimes(1);
+      expect(reload).not.toHaveBeenCalled();
+      expect(useUiStore.getState().paletteOpen).toBe(false);
+    } finally {
+      if (location) Object.defineProperty(window, "location", location);
+    }
   });
 
   it("says so when the tenant list fails instead of dropping the group", async () => {

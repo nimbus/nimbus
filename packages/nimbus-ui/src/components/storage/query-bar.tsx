@@ -169,13 +169,24 @@ function Chip({
       data-testid={testid}
     >
       <span className="truncate">{label}</span>
+      {/*
+        DESIGN.md:877 asks for a 32px square. The chip is 22px tall and the
+        query-bar row it sits in is 26px (the add-filter button and the column
+        chooser are both `h-[26px]`), so a 32px box would overflow the row by
+        3px on each side and, once chips wrap, overlap the remove target of the
+        line above through the 6px `gap-1.5`. 26px is the largest square the
+        row already reserves: it overflows the chip by 2px a side into the
+        row's own slack, grows nothing, and keeps 2px of clearance between
+        wrapped lines. `shrink-0` is load-bearing — the chip is capped at 32ch,
+        and without it the box shrinks back towards the glyph on a long label.
+      */}
       <button
         type="button"
         aria-label={removeLabel}
         onClick={onRemove}
-        className="text-muted hover:text-default"
+        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded text-muted hover:text-default"
       >
-        <X size={11} aria-hidden />
+        <X size={12} aria-hidden />
       </button>
     </span>
   );

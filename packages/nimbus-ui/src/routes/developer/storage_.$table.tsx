@@ -447,7 +447,19 @@ function TableDocumentsPage() {
 
   return (
     <section
-      className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
+      // `@container/documents-row` exists for the inspector row below, which
+      // has to know its own width and cannot get it from a media query: the
+      // shell's drawers sit between the viewport and this page and take 80px
+      // collapsed or 480px expanded, so the same viewport yields row widths
+      // 400px apart. Querying this section instead reads the row's real
+      // budget, because size containment is on the inline axis and this
+      // section's content box is exactly what the row has to spend.
+      //
+      // `container-type: inline-size` does not establish a containing block
+      // and does not open a stacking context, so the `fixed inset-0` drawers
+      // and dialogs inside this subtree still resolve against the viewport --
+      // verified in Chromium against `contain: layout`, which does trap them.
+      className="@container/documents-row flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-table-documents"
     >
       <div className="flex flex-col gap-2">
@@ -527,7 +539,22 @@ function TableDocumentsPage() {
         />
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
+      {/* Stacked until the row can afford both children side by side. They
+          have conflicting floors: the table needs 20rem to stay readable and
+          the inspector wants 420px, so side-by-side costs 320 + 16 gap + 420 =
+          756px of row width. Under that one of them starves, and since the
+          table holds a floor, the inspector is the one that goes -- 6px at a
+          390px viewport, measured. Stacking spends height, which this row can
+          scroll, instead of width, which it cannot.
+
+          756px is measured against the section's container, not the viewport,
+          because the drawers make the two disagree by up to 480px. A viewport
+          breakpoint here would have to pick one number for a threshold that
+          really ranges from 884px to 1284px: `lg` was the closest, and it
+          still starved the panel to 160px at 1024px with both drawers open,
+          and to 416px at 1280px. The container query has no such gap -- it
+          reads the row's own width, so drawer state stops mattering. */}
+      <div className="@min-[756px]/documents-row:flex-row flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
         {/* `flex-1` is `flex: 1 1 0%`, and `overflow-hidden` resolves this
             column's automatic minimum width to zero, so with the schema or
             index inspector open it yielded every pixel to its 420px sibling

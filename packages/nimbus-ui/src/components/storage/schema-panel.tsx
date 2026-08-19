@@ -76,7 +76,21 @@ export function SchemaPanel({
       // min-content width so it stays whole and closeable at any width; the
       // documents table beside it still yields its space first, because its
       // `flex-1` basis of 0 absorbs no shrink.
-      className="flex w-[420px] min-w-0 flex-col overflow-hidden rounded-md border border-app bg-surface"
+      //
+      // Shrinking is a safety valve, not a layout. Once the table took its
+      // `min-w-[20rem]` floor the table stopped yielding, and the panel became
+      // the side that goes to nothing: 6px at a 390px viewport, measured. So
+      // the panel spans the row until the row can afford 320 + 16 gap + 420 =
+      // 756px, and below that the row stacks it under the table. Both halves
+      // are one fix; `w-full` without the stacking direction is just a 420px
+      // panel clipped horizontally.
+      //
+      // The query names the `documents-row` container on the page section in
+      // `storage_.$table.tsx`, which is what makes 756px mean the row's own
+      // width rather than the viewport's. Rendered with no such container in
+      // scope the rule simply never matches and the panel stays `w-full`,
+      // which is the safe direction: full width, never clipped.
+      className="@min-[756px]/documents-row:w-[420px] flex w-full min-w-0 flex-col overflow-hidden rounded-md border border-app bg-surface"
       data-testid="documents-schema-panel"
     >
       <PanelHeader title="Schema" onClose={onClose} />

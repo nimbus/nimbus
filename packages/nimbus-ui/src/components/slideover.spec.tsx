@@ -130,6 +130,27 @@ describe("Slideover", () => {
     expect(stale).not.toHaveBeenCalled();
   });
 
+  // happy-dom does no layout, so the utility class is the only observable a
+  // unit test can read here. Measured in Chromium against the console's own
+  // built stylesheet: with both real bodies the panel's min-content floor is
+  // 207px (insert) and 245px (edit) — a 60-char field name and a 63-char
+  // string value leave it at 207px, because the textarea sizes from `cols`
+  // rather than from its content — so below 480px the panel flex-shrinks to
+  // exactly the viewport (390px and 320px measured, nothing clipped) and
+  // stays 480px at 1440px. `max-w-full` covers the case shrinking cannot: a
+  // 56-char unbroken title floors the panel at 573px, which at HEAD pinned it
+  // to 480px and hung it 90px off the left edge at 390px and 160px at 320px,
+  // close button first.
+  it("clamps the panel to the overlay it is anchored inside", () => {
+    openDrawer();
+    const classes = screen.getByTestId("drawer").className.split(/\s+/);
+    expect(classes).toContain("max-w-full");
+    // The two live on the same element, so the assertion above is also the
+    // absence of the unguarded form: a fixed width carrying no clamp. Under
+    // `justify-end` that overflow leaves by the left edge, close button first.
+    expect(classes.filter((c) => /^w-\[\d/.test(c))).toEqual(["w-[480px]"]);
+  });
+
   it("restores focus to the opener when it closes", () => {
     const onClose = vi.fn();
     const { opener, rerender } = openDrawer(onClose);
