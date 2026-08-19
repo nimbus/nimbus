@@ -424,6 +424,10 @@ struct PreparedFixture {
     pep_port: u16,
     artifact_sentinel: Option<PathBuf>,
     runtime_artifacts: Option<[PathBuf; 3]>,
+    /// Carried over from the fixture that reserved `pep_port`. Every child
+    /// process below rebinds that exact port, so the claim is held for the
+    /// prepared fixture's whole life rather than read.
+    _port_window: PortWindow,
 }
 
 fn prepared_fixture(label: &str, operation: SandboxNetworkTeardownOperation) -> PreparedFixture {
@@ -478,6 +482,7 @@ fn prepared_fixture(label: &str, operation: SandboxNetworkTeardownOperation) -> 
         backend,
         runtime,
         id,
+        port_window,
         ..
     } = fixture;
     drop(runtime);
@@ -488,6 +493,7 @@ fn prepared_fixture(label: &str, operation: SandboxNetworkTeardownOperation) -> 
         pep_port,
         artifact_sentinel,
         runtime_artifacts,
+        _port_window: port_window,
     }
 }
 
@@ -508,6 +514,7 @@ fn prepared_interrupted_adoption(
         backend,
         runtime,
         id,
+        port_window,
         ..
     } = fixture;
     drop(runtime);
@@ -518,6 +525,7 @@ fn prepared_interrupted_adoption(
         pep_port,
         artifact_sentinel: None,
         runtime_artifacts: None,
+        _port_window: port_window,
     }
 }
 

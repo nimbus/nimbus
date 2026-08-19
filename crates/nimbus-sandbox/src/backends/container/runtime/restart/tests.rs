@@ -4,6 +4,8 @@ use std::net::{Shutdown, TcpListener};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use nimbus_process_harness::PortWindow;
+
 use crate::backends::conmon::creator::{CreatorAttemptReceipt, OwnedConmonCreator};
 use crate::backends::oci::command::CommandSpec;
 use crate::backends::oci::network::FixedOciEgressPinProvider;
@@ -144,28 +146,30 @@ struct MachineRestartFixture {
     fence: SandboxRestartAttemptFence,
     network_plan: crate::SandboxProvisionNetworkPlan,
     forwarder_port: u16,
+    /// Keeps offsets 0-2 below reserved for this process. `forwarder_port` is
+    /// re-bound after publication by `spawn_absent_inspection`, so the claim
+    /// must outlive the fixture's constructor.
+    _port_window: PortWindow,
 }
 
 impl MachineRestartFixture {
     fn published_source(name: &str) -> Self {
         let root = tempfile::tempdir().expect("temporary root should exist");
+        // Offset 0 is the published binding, offset 1 the PEP range, offset 2
+        // the machine forwarder endpoint. Each tripwire below still holds its
+        // port until the product is ready to take it.
+        let port_window = PortWindow::claim();
+        let published_port = port_window.port(0);
+        let pep_port = port_window.port(1);
+        let forwarder_port = port_window.port(2);
         let published_reservation =
-            TcpListener::bind("127.0.0.1:0").expect("published tripwire should bind");
-        let published_port = published_reservation
-            .local_addr()
-            .expect("published tripwire should expose its address")
-            .port();
-        let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
-        let pep_port = pep_reservation
-            .local_addr()
-            .expect("PEP tripwire should expose its address")
-            .port();
+            TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, published_port))
+                .expect("published tripwire should bind");
+        let pep_reservation = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, pep_port))
+            .expect("PEP tripwire should bind");
         let forwarder_reservation =
-            TcpListener::bind("127.0.0.1:0").expect("forwarder tripwire should bind");
-        let forwarder_port = forwarder_reservation
-            .local_addr()
-            .expect("forwarder tripwire should expose its address")
-            .port();
+            TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, forwarder_port))
+                .expect("forwarder tripwire should bind");
         let mut config = super::super::ContainerSandboxBackendConfig::under_root(root.path());
         config.node_network_supernet = "127.0.0.0/24".to_owned();
         config.published_port_range = pep_port..=pep_port;
@@ -255,6 +259,7 @@ impl MachineRestartFixture {
             fence,
             network_plan,
             forwarder_port,
+            _port_window: port_window,
         }
     }
 
@@ -778,11 +783,10 @@ fn restart_retained_attach_must_retain_network_allocation_retain_port_lease_reta
     let root = tempfile::tempdir().expect("temporary root should exist");
     let mut config = super::super::ContainerSandboxBackendConfig::under_root(root.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let pep_reservation = reserve_loopback_port();
-    let pep_port = pep_reservation
-        .local_addr()
-        .expect("PEP reservation should expose its address")
-        .port();
+    // The window holds the PEP port until this test ends, so the attachment
+    // below binds the exact port the range names.
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     config.published_port_range = pep_port..=pep_port;
     let backend = ContainerSandboxBackend::new(config.clone())
         .with_egress_pin_provider(std::sync::Arc::new(FixedOciEgressPinProvider::ready()));
@@ -798,7 +802,6 @@ fn restart_retained_attach_must_retain_network_allocation_retain_port_lease_reta
             network_plan,
         )
         .expect("retained-network fixture should reserve exact network authority");
-    drop(pep_reservation);
     backend
         .prepare_provision_workload(&sandbox_id, &source_attempt)
         .expect("retained-network fixture should prepare");

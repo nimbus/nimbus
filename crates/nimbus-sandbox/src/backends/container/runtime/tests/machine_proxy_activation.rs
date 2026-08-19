@@ -5,9 +5,13 @@ use super::*;
 #[test]
 fn machine_proxy_rejects_caller_manifest_identity_mismatch_before_effect() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // The window partitions this test's host ports: offset 0 is the published
+    // binding, offset 1 the machine forwarder endpoint. The claim lives for the
+    // whole test, so the assertions below observe only this process.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
         .plan_start_with_id(
@@ -85,9 +89,13 @@ fn machine_proxy_rejects_caller_manifest_identity_mismatch_before_effect() {
 #[test]
 fn machine_proxy_activation_failure_drops_listeners_and_abandons_exact_claims() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // The window partitions this test's host ports: offset 0 is the published
+    // binding, offset 1 the machine forwarder endpoint. The claim lives for the
+    // whole test, so the assertions below observe only this process.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
         .plan_start_with_id(
@@ -168,9 +176,13 @@ fn machine_proxy_activation_failure_drops_listeners_and_abandons_exact_claims() 
 #[test]
 fn machine_proxy_activation_ack_loss_inspects_active_binding_and_rebinds() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // The window partitions this test's host ports: offset 0 is the published
+    // binding, offset 1 the machine forwarder endpoint. The claim lives for the
+    // whole test, so the assertions below observe only this process.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
         .plan_start_with_id(
@@ -251,9 +263,13 @@ fn machine_proxy_activation_ack_loss_inspects_active_binding_and_rebinds() {
 #[test]
 fn machine_proxy_reuse_requires_exact_normalized_forwarding_plan() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // The window partitions this test's host ports: offset 0 is the published
+    // binding, offset 1 the machine forwarder endpoint. The claim lives for the
+    // whole test, so the assertions below observe only this process.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
         .plan_start_with_id(
@@ -318,9 +334,13 @@ fn machine_proxy_reuse_requires_exact_normalized_forwarding_plan() {
 #[test]
 fn machine_publication_rejects_external_address_substitution_before_proxy_or_forwarder_effect() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // The window partitions this test's host ports: offset 0 is the published
+    // binding, offset 1 the machine forwarder endpoint. The claim lives for the
+    // whole test, so the assertions below observe only this process.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let mut manifest = backend
         .plan_start_with_id(

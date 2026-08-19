@@ -67,7 +67,11 @@ fn unstarted_artifact_cleanup_failure_retains_claim_for_idempotent_retry() {
 
 #[test]
 fn terminal_netavark_cleanup_ignores_current_machine_forwarder() {
-    let published_port = unused_loopback_port();
+    // Offset 0 is the published binding and offset 1 the one-port PEP range.
+    // Distinct offsets replace the retry loop that used to reject a duplicate
+    // draw, and the claim covers both ports for the whole proof.
+    let port_window = PortWindow::claim();
+    let published_port = port_window.port(0);
     let drift_listener =
         TcpListener::bind("127.0.0.1:0").expect("current machine forwarder should bind");
     let drift_forwarder_port = drift_listener
@@ -79,10 +83,7 @@ fn terminal_netavark_cleanup_ignores_current_machine_forwarder() {
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path())
         .with_network_state_root(temp_dir.path().join("node-network-state"));
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let mut egress_proxy_port = unused_loopback_port();
-    while egress_proxy_port == published_port {
-        egress_proxy_port = unused_loopback_port();
-    }
+    let egress_proxy_port = port_window.port(1);
     config.published_port_range = egress_proxy_port..=egress_proxy_port;
     let mut backend = ContainerSandboxBackend::new(config);
     let mut manifest = backend

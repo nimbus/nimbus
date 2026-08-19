@@ -21,6 +21,7 @@ use crate::backends::oci::network::{
 use nimbus_network::{
     NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim, PortLeasePhase,
 };
+use nimbus_process_harness::PortWindow;
 
 #[path = "tests/absent_runtime_projection.rs"]
 mod absent_runtime_projection;
@@ -57,11 +58,3 @@ mod runner_reliability;
 mod status_callbacks;
 #[path = "tests/terminal_finality.rs"]
 mod terminal_finality;
-
-fn unused_loopback_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("ephemeral loopback listener should bind")
-        .local_addr()
-        .expect("ephemeral listener should expose address")
-        .port()
-}

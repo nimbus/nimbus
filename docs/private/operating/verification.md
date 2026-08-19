@@ -94,6 +94,57 @@ slow test after 45 seconds and three strikes, so Nextest lanes and hosted CI
 are protected. A bare `cargo test` has no timeout. Wrap a long check in
 `timeout <seconds> ...` and require the same of a delegated job.
 
+## Host ports in tests
+
+Do not discover a host port with a probe. A probe binds port zero, reads the
+assigned number, closes the socket, and gives the bare number to code that
+binds it later. The port belongs to nobody between the close and the bind.
+Every test is its own process under nextest, so a probe races the rest of the
+suite. This reached CI as `failed to bind egress proxy on 127.0.0.1:38373:
+address in use`.
+
+Claim a window instead. `PortWindow` binds the first port of the window and
+keeps that socket for the life of the window. The kernel refuses the same
+address to a second process, so the claim excludes other processes without a
+lock file, and process exit releases it:
+
+```rust
+use nimbus_process_harness::PortWindow;
+
+let window = PortWindow::claim();   // keep alive while the ports matter
+let pep_port = window.port(0);
+let published = window.ports(8, 21);
+```
+
+The window region is below the host ephemeral range. An unrelated `bind(0)`
+cannot receive a claimed port. Partition the window explicitly. Do not give
+one offset to two consumers.
+
+A server started by hand is a different matter. It binds a fixed port, and the
+claim holds only the window's first one. `PortWindow` therefore withholds every
+window that spans a conventional Nimbus port, so a local MongoDB adapter on
+27017 costs the suite nothing. Any other long-lived listener inside
+17000-31999 still owns the port it sits on: stop it, or move it out of the
+region.
+
+A wider port range is not a fix. The sandbox port coordinator walks its range
+lowest-first and compares each candidate only against its own durable state,
+which each test roots in its own temporary directory. The coordinator never
+asks the kernel. Two test processes that share one range select the same first
+port, so a wider shared range makes collision certain instead of rare.
+
+This rule also covers the inverse assertion. A test that re-binds an address to
+prove the product released it must source that address from a claimed window.
+If it does not, a foreign process that takes the port first turns a correct
+release into a false failure against the product.
+
+The gate below fails on any new probe-and-release site. It holds no allowlist,
+because the count is zero:
+
+```bash
+cargo test -p nimbus-process-harness --test host_ports_are_claimed_not_probed
+```
+
 ## External providers and host capabilities
 
 Use repository-owned provider fixtures instead of recreating image, port,
