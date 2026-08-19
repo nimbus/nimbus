@@ -27,9 +27,15 @@
 //! violated, and [`tests::ephemeral_range_never_overlaps_the_region`] proves
 //! it against the running host rather than trusting documented defaults.
 //!
-//! An unrelated program may still occupy a port in the region. That costs a
-//! claim its first choice, not its correctness: [`PortWindow::try_claim`]
-//! walks on to the next window.
+//! The claim covers the window's first port, so exclusion against *other
+//! claims* rests on that one socket. It does not bind the rest of the host:
+//! an unrelated program that already listens inside a window still holds that
+//! port, and a caller that takes it fails loudly rather than silently sharing
+//! it. [`RESERVED_PORTS`] withholds the windows where that is predictable —
+//! the conventional Nimbus ports a developer's own server would occupy.
+//!
+//! An unrelated program that takes a *sentinel* costs a claim its first choice,
+//! not its correctness: [`PortWindow::try_claim`] walks on to the next window.
 
 use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
@@ -47,6 +53,16 @@ const REGION_START: u16 = 17_000;
 /// Last port of the claimable region, inclusive.
 const REGION_END: u16 = 31_999;
 
+/// Ports inside the region that a running Nimbus may already own.
+///
+/// A claim holds only its window's sentinel, so a program that binds *inside*
+/// a window still collides with a claimed port. Nimbus serves its MongoDB
+/// adapter on the conventional 27017, which falls in the region, so the window
+/// containing it is never handed out and a developer can run the server beside
+/// the suite. The other conventional ports (8000 DynamoDB, 9000 S3, and the
+/// 15000-16000 published sandbox range) already sit below the region.
+const RESERVED_PORTS: &[u16] = &[27_017];
+
 /// Ports per window, sentinel included.
 ///
 /// 32 leaves 31 usable, which covers the widest existing fixture — a
@@ -56,6 +72,12 @@ const WINDOW_LEN: u16 = 32;
 /// Rotates where each claim starts scanning, so concurrent claimers do not all
 /// walk the region from the same end and queue behind the same busy windows.
 static SCAN_ROTATION: AtomicU32 = AtomicU32::new(0);
+
+/// Whether the window opening at `start` spans a reserved port.
+fn window_is_reserved(start: u16) -> bool {
+    let span = start..start + WINDOW_LEN;
+    RESERVED_PORTS.iter().any(|port| span.contains(port))
+}
 
 /// Number of whole windows the region holds.
 const fn window_count() -> u16 {
@@ -101,7 +123,16 @@ impl PortWindow {
         for step in 0..count {
             let index = rotation.wrapping_add(step) % count;
             let offset = index * u32::from(WINDOW_LEN);
-            let start = REGION_START + u16::try_from(offset).unwrap_or(0);
+            // `index < count`, so the offset is bounded by the region and the
+            // conversion cannot fail. Loud rather than silent if that ever
+            // stops holding: a fallback offset would hand out a window that
+            // another claim already owns.
+            let offset =
+                u16::try_from(offset).expect("a window offset should stay inside the region");
+            let start = REGION_START + offset;
+            if window_is_reserved(start) {
+                continue;
+            }
             match TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, start)) {
                 Ok(sentinel) => return Ok(Self { sentinel, start }),
                 Err(error) => last_error = Some(error),
@@ -110,8 +141,9 @@ impl PortWindow {
         Err(io::Error::new(
             io::ErrorKind::AddrInUse,
             format!(
-                "every test port window in {REGION_START}-{REGION_END} is claimed \
-                 ({count} windows of {WINDOW_LEN} ports); last bind failed with: {}",
+                "every claimable test port window in {REGION_START}-{REGION_END} is taken \
+                 ({count} windows of {WINDOW_LEN} ports, less those spanning \
+                 {RESERVED_PORTS:?}); last bind failed with: {}",
                 last_error.map_or_else(
                     || "no candidate was attempted".to_owned(),
                     |error| error.to_string()
@@ -184,7 +216,7 @@ impl PortWindow {
 
 #[cfg(test)]
 mod tests {
-    use super::{PortWindow, REGION_END, REGION_START, WINDOW_LEN, window_count};
+    use super::{PortWindow, REGION_END, REGION_START, RESERVED_PORTS, WINDOW_LEN, window_count};
     use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
     use std::ops::RangeInclusive;
     use std::process::Command;
@@ -218,16 +250,36 @@ mod tests {
 
     #[test]
     fn every_usable_port_in_a_claimed_window_binds() {
-        let window = PortWindow::claim();
-        // Held together rather than one at a time: a port freed between two
-        // binds could be re-handed by the kernel and hide an overlap.
-        let held: Vec<TcpListener> = whole(&window)
-            .map(|port| {
-                TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
-                    .unwrap_or_else(|error| panic!("claimed port {port} should bind: {error}"))
-            })
-            .collect();
-        assert_eq!(held.len(), usize::from(window.usable()));
+        // The claim covers the sentinel, not the interior, so an unrelated
+        // program on this host can occupy a port inside one window. It cannot
+        // occupy one inside every window, which is what separates that from
+        // the failure this asserts against: a window that overlaps another
+        // claim would block a port in each fresh attempt too.
+        const ATTEMPTS: u8 = 5;
+        let mut blocked = None;
+        for _ in 0..ATTEMPTS {
+            let window = PortWindow::claim();
+            // Held together rather than one at a time: a port freed between
+            // two binds could be re-handed by the kernel and hide an overlap.
+            let mut held: Vec<TcpListener> = Vec::with_capacity(usize::from(window.usable()));
+            for port in whole(&window) {
+                match TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)) {
+                    Ok(listener) => held.push(listener),
+                    Err(error) => {
+                        blocked = Some((port, error));
+                        break;
+                    }
+                }
+            }
+            if held.len() == usize::from(window.usable()) {
+                return;
+            }
+        }
+        let (port, error) = blocked.expect("a short attempt records the port that blocked it");
+        panic!(
+            "no claimed window bound cleanly in {ATTEMPTS} attempts; \
+             port {port} failed with: {error}"
+        );
     }
 
     #[test]
@@ -277,12 +329,65 @@ mod tests {
 
     #[test]
     fn dropping_a_window_releases_its_claim() {
-        let sentinel = {
-            let window = PortWindow::claim();
-            window.sentinel_port()
-        };
-        TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, sentinel))
-            .expect("a dropped window should release its sentinel");
+        // A released window is immediately claimable again, so a concurrent
+        // claimant walking the region can take this sentinel before the
+        // re-bind below reaches it. That outcome proves the release just as
+        // well, so it retries with a fresh window instead of failing. A
+        // sentinel that outlived its window would instead lose every attempt.
+        const ATTEMPTS: u8 = 8;
+        let mut last_error = None;
+        for _ in 0..ATTEMPTS {
+            let sentinel = {
+                let window = PortWindow::claim();
+                window.sentinel_port()
+            };
+            match TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, sentinel)) {
+                Ok(_) => return,
+                Err(error) => last_error = Some(error),
+            }
+        }
+        panic!(
+            "a dropped window should release its sentinel, but {ATTEMPTS} windows \
+             stayed bound; last bind failed with: {}",
+            last_error.expect("a failed attempt records its error")
+        );
+    }
+
+    /// A claim holds only its sentinel, so a conventional port inside a handed
+    /// out window would let a locally running Nimbus server collide with a
+    /// claimed port and fail an unrelated test from inside product code.
+    #[test]
+    fn no_conventional_nimbus_port_falls_in_a_claimable_window() {
+        // Spelled out rather than imported: this crate sits below the adapters
+        // and must not depend on them to state its own region invariant.
+        for (port, name) in [
+            (8000_u16, "DynamoDB"),
+            (9000, "S3"),
+            (15_000, "published sandbox range start"),
+            (16_000, "published sandbox range end"),
+            (27_017, "MongoDB"),
+        ] {
+            let outside = !(REGION_START..=REGION_END).contains(&port);
+            assert!(
+                outside || RESERVED_PORTS.contains(&port),
+                "conventional {name} port {port} sits in the claimable region \
+                 {REGION_START}-{REGION_END} without a RESERVED_PORTS entry"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reserved_port_is_never_inside_a_claimed_window() {
+        let windows: Vec<PortWindow> = (0..16).map(|_| PortWindow::claim()).collect();
+        for window in &windows {
+            for reserved in RESERVED_PORTS {
+                assert!(
+                    !whole(window).contains(reserved) && *reserved != window.sentinel_port(),
+                    "claimed window {:?} spans reserved port {reserved}",
+                    whole(window)
+                );
+            }
+        }
     }
 
     #[test]

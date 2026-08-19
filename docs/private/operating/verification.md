@@ -120,6 +120,13 @@ The window region is below the host ephemeral range. An unrelated `bind(0)`
 cannot receive a claimed port. Partition the window explicitly. Do not give
 one offset to two consumers.
 
+A server started by hand is a different matter. It binds a fixed port, and the
+claim holds only the window's first one. `PortWindow` therefore withholds every
+window that spans a conventional Nimbus port, so a local MongoDB adapter on
+27017 costs the suite nothing. Any other long-lived listener inside
+17000-31999 still owns the port it sits on: stop it, or move it out of the
+region.
+
 A wider port range is not a fix. The sandbox port coordinator walks its range
 lowest-first and compares each candidate only against its own durable state,
 which each test roots in its own temporary directory. The coordinator never
