@@ -9,7 +9,7 @@ import { LoadingCell } from "../../components/loading-cell";
 import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime, Uptime } from "../../components/time";
-import { fetchTenants } from "../../hooks/use-tenant-list";
+import { loadTenantList } from "../../hooks/use-tenant-list";
 import {
   type ConnectionSnapshot,
   type LoadingValue,
@@ -59,13 +59,12 @@ function NodesPage() {
     limit: 100,
   });
 
-  const tenantCount = useTenantCount();
+  const tenantsLv = useTenantCount();
 
   const statusLv = toLoadingValue(status, conn);
   const machinesLv = toLoadingValue(machines, conn);
   const servicesLv = toLoadingValue(services, conn);
   const listenersLv = toLoadingValue(listeners, conn);
-  const tenantsLv = toLoadingValue(tenantCount, conn);
 
   return (
     <section
@@ -301,19 +300,37 @@ function useConnSnapshot(): ConnectionSnapshot {
   };
 }
 
-function useTenantCount(): number | undefined {
-  const [count, setCount] = useState<number | undefined>(undefined);
+/**
+ * The tenant count is the one tile on this page that does not ride the
+ * WebSocket — it is a REST read of `/api/tenants` — so it reports its own
+ * outcome rather than being folded through `toLoadingValue`, whose
+ * undefined-while-connected branch means "loading" and has no way back out.
+ * A failed read used to leave the tile on the loading marker for the life of
+ * the page, which is the worst of the three states: it promises the number is
+ * still coming.
+ *
+ * `loadTenantList` rather than `fetchTenants` because it rejects with the
+ * error-envelope message instead of collapsing a non-OK response to `null`,
+ * and an error state has to be able to say what failed. The tile links to
+ * Operator → Tenants, which carries the same failure with a Retry.
+ */
+function useTenantCount(): LoadingValue<number> {
+  const [value, setValue] = useState<LoadingValue<number>>({ kind: "loading" });
   useEffect(() => {
     const controller = new AbortController();
-    fetchTenants(controller.signal)
-      .then((ids) => {
+    loadTenantList(controller.signal)
+      .then((tenants) => {
         if (controller.signal.aborted) return;
-        if (ids !== null) setCount(ids.length);
+        setValue({ kind: "ok", value: tenants.length });
       })
-      .catch(() => {
-        /* surfaced elsewhere; render — for the field */
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setValue({
+          kind: "error",
+          message: err instanceof Error ? err.message : String(err),
+        });
       });
     return () => controller.abort();
   }, []);
-  return count;
+  return value;
 }

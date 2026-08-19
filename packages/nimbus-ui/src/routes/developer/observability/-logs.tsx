@@ -13,6 +13,8 @@ import {
 
 import { api } from "../../../../convex/_generated/api";
 import { Td, Th } from "../../../components/data-table";
+import { EmptyState } from "../../../components/empty-state";
+import { LoadingState } from "../../../components/loading-state";
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
 import { cn } from "../../../lib/cn";
@@ -94,8 +96,14 @@ export function LogsTab({ search }: { search: ObservabilitySearch }) {
     [navigate],
   );
 
+  // `undefined` travels the whole way to the stream rather than being
+  // collapsed here. `events` is undefined until the query lands — and again
+  // after every filter change, which re-keys the query — so flattening it to
+  // `[]` made a pending read indistinguishable from a genuinely empty one and
+  // let the panel claim "no events" before it had asked.
   const sorted = useMemo(() => {
-    return (events ?? [])
+    if (events === undefined) return undefined;
+    return events
       .slice()
       .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   }, [events]);
@@ -107,7 +115,7 @@ export function LogsTab({ search }: { search: ObservabilitySearch }) {
       setPaused(false);
       return;
     }
-    const newest = sorted[0];
+    const newest = sorted?.[0];
     if (!newest) return;
     const isError =
       (newest.level ?? "").toLowerCase() === "error" ||
@@ -119,10 +127,30 @@ export function LogsTab({ search }: { search: ObservabilitySearch }) {
   }, [pauseOnError, sorted]);
 
   const visible = useMemo(() => {
-    if (!paused) return sorted;
+    if (sorted === undefined || !paused) return sorted;
     const idx = sorted.findIndex((e) => e._id === lastErrorRef.current);
     return idx < 0 ? sorted : sorted.slice(idx);
   }, [paused, sorted]);
+
+  const clearFilters = useCallback(
+    () =>
+      setSearchAction({
+        level: undefined,
+        category: undefined,
+        source: undefined,
+        correlationId: undefined,
+      }),
+    [setSearchAction],
+  );
+
+  // Which of the two empty results this is. All four chips narrow the same
+  // stream, so an empty pane under any of them is a filter outcome, not a
+  // statement about the deployment.
+  const filtered =
+    search.level !== undefined ||
+    search.category !== undefined ||
+    search.source !== undefined ||
+    search.correlationId !== undefined;
 
   return (
     <div
@@ -139,16 +167,15 @@ export function LogsTab({ search }: { search: ObservabilitySearch }) {
           setPaused(false);
           lastErrorRef.current = null;
         }}
-        onClear={() =>
-          setSearchAction({
-            level: undefined,
-            category: undefined,
-            source: undefined,
-            correlationId: undefined,
-          })
-        }
+        onClear={clearFilters}
       />
-      <LogStream events={visible} follow={follow} paused={paused} />
+      <LogStream
+        events={visible}
+        follow={follow}
+        paused={paused}
+        filtered={filtered}
+        onClear={clearFilters}
+      />
     </div>
   );
 }
@@ -284,14 +311,29 @@ function Toggle({
   );
 }
 
+/**
+ * Three states, three treatments, one frame. `undefined` is a read that has
+ * not answered, `[]` is an answer, and the two must not render the same node:
+ * a slow backend used to be reported as an empty log, blaming filters the
+ * reader may never have set.
+ *
+ * The scroll container is mounted in every state and holds the ref the follow
+ * and anchor effects read, so the box, its border and its scroll position are
+ * the same object across the swap and nothing moves when the first batch
+ * lands.
+ */
 function LogStream({
   events,
   follow,
   paused,
+  filtered,
+  onClear,
 }: {
-  events: EventDoc[];
+  events: EventDoc[] | undefined;
   follow: boolean;
   paused: boolean;
+  filtered: boolean;
+  onClear: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const scrollAnchorRef = useRef<{
@@ -305,6 +347,7 @@ function LogStream({
     correlationId: string;
   } | null>(null);
   const eventVersion = useMemo(() => {
+    if (events === undefined) return "loading";
     const first = events[0]?._id ?? "";
     const last = events.at(-1)?._id ?? "";
     return `${events.length}:${first}:${last}`;
@@ -347,17 +390,6 @@ function LogStream({
     };
   }, [menu]);
 
-  if (events.length === 0) {
-    return (
-      <div
-        className="flex min-h-0 flex-1 items-center justify-center rounded-md border border-app bg-surface font-mono text-xs text-muted"
-        data-testid="observability-log-empty"
-      >
-        No events match the current filters.
-      </div>
-    );
-  }
-
   const handleContextMenu = (
     e: ReactMouseEvent<HTMLElement>,
     correlationId: string | null | undefined,
@@ -373,88 +405,98 @@ function LogStream({
       className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface"
       data-testid="observability-log-stream"
     >
-      {/*
-        Fixed tracks, not per-row intrinsic sizing: a log reader scans down a
-        constant left edge, so time / level / source / message / run must start
-        at the same x on every line regardless of that line's content.
-      */}
-      <table
-        className="w-full table-fixed border-collapse text-xs"
-        data-testid="observability-log-table"
-      >
-        <colgroup>
-          <col className="w-[88px]" />
-          <col className="w-[92px]" />
-          <col className="w-[220px]" />
-          <col />
-          <col className="w-[112px]" />
-        </colgroup>
-        <thead className="sticky top-0 z-10 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
-          <tr className="h-8">
-            <Th align="right" className="py-1.5">
-              Time
-            </Th>
-            <Th className="py-1.5">Level</Th>
-            <Th className="py-1.5">Source</Th>
-            <Th className="py-1.5">Message</Th>
-            <Th className="py-1.5">Run</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {events.map((event) => {
-            const correlationId = event.correlationId ?? undefined;
-            const source = `${event.source ?? "—"}${event.category ? ` · ${event.category}` : ""}`;
-            const message = event.message ?? "(no message)";
-            return (
-              <tr
-                key={event._id}
-                onContextMenu={(e) => handleContextMenu(e, correlationId)}
-                aria-label={`Log entry${correlationId ? `, correlation ${shortId(correlationId, 8)}` : ""}: ${event.message ?? ""}`}
-                data-testid={`observability-log-row-${event._id}`}
-                // h-9 pins every row at the dense band's 36px. Cells truncate
-                // rather than wrap, so the height is exact, not a minimum that
-                // a long source or message can push past.
-                className={cn("h-9 border-t border-app", "hover:bg-surface-2")}
-              >
-                <Td align="right" className="whitespace-nowrap py-1.5">
-                  <RelativeTime
-                    epochMs={event.createdAt ?? event._creationTime ?? 0}
-                  />
-                </Td>
-                <Td className="py-1.5">
-                  <StateChip state={event.level ?? "info"} />
-                </Td>
-                <Td className="py-1.5">
-                  <span
-                    title={source}
-                    className="block truncate font-mono text-xs uppercase tracking-wide text-muted"
-                  >
-                    {source}
-                  </span>
-                </Td>
-                <Td className="py-1.5">
-                  <span
-                    title={message}
-                    className="block truncate font-mono text-default"
-                  >
-                    {message}
-                  </span>
-                </Td>
-                <Td className="py-1.5">
-                  {correlationId ? (
-                    <CorrelationBadge
-                      correlationId={correlationId}
-                      eventId={event._id}
-                    />
-                  ) : (
-                    <span className="tabular text-muted">—</span>
+      {events === undefined ? (
+        <LoadingState
+          label="Loading events…"
+          testid="observability-log-loading"
+        />
+      ) : events.length === 0 ? (
+        <LogEmptyState filtered={filtered} onClear={onClear} />
+      ) : (
+        // Fixed tracks, not per-row intrinsic sizing: a log reader scans down a
+        // constant left edge, so time / level / source / message / run must
+        // start at the same x on every line regardless of that line's content.
+        <table
+          className="w-full table-fixed border-collapse text-xs"
+          data-testid="observability-log-table"
+        >
+          <colgroup>
+            <col className="w-[88px]" />
+            <col className="w-[92px]" />
+            <col className="w-[220px]" />
+            <col />
+            <col className="w-[112px]" />
+          </colgroup>
+          <thead className="sticky top-0 z-10 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+            <tr className="h-8">
+              <Th align="right" className="py-1.5">
+                Time
+              </Th>
+              <Th className="py-1.5">Level</Th>
+              <Th className="py-1.5">Source</Th>
+              <Th className="py-1.5">Message</Th>
+              <Th className="py-1.5">Run</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {events.map((event) => {
+              const correlationId = event.correlationId ?? undefined;
+              const source = `${event.source ?? "—"}${event.category ? ` · ${event.category}` : ""}`;
+              const message = event.message ?? "(no message)";
+              return (
+                <tr
+                  key={event._id}
+                  onContextMenu={(e) => handleContextMenu(e, correlationId)}
+                  aria-label={`Log entry${correlationId ? `, correlation ${shortId(correlationId, 8)}` : ""}: ${event.message ?? ""}`}
+                  data-testid={`observability-log-row-${event._id}`}
+                  // h-9 pins every row at the dense band's 36px. Cells truncate
+                  // rather than wrap, so the height is exact, not a minimum that
+                  // a long source or message can push past.
+                  className={cn(
+                    "h-9 border-t border-app",
+                    "hover:bg-surface-2",
                   )}
-                </Td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                >
+                  <Td align="right" className="whitespace-nowrap py-1.5">
+                    <RelativeTime
+                      epochMs={event.createdAt ?? event._creationTime ?? 0}
+                    />
+                  </Td>
+                  <Td className="py-1.5">
+                    <StateChip state={event.level ?? "info"} />
+                  </Td>
+                  <Td className="py-1.5">
+                    <span
+                      title={source}
+                      className="block truncate font-mono text-xs uppercase tracking-wide text-muted"
+                    >
+                      {source}
+                    </span>
+                  </Td>
+                  <Td className="py-1.5">
+                    <span
+                      title={message}
+                      className="block truncate font-mono text-default"
+                    >
+                      {message}
+                    </span>
+                  </Td>
+                  <Td className="py-1.5">
+                    {correlationId ? (
+                      <CorrelationBadge
+                        correlationId={correlationId}
+                        eventId={event._id}
+                      />
+                    ) : (
+                      <span className="tabular text-muted">—</span>
+                    )}
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
       {menu ? (
         <div
           role="menu"
@@ -483,6 +525,39 @@ function LogStream({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The two empty results the stream can produce. "No events match the current
+ * filters" is only true when filters are set; on a fresh deployment it named a
+ * cause the reader could not act on and pointed at controls they never
+ * touched.
+ */
+function LogEmptyState({
+  filtered,
+  onClear,
+}: {
+  filtered: boolean;
+  onClear: () => void;
+}) {
+  if (filtered) {
+    return (
+      <EmptyState
+        title="No events match the current filters"
+        body="Level, category, source, and correlation narrow the same stream, so an event has to satisfy every one that is set. Clear them to see the full log."
+        cta={{ label: "Clear filters", onClick: onClear }}
+        testid="observability-log-empty"
+      />
+    );
+  }
+  return (
+    <EmptyState
+      title="No events recorded yet"
+      body="Server, scheduler, and function activity streams here live. Invoke a function or start a service and the first entries appear without a reload."
+      cta={{ label: "Open Compute", to: "/developer/compute" }}
+      testid="observability-log-empty"
+    />
   );
 }
 

@@ -211,6 +211,87 @@ describe("Overview top strip", () => {
       "shrink-0",
     );
   });
+
+  it("prints no licence at all until the server has reported one", () => {
+    // The strip renders on mount, before any query answers. It used to fall
+    // through to the literal "developer" — a value the server never sent,
+    // rendered in the same face and colour as a real reading.
+    useQueryMock.mockImplementation(() => undefined);
+    render(<OverviewPage />);
+
+    expect(screen.getByTestId("overview-license-loading")).toBeInTheDocument();
+    expect(screen.getByTestId("overview-top-strip")).not.toHaveTextContent(
+      /developer/i,
+    );
+  });
+
+  it("shows the loading marker, not a fabricated reading, for every status cell", () => {
+    useQueryMock.mockImplementation(() => undefined);
+    render(<OverviewPage />);
+
+    for (const cell of [
+      "overview-server",
+      "overview-version",
+      "overview-uptime",
+      "overview-storage",
+      "overview-license",
+      "overview-started",
+      "overview-updated",
+    ]) {
+      expect(screen.getByTestId(`${cell}-loading`)).toBeInTheDocument();
+    }
+  });
+
+  it("says offline rather than loading once the socket has dropped", () => {
+    connStateMock.mockReturnValue({
+      isWebSocketConnected: false,
+      hasEverConnected: true,
+    });
+    useQueryMock.mockImplementation(() => undefined);
+    render(<OverviewPage />);
+
+    expect(screen.getByTestId("overview-license-offline")).toBeInTheDocument();
+  });
+
+  it("renders an em dash for a field a settled status omits", () => {
+    // `null` is an answer — the deployment has no status row — so the strip
+    // must settle rather than sit on the loading marker for the life of the
+    // page. A field the server did not report is still not a value.
+    mockQueries({ status: null });
+    render(<OverviewPage />);
+
+    expect(screen.queryByTestId("overview-license-loading")).toBeNull();
+    expect(screen.getByTestId("overview-top-strip")).not.toHaveTextContent(
+      /developer/i,
+    );
+  });
+
+  it("reports the licence the server actually sent", () => {
+    mockQueries({
+      status: { version: "1.2.3", details: { license: "enterprise" } },
+    });
+    render(<OverviewPage />);
+
+    expect(screen.getByTestId("overview-top-strip")).toHaveTextContent(
+      "enterprise",
+    );
+  });
+
+  it("reserves each value line so the strip does not resize when status lands", () => {
+    // The loading marker is a bare `·` at text-sm and the loaded cells are
+    // text-xs chips. Without a floor the eight-cell grid changed height under
+    // itself the moment the query answered.
+    mockQueries({});
+    render(<OverviewPage />);
+
+    const values = screen
+      .getByTestId("overview-top-strip")
+      .querySelectorAll(":scope > div > span:last-child");
+    expect(values).toHaveLength(8);
+    for (const value of values) {
+      expect(value.className).toContain("min-h-5");
+    }
+  });
 });
 
 describe("Overview activity feeds", () => {

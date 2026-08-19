@@ -5,7 +5,8 @@ import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
-import { SkeletonRows } from "../../components/loading-state";
+import { LoadingState, SkeletonRows } from "../../components/loading-state";
+import { PageHeader } from "../../components/page-header";
 import { TablesListTable } from "../../components/storage/tables-list-table";
 import { useTablesSubDrawer } from "../../components/storage/tables-sub-drawer";
 import { useTenantList } from "../../hooks/use-tenant-list";
@@ -36,7 +37,10 @@ function StoragePage() {
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-tenant-tables"
     >
-      <header className="flex flex-col gap-2">
+      {/* Breadcrumb above, shared header molecule below — the same two-part
+          shape the drill-in route `storage_.$table.tsx` uses, so the two pages
+          keep one measure and one title rhythm across the navigation. */}
+      <div className="flex flex-col gap-2">
         <Breadcrumb
           segments={
             tenant
@@ -52,28 +56,50 @@ function StoragePage() {
           }
           testid="tenant-breadcrumb"
         />
-        <div className="flex items-baseline justify-between">
-          <div>
-            <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
-              {tenant ? (
-                <>
-                  Tables in <span className="font-mono">{tenant}</span>
-                </>
-              ) : (
-                "Storage"
-              )}
-            </h1>
-            <p className="text-sm text-muted">
-              Tables are reactive — they appear here as soon as documents are
-              written. A table without a schema accepts any document shape.
-            </p>
-          </div>
-        </div>
-      </header>
+        {/* The tenant id loses its mono span here, matching how the drill-in
+            route titles a bare table name. The breadcrumb directly above still
+            carries the id in mono with its copy affordance, so the identifier
+            treatment is not lost — it stops being duplicated in two faces. */}
+        <PageHeader
+          title={tenant ? `Tables in ${tenant}` : "Storage"}
+          subtitle="Tables are reactive — they appear here as soon as documents are written. A table without a schema accepts any document shape."
+          testid="tenant-tables-header"
+        />
+      </div>
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         {!tenant ? (
-          hasTenants === false ? (
+          // `useTenantList` reports three kinds and this panel has to honour
+          // all three. Reducing them to a boolean sent "Select a tenant" —
+          // an instruction — to a reader whose tenant list was still in
+          // flight, and left it on screen permanently when the list had
+          // failed outright, with nothing anywhere saying so.
+          tenantList.kind === "loading" ? (
+            <LoadingState
+              label="Loading tenants…"
+              testid="tenant-tables-tenants-loading"
+            />
+          ) : tenantList.kind === "error" ? (
+            <EmptyState
+              title="Tenants endpoint unavailable"
+              body={
+                <>
+                  This deployment can&apos;t reach{" "}
+                  <code className="font-mono text-default">/api/tenants</code>:{" "}
+                  <span
+                    className="font-mono text-default"
+                    data-testid="tenant-tables-tenants-error-message"
+                  >
+                    {tenantList.message}
+                  </span>
+                  . Tables live inside tenants, so none can be listed until the
+                  tenant list loads.
+                </>
+              }
+              cta={{ label: "Retry", onClick: tenantList.reload }}
+              testid="tenant-tables-tenants-error"
+            />
+          ) : hasTenants === false ? (
             <EmptyState
               title="No tenants yet"
               body="Click + CREATE TENANT in the top nav to create one. Tables and documents scope to a tenant — once a tenant exists, you can pick it from the selector to see its tables."

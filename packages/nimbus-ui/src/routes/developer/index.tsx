@@ -83,7 +83,7 @@ function OverviewPage() {
         subtitle="Deployment health, recent activity, and live resource counts."
       />
 
-      <TopStrip status={status} />
+      <TopStrip status={toStatusValue(status, conn)} />
 
       <ResourceCountsGrid
         machines={toLoadingValue(machines, conn)}
@@ -131,25 +131,44 @@ function useConnSnapshot(): ConnectionSnapshot {
   };
 }
 
-function TopStrip({ status }: { status: SystemStatusDoc | undefined }) {
+type SystemStatus = NonNullable<SystemStatusDoc>;
+
+/**
+ * `useQuery` resolves to `null` when the server has no status row. That is an
+ * answer, so it must not go through `toLoadingValue`, whose null-or-undefined
+ * branch means "loading" — the strip would then sit on the loading marker for
+ * the life of the page on a deployment that simply has no status document.
+ */
+function toStatusValue(
+  status: SystemStatusDoc | undefined,
+  conn: ConnectionSnapshot,
+): LoadingValue<SystemStatus> {
+  if (status === null) return { kind: "ok", value: {} };
+  return toLoadingValue(status, conn);
+}
+
+// A field the server did not report is not a value. Both of these used to fall
+// through to a literal — `license` to the string "developer" — so a pending
+// read and a server that omits the field rendered the same confident answer as
+// a real reading, in the same face and colour.
+function detailString(status: SystemStatus, ...keys: string[]): string | null {
+  const details = (status.details ?? {}) as Record<string, unknown>;
+  for (const key of keys) {
+    const value = details[key];
+    if (typeof value === "string") return value;
+  }
+  return null;
+}
+
+/**
+ * Every cell here reads one query, so the strip reports that query's state
+ * through `LoadingCell` exactly as the rest of the page does: the loading
+ * marker while it is in flight, "offline" once the socket has dropped, the
+ * message on failure. It used to render its fallbacks unconditionally and so
+ * looked fully loaded, and slightly broken, before it had been told anything.
+ */
+function TopStrip({ status }: { status: LoadingValue<SystemStatus> }) {
   const activeTenant = useUiStore((s) => s.activeTenant);
-  const details = (status?.details ?? {}) as Record<string, unknown>;
-  const storageBackend =
-    typeof details.storageBackend === "string"
-      ? details.storageBackend
-      : typeof details.storage === "string"
-        ? details.storage
-        : "—";
-  const license =
-    typeof details.license === "string"
-      ? details.license
-      : typeof details.licensePosture === "string"
-        ? details.licensePosture
-        : "developer";
-  const version = status?.version ?? "—";
-  const health = status?.health ?? (status === null ? "unknown" : "—");
-  const startedAt =
-    typeof status?.startedAt === "number" ? status.startedAt : null;
   // `shrink-0` below is load-bearing. This grid is a flex child of a column
   // that overflows once the activity feeds fill up, and `overflow-hidden`
   // means flexbox can shrink it to a hairline without leaving any visual cue
@@ -161,37 +180,67 @@ function TopStrip({ status }: { status: SystemStatusDoc | undefined }) {
       className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-md border border-app bg-surface-2 md:grid-cols-4"
     >
       <Cell label="Server">
-        <StateChip state={health} />
+        <LoadingCell value={status} testid="overview-server">
+          {(s) => <StateChip state={s.health ?? "unknown"} />}
+        </LoadingCell>
       </Cell>
       <Cell label="Version">
-        <CopyChip label="version" value={version} testid="overview-version" />
+        <LoadingCell value={status} testid="overview-version">
+          {(s) => (
+            <CopyChip
+              label="version"
+              value={s.version ?? "—"}
+              testid="overview-version"
+            />
+          )}
+        </LoadingCell>
       </Cell>
       <Cell label="Uptime">
-        {startedAt ? (
-          <Uptime startedAtMs={startedAt} />
-        ) : (
-          <span className="tabular text-muted">—</span>
-        )}
+        <LoadingCell value={status} testid="overview-uptime">
+          {(s) =>
+            typeof s.startedAt === "number" ? (
+              <Uptime startedAtMs={s.startedAt} />
+            ) : (
+              <StripDash />
+            )
+          }
+        </LoadingCell>
       </Cell>
       <Cell label="Storage">
-        <span className="font-mono text-xs text-default">{storageBackend}</span>
+        <LoadingCell value={status} testid="overview-storage">
+          {(s) => (
+            <StripValue value={detailString(s, "storageBackend", "storage")} />
+          )}
+        </LoadingCell>
       </Cell>
       <Cell label="License">
-        <span className="font-mono text-xs text-default">{license}</span>
+        <LoadingCell value={status} testid="overview-license">
+          {(s) => (
+            <StripValue value={detailString(s, "license", "licensePosture")} />
+          )}
+        </LoadingCell>
       </Cell>
       <Cell label="Started">
-        {startedAt ? (
-          <RelativeTime epochMs={startedAt} />
-        ) : (
-          <span className="tabular text-muted">—</span>
-        )}
+        <LoadingCell value={status} testid="overview-started">
+          {(s) =>
+            typeof s.startedAt === "number" ? (
+              <RelativeTime epochMs={s.startedAt} />
+            ) : (
+              <StripDash />
+            )
+          }
+        </LoadingCell>
       </Cell>
       <Cell label="Updated">
-        {typeof status?.updatedAt === "number" ? (
-          <RelativeTime epochMs={status.updatedAt} />
-        ) : (
-          <span className="tabular text-muted">—</span>
-        )}
+        <LoadingCell value={status} testid="overview-updated">
+          {(s) =>
+            typeof s.updatedAt === "number" ? (
+              <RelativeTime epochMs={s.updatedAt} />
+            ) : (
+              <StripDash />
+            )
+          }
+        </LoadingCell>
       </Cell>
       <Cell label="Tenant">
         <CopyChip
@@ -202,6 +251,15 @@ function TopStrip({ status }: { status: SystemStatusDoc | undefined }) {
       </Cell>
     </div>
   );
+}
+
+function StripValue({ value }: { value: string | null }) {
+  if (value === null) return <StripDash />;
+  return <span className="font-mono text-xs text-default">{value}</span>;
+}
+
+function StripDash() {
+  return <span className="tabular text-muted">—</span>;
 }
 
 function Cell({
@@ -216,7 +274,11 @@ function Cell({
       <span className="text-xs uppercase tracking-[0.14em] text-muted">
         {label}
       </span>
-      <span className="text-sm">{children}</span>
+      {/* The value line is reserved at 20px whatever occupies it. The loading
+          marker is a bare `·` at text-sm and the loaded cells are text-xs
+          chips, so without a floor the whole eight-cell strip resized under
+          itself the moment the status query landed. */}
+      <span className="flex min-h-5 items-center text-sm">{children}</span>
     </div>
   );
 }

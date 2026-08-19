@@ -112,3 +112,77 @@ describe("LogsTab layout contract", () => {
     }
   });
 });
+
+/**
+ * `useQuery` is `undefined` until it answers, and the stream used to flatten
+ * that to `[]` before rendering — so a read still in flight was reported as a
+ * result, with a cause ("the current filters") the reader could not act on and
+ * may never have set.
+ */
+describe("LogsTab read states", () => {
+  it("says the events are loading rather than claiming there are none", () => {
+    useQueryMock.mockReturnValue(undefined);
+    render(<LogsTab search={{ tab: "logs" }} />);
+
+    expect(screen.getByTestId("observability-log-loading")).toHaveTextContent(
+      /Loading events/i,
+    );
+    expect(screen.queryByTestId("observability-log-empty")).toBeNull();
+  });
+
+  it("blames no filter when a settled read is genuinely empty", () => {
+    useQueryMock.mockReturnValue([]);
+    render(<LogsTab search={{ tab: "logs" }} />);
+
+    expect(
+      screen.getByTestId("observability-log-empty-title"),
+    ).toHaveTextContent("No events recorded yet");
+    expect(screen.getByTestId("observability-log-empty")).not.toHaveTextContent(
+      /current filters/i,
+    );
+    expect(screen.queryByTestId("observability-log-loading")).toBeNull();
+  });
+
+  it("names the filters, and offers to clear them, only when some are set", () => {
+    useQueryMock.mockReturnValue([]);
+    render(<LogsTab search={{ tab: "logs", level: "error" }} />);
+
+    expect(
+      screen.getByTestId("observability-log-empty-title"),
+    ).toHaveTextContent("No events match the current filters");
+    expect(screen.getByTestId("observability-log-empty-cta")).toHaveTextContent(
+      /Clear filters/i,
+    );
+  });
+
+  it("gives the empty pane the whole-tab treatment, not a single muted line", () => {
+    useQueryMock.mockReturnValue([]);
+    render(<LogsTab search={{ tab: "logs" }} />);
+
+    // DESIGN.md's whole-tab empty state is a mono title plus a two-line body
+    // plus a next action. The adjacent Operator -> Observability -> Runs tab
+    // already renders exactly this for the same condition.
+    expect(screen.getByTestId("observability-log-empty-title").tagName).toBe(
+      "H2",
+    );
+    expect(
+      screen.getByTestId("observability-log-empty-body").textContent ?? "",
+    ).not.toHaveLength(0);
+    expect(
+      screen.getByTestId("observability-log-empty-cta"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the stream's frame mounted in every state so the swap moves nothing", () => {
+    useQueryMock.mockReturnValue(undefined);
+    const { rerender } = render(<LogsTab search={{ tab: "logs" }} />);
+    const loadingFrame = screen.getByTestId("observability-log-stream");
+
+    useQueryMock.mockReturnValue(events);
+    rerender(<LogsTab search={{ tab: "logs" }} />);
+
+    expect(screen.getByTestId("observability-log-stream").className).toBe(
+      loadingFrame.className,
+    );
+  });
+});

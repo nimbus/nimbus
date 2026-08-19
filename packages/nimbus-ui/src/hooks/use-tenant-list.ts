@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type TenantListEntry = {
   id: string;
@@ -15,6 +15,13 @@ export type TenantListState =
   | { kind: "loading" }
   | { kind: "loaded"; tenants: TenantListEntry[] }
   | { kind: "error"; message: string };
+
+// `reload` rides along with the state rather than arriving in a wrapper object
+// so that narrowing on `.kind` keeps working at every existing call site. An
+// error state that cannot retry is a dead end: the only recovery left is
+// reloading the whole console, which throws away every other panel's data to
+// re-run one failed request.
+export type TenantListResult = TenantListState & { reload: () => void };
 
 // Normalize the `/api/tenants` payload — entries arrive as bare id strings or
 // as objects under any of `tenantId`/`id`/`name` — into sorted, non-empty
@@ -68,11 +75,22 @@ export async function fetchTenants(
   );
 }
 
-export function useTenantList(): TenantListState {
+export function useTenantList(): TenantListResult {
   const [state, setState] = useState<TenantListState>({ kind: "loading" });
+  // The in-flight request is held across renders so every start aborts the
+  // previous one. Without it, a reader who clicks Retry twice can have the
+  // first response land second and overwrite the newer answer.
+  const active = useRef<AbortController | null>(null);
 
-  useEffect(() => {
+  // `reload` runs the request rather than bumping a nonce the effect watches:
+  // a nonce the effect body never reads is an unused dependency, and the fix
+  // the linter offers for that — dropping it from the dep array — silently
+  // removes the retry. The identity is stable, so the effect below still runs
+  // exactly once per mount.
+  const reload = useCallback(() => {
+    active.current?.abort();
     const controller = new AbortController();
+    active.current = controller;
     setState({ kind: "loading" });
     loadTenantList(controller.signal)
       .then((tenants) => {
@@ -86,8 +104,12 @@ export function useTenantList(): TenantListState {
           message: err instanceof Error ? err.message : String(err),
         });
       });
-    return () => controller.abort();
   }, []);
 
-  return state;
+  useEffect(() => {
+    reload();
+    return () => active.current?.abort();
+  }, [reload]);
+
+  return { ...state, reload };
 }

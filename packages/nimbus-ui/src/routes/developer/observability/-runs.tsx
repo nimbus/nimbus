@@ -1,11 +1,13 @@
 import { useQuery } from "@nimbus/nimbus/react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { type ReactNode, useCallback } from "react";
 
 import { api } from "../../../../convex/_generated/api";
 import { CategoryChip } from "../../../components/category-chip";
 import { CopyChip } from "../../../components/copy-chip";
 import { Td, Th } from "../../../components/data-table";
+import { EmptyState } from "../../../components/empty-state";
+import { LoadingState } from "../../../components/loading-state";
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
 import { formatDuration, shortId } from "../../../lib/format";
@@ -45,6 +47,18 @@ export function RunsTab({ search }: { search: ObservabilitySearch }) {
     [navigate],
   );
 
+  const clearFilters = useCallback(
+    () => setSearch({ status: undefined, functionPath: undefined }),
+    [setSearch],
+  );
+
+  // An empty result means two different things and the table cannot tell them
+  // apart on its own: a deployment that has never run a function, or a filter
+  // the user set that nothing matches. Blaming filters that are not set sends
+  // the reader hunting for a control they never touched.
+  const filtered =
+    search.status !== undefined || search.functionPath !== undefined;
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
@@ -77,9 +91,7 @@ export function RunsTab({ search }: { search: ObservabilitySearch }) {
         <div className="ml-auto flex justify-end">
           <button
             type="button"
-            onClick={() =>
-              setSearch({ status: undefined, functionPath: undefined })
-            }
+            onClick={clearFilters}
             className="rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
             data-testid="observability-run-filter-clear"
           >
@@ -87,7 +99,7 @@ export function RunsTab({ search }: { search: ObservabilitySearch }) {
           </button>
         </div>
       </div>
-      <RunsTable runs={runs} />
+      <RunsTable runs={runs} filtered={filtered} onClear={clearFilters} />
     </div>
   );
 }
@@ -116,29 +128,60 @@ function AdapterHonesty() {
   );
 }
 
-function RunsTable({ runs }: { runs: RunDoc[] | undefined }) {
+/**
+ * Three states, three treatments, one frame. The panel keeps its border, its
+ * fill and its box in every state, so the swap from placeholder to data moves
+ * nothing around it; only the contents change.
+ *
+ * Loading uses `LoadingState` and empty uses `EmptyState` — the console's two
+ * panel-scope primitives — rather than the one-line muted box this used to
+ * hand-roll. The same empty condition one nav entry away (Operator →
+ * Observability → Runs) already renders `EmptyState`, and DESIGN.md's
+ * whole-tab empty state is a mono title plus a two-line body plus a next
+ * action. A fresh install lands here first and got none of it.
+ */
+function RunsTable({
+  runs,
+  filtered,
+  onClear,
+}: {
+  runs: RunDoc[] | undefined;
+  filtered: boolean;
+  onClear: () => void;
+}) {
   if (runs === undefined) {
     return (
-      <div
-        className="flex min-h-0 flex-1 items-center justify-center rounded-md border border-app bg-surface font-mono text-xs text-muted"
-        data-testid="observability-runs-loading"
-      >
-        Loading runs…
-      </div>
+      <RunsFrame>
+        <LoadingState
+          label="Loading runs…"
+          testid="observability-runs-loading"
+        />
+      </RunsFrame>
     );
   }
   if (runs.length === 0) {
     return (
-      <div
-        className="flex min-h-0 flex-1 items-center justify-center rounded-md border border-app bg-surface font-mono text-xs text-muted"
-        data-testid="observability-runs-empty"
-      >
-        No runs recorded yet.
-      </div>
+      <RunsFrame>
+        {filtered ? (
+          <EmptyState
+            title="No runs match the current filters"
+            body="Status and function path narrow the same list, so a run has to satisfy both. Clear them to see every run this deployment has recorded."
+            cta={{ label: "Clear filters", onClick: onClear }}
+            testid="observability-runs-empty"
+          />
+        ) : (
+          <EmptyState
+            title="No runs yet"
+            body="A run is recorded each time a query, mutation, or action executes. Invoke a function and it appears here."
+            cta={{ label: "Open Compute", to: "/developer/compute" }}
+            testid="observability-runs-empty"
+          />
+        )}
+      </RunsFrame>
     );
   }
   return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface">
+    <RunsFrame>
       <table
         className="w-full border-collapse text-sm"
         data-testid="observability-runs-table"
@@ -199,6 +242,14 @@ function RunsTable({ runs }: { runs: RunDoc[] | undefined }) {
           ))}
         </tbody>
       </table>
+    </RunsFrame>
+  );
+}
+
+function RunsFrame({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface">
+      {children}
     </div>
   );
 }
