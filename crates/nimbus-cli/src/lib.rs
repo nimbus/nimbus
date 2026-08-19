@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 
 const CONVEX_SILO_ENV: &str = "NIMBUS_CONVEX_SILO";
 
+mod app_manifest;
 mod auth;
 mod backup;
 mod cli_ux;
@@ -140,7 +141,7 @@ enum Command {
     /// Encryption admin commands.
     #[command(subcommand)]
     Encryption(EncryptionCommand),
-    /// Provision embedded Nimbus JS packages into an app (`.nimbus/packages/`).
+    /// Install embedded Nimbus JS packages into an app (`.nimbus/packages/`).
     #[command(subcommand)]
     Packages(PackagesCommand),
     /// Internal sandbox-local supervisor entrypoint.

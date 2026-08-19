@@ -198,7 +198,7 @@ c12() {
   # `.version` stamp — a distinctive function/command name, not a doc-comment
   # mention of `.nimbus/packages` (the embed module references it in prose) and
   # not the generic word "provision" (which appears in machine-config code).
-  has 'fn provision_packages|fn provision_app|PackagesProvision|nimbus packages provision' \
+  has 'fn provision_packages|fn provision_app|nimbus packages install' \
     crates/nimbus-cli/src &&
     has '\.nimbus/' crates/nimbus-assets/embedded/templates/convex/gitignore
 }
@@ -206,14 +206,18 @@ check "12. provisioning writes .nimbus/packages/* + .version; scaffold gitignore
 
 # ---- 13: explicit package-provisioning command for client-only apps [BPD2] ---
 c13() {
-  # The explicit `nimbus packages provision` subcommand: the PackagesCommand
+  # The explicit `nimbus packages install` subcommand: the PackagesCommand
   # enum + its run fn + the wired top-level Command::Packages dispatch. CLI
   # logic (including the Command enum + dispatch) lives in nimbus-cli;
   # nimbus-bin is a 5-line entrypoint that calls nimbus_cli::run_from_env().
+  # `install` is only half a contract, so require its inverse too: a wired
+  # dependency an app cannot unwire is a one-way door.
   has 'enum PackagesCommand' crates/nimbus-cli/src/provision.rs &&
+    has 'Install\(InstallArgs\)' crates/nimbus-cli/src/provision.rs &&
+    has 'Uninstall\(UninstallArgs\)' crates/nimbus-cli/src/provision.rs &&
     has 'Command::Packages' crates/nimbus-cli/src/lib.rs
 }
-check "13. explicit 'nimbus packages provision' command exists" c13
+check "13. explicit 'nimbus packages install'/'uninstall' commands exist" c13
 
 # ---- 14: in-binary codegen is the default (experimental flag retired) [BPD4] --
 c14() {

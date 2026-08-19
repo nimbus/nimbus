@@ -34,7 +34,7 @@ If your project uses the Nimbus CLI, the `@nimbus/mongodb` helper package
 builds the string for you. Provision it into your project:
 
 ```bash
-nimbus packages provision mongodb
+nimbus packages install mongodb
 ```
 
 Then:

@@ -28,28 +28,50 @@ use serde::Deserialize;
 
 use nimbus_assets::js_packages;
 
+use crate::app_manifest;
+
 const PACKAGES_REL: &str = ".nimbus/packages";
 const STAMP_REL: &str = ".nimbus/packages/.version";
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum PackagesCommand {
-    /// Provision embedded Nimbus JS packages into an app's `.nimbus/packages/`
-    /// and point the app's `package.json` dependency at the provisioned copy.
-    Provision(ProvisionArgs),
+    /// Install embedded Nimbus JS packages into an app: stage them under
+    /// `.nimbus/packages/`, point the app's `package.json` dependency at the
+    /// staged copy, and run the Node dependency install.
+    Install(InstallArgs),
+    /// Undo `install` for one adapter: restore the dependency spec it replaced
+    /// (or remove the dependency it added) and drop the staged packages.
+    Uninstall(UninstallArgs),
     /// Verify provisioned package bytes against the binary's embedded checksums.
     Verify(VerifyArgs),
 }
 
 #[derive(Debug, Args)]
 #[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
-pub(crate) struct ProvisionArgs {
-    /// What to provision: `all`, or an adapter
+pub(crate) struct InstallArgs {
+    /// What to install: `all`, or an adapter
     /// (`convex`|`firebase`|`mongodb`|`dynamodb`|`nimbus`); dependency closure
     /// is included automatically.
     #[arg(default_value = "all")]
     target: String,
 
-    /// App directory to provision into.
+    /// App directory to install into.
+    #[arg(long, default_value = ".")]
+    app_dir: PathBuf,
+
+    /// Stage and wire only; skip the Node dependency install.
+    #[arg(long)]
+    no_node_install: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
+pub(crate) struct UninstallArgs {
+    /// Which adapter to uninstall
+    /// (`convex`|`firebase`|`mongodb`|`dynamodb`|`nimbus`).
+    target: String,
+
+    /// App directory to uninstall from.
     #[arg(long, default_value = ".")]
     app_dir: PathBuf,
 }
@@ -66,28 +88,31 @@ pub(crate) async fn run_packages_command(
     command: PackagesCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        PackagesCommand::Provision(args) => {
+        PackagesCommand::Install(args) => {
             let selection = Selection::parse(&args.target)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
             let outcome = provision_packages(&args.app_dir, &selection)?;
             let where_ = args.app_dir.join(PACKAGES_REL);
             if outcome.changed {
                 crate::cli_ux::write_stderr_line(&format!(
-                    "Provisioned {} package(s) into {}: {}",
+                    "Staged {} package(s) into {}: {}",
                     outcome.provisioned.len(),
                     where_.display(),
                     outcome.provisioned.join(", "),
                 ))?;
             } else {
                 crate::cli_ux::write_stderr_line(&format!(
-                    "Packages already provisioned in {} (up to date)",
+                    "Packages already staged in {} (up to date)",
                     where_.display(),
                 ))?;
             }
-            match wire_app_dependency(&args.app_dir, &selection)? {
+
+            let wired =
+                wire_app_dependency_inner(&args.app_dir, &selection, DetachHandling::Clear)?;
+            match &wired {
                 Some((name, spec)) => {
                     crate::cli_ux::write_stderr_line(&format!(
-                        "Wired \"{name}\": \"{spec}\" in package.json — run `npm install` to pick it up"
+                        "Wired \"{name}\": \"{spec}\" in package.json"
                     ))?;
                 }
                 None => {
@@ -102,6 +127,68 @@ pub(crate) async fn run_packages_command(
                     }
                 }
             }
+
+            // `install` completes: staged bytes and a rewritten specifier are
+            // inert until node_modules reflects them. Forcing the reinstall
+            // first stops an already-installed registry copy from satisfying
+            // the fingerprint and leaving the old package in place.
+            if outcome.changed || wired.is_some() {
+                force_node_reinstall(&args.app_dir)?;
+            }
+            install_node_dependencies(&args.app_dir, args.no_node_install).await?;
+            Ok(())
+        }
+        PackagesCommand::Uninstall(args) => {
+            let selection = Selection::parse(&args.target)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+            if adapter_root(&selection).is_none() {
+                return Err(Box::new(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "uninstall needs one adapter \
+                     (convex|firebase|mongodb|dynamodb|nimbus), not `all`",
+                )));
+            }
+
+            match detach_app_dependency(&args.app_dir, &selection)? {
+                DetachOutcome::Restored { name, previous } => {
+                    crate::cli_ux::write_stderr_line(&format!(
+                        "Restored \"{name}\": \"{previous}\" in package.json"
+                    ))?;
+                }
+                DetachOutcome::Removed { name } => {
+                    crate::cli_ux::write_stderr_line(&format!(
+                        "Removed \"{name}\" from package.json dependencies"
+                    ))?;
+                }
+                DetachOutcome::NotWired => {
+                    crate::cli_ux::write_stderr_line(&format!(
+                        "Nothing to uninstall: {} is not wired to a staged package here",
+                        args.target,
+                    ))?;
+                }
+            }
+
+            match remove_staged_packages(&args.app_dir)? {
+                StagedRemoval::Removed => {
+                    crate::cli_ux::write_stderr_line(&format!(
+                        "Removed staged packages in {}",
+                        args.app_dir.join(PACKAGES_REL).display(),
+                    ))?;
+                }
+                StagedRemoval::StillInUse => {
+                    crate::cli_ux::write_stderr_line(
+                        "Kept staged packages: another dependency still points into \
+                         .nimbus/packages/",
+                    )?;
+                }
+                StagedRemoval::Absent => {}
+            }
+
+            force_node_reinstall(&args.app_dir)?;
+            crate::cli_ux::write_stderr_line(
+                "Run `npm install` to update node_modules. \
+                 `nimbus packages install <target>` re-wires it.",
+            )?;
             Ok(())
         }
         PackagesCommand::Verify(args) => {
@@ -137,7 +224,7 @@ impl Selection {
                 Ok(Selection::Adapter(target.to_string()))
             }
             other => Err(format!(
-                "unknown provision target {other:?} \
+                "unknown package target {other:?} \
                  (expected: all|convex|firebase|mongodb|dynamodb|nimbus)"
             )),
         }
@@ -282,7 +369,7 @@ pub(crate) fn provision_packages(
 /// app migrates the first time any app-scoped Nimbus command runs in it.
 /// Returns whether anything changed. `init` (after scaffolding), `dev` (before
 /// the install loop), `codegen`, and `deploy` call this so the supported
-/// offline flow never needs a manual `nimbus packages provision`.
+/// offline flow never needs a manual `nimbus packages install`.
 pub(crate) fn ensure(app_dir: &Path, selection: &Selection) -> io::Result<bool> {
     let outcome = provision_packages(app_dir, selection)?;
     let wired = wire_app_dependency(app_dir, selection)?;
@@ -343,135 +430,220 @@ pub(crate) fn provisioned_spec(dir: &str) -> String {
 /// Point the app's `package.json` dependency for the selected adapter's root
 /// package at the provisioned copy — the step that turns a registry-installed
 /// app (`"convex": "^1.x"`, `"firebase": "^11.x"`) into a migrated one without
-/// a manual `npm pkg set`. Returns the `(name, spec)` that was written, or
-/// `None` when there is nothing to do: `Selection::All`, no `package.json` in
-/// the app, or the dependency already carries the provisioned spec (scaffolds).
+/// a manual `npm pkg set`. A displaced registry spec is recorded so
+/// `nimbus packages uninstall` can put it back, and a recorded detach is
+/// honored: once a developer uninstalls a package, the automatic wiring that
+/// runs on every `dev`, `codegen`, and `deploy` must not silently re-apply it.
+/// Returns the `(name, spec)` that was written, or `None` when there is nothing
+/// to do: `Selection::All`, no `package.json` in the app, a recorded detach, or
+/// the dependency already carrying the provisioned spec (scaffolds).
 pub(crate) fn wire_app_dependency(
     app_dir: &Path,
     selection: &Selection,
+) -> io::Result<Option<(String, String)>> {
+    wire_app_dependency_inner(app_dir, selection, DetachHandling::Honor)
+}
+
+/// Whether a recorded detach blocks wiring (automatic wiring) or is cleared by
+/// it (the explicit `nimbus packages install`, which is the developer asking
+/// for the wiring back).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DetachHandling {
+    Honor,
+    Clear,
+}
+
+fn wire_app_dependency_inner(
+    app_dir: &Path,
+    selection: &Selection,
+    detach: DetachHandling,
 ) -> io::Result<Option<(String, String)>> {
     let Some((name, dir)) = adapter_root(selection) else {
         return Ok(None);
     };
     let manifest_path = app_dir.join("package.json");
-    let text = match fs::read_to_string(&manifest_path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+    let Some(text) = read_manifest(&manifest_path)? else {
+        return Ok(None);
     };
-    let spec = provisioned_spec(&dir);
-    match set_dependency(&text, &name, &spec) {
-        Ok(Some(rewritten)) => {
-            fs::write(&manifest_path, rewritten)?;
-            Ok(Some((name, spec)))
-        }
-        Ok(None) => Ok(None),
-        Err(error) => Err(io::Error::new(
+    let invalid = |error: String| {
+        io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
                 "cannot wire \"{name}\" in {}: {error}",
                 manifest_path.display()
             ),
-        )),
+        )
+    };
+
+    let record = app_manifest::wiring_record(&text, &name).map_err(invalid)?;
+    if record == Some(app_manifest::WiringRecord::Detached) && detach == DetachHandling::Honor {
+        return Ok(None);
     }
-}
 
-/// A JSON object's entries in source order; values keep their original raw
-/// text so one entry can be rewritten without reformatting the rest. (The
-/// workspace `serde_json` deliberately does not enable `preserve_order`, so
-/// `serde_json::Map` cannot do this.)
-struct ObjectEntries(Vec<(String, Box<serde_json::value::RawValue>)>);
+    let spec = provisioned_spec(&dir);
+    let displaced = app_manifest::dependency_spec(&text, &name).map_err(invalid)?;
+    let mut updated = match app_manifest::set_dependency(&text, &name, &spec).map_err(invalid)? {
+        Some(rewritten) => rewritten,
+        None if record != Some(app_manifest::WiringRecord::Detached) => return Ok(None),
+        // Already carrying the provisioned spec, but still marked detached:
+        // clearing the record is the whole edit.
+        None => text.clone(),
+    };
 
-impl<'de> serde::Deserialize<'de> for ObjectEntries {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct EntriesVisitor;
-        impl<'de> serde::de::Visitor<'de> for EntriesVisitor {
-            type Value = ObjectEntries;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a JSON object")
-            }
-
-            fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::MapAccess<'de>,
-            {
-                let mut entries = Vec::new();
-                while let Some(entry) =
-                    access.next_entry::<String, Box<serde_json::value::RawValue>>()?
-                {
-                    entries.push(entry);
-                }
-                Ok(ObjectEntries(entries))
-            }
+    // Remember the displaced registry spec, but never overwrite an existing
+    // record — the first one holds the app's true pre-Nimbus state. When Nimbus
+    // added the dependency itself there is nothing to restore, and the absence
+    // of a record already means "remove it on uninstall".
+    let wanted = match (&record, displaced) {
+        (Some(app_manifest::WiringRecord::Restorable { .. }), _) => record.clone(),
+        (_, Some(previous)) if previous != spec => {
+            Some(app_manifest::WiringRecord::Restorable { previous })
         }
-        deserializer.deserialize_map(EntriesVisitor)
-    }
-}
-
-/// Rewrite `package.json` text so `dependencies[name] = spec`. Existing entries
-/// keep their source order and raw value text; a missing dependency is inserted
-/// at its npm-sorted position, and a missing `dependencies` object is appended.
-/// Returns `Ok(None)` when the dependency already carries exactly `spec`.
-fn set_dependency(text: &str, name: &str, spec: &str) -> Result<Option<String>, String> {
-    let raw_string =
-        |value: String| serde_json::value::RawValue::from_string(value).map_err(|e| e.to_string());
-    let ObjectEntries(mut top) =
-        serde_json::from_str(text).map_err(|e| format!("invalid JSON: {e}"))?;
-    let spec_json = serde_json::Value::String(spec.to_string()).to_string();
-
-    if let Some(deps_value) = top
-        .iter_mut()
-        .find_map(|(key, value)| (key == "dependencies").then_some(value))
+        _ => None,
+    };
+    if let Some(rewritten) =
+        app_manifest::set_wiring_record(&updated, &name, wanted.as_ref()).map_err(invalid)?
     {
-        let ObjectEntries(mut deps) = serde_json::from_str(deps_value.get())
-            .map_err(|e| format!("invalid `dependencies` object: {e}"))?;
-        if let Some(dep) = deps.iter_mut().find(|(key, _)| key == name) {
-            if dep.1.get() == spec_json {
-                return Ok(None);
-            }
-            dep.1 = raw_string(spec_json)?;
-        } else {
-            let position = deps
-                .iter()
-                .position(|(key, _)| key.as_str() > name)
-                .unwrap_or(deps.len());
-            deps.insert(position, (name.to_string(), raw_string(spec_json)?));
-        }
-        *deps_value = raw_string(render_object(&deps, 2))?;
-    } else {
-        let deps = vec![(name.to_string(), raw_string(spec_json)?)];
-        top.push((
-            "dependencies".to_string(),
-            raw_string(render_object(&deps, 2))?,
-        ));
+        updated = rewritten;
     }
-    Ok(Some(format!("{}\n", render_object(&top, 1))))
+
+    if updated == text {
+        return Ok(None);
+    }
+    fs::write(&manifest_path, updated)?;
+    Ok(Some((name, spec)))
 }
 
-/// Render object entries with 2-space indentation: entries at `depth` levels,
-/// the closing brace one level out. Raw multi-line values embed as-is.
-fn render_object(entries: &[(String, Box<serde_json::value::RawValue>)], depth: usize) -> String {
-    if entries.is_empty() {
-        return "{}".to_string();
-    }
-    let inner = "  ".repeat(depth);
-    let outer = "  ".repeat(depth - 1);
-    let body = entries
-        .iter()
-        .map(|(key, value)| {
+/// What `uninstall` did to the app's `package.json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DetachOutcome {
+    /// The recorded pre-Nimbus spec was restored.
+    Restored { name: String, previous: String },
+    /// Nimbus had added the dependency, so it was removed.
+    Removed { name: String },
+    /// Nothing was wired: no `package.json`, or the dependency does not point
+    /// at the provisioned copy.
+    NotWired,
+}
+
+/// Undo `wire_app_dependency` for the selected adapter root: restore the
+/// recorded registry spec (or drop the dependency Nimbus added), then record
+/// the detach so automatic wiring does not re-apply it on the next command.
+fn detach_app_dependency(app_dir: &Path, selection: &Selection) -> io::Result<DetachOutcome> {
+    let Some((name, dir)) = adapter_root(selection) else {
+        return Ok(DetachOutcome::NotWired);
+    };
+    let manifest_path = app_dir.join("package.json");
+    let Some(text) = read_manifest(&manifest_path)? else {
+        return Ok(DetachOutcome::NotWired);
+    };
+    let invalid = |error: String| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
             format!(
-                "{inner}{}: {}",
-                serde_json::Value::String(key.clone()),
-                value.get()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",\n");
-    format!("{{\n{body}\n{outer}}}")
+                "cannot unwire \"{name}\" in {}: {error}",
+                manifest_path.display()
+            ),
+        )
+    };
+
+    let spec = provisioned_spec(&dir);
+    let current = app_manifest::dependency_spec(&text, &name).map_err(invalid)?;
+    if current.as_deref() != Some(spec.as_str()) {
+        return Ok(DetachOutcome::NotWired);
+    }
+    let record = app_manifest::wiring_record(&text, &name).map_err(invalid)?;
+
+    let (mut updated, outcome) = match record {
+        Some(app_manifest::WiringRecord::Restorable { previous }) => (
+            app_manifest::set_dependency(&text, &name, &previous).map_err(invalid)?,
+            DetachOutcome::Restored {
+                name: name.clone(),
+                previous,
+            },
+        ),
+        _ => (
+            app_manifest::remove_dependency(&text, &name).map_err(invalid)?,
+            DetachOutcome::Removed { name: name.clone() },
+        ),
+    };
+    let mut text_out = updated.take().unwrap_or_else(|| text.clone());
+    if let Some(rewritten) = app_manifest::set_wiring_record(
+        &text_out,
+        &name,
+        Some(&app_manifest::WiringRecord::Detached),
+    )
+    .map_err(invalid)?
+    {
+        text_out = rewritten;
+    }
+    fs::write(&manifest_path, text_out)?;
+    Ok(outcome)
+}
+
+/// Read an app's `package.json`, treating an absent file as "nothing to edit".
+fn read_manifest(manifest_path: &Path) -> io::Result<Option<String>> {
+    match fs::read_to_string(manifest_path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Complete an `install` by refreshing `node_modules`, or say plainly why it
+/// did not. A missing `package.json` or npm is a normal state for an app that
+/// only uses the wire-protocol adapters, so neither is an error here — the
+/// staged bytes and the rewritten specifier are already correct on disk.
+async fn install_node_dependencies(
+    app_dir: &Path,
+    skip: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if skip {
+        crate::cli_ux::write_stderr_line(
+            "Skipped the Node dependency install (--no-node-install); \
+             run `npm install` to pick it up",
+        )?;
+        return Ok(());
+    }
+    if !app_dir.join("package.json").is_file() {
+        return Ok(());
+    }
+    if let Err(error) = crate::node_runtime::ensure_npm_available() {
+        crate::cli_ux::write_stderr_line(&format!(
+            "Skipped the Node dependency install ({error}); \
+             run `npm install` once npm is available"
+        ))?;
+        return Ok(());
+    }
+    crate::node_runtime::auto_install_node_dependencies(app_dir).await
+}
+
+/// Whether `uninstall` could drop the staged package tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StagedRemoval {
+    Removed,
+    /// Another adapter's dependency still resolves through `.nimbus/packages/`,
+    /// so the shared closure has to stay.
+    StillInUse,
+    Absent,
+}
+
+/// Remove `<app>/.nimbus/packages/` unless a dependency still points into it.
+/// The staged tree is a dependency closure shared by every wired adapter, so
+/// uninstalling one of two wired adapters must not delete the other's copy.
+fn remove_staged_packages(app_dir: &Path) -> io::Result<StagedRemoval> {
+    let root = app_dir.join(PACKAGES_REL);
+    if !root.exists() {
+        return Ok(StagedRemoval::Absent);
+    }
+    if let Some(text) = read_manifest(&app_dir.join("package.json"))?
+        && app_manifest::has_dependency_with_prefix(&text, &format!("file:./{PACKAGES_REL}/"))
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+    {
+        return Ok(StagedRemoval::StillInUse);
+    }
+    fs::remove_dir_all(&root)?;
+    Ok(StagedRemoval::Removed)
 }
 
 /// Drop the installed copies of the provisioned packages and clear the Node
@@ -724,7 +896,7 @@ mod tests {
         let app = tempfile::tempdir().unwrap();
         // A fresh `init`/clone has no `.nimbus/packages` — ensure must provision
         // the requested closure (not no-op), so the supported flow needs no
-        // manual `nimbus packages provision`.
+        // manual `nimbus packages install`.
         assert!(
             ensure(app.path(), &Selection::Adapter("convex".into())).unwrap(),
             "absent packages must be provisioned"
@@ -810,7 +982,7 @@ mod tests {
     }
 
     #[test]
-    fn wiring_rewires_registry_spec_preserving_order() {
+    fn wiring_rewires_registry_spec_and_records_what_it_displaced() {
         let app = tempfile::tempdir().unwrap();
         fs::write(
             app.path().join("package.json"),
@@ -853,10 +1025,16 @@ mod tests {
                 "  },\n",
                 "  \"devDependencies\": {\n",
                 "    \"typescript\": \"~5.5.0\"\n",
+                "  },\n",
+                "  \"nimbus\": {\n",
+                "    \"packages\": {\n",
+                "      \"convex\": { \"previous\": \"^1.17.0\" }\n",
+                "    }\n",
                 "  }\n",
                 "}\n",
             ),
-            "only the convex spec may change; order and formatting must hold"
+            "only the convex spec may change, plus the record of the spec it \
+             displaced; order and formatting must hold"
         );
     }
 
@@ -1000,6 +1178,229 @@ mod tests {
         assert!(
             !ensure(app.path(), &Selection::Adapter("convex".into())).unwrap(),
             "already-wired, already-provisioned app must be a no-op"
+        );
+    }
+
+    /// The manifest of an app whose dependency Nimbus added itself stays free of
+    /// a wiring record: there is no earlier spec to restore, and `uninstall`
+    /// already treats an absent record as "remove the dependency".
+    #[test]
+    fn wiring_records_nothing_when_nimbus_adds_the_dependency() {
+        let app = tempfile::tempdir().unwrap();
+        fs::write(
+            app.path().join("package.json"),
+            "{\n  \"dependencies\": {\n    \"react\": \"^19.0.0\"\n  }\n}\n",
+        )
+        .unwrap();
+
+        wire_app_dependency(app.path(), &Selection::Adapter("convex".into()))
+            .unwrap()
+            .expect("missing dependency must be added");
+        let text = fs::read_to_string(app.path().join("package.json")).unwrap();
+        assert!(
+            !text.contains("\"nimbus\""),
+            "no displaced spec means no record: {text}"
+        );
+        assert_eq!(
+            app_manifest::wiring_record(&text, "convex").unwrap(),
+            None,
+            "an added dependency carries no record"
+        );
+    }
+
+    /// A later re-wire must not overwrite the first record. Only the original
+    /// spec restores the app to its pre-Nimbus state.
+    #[test]
+    fn wiring_keeps_the_first_recorded_spec() {
+        let app = tempfile::tempdir().unwrap();
+        let manifest = app.path().join("package.json");
+        fs::write(
+            &manifest,
+            "{\n  \"dependencies\": {\n    \"convex\": \"^1.17.0\"\n  }\n}\n",
+        )
+        .unwrap();
+        wire_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+
+        // Simulate a hand edit that points the spec somewhere else, then re-wire.
+        let text = fs::read_to_string(&manifest).unwrap();
+        fs::write(
+            &manifest,
+            app_manifest::set_dependency(&text, "convex", "^1.19.0")
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        wire_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+
+        assert_eq!(
+            app_manifest::wiring_record(&fs::read_to_string(&manifest).unwrap(), "convex").unwrap(),
+            Some(app_manifest::WiringRecord::Restorable {
+                previous: "^1.17.0".to_string()
+            }),
+            "the first displaced spec is the one that restores the app"
+        );
+    }
+
+    #[test]
+    fn uninstall_restores_the_recorded_registry_spec() {
+        let app = tempfile::tempdir().unwrap();
+        let manifest = app.path().join("package.json");
+        let original = concat!(
+            "{\n",
+            "  \"name\": \"my-app\",\n",
+            "  \"dependencies\": {\n",
+            "    \"convex\": \"^1.17.0\",\n",
+            "    \"react\": \"^19.0.0\"\n",
+            "  }\n",
+            "}\n",
+        );
+        fs::write(&manifest, original).unwrap();
+        wire_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+
+        let outcome =
+            detach_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+        assert_eq!(
+            outcome,
+            DetachOutcome::Restored {
+                name: "convex".to_string(),
+                previous: "^1.17.0".to_string(),
+            }
+        );
+        let text = fs::read_to_string(&manifest).unwrap();
+        assert_eq!(
+            app_manifest::dependency_spec(&text, "convex").unwrap(),
+            Some("^1.17.0".to_string()),
+            "uninstall must put the registry spec back, not merely drop the key"
+        );
+    }
+
+    #[test]
+    fn uninstall_removes_a_dependency_nimbus_added() {
+        let app = tempfile::tempdir().unwrap();
+        let manifest = app.path().join("package.json");
+        fs::write(
+            &manifest,
+            "{\n  \"dependencies\": {\n    \"react\": \"^19.0.0\"\n  }\n}\n",
+        )
+        .unwrap();
+        wire_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+
+        let outcome =
+            detach_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+        assert_eq!(
+            outcome,
+            DetachOutcome::Removed {
+                name: "convex".to_string()
+            }
+        );
+        let text = fs::read_to_string(&manifest).unwrap();
+        assert_eq!(
+            app_manifest::dependency_spec(&text, "convex").unwrap(),
+            None,
+            "a dependency Nimbus added must not survive uninstall"
+        );
+        assert_eq!(
+            app_manifest::dependency_spec(&text, "react").unwrap(),
+            Some("^19.0.0".to_string()),
+            "unrelated dependencies must be untouched"
+        );
+    }
+
+    /// The wiring in `ensure` runs on every `dev`, `codegen`, and `deploy`, so
+    /// without a recorded detach an uninstall would silently undo itself.
+    #[test]
+    fn uninstall_stops_automatic_rewiring_and_install_restores_it() {
+        let app = tempfile::tempdir().unwrap();
+        let manifest = app.path().join("package.json");
+        fs::write(
+            &manifest,
+            "{\n  \"dependencies\": {\n    \"convex\": \"^1.17.0\"\n  }\n}\n",
+        )
+        .unwrap();
+        wire_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+        detach_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+        let detached = fs::read_to_string(&manifest).unwrap();
+
+        let rewired =
+            wire_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+        assert!(rewired.is_none(), "automatic wiring must honor the detach");
+        assert_eq!(
+            fs::read_to_string(&manifest).unwrap(),
+            detached,
+            "a honored detach must not rewrite the manifest"
+        );
+
+        let reinstalled = wire_app_dependency_inner(
+            app.path(),
+            &Selection::Adapter("convex".into()),
+            DetachHandling::Clear,
+        )
+        .unwrap();
+        assert!(
+            reinstalled.is_some(),
+            "`packages install` is the developer asking for the wiring back"
+        );
+        let text = fs::read_to_string(&manifest).unwrap();
+        assert_eq!(
+            app_manifest::dependency_spec(&text, "convex").unwrap(),
+            Some(provisioned_spec("convex")),
+        );
+        assert_eq!(
+            app_manifest::wiring_record(&text, "convex").unwrap(),
+            Some(app_manifest::WiringRecord::Restorable {
+                previous: "^1.17.0".to_string()
+            }),
+            "reinstalling re-records the spec so a later uninstall still restores it"
+        );
+    }
+
+    #[test]
+    fn uninstall_reports_nothing_to_do_when_not_wired() {
+        let app = tempfile::tempdir().unwrap();
+        fs::write(
+            app.path().join("package.json"),
+            "{\n  \"dependencies\": {\n    \"convex\": \"^1.17.0\"\n  }\n}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            detach_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap(),
+            DetachOutcome::NotWired,
+            "a registry spec Nimbus never wired must be left alone"
+        );
+        assert_eq!(
+            fs::read_to_string(app.path().join("package.json")).unwrap(),
+            "{\n  \"dependencies\": {\n    \"convex\": \"^1.17.0\"\n  }\n}\n",
+        );
+    }
+
+    /// The staged tree is one dependency closure shared by every wired adapter,
+    /// so uninstalling one of two must not delete the other's package.
+    #[test]
+    fn uninstall_keeps_staged_packages_another_dependency_still_uses() {
+        let app = tempfile::tempdir().unwrap();
+        fs::write(app.path().join("package.json"), "{}\n").unwrap();
+        provision_packages(app.path(), &Selection::All).unwrap();
+        wire_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+        wire_app_dependency(app.path(), &Selection::Adapter("firebase".into())).unwrap();
+
+        detach_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+        assert_eq!(
+            remove_staged_packages(app.path()).unwrap(),
+            StagedRemoval::StillInUse
+        );
+        assert!(
+            app.path().join(PACKAGES_REL).join("firebase").is_dir(),
+            "the still-wired adapter keeps its staged copy"
+        );
+
+        detach_app_dependency(app.path(), &Selection::Adapter("firebase".into())).unwrap();
+        assert_eq!(
+            remove_staged_packages(app.path()).unwrap(),
+            StagedRemoval::Removed
+        );
+        assert!(
+            !app.path().join(PACKAGES_REL).exists(),
+            "the last uninstall drops the staged tree"
         );
     }
 
