@@ -154,7 +154,10 @@ fn foreign_initial_launch_claim_fails_before_container_provider_effects() {
 #[test]
 fn plan_only_cleanup_does_not_contact_machine_port_forwarder() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let unavailable_port = unused_loopback_port();
+    // The claim keeps this forwarder endpoint unanswered for the whole test,
+    // which is what makes a contacted forwarder observable as a failure.
+    let port_window = PortWindow::claim();
+    let unavailable_port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.start_mode = ContainerStartMode::PlanOnly;
     config.machine_port_forwarder = Some(sample_forwarder(unavailable_port));

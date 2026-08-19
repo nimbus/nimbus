@@ -1,0 +1,37 @@
+### SIC1 fail-before
+### put_object reads the manifest, decides the preconditions against that read,
+### then writes unconditionally. Everything else is the shipped code.
+
+$ cargo test -p nimbus-s3 conditional_ -- --nocapture
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.81s
+     Running unittests src/lib.rs (target/debug/deps/nimbus_s3-1e190a279b541004)
+
+running 3 tests
+test tests::conditional_requests_enforce_s3_etag_preconditions ... ok
+test tests::conditional_put_probe_create_reject_update_reject_stale ... ok
+
+thread 'tests::conditional_put_if_none_match_is_linearizable' (70078319) panicked at crates/nimbus-s3/src/tests.rs:896:5:
+assertion `left == right` failed: exactly one of 100 concurrent If-None-Match: * creates may be admitted
+  left: 75
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::conditional_put_if_none_match_is_linearizable ... FAILED
+
+failures:
+
+failures:
+    tests::conditional_put_if_none_match_is_linearizable
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p nimbus-s3 --lib`
+
+$ cargo test -p nimbus-s3 rejected_object_condition_has_no_commit_or_blob_effect -- --nocapture
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.35s
+     Running unittests src/lib.rs (target/debug/deps/nimbus_s3-1e190a279b541004)
+
+running 1 test
+test tests::rejected_object_condition_has_no_commit_or_blob_effect ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+

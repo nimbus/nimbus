@@ -1,0 +1,42 @@
+=== make test-rust-docs
+   Doc-tests workspace_hack
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== make verify-harness
+     Running tests/locker_smoke.rs (target/debug/deps/locker_smoke-0ee478c8b652d77c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+=== make build-js
+computing gzip size...
+dist/index.html                   0.56 kB │ gzip:  0.35 kB
+dist/assets/index-CPHvamGc.css    2.59 kB │ gzip:  1.14 kB
+dist/assets/index-T0Qb_dtI.js   214.17 kB │ gzip: 66.84 kB
+
+✓ built in 369ms
+=== make typecheck-js
+> npm run codegen && tsc -p tsconfig.json --noEmit
+
+
+> codegen
+> nimbus-codegen --app .
+
+=== make test-js
+> npm run codegen && tsc -p tsconfig.json --noEmit
+
+
+> codegen
+> nimbus-codegen --app .
+
+=== make proof-helpers
+
+Checking uninstall dry-run...
+  [pass] uninstall dry-run indicates no changes
+  [pass] uninstall dry-run describes removal
+
+verified: install script helper passed 44 tests

@@ -19,11 +19,13 @@ const ROLE_ENV: &str = "NIMBUS_PROCESS_HARNESS_ROLE";
 const STATE_ROOT_ENV: &str = "NIMBUS_PROCESS_HARNESS_STATE_ROOT";
 
 mod crash;
+mod ports;
 
 pub use crash::{
     CrashCutChildContext, SubprocessCrashCutHarness, SubprocessCrashCutResult, run_crash_cut_child,
     run_crash_recovery_child,
 };
+pub use ports::PortWindow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentionOutcome {

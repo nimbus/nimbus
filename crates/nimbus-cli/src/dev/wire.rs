@@ -372,12 +372,6 @@ fn bind_and_retain_wire_listener(
 }
 
 #[cfg(test)]
-fn test_free_port() -> io::Result<u16> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-    Ok(listener.local_addr()?.port())
-}
-
-#[cfg(test)]
 fn close_test_listeners(listeners: PreboundServerListeners) {
     listeners
         .close_and_settle()
@@ -432,6 +426,8 @@ fn provider_assigned_fixture(
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
+    use nimbus_process_harness::PortWindow;
 
     use super::*;
 
@@ -532,10 +528,16 @@ mod tests {
     #[test]
     fn detected_surface_prefers_conventional_port() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let free = test_free_port().expect("select a free test port");
+        // The claimed window stands in for a free conventional port. No other
+        // process can take it before the listener binds, so a fallback here
+        // means the preference logic failed rather than that the test lost a
+        // race for the number it picked.
+        let window = PortWindow::claim();
+        let conventional = window.port(0);
         let (resolved, listeners) =
-            prepare_test_wire_listener(temp.path(), true, free, false).expect("prepare listener");
-        assert_eq!(resolved.port, free);
+            prepare_test_wire_listener(temp.path(), true, conventional, false)
+                .expect("prepare listener");
+        assert_eq!(resolved.port, conventional);
         assert!(!resolved.conventional_fallback);
         assert_port_is_still_held(resolved.port);
         close_test_listeners(listeners);

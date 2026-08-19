@@ -436,9 +436,22 @@ fn contention_child(root: &Path, case: &str, role: &str) {
         }
         ProviderCommandClaimDecision::AdoptExactAttempt(observation) => {
             println!("NNC65D2_DECISION:adopt");
-            assert_eq!(
+            // The adopter reads whatever the winner has durably published so
+            // far, and the winner publishes twice: `Claimed` when it takes the
+            // epoch, then `InProgress` once it dispatches. A contender that
+            // reaches the journal in the window between those two writes
+            // legitimately adopts `Claimed` — the epoch is taken, the effect is
+            // simply not yet started. What the adopter must never see is a
+            // resolved effect, which would read as authority to act on the
+            // winner's outcome or retry it.
+            assert!(
+                matches!(
+                    observation.kind(),
+                    ProviderCommandObservationKind::Claimed
+                        | ProviderCommandObservationKind::InProgress
+                ),
+                "an adopting contender must observe the winner's live attempt, got {:?}",
                 observation.kind(),
-                ProviderCommandObservationKind::InProgress
             );
         }
     }

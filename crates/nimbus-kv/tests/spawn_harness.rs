@@ -1,10 +1,12 @@
 use std::env;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use nimbus_process_harness::PortWindow;
 
 const TENANT: &str = "tenant-a";
 const PASSWORD: &str = "secret";
@@ -12,7 +14,10 @@ const PASSWORD: &str = "secret";
 #[test]
 #[ignore = "requires REDISRS_SERVER_BIN or NIMBUS_KV_SERVER_BIN pointing at a built nimbus binary"]
 fn redis_rs_spawned_nimbus_kv_binary_smoke_resp2_and_resp3() {
-    let addr = free_loopback_addr();
+    // The spawned binary binds this port itself, so the window has to stay
+    // claimed for the whole smoke run rather than only until the port is read.
+    let ports = PortWindow::claim();
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, ports.port(0)));
     let mut server = SpawnedServer::start(addr);
     server.wait_ready();
 
@@ -157,11 +162,6 @@ fn server_bin() -> PathBuf {
     }
 
     configured
-}
-
-fn free_loopback_addr() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral loopback port");
-    listener.local_addr().expect("listener has local address")
 }
 
 fn resp3_smoke(addr: SocketAddr) {

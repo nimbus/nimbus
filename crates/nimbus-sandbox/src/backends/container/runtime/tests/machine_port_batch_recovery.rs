@@ -334,11 +334,11 @@ fn publication_record(manifest: &ContainerSandboxManifest) -> serde_json::Value 
 #[test]
 fn nnc5_4a_lifecycle_retry_preserves_authority_and_does_not_duplicate_expose() {
     let temp = tempfile::tempdir().expect("temporary root should exist");
-    let first_port = unused_loopback_port();
-    let mut second_port = unused_loopback_port();
-    while second_port == first_port {
-        second_port = unused_loopback_port();
-    }
+    // One window covers both published bindings this batch exposes. Distinct
+    // offsets replace the retry loop that used to reject a duplicate draw.
+    let port_window = PortWindow::claim();
+    let first_port = port_window.port(0);
+    let second_port = port_window.port(1);
     let listener =
         TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("machine forwarder fixture should bind");
     let forwarder_port = listener
@@ -450,11 +450,11 @@ fn nnc5_4a_lifecycle_retry_preserves_authority_and_does_not_duplicate_expose() {
 #[test]
 fn nnc5_4a_fresh_owner_withdrawal_preserves_authority_and_does_not_duplicate_absence() {
     let temp = tempfile::tempdir().expect("temporary root should exist");
-    let first_port = unused_loopback_port();
-    let mut second_port = unused_loopback_port();
-    while second_port == first_port {
-        second_port = unused_loopback_port();
-    }
+    // One window covers both published bindings this batch exposes. Distinct
+    // offsets replace the retry loop that used to reject a duplicate draw.
+    let port_window = PortWindow::claim();
+    let first_port = port_window.port(0);
+    let second_port = port_window.port(1);
     let listener =
         TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("machine forwarder fixture should bind");
     let forwarder_port = listener

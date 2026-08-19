@@ -1,0 +1,38 @@
+    |                                                            +++
+
+warning: `flume` (lib) generated 4 warnings (run `cargo clippy --fix --lib -p flume -- -D warnings` to apply 1 suggestion)
+warning: `libsql` (lib) generated 4 warnings (run `cargo clippy --fix --lib -p libsql -- -D warnings` to apply 4 suggestions)
+    Checking nimbus-storage v0.1.45 (/Users/jack/src/github.com/nimbus/nimbus/crates/nimbus-storage)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.71s
+bash scripts/single-flight.sh --key cargo-deny-check -- cargo deny check
+advisories ok, bans ok, licenses ok, sources ok
+cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot -- --check \
+		|| cargo run -p nimbus-runtime --bin build_node22_anchor_snapshot
+warning: eliding a lifetime that's named elsewhere is confusing
+  --> third_party/lazy_static-1.5.0/src/core_lazy.rs:18:49
+   |
+18 |     pub fn get<F>(&'static self, builder: F) -> &T
+   |                    -------                      ^^ the same lifetime is elided here
+   |                    |
+...
+test worker_loop::cooperative::backend::tests::backend_driver_v8_locker_driver_starts_with_no_deferred_drops ... ok
+test worker_loop::cooperative::backend::tests::backend_slot_trait_exposes_v8_reusable_runtime_type ... ok
+test worker_loop::cooperative::scheduler::tests::scheduler_drains_retained_runnable_and_parked_slots ... ok
+test worker_loop::cooperative::scheduler::tests::scheduler_moves_parked_slots_back_to_fifo_tail ... ok
+test worker_loop::cooperative::scheduler::tests::scheduler_requeues_runnable_slots_fifo ... ok
+
+test result: ok. 517 passed; 0 failed; 134 ignored; 0 measured; 742 filtered out; finished in 64.66s
+
+     Running unittests src/bin/build_node22_anchor_snapshot.rs (target/debug/deps/build_node22_anchor_snapshot-040dfb54dc869802)
+
+running 0 tests
+...
+        PASS [   0.825s] (7425/7427) nimbus-workloads store::tests::mutex_map_store_satisfies_shared_contract
+        PASS [   0.825s] (7426/7427) nimbus-workloads store::tests::rwlock_append_log_store_satisfies_shared_contract
+        PASS [  10.127s] (7427/7427) nimbus-workloads saga::tests::restart_state::completion_history_is_bounded_ordered_strict_and_non_evicting
+────────────
+     Summary [ 519.940s] 7427 tests run: 7426 passed (7 slow, 1 leaky), 1 failed, 107 skipped
+        FAIL [  16.437s] (4685/7427) nimbus-sandbox backends::container::runtime::tests::lifecycle::runner_recovery::fresh_process::fresh_process_converges_exact_runner_effect_matrix
+error: test run failed
+make: *** [test-rust-workspace] Error 100
+MAKE_CI_RC=2

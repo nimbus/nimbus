@@ -774,6 +774,7 @@ mod tests {
     use nimbus_network::{
         LocalNetworkManager, LocalPortLeaseAuthority, NetworkCapabilityRegistry, PortLeasePhase,
     };
+    use nimbus_process_harness::PortWindow;
     use nimbus_testing::EngineFixture;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1098,10 +1099,15 @@ mod tests {
     async fn nnc3_5_synchronous_sibling_failure_closes_and_releases_owned_main_listener() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let mut options = direct_options(fixture.engine());
+        // The reservation stays provider-assigned, so `prepare_main_listener`
+        // keeps receiving port zero. The main socket itself takes a port this
+        // process holds, because the assertion at the end re-binds that exact
+        // address to prove the failed start closed it.
+        let window = PortWindow::claim();
         let prepared = options
             .prepare_main_listener("127.0.0.1:0".parse().expect("fixture address should parse"))
             .expect("main listener should reserve");
-        let raw = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let raw = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], window.port(0))))
             .await
             .expect("main listener should bind");
         let main_addr = raw.local_addr().expect("main address should resolve");
@@ -1414,6 +1420,12 @@ mod tests {
     async fn nnc3_7a_mismatched_handoff_settles_every_prebound_listener() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let mut prebound = direct_prebound(fixture.data_dir());
+        // Both reservations stay provider-assigned, so `prepare` keeps
+        // receiving port zero. The two provider sockets take held ports —
+        // offset 0 for the matching member and offset 1 for the orphan —
+        // because the loop below re-binds both to prove the rejected handoff
+        // closed them.
+        let window = PortWindow::claim();
         let requested_addr = "127.0.0.1:0"
             .parse()
             .expect("provider-assigned address should parse");
@@ -1421,7 +1433,7 @@ mod tests {
         let prepared = prebound
             .prepare("dev-nnc3-7a-prebound", requested_addr)
             .expect("matching listener should reserve");
-        let raw = std::net::TcpListener::bind(requested_addr)
+        let raw = std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], window.port(0))))
             .expect("matching provider socket should bind");
         let listener = prepared
             .adopt_std(raw)
@@ -1436,7 +1448,7 @@ mod tests {
         let prepared = prebound
             .prepare("dev-nnc3-7a-orphan", requested_addr)
             .expect("unconsumed listener should reserve");
-        let raw = std::net::TcpListener::bind(requested_addr)
+        let raw = std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], window.port(1))))
             .expect("unconsumed provider socket should bind");
         let listener = prepared
             .adopt_std(raw)
@@ -1496,7 +1508,12 @@ mod tests {
     #[test]
     fn nnc3_7a_serve_options_drop_and_replacement_settle_prebound_bundles() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
-        let prepare_bundle = |listener_name: &str, adapter_name: &str| {
+        // Each bundle's reservation stays provider-assigned, so `prepare`
+        // keeps receiving port zero. The caller hands in the held port the
+        // provider socket actually binds, because both addresses are re-bound
+        // at the end to prove the rejected replacement settled them.
+        let window = PortWindow::claim();
+        let prepare_bundle = |listener_name: &str, adapter_name: &str, port: u16| {
             let mut listeners = direct_prebound(fixture.data_dir());
             let requested_addr = "127.0.0.1:0"
                 .parse()
@@ -1504,7 +1521,7 @@ mod tests {
             let prepared = listeners
                 .prepare(listener_name, requested_addr)
                 .expect("pre-bound listener should reserve");
-            let raw = std::net::TcpListener::bind(requested_addr)
+            let raw = std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)))
                 .expect("provider should bind its requested socket");
             let listener = prepared
                 .adopt_std(raw)
@@ -1518,8 +1535,10 @@ mod tests {
             (listeners, actual_addr)
         };
 
-        let (first, first_addr) = prepare_bundle("dev-mongodb-provider-assigned", "mongodb");
-        let (second, second_addr) = prepare_bundle("dev-s3-provider-assigned", "s3");
+        let (first, first_addr) =
+            prepare_bundle("dev-mongodb-provider-assigned", "mongodb", window.port(0));
+        let (second, second_addr) =
+            prepare_bundle("dev-s3-provider-assigned", "s3", window.port(1));
         let options = direct_options(fixture.engine())
             .with_prebound_listener_authority(&first)
             .expect("first prebound authority should authenticate")

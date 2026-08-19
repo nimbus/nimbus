@@ -322,12 +322,15 @@ This runs the on-demand consistency verifier: it fingerprints the
 authoritative snapshot, the shadow materializer, and the embedded replica,
 checks the journal bootstrap cut, and compares them. The report contains:
 
-- `ok` — `true` when every fingerprint agrees. Alert on `false`.
+- `ok` — `true` when every position agrees. Alert on `false`.
 - `authoritative`, `shadow`, `embedded_replica` — one fingerprint each:
-  `digest`, `applied_sequence`, `durable_head`, `schema_table_count`,
-  `document_count`, `scheduled_execution_count`.
+  `position` (`version`, `applied_sequence`, `state_digest`),
+  `snapshot_version`, `durable_head`, `schema_table_count`,
+  `document_count`, `scheduled_execution_count`. Two scopes agree when their
+  `position` agrees: the same `applied_sequence` with a different
+  `state_digest` means the state diverged at an unchanged sequence.
 - `bootstrap` — the journal bootstrap fingerprint
-  (`snapshot_digest`, `resume_after_sequence`, `bootstrap_cut_sequence`,
+  (`snapshot_position`, `resume_after_sequence`, `bootstrap_cut_sequence`,
   `cursor_floor_sequence`).
 - `mismatches` — empty when healthy; otherwise each entry names the
   violated `invariant`, the two scopes compared, the `path`, and both

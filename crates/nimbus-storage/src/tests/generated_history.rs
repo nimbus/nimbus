@@ -647,10 +647,10 @@ fn canonical_digest_generated_history_matches_redb_sqlite_pitr_cdc_and_rebuild_p
         .export_materialized_journal_snapshot()
         .expect("sqlite latest snapshot should export");
     let redb_latest = redb_snapshot
-        .canonical_fingerprint()
+        .materialized_position()
         .expect("redb latest digest should compute");
     let sqlite_latest = sqlite_snapshot
-        .canonical_fingerprint()
+        .materialized_position()
         .expect("sqlite latest digest should compute");
     assert_eq!(redb_latest, sqlite_latest);
 
@@ -672,10 +672,7 @@ fn canonical_digest_generated_history_matches_redb_sqlite_pitr_cdc_and_rebuild_p
                 crate::RetentionGcConfig::retain_all(),
             )
             .expect("sqlite PITR archive should export");
-        assert_eq!(
-            redb_archive.target_fingerprint,
-            sqlite_archive.target_fingerprint
-        );
+        assert_eq!(redb_archive.target_position, sqlite_archive.target_position);
 
         let restored = TenantStore::create_in_memory_with_simulation(
             clock.clone(),
@@ -689,9 +686,9 @@ fn canonical_digest_generated_history_matches_redb_sqlite_pitr_cdc_and_rebuild_p
             restored
                 .export_materialized_journal_snapshot()
                 .expect("restored parity snapshot should export")
-                .canonical_fingerprint()
+                .materialized_position()
                 .expect("restored parity digest should compute"),
-            redb_archive.target_fingerprint
+            redb_archive.target_position
         );
     }
 

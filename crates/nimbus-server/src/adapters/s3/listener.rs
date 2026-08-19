@@ -23,7 +23,10 @@ use nimbus_s3::convex::{
     CONVEX_DOWNLOAD_PATH_PREFIX, ConvexObjectStorage, ConvexStorageError, DownloadTokenSigner,
 };
 use nimbus_s3::{NimbusS3, S3ObjectMeta, S3TenantBlobs, S3TenantObjects, S3TenantResolver};
-use nimbus_storage::{ObjectManifest, ObjectMultipartUpload};
+use nimbus_storage::{
+    ObjectConditionOutcome, ObjectExpectedState, ObjectManifest, ObjectMultipartUpload,
+    ObjectUploadConditionOutcome, ObjectUploadExpectedState,
+};
 use s3s::service::S3ServiceBuilder;
 use s3s::{Body, HttpError};
 use tokio::net::TcpListener;
@@ -117,8 +120,12 @@ struct EngineObjectMeta(TenantObjectMeta);
 
 #[async_trait]
 impl S3ObjectMeta for EngineObjectMeta {
-    async fn put_manifest(&self, manifest: ObjectManifest) -> Result<CommitEntry> {
-        self.0.put_manifest(manifest).await
+    async fn put_manifest_conditional(
+        &self,
+        manifest: ObjectManifest,
+        expected: Vec<ObjectExpectedState>,
+    ) -> Result<ObjectConditionOutcome> {
+        self.0.put_manifest_conditional(manifest, expected).await
     }
 
     async fn get_manifest(&self, bucket: &str, key: &str) -> Result<Option<ObjectManifest>> {
@@ -148,19 +155,28 @@ impl S3ObjectMeta for EngineObjectMeta {
             .await
     }
 
-    async fn put_multipart_upload(&self, upload: ObjectMultipartUpload) -> Result<CommitEntry> {
-        self.0.put_multipart_upload(upload).await
+    async fn put_multipart_upload_conditional(
+        &self,
+        upload: ObjectMultipartUpload,
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome> {
+        self.0
+            .put_multipart_upload_conditional(upload, expected)
+            .await
     }
 
     async fn get_multipart_upload(&self, upload_id: &str) -> Result<Option<ObjectMultipartUpload>> {
         self.0.get_multipart_upload(upload_id.to_string()).await
     }
 
-    async fn delete_multipart_upload(
+    async fn delete_multipart_upload_conditional(
         &self,
         upload_id: &str,
-    ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>> {
-        self.0.delete_multipart_upload(upload_id.to_string()).await
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome> {
+        self.0
+            .delete_multipart_upload_conditional(upload_id.to_string(), expected)
+            .await
     }
 
     async fn list_multipart_uploads(
@@ -306,7 +322,7 @@ mod tests {
     use axum::body::to_bytes;
     use bytes::Bytes;
     use nimbus_core::TenantId;
-    use nimbus_s3::AccessKeyRegistry;
+    use nimbus_s3::{AccessKeyRegistry, put_manifest_unconditional};
     use nimbus_storage::{
         ObjectManifest, ObjectManifestAttributes, ObjectStorePlacementTarget,
         ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
@@ -499,13 +515,13 @@ mod tests {
             .expect("blob should store");
         let mut attributes = ObjectManifestAttributes::new("presigned-etag", current_millis());
         attributes.content_type = Some("text/plain".to_string());
-        ctx.meta
-            .put_manifest(
-                ObjectManifest::whole("bucket", "presigned.txt", 15, hash.to_hex(), attributes)
-                    .expect("manifest should build"),
-            )
-            .await
-            .expect("manifest should store");
+        put_manifest_unconditional(
+            ctx.meta.as_ref(),
+            ObjectManifest::whole("bucket", "presigned.txt", 15, hash.to_hex(), attributes)
+                .expect("manifest should build"),
+        )
+        .await
+        .expect("manifest should store");
 
         let router = router(engine, S3Config::default().with_access_keys(access_keys()));
         let request = axum::http::Request::builder()
