@@ -58,6 +58,7 @@ mod recovery;
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 mod sql_pair_scenarios;
 mod sqlite_foundation;
+mod sqlite_physical_durability;
 mod store_basics;
 mod usage_store;
 
