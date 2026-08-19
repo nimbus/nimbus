@@ -74,6 +74,26 @@ Bound waits and health checks. A timeout must report the child process,
 recent logs, expected readiness signal, and retained artifact path. Do not
 classify a slow but active compile as a hang without host activity evidence.
 
+### Host activity evidence
+
+Prove host activity before you call a check idle or hung. Two probes report a
+false negative on macOS hosts here:
+
+- The `find` on this machine is `bfs`. It rejects a relative timestamp, so
+  `find . -newermt "-5 minutes"` prints an error and no paths. That output is
+  identical to "no file changed", which makes any activity check built on it a
+  permanent false zero. Use `find . -newer <reference-file>`, or compare
+  `stat -f %m` values.
+- A long process log is not a progress signal. Read file modification times in
+  the work tree instead.
+
+Diagnose a suspected hang with `sample <pid>` before you stop the process. Long
+elapsed time with near-zero accumulated processor time is a block, not slow
+work, and the stack names the blocked frame. `.config/nextest.toml` stops a
+slow test after 45 seconds and three strikes, so Nextest lanes and hosted CI
+are protected. A bare `cargo test` has no timeout. Wrap a long check in
+`timeout <seconds> ...` and require the same of a delegated job.
+
 ## External providers and host capabilities
 
 Use repository-owned provider fixtures instead of recreating image, port,
@@ -88,6 +108,14 @@ Provider and host-capability tests must distinguish unsupported, skipped, and
 failed states. If a required provider is absent, the test must fail closed.
 Record the host, provider mode, feature flags, selection, counts, and cleanup
 result.
+
+A missing cargo feature removes tests instead of failing them.
+`cargo nextest run -p nimbus-storage` with no feature flag runs only the
+embedded-provider tests, about 297, and reports green. The crate has no default
+features, so every libSQL, MySQL, and PostgreSQL test is absent. The full set
+of about 439 needs `--features libsql,mysql,postgres` plus live fixtures for
+the provider lanes. `make` entrypoints and `--workspace` runs are unaffected
+because workspace feature unification enables the providers.
 
 A lane that cannot run is `UNVERIFIED`. It is never reported as green, and it is
 never converted into a passing claim by a skip. Storage enforces that rule as a
@@ -169,3 +197,10 @@ verdict. When a check fails:
 Hosted CI remains the authority for platform-only, coverage-upload,
 pointer-compression, Bun, external-provider, node D-Bus, and scheduled Node
 compatibility evidence that a local host cannot supply.
+
+## Sandboxed GitHub authentication
+
+If `gh` reports an invalid token or an authentication failure inside the
+sandbox, retry the same GitHub CLI operation with elevated permissions before
+you treat the credential as broken. Record a credential blocker only after the
+elevated command also fails.
