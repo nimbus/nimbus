@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 use nimbus_core::{Error, Result, SequenceNumber, TableName};
 use nimbus_storage::MaterializedRebuild;
 
-use super::publication::apply_write_to_materialized_documents;
+use super::publication::{TableSnapshotPublish, apply_write_to_materialized_documents};
 use super::state::estimate_document_bytes;
 use super::{MaterializedServingBackend, ServingSnapshot, ServingSnapshotManager};
 use crate::tenant::materialized_reads::warm_load::{
@@ -139,13 +139,26 @@ impl MaterializedServingBackend {
                         store,
                         replayed_sequence,
                     )?;
-                    self.publish_table_snapshot(
-                        snapshots,
-                        table.clone(),
-                        generation,
-                        replayed_sequence,
-                        materialized_by_id,
-                    );
+                    if let TableSnapshotPublish::BehindServingFrontier(frontier) = self
+                        .publish_table_snapshot(
+                            snapshots,
+                            table.clone(),
+                            generation,
+                            replayed_sequence,
+                            materialized_by_id,
+                        )
+                    {
+                        // The surface folded commits past this load between
+                        // the last applied-sequence read above and the publish
+                        // attempt. The scan is stale as of `frontier`, so
+                        // start it over rather than publish a table the
+                        // serving history would drop. The retry rescans from
+                        // the store's current applied head, which is at or
+                        // past `frontier`, so it converges as soon as the
+                        // writer that raced this load pauses.
+                        debug_assert!(frontier.0 > replayed_sequence.0);
+                        continue;
+                    }
                     return self
                         .serving_snapshot_for_table_with_mode(
                             snapshots,
