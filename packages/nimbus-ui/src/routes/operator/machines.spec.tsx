@@ -134,6 +134,67 @@ describe("MachinesPage loading state", () => {
   });
 });
 
+describe("MachinesPage action column", () => {
+  // The table stopped wrapping its cells, which bought uniform rows and cost
+  // width: at 1440x900 it needs 948px in a 910px scroller. Whatever hangs off
+  // the right edge is unreachable in practice, because macOS draws no resting
+  // scrollbar to say the table scrolls. Here that column is Actions, so the
+  // rows read fine and cannot be acted on. jsdom has no layout, so these
+  // assert the mechanism rather than the geometry; `pin-verify` measures the
+  // overhang itself against a live server.
+  const machines = [
+    { _id: "m1", name: "default", state: "running" },
+    { _id: "m2", name: "spare-01", state: "stopped" },
+  ];
+
+  it("pins the actions column against the scroller's right edge", () => {
+    useQueryMock.mockReturnValue(machines);
+    const { container } = render(<MachinesPage />);
+
+    const header = container.querySelector("thead tr")?.lastElementChild;
+    expect(header).toHaveTextContent("Actions");
+    expect(header?.className).toContain("sticky");
+    expect(header?.className).toContain("right-0");
+
+    const cells = Array.from(container.querySelectorAll("tbody tr")).map(
+      (row) => row.lastElementChild,
+    );
+    expect(cells).toHaveLength(machines.length);
+    for (const cell of cells) {
+      expect(cell?.className).toContain("sticky");
+      expect(cell?.className).toContain("right-0");
+    }
+  });
+
+  it("gives every row a background for the pinned cell to paint", () => {
+    // A pinned cell is transparent unless the row publishes `--row-bg`, and
+    // the scrolled columns then read straight through it. Hover counts: it is
+    // the state the operator is in while aiming at the button.
+    useQueryMock.mockReturnValue(machines);
+    const { container } = render(<MachinesPage />);
+
+    for (const row of container.querySelectorAll("tbody tr")) {
+      expect(row.className).toMatch(/\[--row-bg:/);
+      expect(row.className).toMatch(
+        /hover:\[--row-bg:|bg-surface-2 \[--row-bg:/,
+      );
+    }
+  });
+
+  it("keeps the sticky header above the pinned body cells", () => {
+    // `position: sticky` with `z-index: auto` opens no stacking context, so a
+    // `z-10` pinned cell in the body paints over an unranked header as the
+    // rows scroll under it.
+    useQueryMock.mockReturnValue(machines);
+    const { container } = render(<MachinesPage />);
+
+    expect(container.querySelector("thead")?.className).toContain("z-20");
+    expect(
+      container.querySelector("tbody tr")?.lastElementChild?.className,
+    ).toContain("z-10");
+  });
+});
+
 function headerLabels(container: HTMLElement) {
   return Array.from(container.querySelectorAll("thead th")).map((cell) =>
     cell.textContent?.trim(),

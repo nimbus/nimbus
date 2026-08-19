@@ -3,6 +3,26 @@ import type { ReactNode } from "react";
 import { cn } from "../lib/cn";
 
 /**
+ * Pin a column against one edge of the table's horizontal scroller.
+ *
+ * `whitespace-nowrap` below buys uniform row heights by letting a wide table
+ * overflow into that scroller. That trade is only sound while the columns you
+ * need in order to *act* on a row stay on screen: an Actions column that
+ * scrolls away leaves the row readable and inoperable, and macOS draws no
+ * resting scrollbar to say so. Pinning keeps it against the edge and lets the
+ * data columns pass underneath.
+ *
+ * `--row-bg` carries the row's own background onto the pinned cell; without it
+ * the scrolled columns show straight through. Every row that pins a cell must
+ * set it, including on hover, and the `thead` must set its own.
+ *
+ * The pinned cell is `z-10`, so the sticky `thead` above it needs `z-20` or
+ * the body's pinned cells paint over the header as rows scroll under it.
+ */
+export const PIN_L = "sticky z-10 bg-[var(--row-bg)]";
+export const PIN_R = "sticky right-0 z-10 bg-[var(--row-bg)]";
+
+/**
  * Canonical table cells for the console's resource lists: hairline row borders,
  * normal-weight headers, tabular/right-align and mono opt-ins. This is the one
  * table-cell primitive — every resource table imports `Th`/`Td` from here.
@@ -10,11 +30,17 @@ import { cn } from "../lib/cn";
  * `align` right-aligns numeric columns; `mono` renders cell content in the
  * monospace tabular face. `className` still composes for one-off needs.
  *
- * Cells do not wrap. A dense table's value is that every row is the same
+ * Body cells do not wrap. A dense table's value is that every row is the same
  * height and the eye can scan a column without re-finding the baseline; one
  * cell wrapping to a second line breaks the whole grid. Long values overflow
  * into the table's own horizontal scroll instead. A cell that genuinely needs
  * to wrap opts out with `className="whitespace-normal"`.
+ *
+ * Headers are exempt: there is only one of them, so a two-line header creates
+ * no jitter to scan past, and holding a multi-word label on one line buys
+ * nothing while costing the column real width. `Last request` on
+ * /operator/network measured 125px held flat against 81px wrapped — 44px of a
+ * table that only overran its scroller by 38.
  *
  * `h-10` is a floor, not a fixed height: on a table cell the CSS `height`
  * property behaves as a minimum. It pins every row to the same 40px dense
@@ -42,7 +68,7 @@ export function Th({
   return (
     <th
       className={cn(
-        "whitespace-nowrap border-b border-app px-3 py-2 font-normal",
+        "border-b border-app px-3 py-2 font-normal",
         align === "right" ? "text-right" : "text-left",
         className,
       )}

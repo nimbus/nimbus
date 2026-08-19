@@ -6,7 +6,7 @@ import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import type { DocumentJson, PageResponse } from "../../lib/types/table";
 import { Checkbox } from "../checkbox";
-import { Td, Th } from "../data-table";
+import { PIN_L, PIN_R, Td, Th } from "../data-table";
 import { CellValue } from "./cell-value";
 import { RowContextMenu, type RowMenuItem } from "./row-context-menu";
 import type { DocumentOrder } from "./table-query";
@@ -15,9 +15,6 @@ import type { DocumentOrder } from "./table-query";
 // checkbox, the `_id` copy chip, a container-value chip, or the row's own
 // action buttons — all of which sit inside the row.
 const INTERACTIVE = "button, a, input, label, [role='menuitem']";
-
-const PIN_L = "sticky z-10 bg-[var(--row-bg)]";
-const PIN_R = "sticky right-0 z-10 bg-[var(--row-bg)]";
 
 /** Rows shown while a page is in flight, matching PAGE_SIZE. */
 const SKELETON_ROWS = 25;

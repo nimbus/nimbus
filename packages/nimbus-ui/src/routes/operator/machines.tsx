@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
-import { Td, Th } from "../../components/data-table";
+import { PIN_R, Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
@@ -246,7 +246,13 @@ function MachineTable({
                 data-selected={isSelected || undefined}
                 className={cn(
                   "border-t border-app hover:bg-surface-2",
-                  isSelected && "bg-surface-2",
+                  // The pinned Actions cell paints `--row-bg`, so the row has
+                  // to publish its own background — hover included, or the
+                  // data columns show through the cell exactly while the
+                  // operator is aiming at it.
+                  isSelected
+                    ? "bg-surface-2 [--row-bg:var(--nimbus-surface-2)]"
+                    : "[--row-bg:var(--nimbus-surface)] hover:[--row-bg:var(--nimbus-surface-2)]",
                 )}
               >
                 <Td>
@@ -302,7 +308,9 @@ function MachineTable({
                     <span className="tabular text-muted">—</span>
                   )}
                 </Td>
-                <Td className="text-right">
+                <Td
+                  className={cn("w-px border-l border-app text-right", PIN_R)}
+                >
                   <div className="inline-flex gap-1">
                     {actions.length === 0 ? (
                       <span className="font-mono text-xs text-muted">
@@ -333,7 +341,7 @@ function MachineTable({
 
 function MachineTableHead() {
   return (
-    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+    <thead className="sticky top-0 z-20 bg-surface-2 [--row-bg:var(--nimbus-surface-2)] text-xs uppercase tracking-[0.14em] text-muted">
       <tr>
         <Th>Name</Th>
         <Th>State</Th>
@@ -343,7 +351,9 @@ function MachineTableHead() {
         <Th className="text-right">Memory</Th>
         <Th className="text-right">Disk</Th>
         <Th>Updated</Th>
-        <Th className="text-right">Actions</Th>
+        <Th className={cn("w-px border-l border-app text-right", PIN_R)}>
+          Actions
+        </Th>
       </tr>
     </thead>
   );
