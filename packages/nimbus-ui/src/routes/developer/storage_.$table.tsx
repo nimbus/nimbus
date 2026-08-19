@@ -1,6 +1,6 @@
 import { useQuery } from "@nimbus/nimbus/react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "../../../convex/_generated/api";
@@ -98,6 +98,33 @@ const EMPTY_PAGE: PageResponse = {
 };
 /** IDs listed by name in the bulk-delete confirmation before it elides. */
 const CONFIRM_ID_PREVIEW = 5;
+/** Failures listed by name in the partial-delete toast before it elides. */
+const FAILED_ID_PREVIEW = 3;
+/** How long the partial-delete toast stays up, in ms. */
+const FAILED_DELETE_TOAST_MS = 12_000;
+
+type DeleteFailure = { id: string; error: string };
+
+// The mirror of the confirm dialog's id list: that one names what is about to
+// be destroyed, this one names what survived and why.
+function DeleteFailures({
+  failures,
+}: {
+  failures: ReadonlyArray<DeleteFailure>;
+}) {
+  return (
+    <ul className="font-mono text-xs" data-testid="documents-delete-failures">
+      {failures.slice(0, FAILED_ID_PREVIEW).map((failure) => (
+        <li key={failure.id} className="break-all">
+          {failure.id}: {failure.error}
+        </li>
+      ))}
+      {failures.length > FAILED_ID_PREVIEW ? (
+        <li>and {failures.length - FAILED_ID_PREVIEW} more</li>
+      ) : null}
+    </ul>
+  );
+}
 
 // Parse a drawer's JSON draft into a document object, throwing a readable error
 // (surfaced by the drawer's form) for anything that is not a JSON object.
@@ -174,6 +201,20 @@ function TableDocumentsPage() {
   const [editing, setEditing] = useState<DocumentJson | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const [deletingDocs, setDeletingDocs] = useState(false);
+  // A bulk delete is a loop of independent requests, not one call, and the
+  // dialog reporting it belongs to this route. Navigating away mid-delete
+  // (sidebar, palette, browser back) used to leave the loop destroying
+  // documents with nothing on screen saying so: the state setters went
+  // nowhere, the dialog left with the route, and only the final toast
+  // arrived, seconds later and out of context. The loop reads this flag
+  // between documents.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [pendingScanSort, setPendingScanSort] = useState<string | null>(null);
 
   const goNext = useCallback(() => {
@@ -218,22 +259,72 @@ function TableDocumentsPage() {
   const runDelete = useCallback(
     async (ids: string[]) => {
       setDeletingDocs(true);
-      let failed = 0;
+      const failures: DeleteFailure[] = [];
+      let attempted = 0;
       for (const id of ids) {
+        // Stop at a document boundary rather than mid-request: at most the
+        // one delete already in flight outlives the route, and the rest of
+        // the set is left where the operator can still see it.
+        if (!mounted.current) break;
+        attempted += 1;
         const result = await documents.remove(tenant, table, id);
-        if (!result.ok) failed += 1;
+        if (!result.ok) failures.push({ id, error: result.error });
       }
+      const stopped = attempted < ids.length;
       setDeletingDocs(false);
       setConfirmDelete(null);
-      if (failed === 0) {
+      if (stopped) {
+        // The table is gone, so this toast is the only account of a
+        // half-finished destructive operation. It says how far the loop got
+        // and that the remainder was never touched, because "Deleted 1/3"
+        // would read as two failures that never happened.
+        toast.error(
+          `Stopped after deleting ${attempted - failures.length} of ${ids.length} documents`,
+          {
+            description: (
+              <div className="space-y-1" data-testid="documents-delete-stopped">
+                <p>
+                  Left {table} before the rest were deleted;{" "}
+                  {ids.length - attempted} document
+                  {ids.length - attempted === 1 ? " was" : "s were"} not
+                  touched.
+                </p>
+                {failures.length > 0 ? (
+                  <DeleteFailures failures={failures} />
+                ) : null}
+              </div>
+            ),
+            duration: FAILED_DELETE_TOAST_MS,
+          },
+        );
+      } else if (failures.length === 0) {
         toast.success(
           `Deleted ${ids.length} document${ids.length === 1 ? "" : "s"}`,
         );
+        setSelected(new Set());
       } else {
-        toast.error(`Deleted ${ids.length - failed}/${ids.length} documents`);
+        // A bare count ("Deleted 3/5") names neither the documents that
+        // survived nor the reason, and the reasons differ per document: a
+        // permission denial reads nothing like a validation trigger. The
+        // server message is already extracted for us in `ApiResult.error`, so
+        // drop it into the toast next to the id it belongs to instead of
+        // counting the failure and discarding it.
+        toast.error(
+          `Deleted ${ids.length - failures.length}/${ids.length} documents`,
+          {
+            description: <DeleteFailures failures={failures} />,
+            // Long enough to read several "<id>: <reason>" lines; the default
+            // four seconds is not, and this is the only place the reason is
+            // ever shown.
+            duration: FAILED_DELETE_TOAST_MS,
+          },
+        );
+        // Leave exactly the failures selected: the surviving rows come back on
+        // refresh, and re-picking them out of a refreshed table is the step
+        // the operator should not have to repeat before retrying.
+        setSelected(new Set(failures.map((failure) => failure.id)));
       }
-      setSelected(new Set());
-      refresh();
+      if (mounted.current) refresh();
     },
     [tenant, table, refresh],
   );
@@ -437,7 +528,20 @@ function TableDocumentsPage() {
       </div>
 
       <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-app bg-surface">
+        {/* `flex-1` is `flex: 1 1 0%`, and `overflow-hidden` resolves this
+            column's automatic minimum width to zero, so with the schema or
+            index inspector open it yielded every pixel to its 420px sibling
+            and collapsed to its own two borders at narrow widths. 20rem is
+            what one readable row costs: the 38px selection gutter the `_id`
+            column is pinned against, the 13-character `_id` cell itself
+            (~118px at text-xs mono plus `px-3`), and one data cell wide
+            enough to read. The pinned action column is deliberately not in
+            that budget -- the grid scrolls horizontally, so it stays
+            reachable. */}
+        <div
+          className="flex min-h-0 min-w-[20rem] flex-1 flex-col overflow-hidden rounded-md border border-app bg-surface"
+          data-testid="documents-table-column"
+        >
           <QueryBar
             fields={filterFields}
             filters={filters}

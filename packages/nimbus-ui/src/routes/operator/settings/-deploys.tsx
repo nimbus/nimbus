@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { CopyChip } from "../../../components/copy-chip";
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
-import { formatRelativeTime, shortHash } from "../../../lib/format";
+import { shortHash } from "../../../lib/format";
 import { Definition, DefinitionList, PageSection } from "./-primitives";
 import type { BundleDoc, FunctionDoc } from "./-types";
 
@@ -135,11 +135,17 @@ export function DeploysSection({
                     <span className="ml-auto tabular text-muted">
                       {fns.length} fn
                     </span>
-                    <span className="tabular text-muted">
-                      {b._creationTime
-                        ? formatRelativeTime(b._creationTime)
-                        : "—"}
-                    </span>
+                    {/* The newest bundle is usually the active one, so this
+                        value is on screen twice: formatting it here computed
+                        it once at render, and the history row still read "just
+                        now" while the panel above had walked on to "5m ago".
+                        `RelativeTime` re-ticks and carries the absolute time
+                        as a tooltip. */}
+                    {b._creationTime ? (
+                      <RelativeTime epochMs={b._creationTime} />
+                    ) : (
+                      <span className="tabular text-muted">—</span>
+                    )}
                   </li>
                 );
               })}
