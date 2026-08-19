@@ -396,14 +396,16 @@ pub(crate) fn ensure_known_app_packages(app_dir: &Path) -> io::Result<bool> {
     ensure(app_dir, &selection)
 }
 
+/// The adapter whose root package an app's authoring sources import.
+///
+/// Delegates to `authoring_root` rather than testing for directories here: the
+/// package this wires into `package.json` has to be the one codegen bakes into
+/// the app's generated imports, and codegen prefers `nimbus/` over `convex/`.
+/// A local copy of that precedence got it backwards, so a dual-root app was
+/// wired to `convex` while its generated code imported `@nimbus/nimbus`.
 fn selection_for_app_dir(app_dir: &Path) -> Option<Selection> {
-    if app_dir.join("convex").is_dir() {
-        return Some(Selection::Adapter("convex".to_string()));
-    }
-    if app_dir.join("nimbus").is_dir() {
-        return Some(Selection::Adapter("nimbus".to_string()));
-    }
-    None
+    let root = crate::authoring_root::resolve(app_dir).ok().flatten()?;
+    Some(Selection::Adapter(root.package_target.to_string()))
 }
 
 /// The embedded root package an adapter selection wires into an app's
