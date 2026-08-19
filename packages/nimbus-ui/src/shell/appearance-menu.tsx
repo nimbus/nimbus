@@ -37,7 +37,7 @@ const MODE_ICONS: Record<ThemeMode, LucideIcon> = {
 // Appearance is a per-user preference, not server administration, so it has to
 // be reachable from both consoles. The full AppearanceSection card stays on the
 // operator settings page; this is the same two controls bound to the same store
-// slices, sized for a 40px nav.
+// slices.
 export function AppearanceMenu() {
   const themeMode = useUiStore((s) => s.themeMode);
   const setThemeMode = useUiStore((s) => s.setThemeMode);
@@ -48,6 +48,11 @@ export function AppearanceMenu() {
 
   return (
     <Popover.Root>
+      {/* 32px square, per DESIGN.md §Spacing And Shape. It shipped at 28px with
+          a 14px glyph, and it is the one shell control with no text to aim at:
+          the label is a tooltip, so the box is the whole target. The nav row is
+          a fixed h-10 with items-center, so the extra 4px comes out of existing
+          padding and the header keeps its height. */}
       <Popover.Trigger
         render={
           <button
@@ -55,9 +60,9 @@ export function AppearanceMenu() {
             aria-label="Appearance"
             title="Appearance"
             data-testid="appearance-menu-trigger"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
           >
-            <TriggerIcon size={14} aria-hidden />
+            <TriggerIcon size={16} aria-hidden />
           </button>
         }
       />

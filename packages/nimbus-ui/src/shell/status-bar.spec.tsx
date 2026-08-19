@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@nimbus/nimbus/react", () => ({
   useNimbus: () => ({ url: "http://localhost:9000" }),
@@ -42,6 +42,25 @@ import { StatusBar, UPGRADE_TONE_KINDS, type UpgradeTone } from "./status-bar";
 beforeEach(() => {
   snapshotRef.current = { state: "hidden", info: null, targetLatest: null };
 });
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+// The global test setup stubs matchMedia to always report `matches: false`,
+// which is the desktop tier. Narrow it per query to drive the other tiers.
+function stubTier(tier: "mobile" | "tablet") {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: tier === "mobile" ? true : query.includes("1023px"),
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }));
+}
 
 const UPGRADE_STATES: Array<[UpgradeTone, string, string]> = [
   ["available", "available", "status-version-available"],
@@ -95,6 +114,54 @@ describe("StatusBar", () => {
   it("no longer renders a tenant slot in the footer", () => {
     render(<StatusBar />);
     expect(screen.queryByTestId("status-tenant")).toBeNull();
+  });
+
+  // jsdom does not lay out, so these lock the constraint rather than the
+  // geometry it produces. DESIGN.md: "The bar never wraps. Truncate
+  // aggressively; rely on title attributes for full values."
+  describe("never wraps out of its band", () => {
+    it("clips the bar instead of letting it wrap or escape to the document", () => {
+      render(<StatusBar />);
+      const bar = screen.getByRole("contentinfo");
+      // Without nowrap the multi-word hints wrapped inside a box pinned to
+      // 28px; without overflow-hidden the spill reached html and put a
+      // horizontal scrollbar on the whole shell.
+      expect(bar.className).toContain("whitespace-nowrap");
+      expect(bar.className).toContain("overflow-hidden");
+    });
+
+    it("lets the hint group shrink so the connection state never yields first", () => {
+      render(<StatusBar />);
+      const hints = screen.getByTestId("status-hints");
+      // min-w-0 is what lets a flex item go below its min-content width; a
+      // multi-word label's min-content is a whole word, which is what wrapped.
+      expect(hints.className).toContain("min-w-0");
+      expect(hints.className).toContain("overflow-hidden");
+    });
+  });
+
+  describe("viewport tier", () => {
+    it("keeps the keyboard hints at the desktop tier", () => {
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-hints")).toBeInTheDocument();
+    });
+
+    it("keeps the keyboard hints at the tablet tier", () => {
+      // A 900px browser window still has a keyboard, so the hints stay.
+      stubTier("tablet");
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-hints")).toBeInTheDocument();
+    });
+
+    it("drops the keyboard hints on a touch viewport", () => {
+      stubTier("mobile");
+      render(<StatusBar />);
+      // There is no ⌘ key to press at 390px, and three hints crowd out the
+      // connection state and server URL the bar exists to show.
+      expect(screen.queryByTestId("status-hints")).toBeNull();
+      expect(screen.getByTestId("status-connection")).toBeInTheDocument();
+      expect(screen.getByTestId("status-server-url")).toBeInTheDocument();
+    });
   });
   describe("UpgradeDot", () => {
     it.each(

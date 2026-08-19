@@ -44,11 +44,17 @@ export function SystemTenantLens() {
             _nimbus <span aria-hidden="true">›</span> {view.label}
           </div>
         </div>
+        {/* 32px square, per DESIGN.md §Spacing And Shape. `p-1` around a 16px
+            glyph gave 24px -- the smallest target in the shell, and the only
+            way out of a panel that covers half the viewport. The header is
+            sized by the two-line title beside it (a 16px line box over a 20px
+            one), so the taller button fits inside it and the header keeps its
+            height. */}
         <button
           type="button"
           aria-label="Close lens"
           onClick={() => setLensOpen(false)}
-          className="rounded p-1 text-muted hover:bg-surface-2 hover:text-default"
+          className="flex h-8 w-8 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-default"
           data-testid="lens-close"
         >
           <X size={16} aria-hidden />

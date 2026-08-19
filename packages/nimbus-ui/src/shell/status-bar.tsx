@@ -12,6 +12,7 @@ import { type ConnState, StateDot } from "../components/state-dot";
 import { UpgradePopover } from "../components/upgrade-popover";
 import { useStalenessContext } from "../hooks/use-staleness";
 import { metaGlyph } from "../lib/platform";
+import { useViewportTier } from "./use-viewport-tier";
 
 type SystemStatus = {
   version?: string | null;
@@ -41,35 +42,58 @@ export function StatusBar() {
 
   const staleness = useStalenessContext();
   const baseValue = `${version}${buildHash ? `+${buildHash.slice(0, 7)}` : ""}`;
+  const tier = useViewportTier();
 
   return (
     <footer
       role="contentinfo"
       aria-label="Status bar"
-      className="flex h-[var(--statusbar-height)] items-center justify-between gap-3 border-t border-app bg-surface px-3 text-xs font-mono text-muted"
+      // The band is a hard 28px, so the row has to refuse to grow into a
+      // second line. Without `whitespace-nowrap` the multi-word hints wrapped
+      // to three lines and the text spilled over the page above the bar and
+      // past the viewport below it; without `overflow-hidden` that spill
+      // reached the document and put a horizontal scrollbar on the whole
+      // shell. DESIGN.md: "The bar never wraps. Truncate aggressively; rely
+      // on title attributes for full values."
+      className="flex h-[var(--statusbar-height)] items-center justify-between gap-3 overflow-hidden whitespace-nowrap border-t border-app bg-surface px-3 text-xs font-mono text-muted"
     >
       {/* Left: keyboard hints (least important — Chrome's link-hover URL
           preview covers this corner, so the connection/url/tenant info lives
-          on the right where it stays readable). */}
-      <span className="inline-flex items-center gap-3">
-        <span className="inline-flex items-center gap-1">
-          <Kbd>{metaGlyph}</Kbd>
-          <Kbd>\</Kbd>
-          <span className="text-muted">system tenant lens</span>
+          on the right where it stays readable). Dropped entirely at the mobile
+          tier: a touch viewport has no ⌘ key to press, and at 390px three
+          hints crowd out the connection state and server URL the bar exists
+          to show. */}
+      {tier === "mobile" ? null : (
+        // min-w-0 is what lets a flex item shrink past its min-content width,
+        // which for a multi-word label is a whole word. The hints are the
+        // group that gives way, so the connection state and URL keep their
+        // room.
+        <span
+          className="inline-flex min-w-0 items-center gap-3 overflow-hidden"
+          data-testid="status-hints"
+        >
+          <span className="inline-flex items-center gap-1">
+            <Kbd>{metaGlyph}</Kbd>
+            <Kbd>\</Kbd>
+            <span className="text-muted">system tenant lens</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <Kbd>{metaGlyph}</Kbd>
+            <Kbd>K</Kbd>
+            <span className="text-muted">palette</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <Kbd>/</Kbd>
+            <span className="text-muted">filter</span>
+          </span>
         </span>
-        <span className="inline-flex items-center gap-1">
-          <Kbd>{metaGlyph}</Kbd>
-          <Kbd>K</Kbd>
-          <span className="text-muted">palette</span>
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <Kbd>/</Kbd>
-          <span className="text-muted">filter</span>
-        </span>
-      </span>
+      )}
       {/* Right: connection status, server URL, version (the info that matters,
-          kept clear of the bottom-left link-hover URL preview). */}
-      <span className="inline-flex items-center gap-3">
+          kept clear of the bottom-left link-hover URL preview). `shrink-0`
+          because this group must not be the one that gives way; the server URL
+          inside it already truncates to 28ch and carries the full value in its
+          title. */}
+      <span className="inline-flex shrink-0 items-center gap-3">
         <span
           className="inline-flex items-center gap-1.5"
           data-testid="status-connection"

@@ -429,6 +429,57 @@ describe("SubDrawer", () => {
 });
 
 /**
+ * DESIGN.md §Spacing And Shape: "Icon button: 32px square, 36px on touch
+ * surfaces."
+ *
+ * The two toggles are one control in two positions -- collapse the panel and
+ * the rail's expand button lands where your pointer already is. They shipped at
+ * 24px and 28px, so the smallest targets in the shell were the two buttons that
+ * swap places with each other, sitting beside 32px rail items.
+ *
+ * jsdom performs no layout, so the size utilities are the only thing a test can
+ * read back.
+ */
+describe("SubDrawer icon-button hit targets", () => {
+  const SPEC: SubDrawerSpec = {
+    kind: "dynamic",
+    title: "Compute",
+    children: <div data-testid="dynamic-body" />,
+    railItems: [
+      {
+        id: "functions",
+        label: "Functions",
+        icon: Box,
+        active: true,
+        onSelect: () => {},
+      },
+    ],
+  };
+
+  it("sizes the panel collapse toggle 32px square", () => {
+    renderSubDrawer(SPEC);
+    const collapse = screen.getByTestId("sub-drawer-toggle");
+    expect(collapse.className.split(" ")).toEqual(
+      expect.arrayContaining(["h-8", "w-8"]),
+    );
+  });
+
+  it("sizes the rail expand toggle to match the rail items under it", () => {
+    useUiStore.setState({ subDrawerOpen: false });
+    renderSubDrawer(SPEC);
+    const expand = screen.getByTestId("sub-drawer-toggle");
+    const railItem = screen.getByTestId("sub-drawer-rail-item-functions");
+    // The rail is a 32px column, so both fill its width rather than naming it.
+    expect(expand.className.split(" ")).toEqual(
+      expect.arrayContaining(["h-8", "w-full"]),
+    );
+    expect(railItem.className.split(" ")).toEqual(
+      expect.arrayContaining(["h-8", "w-full"]),
+    );
+  });
+});
+
+/**
  * A disabled item points at a sub-view that does not exist yet.
  *
  * It used to render as a real `<Link>` dimmed with `pointer-events-none`,

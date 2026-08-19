@@ -251,9 +251,14 @@ function SubDrawerRail({
         aria-label="Expand sub-drawer"
         title="Expand sub-drawer"
         data-testid="sub-drawer-toggle"
-        className="flex h-7 w-full items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
+        // 32px square: DESIGN.md §Spacing And Shape, "Icon button: 32px
+        // square, 36px on touch surfaces." At 28 this toggle was a smaller
+        // target than the rail items stacked directly under it, which is the
+        // one control that must not be fiddly -- it is the only way back to
+        // the expanded panel.
+        className="flex h-8 w-full items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
       >
-        <ChevronsRight size={12} aria-hidden />
+        <ChevronsRight size={14} aria-hidden />
       </button>
       {spec.railItems?.map((item) => {
         const Icon = item.icon;
@@ -308,9 +313,12 @@ function SubDrawerPanelBody({
           aria-label="Collapse sub-drawer"
           title="Collapse sub-drawer"
           data-testid="sub-drawer-toggle"
-          className="flex h-6 w-6 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
+          // Same 32px square as the rail toggle it swaps places with: at 24 it
+          // was the smallest target in the shell, sitting in a 40px header
+          // beside 32px rail items and a 40px search field.
+          className="flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-default"
         >
-          <ChevronsLeft size={12} aria-hidden />
+          <ChevronsLeft size={14} aria-hidden />
         </button>
       </header>
       {spec.kind === "dynamic" && spec.search ? (
