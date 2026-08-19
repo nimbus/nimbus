@@ -326,10 +326,21 @@ function TenantsPage() {
                     <Td align="right">
                       <button
                         type="button"
-                        onClick={() => setConfirmTenant(row.tenantId)}
-                        disabled={deletingTenant === row.tenantId}
+                        // `aria-disabled`, not `disabled`: this button is what
+                        // the confirm dialog hands focus back to, and it grays
+                        // out in the same commit that closes the dialog. A
+                        // disabled element cannot take focus, so that restore
+                        // was a silent no-op and the operator was left on
+                        // <body> with no focus ring and Tab starting again at
+                        // the top of the page. The handler is what refuses the
+                        // second press.
+                        onClick={() => {
+                          if (deletingTenant === row.tenantId) return;
+                          setConfirmTenant(row.tenantId);
+                        }}
+                        aria-disabled={deletingTenant === row.tenantId}
                         className={cn(
-                          "rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
+                          "rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide aria-disabled:cursor-not-allowed",
                           deletingTenant === row.tenantId
                             ? "text-muted"
                             : "text-danger hover:bg-surface-2",

@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 
+import { useModalFocus } from "../hooks/use-modal-focus";
 import { cn } from "../lib/cn";
 
 export type ConfirmDialogProps = {
@@ -22,31 +23,40 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel = "Cancel",
   danger,
-  busy,
+  busy = false,
   onConfirm,
   onCancel,
   testid = "confirm-dialog",
 }: ConfirmDialogProps) {
-  const confirmRef = useRef<HTMLButtonElement>(null);
-  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    previouslyFocusedRef.current =
-      (document.activeElement as HTMLElement | null) ?? null;
-    confirmRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previouslyFocusedRef.current?.focus?.();
-    };
-  }, [open, onCancel]);
+  // `busy` means the confirmed work is already running, and the caller's loop
+  // does not stop when the dialog closes — the storage bulk delete keeps
+  // deleting every remaining document. Escape, the backdrop and the ✕ used to
+  // dismiss anyway while both action buttons were frozen, which reads as
+  // "cancelled": the modal is gone, nothing on the page says work is in
+  // flight, and a "Deleted 25 documents" toast arrives seconds later. Every
+  // informal exit runs through this guard, so while the work is in flight the
+  // dialog stays and says what is happening.
+  const dismiss = () => {
+    if (busy) return;
+    onCancel();
+  };
+
+  // Focus opens on Cancel, never on the confirm button. Every call site is
+  // destructive — delete tenant, delete machine, drop schema, bulk delete
+  // documents — so an operator who answers a dialog on reflex with Enter, or
+  // who hits it before a screen reader has read the description, would commit
+  // the deletion with one keystroke and no undo. There is no non-destructive
+  // caller and no tone prop to switch on, so this is unconditional rather than
+  // a choice the caller can get wrong.
+  useModalFocus({
+    open,
+    panelRef,
+    initialFocusRef: cancelRef,
+    onEscape: dismiss,
+  });
 
   if (!open) return null;
 
@@ -62,23 +72,29 @@ export function ConfirmDialog({
       <button
         type="button"
         aria-label="Close dialog"
-        onClick={onCancel}
+        onClick={dismiss}
+        disabled={busy}
         className="absolute inset-0 cursor-default"
       />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
         data-testid={testid}
-        className="relative z-10 w-full max-w-md rounded-md border border-app bg-surface p-4 shadow-lg"
+        // tabIndex -1 so the panel can hold focus if it ever has no focusable
+        // child; outline-none so that lands without ringing the whole dialog.
+        tabIndex={-1}
+        className="relative z-10 w-full max-w-md rounded-md border border-app bg-surface p-4 shadow-lg outline-none"
       >
         <header className="mb-3 flex items-baseline justify-between">
           <h2 className="text-sm text-default">{title}</h2>
           <button
             type="button"
-            onClick={onCancel}
+            onClick={dismiss}
+            aria-disabled={busy}
             aria-label="Dismiss"
-            className="font-mono text-xs text-muted hover:text-default"
+            className="font-mono text-xs text-muted hover:text-default aria-disabled:cursor-not-allowed"
           >
             ✕
           </button>
@@ -91,24 +107,34 @@ export function ConfirmDialog({
             {description}
           </div>
         ) : null}
+        {/* `aria-disabled`, not `disabled`. `busy` flips while the dialog is
+            open and focus is sitting on one of these two buttons, and a
+            `disabled` attribute on the focused element hands focus to <body>:
+            the operator was left with a "Working…" dialog on screen, nothing
+            focused, and Tab restarting from the top of the page behind it.
+            These keep their tab stop and announce the state instead; the
+            handlers are what refuse the action. */}
         <div className="flex items-center justify-end gap-2">
           <button
             type="button"
-            onClick={onCancel}
-            disabled={busy}
+            ref={cancelRef}
+            onClick={dismiss}
+            aria-disabled={busy}
             data-testid={`${testid}-cancel`}
-            className="rounded border border-app bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] text-default hover:border-strong disabled:cursor-not-allowed disabled:text-muted"
+            className="rounded border border-app bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] text-default hover:border-strong aria-disabled:cursor-not-allowed aria-disabled:text-muted"
           >
             {cancelLabel}
           </button>
           <button
             type="button"
-            ref={confirmRef}
-            onClick={onConfirm}
-            disabled={busy}
+            onClick={() => {
+              if (busy) return;
+              onConfirm();
+            }}
+            aria-disabled={busy}
             data-testid={`${testid}-confirm`}
             className={cn(
-              "rounded border bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] disabled:cursor-not-allowed disabled:text-muted",
+              "rounded border bg-surface px-3 py-1.5 font-mono text-xs uppercase tracking-[0.14em] aria-disabled:cursor-not-allowed aria-disabled:text-muted",
               confirmTone,
             )}
           >

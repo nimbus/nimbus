@@ -1,14 +1,6 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useRef } from "react";
 
-const FOCUSABLE =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-function focusableWithin(panel: HTMLElement): HTMLElement[] {
-  return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-    (el) =>
-      !el.hasAttribute("hidden") && el.getAttribute("aria-hidden") !== "true",
-  );
-}
+import { useModalFocus } from "../hooks/use-modal-focus";
 
 // Header bar shared by the Slideover and the inline side panels (schema,
 // indexes): a mono title on the left and a close button on the right.
@@ -51,51 +43,11 @@ export function Slideover({
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
-  // Move focus into the panel on open, keep Tab inside it while open, and hand
-  // focus back to the opener on close (DESIGN.md: focus restoration on close).
-  useEffect(() => {
-    previouslyFocusedRef.current =
-      (document.activeElement as HTMLElement | null) ?? null;
-    panelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-      if (e.key !== "Tab") return;
-      const panel = panelRef.current;
-      if (!panel) return;
-      const items = focusableWithin(panel);
-      if (items.length === 0) {
-        e.preventDefault();
-        panel.focus();
-        return;
-      }
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-      if (active && !panel.contains(active)) {
-        e.preventDefault();
-        (e.shiftKey ? last : first).focus();
-        return;
-      }
-      if (e.shiftKey && (active === first || active === panel)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previouslyFocusedRef.current?.focus?.();
-    };
-  }, [onClose]);
+  // Callers mount the drawer only while it is open, so the trap is armed for
+  // the whole life of the component.
+  useModalFocus({ open: true, panelRef, onEscape: onClose });
+
   return (
     <div className="fixed inset-0 z-30 flex justify-end">
       <button
