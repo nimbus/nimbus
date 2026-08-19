@@ -234,12 +234,9 @@ fn scanned_outcome(signature: &str) -> Option<(Outcome, bool)> {
     if let Some(where_clause) = tail.find(" where ") {
         tail = tail[..where_clause].trim();
     }
-    let (payload, fenced) = if let Some(inner) = tail.strip_prefix("CommitterLeaseResult<") {
-        (inner.strip_suffix('>')?, true)
-    } else if let Some(inner) = tail.strip_prefix("Result<") {
-        (inner.strip_suffix('>')?, false)
-    } else {
-        return None;
+    let (payload, fenced) = match tail.strip_prefix("CommitterLeaseResult<") {
+        Some(inner) => (inner.strip_suffix('>')?, true),
+        None => (tail.strip_prefix("Result<")?.strip_suffix('>')?, false),
     };
     OUTCOME_BY_PAYLOAD
         .iter()
