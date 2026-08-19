@@ -1,0 +1,39 @@
+SIC3 fail-before evidence
+base: main @ 172d737a42539676677e325e14288480cd17975c, branch codex/sic-sic3
+Each mutation below was applied, captured, and reverted.
+
+=== A. a new direct writer lands in SqlStoreCore with no matrix row ===
+$ cargo test -p nimbus-storage all_storage_writers_declare_their_commit_effects -- --nocapture
+ownership scan: 53 SqlStoreCore methods, 27 direct writers, 45 writers total, 54 matrix rows (10 outside SqlStoreCore)
+storage writer ownership is incomplete. Every writer declares admission, lease, condition, document, index, version, catalog, scheduler, trigger, journal, watermark and outcome in crates/nimbus-storage/src/tests/commit_path_ownership/effect_matrix.rs, and each declaration is checked against the writer's own source. Violations: [
+    "purge_orphaned_documents_unowned writes storage and has 0 matrix rows; every writer declares its effects exactly once",
+test tests::commit_path_ownership::effect_gate::all_storage_writers_declare_their_commit_effects ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 307 filtered out; finished in 0.03s
+
+=== B. an existing direct writer gains an effect it does not declare ===
+    update_validated_once gains transaction.delete_table_schema(&table)
+
+$ cargo test -p nimbus-storage --features mysql,postgres effect_coherence -- --nocapture
+  (U5, the pre-SIC3 coherence gate over the three composite paths)
+test sql::commit_effects::tests::effect_coherence_accepts_only_the_pairings_the_document_strategy_implies ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 400 filtered out; finished in 0.00s
+
+$ cargo test -p nimbus-storage all_storage_writers_declare_their_commit_effects -- --nocapture
+storage writer ownership is incomplete. Every writer declares admission, lease, condition, document, index, version, catalog, scheduler, trigger, journal, watermark and outcome in crates/nimbus-storage/src/tests/commit_path_ownership/effect_matrix.rs, and each declaration is checked against the writer's own source. Violations: [
+    "update_validated_once: writes catalog state through delete_table_schema but declares None",
+test tests::commit_path_ownership::effect_gate::all_storage_writers_declare_their_commit_effects ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 307 filtered out; finished in 0.02s
+
+=== C. a declared effect is dropped from the matrix ===
+    insert_once's journal effect set to JournalEffect::None
+
+$ cargo test -p nimbus-storage commit_path_ownership -- --nocapture
+storage writer ownership is incomplete. Every writer declares admission, lease, condition, document, index, version, catalog, scheduler, trigger, journal, watermark and outcome in crates/nimbus-storage/src/tests/commit_path_ownership/effect_matrix.rs, and each declaration is checked against the writer's own source. Violations: [
+    "insert_once: writes a document through insert_document without declaring a journal effect",
+    "insert: declares a journal effect that no delegate in [\"insert_once\"] declares",
+    "insert_with_indexes_once: declares a journal effect that no delegate in [\"insert_once\"] declares",
+test tests::commit_path_ownership::effect_gate::all_storage_writers_declare_their_commit_effects ... FAILED
+test tests::commit_path_ownership::effect_gate::omitted_commit_effect_fails_the_ownership_matrix ... FAILED
+test tests::commit_path_ownership::u4_journal_fault_points_stay_with_their_pinned_owners ... ok
+test tests::commit_path_ownership::u4_commit_sequence_fault_points_live_only_in_the_shared_sql_core ... ok
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 304 filtered out; finished in 0.01s
