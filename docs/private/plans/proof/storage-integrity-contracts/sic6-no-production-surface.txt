@@ -1,0 +1,40 @@
+SIC6 — the production binary gains no fault or VFS surface
+==========================================================
+
+1. Every added line lives under src/tests/, which lib.rs gates on cfg(test):
+170-#[cfg(test)]
+171:mod tests;
+
+2. No production module names the shim, its faults, or any VFS registration:
+   $ grep -rn 'fault_vfs\|sqlite3_vfs_register\|PhysicalFault' crates --include='*.rs' | grep -v '/tests/'
+   (no matches)
+
+3. No new feature, environment variable, or config key reaches it. The only
+   environment variable the module reads is the crash child's own database
+   path, set by the parent test process and read nowhere else:
+crates/nimbus-storage/src/tests/sqlite_physical_durability.rs:29:const CRASH_DB_ENV: &str = "NIMBUS_SIC6_CRASH_DB";
+
+4. nimbus-storage feature list is unchanged by this task:
+[features]
+# The embedded providers (redb, SQLite, memory) are always compiled. Each
+# remote provider is opt-in so a build that does not use one does not pay for
+# its driver stack. `libsql` owns the HTTP/TLS transport crates because the
+# replica client is the only consumer of them in this crate.
+default = []
+aws-kms = ["nimbus-crypto/aws-kms"]
+libsql = [
+    "dep:hyper",
+    "dep:libsql",
+    "dep:native-tls",
+    "dep:reqwest",
+    "dep:tokio-native-tls",
+    "dep:tower-service",
+]
+mysql = ["dep:mysql_async"]
+postgres = ["dep:deadpool-postgres", "dep:tokio-postgres"]
+test-hooks = []
+
+5. The release build of the crate compiles without the module:
+
+warning: `flume` (lib) generated 4 warnings (run `cargo fix --lib -p flume` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 04s
