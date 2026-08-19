@@ -82,6 +82,26 @@ describe("RunsTab loading state", () => {
     expect(loaded.fixed).toBe(true);
   });
 
+  // The pane scrolls up to 50 runs (~2000px at the dense row step) and the
+  // four columns are mono ids, a state glyph and two numbers — unreadable
+  // without their labels. Every other scrolling table in the console pins its
+  // head; this one did not. jsdom does not scroll, so the assertion is on the
+  // constraint: `sticky top-0` plus an opaque fill, since a transparent head
+  // lets the rows scroll visibly through it.
+  it.each([
+    ["loading", undefined],
+    ["loaded", [{ _id: "runs:1", status: "ok", durationMs: 4, startedAt: 1 }]],
+  ])("pins the head while the %s table scrolls", (_state, runs) => {
+    useQueryMock.mockReturnValue(runs);
+    const { container } = render(<RunsTab fn={fn} />);
+
+    const head = container.querySelector("thead");
+    expect(head).not.toBeNull();
+    expect(head?.className).toContain("sticky");
+    expect(head?.className).toContain("top-0");
+    expect(head?.className).toMatch(/\bbg-/);
+  });
+
   it("shows the empty state, not skeletons, once an empty result lands", () => {
     useQueryMock.mockReturnValue([]);
     render(<RunsTab fn={fn} />);

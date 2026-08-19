@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { api } from "../../../convex/_generated/api";
 import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
+import { PageHeader } from "../../components/page-header";
 import { ScrollRegion } from "../../components/scroll-region";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
@@ -145,26 +146,14 @@ function AdminObservabilityPage() {
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-admin-observability"
     >
-      <Header scope={scope} />
+      <PageHeader
+        title="Operator observability"
+        subtitle="Server-wide logs and runs across every tenant. Tenant filtering is gated until the events table exposes a tenant column."
+        trailing={<ScopeChip scope={scope} />}
+        testid="admin-observability-header"
+      />
       {tab === "logs" ? <LogsTab /> : <RunsTab />}
     </section>
-  );
-}
-
-function Header({ scope }: { scope: TenantScope }) {
-  return (
-    <header className="flex items-baseline justify-between gap-4">
-      <div className="min-w-0">
-        <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
-          Operator observability
-        </h1>
-        <p className="text-sm text-muted">
-          Server-wide logs and runs across every tenant. Tenant filtering is
-          gated until the events table exposes a tenant column.
-        </p>
-      </div>
-      <ScopeChip scope={scope} />
-    </header>
   );
 }
 

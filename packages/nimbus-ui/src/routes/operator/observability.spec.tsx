@@ -92,3 +92,37 @@ describe("operator observability sub-view switching", () => {
     }
   });
 });
+
+// The page hand-rolled the title/subtitle/trailing molecule instead of using
+// `PageHeader`, and so missed the one thing that component exists for: the
+// 68ch cap. Its 120-character description set a single unbroken line, and the
+// measure visibly changed as you moved between this page and any page that
+// does go through `PageHeader`. jsdom does no layout, so the cap utility is
+// the only thing a test can read back.
+describe("operator observability header", () => {
+  it("caps the subtitle measure through the shared PageHeader", () => {
+    useQueryMock.mockReturnValue([]);
+    renderPage();
+
+    const header = screen.getByTestId("admin-observability-header");
+    expect(header.querySelector("h1")?.textContent).toBe(
+      "Operator observability",
+    );
+    const subtitle = header.querySelector("p");
+    expect(subtitle?.textContent).toContain(
+      "Server-wide logs and runs across every tenant.",
+    );
+    expect(subtitle?.className.split(" ")).toContain("max-w-[68ch]");
+  });
+
+  it("keeps the scope chip in the header's trailing slot", () => {
+    useQueryMock.mockReturnValue([]);
+    renderPage();
+
+    const header = screen.getByTestId("admin-observability-header");
+    const chip = header.querySelector(
+      '[data-testid="admin-observability-scope"]',
+    );
+    expect(chip?.textContent).toBe("tenant filter unavailable");
+  });
+});

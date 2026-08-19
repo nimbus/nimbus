@@ -607,7 +607,11 @@ function LogsTab({ fn }: { fn: FunctionDoc }) {
  */
 function RunsTableHead() {
   return (
-    <thead className="text-xs uppercase tracking-[0.14em] text-muted">
+    // Sticky because the pane below scrolls 50 runs and the four columns are a
+    // mono id, a state glyph and two numbers, which read as nothing once their
+    // labels leave the viewport. `bg-surface-2` is load-bearing, not styling: a
+    // transparent sticky head lets the rows scroll visibly through it.
+    <thead className="sticky top-0 z-20 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
       <tr>
         <Th width="29%">Run ID</Th>
         <Th width="21%">Status</Th>

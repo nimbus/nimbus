@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 
+import { PageHeader } from "../../components/page-header";
 import { cn } from "../../lib/cn";
 import {
   type StaticSubDrawerSpec,
@@ -84,21 +85,25 @@ function ObservabilityPage() {
 
 function Header({ tab }: { tab: ActiveObservabilityTab }) {
   return (
-    // `shrink-0` on both the header and the tab strip: the page column is
+    // `shrink-0` on both this column and the tab strip: the page column is
     // `overflow-hidden`, so anything the flexbox compresses here is clipped
     // with no way to scroll it back. Today the tab row survives only because
     // the sibling pane is `min-h-0 flex-1` and absorbs the shrink — an
     // invariant owned by another file. Pin it locally instead.
-    <header className="flex shrink-0 flex-col gap-3">
-      <div>
-        <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
-          Observability
-        </h1>
-        <p className="text-sm text-muted">
-          Live event stream and recent runs. Reads stream from the{" "}
-          <code className="font-mono text-default">_nimbus</code> system tenant.
-        </p>
-      </div>
+    <div className="flex shrink-0 flex-col gap-3">
+      {/* The tab strip sits below the title rather than in `trailing`, so the
+          title molecule is the shared one and the nav is its sibling. */}
+      <PageHeader
+        title="Observability"
+        subtitle={
+          <>
+            Live event stream and recent runs. Reads stream from the{" "}
+            <code className="font-mono text-default">_nimbus</code> system
+            tenant.
+          </>
+        }
+        testid="observability-header"
+      />
       <nav
         aria-label="Observability tabs"
         className="flex shrink-0 gap-px self-start overflow-hidden rounded-md border border-app bg-surface-2"
@@ -117,7 +122,7 @@ function Header({ tab }: { tab: ActiveObservabilityTab }) {
           ),
         )}
       </nav>
-    </header>
+    </div>
   );
 }
 
