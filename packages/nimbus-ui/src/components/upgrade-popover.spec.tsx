@@ -113,4 +113,26 @@ describe("UpgradePopover", () => {
     await userEvent.click(screen.getByTestId("upgrade-popover-copy"));
     expect(onCopyCommand).toHaveBeenCalledTimes(1);
   });
+
+  // The inline Copy beside the command used to own a second clipboard call
+  // whose catch was empty. On the case this popover exists for -- a remote host
+  // reached over plain http, where `navigator.clipboard` is undefined -- the
+  // click did nothing and reported nothing, and the operator pasted whatever
+  // was already on the clipboard into a root shell. One copy action, one place
+  // that reports.
+  it("routes the inline Copy through the same action as the primary button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const onCopyCommand = vi.fn();
+    renderPopover({ onCopyCommand });
+
+    await userEvent.click(screen.getByTestId("upgrade-popover-inline-copy"));
+
+    expect(onCopyCommand).toHaveBeenCalledTimes(1);
+    expect(writeText).not.toHaveBeenCalled();
+    Reflect.deleteProperty(navigator, "clipboard");
+  });
 });

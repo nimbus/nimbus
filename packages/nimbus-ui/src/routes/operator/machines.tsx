@@ -32,11 +32,21 @@ export const Route = createFileRoute("/operator/machines")({
 
 const MACHINE_INIT_COMMAND = "nimbus machine init";
 
-function copyMachineInitCommand() {
-  navigator.clipboard.writeText(MACHINE_INIT_COMMAND).then(
-    () => toast(`Copied ${MACHINE_INIT_COMMAND}`),
-    () => toast.error("Failed to copy command"),
-  );
+// The clipboard API exists only in a secure context, and this console is
+// normally reached over plain http on a remote host, where `navigator.clipboard`
+// is not defined at all. Reading `.writeText` off it outside a try block threw
+// before there was a promise to reject, so the rejection handler could never
+// run: the click did nothing and said nothing. Awaiting inside the try catches
+// the missing API the same way it catches a refused write, and matches the
+// upgrade popover's copy action.
+async function copyMachineInitCommand() {
+  try {
+    await navigator.clipboard.writeText(MACHINE_INIT_COMMAND);
+  } catch {
+    toast.error("Copy failed. The clipboard is not available.");
+    return;
+  }
+  toast(`Copied ${MACHINE_INIT_COMMAND}`);
 }
 
 function MachinesPage() {
@@ -352,8 +362,14 @@ function ActionButton({
   onClick: () => void;
   machineName: string;
 }) {
-  const tone =
-    action === "delete"
+  // Graying out swaps the tone rather than dimming it. CSS `opacity`
+  // composites in gamma-encoded sRGB, so the `opacity-50` this used to carry
+  // measured between 1.5:1 and 3.1:1 for the delete and stop tones against the
+  // row behind them — unreadable, worst in the mono dark palette. `text-muted`
+  // is a palette token and stays above 4.5:1 in every palette and theme.
+  const tone = disabled
+    ? "text-muted"
+    : action === "delete"
       ? "text-danger hover:bg-danger/10"
       : action === "stop"
         ? "text-warning hover:bg-warning/10"
@@ -361,13 +377,21 @@ function ActionButton({
   return (
     <button
       type="button"
-      onClick={onClick}
-      disabled={disabled}
+      onClick={() => {
+        if (disabled) return;
+        onClick();
+      }}
+      // `aria-disabled`, not `disabled`: this is the button the delete confirm
+      // dialog hands focus back to, and every action in the row grays out the
+      // moment one of them starts. A disabled element cannot take focus, so
+      // that restore was a silent no-op and the operator was left on <body>
+      // with no focus ring. The handler is what refuses the press.
+      aria-disabled={disabled}
       aria-busy={busy || undefined}
       data-testid={`machines-action-${action}-${machineName}`}
       className={cn(
         "rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
-        "disabled:cursor-not-allowed disabled:opacity-50",
+        "aria-disabled:cursor-not-allowed",
         tone,
       )}
     >

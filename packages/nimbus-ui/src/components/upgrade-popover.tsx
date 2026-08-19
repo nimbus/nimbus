@@ -1,5 +1,4 @@
 import { Popover } from "@base-ui/react/popover";
-import { useCallback, useState } from "react";
 
 import type { VersionInfo } from "../api/system";
 import { cn } from "../lib/cn";
@@ -57,7 +56,10 @@ export function UpgradePopover({
           >
             <h2 className="text-sm text-default">{heading}</h2>
             {hasCommand ? (
-              <CommandRow command={info.upgrade.command as string} />
+              <CommandRow
+                command={info.upgrade.command as string}
+                onCopy={onCopyCommand}
+              />
             ) : (
               <FallbackRow url={info.upgrade.fallbackUrl} />
             )}
@@ -106,17 +108,20 @@ export function UpgradePopover({
   );
 }
 
-function CommandRow({ command }: { command: string }) {
-  const [copied, setCopied] = useState(false);
-  const onCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(command);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {
-      // ignore
-    }
-  }, [command]);
+// The inline Copy runs the popover's own copy action -- the same one behind
+// the primary "Copy command" button. It used to own a second
+// `navigator.clipboard.writeText` whose catch was empty, so on the case this
+// popover is written for (a remote host reached over plain http, where
+// `navigator.clipboard` does not exist) the click did nothing at all and said
+// nothing: no label change, no toast. The shared action reports the failure
+// and, on success, arms the poll that watches for the upgrade to land.
+function CommandRow({
+  command,
+  onCopy,
+}: {
+  command: string;
+  onCopy: () => Promise<void> | void;
+}) {
   return (
     <div className="mt-3 flex items-center gap-2 rounded border border-app bg-surface-2 px-2 py-1.5">
       {/*
@@ -134,7 +139,7 @@ function CommandRow({ command }: { command: string }) {
         aria-label="Copy command"
         className="rounded px-1 py-px text-xs text-muted hover:bg-surface hover:text-default"
       >
-        {copied ? "Copied" : "Copy"}
+        Copy
       </button>
     </div>
   );

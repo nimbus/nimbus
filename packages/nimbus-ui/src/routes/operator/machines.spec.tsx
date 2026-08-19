@@ -76,6 +76,27 @@ describe("MachinesPage empty state", () => {
     expect(toastMock).toHaveBeenCalledWith("Copied nimbus machine init");
   });
 
+  it("says so when the host has no clipboard", async () => {
+    // The console is normally served over plain http from a remote box, where
+    // `navigator.clipboard` does not exist. The command was read off it before
+    // any promise existed, so the rejection handler could never run and the
+    // only next action the empty state offers failed in silence.
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      configurable: true,
+    });
+
+    render(<MachinesPage />);
+    fireEvent.click(screen.getByTestId("machines-empty-cta"));
+
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith(
+        "Copy failed. The clipboard is not available.",
+      ),
+    );
+    expect(toastMock).not.toHaveBeenCalledWith("Copied nimbus machine init");
+  });
+
   it("keeps the empty state distinct from the loading state", () => {
     render(<MachinesPage />);
     expect(screen.getByTestId("machines-empty")).toBeInTheDocument();
