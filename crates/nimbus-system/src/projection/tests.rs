@@ -1422,11 +1422,20 @@ async fn projection_work_sweeps_evicted_tenant_runtime_generations() {
             .expect("ephemeral tenant should delete");
     }
 
-    assert_eq!(
-        projection_work.tenant_count(),
-        0,
-        "dead runtime generations must not accumulate in projection state"
-    );
+    // The sweep keeps a tenant while its runtime identity is live, and that
+    // identity is a `Weak` on the runtime's lifetime token: it dies when the
+    // last `Arc<TenantRuntime>` drops. `delete_tenant_async` fences the tenant
+    // and waits for its shutdown, but the background workers holding clones are
+    // torn down by the async runtime afterwards, so liveness clears eventually,
+    // not by the time the call returns. Poll the sweep under a bound instead of
+    // sampling it once -- a generation that never clears still fails here.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while projection_work.tenant_count() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("dead runtime generations must not accumulate in projection state");
 }
 
 #[test]
