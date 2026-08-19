@@ -111,6 +111,21 @@ describe("Select", () => {
     expect(harness.onChange).toHaveBeenCalledWith("warn");
   });
 
+  // jsdom paints nothing, so this locks the stacking level rather than the
+  // overlap it decides. The menu opens out of the storage query bar straight
+  // over the documents table: at z-20 it tied with that table's sticky head,
+  // and an equal z-index is resolved by tree order, so the head — which
+  // renders after the query bar — painted over the first option and took its
+  // clicks. z-30 is the popover band the sibling ColumnChooser already uses.
+  it("opens above the sticky table heads it overlaps", () => {
+    renderSelect();
+    fireEvent.click(screen.getByTestId("level-select"));
+    const menu = screen.getByTestId("level-select-menu");
+    const level = menu.className.match(/\bz-(\d+)\b/)?.[1];
+    expect(level).toBeDefined();
+    expect(Number(level)).toBeGreaterThan(20);
+  });
+
   it("renders placeholder when value is not in options", () => {
     render(
       <Select

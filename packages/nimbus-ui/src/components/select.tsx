@@ -192,7 +192,14 @@ export function Select<T extends string>({
             }
             onKeyDown={onKeyDown}
             data-testid={testid ? `${testid}-menu` : undefined}
-            className="absolute left-0 top-full z-20 mt-1 max-h-72 min-w-full overflow-auto rounded-md border border-app bg-surface shadow-lg focus:outline-none"
+            // z-30 is the console's popover band, above the z-20 sticky table
+            // heads this menu opens over. At z-20 it tied with them, and CSS
+            // resolves an equal z-index by tree order: the storage query bar
+            // renders before the documents table, so the table's opaque head
+            // painted over the first option and swallowed its clicks (hitting
+            // a column header, which sorts and dismisses the menu). The
+            // sibling ColumnChooser in the same bar already sits at z-30.
+            className="absolute left-0 top-full z-30 mt-1 max-h-72 min-w-full overflow-auto rounded-md border border-app bg-surface shadow-lg focus:outline-none"
           >
             <ul className="flex flex-col gap-px py-1">
               {options.map((option, idx) => {
