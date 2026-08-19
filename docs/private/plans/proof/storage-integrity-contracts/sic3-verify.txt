@@ -1,0 +1,20 @@
+$ cargo test -p nimbus-storage commit_path_ownership -- --nocapture
+ownership scan: 52 SqlStoreCore methods, 26 direct writers, 44 writers total, 54 matrix rows (10 outside SqlStoreCore)
+test tests::commit_path_ownership::effect_gate::all_storage_writers_declare_their_commit_effects ... ok
+test tests::commit_path_ownership::u4_journal_fault_points_stay_with_their_pinned_owners ... ok
+test tests::commit_path_ownership::u4_commit_sequence_fault_points_live_only_in_the_shared_sql_core ... ok
+test tests::commit_path_ownership::effect_gate::omitted_commit_effect_fails_the_ownership_matrix ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 304 filtered out; finished in 0.03s
+
+$ cargo test -p nimbus-storage --features mysql,postgres commit_effects -- --nocapture
+test sql::commit_effects::tests::effect_coherence_accepts_only_the_pairings_the_document_strategy_implies ... ok
+test tests::commit_path_ownership::effect_gate::all_storage_writers_declare_their_commit_effects ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 399 filtered out; finished in 0.01s
+
+$ cargo test -p nimbus-storage --features mysql,postgres commit_path_ownership -- --nocapture
+ownership scan: 52 SqlStoreCore methods, 26 direct writers, 44 writers total, 54 matrix rows (10 outside SqlStoreCore)
+test tests::commit_path_ownership::effect_gate::all_storage_writers_declare_their_commit_effects ... ok
+test tests::commit_path_ownership::u4_journal_fault_points_stay_with_their_pinned_owners ... ok
+test tests::commit_path_ownership::u4_commit_sequence_fault_points_live_only_in_the_shared_sql_core ... ok
+test tests::commit_path_ownership::effect_gate::omitted_commit_effect_fails_the_ownership_matrix ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 397 filtered out; finished in 0.02s
