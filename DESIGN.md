@@ -658,7 +658,8 @@ dark; the Cool Blue light column lives in `globals.css` under
 | `--text` | `oklch(20% 0.020 60)` | `oklch(91% 0.014 252)` | Primary text |
 | `--muted` | `oklch(53% 0.013 75)` | `oklch(67% 0.026 248)` | Secondary text |
 | `--brand` | `oklch(73% 0.17 65)` (`#F59E0B`) | `oklch(72% 0.17 248)` (`#60A5FA`) | Primary identity: active nav stripe, primary CTA fill, connection-state dot |
-| `--accent` | `oklch(80% 0.14 70)` (`#FFB84D`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Interactive feedback: focus ring and selection. Not a state colour — `Running` has its own `--running` |
+| `--accent` | `oklch(80% 0.14 70)` (`#FFB84D`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Selection identity: the selected row's left bar, `::selection`. Never a focus ring in a light palette — 1.71:1 on `--surface-2` in Warm, under the 3:1 floor. Not a state colour — `Running` has its own `--running` |
+| `--focus` | `oklch(62% 0.17 55)` | `var(--accent)` | The focus ring, and the only token that paints one. Set against `--surface-2`, the darkest ground a light palette paints on: 3.42:1 Warm, 3.94:1 Blue, 4.15:1 Mono, against WCAG 2.2 SC 1.4.11's 3:1 non-text floor. Resolves to `--accent` in the dark palettes, where that measures 9.87:1 and clears the floor easily |
 | `--link` | `oklch(55% 0.17 52)` | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
 
 Semantic tokens (stable across all palettes):
@@ -681,9 +682,13 @@ all three light palettes and clears AA for colours that fail everywhere else.
 
 Rules:
 
-- **Three identity tokens, three different jobs.** `--brand` carries
+- **Four identity tokens, four different jobs.** `--brand` carries
   primary identity (active nav, primary CTA, dominant brand fill).
-  `--accent` is interactive feedback (focus, selection).
+  `--accent` is selection. `--focus` is the focus ring, and no other token
+  paints one: `--accent` at 1.71:1 and `--brand` at 2.21:1 both miss the
+  3:1 non-text floor on `--surface-2` in Warm light. In the dark palettes
+  `--focus` is defined as `var(--accent)`, so the two coincide there — the
+  rule is that a focus ring names `--focus`, never `--accent` directly.
   `--link` is hyperlinks. Never paint buttons with `--link`. Never paint
   active nav with `--accent` — that's `--brand`'s job.
 - **State colors are universal.** Status state colors do not vary by
@@ -691,7 +696,7 @@ Rules:
 - **Status colors must always have text or icon labels.** Color alone is
   never the only signal.
 - **Surfaces never use accent or brand as a fill.** Identity colors appear
-  as a 1–2px left bar, an inline dot, a focus ring, a small icon, or a
+  as a 1–2px left bar, an inline dot, a 2px `--focus` ring, a small icon, or a
   small CTA — never as a section background.
 - Tailwind v4 `@theme` directive should expose the non-palette tokens as
   CSS variables; palette-scoped tokens live in `@layer base` under

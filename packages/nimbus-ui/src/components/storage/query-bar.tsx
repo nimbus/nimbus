@@ -232,7 +232,14 @@ function FilterEditor({
         // Documents are JSON: `42` filters a number, `"42"` a string.
         placeholder='value — 42, true, null, "text"'
         aria-label="Filter value"
-        className="h-[26px] w-56 rounded border border-app bg-surface px-2 font-mono text-xs text-default placeholder:text-muted focus:outline-none focus-visible:border-strong"
+        // No `focus:outline-none`: `--border` -> `--border-strong` is a
+        // 1.35:1 -> 1.74:1 shift on this white field in warm light, and 1.31
+        // -> 1.75:1 in blue, which is not a focus indicator on its own. The
+        // border tint stays as the field's own emphasis; the console-wide
+        // `:focus-visible` outline it used to cancel is what marks focus,
+        // exactly as on every other input in the console (select.tsx,
+        // -filters.tsx, tenants.tsx).
+        className="h-[26px] w-56 rounded border border-app bg-surface px-2 font-mono text-xs text-default placeholder:text-muted focus-visible:border-strong"
         data-testid="documents-filter-value"
       />
       <button

@@ -69,6 +69,22 @@ describe("QueryBar", () => {
     ).not.toBeInTheDocument();
   });
 
+  // The value field used to cancel the console-wide focus outline and leave
+  // the `--border` -> `--border-strong` tint as the whole cue: 1.35:1 -> 1.74:1
+  // on this white field in warm light, which a sighted keyboard user cannot
+  // see. Every other input in the console (select.tsx, -filters.tsx,
+  // tenants.tsx) keeps the outline and adds the tint on top.
+  it("keeps the console-wide focus outline on the value field", async () => {
+    const user = userEvent.setup();
+    renderBar();
+    await user.click(screen.getByTestId("documents-add-filter"));
+
+    const field = screen.getByTestId("documents-filter-value");
+    expect(field.className).not.toMatch(/(^|:)outline-none/);
+    // The tint stays — as emphasis on top of the ring, not instead of it.
+    expect(field.className).toContain("focus-visible:border-strong");
+  });
+
   it("shows the sort as its own removable chip", async () => {
     const user = userEvent.setup();
     const props = renderBar({ order: { field: "author", direction: "desc" } });

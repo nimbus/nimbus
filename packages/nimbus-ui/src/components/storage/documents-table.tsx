@@ -200,8 +200,26 @@ export function DocumentsTable({
                       aria-selected={isSelected}
                       data-selected={isSelected || undefined}
                       className={cn(
-                        "group h-9 cursor-pointer outline-none [&>td]:border-t [&>td]:border-app",
-                        "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[color:var(--nimbus-accent)]",
+                        // No `outline-none`: the row keeps the console-wide
+                        // `:focus-visible` outline — 2px of `--focus` at
+                        // offset 2px — which is the only ring in the system
+                        // tuned to clear WCAG 2.2 SC 1.4.11's 3:1 non-text
+                        // floor on every ground (3.42:1 warm light on
+                        // `--surface-2`, its worst case). The inset `--accent`
+                        // hairline it replaces measured 1.71:1 there, and read
+                        // worse than that: `PIN_L`/`PIN_R` are `z-10` over an
+                        // opaque `--row-bg`, so they covered the ring's left
+                        // and right segments outright.
+                        "group h-9 cursor-pointer [&>td]:border-t [&>td]:border-app",
+                        // Same reason the row has to outrank those pinned
+                        // cells: at offset 2px the outline is drawn inside the
+                        // neighbouring rows' band, so their `z-10` cells eat
+                        // the segment behind them — 155px of this row at the
+                        // default column widths. `15`, not `20` — the sticky
+                        // header is `z-20` and equal z-index resolves by tree
+                        // order, so a `z-20` row would slide over the header
+                        // as it scrolls under it.
+                        "focus-visible:relative focus-visible:z-[15]",
                         isSelected
                           ? // DESIGN.md:654 gives `--surface-2` the "selected rows"
                             // job, with `--accent` as the selection identity in the

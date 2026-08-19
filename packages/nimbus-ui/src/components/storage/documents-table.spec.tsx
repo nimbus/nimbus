@@ -125,6 +125,27 @@ describe("DocumentsTable rows", () => {
     );
   });
 
+  // Row focus is the only cue for which document Enter opens, and the roving
+  // tabindex means it is reached by arrow key, so hover never fires to help.
+  // The row used to cancel the console-wide outline and paint a 1px inset
+  // `--accent` ring instead — 1.71:1 on `--surface-2` in warm light, against
+  // the 3:1 non-text floor, and half of it hidden behind the pinned cells.
+  // Vitest runs with `css: false`, so there is no cascade here to measure;
+  // what this can hold is that the row does not opt out of the outline the
+  // base layer paints, and does not reintroduce its own ring.
+  it("leaves the console-wide focus outline alone", () => {
+    renderTable();
+    const row = screen.getByTestId("documents-row-doc_a");
+    expect(row.className).not.toMatch(/(^|:)outline-none/);
+    expect(row.className).not.toMatch(/ring-\[color:var\(--nimbus-/);
+    // Lifted over the neighbouring rows' pinned cells (`z-10`), which would
+    // otherwise cover the ring where it is drawn in their 2px band, and under
+    // the sticky header (`z-20`), which has to stay on top when the row
+    // scrolls beneath it.
+    expect(row.className).toContain("focus-visible:relative");
+    expect(row.className).toContain("focus-visible:z-[15]");
+  });
+
   it("marks a selected row for assistive technology", () => {
     renderTable({ selected: new Set(["doc_a"]) });
     expect(screen.getByTestId("documents-row-doc_a")).toHaveAttribute(

@@ -125,7 +125,12 @@ function RotateTokenDialog({ onClose }: { onClose: () => void }) {
               autoComplete="off"
               onChange={(e) => setToken(e.target.value)}
               data-testid="settings-rotate-token"
-              className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default focus:border-strong focus:outline-none"
+              // No `focus:outline-none`: `--border` -> `--border-strong` is
+              // a 1.35:1 -> 1.74:1 shift on this white field in warm light,
+              // which is not a focus indicator on its own. The tint stays as
+              // emphasis; the console-wide `:focus-visible` outline it used to
+              // cancel is what marks focus.
+              className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default focus:border-strong"
               placeholder="Paste the token printed by nimbus token show"
             />
           </label>

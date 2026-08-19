@@ -1,6 +1,6 @@
 /// <reference types="node" />
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -23,10 +23,9 @@ import { describe, expect, it } from "vitest";
 /* Read from disk, not imported: `css: false` stubs every CSS module to an
    empty string, and Vite rewrites `new URL(…, import.meta.url)` into an asset
    URL rather than a filesystem path. */
-const CSS = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "globals.css"),
-  "utf8",
-);
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SRC = join(HERE, "..");
+const CSS = readFileSync(join(HERE, "globals.css"), "utf8");
 
 // --- colour maths -----------------------------------------------------------
 
@@ -185,6 +184,113 @@ describe("palette token contrast", () => {
     for (const other of ["--nimbus-muted", "--nimbus-success"]) {
       expect(t["--nimbus-running"]).not.toBe(t[other]);
     }
+  });
+});
+
+// --- focus indicators at the call sites -------------------------------------
+
+/* The token table above is only half the contract. It proves `--focus` clears
+   the floor; it cannot stop a component binding its ring to a token that does
+   not. Nothing here used to, and four call sites had drifted onto tokens that
+   fail outright: measured in Chrome, `--accent` is 1.71:1 on `--surface-2` in
+   warm light and 2.24:1 in blue, and `--brand` is 2.21:1 and 3.32:1, against
+   SC 1.4.11's 3:1 non-text floor.
+
+   They were not sloppy, they were compliant — DESIGN.md's token table gave
+   `--accent` the job "focus ring and selection" in writing, and globals.css
+   disagreed. The document is being corrected; this gate is what keeps the code
+   from drifting back, so it must fail on any NEW binding anywhere in src, not
+   just on the four that are fixed.
+
+   Scope: a ring or outline colour on a `focus:`/`focus-visible:` variant. That
+   is a focus indicator by construction, so the 3:1 floor is unambiguous. A ring
+   with no focus variant is decoration and is out of scope, as is
+   `shadow-[inset_2px_0_0_var(--accent)]` — the sanctioned selection bar, which
+   is identity rather than focus and may sit below 3:1. */
+
+/* Both spellings reach the same token: `ring-[color:var(--nimbus-accent)]` and
+   the `--color-*` utility `ring-accent`. Catching only the first would leave
+   the second as an open door, so the utility map is parsed out of `@theme
+   inline` — a new `--color-*` is then covered the day it is added. */
+const THEME_COLOURS = new Map(
+  [
+    ...CSS.matchAll(/--color-([a-z0-9-]+):\s*var\((--nimbus-[a-z0-9-]+)\)/g),
+  ].map(([, utility, token]) => [utility, token]),
+);
+
+const FOCUS_RING =
+  /\b(?:focus|focus-visible):(?:ring|outline)-(?:\[color:var\((--nimbus-[a-z0-9-]+)\)\]|([a-z0-9-]+))/g;
+
+function tsxFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...tsxFiles(path));
+    else if (entry.name.endsWith(".tsx")) out.push(path);
+  }
+  return out;
+}
+
+describe("focus indicators", () => {
+  it("maps the --color-* utilities so both ring spellings are covered", () => {
+    // If this map ever comes back empty the scan below still passes while
+    // checking nothing, which is the one way this gate could fail silently.
+    expect(THEME_COLOURS.get("accent")).toBe("--nimbus-accent");
+    expect(THEME_COLOURS.get("brand")).toBe("--nimbus-brand");
+    expect(THEME_COLOURS.get("focus")).toBe("--nimbus-focus");
+  });
+
+  /* DESIGN.md: "a focus ring names `--focus`, never `--accent` directly."
+
+     That is a naming rule, and it has to be checked as one. Measuring the
+     bound colour instead is not equivalent, for two reasons that pull in
+     opposite directions.
+
+     `--focus` is declared `var(--accent)` in the dark palettes and in mono
+     light, so in four of the six combinations the two tokens resolve to the
+     same literal and no measurement can tell them apart. What separates them
+     is warm light and blue light, where `--focus` diverges precisely because
+     `--accent` cannot carry a ring there.
+
+     And a pure value check is too weak in the other direction: `--text` and
+     `--danger` clear 3:1 on every ground, so a ring bound to either would pass
+     a threshold gate while still breaking the contract — verified, both did.
+     So the token is checked by name, and the measured ratio is carried into
+     the message to say why the rule exists rather than merely that it was
+     broken. */
+  it("name --focus, never another token that measures well", () => {
+    const failures: string[] = [];
+    for (const file of tsxFiles(SRC)) {
+      const name = relative(SRC, file).replaceAll("\\", "/");
+      const lines = readFileSync(file, "utf8").split("\n");
+      lines.forEach((line, i) => {
+        for (const [, arbitrary, utility] of line.matchAll(FOCUS_RING)) {
+          // `ring-1`, `ring-inset`, `outline-offset-2` name no colour.
+          const token = arbitrary ?? THEME_COLOURS.get(utility);
+          if (!token || token === "--nimbus-focus") continue;
+
+          let worst = Number.POSITIVE_INFINITY;
+          let where = "";
+          for (const [combo, t] of COMBOS) {
+            for (const backdrop of BACKDROPS) {
+              const ratio = contrast(t[token], t[backdrop]);
+              if (ratio < worst) {
+                worst = ratio;
+                where = `${combo} on ${backdrop}`;
+              }
+            }
+          }
+          const why =
+            worst < 3
+              ? `${worst.toFixed(2)}:1 (${where}) is under the 3:1 floor`
+              : `${worst.toFixed(2)}:1 (${where}) clears the floor, but a focus ring still names --nimbus-focus`;
+          failures.push(`${name}:${i + 1} — ${token} — ${why}`);
+        }
+      });
+    }
+    // Named, not counted: a ratio without the file that paints it sends the
+    // next person back to the browser to re-derive which ring is invisible.
+    expect(failures).toEqual([]);
   });
 });
 

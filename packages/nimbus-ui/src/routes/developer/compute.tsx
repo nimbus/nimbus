@@ -291,7 +291,12 @@ function Toolbar({
           onChange={(e) => onSearch(e.target.value)}
           placeholder={placeholder}
           data-testid={testid ? `${testid}-search` : undefined}
-          className="h-7 w-56 rounded border border-app bg-surface pl-7 pr-2 font-mono text-xs text-default placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-[color:var(--nimbus-brand)]"
+          // No `focus:outline-none` and no `--brand` ring: on this field's
+          // own `--surface` ground `--brand` measures 2.48:1 in warm light,
+          // under WCAG 2.2 SC 1.4.11's 3:1 non-text floor (2.21:1 on
+          // `--surface-2`, its worst ground). Cancelling the console-wide
+          // outline for it traded a compliant ring for a failing one.
+          className="h-7 w-56 rounded border border-app bg-surface pl-7 pr-2 font-mono text-xs text-default placeholder:text-muted"
         />
       </div>
       {children}

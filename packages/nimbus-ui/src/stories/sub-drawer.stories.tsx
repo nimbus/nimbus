@@ -47,7 +47,11 @@ function FakeSubDrawerHost({
             onChange={(e) => setSearch(e.target.value)}
             placeholder={spec.search.placeholder}
             data-testid="sub-drawer-search"
-            className="h-7 w-full rounded-md border border-app bg-canvas px-2 text-xs text-default placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-[color:var(--nimbus-brand)]"
+            // A story is where the next author looks for the pattern, so the
+            // failing `--brand` ring must not be modelled here either: 2.24:1
+            // in warm light on this field's own `bg-canvas` ground, under SC
+            // 1.4.11's 3:1 floor.
+            className="h-7 w-full rounded-md border border-app bg-canvas px-2 text-xs text-default placeholder:text-muted"
           />
         </div>
       ) : null}

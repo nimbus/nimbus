@@ -105,9 +105,19 @@ export function TablesListTable({ tables }: { tables: TableDoc[] }) {
                   rowRefs.current[index] = el;
                 }}
                 tabIndex={index === focusRow ? 0 : -1}
+                // No `outline-none`: the row keeps the console-wide
+                // `:focus-visible` outline — 2px of `--focus` at offset 2px —
+                // which is the only ring in the system tuned to clear WCAG 2.2
+                // SC 1.4.11's 3:1 non-text floor on every ground (3.42:1 warm
+                // light on `--surface-2`, its worst case). The inset `--accent`
+                // hairline it replaces measured 1.71:1 there.
+                //
+                // No `focus-visible:z-*` counterpart to documents-table.tsx:
+                // this table has no pinned cells to occlude the outline, and
+                // its sticky `thead` carries no z-index, so a positioned row
+                // would paint over the header instead of scrolling under it.
                 className={cn(
-                  "group h-9 cursor-pointer border-t border-app outline-none hover:bg-surface-2",
-                  "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[color:var(--nimbus-accent)]",
+                  "group h-9 cursor-pointer border-t border-app hover:bg-surface-2",
                 )}
                 data-testid={`tenant-table-row-${name}`}
                 onFocus={() => setFocusRow(index)}
