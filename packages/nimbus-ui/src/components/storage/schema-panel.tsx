@@ -69,7 +69,14 @@ export function SchemaPanel({
 
   return (
     <aside
-      className="flex w-[420px] shrink-0 flex-col overflow-hidden rounded-md border border-app bg-surface"
+      // 420px is the preferred width, not a floor. With `shrink-0` it was both,
+      // so in a window under ~564px the panel kept all 420px and the row's
+      // `overflow-hidden` cut off its right edge — the close button included —
+      // leaving no way to dismiss it. `min-w-0` lets the panel go below its
+      // min-content width so it stays whole and closeable at any width; the
+      // documents table beside it still yields its space first, because its
+      // `flex-1` basis of 0 absorbs no shrink.
+      className="flex w-[420px] min-w-0 flex-col overflow-hidden rounded-md border border-app bg-surface"
       data-testid="documents-schema-panel"
     >
       <PanelHeader title="Schema" onClose={onClose} />
