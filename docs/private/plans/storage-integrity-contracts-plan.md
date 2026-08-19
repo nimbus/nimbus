@@ -3,7 +3,7 @@
 Status: `active` | Owner: this plan | Created: 2026-08-18
 Baseline: main @ `8877eaff43a36d9606a1feaa0ab31d0377539d9d`
 Proof root: `proof/storage-integrity-contracts/`
-Next action: SIC4 is `done` on `codex/sic-sic4` with pull request #287 open and hosted CI running. Merge on green, record the `merged` transition, then start SIC5.
+Next action: SIC4 is merged as `f49abe93a`. SIC5 is `done` on `codex/sic-sic5` with pull request #289 open and hosted CI running. Merge on green, record the `merged` transition, then start SIC6 — the last red verifier condition, four `sqlite_physical_durability` cases behind a test-only fault harness with no production fault seam.
 
 ## Outcome
 
