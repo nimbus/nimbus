@@ -1029,17 +1029,20 @@ async fn online_consistency_verifier_matches_authoritative_shadow_and_replica_st
     assert_eq!(report.authoritative.document_count, 3);
     assert_eq!(report.authoritative.schema_table_count, 1);
     assert_eq!(
-        report.authoritative.applied_sequence,
+        report.authoritative.position.applied_sequence.0,
         report.authoritative.durable_head
     );
-    assert_eq!(report.authoritative.digest, report.shadow.digest);
-    assert_eq!(report.authoritative.digest, report.embedded_replica.digest);
+    assert_eq!(report.authoritative.position, report.shadow.position);
+    assert_eq!(
+        report.authoritative.position,
+        report.embedded_replica.position
+    );
     assert!(report.bootstrap.resume_after_sequence <= report.bootstrap.bootstrap_cut_sequence);
     assert_eq!(
         report.bootstrap.bootstrap_cut_sequence,
         report.authoritative.durable_head
     );
-    assert!(!report.bootstrap.snapshot_digest.is_empty());
+    assert!(!report.bootstrap.snapshot_position.state_digest.is_empty());
 }
 
 #[test]
@@ -1061,6 +1064,7 @@ fn snapshot_comparison_reports_document_field_differences_with_identifier() {
         ConsistencyScope::ShadowMaterializer,
         &right,
     )
+    .expect("snapshot comparison should succeed")
     .expect("document mismatch should be reported");
 
     assert_eq!(mismatch.invariant, "materialized_snapshot_match");
@@ -1077,7 +1081,7 @@ fn snapshot_with_table_identities(
     table_identities: Vec<crate::TableIdentitySnapshotEntry>,
 ) -> crate::MaterializedJournalSnapshot {
     crate::MaterializedJournalSnapshot {
-        version: 2,
+        version: nimbus_storage::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
         applied_sequence: SequenceNumber(1),
         durable_head: SequenceNumber(1),
         table_identities,
@@ -1089,18 +1093,26 @@ fn snapshot_with_table_identities(
 
 #[test]
 fn snapshot_comparison_reports_table_identity_state_drift() {
-    // Same namespace/table/table_id on both sides; only the lifecycle state
-    // diverges. The digest hashes table_identities, so the equality verifier
-    // must surface this mismatch rather than reporting green on drift.
+    // Same table and table_id on both sides; only the lifecycle state diverges.
+    // A snapshot's namespace is derived from the state, so a real state drift
+    // moves the identity's namespace with it and the equality verifier has to
+    // surface the identity set rather than reporting green on drift.
     let table_id = nimbus_core::TableId::new();
-    let identity = |state: nimbus_core::TableState| crate::TableIdentitySnapshotEntry {
-        namespace: "default".to_string(),
-        table: tasks_table(),
-        table_id: table_id.clone(),
-        state,
-    };
-    let left = snapshot_with_table_identities(vec![identity(nimbus_core::TableState::Active)]);
-    let right = snapshot_with_table_identities(vec![identity(nimbus_core::TableState::Deleting)]);
+    let identity =
+        |namespace: String, state: nimbus_core::TableState| crate::TableIdentitySnapshotEntry {
+            namespace,
+            table: tasks_table(),
+            table_id: table_id.clone(),
+            state,
+        };
+    let left = snapshot_with_table_identities(vec![identity(
+        "default".to_string(),
+        nimbus_core::TableState::Active,
+    )]);
+    let right = snapshot_with_table_identities(vec![identity(
+        format!("deleting:{table_id}"),
+        nimbus_core::TableState::Deleting,
+    )]);
 
     let mismatch = compare_materialized_journal_snapshots(
         ConsistencyScope::AuthoritativeSnapshot,
@@ -1108,23 +1120,20 @@ fn snapshot_comparison_reports_table_identity_state_drift() {
         ConsistencyScope::ShadowMaterializer,
         &right,
     )
+    .expect("snapshot comparison should succeed")
     .expect("table identity state drift should be reported");
 
     assert_eq!(mismatch.invariant, "materialized_snapshot_match");
-    assert!(
-        mismatch.path.starts_with("table_identities."),
-        "expected per-identity path, got {}",
-        mismatch.path
-    );
+    assert_eq!(mismatch.path, "table_identities");
     assert_eq!(mismatch.left_scope, ConsistencyScope::AuthoritativeSnapshot);
     assert_eq!(mismatch.right_scope, ConsistencyScope::ShadowMaterializer);
     assert!(
-        mismatch.left_description.contains("active"),
+        mismatch.left_description.contains("default/tasks"),
         "{}",
         mismatch.left_description
     );
     assert!(
-        mismatch.right_description.contains("deleting"),
+        mismatch.right_description.contains("deleting:"),
         "{}",
         mismatch.right_description
     );
@@ -1150,6 +1159,7 @@ fn snapshot_comparison_reports_table_identity_table_id_drift() {
         ConsistencyScope::ShadowMaterializer,
         &right,
     )
+    .expect("snapshot comparison should succeed")
     .expect("table identity table_id drift should be reported");
 
     assert_eq!(mismatch.invariant, "materialized_snapshot_match");
@@ -1183,7 +1193,8 @@ fn durable_journal_bootstrap_verifier_reports_resume_after_mismatch() {
         cursor_floor: SequenceNumber(0),
     };
 
-    let mismatches = collect_durable_journal_bootstrap_mismatches(&snapshot, &bootstrap);
+    let mismatches = collect_durable_journal_bootstrap_mismatches(&snapshot, &bootstrap)
+        .expect("bootstrap comparison should succeed");
     let resume_after = mismatches
         .iter()
         .find(|mismatch| mismatch.path == "bootstrap.resume_after_sequence")
@@ -1476,4 +1487,51 @@ fn index_scan_eq_count_for_backend(
                 .len()
         }
     }
+}
+
+#[test]
+fn shadow_recovery_rejects_wrong_checkpoint_digest() {
+    let document = nimbus_core::Document::new(
+        tasks_table(),
+        serde_json::Map::from_iter([("title".to_string(), json!("alpha"))]),
+    );
+    let checkpoint = materialized_snapshot_with_documents(vec![document.clone()]);
+    let config = ShadowMaterializerConfig {
+        compaction_threshold_records: 8,
+    };
+
+    let honest = crate::ShadowMaterializer::from_checkpoint_and_journal(
+        checkpoint.clone(),
+        Vec::new(),
+        config,
+    )
+    .expect("shadow materializer should build from the checkpoint");
+    let manifest = honest.manifest().clone();
+
+    crate::ShadowMaterializer::recover(checkpoint.clone(), Vec::new(), manifest.clone(), config)
+        .expect("recovery against the honest checkpoint must succeed");
+
+    // Tamper the checkpoint content only. The applied sequence, the durable
+    // head, and the pending tail all still match the manifest, so a manifest
+    // that recorded a bare sequence would accept this checkpoint and recover a
+    // materializer whose state never came from the journal.
+    let mut tampered = checkpoint.clone();
+    tampered
+        .documents
+        .first_mut()
+        .expect("checkpoint should carry a document")
+        .fields
+        .insert("title".to_string(), json!("tampered"));
+    assert_eq!(
+        tampered.applied_sequence, checkpoint.applied_sequence,
+        "the tamper must not move the applied sequence, or the test proves nothing"
+    );
+
+    let error = crate::ShadowMaterializer::recover(tampered, Vec::new(), manifest, config)
+        .expect_err("recovery against a tampered checkpoint must fail");
+    let message = error.to_string();
+    assert!(
+        message.contains("checkpoint position"),
+        "expected a checkpoint position mismatch, saw {message}"
+    );
 }
