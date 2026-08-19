@@ -14,7 +14,9 @@ pub(crate) const CODEGEN_VERSION: &str = env!("NIMBUS_CODEGEN_VERSION");
 #[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
 pub(crate) struct InitCommand {
     /// Adapter to scaffold (e.g. nimbus, convex, cloud-functions).
-    #[arg(value_parser = ["nimbus", "convex", "cloud-functions"])]
+    #[arg(value_parser = clap::builder::PossibleValuesParser::new(
+        crate::node_runtime::Adapter::cli_arg_values(),
+    ))]
     pub(crate) adapter: String,
 
     /// Target directory (created if it does not exist).
@@ -656,6 +658,34 @@ mod tests {
         assert_eq!(command.adapter, "convex");
         assert_eq!(command.directory, PathBuf::from("."));
         assert!(!command.install);
+    }
+
+    /// The CLI offers exactly the adapters it can resolve. Both halves matter:
+    /// a name clap accepts but `from_cli_arg` cannot resolve fails at run time
+    /// with "unknown adapter" after parsing cleanly, and a name clap rejects
+    /// makes a real adapter unreachable.
+    #[test]
+    fn cli_offers_exactly_the_resolvable_adapters() {
+        for adapter in crate::node_runtime::Adapter::ALL {
+            let command = parse_init(["nimbus", "init", adapter.name()]);
+            assert_eq!(
+                crate::node_runtime::Adapter::from_cli_arg(&command.adapter),
+                Some(*adapter),
+                "`nimbus init {}` parses but does not resolve",
+                adapter.name(),
+            );
+            assert!(
+                adapter_templates(*adapter).len() > 1,
+                "`nimbus init {}` is offered but scaffolds nothing",
+                adapter.name(),
+            );
+        }
+
+        // Negative control: the parser is not simply accepting anything.
+        assert!(
+            Cli::try_parse_from(["nimbus", "init", "firestore-client"]).is_err(),
+            "init must reject an adapter it cannot scaffold"
+        );
     }
 
     #[test]
