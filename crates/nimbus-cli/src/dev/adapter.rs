@@ -26,9 +26,16 @@ pub(super) enum DevAdapter {
 }
 
 impl DevAdapter {
+    /// The adapter name `dev` reports to the operator.
+    ///
+    /// An authoring root answers with the package it authors against, not with
+    /// a fixed `convex`: the banner and the redetect notice are how an operator
+    /// checks that `dev` adopted the root they expected, so a native app that
+    /// reported `convex` there would contradict the `@nimbus/nimbus` dependency
+    /// the same run wires in.
     pub(super) fn name(&self) -> &'static str {
         match self {
-            Self::Convex { .. } => node_runtime::Adapter::Convex.name(),
+            Self::Convex { package_target, .. } => package_target,
             Self::CloudFunctions { .. } => node_runtime::Adapter::CloudFunctions.name(),
             Self::FirestoreClient => "firestore-client",
         }
@@ -324,6 +331,9 @@ mod tests {
             adapter.provision_target(),
             Some(authoring_root::NIMBUS_TARGET)
         );
+        // The operator-visible name follows the wired package, so the banner
+        // and the dependency cannot disagree.
+        assert_eq!(adapter.name(), authoring_root::NIMBUS_TARGET);
     }
 
     #[test]
@@ -337,6 +347,7 @@ mod tests {
             adapter.provision_target(),
             Some(authoring_root::CONVEX_TARGET)
         );
+        assert_eq!(adapter.name(), authoring_root::CONVEX_TARGET);
     }
 
     /// A dual-root app follows codegen: `nimbus/` wins, and the wired package
@@ -378,6 +389,9 @@ mod tests {
                 package_target: authoring_root::CONVEX_TARGET,
             }
         );
+        // A directory named `nimbus` behind a Convex override is still a Convex
+        // app: the name must follow the package, not the directory.
+        assert_eq!(adapter.name(), authoring_root::CONVEX_TARGET);
     }
 
     #[test]
