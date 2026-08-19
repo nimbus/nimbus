@@ -1,0 +1,53 @@
+provider qualification matrix
+  redb [available]
+    atomic-effects         QUALIFIED  redb_tenant_store_durable_journal_conformance
+    committer-fencing      NOT-OWNED  impl_unsupported_fenced_durable_apply!: no committer lease, so no stale owner to fence
+    conditional-admission  QUALIFIED  redb_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes
+    journal-progress       QUALIFIED  redb_journal_progress_round_trips_through_insert_update_delete
+    durable-recovery       QUALIFIED  redb_durable_recovery_replays_durable_but_unapplied_records
+    write-isolation        QUALIFIED  redb_pending_prefix_blocks_generic_zero_write
+    position-parity        QUALIFIED  redb_materialized_position_matches_the_provider_independent_reference
+  memory [available]
+    atomic-effects         QUALIFIED  memory_tenant_store_durable_journal_conformance
+    committer-fencing      NOT-OWNED  impl_unsupported_fenced_durable_apply!: no committer lease, so no stale owner to fence
+    conditional-admission  QUALIFIED  memory_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes
+    journal-progress       QUALIFIED  memory_journal_progress_round_trips_through_insert_update_delete
+    durable-recovery       QUALIFIED  memory_durable_recovery_replays_durable_but_unapplied_records
+    write-isolation        QUALIFIED  memory_pending_prefix_blocks_generic_zero_write
+    position-parity        QUALIFIED  memory_materialized_position_matches_the_provider_independent_reference
+  sqlite [available]
+    atomic-effects         QUALIFIED  sqlite_execution_unit_batch_rolls_back_when_schedule_ops_fail
+    committer-fencing      NOT-OWNED  impl_unsupported_fenced_durable_apply!: no committer lease, so no stale owner to fence
+    conditional-admission  QUALIFIED  sqlite_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes
+    journal-progress       QUALIFIED  sqlite_journal_progress_round_trips_through_insert_update_delete
+    durable-recovery       QUALIFIED  sqlite_recovery_replays_durable_but_unapplied_records
+    write-isolation        QUALIFIED  sqlite_pending_prefix_blocks_generic_zero_write
+    position-parity        QUALIFIED  sqlite_materialized_position_matches_the_provider_independent_reference
+  postgres [unavailable (external provider fixtures disabled for this run)]
+    atomic-effects         UNVERIFIED postgres_sql_pipeline_cancellation_rolls_back did not run: external provider fixtures disabled for this run
+    committer-fencing      UNVERIFIED postgres_fenced_durable_apply_contract_is_atomic did not run: external provider fixtures disabled for this run
+    conditional-admission  UNVERIFIED postgres_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes did not run: external provider fixtures disabled for this run
+    journal-progress       UNVERIFIED postgres_direct_writes_dedupe_and_journal_progress_round_trip did not run: external provider fixtures disabled for this run
+    durable-recovery       UNVERIFIED postgres_durable_journal_recovery_applies_pending_records did not run: external provider fixtures disabled for this run
+    write-isolation        UNVERIFIED postgres_pending_prefix_blocks_generic_zero_write did not run: external provider fixtures disabled for this run
+    position-parity        UNVERIFIED postgres_materialized_position_matches_the_provider_independent_reference did not run: external provider fixtures disabled for this run
+  mysql [unavailable (external provider fixtures disabled for this run)]
+    atomic-effects         UNVERIFIED mysql_packet_bounded_journal_chunks_commit_atomically did not run: external provider fixtures disabled for this run
+    committer-fencing      UNVERIFIED mysql_fenced_durable_apply_contract_is_atomic did not run: external provider fixtures disabled for this run
+    conditional-admission  UNVERIFIED mysql_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes did not run: external provider fixtures disabled for this run
+    journal-progress       UNVERIFIED mysql_direct_writes_dedupe_and_journal_progress_round_trip did not run: external provider fixtures disabled for this run
+    durable-recovery       UNVERIFIED mysql_durable_journal_recovery_applies_pending_records did not run: external provider fixtures disabled for this run
+    write-isolation        UNVERIFIED mysql_pending_prefix_blocks_generic_zero_write did not run: external provider fixtures disabled for this run
+    position-parity        UNVERIFIED mysql_materialized_position_matches_the_provider_independent_reference did not run: external provider fixtures disabled for this run
+  libsql [unavailable (external provider fixtures disabled for this run)]
+    atomic-effects         UNVERIFIED libsql_pre_visibility_fault_rolls_back_and_leaves_the_store_writable did not run: external provider fixtures disabled for this run
+    committer-fencing      UNVERIFIED libsql_fenced_durable_apply_contract_is_atomic did not run: external provider fixtures disabled for this run
+    conditional-admission  UNVERIFIED libsql_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes did not run: external provider fixtures disabled for this run
+    journal-progress       UNVERIFIED libsql_direct_writes_refresh_derivative_cache_and_round_trip_journal_progress did not run: external provider fixtures disabled for this run
+    durable-recovery       UNVERIFIED libsql_durable_journal_recovery_refreshes_local_cache_from_remote_records did not run: external provider fixtures disabled for this run
+    write-isolation        UNVERIFIED libsql_pending_prefix_blocks_generic_zero_write did not run: external provider fixtures disabled for this run
+    position-parity        UNVERIFIED libsql_materialized_position_matches_the_provider_independent_reference did not run: external provider fixtures disabled for this run
+test tests::provider_contract_matrix::provider_contract_matrix_is_complete ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 469 filtered out; finished in 0.02s
+
