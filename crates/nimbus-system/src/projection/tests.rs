@@ -346,11 +346,20 @@ async fn projection_lease_contention_uses_delayed_bounded_retry() {
         vec![tasks.clone()],
         ProjectionToken::default(),
     );
-    let first_retry = tokio::time::timeout(Duration::from_secs(5), async {
+    let (first_retry, diagnostics) = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let stats = projection_work.stats(&tenant_id);
             if stats.delayed_retry_count == 2 {
-                break stats;
+                // Sample the engine's view in the same iteration. Both are
+                // reads of one live system, and the retry that follows the
+                // backoff clears the state these two are compared on, so any
+                // work placed between the reads is a window in which they can
+                // legitimately disagree.
+                let diagnostics = engine
+                    .tenant_engine_diagnostics(&tenant_id)
+                    .expect("projection retry diagnostics should load")
+                    .mutation_journal;
+                break (stats, diagnostics);
             }
             tokio::task::yield_now().await;
         }
@@ -360,10 +369,6 @@ async fn projection_lease_contention_uses_delayed_bounded_retry() {
     assert!(first_retry.dirty_projection_scope_count != 0 || first_retry.depth != 0);
     assert!(first_retry.catch_up_projection_count <= 1);
     assert!(first_retry.current_retry_backoff_millis >= 50);
-    let diagnostics = engine
-        .tenant_engine_diagnostics(&tenant_id)
-        .expect("projection retry diagnostics should load")
-        .mutation_journal;
     assert_eq!(
         diagnostics.observer_spawned_work_dirty_scope_count,
         first_retry.dirty_projection_scope_count
