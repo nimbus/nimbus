@@ -64,6 +64,51 @@ function quoted(text: string, open: number): string {
 }
 
 /**
+ * Drop JSX tags and keep the text between them. Quote-aware for the same
+ * reason `braced` above is: `>` is legal inside an attribute value, and a
+ * pattern that stops at the first one leaves the tail of the attribute behind
+ * as text -- including its closing quote, which the literal sweep below would
+ * then pair with the next quote in the expression and read a fragment of
+ * markup as copy. A `<` with no tag end after it is a comparison, not a tag,
+ * and stays.
+ */
+function untagged(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "<") {
+      out += text[i];
+      i += 1;
+      continue;
+    }
+    const end = tagEnd(text, i);
+    if (end === -1) {
+      out += text[i];
+      i += 1;
+      continue;
+    }
+    i = end + 1;
+  }
+  return out;
+}
+
+/** Index of the `>` closing the tag opened at `open`, or -1 if there is none. */
+function tagEnd(text: string, open: number): number {
+  let quote = "";
+  for (let i = open + 1; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote) {
+      if (c === "\\") i += 1;
+      else if (c === quote) quote = "";
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") quote = c;
+    else if (c === ">") return i;
+  }
+  return -1;
+}
+
+/**
  * Reduce a subtitle expression to the strings a reader actually sees. A
  * conditional yields one per branch; a JSX fragment yields its flattened text.
  */
@@ -71,7 +116,7 @@ function prose(expression: string): string[] {
   const spaced = expression.replace(/\{"\s*"\}/g, " ");
   // Tags come out before literals are swept, so a `className` value is never
   // mistaken for copy.
-  const stripped = spaced.replace(/<[^>]*>/g, "");
+  const stripped = untagged(spaced);
   const literals = [...stripped.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"/g)]
     .map((match) => match[1])
     .filter((text) => text.trim() !== "");
@@ -131,6 +176,24 @@ describe("page subtitles fit one line", () => {
       "expression",
       "map",
       "string",
+    ]);
+  });
+
+  it("reads copy out of a tag that carries a `>` in an attribute", () => {
+    // The tail of `title` used to survive the strip, and its closing quote
+    // paired with the next one to make `" and ` look like the copy.
+    expect(prose('<span title="a > b">Real copy</span>')).toEqual([
+      "Real copy",
+    ]);
+    expect(prose('<b className="x">"Quoted copy"</b>')).toEqual([
+      "Quoted copy",
+    ]);
+  });
+
+  it("keeps a comparison that never opens a tag", () => {
+    expect(prose('count < limit ? "Under" : "Over"')).toEqual([
+      "Under",
+      "Over",
     ]);
   });
 
