@@ -130,8 +130,8 @@ fn sqlite_point_in_time_archive_restores_sequence_and_timestamp_targets() {
     assert_eq!(sequence_archive.target_sequence, second_commit.sequence);
     assert_eq!(timestamp_archive.target_sequence, second_commit.sequence);
     assert_eq!(
-        sequence_archive.target_fingerprint,
-        timestamp_archive.target_fingerprint
+        sequence_archive.target_position,
+        timestamp_archive.target_position
     );
 
     let restored_dir = tempdir().expect("temporary directory should create");
@@ -146,9 +146,9 @@ fn sqlite_point_in_time_archive_restores_sequence_and_timestamp_targets() {
         restored
             .export_materialized_journal_snapshot()
             .expect("restored snapshot should export")
-            .canonical_fingerprint()
-            .expect("restored fingerprint should compute"),
-        sequence_archive.target_fingerprint
+            .materialized_position()
+            .expect("restored position should compute"),
+        sequence_archive.target_position
     );
 
     let restored_documents = restored

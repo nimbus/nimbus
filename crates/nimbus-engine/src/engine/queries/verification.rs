@@ -62,7 +62,7 @@ impl Engine {
             &authoritative_snapshot,
             ConsistencyScope::ShadowMaterializer,
             &shadow_snapshot,
-        ) {
+        )? {
             mismatches.push(mismatch);
         }
         if let Some(mismatch) = compare_materialized_journal_snapshots(
@@ -70,13 +70,13 @@ impl Engine {
             &authoritative_snapshot,
             ConsistencyScope::EmbeddedReplica,
             &replica_snapshot,
-        ) {
+        )? {
             mismatches.push(mismatch);
         }
         mismatches.extend(collect_durable_journal_bootstrap_mismatches(
             &bootstrap.snapshot,
             &bootstrap,
-        ));
+        )?);
 
         Ok(ConsistencyVerificationReport {
             tenant_id: tenant_id.to_string(),
