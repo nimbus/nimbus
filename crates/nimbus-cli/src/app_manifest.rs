@@ -24,8 +24,8 @@
 //! remove the key — so neither writes a record, and the manifests of apps that
 //! never had a registry dependency stay untouched.
 //!
-//! Every edit preserves the source order and raw text of untouched entries, so
-//! a rewrite shows up as a one-line diff.
+//! Every edit preserves the source order, raw text, and indentation of the
+//! manifest it edits, so a rewrite shows up as a one-line diff.
 
 use serde::Deserialize;
 
@@ -76,6 +76,7 @@ pub(crate) fn has_dependency_with_prefix(text: &str, prefix: &str) -> Result<boo
 /// at its npm-sorted position, and a missing `dependencies` object is appended.
 /// Returns `Ok(None)` when the dependency already carries exactly `spec`.
 pub(crate) fn set_dependency(text: &str, name: &str, spec: &str) -> Result<Option<String>, String> {
+    let unit = indent_unit(text);
     let mut top = parse_object(text)?;
     let spec_json = raw_string(&serde_json::Value::String(spec.to_string()).to_string())?;
 
@@ -89,20 +90,21 @@ pub(crate) fn set_dependency(text: &str, name: &str, spec: &str) -> Result<Optio
         } else {
             insert_sorted(&mut deps, name, spec_json);
         }
-        *deps_value = raw_string(&render_object(&deps, 2))?;
+        *deps_value = raw_string(&render_object(&deps, 2, unit))?;
     } else {
         let deps = vec![(name.to_string(), spec_json)];
         top.push((
             DEPENDENCIES_KEY.to_string(),
-            raw_string(&render_object(&deps, 2))?,
+            raw_string(&render_object(&deps, 2, unit))?,
         ));
     }
-    Ok(Some(render_document(&top)))
+    Ok(Some(render_document(&top, unit)))
 }
 
 /// Rewrite `package.json` text with `dependencies[name]` removed, pruning an
 /// emptied `dependencies` object. Returns `Ok(None)` when it was already absent.
 pub(crate) fn remove_dependency(text: &str, name: &str) -> Result<Option<String>, String> {
+    let unit = indent_unit(text);
     let mut top = parse_object(text)?;
     let Some(deps_value) = entry_mut(&mut top, DEPENDENCIES_KEY) else {
         return Ok(None);
@@ -115,9 +117,9 @@ pub(crate) fn remove_dependency(text: &str, name: &str) -> Result<Option<String>
     if deps.is_empty() {
         remove_entry(&mut top, DEPENDENCIES_KEY);
     } else {
-        *deps_value = raw_string(&render_object(&deps, 2))?;
+        *deps_value = raw_string(&render_object(&deps, 2, unit))?;
     }
-    Ok(Some(render_document(&top)))
+    Ok(Some(render_document(&top, unit)))
 }
 
 /// The recorded wiring state for `name`, or `None` when the manifest carries no
@@ -162,6 +164,7 @@ pub(crate) fn set_wiring_record(
     name: &str,
     record: Option<&WiringRecord>,
 ) -> Result<Option<String>, String> {
+    let unit = indent_unit(text);
     let mut top = parse_object(text)?;
     let mut nimbus = match entry(&top, NIMBUS_KEY) {
         Some(raw) => parse_nested(raw.get(), NIMBUS_KEY)?,
@@ -207,7 +210,7 @@ pub(crate) fn set_wiring_record(
         upsert(
             &mut nimbus,
             PACKAGES_KEY,
-            raw_string(&render_object(&packages, 3))?,
+            raw_string(&render_object(&packages, 3, unit))?,
         );
     }
     if nimbus.is_empty() {
@@ -216,10 +219,10 @@ pub(crate) fn set_wiring_record(
         upsert(
             &mut top,
             NIMBUS_KEY,
-            raw_string(&render_object(&nimbus, 2))?,
+            raw_string(&render_object(&nimbus, 2, unit))?,
         );
     }
-    Ok(Some(render_document(&top)))
+    Ok(Some(render_document(&top, unit)))
 }
 
 /// A JSON object's entries in source order; values keep their original raw
@@ -313,18 +316,34 @@ fn remove_entry(entries: &mut Entries, key: &str) {
     entries.retain(|(entry_key, _)| entry_key != key);
 }
 
-fn render_document(top: &Entries) -> String {
-    format!("{}\n", render_object(top, 1))
+/// The indentation one level of this manifest already uses. A rewrite has to
+/// match the file it edits: re-indenting to a fixed unit turns a one-line
+/// change into a whole-file diff, and leaves untouched nested objects -- which
+/// keep their raw source text -- indented differently from the keys around
+/// them. Falls back to two spaces for a manifest with no indented line at all.
+fn indent_unit(text: &str) -> &str {
+    text.lines()
+        .find_map(|line| {
+            let indent_len = line
+                .find(|c: char| c != ' ' && c != '\t')
+                .filter(|len| *len > 0)?;
+            Some(&line[..indent_len])
+        })
+        .unwrap_or("  ")
 }
 
-/// Render object entries with 2-space indentation: entries at `depth` levels,
-/// the closing brace one level out. Raw multi-line values embed as-is.
-fn render_object(entries: &Entries, depth: usize) -> String {
+fn render_document(top: &Entries, unit: &str) -> String {
+    format!("{}\n", render_object(top, 1, unit))
+}
+
+/// Render object entries indented with `unit`: entries at `depth` levels, the
+/// closing brace one level out. Raw multi-line values embed as-is.
+fn render_object(entries: &Entries, depth: usize, unit: &str) -> String {
     if entries.is_empty() {
         return "{}".to_string();
     }
-    let inner = "  ".repeat(depth);
-    let outer = "  ".repeat(depth - 1);
+    let inner = unit.repeat(depth);
+    let outer = unit.repeat(depth - 1);
     let body = entries
         .iter()
         .map(|(key, value)| {
@@ -460,6 +479,66 @@ mod tests {
         assert!(
             !has_dependency_with_prefix("{}\n", "file:./.nimbus/packages/").unwrap(),
             "a manifest with no dependencies holds nothing in use"
+        );
+    }
+
+    /// A manifest that does not use two spaces must come back in its own
+    /// indentation. Re-indenting the keys around an untouched nested object --
+    /// which keeps its raw source text -- would both mix the two styles in one
+    /// file and turn every one-line edit into a whole-file diff.
+    #[test]
+    fn edits_keep_the_manifest_indentation() {
+        let four = concat!(
+            "{\n",
+            "    \"name\": \"x\",\n",
+            "    \"scripts\": {\n",
+            "        \"build\": \"tsc\"\n",
+            "    },\n",
+            "    \"dependencies\": {\n",
+            "        \"convex\": \"^1.17.0\"\n",
+            "    }\n",
+            "}\n",
+        );
+        assert_eq!(
+            set_dependency(four, "convex", "file:./.nimbus/packages/convex")
+                .unwrap()
+                .unwrap(),
+            concat!(
+                "{\n",
+                "    \"name\": \"x\",\n",
+                "    \"scripts\": {\n",
+                "        \"build\": \"tsc\"\n",
+                "    },\n",
+                "    \"dependencies\": {\n",
+                "        \"convex\": \"file:./.nimbus/packages/convex\"\n",
+                "    }\n",
+                "}\n",
+            ),
+        );
+
+        let tabbed = "{\n\t\"dependencies\": {\n\t\t\"convex\": \"^1.17.0\"\n\t}\n}\n";
+        assert_eq!(
+            set_wiring_record(
+                tabbed,
+                "convex",
+                Some(&WiringRecord::Restorable {
+                    previous: "^1.17.0".to_string()
+                }),
+            )
+            .unwrap()
+            .unwrap(),
+            concat!(
+                "{\n",
+                "\t\"dependencies\": {\n",
+                "\t\t\"convex\": \"^1.17.0\"\n",
+                "\t},\n",
+                "\t\"nimbus\": {\n",
+                "\t\t\"packages\": {\n",
+                "\t\t\t\"convex\": { \"previous\": \"^1.17.0\" }\n",
+                "\t\t}\n",
+                "\t}\n",
+                "}\n",
+            ),
         );
     }
 
