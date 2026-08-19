@@ -89,6 +89,27 @@ failed states. If a required provider is absent, the test must fail closed.
 Record the host, provider mode, feature flags, selection, counts, and cleanup
 result.
 
+A lane that cannot run is `UNVERIFIED`. It is never reported as green, and it is
+never converted into a passing claim by a skip. Storage enforces that rule as a
+test rather than as a convention: a closed matrix qualifies every tenant
+provider against atomic effects, committer fencing, conditional admission,
+journal progress, durable recovery, write isolation, and position parity, and a
+cell whose cargo feature is disabled or whose fixture is absent degrades to
+`UNVERIFIED`. A guarantee a provider does not own stays "not owned", which is a
+fact about the provider and not about the host.
+
+Physical durability is proved against real failures rather than modeled. The
+`nimbus-storage` physical durability lane fails bounded SQLite write, sync, and
+write-ahead-log operations through a test-only VFS shim, then reopens the store
+and compares the durable head, the applied head, and the materialized position
+against the last acknowledged result. Keep that fault control inside the test
+tree: the production binary carries no fault configuration and no VFS selection
+surface.
+
+```bash
+cargo test -p nimbus-storage sqlite_physical_durability -- --nocapture
+```
+
 ## Application verification
 
 Use `make examples-verify` for the nine-case live application lane. It requires
