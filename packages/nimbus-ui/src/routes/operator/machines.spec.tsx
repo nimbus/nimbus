@@ -36,6 +36,27 @@ const { toastMock } = vi.hoisted(() => ({
 
 vi.mock("sonner", () => ({ toast: toastMock }));
 
+// The page's lifecycle side effects live in this hook. Mocking it is what
+// lets a test hold a row in its in-flight state without driving a fetch.
+const { machineActionsRef, handleActionMock } = vi.hoisted(() => ({
+  machineActionsRef: { current: {} as Record<string, string> },
+  handleActionMock: vi.fn(),
+}));
+
+// Partial: the module also exports `actionsForState` and `OPTIMISTIC_STATES`,
+// which the table needs for real. Only the hook is replaced.
+vi.mock("./-use-machine-actions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./-use-machine-actions")>()),
+  useMachineActions: () => ({
+    pending: machineActionsRef.current,
+    errors: {},
+    confirmDelete: null,
+    setConfirmDelete: vi.fn(),
+    runAction: vi.fn(),
+    handleAction: handleActionMock,
+  }),
+}));
+
 import { routeComponent } from "../../test/route-internals";
 import { Route } from "./machines";
 
@@ -44,6 +65,8 @@ const MachinesPage = routeComponent(Route);
 let writeText: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  machineActionsRef.current = {};
+  handleActionMock.mockReset();
   useQueryMock.mockReset().mockReturnValue([]);
   writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", {
@@ -200,3 +223,45 @@ function headerLabels(container: HTMLElement) {
     cell.textContent?.trim(),
   );
 }
+
+describe("MachinesPage action affordance", () => {
+  const machines = [
+    { _id: "m1", name: "default", state: "running" },
+    { _id: "m2", name: "spare-01", state: "stopped" },
+  ];
+
+  // `OPTIMISTIC_STATES` maps every lifecycle action onto an in-flight state,
+  // and `actionsForState` offers nothing for those, so a row with a pending
+  // action renders no buttons at all rather than grayed-out ones. That is the
+  // anti-race contract; this pins it, because the alternative reading — that
+  // the row keeps its buttons and disables them — is what the ActionButton's
+  // own `disabled` branch is written for, and nothing else says which is true.
+  it("offers no actions at all while a lifecycle request is in flight", () => {
+    useQueryMock.mockReturnValue(machines);
+    machineActionsRef.current = { m1: "stop" };
+    render(<MachinesPage />);
+
+    for (const action of ["start", "stop", "restart", "delete"]) {
+      expect(
+        screen.queryByTestId(`machines-action-${action}-default`),
+      ).not.toBeInTheDocument();
+    }
+    expect(screen.getByTestId("machines-row-default")).toHaveTextContent("…");
+  });
+
+  it("leaves an untouched row's actions operable while another is busy", () => {
+    useQueryMock.mockReturnValue(machines);
+    machineActionsRef.current = { m1: "stop" };
+    render(<MachinesPage />);
+
+    const other = screen.getByTestId("machines-action-delete-spare-01");
+    expect(other).toHaveAttribute("aria-disabled", "false");
+    expect(other).not.toBeDisabled();
+
+    other.focus();
+    expect(document.activeElement).toBe(other);
+
+    fireEvent.click(other);
+    expect(handleActionMock).toHaveBeenCalledTimes(1);
+  });
+});

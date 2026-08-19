@@ -55,6 +55,15 @@ vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
 
+const { removeMock, createMock } = vi.hoisted(() => ({
+  removeMock: vi.fn(),
+  createMock: vi.fn(),
+}));
+
+vi.mock("../../lib/api-mutations", () => ({
+  tenants: { remove: removeMock, create: createMock },
+}));
+
 const { subDrawerSpecRef } = vi.hoisted(() => ({
   subDrawerSpecRef: { current: null as { children?: React.ReactNode } | null },
 }));
@@ -239,5 +248,57 @@ describe("admin/tenants navigation", () => {
     fireEvent.click(screen.getByTestId("storage-tenant-delete-alpha"));
     fireEvent.click(screen.getByTestId("storage-tenant-link-alpha"));
     expect(navigateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("admin/tenants delete affordance", () => {
+  beforeEach(() => {
+    loaderDataRef.current = {
+      kind: "ok",
+      tenants: ["alpha"],
+      tables: [{ _id: "t1", tenantId: "alpha", name: "users", rowCount: 3 }],
+    };
+    removeMock.mockReset();
+  });
+
+  // The confirm dialog hands focus back to this button, and the same commit
+  // that closes the dialog grays it out. `disabled` would make that restore a
+  // silent no-op — the element cannot take focus, so the operator lands on
+  // <body> with no ring and Tab restarts at the top of the page. The comment
+  // at the call site says so; nothing enforced it, and the two attributes look
+  // interchangeable to anyone tidying the file. Asserting the class or the
+  // "deleting…" label would not catch the swap, so this asserts the tab stop
+  // itself.
+  it("keeps the busy delete button focusable instead of disabling it", async () => {
+    let settle: (v: { ok: true }) => void = () => {};
+    removeMock.mockReturnValue(
+      new Promise<{ ok: true }>((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    render(<TenantsPage />);
+    fireEvent.click(screen.getByTestId("storage-tenant-delete-alpha"));
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId("storage-delete-tenant-dialog-confirm"),
+      );
+    });
+
+    const button = screen.getByTestId("storage-tenant-delete-alpha");
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).not.toBeDisabled();
+    expect(button).not.toHaveAttribute("disabled");
+
+    button.focus();
+    expect(document.activeElement).toBe(button);
+
+    // The handler, not the attribute, is what refuses the second press.
+    fireEvent.click(button);
+    expect(removeMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settle({ ok: true });
+    });
   });
 });

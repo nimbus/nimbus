@@ -78,10 +78,11 @@ class ShellErrorBoundary extends Component<Props, State> {
             Capping the specified width therefore drops the floor with it:
             the specified suggestion becomes 288px and the minimum follows.
             Measured 288px at a 320px viewport and 351px at 390px,
-            fully on screen, still 480px at 1440px. `max-w-full` would work too
-            by clamping the content suggestion instead (min-content becomes the
-            viewport); 90vw is chosen over it so the card keeps a gutter and
-            still reads as a card rather than a full-bleed band. */}
+            fully on screen, still 480px at 1440px. `max-w-full` would work
+            too, by a different route: css-flexbox-1 4.5 clamps the resulting
+            minimum by the maximum main size, rather than feeding max-width
+            into either suggestion. 90vw is chosen over it so the card keeps a
+            gutter and still reads as a card rather than a full-bleed band. */}
         <div
           className="w-[min(480px,90vw)] rounded-md border bg-surface p-4 border-app"
           data-testid="error-boundary-card"

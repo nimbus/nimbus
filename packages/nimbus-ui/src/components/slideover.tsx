@@ -77,9 +77,13 @@ export function Slideover({
         // overflow out by the LEFT edge, taking the close button with it.
         //
         // `max-w-full` here but `min(480px,90vw)` on the shell error card is a
-        // gutter choice, not a mechanism one: a max-width lowers a flex item's
-        // automatic minimum size too, since the size suggestion that minimum
-        // is built from is itself clamped by max-width. This panel is
+        // gutter choice, not a mechanism one: both lower the automatic
+        // minimum, by different routes. A smaller preferred width lowers the
+        // specified size suggestion the minimum is capped by; a max-width
+        // leaves both suggestions alone and clamps the result, since
+        // css-flexbox-1 4.5 clamps the content-based minimum by the maximum
+        // main size (max-width enters the content size suggestion only
+        // through an aspect ratio, which no panel here has). This panel is
         // edge-anchored and should meet the viewport edge; that card is
         // centred and needs a gutter to still read as a card.
         className="relative flex h-full w-[480px] max-w-full flex-col gap-2 border-l border-app bg-surface p-4 shadow-xl outline-none"

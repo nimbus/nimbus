@@ -391,11 +391,19 @@ function ActionButton({
         if (disabled) return;
         onClick();
       }}
-      // `aria-disabled`, not `disabled`: this is the button the delete confirm
-      // dialog hands focus back to, and every action in the row grays out the
-      // moment one of them starts. A disabled element cannot take focus, so
-      // that restore was a silent no-op and the operator was left on <body>
-      // with no focus ring. The handler is what refuses the press.
+      // `aria-disabled`, not `disabled`, so the control keeps its tab stop:
+      // a disabled element cannot take focus, which turns a focus restore
+      // into a silent no-op and leaves the operator on <body>.
+      //
+      // On this page the branch is unreached today, and deliberately kept.
+      // `OPTIMISTIC_STATES` maps every action onto an in-flight state and
+      // `actionsForState` offers nothing for those, so a row with a pending
+      // action renders no buttons rather than grayed-out ones — `disabled`
+      // is therefore always false wherever this component is mounted. It
+      // stays because it is this component's contract rather than the
+      // caller's, and the caller is one edit away from graying a row in
+      // place. `machines.spec.tsx` pins the render rule that makes it dead,
+      // so a change to either side shows up as a failing test.
       aria-disabled={disabled}
       aria-busy={busy || undefined}
       data-testid={`machines-action-${action}-${machineName}`}
