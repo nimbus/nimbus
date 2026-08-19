@@ -73,7 +73,7 @@ function NodesPage() {
     >
       <PageHeader
         title="Nodes"
-        subtitle="Hosts running the Nimbus binary. This deployment is a single node today — multi-node clustering is not active yet."
+        subtitle="Hosts running the Nimbus binary. This deployment is a single node — clustering is not active yet."
       />
 
       <NodeCard status={statusLv} />

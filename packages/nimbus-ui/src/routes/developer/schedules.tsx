@@ -99,7 +99,7 @@ function SchedulesPage() {
     >
       <PageHeader
         title="Schedules"
-        subtitle="Scheduler-driven and cron-driven invocations for this tenant. Switch between one-shot scheduled jobs and recurring cron entries."
+        subtitle="Invocations for this tenant: one-shot scheduled jobs and recurring cron entries."
       />
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">

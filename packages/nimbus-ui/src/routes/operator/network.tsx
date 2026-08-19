@@ -144,7 +144,7 @@ function NetworkPage() {
     >
       <PageHeader
         title="Network"
-        subtitle="HTTP routes, listeners, and published ports. Routes are sourced from the live registry — adapters appear as they register."
+        subtitle="HTTP routes, listeners, published ports from the live registry — adapters appear as they register."
         trailing={
           <span
             className="font-mono text-xs text-muted"

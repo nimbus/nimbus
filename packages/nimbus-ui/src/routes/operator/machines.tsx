@@ -116,7 +116,7 @@ function MachinesPage() {
     >
       <PageHeader
         title="Machines"
-        subtitle="Outer Linux VMs that host sandboxes on macOS and Windows dev hosts (krunkit / WSL2). Start, stop, and inspect them. Not the same as cluster Nodes."
+        subtitle="Outer Linux VMs hosting sandboxes on macOS/Windows dev hosts (krunkit / WSL2). Not cluster Nodes."
         trailing={
           <span
             className="font-mono text-xs text-muted"

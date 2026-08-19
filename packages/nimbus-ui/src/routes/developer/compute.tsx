@@ -91,10 +91,10 @@ function ComputePage() {
         title="Compute"
         subtitle={
           view === "graph"
-            ? "The deployment's function call graph — api.* / internal.* calls between functions. Click a node to open its source."
+            ? "Function call graph for this deployment — api.* / internal.* edges. Click a node to open its source."
             : view === "sandboxes"
-              ? "Sandboxes are isolated execution environments for this tenant, read live from the sandbox runtime."
-              : "Functions registered to this tenant, grouped by bundle and module. Open one to view its source, logs, and runs."
+              ? "Isolated execution environments for this tenant, read live from the sandbox runtime."
+              : "Functions registered to this tenant, by bundle and module. Open one for source, logs, and runs."
         }
       />
 

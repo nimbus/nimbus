@@ -50,12 +50,11 @@ function renderPage(search: Record<string, unknown> = { tab: "logs" }) {
 }
 
 // The page hand-rolled the title/subtitle molecule instead of using
-// `PageHeader`, and so missed the one thing that component exists for: the
-// 68ch cap. Its description set a single unbroken line whose measure changed
-// against every sibling page that does go through `PageHeader`. jsdom does no
-// layout, so the cap utility is the only thing a test can read back.
+// `PageHeader`, so its header drifted from every sibling page. jsdom does no
+// layout, so the shared component's `data-slot` marker is what a test can read
+// back: a hand-rolled `<p>` does not carry it.
 describe("developer observability header", () => {
-  it("caps the subtitle measure through the shared PageHeader", () => {
+  it("renders its subtitle through the shared PageHeader", () => {
     useQueryMock.mockReturnValue([]);
     renderPage();
 
@@ -65,7 +64,7 @@ describe("developer observability header", () => {
     expect(subtitle?.textContent).toContain(
       "Live event stream and recent runs",
     );
-    expect(subtitle?.className.split(" ")).toContain("max-w-[68ch]");
+    expect(subtitle?.getAttribute("data-slot")).toBe("page-subtitle");
   });
 
   it("keeps the system tenant marked up as code in the subtitle", () => {

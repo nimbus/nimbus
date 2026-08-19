@@ -62,7 +62,7 @@ function StoragePage() {
             treatment is not lost — it stops being duplicated in two faces. */}
         <PageHeader
           title={tenant ? `Tables in ${tenant}` : "Storage"}
-          subtitle="Tables are reactive — they appear here as soon as documents are written. A table without a schema accepts any document shape."
+          subtitle="Tables appear as soon as documents are written. A table without a schema takes any document shape."
           testid="tenant-tables-header"
         />
       </div>

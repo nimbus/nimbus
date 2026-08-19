@@ -95,9 +95,8 @@ function ServicesPage() {
         title="Services"
         subtitle={
           <>
-            Services this tenant declares in <code>compose.yaml</code>. They run
-            as microVMs on Linux and as containers inside the developer machine
-            VM on macOS.
+            Services this tenant declares in <code>compose.yaml</code> —
+            microVMs on Linux, containers in a macOS machine VM.
           </>
         }
         trailing={<ScopeChip activeTenant={activeTenant} />}

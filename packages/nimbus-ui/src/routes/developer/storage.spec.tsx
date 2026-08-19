@@ -102,13 +102,11 @@ describe("StoragePage empty states", () => {
 });
 
 // The page hand-rolled the title/subtitle molecule instead of using
-// `PageHeader`, and so missed the one thing that component exists for: the
-// 68ch cap. Its 137-character description set a single unbroken line at
-// 1440px, and the measure visibly changed on the step from this page to the
-// table it links into, which does go through `PageHeader`. jsdom does no
-// layout, so the cap utility is the only thing a test can read back.
+// `PageHeader`, so its header drifted from every sibling page. jsdom does no
+// layout, so the shared component's `data-slot` marker is what a test can read
+// back: a hand-rolled `<p>` does not carry it.
 describe("storage header", () => {
-  it("caps the subtitle measure through the shared PageHeader", async () => {
+  it("renders its subtitle through the shared PageHeader", async () => {
     mockTenants([]);
     useQueryMock.mockReturnValue(undefined);
 
@@ -118,8 +116,8 @@ describe("storage header", () => {
     const subtitle = screen
       .getByTestId("tenant-tables-header")
       .querySelector("p");
-    expect(subtitle?.textContent).toContain("Tables are reactive");
-    expect(subtitle?.className.split(" ")).toContain("max-w-[68ch]");
+    expect(subtitle?.textContent).toContain("Tables appear as soon as");
+    expect(subtitle?.getAttribute("data-slot")).toBe("page-subtitle");
   });
 
   it("names the selected tenant in the title", async () => {

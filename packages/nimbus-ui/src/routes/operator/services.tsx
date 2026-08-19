@@ -83,7 +83,7 @@ function AdminServicesPage() {
     >
       <PageHeader
         title="Services"
-        subtitle="Every service running on this Nimbus cluster, grouped by tenant. Operator-only view: inspect placement, restarts, density, and bundle drift across all tenants."
+        subtitle="Every service on this cluster by tenant. Operator-only: placement, restarts, density, bundle drift."
         trailing={<SummaryChip services={services} />}
       />
 

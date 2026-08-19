@@ -148,7 +148,7 @@ function AdminObservabilityPage() {
     >
       <PageHeader
         title="Operator observability"
-        subtitle="Server-wide logs and runs across every tenant. Tenant filtering is gated until the events table exposes a tenant column."
+        subtitle="Logs and runs across every tenant. Tenant filtering waits on a tenant column in the events table."
         trailing={<ScopeChip scope={scope} />}
         testid="admin-observability-header"
       />
