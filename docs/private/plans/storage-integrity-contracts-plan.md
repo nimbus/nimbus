@@ -3,7 +3,7 @@
 Status: `active` | Owner: this plan | Created: 2026-08-18
 Baseline: main @ `8877eaff43a36d9606a1feaa0ab31d0377539d9d`
 Proof root: `proof/storage-integrity-contracts/`
-Next action: SIC3 is `done`. Pull request #285 is open from `codex/sic-sic3` with hosted CI in flight. Merge it when CI is green, record the merge, then cut `codex/sic-sic4` from updated `main` for the canonical materialized position.
+Next action: SIC3 is `done`. Pull request #285 is open from `codex/sic-sic3`. The first hosted run failed only `Rust Clippy`: CI resolves `stable` to rustc 1.97, whose `clippy::question_mark` covers the `else if let ... else { return None }` chain in `scanned_outcome`. Commit `1b2cf51ce` folds that arm into a `match`; the local toolchain is 1.96.1, so this class of lint is hosted-only. Merge #285 when CI is green, record the merge, then cut `codex/sic-sic4` from updated `main` for the canonical materialized position.
 
 ## Outcome
 
