@@ -38,6 +38,7 @@ pub(crate) use crate::{PostgresProvider, PostgresProviderConfig};
 
 mod async_faults;
 mod commit_path_ownership;
+mod contract_scenarios;
 mod crud_and_journal;
 mod generated_history;
 #[cfg(feature = "libsql")]
@@ -48,6 +49,7 @@ mod mysql_provider;
 mod object_meta;
 #[cfg(feature = "postgres")]
 mod postgres_provider;
+mod provider_contract_matrix;
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 mod provider_scenarios;
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
