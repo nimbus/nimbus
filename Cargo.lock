@@ -6664,6 +6664,7 @@ dependencies = [
  "nimbus-network",
  "nimbus-node",
  "nimbus-operator",
+ "nimbus-process-harness",
  "nimbus-provenance",
  "nimbus-runtime",
  "nimbus-sandbox",
