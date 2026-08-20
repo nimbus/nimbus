@@ -10,7 +10,7 @@ use crate::backends::conmon::creator::{CreatorQuiescenceProof, confirm_dead_conm
 use crate::backends::conmon::lifecycle::{
     RuntimeStateObservation, configured_stop_signal, configured_stop_timeout,
     delete_runtime_and_confirm_absent, read_exit_code, read_pid, remove_if_exists, runtime_state,
-    runtime_state_for_creator_attempt, signal_process, wait_for_path,
+    runtime_state_for_creator_attempt, signal_process, wait_for_receipt,
 };
 use crate::backends::oci::egress::PepPreAdoptionReleaseAuthority;
 use crate::backends::oci::network::{
@@ -1401,26 +1401,47 @@ impl ContainerSandboxBackend {
     }
 
     fn stop_running_restart_source(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
-        if manifest.conmon_layout.exit_status_file.exists() {
-            read_exit_code(&manifest.conmon_layout.exit_status_file)?;
-            return Ok(());
+        let exit_status_file = &manifest.conmon_layout.exit_status_file;
+        let stop_timeout = configured_stop_timeout(&manifest.spec, self.config.stop_timeout);
+        // Say why the wait gave up. The old code read the receipt after the
+        // wait and returned that error, so an unreadable receipt named itself;
+        // keep that, because "absent" and "present but empty" call for
+        // different operator action.
+        let receipt_diagnosis = || {
+            read_exit_code(exit_status_file)
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "the receipt became readable after the wait".to_owned())
+        };
+        // Wait for the exit code, not for the file. Conmon creates the receipt
+        // and then writes into it, so its mere presence can still mean "no exit
+        // code yet" and would fail an otherwise healthy restart.
+        if exit_status_file.exists() {
+            return wait_for_receipt(exit_status_file, stop_timeout, read_exit_code)
+                .map(|_exit_code| ())
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "container restart source {} published an exit receipt that never carried an exit code: {}",
+                        manifest.handle.id,
+                        receipt_diagnosis()
+                    ),
+                });
         }
         let pid = read_pid(&manifest.conmon_layout.pidfile)?;
         let stop_signal = configured_stop_signal(manifest.image_metadata.stop_signal.as_deref());
         signal_process(&stop_signal, pid)?;
-        let stop_timeout = configured_stop_timeout(&manifest.spec, self.config.stop_timeout);
-        if !wait_for_path(&manifest.conmon_layout.exit_status_file, stop_timeout) {
+        if wait_for_receipt(exit_status_file, stop_timeout, read_exit_code).is_none() {
             signal_process("KILL", pid)?;
-            if !wait_for_path(&manifest.conmon_layout.exit_status_file, stop_timeout) {
+            if wait_for_receipt(exit_status_file, stop_timeout, read_exit_code).is_none() {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
-                        "container restart source {} did not write an exit receipt after TERM/KILL",
-                        manifest.handle.id
+                        "container restart source {} did not publish a readable exit receipt after TERM/KILL: {}",
+                        manifest.handle.id,
+                        receipt_diagnosis()
                     ),
                 });
             }
         }
-        read_exit_code(&manifest.conmon_layout.exit_status_file)?;
         Ok(())
     }
 

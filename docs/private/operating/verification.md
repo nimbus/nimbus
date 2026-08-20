@@ -145,6 +145,37 @@ because the count is zero:
 cargo test -p nimbus-process-harness --test host_ports_are_claimed_not_probed
 ```
 
+## A receipt is published when it parses
+
+A file that carries a value has two publication steps. The writer opens the
+path, and then it writes the value. Between those steps the file exists and is
+empty. Code that waits for existence and then reads the value gets nothing
+whenever it lands in that window, and it reports a parse failure against a
+writer that did nothing wrong. A loaded host makes the window wider, because
+the writer can lose the processor between the open and the write.
+
+Wait for the value instead:
+
+```rust
+let pid = wait_for_receipt(&receipt, timeout, read_pid)
+    .expect("receipt should carry a pid");
+```
+
+`wait_for_path` waits for existence only. Keep it for a marker whose presence
+is the whole message. Do not use it for a pidfile, an exit-status file, or any
+other receipt that carries content.
+
+Two rules follow for a test fixture that publishes a receipt:
+
+- Read the receipt before you stop the writer. A stop that lands inside the
+  window leaves the file empty for good, and no amount of waiting recovers it.
+- Do not make the fixture publish atomically to hide the window. Nimbus does
+  not own how conmon and crun publish their receipts, so the reader must
+  tolerate a split that the writer is free to make.
+
+This reached CI as
+`descendant receipt should contain a PID: ParseIntError { kind: Empty }`.
+
 ## External providers and host capabilities
 
 Use repository-owned provider fixtures instead of recreating image, port,
