@@ -595,7 +595,7 @@ mod tests {
 
     use super::*;
     #[cfg(unix)]
-    use crate::backends::conmon::lifecycle::wait_for_path;
+    use crate::backends::conmon::lifecycle::{wait_for_path, wait_for_receipt};
 
     const GATED_CRASH_CHILD_TEST: &str =
         "backends::conmon::creator::tests::gated_creator_crash_child";
@@ -761,18 +761,16 @@ mod tests {
         ]);
         let mut creator =
             OwnedConmonCreator::spawn(&command).expect("creator process should spawn");
-        assert!(
-            wait_for_path(&entered, Duration::from_secs(2)),
-            "semantic creator-entry receipt should appear"
-        );
+        // Capture the descendant while its writer is alive. Reaping first can
+        // kill the wrapper between the open and the write, which leaves the
+        // receipt empty for good and reports a fixture accident as a product
+        // failure.
+        let descendant = wait_for_receipt(&entered, Duration::from_secs(2), read_pid)
+            .expect("semantic creator-entry receipt should carry a PID");
 
         creator
             .cancel_containment_and_reap()
             .expect("owned process group should be cancelled and reaped");
-        let descendant = std::fs::read_to_string(&entered)
-            .expect("descendant receipt should read")
-            .parse::<u32>()
-            .expect("descendant receipt should contain a PID");
         assert!(
             !pid_is_alive(descendant),
             "wrapper descendants must be absent before quiescence is acknowledged"
@@ -1146,14 +1144,8 @@ mod tests {
         ]);
         let mut creator =
             OwnedConmonCreator::spawn(&command).expect("creator process should spawn");
-        assert!(
-            wait_for_path(&descendant_receipt, Duration::from_secs(2)),
-            "creator descendant receipt should appear"
-        );
-        let descendant = std::fs::read_to_string(&descendant_receipt)
-            .expect("descendant receipt should read")
-            .parse::<u32>()
-            .expect("descendant receipt should contain a PID");
+        let descendant = wait_for_receipt(&descendant_receipt, Duration::from_secs(2), read_pid)
+            .expect("creator descendant receipt should carry a PID");
 
         let error = creator
             .reap_after_runtime_observed(Duration::from_millis(40))
@@ -1206,14 +1198,8 @@ mod tests {
         let mut creator =
             OwnedConmonCreator::spawn(&command).expect("creator process should spawn");
         let original_group = creator.process_group;
-        assert!(
-            wait_for_path(&descendant_receipt, Duration::from_secs(2)),
-            "creator descendant receipt should appear"
-        );
-        let descendant = std::fs::read_to_string(&descendant_receipt)
-            .expect("descendant receipt should read")
-            .parse::<u32>()
-            .expect("descendant receipt should contain a PID");
+        let descendant = wait_for_receipt(&descendant_receipt, Duration::from_secs(2), read_pid)
+            .expect("creator descendant receipt should carry a PID");
 
         creator
             .reap_after_runtime_observed(Duration::from_millis(40))

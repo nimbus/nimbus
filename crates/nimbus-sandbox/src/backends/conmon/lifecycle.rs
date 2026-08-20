@@ -663,14 +663,53 @@ fn parse_pid_evidence(path: &Path, pid: &[u8]) -> Result<u32> {
         })
 }
 
+/// Interval between receipt probes.
+const RECEIPT_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Wait until `path` exists, or `timeout` elapses.
+///
+/// Existence is the whole contract, so this suits a marker whose presence is
+/// the message and nothing else. Every remaining caller is a test fixture
+/// gate; no production wait belongs here, because a production receipt always
+/// carries a value and existence is the wrong event to wait for. Use
+/// [`wait_for_receipt`] for those.
+#[cfg(test)]
 pub(crate) fn wait_for_path(path: &Path, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
-    let found = poll_until_deadline(Some(deadline), Duration::from_millis(200), || {
+    let found = poll_until_deadline(Some(deadline), RECEIPT_POLL_INTERVAL, || {
         Ok(path.exists().then_some(()))
     })
     .unwrap_or(None) // the probe here is infallible
     .is_some();
     found || path.exists()
+}
+
+/// Wait until `path` holds a receipt that `read` accepts, or `timeout`
+/// elapses.
+///
+/// A writer publishes a receipt in two steps: it opens the path, and then it
+/// writes the value into it. Between those steps the file is visible and
+/// empty. A reader that treats existence as publication therefore reads an
+/// empty file whenever it lands inside that window, and reports a parse
+/// failure against a writer that did nothing wrong. The window is short, but
+/// it is not closed: a loaded host can deschedule the writer between the open
+/// and the write, and the coverage lane caught exactly that.
+///
+/// Waiting on the value closes the window without asking the writer to publish
+/// atomically. That matters, because the writers here are real runtime
+/// processes -- conmon and crun -- whose publication order this code does not
+/// own.
+pub(crate) fn wait_for_receipt<T>(
+    path: &Path,
+    timeout: Duration,
+    read: impl Fn(&Path) -> Result<T>,
+) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+    poll_until_deadline(Some(deadline), RECEIPT_POLL_INTERVAL, || {
+        Ok(path.exists().then(|| read(path).ok()).flatten())
+    })
+    .unwrap_or(None) // the probe here is infallible
+    .or_else(|| read(path).ok())
 }
 
 pub(crate) fn read_exit_code(path: &Path) -> Result<i32> {
@@ -736,6 +775,51 @@ mod tests {
     use super::*;
     use crate::backend::SandboxBackendKind;
     use crate::spec::{SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec};
+
+    #[test]
+    fn a_receipt_wait_spans_the_gap_between_creating_a_file_and_filling_it() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let receipt = temp_dir.path().join("descendant.pid");
+        // Publish the way a writer does: the path becomes visible first, and
+        // the value arrives afterwards.
+        std::fs::write(&receipt, b"").expect("receipt should be created empty");
+        let filler = std::thread::spawn({
+            let receipt = receipt.clone();
+            move || {
+                std::thread::sleep(Duration::from_millis(300));
+                std::fs::write(&receipt, b"4242").expect("receipt should be filled");
+            }
+        });
+
+        assert!(
+            wait_for_path(&receipt, Duration::from_secs(2)),
+            "the empty file already satisfies existence, which is what made it the wrong event"
+        );
+        assert!(
+            read_pid(&receipt).is_err(),
+            "and existence alone cannot yield a pid"
+        );
+
+        assert_eq!(
+            wait_for_receipt(&receipt, Duration::from_secs(2), read_pid),
+            Some(4242),
+            "waiting on the value must outlast the writer's open-then-write gap"
+        );
+        filler.join().expect("filler thread should finish");
+    }
+
+    #[test]
+    fn a_receipt_that_never_fills_times_out_rather_than_reporting_a_value() {
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let receipt = temp_dir.path().join("descendant.pid");
+        std::fs::write(&receipt, b"").expect("receipt should be created empty");
+
+        assert_eq!(
+            wait_for_receipt(&receipt, Duration::from_millis(300), read_pid),
+            None,
+            "a receipt that never carries a value must not resolve"
+        );
+    }
 
     #[test]
     fn configured_stop_signal_trims_and_defaults() {
