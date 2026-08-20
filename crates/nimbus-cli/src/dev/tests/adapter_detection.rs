@@ -53,6 +53,7 @@ fn dev_plan_prefers_native_source_root_for_watch_when_both_exist() {
         plan.adapter,
         Some(DevAdapter::Convex {
             source_root: plan.app_dir.join("nimbus"),
+            package_target: crate::authoring_root::NIMBUS_TARGET,
         })
     );
 }
@@ -367,6 +368,7 @@ fn cloud_functions_adapter_npm_install_dirs() {
 fn convex_adapter_npm_install_dirs() {
     let adapter = DevAdapter::Convex {
         source_root: PathBuf::from("/project/convex"),
+        package_target: crate::authoring_root::CONVEX_TARGET,
     };
     assert_eq!(
         adapter.npm_install_dirs(Path::new("/project")),
@@ -415,6 +417,7 @@ fn convex_json_functions_override_relocates_source_root() {
         adapter,
         Some(DevAdapter::Convex {
             source_root: temp.path().join("src/backend"),
+            package_target: crate::authoring_root::CONVEX_TARGET,
         })
     );
 }
@@ -435,6 +438,7 @@ fn convex_json_functions_override_takes_priority_over_default_convex_dir() {
         adapter,
         Some(DevAdapter::Convex {
             source_root: temp.path().join("src/backend"),
+            package_target: crate::authoring_root::CONVEX_TARGET,
         }),
         "an explicit functions override must win over the default convex/ directory"
     );
@@ -468,6 +472,7 @@ fn convex_json_without_functions_field_falls_back_to_default_heuristic() {
         adapter,
         Some(DevAdapter::Convex {
             source_root: temp.path().join("convex"),
+            package_target: crate::authoring_root::CONVEX_TARGET,
         })
     );
 }
@@ -485,6 +490,7 @@ fn malformed_convex_json_falls_back_to_default_heuristic_instead_of_erroring() {
         adapter,
         Some(DevAdapter::Convex {
             source_root: temp.path().join("convex"),
+            package_target: crate::authoring_root::CONVEX_TARGET,
         })
     );
 }

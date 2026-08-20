@@ -4,6 +4,7 @@ const CONVEX_SILO_ENV: &str = "NIMBUS_CONVEX_SILO";
 
 mod app_manifest;
 mod auth;
+mod authoring_root;
 mod backup;
 mod cli_ux;
 mod codegen;

@@ -411,11 +411,18 @@ fn locate_tsc(app_dir: &Path) -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
-/// The tsconfig to check: the `convex/` project first, else the app root.
+/// The tsconfig to check: the authoring root's project first, else the app
+/// root. A `nimbus/`-root app keeps its tsconfig beside its functions the same
+/// way a `convex/`-root app does, so this follows the resolved root instead of
+/// looking only in `convex/`. An unresolvable root (a `convex.json` override
+/// naming a missing directory) just falls back to the app root here — codegen
+/// is where that misconfiguration is reported.
 fn find_tsconfig(app_dir: &Path) -> Option<PathBuf> {
-    let convex = app_dir.join("convex").join("tsconfig.json");
-    if convex.is_file() {
-        return Some(convex);
+    if let Some(root) = crate::authoring_root::resolve(app_dir).ok().flatten() {
+        let scoped = root.source_root.join("tsconfig.json");
+        if scoped.is_file() {
+            return Some(scoped);
+        }
     }
     let root = app_dir.join("tsconfig.json");
     root.is_file().then_some(root)
@@ -763,20 +770,25 @@ fn package_convex_artifacts(
     }))
 }
 
-/// Build the canonical source package from the app's `convex/` source tree (the
+/// Build the canonical source package from the app's authoring source tree (the
 /// read-artifact behind the console Source view, FSV3). Walks original
 /// `.ts`/`.js` modules — skipping `_generated/`, `node_modules/`, and `.d.ts`
 /// declarations — keyed by module path (the function-path prefix). Returns the
 /// canonical JSON and its content digest, or `None` when there is no source.
+///
+/// Reads the root `authoring_root` resolves, not `convex/` unconditionally: a
+/// `nimbus/`-root app deployed through this path otherwise shipped no source at
+/// all, leaving the console Source view empty for exactly the apps the native
+/// scaffold creates.
 fn collect_convex_source_package(
     app_dir: &Path,
 ) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
-    let convex_dir = app_dir.join("convex");
-    if !convex_dir.is_dir() {
+    let Some(root) = crate::authoring_root::resolve(app_dir)? else {
         return Ok(None);
-    }
+    };
+    let source_dir = root.source_root;
     let mut files = std::collections::BTreeMap::new();
-    collect_source_modules(&convex_dir, &convex_dir, &mut files)?;
+    collect_source_modules(&source_dir, &source_dir, &mut files)?;
     if files.is_empty() {
         return Ok(None);
     }
