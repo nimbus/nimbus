@@ -54,10 +54,11 @@ Examples:
   nimbus dev --data-dir ./.nimbus/dev
   nimbus dev --no-compose-discovery
 
-P3 scope:
-  nimbus dev now watches nimbus/ or convex/ for debounced codegen reruns.
-  Use --once for startup only. Watched codegen locally activates generated
-  artifacts after validation. Live runtime log multiplexing is still pending.
+Watch mode:
+  nimbus dev watches nimbus/ or convex/ and reruns codegen on change, after a
+  debounce; regenerated artifacts activate locally once they validate. Use
+  --once to run codegen at startup only. Runtime log multiplexing is not
+  implemented yet, so --tail-logs selects a mode without streaming logs.
 
 Browser auto-open is suppressed automatically when $CI or $NO_BROWSER is
 set, when stdout is not a TTY, or when --no-open is passed; in those cases
@@ -651,6 +652,81 @@ mod tests {
         format_action_summary, format_hint, info_output_enabled, phase_output_enabled,
         progress_output_enabled, push_output_mode, render_table_with_options,
     };
+
+    /// Tokens that match the plan-label shape but are real product terms the
+    /// CLI is allowed to name in its help.
+    const PRODUCT_TOKENS: &[&str] = &["S3", "V8"];
+
+    /// Shipped help must read as product documentation. Internal plan phase
+    /// labels ("P3 scope:", "BPD5", …) leaked into `nimbus dev --help` once.
+    ///
+    /// This renders the long help of every command in the tree, root and
+    /// subcommands at every depth, and scans what a user actually sees. A
+    /// source scan would cover only the constants that live in one file and
+    /// would pass again as soon as a constant moved.
+    #[test]
+    fn rendered_help_carries_no_internal_phase_labels() {
+        let mut pending = vec![(
+            String::from("nimbus"),
+            <crate::Cli as clap::CommandFactory>::command(),
+        )];
+        let mut rendered_commands = 0usize;
+        let mut dev_help = String::new();
+
+        while let Some((path, mut command)) = pending.pop() {
+            for sub in command.get_subcommands().cloned() {
+                pending.push((format!("{path} {}", sub.get_name()), sub));
+            }
+
+            let rendered = command.render_long_help().to_string();
+            let labels = phase_label_candidates(&rendered);
+            assert!(
+                labels.is_empty(),
+                "`{path} --help` reads like plan notes, not product \
+                 documentation: {labels:?}. Rewrite the help text, or add the \
+                 token to PRODUCT_TOKENS if it names a real product term.",
+            );
+            if path == "nimbus dev" {
+                dev_help = rendered;
+            }
+            rendered_commands += 1;
+        }
+
+        // Positive controls. A walk that rendered nothing, or that rendered
+        // help without the `after_help` prose the leak was in, would pass
+        // this test while checking none of the text it exists to check.
+        assert!(
+            rendered_commands > 20,
+            "the command walk reached only {rendered_commands} commands; the \
+             CLI has far more, so the guard is not covering the tree",
+        );
+        assert!(
+            dev_help.contains("nimbus dev --data-dir") && dev_help.contains("Watch mode:"),
+            "`nimbus dev --help` did not carry its after_help prose, so the \
+             scan above never saw the text this guard exists to check",
+        );
+    }
+
+    /// Words shaped like an internal plan identifier: one to four capitals
+    /// followed only by digits, standing alone (`P3`, `BPD5`, `AVR5`), minus
+    /// the product terms that share that shape.
+    fn phase_label_candidates(text: &str) -> Vec<String> {
+        let mut candidates: Vec<String> = text
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|word| {
+                let letters = word.chars().take_while(char::is_ascii_uppercase).count();
+                let digits = &word[letters..];
+                (1..=4).contains(&letters)
+                    && !digits.is_empty()
+                    && digits.chars().all(|c| c.is_ascii_digit())
+                    && !PRODUCT_TOKENS.contains(word)
+            })
+            .map(str::to_string)
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
+    }
 
     #[test]
     fn format_action_summary_appends_newline() {

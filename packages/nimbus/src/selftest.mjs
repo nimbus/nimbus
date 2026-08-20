@@ -48,6 +48,7 @@ async function main() {
   await assertSandboxRoutes(indexBundle);
   await assertSessionRoutes(indexBundle);
   await assertCommitErrorEnvelopeDecoding(indexBundle);
+  await assertEnvelopeMetadataAndUnknownCodes(indexBundle);
   await typecheckNimbusAuthExtension();
 }
 
@@ -130,6 +131,87 @@ async function assertCommitErrorEnvelopeDecoding(indexBundle) {
     assert.equal(error.retryable, retryable);
     assert.equal(error.retryAfterMs, code === "rate.limited" ? 250 : undefined);
   }
+}
+
+async function assertEnvelopeMetadataAndUnknownCodes(indexBundle) {
+  const sdk = await import(
+    `${pathToFileURL(indexBundle).href}?envelope=${Date.now()}`
+  );
+
+  // A recognized code keeps the whole envelope, not only retry metadata.
+  const known = sdk.decodeNimbusErrorEnvelope({
+    error: {
+      code: "op.conflict",
+      message: "write conflict",
+      requestId: "req-42",
+      timestamp: "2026-08-18T00:00:00Z",
+      severity: "error",
+      retryable: true,
+      detail: { retryability: "retryable" },
+      remediation: { action: "retry", message: "retry the transaction" },
+    },
+  });
+  assert.ok(known instanceof sdk.NimbusCommitError);
+  assert.ok(known instanceof sdk.NimbusError);
+  assert.equal(known.requestId, "req-42");
+  assert.equal(known.timestamp, "2026-08-18T00:00:00Z");
+  assert.equal(known.severity, "error");
+  assert.deepEqual(known.remediation, {
+    action: "retry",
+    message: "retry the transaction",
+  });
+
+  // An unrecognized code stays a NimbusError instead of collapsing to Error.
+  const unknown = sdk.decodeNimbusErrorEnvelope({
+    error: {
+      code: "storage.unavailable",
+      message: "storage is unavailable",
+      requestId: "req-7",
+      severity: "fatal",
+      retryable: true,
+      detail: { attempt: 3 },
+      remediation: { action: "wait", message: "retry after the backend heals" },
+    },
+  });
+  assert.ok(unknown instanceof sdk.NimbusError);
+  assert.ok(sdk.isNimbusError(unknown));
+  assert.ok(!(unknown instanceof sdk.NimbusCommitError));
+  assert.ok(!sdk.isNimbusCommitError(unknown));
+  assert.equal(unknown.name, "NimbusError");
+  assert.equal(unknown.code, "storage.unavailable");
+  assert.equal(unknown.message, "storage is unavailable");
+  assert.equal(unknown.requestId, "req-7");
+  assert.equal(unknown.severity, "fatal");
+  assert.equal(unknown.retryability, "retryable");
+  assert.equal(unknown.retryable, true);
+  assert.deepEqual(unknown.detail, { attempt: 3 });
+  assert.deepEqual(unknown.remediation, {
+    action: "wait",
+    message: "retry after the backend heals",
+  });
+
+  // Malformed metadata is dropped instead of surfaced as garbage.
+  const sparse = sdk.decodeNimbusErrorEnvelope({
+    error: {
+      code: "storage.unavailable",
+      message: "no metadata",
+      severity: "loud",
+      remediation: { action: 7 },
+      retryable: false,
+    },
+  });
+  assert.ok(sparse instanceof sdk.NimbusError);
+  assert.equal(sparse.severity, undefined);
+  assert.equal(sparse.remediation, undefined);
+  assert.equal(sparse.requestId, undefined);
+  assert.equal(sparse.retryability, "terminal");
+  assert.equal(sparse.retryable, false);
+
+  // A non-envelope shape still decodes to a plain Error.
+  const plain = sdk.decodeNimbusErrorEnvelope({ error: "boom" });
+  assert.ok(plain instanceof Error);
+  assert.ok(!(plain instanceof sdk.NimbusError));
+  assert.equal(plain.message, "boom");
 }
 
 async function assertControlPlaneRouteManifest(controlPlaneRoutesBundle) {

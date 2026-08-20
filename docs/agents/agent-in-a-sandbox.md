@@ -59,11 +59,16 @@ curl -s -X POST http://localhost:8080/api/tenants \
   -d '{"id": "demo"}'
 ```
 
-Install the SDK for the script below:
+Install the SDK for the script below. It ships inside the Nimbus binary
+rather than on the public npm registry, so `nimbus packages provision`
+materializes it into the project and points `package.json` at the
+provisioned copy:
 
 ```bash
 mkdir agent-in-a-sandbox && cd agent-in-a-sandbox
-npm init -y && npm install @nimbus/nimbus
+npm init -y
+nimbus packages provision nimbus
+npm install
 ```
 
 ## 1. Package the agent as an OCI image
