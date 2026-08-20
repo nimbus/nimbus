@@ -92,28 +92,32 @@ pub(super) struct ComposeRetirementReport {
 }
 
 #[derive(Debug)]
+pub(super) struct ComposeServiceRetirementFailure {
+    project_name: String,
+    tenant_id: TenantId,
+    completed: Vec<ComposeServiceRetirementOutcome>,
+    failed_service: String,
+    source: Error,
+}
+
+#[derive(Debug)]
 pub(super) enum ComposeRetirementError {
     Setup(Error),
-    Service {
-        project_name: String,
-        tenant_id: TenantId,
-        completed: Vec<ComposeServiceRetirementOutcome>,
-        failed_service: String,
-        source: Error,
-    },
+    Service(Box<ComposeServiceRetirementFailure>),
 }
 
 impl ComposeRetirementError {
     pub(super) fn into_nimbus_error(self) -> Error {
         match self {
             Self::Setup(error) => error,
-            Self::Service {
-                project_name,
-                tenant_id,
-                completed,
-                failed_service,
-                source,
-            } => {
+            Self::Service(failure) => {
+                let ComposeServiceRetirementFailure {
+                    project_name,
+                    tenant_id,
+                    completed,
+                    failed_service,
+                    source,
+                } = *failure;
                 let completed = completed
                     .iter()
                     .map(|outcome| {
@@ -133,7 +137,7 @@ impl ComposeRetirementError {
     pub(super) fn completed(&self) -> &[ComposeServiceRetirementOutcome] {
         match self {
             Self::Setup(_) => &[],
-            Self::Service { completed, .. } => completed,
+            Self::Service(failure) => &failure.completed,
         }
     }
 
@@ -141,7 +145,7 @@ impl ComposeRetirementError {
     pub(super) fn failed_service(&self) -> Option<&str> {
         match self {
             Self::Setup(_) => None,
-            Self::Service { failed_service, .. } => Some(failed_service),
+            Self::Service(failure) => Some(&failure.failed_service),
         }
     }
 }
@@ -211,13 +215,15 @@ pub(super) async fn retire_compose_services(
         {
             Ok(outcome) => outcome,
             Err(error) => {
-                return Err(ComposeRetirementError::Service {
-                    project_name: context.control_plane.project_name,
-                    tenant_id,
-                    completed: outcomes,
-                    failed_service: service_name,
-                    source: retirement_error(error),
-                });
+                return Err(ComposeRetirementError::Service(Box::new(
+                    ComposeServiceRetirementFailure {
+                        project_name: context.control_plane.project_name,
+                        tenant_id,
+                        completed: outcomes,
+                        failed_service: service_name,
+                        source: retirement_error(error),
+                    },
+                )));
             }
         };
         let outcome = match outcome.disposition() {
