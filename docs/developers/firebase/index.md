@@ -48,7 +48,7 @@ method with a separate `nimbus start` server:
 
 ```bash
 # in your existing app directory
-nimbus packages provision firebase
+nimbus packages install firebase
 npm install
 ```
 

@@ -38,7 +38,7 @@ again.
 To repoint without a dev session, provision directly:
 
 ```bash
-nimbus packages provision firebase
+nimbus packages install firebase
 npm install
 ```
 

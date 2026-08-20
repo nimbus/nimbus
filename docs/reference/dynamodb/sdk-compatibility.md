@@ -42,7 +42,7 @@ them.
 ## Helper package
 
 `@nimbus/dynamodb` is a small optional package, provisioned into a Nimbus
-project with `nimbus packages provision dynamodb`:
+project with `nimbus packages install dynamodb`:
 
 | Export | Behavior |
 | --- | --- |
