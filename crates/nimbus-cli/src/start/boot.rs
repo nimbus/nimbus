@@ -1043,6 +1043,7 @@ mod listener_tests {
     use nimbus_network::{
         LocalPortLeaseAuthority, PortBindFailureKind, PortBindingProvenance, PortLeasePhase,
     };
+    use nimbus_process_harness::PortWindow;
 
     use super::*;
 
@@ -1076,11 +1077,14 @@ mod listener_tests {
         let staged = StagedLocalNetworkComposition::claim(&source_root)
             .expect("source manager should claim");
         let mut listeners = nimbus_server::PreboundServerListeners::new(staged.authority());
-        let requested_addr = "127.0.0.1:0"
-            .parse()
-            .expect("provider-assigned address should parse");
+        // The window holds this port for the rest of the case, so the closing
+        // re-bind proves the rejected handoff released its socket instead of
+        // racing an unrelated process for a freed ephemeral number.
+        let port_window = PortWindow::claim();
+        let requested_addr =
+            std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port_window.port(0)));
         let prepared_listener = listeners
-            .prepare("dev-mongodb-provider-assigned", requested_addr)
+            .prepare("dev-mongodb-conventional", requested_addr)
             .expect("source listener should reserve before bind");
         let raw = std::net::TcpListener::bind(requested_addr).expect("source listener should bind");
         let listener = prepared_listener
@@ -1273,9 +1277,13 @@ mod listener_tests {
         let state_root = tempfile::tempdir().expect("state root should be created");
         let engine = Arc::new(Engine::new(state_root.path()).expect("engine should initialize"));
         let options = ServeOptions::reconstruct_direct(engine).expect("test authority should open");
+        // A claimed port rather than a provider-assigned one, so the re-bind at
+        // the end measures the CLI's release and nothing else: no other process
+        // can be holding this number when the assertion runs.
+        let port_window = PortWindow::claim();
         let command = StartCommand {
             host: "127.0.0.1".to_owned(),
-            port: 0,
+            port: port_window.port(0),
             ..StartCommand::default()
         };
         let listener = start_listener(&command, &options)
@@ -1311,11 +1319,14 @@ mod listener_tests {
         let mut listeners =
             nimbus_server::PreboundServerListeners::reconstruct_direct(state_root.path())
                 .expect("test authority should open");
-        let requested_addr = "127.0.0.1:0"
-            .parse()
-            .expect("provider-assigned address should parse");
+        // The window holds this port for the rest of the test, so the closing
+        // re-bind proves the untransferred listener was really closed rather
+        // than racing an unrelated process for a freed ephemeral number.
+        let port_window = PortWindow::claim();
+        let requested_addr =
+            std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port_window.port(0)));
         let prepared = listeners
-            .prepare("dev-mongodb-provider-assigned", requested_addr)
+            .prepare("dev-mongodb-conventional", requested_addr)
             .expect("pre-bound listener should reserve");
         let raw = std::net::TcpListener::bind(requested_addr)
             .expect("provider should bind its requested socket");

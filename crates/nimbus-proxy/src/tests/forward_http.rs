@@ -281,13 +281,12 @@ fn egress_proxy_overwrites_caller_host_with_authorized_authority() {
 // propagates and the client receives an empty response.
 #[test]
 fn egress_proxy_maps_upstream_dial_failure_to_bad_gateway() {
-    // Bind an ephemeral port, then drop the listener so the dial is refused.
-    let dead = TcpListener::bind(("127.0.0.1", 0)).expect("bind to reserve a dead port");
-    let dead_port = dead
-        .local_addr()
-        .expect("dead address should resolve")
-        .port();
-    drop(dead);
+    // The claim is what keeps this endpoint dead: the window reserves the port
+    // for this process and binds nothing on it, so the upstream dial below is
+    // refused. The probe it replaces released the port before the dial, which
+    // let any other process answer in its place.
+    let port_window = PortWindow::claim();
+    let dead_port = port_window.port(0);
 
     let resolver = Arc::new(move |_host: &str, _port: u16| {
         Ok(vec![SocketAddr::from(([127, 0, 0, 1], dead_port))])

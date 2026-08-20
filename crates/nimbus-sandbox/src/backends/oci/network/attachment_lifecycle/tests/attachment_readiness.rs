@@ -17,9 +17,14 @@ use nimbus_network::{
     NetworkPlanId, NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration,
     NetworkResourcePhase, NetworkStateTransition, NetworkTransitionEvidence, PortExposure,
 };
+use nimbus_process_harness::PortWindow;
 
 struct ReadinessFixture {
     base: ContractFixture,
+    /// Holds the PEP and published ports this fixture configured. The proxy the
+    /// constructor starts keeps its port past construction, and the restart
+    /// proofs below rebind it, so the claim belongs to the fixture.
+    _port_window: PortWindow,
     config: OciNetworkConfig,
     bindings: Vec<SandboxPortBinding>,
     leases: Vec<nimbus_network::PortLeaseRequest>,
@@ -33,16 +38,17 @@ struct ReadinessFixture {
 impl ReadinessFixture {
     fn active(backend: ContractBackend, row: &str) -> Self {
         let mut base = ContractFixture::new(backend, row);
-        let pep_port = std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("ephemeral PEP port should bind")
-            .local_addr()
-            .expect("ephemeral PEP listener should report its address")
-            .port();
+        // Offset 0 is the one-port PEP range and offset 1 the published
+        // binding. Distinct offsets replace the constant that used to dodge a
+        // collision with the drawn PEP port, and the claim holds both ports for
+        // as long as the fixture lives.
+        let port_window = PortWindow::claim();
+        let pep_port = port_window.port(0);
         base.ports =
             OciPortLeaseCoordinator::new(&base.layout.network_state_root, pep_port..=pep_port);
         let config = base.reserve_and_adopt();
         let listener_ip = std::net::Ipv4Addr::LOCALHOST;
-        let published_port = if pep_port == 32_000 { 32_001 } else { 32_000 };
+        let published_port = port_window.port(1);
         let desired = [SandboxPortBinding::tcp("http", published_port, 8080)];
         let mut reserved = base
             .ports
@@ -105,6 +111,7 @@ impl ReadinessFixture {
 
         Self {
             base,
+            _port_window: port_window,
             config,
             bindings,
             leases,

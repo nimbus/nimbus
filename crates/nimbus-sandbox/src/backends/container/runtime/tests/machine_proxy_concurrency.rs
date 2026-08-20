@@ -5,7 +5,11 @@ use super::*;
 #[test]
 fn machine_proxy_withdrawal_waits_for_inflight_active_validation() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // Offset 0 is the published binding the machine proxy binds below; offset 1
+    // is the forwarder endpoint. The claim outlives both proxy generations this
+    // test starts and stops.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let tenant =
         nimbus_core::TenantId::new("tenant-machine-linearization").expect("tenant should validate");
     let id = SandboxId::new("machine-linearization");
@@ -18,7 +22,7 @@ fn machine_proxy_withdrawal_waits_for_inflight_active_validation() {
     )
     .with_port_binding(SandboxPortBinding::tcp("http", port, 8080));
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
         .plan_start_with_id(&spec, &id, None, None)
@@ -103,7 +107,11 @@ fn machine_proxy_withdrawal_waits_for_inflight_active_validation() {
 #[test]
 fn machine_proxy_withdrawal_waits_for_inflight_publication() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // Offset 0 is the published binding the machine proxy binds below; offset 1
+    // is the forwarder endpoint. The claim outlives both proxy generations this
+    // test starts and stops.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let tenant = nimbus_core::TenantId::new("tenant-machine-publish-linearization")
         .expect("tenant should validate");
     let id = SandboxId::new("machine-publish-linearization");
@@ -116,7 +124,7 @@ fn machine_proxy_withdrawal_waits_for_inflight_publication() {
     )
     .with_port_binding(SandboxPortBinding::tcp("http", port, 8080));
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
         .plan_start_with_id(&spec, &id, None, None)

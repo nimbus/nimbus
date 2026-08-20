@@ -10,11 +10,10 @@ use super::*;
 #[test]
 fn nnc0_6_container_is_not_ready_at_partial_attachment_boundary() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let proxy_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP port fixture should bind");
-    let proxy_port = proxy_reservation
-        .local_addr()
-        .expect("PEP port fixture should report its address")
-        .port();
+    // The claim outlives the PEP launch below, so the one-port range names a
+    // port only this test process can bind.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = proxy_port..=proxy_port;
@@ -37,7 +36,6 @@ fn nnc0_6_container_is_not_ready_at_partial_attachment_boundary() {
         !manifest.network_layout.status_path.exists(),
         "precondition: Netavark status must still be absent at this partial boundary"
     );
-    drop(proxy_reservation);
     backend
         .ensure_egress_proxy_running_with_release_authority(
             &manifest,
@@ -62,17 +60,14 @@ fn nnc0_6_container_is_not_ready_at_partial_attachment_boundary() {
 #[test]
 fn container_live_status_withdraws_and_restores_endpoints_with_attachment_evidence() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let endpoint_listener =
-        TcpListener::bind("127.0.0.1:0").expect("published endpoint fixture should bind");
-    let endpoint_port = endpoint_listener
-        .local_addr()
-        .expect("published endpoint fixture should report its address")
-        .port();
-    let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP port fixture should bind");
-    let pep_port = pep_reservation
-        .local_addr()
-        .expect("PEP port fixture should report its address")
-        .port();
+    // Offset 0 is the published endpoint, offset 1 the PEP. The endpoint
+    // tripwire below stays live for the whole test, which is what proves the
+    // attachment published no host listener of its own.
+    let port_window = PortWindow::claim();
+    let endpoint_port = port_window.port(0);
+    let pep_port = port_window.port(1);
+    let endpoint_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, endpoint_port))
+        .expect("published endpoint fixture should bind");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = endpoint_port.min(pep_port)..=endpoint_port.max(pep_port);
@@ -125,7 +120,6 @@ fn container_live_status_withdraws_and_restores_endpoints_with_attachment_eviden
             },
         )
         .expect("fixture should realize the complete host-managed attachment");
-    drop(pep_reservation);
     backend
         .ensure_egress_proxy_running_with_release_authority(
             &manifest,

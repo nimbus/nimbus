@@ -1,9 +1,10 @@
 use super::support::*;
 use crate::backends::oci::network::default_network_attachment_id;
 use nimbus_network::{LocalPortLeaseAuthority, NetworkResourceGeneration, PortLeasePhase};
+use nimbus_process_harness::PortWindow;
 use std::collections::BTreeMap;
 use std::io::Read as _;
-use std::net::{Shutdown, TcpListener};
+use std::net::{Ipv4Addr, Shutdown, TcpListener};
 
 #[derive(Clone, Copy, Debug)]
 enum ReservationCrashCut {
@@ -140,6 +141,10 @@ fn snapshot_files(root: &std::path::Path) -> BTreeMap<PathBuf, Vec<u8>> {
 
 struct PlanOnlyMachineProvisionFixture {
     _root: tempfile::TempDir,
+    /// Owns every host port below. The tripwires are released only when the
+    /// product is about to bind the same port, so the window has to outlive
+    /// them both.
+    _port_window: PortWindow,
     backend: ContainerSandboxBackend,
     id: SandboxId,
     execution_attempt_id: crate::SandboxExecutionAttemptId,
@@ -153,23 +158,21 @@ struct PlanOnlyMachineProvisionFixture {
 impl PlanOnlyMachineProvisionFixture {
     fn prepared(name: &str) -> Self {
         let root = tempfile::tempdir().expect("temporary root should exist");
-        let published_reservation =
-            TcpListener::bind("127.0.0.1:0").expect("published tripwire should bind");
-        let published_port = published_reservation
-            .local_addr()
-            .expect("published tripwire should report its port")
-            .port();
-        let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
-        let pep_port = pep_reservation
-            .local_addr()
-            .expect("PEP tripwire should report its port")
-            .port();
-        let forwarder_listener =
-            TcpListener::bind("127.0.0.1:0").expect("forwarder observer should bind");
-        let forwarder_port = forwarder_listener
-            .local_addr()
-            .expect("forwarder observer should report its port")
-            .port();
+        // The window partitions this fixture's host ports: offset 0 is the
+        // published binding, offset 1 the PEP range, offset 2 the forwarder
+        // observer. The tripwires below still hold the first two, which is
+        // what proves the product created no listener of its own; the window
+        // makes the hand-off deterministic once a tripwire is released.
+        let port_window = PortWindow::claim();
+        let published_port = port_window.port(0);
+        let pep_port = port_window.port(1);
+        let forwarder_port = port_window.port(2);
+        let published_reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, published_port))
+            .expect("published tripwire should bind");
+        let pep_reservation =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, pep_port)).expect("PEP tripwire should bind");
+        let forwarder_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, forwarder_port))
+            .expect("forwarder observer should bind");
         let mut config = ContainerSandboxBackendConfig::under_root(root.path());
         config.start_mode = ContainerStartMode::PlanOnly;
         config.node_network_supernet = "127.0.0.0/24".to_owned();
@@ -199,6 +202,7 @@ impl PlanOnlyMachineProvisionFixture {
             .expect("PlanOnly preparation should install the runner handoff");
         Self {
             _root: root,
+            _port_window: port_window,
             backend,
             id,
             execution_attempt_id,
