@@ -3,7 +3,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::backends::conmon::lifecycle::{
-    RuntimeStateObservation, read_exit_code, runtime_state, runtime_state_for_creator_attempt,
+    ExitReceipt, RuntimeStateObservation, read_exit_receipt, runtime_state,
+    runtime_state_for_creator_attempt,
 };
 use crate::backends::conmon::runtime_process::{
     RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
@@ -58,9 +59,14 @@ impl ContainerExecutionTeardownRuntime for HostContainerExecutionTeardownRuntime
     }
 
     fn execution_is_terminal(&self, manifest: &ContainerSandboxManifest) -> Result<bool> {
-        if manifest.conmon_layout.exit_status_file.exists() {
-            let _ = read_exit_code(&manifest.conmon_layout.exit_status_file)?;
-            return Ok(true);
+        match read_exit_receipt(&manifest.conmon_layout.exit_status_file)? {
+            ExitReceipt::Published { .. } => return Ok(true),
+            // The receipt exists but carries no code yet, so terminality is not
+            // observable here. Answering "not yet" lets the caller reconcile
+            // through process inspection, which converges either when conmon
+            // finishes publishing or when the process is seen absent.
+            ExitReceipt::Unpublished => return Ok(false),
+            ExitReceipt::Absent => {}
         }
         match &manifest.creator_handoff {
             ContainerCreatorHandoffState::NotSpawned => Ok(matches!(

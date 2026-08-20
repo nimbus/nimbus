@@ -83,15 +83,15 @@ impl ContainerSandboxBackend {
             return pending_handoff_inspection(&manifest, &handoff_evidence).map(Some);
         }
 
-        let exit_present = crate::backends::conmon::lifecycle::inspect_runtime_artifact_presence(
+        // Report the exit only once the receipt carries a code. Conmon creates
+        // the receipt before it writes into it, so presence alone would make a
+        // mid-publication receipt fail this inspection.
+        if let crate::backends::conmon::lifecycle::ExitReceipt::Published {
+            exit_code,
+            evidence: exit_evidence,
+        } = crate::backends::conmon::lifecycle::read_exit_receipt(
             &manifest.conmon_layout.exit_status_file,
-            "exit-status receipt",
-        )?;
-        if exit_present {
-            let (exit_code, exit_evidence) =
-                crate::backends::conmon::lifecycle::read_exit_code_evidence(
-                    &manifest.conmon_layout.exit_status_file,
-                )?;
+        )? {
             return exited_inspection(
                 self,
                 &manifest,

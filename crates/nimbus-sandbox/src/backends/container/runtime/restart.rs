@@ -9,8 +9,9 @@ use serde::Serialize;
 use crate::backends::conmon::creator::{CreatorQuiescenceProof, confirm_dead_conmon_receipt};
 use crate::backends::conmon::lifecycle::{
     RuntimeStateObservation, configured_stop_signal, configured_stop_timeout,
-    delete_runtime_and_confirm_absent, read_exit_code, read_pid, remove_if_exists, runtime_state,
-    runtime_state_for_creator_attempt, signal_process, wait_for_receipt,
+    delete_runtime_and_confirm_absent, read_exit_code, read_exit_receipt, read_pid,
+    remove_if_exists, runtime_state, runtime_state_for_creator_attempt, signal_process,
+    wait_for_receipt,
 };
 use crate::backends::oci::egress::PepPreAdoptionReleaseAuthority;
 use crate::backends::oci::network::{
@@ -392,9 +393,12 @@ impl ContainerSandboxBackend {
             manifest.handle.id.as_str(),
         )?;
         confirm_source_conmon_absence(&manifest, &creator_quiescence, false)?;
-        if manifest.conmon_layout.exit_status_file.exists() {
-            manifest.last_exit_code =
-                Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
+        // Same rule as the teardown persist: an unpublished receipt leaves
+        // `last_exit_code` unknown rather than failing the transition.
+        if let Some(exit_code) =
+            read_exit_receipt(&manifest.conmon_layout.exit_status_file)?.exit_code()
+        {
+            manifest.last_exit_code = Some(exit_code);
         }
         self.persist_creator_quiescence(&mut manifest, creator_quiescence.clone())?;
         manifest.restart_transition = Some(ContainerRestartTransition::SourceQuiesced {
