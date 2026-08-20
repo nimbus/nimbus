@@ -236,3 +236,159 @@ storage apply, watermark publication, and fan-out execute only in
 the same ordered publisher behind an assignment fence. Provider stores and the
 explicit `serial`/`off` kill-switch intentionally retain the pre-slice actor
 path until PPSC5 slice C.
+
+## PPSC5-D/U8 performance closeout (2026-07-23)
+
+U8 measures the production ordered-publisher topology after the provider arm
+flip. The measured candidate merged as `42c4c5198` (PR #235). Its pre-merge
+worktree base and branch head are not reachable here, because the branch
+squash-merged and the worktree is gone.
+
+The runs wrote reports under `target/ppsc-bench/`. Those files are build
+output and are not retained, so the tables below are the record rather than a
+pointer to one. The hashes name the exact files the numbers were transcribed
+from:
+
+| Report | SHA-256 |
+| --- | --- |
+| `embedded-sqlite.md` | `c58971fd1b3af35a03733b2d91f1dd5f6c468332ae9974e5554fa76c5d1ca2bd` |
+| `postgres-mixed-load.md` | `93fc2d19ff9682e329375ef008085ca17bc6affd7e04a955eaa0c7a8f7ff4919` |
+| `mysql-mixed-load.md` | `605cf352f7c1bc83b3f74e6d135d00545e7a0bac2a4bb5d2153533dd1ca2ad5e` |
+
+### Embedded SQLite fsync/batching gate
+
+Command:
+
+```bash
+NIMBUS_CWB_WORKLOAD=crud NIMBUS_CWB_LADDER=1,32,256 \
+NIMBUS_CWB_MEASURE_ROUNDS=5 NIMBUS_CWB_WARMUP_ROUNDS=2 \
+NIMBUS_CWB_BACKEND=sqlite NIMBUS_CWB_SPLIT_PHASES=1 \
+NIMBUS_CWB_OUT=target/ppsc-bench/embedded-sqlite.md \
+cargo bench -p nimbus-engine --bench concurrent-write-throughput
+```
+
+| N | Mean mut/s | 95% CI | Median | CV | Speedup | Avg effective batch | Fsync/append share |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1,629 | [1,585, 1,672] | 1,630 | 2.2% | 1.00× | 1.00 | 44.9% |
+| 32 | 12,690 | [12,418, 12,962] | 12,566 | 1.7% | 7.79× | 16.42 | 29.0% |
+| 256 | 20,132 | [19,734, 20,531] | 20,174 | 1.6% | 12.36× | 143.25 | 16.3% |
+
+Raw measured-round mut/s:
+
+- N=1: `1600.495, 1663.828, 1662.955, 1587.432, 1629.586`
+- N=32: `12863.783, 12483.350, 12554.561, 12565.920, 12982.045`
+- N=256: `19603.976, 20124.548, 20445.661, 20313.205, 20174.071`
+
+The saturated rung retains a large effective batch and reduces fsync share as
+load grows. It therefore does not regress the embedded group-commit/fsync
+behavior established earlier in the campaign.
+
+### PostgreSQL 16 loopback and injected RTT
+
+Command:
+
+```bash
+NIMBUS_BENCH_POSTGRES_URL='host=127.0.0.1 port=25432 user=postgres password=<fixture> dbname=postgres' \
+NIMBUS_BENCH_RTT_DELAY_MS=5 \
+make bench-postgres-provider WORKLOAD=mixed-load \
+  REPORT=target/ppsc-bench/postgres-mixed-load.md
+```
+
+The pinned fixture was `postgres:16`, image digest
+`sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20`.
+The run used 10 steady, 8 cold, and 4 RTT measured rounds after 2/1/1 warmups.
+
+| Lane/backend | Median per op | Mean 95% CI | Median ops/s |
+| --- | ---: | --- | ---: |
+| Steady SQLite | 403.39 µs | [389.67, 414.91] µs | 2,478.97 |
+| Steady PostgreSQL loopback | 5.19 ms | [5.15, 5.22] ms | 192.65 |
+| Cold SQLite | 440.44 µs | [424.67, 446.23] µs | 2,270.44 |
+| Cold PostgreSQL loopback | 6.48 ms | [6.05, 6.75] ms | 154.31 |
+| RTT PostgreSQL loopback | 20.12 ms | [18.92, 21.95] ms | 49.71 |
+| RTT PostgreSQL +5 ms/direction | 643.84 ms | [640.75, 647.71] ms | 1.55 |
+
+Raw round durations:
+
+- steady SQLite: `186.31, 189.16, 202.43, 188.99, 177.34, 196.55, 194.72, 192.54, 195.32, 207.64 ms`
+- steady PostgreSQL: `2.47, 2.46, 2.50, 2.54, 2.47, 2.49, 2.49, 2.47, 2.50, 2.50 s`
+- cold SQLite: `212.67, 211.93, 214.31, 201.12, 216.72, 201.49, 210.90, 202.99 ms`
+- cold PostgreSQL: `2.77, 2.88, 2.91, 3.06, 3.16, 3.21, 3.29, 3.31 s`
+- RTT loopback: `163.55, 157.91, 158.31, 174.28 ms`
+- RTT injected: `5.14, 5.14, 5.18, 5.16 s`
+
+For the four mutation commits in each RTT round, mean durable append was
+16.83 ms/commit loopback and 658.21 ms/commit injected, representing 92.14%
+and 95.19% of measured commit phase time. This provider I/O occurs after
+serial assignment releases the assignment/recovery gate, so ordinary mutation
+`durable_append` network-wait share under serial assignment is 0% by
+construction. Initial lease acquisition remains intentionally before first
+assignment; lease renewal is a separate background lifecycle.
+
+### MySQL 8.4 loopback and injected RTT
+
+Command:
+
+```bash
+NIMBUS_MYSQL_URL='mysql://root:<fixture>@127.0.0.1:23306/test' \
+NIMBUS_BENCH_RTT_DELAY_MS=5 \
+make bench-mysql-provider WORKLOAD=mixed-load \
+  REPORT=target/ppsc-bench/mysql-mixed-load.md
+```
+
+The pinned fixture was `mysql:8.4`, image digest
+`sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d`.
+The run used the same 10/8/4 measured and 2/1/1 warmup protocol.
+
+| Lane/backend | Median per op | Mean 95% CI | Median ops/s |
+| --- | ---: | --- | ---: |
+| Steady SQLite | 415.24 µs | [383.91, 490.60] µs | 2,408.23 |
+| Steady MySQL loopback | 4.53 ms | [4.46, 4.61] ms | 220.85 |
+| Cold SQLite | 435.60 µs | [418.04, 459.56] µs | 2,295.69 |
+| Cold MySQL loopback | 6.49 ms | [6.01, 6.82] ms | 154.19 |
+| RTT MySQL loopback | 20.10 ms | [17.87, 24.23] ms | 49.75 |
+| RTT MySQL +5 ms/direction | 553.52 ms | [521.74, 577.79] ms | 1.81 |
+
+Raw round durations:
+
+- steady SQLite: `302.92, 234.62, 181.25, 187.32, 189.18, 204.17, 196.88, 205.75, 194.98, 201.76 ms`
+- steady MySQL: `2.10, 2.12, 2.15, 2.19, 2.26, 2.17, 2.16, 2.20, 2.18, 2.25 s`
+- cold SQLite: `225.22, 201.20, 213.75, 205.79, 229.39, 201.48, 212.39, 195.78 ms`
+- cold MySQL: `2.77, 2.82, 2.88, 3.03, 3.20, 3.24, 3.32, 3.36 s`
+- RTT loopback: `192.38, 159.65, 161.63, 159.98 ms`
+- RTT injected: `4.21, 4.47, 4.53, 4.38 s`
+
+Mean durable append was 18.57 ms/commit loopback and 584.78 ms/commit
+injected, representing 89.44% and 90.78% of measured commit phase time. The
+same post-assignment ownership rule makes ordinary mutation network-wait share
+under serial assignment 0%.
+
+### In-flight-depth proof and interpretation boundary
+
+The RTT workload intentionally runs one tenant and awaits each read, query,
+insert, or update before issuing the next operation. Its observed effective
+mutation rate of 0.01 operations per nominal RTT is therefore a latency/protocol
+sensitivity result, not evidence for or against same-tenant batching. It is not
+used to claim publisher pipelining throughput.
+
+Actual provider statement in-flight depth is established through the
+production Engine publisher interface and its provider diagnostics:
+
+```bash
+NIMBUS_PROVIDER_FIXTURE_PROJECT=nimbus-external-provider-tests-u8 \
+NIMBUS_PROVIDER_FIXTURE_POSTGRES_PORT=25432 \
+make test-external-provider PROVIDER=postgres REUSE=1 KEEP=1 \
+  TEST_FILTER='test(postgres_provider_publisher_contract)'
+
+NIMBUS_PROVIDER_FIXTURE_PROJECT=nimbus-external-provider-tests-u8 \
+NIMBUS_PROVIDER_FIXTURE_MYSQL_PORT=23306 \
+make test-external-provider PROVIDER=mysql REUSE=1 KEEP=1 \
+  TEST_FILTER='test(mysql_provider_publisher_contract)'
+```
+
+Both commands executed exactly one test and passed. PostgreSQL asserted
+configured and observed in-flight depth **2**; MySQL asserted configured and
+observed depth **1**, the deliberate driver/protocol divergence. Both also
+asserted one journal statement per provider batch and exercised the canonical
+async tenant lifecycle plus the production ordered-publisher path. The complete
+U8 live-provider lanes independently passed PostgreSQL 72/72, MySQL 45/45, and
+libSQL 49/49 with required fixtures and no provider skips.
