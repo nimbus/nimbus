@@ -41,6 +41,12 @@ pub(crate) enum WiringRecord {
 const NIMBUS_KEY: &str = "nimbus";
 const PACKAGES_KEY: &str = "packages";
 const DEPENDENCIES_KEY: &str = "dependencies";
+const DEV_DEPENDENCIES_KEY: &str = "devDependencies";
+
+/// The manifest sections a `file:` spec into the provisioned tree can live in.
+/// `node_runtime::collect_node_dependency_requirements` installs from both, so
+/// both must be read before the staged tree is judged unused.
+const DEPENDENCY_SECTIONS: [&str; 2] = [DEPENDENCIES_KEY, DEV_DEPENDENCIES_KEY];
 
 /// The current `dependencies[name]` spec, or `None` when the dependency (or
 /// the `dependencies` object) is absent.
@@ -60,15 +66,25 @@ pub(crate) fn dependency_spec(text: &str, name: &str) -> Result<Option<String>, 
 
 /// Whether any dependency still points into the provisioned package tree.
 /// `uninstall` uses this to decide whether the staged payload is still in use.
+///
+/// It reads `devDependencies` as well as `dependencies`, because the install
+/// path does: `@nimbus/codegen` is wired as a dev dependency, so a check that
+/// saw only `dependencies` would call the tree unused and delete it out from
+/// under a spec npm still has to resolve.
 pub(crate) fn has_dependency_with_prefix(text: &str, prefix: &str) -> Result<bool, String> {
     let top = parse_object(text)?;
-    let Some(raw) = entry(&top, DEPENDENCIES_KEY) else {
-        return Ok(false);
-    };
-    let deps = parse_nested(raw.get(), DEPENDENCIES_KEY)?;
-    Ok(deps.iter().any(|(_, value)| {
-        serde_json::from_str::<String>(value.get()).is_ok_and(|spec| spec.starts_with(prefix))
-    }))
+    for section in DEPENDENCY_SECTIONS {
+        let Some(raw) = entry(&top, section) else {
+            continue;
+        };
+        let deps = parse_nested(raw.get(), section)?;
+        if deps.iter().any(|(_, value)| {
+            serde_json::from_str::<String>(value.get()).is_ok_and(|spec| spec.starts_with(prefix))
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Rewrite `package.json` text so `dependencies[name] = spec`. Existing entries
@@ -480,6 +496,23 @@ mod tests {
             !has_dependency_with_prefix("{}\n", "file:./.nimbus/packages/").unwrap(),
             "a manifest with no dependencies holds nothing in use"
         );
+    }
+
+    /// `@nimbus/codegen` is wired as a dev dependency, so a dev-only spec into
+    /// the provisioned tree still holds it in use. Reading `dependencies` alone
+    /// reported the tree unused and `uninstall` deleted it, leaving npm with a
+    /// `file:` path that no longer exists.
+    #[test]
+    fn a_dev_dependency_into_the_provisioned_tree_holds_it_in_use() {
+        let dev_only = "{\n  \"name\": \"x\",\n  \"devDependencies\": {\n    \
+\"@nimbus/codegen\": \"file:./.nimbus/packages/codegen\"\n  }\n}\n";
+        assert!(has_dependency_with_prefix(dev_only, "file:./.nimbus/packages/").unwrap());
+
+        // Positive control: the section is read, not merely present. A dev
+        // dependency outside the tree leaves it free to remove.
+        let dev_elsewhere =
+            "{\n  \"name\": \"x\",\n  \"devDependencies\": {\n    \"vite\": \"^7.0.0\"\n  }\n}\n";
+        assert!(!has_dependency_with_prefix(dev_elsewhere, "file:./.nimbus/packages/").unwrap());
     }
 
     /// A manifest that does not use two spaces must come back in its own
