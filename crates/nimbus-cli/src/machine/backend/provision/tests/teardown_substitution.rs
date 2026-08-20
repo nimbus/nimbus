@@ -1,6 +1,5 @@
 //! End-to-end compute substitution for the forwarded-machine teardown sink.
 
-use std::io::{Read as _, Write as _};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

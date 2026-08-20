@@ -109,7 +109,7 @@ impl CollectionPath {
 
         let root = CollectionName::new(segments[0].clone())?;
         let mut descendants = Vec::with_capacity((segments.len() - 1) / 2);
-        for pair in segments[1..].chunks_exact(2) {
+        for pair in segments[1..].as_chunks::<2>().0 {
             descendants.push(CollectionPathSegment {
                 document_id: DocumentId::from_key(pair[0].clone())?,
                 collection: CollectionName::new(pair[1].clone())?,
