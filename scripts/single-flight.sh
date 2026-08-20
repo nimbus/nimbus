@@ -11,9 +11,13 @@ Usage:
   bash scripts/single-flight.sh --clear <name>
 
 Examples:
-  bash scripts/single-flight.sh --key cargo-test-workspace -- cargo test --workspace
-  bash scripts/single-flight.sh -- cargo test -p nimbus-engine
+  bash scripts/single-flight.sh --key cargo-test-workspace -- cargo nextest run --workspace
+  bash scripts/single-flight.sh -- cargo nextest run -p nimbus-engine
   bash scripts/single-flight.sh --clear cargo-test-workspace
+
+Run a whole crate with `cargo nextest run`, not `cargo test`. This workspace
+holds process-scoped invariants that a one-process run violates; see
+docs/private/operating/verification.md.
 EOF
 }
 

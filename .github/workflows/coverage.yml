@@ -135,7 +135,11 @@ jobs:
   coverage:
     name: Coverage shard (${{ matrix.shard }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Process-per-test is strictly slower than one process per crate, and
+    # nextest's `external-provider` group serializes the provider suites that
+    # `cargo test` used to interleave. Both are correctness requirements, not
+    # regressions, so the bound accommodates them rather than the reverse.
+    timeout-minutes: 45
     needs: [ui-artifacts, warm-sccache]
     strategy:
       fail-fast: false
@@ -202,6 +206,15 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      # Pinned to the same version ci.yml's workspace test lane uses. The
+      # coverage shards must run tests the same way the merge gate does; see
+      # the "Run coverage shard" step for why.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: nextest@0.9.138
+          fallback: none
+
       - name: Download nimbus-ui artifacts
         uses: actions/download-artifact@v8
         with:
@@ -267,14 +280,32 @@ jobs:
       - name: Run coverage shard (no report)
         # CA3: shards use cargo-llvm-cov's `show-env --export-prefix`
         # mode to set LLVM_PROFILE_FILE/RUSTFLAGS/RUSTC_WRAPPER, then run
-        # `cargo test` directly. Profraws live at `target/nimbus-*.profraw`
-        # (the show-env convention) which the reducer also uses.
+        # the tests directly. Profraws live at `target/nimbus-*.profraw`
+        # (the show-env convention) which the reducer also uses; the
+        # LLVM_PROFILE_FILE pattern carries `%p`, so one profraw per test
+        # process merges exactly like one profraw per test binary did.
         #
-        # CA2: -j 4 matches the ubuntu-24.04 runner vCPU count under mold.
+        # This runs nextest, not `cargo test`, because the workspace only
+        # supports process-per-test. `cargo test` puts every test of a crate
+        # in one process, and several of our invariants are process-global by
+        # design -- `LocalNetworkManager::bootstrap` deliberately admits one
+        # composition per process, and V8 isolate construction is guarded by
+        # nextest's `runtime-v8-global` test group. Under `cargo test` those
+        # tests collided with each other rather than testing anything, which
+        # is what left this lane red while `make test` stayed green. Running
+        # the merge gate's runner also means a coverage failure now reflects
+        # the same execution model the gate does.
+        #
+        # CA2: --build-jobs 4 matches the ubuntu-24.04 runner vCPU count
+        # under mold. Note nextest's `-j` means `--test-threads`, not build
+        # jobs; test concurrency is left at the profile default (num-cpus).
         run: |
           # shellcheck disable=SC1090
           source <(cargo llvm-cov show-env --export-prefix)
-          cargo test ${{ matrix.packages }} -j 4
+          cargo-nextest nextest run \
+            --profile coverage \
+            ${{ matrix.packages }} \
+            --build-jobs 4
 
       - name: Show sccache stats
         if: always()

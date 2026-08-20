@@ -70,3 +70,12 @@ slow-timeout = { period = "20m", terminate-after = 2 }
 inherits = "default"
 default-filter = 'package(nimbus-engine) and test(/^tests::ppsc::seed_farm::ppsc_seed_farm_executes_selected_redb_scenarios$/)'
 slow-timeout = { period = "30m", terminate-after = 1 }
+
+[profile.coverage]
+inherits = "default"
+# Coverage shards run llvm-instrumented binaries, which are several times
+# slower than the ones `default`'s 45s bound was calibrated against. Keep the
+# shape of that bound -- a genuinely hung test must still be terminated -- but
+# scale the period so instrumentation overhead alone cannot kill a healthy
+# test and report it as a coverage-lane failure.
+slow-timeout = { period = "180s", terminate-after = 3 }

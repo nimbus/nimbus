@@ -94,6 +94,32 @@ slow test after 45 seconds and three strikes, so Nextest lanes and hosted CI
 are protected. A bare `cargo test` has no timeout. Wrap a long check in
 `timeout <seconds> ...` and require the same of a delegated job.
 
+## Nextest is the runner, not a preference
+
+Run a whole crate with `cargo nextest run`, never with `cargo test`. Nextest
+gives each test its own process. This workspace depends on that, so a
+full-crate `cargo test` does not measure a supported configuration:
+
+- `LocalNetworkManager::bootstrap` admits exactly one composition per process
+  by design. Every test that builds one is process-exclusive, and a second
+  concurrent one gets `DuplicateProcessComposition`.
+- Parallel V8 isolate construction aborts the process outright
+  (`vector.h:415`). The `runtime-v8-global` test group serializes it.
+- Process-global test hooks keyed by tenant collide when two tests share a
+  tenant id.
+
+None of these are defects to fix by making the code thread-safe. They are
+process-scoped invariants, and process-per-test is how the workspace honors
+them.
+
+A focused `cargo test -p <crate> <test>` naming one test is fine — one test in
+one process is the same shape. The rule is about running a crate's whole
+suite.
+
+This is a live hazard, not a hypothetical: the Coverage lane ran
+`cargo test` per shard and spent three weeks red on 68 collisions that said
+nothing about the code under test.
+
 ## Host ports in tests
 
 Do not discover a host port with a probe. A probe binds port zero, reads the

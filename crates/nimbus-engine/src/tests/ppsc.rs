@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use nimbus_core::{
     DocumentId, FieldSchema, FieldType, IdSource, ManualMonotonicClock, Mutation, ScheduleRequest,
@@ -45,7 +46,6 @@ struct PpscEngineRunner {
     publications: Arc<PpscPublicationRecorder>,
     tenants: BTreeMap<String, TenantId>,
     created_tenants: BTreeSet<TenantId>,
-    publisher_limited_tenants: BTreeSet<TenantId>,
     restore_archives: BTreeMap<u64, PointInTimeRestoreArchive>,
     takeover_engine_factory: Option<PpscEngineFactory>,
     provider_lease_time_control: Option<Arc<dyn ProviderLeaseTimeControl>>,
@@ -53,6 +53,7 @@ struct PpscEngineRunner {
     restart_heads: Option<BTreeMap<String, u64>>,
     restart_runtime_identities: Option<BTreeMap<String, u64>>,
     scenario_seed: u64,
+    tenant_namespace: u64,
     next_engine_generation: u64,
 }
 
@@ -172,6 +173,7 @@ impl PpscEngineRunner {
         let publications = Arc::new(PpscPublicationRecorder::default());
         PpscEnginePublicationObserver::install(&engine, publications.clone(), 0);
 
+        let tenant_namespace = next_tenant_namespace();
         let tenant_names = scenario
             .steps
             .iter()
@@ -179,16 +181,14 @@ impl PpscEngineRunner {
             .collect::<BTreeSet<_>>();
         let mut tenants = BTreeMap::new();
         let mut created_tenants = BTreeSet::new();
-        let mut publisher_limited_tenants = BTreeSet::new();
         for tenant_name in tenant_names {
-            let tenant_id = TenantId::new(tenant_name).expect("scenario tenant id should parse");
+            let tenant_id = ppsc_tenant_id(tenant_namespace, tenant_name);
             if scenario.steps.iter().any(|step| {
                 matches!(
                     &step.operation,
                     PpscOperation::ForceOverload { tenant } if tenant == tenant_name
                 )
             }) {
-                publisher_limited_tenants.insert(tenant_id.clone());
                 crate::tenant::configure_publisher_limits_for_testing(
                     tenant_id.clone(),
                     1,
@@ -220,7 +220,8 @@ impl PpscEngineRunner {
             .collect::<BTreeSet<_>>();
         let mut restore_archives = BTreeMap::new();
         for archive_id in archive_ids {
-            let source_id = ppsc_restore_source_tenant_id(scenario.seed, archive_id);
+            let source_id =
+                ppsc_restore_source_tenant_id(tenant_namespace, scenario.seed, archive_id);
             engine
                 .create_tenant_async(source_id.clone())
                 .await
@@ -277,7 +278,6 @@ impl PpscEngineRunner {
             publications,
             tenants,
             created_tenants,
-            publisher_limited_tenants,
             restore_archives,
             takeover_engine_factory: None,
             provider_lease_time_control: None,
@@ -285,6 +285,7 @@ impl PpscEngineRunner {
             restart_heads: None,
             restart_runtime_identities: None,
             scenario_seed: scenario.seed,
+            tenant_namespace,
             next_engine_generation: 1,
         }
     }
@@ -492,7 +493,6 @@ impl PpscEngineRunner {
                                 error.to_string().contains("crash-and-replay"),
                                 "PPSC provider acknowledgement loss must preserve its ambiguous outcome: {error}"
                             );
-                            self.prepare_publisher_limits_for_runtime_load(&tenant_id);
                         } else {
                             result.expect(
                                 "PPSC embedded apply acknowledgement loss should reconcile in place",
@@ -947,22 +947,10 @@ impl PpscEngineRunner {
 
     fn expected_created_tenants(&self) -> BTreeSet<TenantId> {
         let mut expected = self.tenants.values().cloned().collect::<BTreeSet<_>>();
-        expected.extend(
-            self.restore_archives
-                .keys()
-                .map(|archive_id| ppsc_restore_source_tenant_id(self.scenario_seed, *archive_id)),
-        );
+        expected.extend(self.restore_archives.keys().map(|archive_id| {
+            ppsc_restore_source_tenant_id(self.tenant_namespace, self.scenario_seed, *archive_id)
+        }));
         expected
-    }
-
-    fn prepare_publisher_limits_for_runtime_load(&self, tenant_id: &TenantId) {
-        if self.publisher_limited_tenants.contains(tenant_id) {
-            crate::tenant::configure_publisher_limits_for_testing(
-                tenant_id.clone(),
-                1,
-                Duration::from_millis(25),
-            );
-        }
     }
 
     async fn commit_route_insert(
@@ -1102,7 +1090,6 @@ impl PpscEngineRunner {
             engine_generation,
         );
         for tenant_id in self.tenants.values() {
-            self.prepare_publisher_limits_for_runtime_load(tenant_id);
             engine
                 .ensure_tenant_ready_async(tenant_id.clone())
                 .await
@@ -1364,8 +1351,32 @@ fn ppsc_document_id(seed: u64, step: usize, key: &str) -> DocumentId {
         .expect("scenario document id should parse")
 }
 
-fn ppsc_restore_source_tenant_id(seed: u64, archive_id: u64) -> TenantId {
-    TenantId::new(format!("r-{seed:016x}-{archive_id:016x}"))
+/// Mints a process-unique namespace for one runner's tenant identifiers.
+///
+/// Scenario tenant names derive from the scenario seed alone, so every runner
+/// replaying the same retained corpus would otherwise mint identical
+/// `TenantId`s. Several engine test hooks are process-global maps keyed by
+/// `TenantId` — publisher limits most sharply, because that map is read once
+/// and removed, so whichever concurrent test builds its publisher second
+/// silently falls back to the production queue capacity and the overload the
+/// scenario asked for never happens. Namespacing keeps those keys disjoint.
+///
+/// Runners never share a namespace, and they do not need to: each one builds
+/// its own engine over its own data directory, and nothing the differential
+/// compares carries a tenant id. Terminal state is keyed by scenario name, and
+/// `TenantEventRecord` has no tenant field, so the compared canonical journal
+/// bytes are identical across namespaces.
+fn next_tenant_namespace() -> u64 {
+    static NEXT_TENANT_NAMESPACE: AtomicU64 = AtomicU64::new(0);
+    NEXT_TENANT_NAMESPACE.fetch_add(1, AtomicOrdering::Relaxed)
+}
+
+fn ppsc_tenant_id(namespace: u64, name: &str) -> TenantId {
+    TenantId::new(format!("n{namespace:016x}-{name}")).expect("scenario tenant id should parse")
+}
+
+fn ppsc_restore_source_tenant_id(namespace: u64, seed: u64, archive_id: u64) -> TenantId {
+    TenantId::new(format!("n{namespace:016x}-r-{seed:016x}-{archive_id:016x}"))
         .expect("PPSC restore source tenant id should parse")
 }
 
