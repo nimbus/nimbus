@@ -34,7 +34,7 @@ bytes.workspace = true
 bytestring.workspace = true
 cfg-if.workspace = true
 chrono = { workspace = true, default-features = false }
-crc-fast.workspace = true
+crc-fast = "=1.6.0"
 futures = { workspace = true, features = ["std"] }
 hex-simd.workspace = true
 hmac.workspace = true

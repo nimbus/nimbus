@@ -2,7 +2,6 @@ use super::*;
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::net::TcpListener;
 use std::sync::Mutex;
 
 use crate::backend::SandboxBackendKind;
@@ -17,12 +16,17 @@ use crate::backends::oci::network::{
 use crate::spec::{
     SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
 };
+use nimbus_process_harness::PortWindow;
 
 mod fault_matrix;
 mod store_faults;
 
 struct PublicationFixture {
     _temp: tempfile::TempDir,
+    /// Keeps the provider endpoint below unanswered for as long as the fixture
+    /// lives. Nothing may listen there, and only a held claim keeps a foreign
+    /// process from binding it mid-test.
+    _port_window: PortWindow,
     backend: ContainerSandboxBackend,
     manifest: ContainerSandboxManifest,
     expectation: MachinePortPublicationExpectation,
@@ -31,12 +35,8 @@ struct PublicationFixture {
 impl PublicationFixture {
     fn new(bindings: Vec<SandboxPortBinding>) -> Self {
         let temp = tempfile::tempdir().expect("temporary root should exist");
-        let listener = TcpListener::bind("127.0.0.1:0").expect("provider fixture should bind");
-        let port = listener
-            .local_addr()
-            .expect("provider fixture address should resolve")
-            .port();
-        drop(listener);
+        let port_window = PortWindow::claim();
+        let port = port_window.port(0);
         let forwarder = OciMachinePortForwarderConfig::for_provider_instance(
             "127.0.0.1",
             port,
@@ -132,6 +132,7 @@ impl PublicationFixture {
         .expect("fixture expectation should authenticate");
         Self {
             _temp: temp,
+            _port_window: port_window,
             backend,
             manifest,
             expectation,

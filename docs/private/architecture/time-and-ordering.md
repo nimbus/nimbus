@@ -113,6 +113,25 @@ the already-computed record; it never re-runs the handler in the same attempt.
 Crash or lease takeover may replay a durable `Running` record, so the external
 delivery contract remains explicitly at-least-once rather than exactly-once.
 
+## Conditional admission and materialized position
+
+A conditional write is admitted in durable order, not against a pre-read. The
+writer carries its expected state to the committer, which evaluates it against
+its own read inside the actor and **before** sequence assignment. A refused
+write therefore takes no sequence, appends no journal record, and publishes
+nothing, so a rejection cannot leave a gap in the durable order. Multipart
+metadata is fenced on the revision the writer observed, and no adapter or
+provider receives a raw compare-and-swap escape hatch.
+
+A sequence number orders writes; it does not identify state. Every materialized
+artifact is bound to a `MaterializedPosition` carrying the state version, the
+applied sequence, and a canonical state digest computed over a total order of
+table identities, schema tables, documents, and scheduled execution ids. Two
+artifacts at the same applied sequence with different state compare unequal, so
+recovery and point-in-time restore reject a checkpoint that diverges from the
+state its sequence should carry. `durable_head` stays a separate field because
+it is a durability fact about the journal rather than a property of the state.
+
 ## Distributed activation gates
 
 The Cloudflare Durable Object module is a compatibility-test substrate. Its

@@ -5,14 +5,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use nimbus_core::CommitEntry;
+
 use super::{TenantPointRead, TenantRangeScan};
-// Commit entries and point writes appear only on the test-only `*_direct`
-// seeding helpers: the metadata plane's production writer is the engine
-// committer, not this crate.
+// Point writes appear only on the test-only `*_direct` seeding helpers: the
+// metadata plane's production writer is the engine committer, not this crate.
 #[cfg(test)]
 use super::TenantPointWrite;
-#[cfg(test)]
-use nimbus_core::CommitEntry;
 
 /// Reserved table where object manifests are stored.
 ///
@@ -34,6 +33,11 @@ const OBJECT_FIELD_LAST_MODIFIED_MILLIS: &str = "last_modified_millis";
 const OBJECT_FIELD_UPLOAD_ID: &str = "upload_id";
 const OBJECT_FIELD_INITIATED_AT_MILLIS: &str = "initiated_at_millis";
 const OBJECT_FIELD_PARTS: &str = "parts";
+const OBJECT_FIELD_REVISION: &str = "revision";
+
+/// Revision a `CreateMultipartUpload` publishes. Revision 0 never exists, so
+/// "absent" and "present at the first revision" stay distinguishable.
+const FIRST_UPLOAD_REVISION: u64 = 1;
 
 /// A blob reference inside an object manifest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -418,6 +422,11 @@ pub struct ObjectMultipartUpload {
     pub initiated_at_millis: u64,
     #[serde(default)]
     pub parts: Vec<ObjectMultipartPart>,
+    /// Monotonic version of this upload row, starting at 1 for the row a
+    /// `CreateMultipartUpload` publishes. Every later write must name the
+    /// revision it observed, so the commit authority can refuse a write that
+    /// merged onto a stale image. See [`ObjectUploadExpectedState`].
+    pub revision: u64,
 }
 
 impl ObjectMultipartUpload {
@@ -437,6 +446,7 @@ impl ObjectMultipartUpload {
             user_metadata,
             initiated_at_millis,
             parts: Vec::new(),
+            revision: FIRST_UPLOAD_REVISION,
         };
         upload.validate()?;
         Ok(upload)
@@ -446,6 +456,11 @@ impl ObjectMultipartUpload {
         validate_upload_id(&self.upload_id)?;
         validate_object_bucket(&self.bucket)?;
         validate_object_key(&self.key)?;
+        if self.revision < FIRST_UPLOAD_REVISION {
+            return Err(nimbus_core::Error::InvalidInput(
+                "multipart upload revision must start at 1".to_string(),
+            ));
+        }
         let mut previous = None;
         for part in &self.parts {
             part.validate()?;
@@ -474,6 +489,19 @@ impl ObjectMultipartUpload {
                 Ok(None)
             }
         }
+    }
+
+    /// The clause a write derived from this image must carry, so the
+    /// authority can confirm nothing changed between the read and the write.
+    #[must_use]
+    pub fn observed_state(&self) -> ObjectUploadExpectedState {
+        ObjectUploadExpectedState::AtRevision(self.revision)
+    }
+
+    /// Advances this image to the revision that succeeds the one it was read
+    /// at. Call it once, on the merged image, immediately before the write.
+    pub fn advance_revision(&mut self) {
+        self.revision = self.revision.saturating_add(1);
     }
 
     pub fn document_id(&self) -> Result<DocumentId> {
@@ -516,6 +544,7 @@ impl ObjectMultipartUpload {
                 nimbus_core::Error::Serialization(format!("encode multipart parts: {err}"))
             })?,
         );
+        fields.insert(OBJECT_FIELD_REVISION.to_string(), json!(self.revision));
         Ok(Document::with_id(
             self.document_id()?,
             object_multipart_table()?,
@@ -540,6 +569,7 @@ impl ObjectMultipartUpload {
         let initiated_at_millis = required_u64(document, OBJECT_FIELD_INITIATED_AT_MILLIS)?;
         let parts = optional_json::<Vec<ObjectMultipartPart>>(document, OBJECT_FIELD_PARTS)?
             .unwrap_or_default();
+        let revision = required_u64(document, OBJECT_FIELD_REVISION)?;
         let upload = Self {
             upload_id,
             bucket,
@@ -548,6 +578,7 @@ impl ObjectMultipartUpload {
             user_metadata,
             initiated_at_millis,
             parts,
+            revision,
         };
         upload.validate()?;
         Ok(upload)
@@ -585,6 +616,156 @@ pub trait ObjectMetaRead {
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<ObjectMultipartUpload>>;
+}
+
+/// One state clause the authoritative committer evaluates against its own
+/// read of the current object row, before it assigns a sequence number.
+///
+/// A clause carries opaque `ETag` values only. Wire policy — header parsing,
+/// strong against weak comparison, and response mapping — belongs to the
+/// protocol surface that builds the clause, not to the commit authority that
+/// decides it.
+///
+/// There is deliberately no `Default`. A writer that omits a condition must
+/// say so by passing no clauses, so "unconditional" is always written down
+/// rather than inherited from a silent default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ObjectExpectedState {
+    /// The row must be absent.
+    Absent,
+    /// The row must be present, whatever `ETag` it carries.
+    Present,
+    /// The row must be present and carry exactly this opaque `ETag`.
+    PresentWithEtag(String),
+    /// The row must be absent, or present with a different opaque `ETag`.
+    AbsentOrEtagDiffers(String),
+}
+
+impl ObjectExpectedState {
+    /// Evaluates this clause against the current row's opaque `ETag`, or
+    /// `None` when the row is absent.
+    #[must_use]
+    pub fn holds_for(&self, current_etag: Option<&str>) -> bool {
+        match (self, current_etag) {
+            (Self::Absent, None) | (Self::Present, Some(_)) => true,
+            (Self::Absent, Some(_)) | (Self::Present | Self::PresentWithEtag(_), None) => false,
+            (Self::PresentWithEtag(expected), Some(current)) => expected == current,
+            (Self::AbsentOrEtagDiffers(_), None) => true,
+            (Self::AbsentOrEtagDiffers(rejected), Some(current)) => rejected != current,
+        }
+    }
+
+    /// Evaluates every clause in order and returns the first one that does
+    /// not hold. An empty clause list is an unconditional write.
+    #[must_use]
+    pub fn first_unmet<'a>(clauses: &'a [Self], current_etag: Option<&str>) -> Option<&'a Self> {
+        clauses
+            .iter()
+            .find(|clause| !clause.holds_for(current_etag))
+    }
+}
+
+/// What the commit authority decided for a conditional object-metadata write.
+///
+/// A rejected condition consumes no sequence number, appends no journal
+/// record, publishes no fan-out, and retains nothing in the byte plane: the
+/// authority returns [`ObjectConditionOutcome::Rejected`] before it reaches
+/// sequence assignment.
+#[derive(Clone, Debug)]
+pub enum ObjectConditionOutcome {
+    /// Every clause held, and the write committed.
+    Committed {
+        /// The commit the write produced.
+        commit: CommitEntry,
+        /// The manifest this write replaced, decoded from the authority's own
+        /// read. Callers use this — never a pre-read taken outside the
+        /// authority — to decide which blobs the superseded manifest released.
+        previous: Option<ObjectManifest>,
+    },
+    /// A clause did not hold. Nothing was written.
+    Rejected {
+        /// The first clause that did not hold.
+        unmet: ObjectExpectedState,
+        /// The manifest the authority observed when it decided. Callers use
+        /// this to decide whether a just-written blob is still retained by
+        /// the manifest that won.
+        current: Option<ObjectManifest>,
+    },
+}
+
+/// One state clause the authoritative committer evaluates against its own
+/// read of the current multipart-upload row, before it assigns a sequence
+/// number.
+///
+/// `UploadPart` carries no conditional headers on the wire, so no client
+/// policy can protect a multipart merge. The clause is therefore internal: a
+/// writer states the revision it merged onto, and the authority refuses the
+/// write when the row has moved on. The writer then reloads and re-merges,
+/// which is a pure operation on the reloaded image.
+///
+/// There is deliberately no `Default`, for the reason
+/// [`ObjectExpectedState`] documents.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ObjectUploadExpectedState {
+    /// The upload row must be absent.
+    Absent,
+    /// The upload row must be present at exactly this revision.
+    AtRevision(u64),
+}
+
+impl ObjectUploadExpectedState {
+    /// Evaluates this clause against the current row's revision, or `None`
+    /// when the row is absent.
+    #[must_use]
+    pub fn holds_for(&self, current_revision: Option<u64>) -> bool {
+        match (self, current_revision) {
+            (Self::Absent, None) => true,
+            (Self::Absent, Some(_)) | (Self::AtRevision(_), None) => false,
+            (Self::AtRevision(expected), Some(current)) => *expected == current,
+        }
+    }
+
+    /// The revision a write guarded by this clause must publish. An absent
+    /// row becomes the first revision; a present row becomes its successor.
+    #[must_use]
+    pub fn successor_revision(&self) -> u64 {
+        match self {
+            Self::Absent => FIRST_UPLOAD_REVISION,
+            Self::AtRevision(current) => current.saturating_add(1),
+        }
+    }
+
+    /// Evaluates every clause in order and returns the first one that does
+    /// not hold. An empty clause list is an unconditional write.
+    #[must_use]
+    pub fn first_unmet(clauses: &[Self], current_revision: Option<u64>) -> Option<&Self> {
+        clauses
+            .iter()
+            .find(|clause| !clause.holds_for(current_revision))
+    }
+}
+
+/// What the commit authority decided for a conditional multipart-upload
+/// write. A rejected clause has the same no-effect guarantee that
+/// [`ObjectConditionOutcome`] documents.
+#[derive(Clone, Debug)]
+pub enum ObjectUploadConditionOutcome {
+    /// Every clause held, and the write committed.
+    Committed {
+        /// The commit the write produced.
+        commit: CommitEntry,
+        /// The upload row this write replaced or removed, decoded from the
+        /// authority's own read. `None` when the write created the row.
+        previous: Option<ObjectMultipartUpload>,
+    },
+    /// A clause did not hold. Nothing was written.
+    Rejected {
+        /// The first clause that did not hold.
+        unmet: ObjectUploadExpectedState,
+        /// The upload row the authority observed when it decided. The caller
+        /// re-merges onto this image rather than onto its own stale read.
+        current: Option<ObjectMultipartUpload>,
+    },
 }
 
 fn object_identity_matches_prefix(document: &Document, bucket: &str, prefix: &str) -> bool {

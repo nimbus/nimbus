@@ -1,0 +1,243 @@
+{
+  "schemaVersion": 1,
+  "kind": "nimbus.examples-verification-benchmark",
+  "status": "failed",
+  "startedAt": "2026-08-18T07:49:46.379Z",
+  "completedAt": "2026-08-18T08:02:36.812Z",
+  "benchmarkRoot": "/home/nimbus/avr9-candidate.PcfwNs/target/examples-verify-benchmarks/nimbus-examples-benchmark.ebaO2D",
+  "request": {
+    "serialSamples": 3,
+    "parallelSamples": 5,
+    "maxSeconds": 1200,
+    "parallelism": 5,
+    "expectedCases": 9,
+    "expectedAnchors": 37,
+    "relativeLimit": 0.6
+  },
+  "hostFingerprint": {
+    "hostname": "minicloud",
+    "platform": "linux",
+    "release": "6.12.94+deb13-amd64",
+    "architecture": "x64",
+    "cpuCount": 4,
+    "cpuModels": [
+      "Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz"
+    ],
+    "totalMemoryBytes": 8246829056,
+    "nodeVersion": "v24.16.0"
+  },
+  "invalidPreflights": [],
+  "evaluation": {
+    "status": "failed",
+    "reason": "one or more benchmark checks failed",
+    "validSampleIds": [
+      "serial-01",
+      "serial-02",
+      "serial-03",
+      "parallel-01",
+      "parallel-02",
+      "parallel-03",
+      "parallel-04",
+      "parallel-05"
+    ],
+    "invalidSampleIds": [],
+    "checks": [
+      {
+        "name": "requested-valid-samples",
+        "status": "passed",
+        "evidence": "3 serial and 5 parallel"
+      },
+      {
+        "name": "all-runs-pass",
+        "status": "passed",
+        "evidence": [
+          "serial-01:passed/passed/matched",
+          "serial-02:passed/passed/matched",
+          "serial-03:passed/passed/matched",
+          "parallel-01:passed/passed/matched",
+          "parallel-02:passed/passed/matched",
+          "parallel-03:passed/passed/matched",
+          "parallel-04:passed/passed/matched",
+          "parallel-05:passed/passed/matched"
+        ]
+      },
+      {
+        "name": "exact-case-and-anchor-count",
+        "status": "passed",
+        "evidence": {
+          "caseCount": 9,
+          "anchorCount": 37,
+          "expectedCases": 9,
+          "expectedAnchors": 37
+        }
+      },
+      {
+        "name": "coverage-and-order-match",
+        "status": "passed",
+        "evidence": "1307573c0d36fdd666606a86f5ad45a2ab8ef0aa5c8260f3fe8a3bb161e52bbd"
+      },
+      {
+        "name": "binary-manifest-node-source-match",
+        "status": "passed",
+        "evidence": "a3626238ddb1bcbf7451135866cf37744f4c581e0d1fa4fd15aea0f5b6cf2400"
+      },
+      {
+        "name": "case-ports-are-distinct",
+        "status": "passed",
+        "evidence": [
+          {
+            "id": "serial-01",
+            "ports": [
+              33337,
+              35461,
+              35949,
+              41731,
+              39277,
+              32859,
+              40239,
+              39279,
+              34407
+            ]
+          },
+          {
+            "id": "serial-02",
+            "ports": [
+              35741,
+              38413,
+              39867,
+              35477,
+              40671,
+              44949,
+              40653,
+              38099,
+              34821
+            ]
+          },
+          {
+            "id": "serial-03",
+            "ports": [
+              37619,
+              45253,
+              33707,
+              38939,
+              37981,
+              38917,
+              33147,
+              41771,
+              42049
+            ]
+          },
+          {
+            "id": "parallel-01",
+            "ports": [
+              36825,
+              34637,
+              40499,
+              37559,
+              35757,
+              33243,
+              34555,
+              34107,
+              36573
+            ]
+          },
+          {
+            "id": "parallel-02",
+            "ports": [
+              37157,
+              34025,
+              46851,
+              43621,
+              42415,
+              38563,
+              35869,
+              34497,
+              37075
+            ]
+          },
+          {
+            "id": "parallel-03",
+            "ports": [
+              40593,
+              45543,
+              38005,
+              39183,
+              35771,
+              44145,
+              34785,
+              34761,
+              45421
+            ]
+          },
+          {
+            "id": "parallel-04",
+            "ports": [
+              45771,
+              41415,
+              44427,
+              42359,
+              33845,
+              42739,
+              34465,
+              41787,
+              42103
+            ]
+          },
+          {
+            "id": "parallel-05",
+            "ports": [
+              38995,
+              35229,
+              36341,
+              42601,
+              36731,
+              46453,
+              42363,
+              46455,
+              36811
+            ]
+          }
+        ]
+      },
+      {
+        "name": "parallel-relative-budget",
+        "status": "failed",
+        "evidence": {
+          "parallelMedianMs": 79136,
+          "serialMedianMs": 124355,
+          "relativeLimit": 0.6,
+          "relativeBudgetMs": 74613
+        }
+      },
+      {
+        "name": "parallel-absolute-budget",
+        "status": "passed",
+        "evidence": {
+          "parallelMedianMs": 79136,
+          "absoluteBudgetMs": 1200000
+        }
+      }
+    ],
+    "metrics": {
+      "serialDurationsMs": [
+        123512,
+        125241,
+        124355
+      ],
+      "parallelDurationsMs": [
+        79453,
+        79133,
+        79777,
+        79082,
+        79136
+      ],
+      "serialMedianMs": 124355,
+      "parallelMedianMs": 79136,
+      "relativeRatio": 0.636371677857746,
+      "relativeLimit": 0.6,
+      "absoluteBudgetMs": 1200000,
+      "caseCount": 9,
+      "anchorCount": 37
+    }
+  }
+}

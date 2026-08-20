@@ -6,7 +6,10 @@ use crate::inspection::{SandboxCleanupObservation, SandboxExecutionObservation};
 #[test]
 fn release_execution_artifacts_stops_running_egress_proxy() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let proxy_port = unused_loopback_port();
+    // The claim holds the one-port PEP range until this proof ends, so the
+    // proxy started below binds the exact port the range names.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = proxy_port..=proxy_port;
@@ -260,7 +263,10 @@ fn natural_exit_preserves_terminal_ipam_until_segment_cleanup_finalizes() {
     );
     let injected: Arc<OciSegmentAllocator> = recorder.clone();
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    let proxy_port = unused_loopback_port();
+    // The claim holds the one-port PEP range until this proof ends, so the
+    // proxy started below binds the exact port the range names.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
     config.published_port_range = proxy_port..=proxy_port;
     let backend = ContainerSandboxBackend::with_segment_allocator(config, injected);
     let mut manifest = backend

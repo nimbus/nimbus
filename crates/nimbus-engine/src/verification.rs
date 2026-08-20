@@ -1,7 +1,9 @@
-use nimbus_core::{Document, Error, Result, Schema, TableSchema, hex_encode};
-use nimbus_storage::{DurableJournalBootstrap, MaterializedJournalSnapshot};
+use nimbus_core::{Document, Result};
+use nimbus_storage::{
+    CanonicalMaterializedState, DurableJournalBootstrap, MaterializedJournalSnapshot,
+    MaterializedPosition, TableIdentitySnapshotEntry,
+};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -14,9 +16,12 @@ pub enum ConsistencyScope {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SnapshotFingerprint {
-    pub digest: String,
-    pub version: u16,
-    pub applied_sequence: u64,
+    /// The storage-owned position: applied sequence plus the digest of the
+    /// state that sequence produced. Reports compare this, not a sequence.
+    pub position: MaterializedPosition,
+    pub snapshot_version: u16,
+    /// Durable head stays outside the position. It describes how far the
+    /// journal is durable, not which state the snapshot materialized.
     pub durable_head: u64,
     pub schema_table_count: usize,
     pub document_count: usize,
@@ -25,7 +30,7 @@ pub struct SnapshotFingerprint {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BootstrapFingerprint {
-    pub snapshot_digest: String,
+    pub snapshot_position: MaterializedPosition,
     pub resume_after_sequence: u64,
     pub bootstrap_cut_sequence: u64,
     pub cursor_floor_sequence: u64,
@@ -52,35 +57,10 @@ pub struct ConsistencyVerificationReport {
     pub mismatches: Vec<ConsistencyMismatch>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct CanonicalMaterializedJournalSnapshot {
-    version: u16,
-    applied_sequence: u64,
-    durable_head: u64,
-    table_identities: Vec<CanonicalTableIdentity>,
-    schema: Vec<TableSchema>,
-    documents: Vec<Document>,
-    scheduled_execution_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct CanonicalTableIdentity {
-    namespace: String,
-    table_name: String,
-    table_id: String,
-    state: String,
-}
-
 pub fn snapshot_fingerprint(snapshot: &MaterializedJournalSnapshot) -> Result<SnapshotFingerprint> {
-    let canonical = canonicalize_materialized_journal_snapshot(snapshot);
-    let payload =
-        serde_json::to_vec(&canonical).map_err(|error| Error::Serialization(error.to_string()))?;
-    let digest = hex_encode(Sha256::digest(payload));
-
     Ok(SnapshotFingerprint {
-        digest,
-        version: snapshot.version,
-        applied_sequence: snapshot.applied_sequence.0,
+        position: snapshot.materialized_position()?,
+        snapshot_version: snapshot.version,
         durable_head: snapshot.durable_head.0,
         schema_table_count: snapshot.schema.tables.len(),
         document_count: snapshot.documents.len(),
@@ -90,66 +70,110 @@ pub fn snapshot_fingerprint(snapshot: &MaterializedJournalSnapshot) -> Result<Sn
 
 pub fn bootstrap_fingerprint(bootstrap: &DurableJournalBootstrap) -> Result<BootstrapFingerprint> {
     Ok(BootstrapFingerprint {
-        snapshot_digest: snapshot_fingerprint(&bootstrap.snapshot)?.digest,
+        snapshot_position: snapshot_fingerprint(&bootstrap.snapshot)?.position,
         resume_after_sequence: bootstrap.resume_after.0,
         bootstrap_cut_sequence: bootstrap.bootstrap_cut.0,
         cursor_floor_sequence: bootstrap.cursor_floor.0,
     })
 }
 
+/// Compare two materialized snapshots and name the first difference.
+///
+/// The position decides equality: two snapshots agree when their applied
+/// sequence and state digest agree. The field walk below exists only to name
+/// *where* a digest difference came from, so an operator gets a path rather
+/// than two opaque hashes.
 pub fn compare_materialized_journal_snapshots(
     left_scope: ConsistencyScope,
     left: &MaterializedJournalSnapshot,
     right_scope: ConsistencyScope,
     right: &MaterializedJournalSnapshot,
-) -> Option<ConsistencyMismatch> {
-    let left_canonical = canonicalize_materialized_journal_snapshot(left);
-    let right_canonical = canonicalize_materialized_journal_snapshot(right);
+) -> Result<Option<ConsistencyMismatch>> {
+    let left_position = left.materialized_position()?;
+    let right_position = right.materialized_position()?;
 
-    if left_canonical.version != right_canonical.version {
+    if left_position.version != right_position.version {
+        return Ok(Some(mismatch(
+            "materialized_snapshot_match",
+            left_scope,
+            right_scope,
+            "position.version",
+            left_position.version,
+            right_position.version,
+        )));
+    }
+    if left_position.applied_sequence != right_position.applied_sequence {
+        return Ok(Some(mismatch(
+            "materialized_snapshot_match",
+            left_scope,
+            right_scope,
+            "position.applied_sequence",
+            left_position.applied_sequence.0,
+            right_position.applied_sequence.0,
+        )));
+    }
+    // Durable head is compared separately because it is deliberately not part
+    // of the state digest.
+    if left.durable_head != right.durable_head {
+        return Ok(Some(mismatch(
+            "materialized_snapshot_match",
+            left_scope,
+            right_scope,
+            "durable_head",
+            left.durable_head.0,
+            right.durable_head.0,
+        )));
+    }
+    if left_position.state_digest == right_position.state_digest {
+        return Ok(None);
+    }
+
+    let left_state = left.canonical_state()?;
+    let right_state = right.canonical_state()?;
+    Ok(Some(
+        locate_canonical_state_difference(left_scope, &left_state, right_scope, &right_state)
+            .unwrap_or_else(|| {
+                mismatch(
+                    "materialized_snapshot_match",
+                    left_scope,
+                    right_scope,
+                    "position.state_digest",
+                    left_position.state_digest,
+                    right_position.state_digest,
+                )
+            }),
+    ))
+}
+
+/// Walk two canonical states in their shared canonical order and name the first
+/// field that differs. Returns `None` only when the states are field-identical,
+/// which the digest comparison above has already ruled out.
+fn locate_canonical_state_difference(
+    left_scope: ConsistencyScope,
+    left: &CanonicalMaterializedState,
+    right_scope: ConsistencyScope,
+    right: &CanonicalMaterializedState,
+) -> Option<ConsistencyMismatch> {
+    if left.snapshot_version != right.snapshot_version {
         return Some(mismatch(
             "materialized_snapshot_match",
             left_scope,
             right_scope,
             "version",
-            left_canonical.version,
-            right_canonical.version,
-        ));
-    }
-    if left_canonical.applied_sequence != right_canonical.applied_sequence {
-        return Some(mismatch(
-            "materialized_snapshot_match",
-            left_scope,
-            right_scope,
-            "applied_sequence",
-            left_canonical.applied_sequence,
-            right_canonical.applied_sequence,
-        ));
-    }
-    if left_canonical.durable_head != right_canonical.durable_head {
-        return Some(mismatch(
-            "materialized_snapshot_match",
-            left_scope,
-            right_scope,
-            "durable_head",
-            left_canonical.durable_head,
-            right_canonical.durable_head,
+            left.snapshot_version,
+            right.snapshot_version,
         ));
     }
 
-    // Compare stable table identities. `canonicalize_table_identities` already
-    // sorts both vectors deterministically, so this two-stage diff mirrors the
-    // schema/documents branches below: first the identity-key cardinality/order,
-    // then per-entry (which surfaces table_id or lifecycle-state drift on a
-    // same-named table). Without this branch the fingerprint digest hashes the
-    // identities while `ok = mismatches.is_empty()` ignores them, so the digest
-    // and the integrity flag could silently disagree (green-on-drift).
-    let left_identity_keys = left_canonical
+    // Table identities first: a table_id or lifecycle-state drift on a
+    // same-named table changes the digest, so the walk has to be able to say so
+    // rather than falling through to the opaque digest path.
+    let left_identity_keys = left
         .table_identities
         .iter()
         .map(table_identity_key)
         .collect::<Vec<_>>();
-    let right_identity_keys = right_canonical
+    let right_identity_keys = right
         .table_identities
         .iter()
         .map(table_identity_key)
@@ -164,10 +188,7 @@ pub fn compare_materialized_journal_snapshots(
             right_identity_keys,
         ));
     }
-    for (left_identity, right_identity) in left_canonical
-        .table_identities
-        .iter()
-        .zip(&right_canonical.table_identities)
+    for (left_identity, right_identity) in left.table_identities.iter().zip(&right.table_identities)
     {
         if left_identity != right_identity {
             return Some(mismatch(
@@ -181,13 +202,13 @@ pub fn compare_materialized_journal_snapshots(
         }
     }
 
-    let left_schema_keys = left_canonical
-        .schema
+    let left_schema_keys = left
+        .schema_tables
         .iter()
         .map(|table| table.table.to_string())
         .collect::<Vec<_>>();
-    let right_schema_keys = right_canonical
-        .schema
+    let right_schema_keys = right
+        .schema_tables
         .iter()
         .map(|table| table.table.to_string())
         .collect::<Vec<_>>();
@@ -201,7 +222,7 @@ pub fn compare_materialized_journal_snapshots(
             right_schema_keys,
         ));
     }
-    for (left_table, right_table) in left_canonical.schema.iter().zip(&right_canonical.schema) {
+    for (left_table, right_table) in left.schema_tables.iter().zip(&right.schema_tables) {
         if left_table != right_table {
             return Some(mismatch(
                 "materialized_snapshot_match",
@@ -214,16 +235,8 @@ pub fn compare_materialized_journal_snapshots(
         }
     }
 
-    let left_document_keys = left_canonical
-        .documents
-        .iter()
-        .map(document_key)
-        .collect::<Vec<_>>();
-    let right_document_keys = right_canonical
-        .documents
-        .iter()
-        .map(document_key)
-        .collect::<Vec<_>>();
+    let left_document_keys = left.documents.iter().map(document_key).collect::<Vec<_>>();
+    let right_document_keys = right.documents.iter().map(document_key).collect::<Vec<_>>();
     if left_document_keys != right_document_keys {
         return Some(mismatch(
             "materialized_snapshot_match",
@@ -234,11 +247,7 @@ pub fn compare_materialized_journal_snapshots(
             right_document_keys,
         ));
     }
-    for (left_document, right_document) in left_canonical
-        .documents
-        .iter()
-        .zip(&right_canonical.documents)
-    {
+    for (left_document, right_document) in left.documents.iter().zip(&right.documents) {
         if left_document != right_document {
             return Some(mismatch(
                 "materialized_snapshot_match",
@@ -251,14 +260,14 @@ pub fn compare_materialized_journal_snapshots(
         }
     }
 
-    if left_canonical.scheduled_execution_ids != right_canonical.scheduled_execution_ids {
+    if left.scheduled_execution_ids != right.scheduled_execution_ids {
         return Some(mismatch(
             "materialized_snapshot_match",
             left_scope,
             right_scope,
             "scheduled_execution_ids",
-            left_canonical.scheduled_execution_ids,
-            right_canonical.scheduled_execution_ids,
+            &left.scheduled_execution_ids,
+            &right.scheduled_execution_ids,
         ));
     }
 
@@ -268,7 +277,7 @@ pub fn compare_materialized_journal_snapshots(
 pub fn collect_durable_journal_bootstrap_mismatches(
     authoritative_snapshot: &MaterializedJournalSnapshot,
     bootstrap: &DurableJournalBootstrap,
-) -> Vec<ConsistencyMismatch> {
+) -> Result<Vec<ConsistencyMismatch>> {
     let mut mismatches = Vec::new();
 
     if let Some(snapshot_mismatch) = compare_materialized_journal_snapshots(
@@ -276,7 +285,7 @@ pub fn collect_durable_journal_bootstrap_mismatches(
         authoritative_snapshot,
         ConsistencyScope::JournalBootstrap,
         &bootstrap.snapshot,
-    ) {
+    )? {
         mismatches.push(ConsistencyMismatch {
             invariant: "bootstrap_snapshot_match".to_string(),
             ..snapshot_mismatch
@@ -329,78 +338,15 @@ pub fn collect_durable_journal_bootstrap_mismatches(
         ));
     }
 
-    mismatches
-}
-
-fn canonicalize_materialized_journal_snapshot(
-    snapshot: &MaterializedJournalSnapshot,
-) -> CanonicalMaterializedJournalSnapshot {
-    CanonicalMaterializedJournalSnapshot {
-        version: snapshot.version,
-        applied_sequence: snapshot.applied_sequence.0,
-        durable_head: snapshot.durable_head.0,
-        table_identities: canonicalize_table_identities(&snapshot.table_identities),
-        schema: canonicalize_schema(&snapshot.schema),
-        documents: canonicalize_documents(&snapshot.documents),
-        scheduled_execution_ids: canonicalize_scheduled_execution_ids(
-            &snapshot.scheduled_execution_ids,
-        ),
-    }
-}
-
-fn canonicalize_table_identities(
-    identities: &[nimbus_storage::TableIdentitySnapshotEntry],
-) -> Vec<CanonicalTableIdentity> {
-    let mut identities = identities
-        .iter()
-        .map(|identity| CanonicalTableIdentity {
-            namespace: identity.namespace.clone(),
-            table_name: identity.table.to_string(),
-            table_id: identity.table_id.to_string(),
-            state: identity.state.to_string(),
-        })
-        .collect::<Vec<_>>();
-    identities.sort_by(|left, right| {
-        (
-            &left.namespace,
-            &left.table_name,
-            &left.table_id,
-            &left.state,
-        )
-            .cmp(&(
-                &right.namespace,
-                &right.table_name,
-                &right.table_id,
-                &right.state,
-            ))
-    });
-    identities
-}
-
-fn canonicalize_schema(schema: &Schema) -> Vec<TableSchema> {
-    let mut tables = schema.tables.values().cloned().collect::<Vec<_>>();
-    tables.sort_by_key(|left| left.table.to_string());
-    tables
-}
-
-fn canonicalize_documents(documents: &[Document]) -> Vec<Document> {
-    let mut sorted = documents.to_vec();
-    sorted.sort_by_key(document_key);
-    sorted
-}
-
-fn canonicalize_scheduled_execution_ids(ids: &[String]) -> Vec<String> {
-    let mut sorted = ids.to_vec();
-    sorted.sort_unstable();
-    sorted
+    Ok(mismatches)
 }
 
 fn document_key(document: &Document) -> String {
     format!("{}/{}", document.table, document.id)
 }
 
-fn table_identity_key(identity: &CanonicalTableIdentity) -> String {
-    format!("{}/{}", identity.namespace, identity.table_name)
+fn table_identity_key(identity: &TableIdentitySnapshotEntry) -> String {
+    format!("{}/{}", identity.namespace, identity.table)
 }
 
 fn mismatch<T, U>(

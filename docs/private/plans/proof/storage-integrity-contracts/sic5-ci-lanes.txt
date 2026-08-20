@@ -1,0 +1,18 @@
+make ci on codex/sic-sic5 (SIC5 work commit)
+Summary [ 713.888s] 7448 tests run: 7445 passed (8 slow, 3 leaky), 3 failed, 107 skipped
+MAKE_CI_RC=2
+
+The three failures are wall-clock budget tests, not correctness assertions,
+and none of them touches storage provider qualification. Each passes alone
+on the same checkout:
+
+  nimbus-cli    exact_guest_teardown_accept_fails_within_its_deadline_when_a_call_is_missing
+                in-run FAIL 1.871s -> alone ok, 1 passed, 0.10s
+  nimbus-egress layered::tests::composition_stays_in_memory_nanosecond_scale
+                in-run FAIL 5.495s -> alone ok, 1 passed, 2.59s
+  nimbus-storage redb_storage_engine_quality_performance_budget_covers_latest_historical_cdc_pitr_and_gc
+                in-run FAIL 1.931s -> alone ok, 1 passed, 1.80s
+
+The third is the same budget test SIC4 already recorded as contention
+sensitive: a 1s PITR export/import bound measured inside a 7448-test
+concurrent run on a loaded host.

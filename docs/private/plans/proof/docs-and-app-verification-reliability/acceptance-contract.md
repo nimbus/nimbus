@@ -1,7 +1,7 @@
 # Acceptance Contract
 
 Date: 2026-08-17
-Owner: `docs-and-app-verification-reliability-plan.md`
+Owner: `docs/private/plans/archive/docs-and-app-verification-reliability-plan.md`
 
 ## Decisions
 

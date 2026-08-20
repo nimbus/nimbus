@@ -48,13 +48,6 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   UI hygiene, doc/spec truth-ups, and the `nimbus-compute` extraction plus
   workload-identity decision records. Review-driven refactor and cleanup work
   should route through this plan's band ledgers while it is active.
-- `storage-integrity-contracts-plan.md` - `proposed`. Owns atomic object-metadata
-  conditions and explicit writer-effect decisions. It also owns one canonical
-  materialized position, provider qualification, and physical SQLite evidence.
-  It consumes the completed storage
-  unification campaigns and must precede HS work that exports storage
-  artifacts. Immutable epoch lineages, seals, and mixed-fleet reader rollout
-  remain with `horizontal-scaling-plan.md`.
 - `nimbus-runtime-tenant-isolation-plan.md` - `complete` in PR #227. Canonical
   runtime-owner identity, routing-versus-reuse-authority separation,
   owner-partitioned
@@ -87,14 +80,13 @@ extension-registry seam before the second concern edits `extensions.rs`.
   The only outgoing workspace edge remains `nimbus-network -> nimbus-core`.
   Concrete effects stay with sandbox, server, KV, machine, proxy, and node.
   Future cluster transport stays in the deferred horizontal-scaling lane.
-- `docs-and-app-verification-reliability-plan.md` - `active` owner for network
-  documentation, stable verifier contracts, plan archival, and fresh-checkout
-  application verification. It will keep source unchanged and use product-owned
-  ports. It will isolate temporary state and emit structured evidence. It will
-  run nine apps with bounded parallelism. It consumes completed network and
-  examples decisions without reopening them. The AVR0-AVR2 phase candidate is
-  open as PR #275. It must merge and reconcile before runner and performance
-  work starts.
+- `archive/docs-and-app-verification-reliability-plan.md` - `cleanup candidate,
+  AVR0-AVR11 done`. This is the closing record for source-verified network
+  documentation and hermetic application verification. The shipped lane keeps
+  tracked source bytes unchanged and owns every temporary resource. It consumes
+  product-assigned ports and emits validated JSON and JUnit evidence. It runs
+  all nine applications with bounded parallelism. Final evidence stays in
+  `proof/docs-and-app-verification-reliability/`.
 - `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
   architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
   `SandboxBackend` router/dispatch seam with backend families
@@ -143,7 +135,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
   shared lease authority, and epoch-fenced protected writes. It supplies
   raft-committed fenced node super-net leases to the canonical
   `nimbus-network` allocation contract; it does not own a second segment
-  allocator, provider effects, or local network state store.
+  allocator, provider effects, or local network state store. It also owns the
+  storage artifacts the archived storage-integrity campaign deferred to it:
+  immutable external epoch lineages, journal-format seals, and reader-first
+  format rollout across a mixed-version reader fleet. Storage already publishes
+  one canonical `MaterializedPosition` and a provider semantic-qualification
+  profile for those protocols to build on.
 - `nimbus-fips-iroh-ed25519-retrofit-plan.md` - `draft`. Owns a future
   aws-lc-rs/PQ TLS posture, NodeSigner seam, and CMVP-triggered identity-key
   retrofit. Promote only after the current FIPS and iroh identity facts are

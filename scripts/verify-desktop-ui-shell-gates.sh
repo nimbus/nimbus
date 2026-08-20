@@ -50,11 +50,13 @@ check_gate \
 # 3. /debug/runtime/metrics references must stay in the wired-up hook and
 #    its msw fixtures; surface any new caller.
 allowed_debug_runtime_metrics=$(cat <<'EOF'
-packages/nimbus-ui/src/routes/operator/settings/hooks.ts
+packages/nimbus-ui/src/routes/operator/settings/-hooks.ts
 packages/nimbus-ui/src/test/handlers.ts
 packages/nimbus-ui/src/test/msw.spec.ts
 EOF
 )
+# The child Bash reads the allow-list from $1. Keep this script literal.
+# shellcheck disable=SC2016
 check_gate \
   "/debug/runtime/metrics references outside the wired-up consumer" \
   bash -c '

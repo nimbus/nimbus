@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { COMPUTE_VIEWS, parseComputeView } from "./compute-views";
+import { COMPUTE_VIEWS, parseComputeView } from "./-compute-views";
 
 describe("compute-views", () => {
   it("exposes functions, sandboxes, and the call graph as compute views", () => {

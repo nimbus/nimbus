@@ -73,7 +73,8 @@ fn runner_effects_crash_child() {
     let root = child_root();
 
     let present_root = case_root(&root, PRESENT_CASE);
-    let (present_backend, mut present) = prepared_runner_fixture(&present_root, PRESENT_ID);
+    let (_present_port_window, present_backend, mut present) =
+        prepared_runner_fixture(&present_root, PRESENT_ID);
     let present_creator_attempt = "fresh-runner-present-creator";
     present.conmon_launch.state_command =
         exact_present_command(&present.handle.id, Some(present_creator_attempt));
@@ -118,7 +119,8 @@ fn runner_effects_crash_child() {
         .expect("complete present result should be durable");
 
     let absent_root = case_root(&root, ABSENT_CASE);
-    let (absent_backend, mut absent) = prepared_runner_fixture(&absent_root, ABSENT_ID);
+    let (_absent_port_window, absent_backend, mut absent) =
+        prepared_runner_fixture(&absent_root, ABSENT_ID);
     mark_runtime_absent_for_cleanup(&mut absent);
     absent_backend
         .write_manifest(&absent)
@@ -132,7 +134,8 @@ fn runner_effects_crash_child() {
         .expect("absent EffectsStarted boundary should be durable");
 
     let ambiguous_root = case_root(&root, AMBIGUOUS_CASE);
-    let (ambiguous_backend, mut ambiguous) = prepared_runner_fixture(&ambiguous_root, AMBIGUOUS_ID);
+    let (_ambiguous_port_window, ambiguous_backend, mut ambiguous) =
+        prepared_runner_fixture(&ambiguous_root, AMBIGUOUS_ID);
     ambiguous.conmon_launch.state_command = ambiguous_runtime_command();
     ambiguous_backend
         .write_manifest(&ambiguous)

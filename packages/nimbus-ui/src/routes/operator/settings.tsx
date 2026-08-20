@@ -5,23 +5,23 @@ import { api } from "../../../convex/_generated/api";
 import { AppearanceSection } from "../../components/appearance-section";
 import { PageHeader } from "../../components/page-header";
 import { useContributeSubDrawer } from "../../shell/sub-drawer";
-import { ConfigurationSection } from "./settings/configuration";
-import { DangerZoneSection } from "./settings/danger-zone";
-import { DeploysSection } from "./settings/deploys";
+import { ConfigurationSection } from "./settings/-configuration";
+import { DangerZoneSection } from "./settings/-danger-zone";
+import { DeploysSection } from "./settings/-deploys";
 import {
   useEncryptionStatus,
   useLicenseSnapshot,
   useRuntimeDiagnostics,
-} from "./settings/hooks";
-import { IntegrationsSection } from "./settings/integrations";
-import { ServerInfoSection, TenantHeaderStrip } from "./settings/server-info";
-import { ADMIN_SETTINGS_SUB_DRAWER } from "./settings/sub-drawer";
+} from "./settings/-hooks";
+import { IntegrationsSection } from "./settings/-integrations";
+import { ServerInfoSection, TenantHeaderStrip } from "./settings/-server-info";
+import { ADMIN_SETTINGS_SUB_DRAWER } from "./settings/-sub-drawer";
 import type {
   AdapterCapabilityDoc,
   BundleDoc,
   FunctionDoc,
   SystemStatusDoc,
-} from "./settings/types";
+} from "./settings/-types";
 
 export const Route = createFileRoute("/operator/settings")({
   component: SettingsPage,

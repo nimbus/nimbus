@@ -1,6 +1,5 @@
 //! Real Krun host-managed attachment teardown proofs.
 
-use std::net::TcpListener;
 use std::sync::mpsc;
 
 use nimbus_network::{
@@ -8,6 +7,7 @@ use nimbus_network::{
     NetworkResourcePhase, NetworkSegmentReleaseOutcome, PortLeaseError, PortLeasePhase,
     PortLeaseRequest,
 };
+use nimbus_process_harness::PortWindow;
 
 use super::*;
 use crate::backends::KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY;
@@ -48,22 +48,21 @@ struct NetworkTeardownFixture {
     runtime: Arc<ScriptedRuntime>,
     id: SandboxId,
     execution_attempt_id: SandboxExecutionAttemptId,
+    /// Holds the fixture's published and PEP ports. It must outlive every
+    /// backend — and every child process — that can bind them, so a caller
+    /// that takes the fixture apart has to carry this field forward.
+    port_window: PortWindow,
 }
 
 impl NetworkTeardownFixture {
     fn attached(label: &str) -> Self {
         let root = tempfile::tempdir().expect("temporary root should exist");
-        let published_reservation =
-            TcpListener::bind("127.0.0.1:0").expect("published-port probe should bind");
-        let published_port = published_reservation
-            .local_addr()
-            .expect("published-port probe should report its address")
-            .port();
-        let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP-port probe should bind");
-        let pep_port = pep_reservation
-            .local_addr()
-            .expect("PEP-port probe should report its address")
-            .port();
+        // One claimed window owns both fixture ports. Partitioning it keeps the
+        // published port distinct from the PEP port, and holding the window for
+        // the fixture's whole life is what lets the PEP bind its exact port.
+        let port_window = PortWindow::claim();
+        let published_port = port_window.port(0);
+        let pep_port = port_window.port(1);
         let mut config = KrunSandboxBackendConfig::under_root(root.path());
         config.node_network_supernet = "127.0.0.0/24".to_owned();
         config.published_port_range = pep_port..=pep_port;
@@ -88,8 +87,6 @@ impl NetworkTeardownFixture {
         let plan = crate::provision::test_support::sandbox_provision_network_plan_fixture(
             &spec, &id, label,
         );
-        drop(published_reservation);
-        drop(pep_reservation);
 
         backend
             .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), plan)
@@ -180,22 +177,18 @@ impl NetworkTeardownFixture {
             runtime,
             id,
             execution_attempt_id,
+            port_window,
         }
     }
 
     fn interrupted_adoption(label: &str, cut: InterruptedAdoptionAllocatorCut) -> Self {
         let root = tempfile::tempdir().expect("temporary root should exist");
-        let published_reservation =
-            TcpListener::bind("127.0.0.1:0").expect("published-port probe should bind");
-        let published_port = published_reservation
-            .local_addr()
-            .expect("published-port probe should report its address")
-            .port();
-        let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP-port probe should bind");
-        let pep_port = pep_reservation
-            .local_addr()
-            .expect("PEP-port probe should report its address")
-            .port();
+        // One claimed window owns both fixture ports. This fixture stops before
+        // it starts a PEP, but it hands the same PEP port to the fresh-process
+        // children that do start one, so the window must outlive the fixture.
+        let port_window = PortWindow::claim();
+        let published_port = port_window.port(0);
+        let pep_port = port_window.port(1);
         let mut config = KrunSandboxBackendConfig::under_root(root.path());
         config.node_network_supernet = "127.0.0.0/24".to_owned();
         config.published_port_range = pep_port..=pep_port;
@@ -220,8 +213,6 @@ impl NetworkTeardownFixture {
         let plan = crate::provision::test_support::sandbox_provision_network_plan_fixture(
             &spec, &id, label,
         );
-        drop(published_reservation);
-        drop(pep_reservation);
 
         backend
             .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), plan)
@@ -288,6 +279,7 @@ impl NetworkTeardownFixture {
             runtime,
             id,
             execution_attempt_id,
+            port_window,
         }
     }
 
@@ -881,11 +873,15 @@ fn krun_network_teardown_reopens_durable_owner_death_state() {
         .cloned_authority()
         .expect("fixture PEP authority should remain available");
 
+    // The window comes out of the fixture with the roots: the reopened backends
+    // below still own the same PEP port, so the claim has to survive the
+    // fixture that made it.
     let NetworkTeardownFixture {
         root,
         config,
         backend,
         runtime,
+        port_window,
         ..
     } = fixture;
     drop(runtime);
@@ -950,6 +946,7 @@ fn krun_network_teardown_reopens_durable_owner_death_state() {
         HostManagedAttachmentReleasePhase::Released
     );
     drop(root);
+    drop(port_window);
 }
 
 fn await_dead_pep_lifetime(

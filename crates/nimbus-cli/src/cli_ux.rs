@@ -653,48 +653,79 @@ mod tests {
         progress_output_enabled, push_output_mode, render_table_with_options,
     };
 
-    /// Shipped help must read as product documentation. Internal plan phase
-    /// labels ("P3 scope:", "BPD5", …) leaked into `nimbus dev --help` once;
-    /// this scans every help constant in this file so they cannot return.
-    #[test]
-    fn help_constants_carry_no_internal_phase_labels() {
-        let Some(crate_root) = std::env::var_os("CARGO_MANIFEST_DIR").map(std::path::PathBuf::from)
-        else {
-            return;
-        };
-        let source = std::fs::read_to_string(crate_root.join("src/cli_ux.rs"))
-            .expect("cli_ux source should be readable");
+    /// Tokens that match the plan-label shape but are real product terms the
+    /// CLI is allowed to name in its help.
+    const PRODUCT_TOKENS: &[&str] = &["S3", "V8"];
 
-        for (index, line) in source.lines().enumerate() {
-            // Only the help/example string literals in this file, not the
-            // Rust code or the doc comments around them.
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") || trimmed.starts_with("///") {
-                continue;
+    /// Shipped help must read as product documentation. Internal plan phase
+    /// labels ("P3 scope:", "BPD5", …) leaked into `nimbus dev --help` once.
+    ///
+    /// This renders the long help of every command in the tree, root and
+    /// subcommands at every depth, and scans what a user actually sees. A
+    /// source scan would cover only the constants that live in one file and
+    /// would pass again as soon as a constant moved.
+    #[test]
+    fn rendered_help_carries_no_internal_phase_labels() {
+        let mut pending = vec![(
+            String::from("nimbus"),
+            <crate::Cli as clap::CommandFactory>::command(),
+        )];
+        let mut rendered_commands = 0usize;
+        let mut dev_help = String::new();
+
+        while let Some((path, mut command)) = pending.pop() {
+            for sub in command.get_subcommands().cloned() {
+                pending.push((format!("{path} {}", sub.get_name()), sub));
             }
-            let labels = phase_label_candidates(line);
+
+            let rendered = command.render_long_help().to_string();
+            let labels = phase_label_candidates(&rendered);
             assert!(
                 labels.is_empty(),
-                "internal phase labels {labels:?} appear in user-facing help \
-                 at src/cli_ux.rs:{}: {line}",
-                index + 1,
+                "`{path} --help` reads like plan notes, not product \
+                 documentation: {labels:?}. Rewrite the help text, or add the \
+                 token to PRODUCT_TOKENS if it names a real product term.",
             );
+            if path == "nimbus dev" {
+                dev_help = rendered;
+            }
+            rendered_commands += 1;
         }
+
+        // Positive controls. A walk that rendered nothing, or that rendered
+        // help without the `after_help` prose the leak was in, would pass
+        // this test while checking none of the text it exists to check.
+        assert!(
+            rendered_commands > 20,
+            "the command walk reached only {rendered_commands} commands; the \
+             CLI has far more, so the guard is not covering the tree",
+        );
+        assert!(
+            dev_help.contains("nimbus dev --data-dir") && dev_help.contains("Watch mode:"),
+            "`nimbus dev --help` did not carry its after_help prose, so the \
+             scan above never saw the text this guard exists to check",
+        );
     }
 
     /// Words shaped like an internal plan identifier: one to four capitals
-    /// followed by digits, standing alone (`P3`, `BPD5`, `K11P2`, `AVR5`).
-    fn phase_label_candidates(line: &str) -> Vec<String> {
-        line.split(|c: char| !c.is_ascii_alphanumeric())
+    /// followed only by digits, standing alone (`P3`, `BPD5`, `AVR5`), minus
+    /// the product terms that share that shape.
+    fn phase_label_candidates(text: &str) -> Vec<String> {
+        let mut candidates: Vec<String> = text
+            .split(|c: char| !c.is_ascii_alphanumeric())
             .filter(|word| {
                 let letters = word.chars().take_while(char::is_ascii_uppercase).count();
-                let digits = word.chars().skip(letters).collect::<String>();
+                let digits = &word[letters..];
                 (1..=4).contains(&letters)
                     && !digits.is_empty()
                     && digits.chars().all(|c| c.is_ascii_digit())
+                    && !PRODUCT_TOKENS.contains(word)
             })
             .map(str::to_string)
-            .collect()
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
     }
 
     #[test]

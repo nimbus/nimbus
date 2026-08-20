@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
 use std::sync::Arc;
 
@@ -10,6 +10,7 @@ use nimbus_network::{
     PortBindTarget, PortBindingSpec, PortExposure, PortLeaseAccounting, PortLeaseFence,
     PortLeaseId, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
+use nimbus_process_harness::PortWindow;
 use nimbus_server::{PreboundServerListeners, ServeOptions};
 
 static MANAGER_TEST_SERIALIZER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -220,12 +221,13 @@ fn sandbox_shaped_reservation_conflicts_with_server_before_kernel_bind() {
         LocalNetworkManager::bootstrap(&node_root).expect("node manager should initialize");
     let authority = bootstrap.authority();
     let manager = freeze_empty(bootstrap);
-    let selector =
-        std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("selector should bind");
-    let requested_addr = selector
-        .local_addr()
-        .expect("selected address should resolve");
-    drop(selector);
+    // Held to the end of the test. Nothing binds this address: the reservation
+    // below claims it durably, and the probe near the end rebinds it to prove
+    // the losing server never took the socket. Both readings need the number to
+    // stay this process's alone, which the selector this replaces could not do
+    // once it released the port.
+    let port_window = PortWindow::claim();
+    let requested_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port_window.port(0)));
 
     let tenant = TenantId::new("nnc4-6d-conflict").expect("fixture tenant should validate");
     let listener = ListenerId::for_tenant_workload_listener(&tenant, "sandbox", "published-http");

@@ -553,7 +553,7 @@ fn backup_roots_are_extracted_from_object_manifest_snapshot() {
     )
     .unwrap();
     let mut snapshot = nimbus_storage::MaterializedJournalSnapshot {
-        version: 0,
+        version: nimbus_storage::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
         applied_sequence: nimbus_core::SequenceNumber(0),
         durable_head: nimbus_core::SequenceNumber(0),
         table_identities: Vec::new(),
@@ -561,17 +561,28 @@ fn backup_roots_are_extracted_from_object_manifest_snapshot() {
         documents: Vec::new(),
         scheduled_execution_ids: Vec::new(),
     };
-    snapshot.documents.push(manifest.to_document().unwrap());
+    let document = manifest.to_document().unwrap();
+    snapshot
+        .table_identities
+        .push(nimbus_storage::TableIdentitySnapshotEntry {
+            namespace: "default".to_string(),
+            table: document.table.clone(),
+            table_id: nimbus_core::TableId::new(),
+            state: nimbus_core::TableState::Active,
+        });
+    snapshot.documents.push(document);
     let archive = PointInTimeRestoreArchive {
         version: 1,
         target_sequence: nimbus_core::SequenceNumber(0),
         target_timestamp: nimbus_core::Timestamp(0),
-        base_snapshot: snapshot,
+        base_snapshot: snapshot.clone(),
         journal_tail: Vec::new(),
         storage_format_version: nimbus_storage::CURRENT_STORAGE_FORMAT_VERSION,
         document_version_storage_format: nimbus_storage::CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT,
         index_version_storage_format: nimbus_storage::CURRENT_INDEX_VERSION_STORAGE_FORMAT,
-        target_fingerprint: String::new(),
+        target_position: snapshot
+            .materialized_position()
+            .expect("archive base position should compute"),
     };
 
     assert_eq!(object_backup_roots(&archive).unwrap(), vec![first, second]);

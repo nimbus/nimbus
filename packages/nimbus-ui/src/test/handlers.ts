@@ -3,7 +3,7 @@ import { HttpResponse, http } from "msw";
 import type {
   RuntimeDiagnostics,
   RuntimeLimits,
-} from "../routes/operator/settings/types";
+} from "../routes/operator/settings/-types";
 
 export type TenantsResponse = { tenants: string[] };
 
