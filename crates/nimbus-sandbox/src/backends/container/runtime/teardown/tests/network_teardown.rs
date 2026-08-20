@@ -45,21 +45,13 @@ struct ForwardedNetworkFixture {
 impl ForwardedNetworkFixture {
     fn attached(label: &str, with_listener: bool) -> Self {
         let root = tempfile::tempdir().expect("temporary root should exist");
-        let published_reservation = with_listener.then(|| {
-            TcpListener::bind("127.0.0.1:0").expect("published-port tripwire should bind")
-        });
-        let published_port = published_reservation.as_ref().map(|listener| {
-            listener
-                .local_addr()
-                .expect("published-port tripwire should report its address")
-                .port()
-        });
-        let pep_reservation =
-            TcpListener::bind("127.0.0.1:0").expect("PEP-port tripwire should bind");
-        let pep_port = pep_reservation
-            .local_addr()
-            .expect("PEP-port tripwire should report its address")
-            .port();
+        // The window owns the two host ports the product binds later: the
+        // published binding the machine proxy serves and the one-port range
+        // the egress proxy is allocated from. It stays claimed for the whole
+        // fixture, so neither bind can lose its port to another test process.
+        let port_window = PortWindow::claim();
+        let published_port = with_listener.then(|| port_window.port(0));
+        let pep_port = port_window.port(1);
         let forwarder_listener =
             TcpListener::bind("127.0.0.1:0").expect("forwarder fixture should bind");
         let forwarder = sample_forwarder(
@@ -86,7 +78,6 @@ impl ForwardedNetworkFixture {
         }
         let execution_attempt_id = sample_execution_attempt_id(&id);
         let plan = sample_provision_network_plan(&spec, &id, label);
-        drop(pep_reservation);
         backend
             .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), plan.clone())
             .expect("forwarded teardown fixture should reserve its exact plan");
@@ -96,7 +87,6 @@ impl ForwardedNetworkFixture {
         backend
             .attach_provision_network_with_test_host(&id, &execution_attempt_id)
             .expect("forwarded teardown fixture should attach its private network");
-        drop(published_reservation);
         backend
             .publish_provision_machine_ingress_with_test_provider(
                 &id,
@@ -122,6 +112,7 @@ impl ForwardedNetworkFixture {
         Self {
             fixture: TeardownFixture {
                 root,
+                port_window: Some(port_window),
                 backend,
                 id,
                 execution_attempt_id,

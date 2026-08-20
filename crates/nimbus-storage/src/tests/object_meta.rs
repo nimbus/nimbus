@@ -156,6 +156,49 @@ fn object_meta_store_persists_through_sqlite() {
     assert_eq!(fetched, manifest);
 }
 
+/// The revision an upload row carries is the fence every multipart writer
+/// declares, so it has to survive the durable embedded provider, not only the
+/// in-memory one.
+#[test]
+fn multipart_upload_revision_survives_sqlite_reopen() {
+    let dir = tempdir().expect("tempdir should create");
+    let path = dir.path().join("tenant.sqlite3");
+    let mut upload = ObjectMultipartUpload::new(
+        "upload-sqlite",
+        BUCKET,
+        "large/durable.bin",
+        None,
+        serde_json::Map::new(),
+        1_776_960_000_000,
+    )
+    .expect("upload should validate");
+    upload
+        .replace_part(ObjectMultipartPart {
+            part_number: 1,
+            blob_hash: "hash-a".to_string(),
+            size: 3,
+            etag: "\"part-a\"".to_string(),
+            checksums: ObjectChecksums::default(),
+            last_modified_millis: 1_776_960_000_001,
+        })
+        .expect("first part should insert");
+    upload.advance_revision();
+    assert_eq!(upload.revision, 2);
+
+    {
+        let store = SqliteTenantStore::open(&path).expect("sqlite store should open");
+        put_multipart_upload_direct(&store, &upload).expect("multipart put should commit");
+    }
+
+    let reopened = SqliteTenantStore::open(&path).expect("sqlite store should reopen");
+    let fetched = reopened
+        .get_multipart_upload("upload-sqlite")
+        .expect("multipart get should succeed")
+        .expect("multipart upload should exist");
+    assert_eq!(fetched, upload);
+    assert_eq!(fetched.revision, 2);
+}
+
 #[test]
 fn object_meta_store_rejects_invalid_keys_before_document_write() {
     let store = TenantStore::create_in_memory().expect("store should open");

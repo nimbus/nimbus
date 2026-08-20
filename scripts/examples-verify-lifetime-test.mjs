@@ -317,6 +317,7 @@ async function six_fault_cuts_release_active_resources() {
       if (managed) assert.equal(await isManagedProcessLive(managed.pid), false);
       const result = await finalizeRunContext(run, { runStatus: 17, cleanupStatus: 0 });
       assert.equal(result.status, 17);
+      assert.equal(result.cleanupStatus, "passed");
       assert.equal(await pathExists(run.runRoot), false);
       assert.equal(await pathExists(result.retainedPath), true);
     });
@@ -329,10 +330,12 @@ async function cleanup_retry_converges_after_retained_failure() {
     await fs.writeFile(path.join(run.runRoot, "cleanup.marker"), "present\n");
     const failed = await finalizeRunContext(run, { runStatus: 0, cleanupStatus: 1 });
     assert.equal(failed.status, 1);
+    assert.equal(failed.cleanupStatus, "failed");
     assert.equal(failed.retainedPath, run.runRoot);
     assert.equal(await pathExists(run.runRoot), true);
     const retried = await finalizeRunContext(run, { runStatus: 0, cleanupStatus: 0 });
     assert.equal(retried.status, 0);
+    assert.equal(retried.cleanupStatus, "passed");
     assert.equal(await pathExists(run.runRoot), false);
   });
 }
@@ -447,6 +450,7 @@ async function failed_run_retains_artifact_without_live_resources() {
     await stopManagedProcess(managed.processRecord);
     const result = await finalizeRunContext(run, { runStatus: 23, cleanupStatus: 0 });
     assert.equal(result.status, 23);
+    assert.equal(result.cleanupStatus, "passed");
     assert.equal(await isManagedProcessLive(managed.pid), false);
     assert.equal(await pathExists(run.runRoot), false);
     assert.equal(await fs.readFile(path.join(result.retainedPath, "cases", "failure", "logs", "smoke.stderr"), "utf8"), "failure evidence\n");

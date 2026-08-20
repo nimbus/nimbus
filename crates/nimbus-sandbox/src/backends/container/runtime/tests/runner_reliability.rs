@@ -317,7 +317,10 @@ fn egress_reload_waits_for_execute_lifecycle_lock_and_uses_current_manifest() {
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.start_mode = ContainerStartMode::PlanOnly;
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let pep_port = unused_loopback_port();
+    // The claim holds the one-port PEP range until the reload assertions end,
+    // so the proxy launched below binds the exact port the range names.
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     config.published_port_range = pep_port..=pep_port;
     let backend = ContainerSandboxBackend::new(config)
         .with_runner_lifecycle_lock_test_probe(lock_probe.clone());

@@ -1,0 +1,14 @@
+### A. nimbus-cli machine::tests with the developer's live server discoverable
+TMPDIR=/var/folders/kw/d608x5pn4cq73rz78ztl92cw0000gn/T/ ; server.json:
+{
+  "pid": 92986,
+  "address": "127.0.0.1:3411",
+  "startedAt": "2026-08-18T16:09:09.49544Z",
+  "version": "0.1.45",
+  "protocolVersions": [
+    "nimbus.v2"
+  ]
+}     Summary [   1.627s] 113 tests run: 113 passed, 912 skipped
+
+### B. the same tests with TMPDIR=/private/tmp/sic1-iso (no server.json, so no live server is discovered)
+     Summary [   1.298s] 113 tests run: 113 passed, 912 skipped

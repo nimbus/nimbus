@@ -133,7 +133,9 @@ fn shadow_materializer_recovery_after_interrupted_compaction_converges_to_clean_
 
     let interrupted_manifest = ShadowMaterializerManifest {
         version: 1,
-        checkpoint_sequence: checkpoint.applied_sequence,
+        checkpoint_position: checkpoint
+            .materialized_position()
+            .expect("checkpoint position should compute"),
         current_sequence: SequenceNumber(4),
         pending_record_count: journal_tail.len(),
         compaction_runs: 0,

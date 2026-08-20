@@ -19,8 +19,8 @@ import {
   COMPUTE_VIEWS,
   type ComputeView,
   parseComputeView,
-} from "./compute-views";
-import { GraphView } from "./graph-view";
+} from "./-compute-views";
+import { GraphView } from "./-graph-view";
 
 type ComputeSearch = { view?: ComputeView };
 

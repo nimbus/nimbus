@@ -12,6 +12,7 @@ const LIST_DELIMITER = ",";
 const UPDATE_SEMANTICS = new Set(["polling", "push", "request-response"]);
 const BOOT_MODES = new Set(["dev", "start"]);
 const SMOKE_COMMANDS = new Set(["node", "npm"]);
+const SOURCE_HASH_CONCURRENCY = 128;
 const SURFACE_ENV_KEYS = new Map([
   ["mongodb-wire", ["NIMBUS_MONGODB_URL"]],
   ["dynamodb-wire", [
@@ -134,6 +135,13 @@ function validateCaseShape(item, index) {
 
   shellListStrings(item.surfaces, `${label}.surfaces`);
   invariant(UPDATE_SEMANTICS.has(item.updateSemantics), `${label}.updateSemantics is invalid`);
+  uniqueStrings(item.expectedAnchors, `${label}.expectedAnchors`);
+  for (const anchor of item.expectedAnchors) {
+    invariant(
+      /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(anchor),
+      `${label}.expectedAnchors entry is invalid: ${anchor}`,
+    );
+  }
   invariant(!item.name.includes(SHELL_DELIMITER), `${label}.name is not shell-safe`);
   invariant(!item.workspace.includes(SHELL_DELIMITER), `${label}.workspace is not shell-safe`);
 }
@@ -445,6 +453,19 @@ function nulFields(buffer) {
   return buffer.toString("utf8").split("\0").filter(Boolean);
 }
 
+function rejectIndexHiddenSourcePaths(repoRoot) {
+  const hidden = [];
+  for (const record of nulFields(git(repoRoot, ["ls-files", "-v", "-z"]).stdout)) {
+    invariant(record.length >= 3 && record[1] === " ", "git ls-files returned an invalid source record");
+    const marker = record[0];
+    if (marker === "S" || /^[a-z]$/u.test(marker)) hidden.push(record.slice(2));
+  }
+  invariant(
+    hidden.length === 0,
+    `source verification refuses Git index-hidden paths: ${hidden.slice(0, 10).join(", ")}${hidden.length > 10 ? `, and ${hidden.length - 10} more` : ""}`,
+  );
+}
+
 async function buildSourceSnapshot({ manifestPath, repoRoot }) {
   const manifest = await loadValidatedManifest(manifestPath, repoRoot);
   const probe = git(repoRoot, ["rev-parse", "--is-inside-work-tree"], { allowFailure: true });
@@ -453,8 +474,16 @@ async function buildSourceSnapshot({ manifestPath, repoRoot }) {
   let indexSha256 = null;
   if (probe.status === 0 && probe.stdout.toString("utf8").trim() === "true") {
     mode = "git";
-    sourcePaths = nulFields(git(repoRoot, ["ls-files", "--cached", "-z"]).stdout).sort();
+    rejectIndexHiddenSourcePaths(repoRoot);
     indexSha256 = digest(git(repoRoot, ["ls-files", "--stage", "-z"]).stdout);
+    sourcePaths = nulFields(git(repoRoot, [
+      "diff",
+      "--name-only",
+      "--no-ext-diff",
+      "--no-renames",
+      "-z",
+      "--",
+    ]).stdout).sort();
   } else {
     mode = "export";
     const manifestRelative = path.relative(repoRoot, manifestPath).replaceAll(path.sep, "/");
@@ -464,8 +493,18 @@ async function buildSourceSnapshot({ manifestPath, repoRoot }) {
     }
     sourcePaths = [...protectedPaths].sort();
   }
-  const entries = [];
-  for (const relativePath of sourcePaths) entries.push(await byteEntry(repoRoot, relativePath));
+  const entries = new Array(sourcePaths.length);
+  let cursor = 0;
+  await Promise.all(Array.from(
+    { length: Math.min(SOURCE_HASH_CONCURRENCY, sourcePaths.length) },
+    async () => {
+      while (cursor < sourcePaths.length) {
+        const index = cursor;
+        cursor += 1;
+        entries[index] = await byteEntry(repoRoot, sourcePaths[index]);
+      }
+    },
+  ));
   return { schemaVersion: 1, mode, indexSha256, entries };
 }
 
@@ -492,9 +531,12 @@ function snapshotDifferences(expected, observed) {
   return differences;
 }
 
-export async function verifySourceByteManifest({ manifestPath, repoRoot, snapshotPath }) {
+export async function verifySourceByteManifest({ manifestPath, repoRoot, snapshotPath, observedOutputPath = null }) {
   const expected = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
   const observed = await buildSourceSnapshot({ manifestPath, repoRoot });
+  if (observedOutputPath) {
+    await fs.writeFile(observedOutputPath, `${JSON.stringify(observed, null, 2)}\n`, { flag: "wx" });
+  }
   const differences = snapshotDifferences(expected, observed);
   if (differences.length > 0) {
     throw new Error(`source byte manifest mismatch:\n  ${differences.join("\n  ")}`);
@@ -562,7 +604,12 @@ async function main() {
   }
   if (command === "verify-source") {
     invariant(options.snapshot, "verify-source requires --snapshot");
-    await verifySourceByteManifest({ manifestPath, repoRoot, snapshotPath: path.resolve(options.snapshot) });
+    await verifySourceByteManifest({
+      manifestPath,
+      repoRoot,
+      snapshotPath: path.resolve(options.snapshot),
+      observedOutputPath: options["observed-output"] ? path.resolve(options["observed-output"]) : null,
+    });
     console.log("source byte manifest matches");
     return;
   }

@@ -1,3 +1,7 @@
+use super::contract_scenarios::{
+    exercise_durable_recovery_replays_unapplied_records, exercise_journal_progress_round_trip,
+    exercise_materialized_position_is_provider_independent, reference_materialized_position,
+};
 use super::*;
 use crate::{DurableJournal, TenantPointRead, TenantPointWrite, TenantRangeScan};
 
@@ -307,5 +311,68 @@ fn memory_tenant_store_rebuilds_from_nonzero_snapshot_boundary() {
             .get(&inserted.table, &inserted.id)
             .expect("restored document should read"),
         Some(updated)
+    );
+}
+
+#[test]
+fn redb_journal_progress_round_trips_through_insert_update_delete() {
+    let directory = tempdir().expect("temporary directory should create");
+    let store =
+        TenantStore::open(directory.path().join("progress.redb")).expect("redb store should open");
+    exercise_journal_progress_round_trip(&store, "redb_progress_tasks");
+}
+
+#[test]
+fn memory_journal_progress_round_trips_through_insert_update_delete() {
+    let store = MemoryTenantStore::new();
+    exercise_journal_progress_round_trip(&store, "memory_progress_tasks");
+}
+
+#[test]
+fn redb_durable_recovery_replays_durable_but_unapplied_records() {
+    let directory = tempdir().expect("temporary directory should create");
+    let store =
+        TenantStore::open(directory.path().join("recovery.redb")).expect("redb store should open");
+    exercise_durable_recovery_replays_unapplied_records(&store, "redb_recovery_tasks");
+}
+
+#[test]
+fn memory_durable_recovery_replays_durable_but_unapplied_records() {
+    let store = MemoryTenantStore::new();
+    exercise_durable_recovery_replays_unapplied_records(&store, "memory_recovery_tasks");
+}
+
+#[test]
+fn redb_materialized_position_matches_the_provider_independent_reference() {
+    let directory = tempdir().expect("temporary directory should create");
+    let store =
+        TenantStore::open(directory.path().join("position.redb")).expect("redb store should open");
+    assert_eq!(
+        exercise_materialized_position_is_provider_independent(&store),
+        reference_materialized_position()
+    );
+}
+
+#[test]
+fn memory_materialized_position_matches_the_provider_independent_reference() {
+    let store = MemoryTenantStore::new();
+    assert_eq!(
+        exercise_materialized_position_is_provider_independent(&store),
+        reference_materialized_position()
+    );
+}
+
+#[test]
+fn memory_ppsc_identical_replay_is_idempotent_for_all_write_shapes() {
+    let store = MemoryTenantStore::new();
+    exercise_ppsc_identical_applied_sequence_replay(&store, "memory_duplicate_replay");
+}
+
+#[test]
+fn memory_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes() {
+    let store = MemoryTenantStore::new();
+    exercise_ppsc_different_content_applied_sequence_reuse_rejection(
+        &store,
+        "memory_duplicate_corruption",
     );
 }

@@ -2563,7 +2563,19 @@ jobs:
       - name: Run examples-verify
         env:
           NIMBUS_EXAMPLES_VERIFY_BIN: ${{ github.workspace }}/target/ci-archive/nimbus
+          NIMBUS_EXAMPLES_VERIFY_MAX_PARALLEL: "5"
         run: make examples-verify
+
+      - name: Upload examples-verification reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: examples-verification-reports
+          path: |
+            target/examples-verify-results/*/report.json
+            target/examples-verify-results/*/junit.xml
+          if-no-files-found: error
+          retention-days: 14
 
   proof-helpers:
     name: Proof Helper Checks
@@ -2609,6 +2621,7 @@ jobs:
           bash -n scripts/verify-machine-os-release-ref-contract.sh
           bash -n scripts/verify-machine-os-release-ref-contract-helper.sh
           bash -n scripts/ci/verify-prebuilt-v8-consumption.sh
+          bash -n scripts/ci/configure-ubuntu-apt-mirrors.sh
           bash -n scripts/ci/disk-guard.sh
           bash -n scripts/ci/append-rerun-visibility.sh
           bash -n scripts/ci/shard-scaling-probe.sh
@@ -2657,6 +2670,9 @@ jobs:
 
       - name: Verify install script helper
         run: bash scripts/verify-install-helper.sh
+
+      - name: Verify CI Ubuntu mirror resilience
+        run: bash scripts/verify-ci-apt-mirror-resilience.sh
 
 # PW2: Coverage moved to .github/workflows/coverage.yml.
 # Not a merge gate (rust-gate-summary.needs excludes it); now fires on

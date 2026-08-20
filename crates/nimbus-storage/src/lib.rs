@@ -139,11 +139,12 @@ pub use sqlite::{
     sqlite_init_sql,
 };
 pub use store::{
-    DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DirectWriteAssignment, DurableJournalBootstrap,
-    DurableJournalPage, HistoricalIndexDocumentPage, JournalProgress,
-    MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot, PointInTimeRestoreArchive,
-    PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite, TenantReadSnapshot, TenantStore,
-    TenantWriteCommit, TenantWriteTransaction,
+    CanonicalMaterializedState, DEFAULT_DURABLE_JOURNAL_STREAM_LIMIT, DirectWriteAssignment,
+    DurableJournalBootstrap, DurableJournalPage, HistoricalIndexDocumentPage, JournalProgress,
+    MATERIALIZED_JOURNAL_SNAPSHOT_VERSION, MATERIALIZED_POSITION_VERSION,
+    MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot, MaterializedPosition,
+    PointInTimeRestoreArchive, PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite,
+    TenantReadSnapshot, TenantStore, TenantWriteCommit, TenantWriteTransaction,
 };
 pub use table_identity::{
     TableBackendLayout, TableIdentityDiagnostic, TableIdentitySnapshotEntry,
@@ -156,10 +157,12 @@ pub use traits::{
     ControlPlaneUsage, DurableJournal, KeyProviderSurface, KvBatchOp, KvBatchOutcome, KvEntry,
     KvMutation, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, MaterializedRebuild,
     OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums,
-    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMetaRead, ObjectMultipartPart,
-    ObjectMultipartUpload, ReadCapabilities, ResourcePathScan, ResourcePathSnapshot,
-    SchedulerStore, StorageEngine, TenantKvStore, TenantLifecycle, TenantPointRead,
-    TenantPointWrite, TenantRangeScan, multipart_upload_document_id, object_manifest_document_id,
+    ObjectChunkRef, ObjectConditionOutcome, ObjectExpectedState, ObjectManifest,
+    ObjectManifestAttributes, ObjectMetaRead, ObjectMultipartPart, ObjectMultipartUpload,
+    ObjectUploadConditionOutcome, ObjectUploadExpectedState, ReadCapabilities, ResourcePathScan,
+    ResourcePathSnapshot, SchedulerStore, StorageEngine, TenantKvStore, TenantLifecycle,
+    TenantPointRead, TenantPointWrite, TenantRangeScan, multipart_upload_document_id,
+    object_manifest_document_id,
 };
 pub use trigger_invocation_transition::TriggerInvocationTransitionStore;
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};

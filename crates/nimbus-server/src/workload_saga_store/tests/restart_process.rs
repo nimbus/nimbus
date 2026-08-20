@@ -30,7 +30,10 @@ const MODE_ENV: &str = "NIMBUS_NNC64A_RESTART_PROCESS_MODE";
 const WRITE_MODE: &str = "write";
 const RECOVER_MODE: &str = "recover";
 const BOUNDARY: &str = "workload-restart.phase-matrix-durable";
-const TIMEOUT: Duration = Duration::from_secs(20);
+// The matrix performs many individually durable transitions before its crash
+// boundary. Keep the wait bounded while allowing slower supported hosts to
+// complete their fsync work.
+const TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_CHILD_DIAGNOSTIC_BYTES: usize = 4 * 1024;
 const PID_PREFIX: &str = "NIMBUS_NNC64A_RESTART_PROCESS_ID";
 const RESTART_NOT_BEFORE: u64 = 500;

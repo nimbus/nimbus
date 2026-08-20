@@ -1,0 +1,108 @@
+SIC7 fail-before — the four governing specs at main @ 8031cc581b086646bc64688aecd48254aedb18f1
+Captured 2026-08-19.
+
+Captured from the primary worktree. Two of the four specs sit outside the
+force-tracked docs/private subset and do not exist in a fresh checkout:
+
+  tracked=no   docs/private/plans/storage-seams-architecture.md
+  tracked=no   docs/private/architecture/storage/persistence-engine-baseline.md
+  tracked=yes  docs/private/architecture/time-and-ordering.md
+  tracked=yes  docs/private/operating/verification.md
+
+Note: pass the four paths to grep literally. This repository's shell wraps
+grep in a function that does not word-split an unquoted variable, so a file
+list expanded from $SPECS is read as one path and every search returns a
+false negative.
+
+=== A. The adapter pre-read model is not contradicted ===
+No governing text places a conditional decision inside the commit
+authority, so nothing in the specs rules out an adapter that decides a
+precondition against its own pre-read.
+
+$ grep -rn -i -E 'expected state|expected-state|conditional admission|precondition|If-None-Match|If-Match' <the four specs>
+(no matches)
+
+=== B. Sequence-only recovery ===
+The shadow materializer posture still binds a checkpoint to a sequence
+alone, which is the F4 gap SIC4 closed.
+
+$ sed -n '332,338p' docs/private/architecture/storage/persistence-engine-baseline.md
+### Shadow materializer posture
+
+The first custom materializer remains shadow-only and checkpoint-driven. It
+rebuilds from an explicit `MaterializedJournalSnapshot` plus a durable-journal
+suffix, tracks checkpoint and current sequence in a versioned manifest, and
+compacts only when explicit journal state crosses the configured threshold.
+
+
+$ grep -rn -i -E 'materialized position|MaterializedPosition|state_digest|state digest' <the four specs>
+(no matches — one canonical position is undocumented)
+
+=== C. The U8 gap has no named successor gate ===
+U8 appears once, as a performance closeout. No governing text names the
+all-writer commit-effect gate that F3 asked for and SIC3 landed.
+
+$ grep -rn -E 'U8|U5' <the four specs>
+docs/private/architecture/storage/persistence-engine-baseline.md:62:The 2026-07-23 U8 performance closeout measured the production publisher rather
+
+$ grep -rn -i -E 'commit effect|effect matrix|effect gate|SqlCommitEffects|SqlStoreCore' <the four specs>
+(no matches — the successor gate is undocumented)
+
+=== D. Provider semantic qualification is undocumented ===
+$ grep -rn -i -E 'semantic_contract|semantic qualification|UNVERIFIED' <the four specs>
+(no matches)
+
+=== E. Physical durability is undocumented ===
+$ grep -rn -i -E 'physical durability|sqlite_physical|disk full|disk-full|fault injection|VFS' <the four specs>
+(no matches)
+
+=== F. The HS deferrals are not recorded as binding prerequisites ===
+$ grep -rn -i -E 'epoch lineage|lineage|reader-first|reader floor' <the four specs>
+(no matches)
+
+############################################################
+AFTER — the same six searches against the reconciled specs
+############################################################
+
+=== A. Conditional admission now sits at the commit authority ===
+docs/private/architecture/time-and-ordering.md:116:## Conditional admission and materialized position
+docs/private/architecture/time-and-ordering.md:119:writer carries its expected state to the committer, which evaluates it against
+docs/private/operating/verification.md:95:provider against atomic effects, committer fencing, conditional admission,
+docs/private/architecture/storage/persistence-engine-baseline.md:56:A conditional write carries its expected state to the commit authority
+docs/private/architecture/storage/persistence-engine-baseline.md:328:committer fencing, conditional admission, journal progress, durable recovery,
+docs/private/plans/storage-seams-architecture.md:233:expected state — `ObjectExpectedState` for a manifest, `ObjectUploadExpectedState`
+docs/private/plans/storage-seams-architecture.md:681:  landed conditional admission at the commit authority (Seam B, §6), an
+
+=== B. Recovery binds a position, not a sequence alone ===
+docs/private/operating/verification.md:104:and compares the durable head, the applied head, and the materialized position
+docs/private/architecture/time-and-ordering.md:116:## Conditional admission and materialized position
+docs/private/architecture/time-and-ordering.md:127:artifact is bound to a `MaterializedPosition` carrying the state version, the
+docs/private/architecture/time-and-ordering.md:128:applied sequence, and a canonical state digest computed over a total order of
+docs/private/architecture/storage/persistence-engine-baseline.md:280:`MaterializedPosition` carries the state version, the applied sequence, and a
+docs/private/architecture/storage/persistence-engine-baseline.md:281:state digest, and canonicalization sorts table identities, schema tables,
+docs/private/architecture/storage/persistence-engine-baseline.md:379:threshold. Its versioned manifest stores a `checkpoint_position`, not a
+docs/private/plans/storage-seams-architecture.md:683:  `MaterializedPosition` behind every materialized artifact, a closed provider
+
+=== C. The U8 successor gate is named ===
+docs/private/architecture/storage/persistence-engine-baseline.md:66:Every storage writer declares its commit effects explicitly rather than
+docs/private/architecture/storage/persistence-engine-baseline.md:68:`SqlStoreCore` writer set, and each row names admission, lease, condition,
+docs/private/plans/storage-seams-architecture.md:682:  all-writer commit-effect matrix and gate, one storage-owned
+
+=== D. Provider semantic qualification is documented ===
+docs/private/architecture/storage/persistence-engine-baseline.md:325:`StorageCapabilities` also publishes a `semantic_contract` profile per store
+docs/private/architecture/storage/persistence-engine-baseline.md:332:feature is disabled or whose fixture is absent reports `UNVERIFIED`; it never
+docs/private/plans/storage-seams-architecture.md:684:  semantic-qualification matrix where an unavailable lane reads `UNVERIFIED`
+docs/private/operating/verification.md:92:A lane that cannot run is `UNVERIFIED`. It is never reported as green, and it is
+docs/private/operating/verification.md:98:`UNVERIFIED`. A guarantee a provider does not own stays "not owned", which is a
+
+=== E. Physical durability is documented ===
+docs/private/operating/verification.md:101:Physical durability is proved against real failures rather than modeled. The
+docs/private/operating/verification.md:102:`nimbus-storage` physical durability lane fails bounded SQLite write, sync, and
+docs/private/operating/verification.md:103:write-ahead-log operations through a test-only VFS shim, then reopens the store
+docs/private/operating/verification.md:106:tree: the production binary carries no fault configuration and no VFS selection
+docs/private/operating/verification.md:110:cargo test -p nimbus-storage sqlite_physical_durability -- --nocapture
+
+=== F. The HS deferrals are recorded as binding prerequisites ===
+docs/private/architecture/storage/persistence-engine-baseline.md:422:- External epoch lineages, journal-format seals, and reader-first format
+docs/private/plans/storage-seams-architecture.md:688:  SIC-D4 and owned by HS: external epoch lineages, journal-format seals, and
+docs/private/plans/storage-seams-architecture.md:689:  reader-first format rollout.

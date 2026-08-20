@@ -1,5 +1,7 @@
 //! Restart fencing while exact runtime absence remains unproven.
 
+use nimbus_process_harness::PortWindow;
+
 use super::*;
 
 #[test]
@@ -30,11 +32,13 @@ fn assert_restart_cleanup_is_fenced(
     expected_error: &str,
 ) {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let published_port = unused_loopback_port();
-    let mut pep_port = unused_loopback_port();
-    while pep_port == published_port {
-        pep_port = unused_loopback_port();
-    }
+    // One claimed window owns both ports for the whole test. Partitioning it
+    // keeps the published listener and the PEP distinct without retrying a
+    // probe, and the fixture PEP binds its exact port with no other test
+    // process able to take it.
+    let port_window = PortWindow::claim();
+    let published_port = port_window.port(0);
+    let pep_port = port_window.port(1);
     let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
     config.netavark_path = PathBuf::from("/usr/bin/true");
     config.node_network_supernet = "127.0.0.0/24".to_owned();
@@ -221,12 +225,4 @@ fn assert_restart_cleanup_is_fenced(
             path.display()
         );
     }
-}
-
-fn unused_loopback_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("ephemeral test listener should bind")
-        .local_addr()
-        .expect("ephemeral listener should have an address")
-        .port()
 }

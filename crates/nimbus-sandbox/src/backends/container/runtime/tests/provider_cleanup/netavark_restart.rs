@@ -5,13 +5,16 @@ use super::*;
 #[test]
 fn confirmed_netavark_restart_detach_prepares_published_leases_for_rebind() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
+    // The claim keeps the published port exclusive for the whole restart
+    // transition this proof drives over its durable lease.
+    let port_window = PortWindow::claim();
     let backend =
         ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
     let mut manifest = backend
         .plan_start_with_id(
             &sample_spec().with_port_binding(SandboxPortBinding::tcp(
                 "http",
-                unused_loopback_port(),
+                port_window.port(0),
                 8080,
             )),
             &SandboxId::new("netavark-restart-rebind"),
@@ -163,11 +166,12 @@ fn already_absent_runtime_is_a_successful_restart_delete_replay() {
 #[test]
 fn restart_cleanup_retains_network_and_listeners_until_runtime_absence_is_observed() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let published_port = unused_loopback_port();
-    let mut pep_port = unused_loopback_port();
-    while pep_port == published_port {
-        pep_port = unused_loopback_port();
-    }
+    // Offset 0 is the published binding and offset 1 the one-port PEP range.
+    // Distinct offsets replace the retry loop that used to reject a duplicate
+    // draw, and the claim covers both until the fence assertions end.
+    let port_window = PortWindow::claim();
+    let published_port = port_window.port(0);
+    let pep_port = port_window.port(1);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.netavark_path = PathBuf::from("/usr/bin/true");
     config.node_network_supernet = "127.0.0.0/24".to_owned();

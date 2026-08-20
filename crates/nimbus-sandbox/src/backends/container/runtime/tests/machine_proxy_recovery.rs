@@ -64,9 +64,12 @@ fn machine_proxy_cleanup_targets_only_the_tenant_qualified_registry_entry() {
 #[test]
 fn machine_proxy_restart_rebinds_exact_active_lease() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // Offset 0 is the published binding the machine proxy binds; offset 1 is
+    // the forwarder endpoint. The claim outlives every proxy generation below.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
         .plan_start_with_id(
@@ -137,9 +140,12 @@ fn machine_proxy_restart_rebinds_exact_active_lease() {
 #[test]
 fn machine_proxy_accept_worker_panic_reports_then_cleanup_converges_on_retry() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // Offset 0 is the published binding the machine proxy binds; offset 1 is
+    // the forwarder endpoint. The claim outlives every proxy generation below.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
         .plan_start_with_id(
@@ -268,7 +274,10 @@ fn machine_proxy_accept_worker_panic_reports_then_cleanup_converges_on_retry() {
 
 #[test]
 fn machine_proxy_restart_waits_for_external_unexpose_before_rebind() {
-    let published_port = unused_loopback_port();
+    // The claim holds the published port across the restart the provider script
+    // below drives, so the rebind observes the exact port the routes name.
+    let port_window = PortWindow::claim();
+    let published_port = port_window.port(0);
     let listener = TcpListener::bind("127.0.0.1:0").expect("forwarder should bind");
     let forwarder_port = listener
         .local_addr()
@@ -447,7 +456,10 @@ fn machine_proxy_restart_waits_for_external_unexpose_before_rebind() {
 #[test]
 fn empty_overlapping_machine_proxy_registry_keeps_live_provider_fenced() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // Offset 0 is the published binding the machine proxy binds; offset 1 is
+    // the forwarder endpoint. The claim outlives every proxy generation below.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let tenant =
         nimbus_core::TenantId::new("tenant-machine-overlap").expect("tenant should validate");
     let id = SandboxId::new("machine-overlap");
@@ -460,7 +472,7 @@ fn empty_overlapping_machine_proxy_registry_keeps_live_provider_fenced() {
     )
     .with_port_binding(SandboxPortBinding::tcp("http", port, 8080));
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let first = ContainerSandboxBackend::new(config.clone());
     let manifest = first
         .plan_start_with_id(&spec, &id, None, None)
@@ -549,7 +561,10 @@ fn empty_overlapping_machine_proxy_registry_keeps_live_provider_fenced() {
 #[test]
 fn independent_machine_backend_cannot_withdraw_another_process_provider() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // Offset 0 is the published binding the machine proxy binds; offset 1 is
+    // the forwarder endpoint. The claim outlives every proxy generation below.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let tenant = nimbus_core::TenantId::new("tenant-machine-foreign-withdraw")
         .expect("tenant should validate");
     let id = SandboxId::new("machine-foreign-withdraw");
@@ -562,7 +577,7 @@ fn independent_machine_backend_cannot_withdraw_another_process_provider() {
     )
     .with_port_binding(SandboxPortBinding::tcp("http", port, 8080));
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let owner = ContainerSandboxBackend::new(config.clone());
     let manifest = owner
         .plan_start_with_id(&spec, &id, None, None)
@@ -623,7 +638,10 @@ fn independent_machine_backend_cannot_withdraw_another_process_provider() {
 #[test]
 fn machine_proxy_lifetime_fences_live_owner_and_recovers_after_owner_drop() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let port = unused_loopback_port();
+    // Offset 0 is the published binding the machine proxy binds; offset 1 is
+    // the forwarder endpoint. The claim outlives every proxy generation below.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let tenant =
         nimbus_core::TenantId::new("tenant-machine-lifetime").expect("tenant should validate");
     let id = SandboxId::new("machine-lifetime");
@@ -636,7 +654,7 @@ fn machine_proxy_lifetime_fences_live_owner_and_recovers_after_owner_drop() {
     )
     .with_port_binding(SandboxPortBinding::tcp("http", port, 8080));
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let owner = ContainerSandboxBackend::new(config.clone());
     let manifest = owner
         .plan_start_with_id(&spec, &id, None, None)
@@ -745,23 +763,16 @@ fn machine_proxy_lifetime_fences_live_owner_and_recovers_after_owner_drop() {
 #[test]
 fn absent_machine_registry_accepts_only_an_entire_terminal_no_effect_batch() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let first_probe =
-        TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("first port probe should bind");
-    let first_port = first_probe
-        .local_addr()
-        .expect("first port should resolve")
-        .port();
-    let second_probe =
-        TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("second port probe should bind");
-    let second_port = second_probe
-        .local_addr()
-        .expect("second port should resolve")
-        .port();
+    // The window owns the two-port published range plus the forwarder endpoint
+    // at offset 2. The claim holds for the whole test, so the range the
+    // coordinator walks names ports no other test process can draw.
+    let port_window = PortWindow::claim();
+    let first_port = port_window.port(0);
+    let second_port = port_window.port(1);
     assert_ne!(first_port, second_port);
-    drop((first_probe, second_probe));
 
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(2)));
     config.published_port_range = first_port.min(second_port)..=first_port.max(second_port);
     let backend = ContainerSandboxBackend::new(config);
     let manager = backend.port_lease_coordinator();

@@ -4,7 +4,7 @@ use std::time::Instant;
 use nimbus_core::{
     CommitSequence, CommitTimestamp, Document, Error, HistoricalReadErrorKind,
     HistoricalReadSnapshot, ReadTimestamp, Result, Schema, SequenceNumber, TableId, TableName,
-    TableState, TenantEventRecord, Timestamp,
+    TableSchema, TableState, TenantEventRecord, Timestamp,
 };
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
@@ -44,8 +44,45 @@ pub struct MaterializedJournalSnapshot {
     pub scheduled_execution_ids: Vec<String>,
 }
 
-pub(crate) const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 3;
+pub const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 = 3;
 pub(crate) const POINT_IN_TIME_RESTORE_ARCHIVE_VERSION: u16 = 1;
+
+/// The digest format for [`MaterializedPosition`]. Bump this when the canonical
+/// state layout changes, so a stale digest cannot compare equal to a fresh one.
+pub const MATERIALIZED_POSITION_VERSION: u16 = 1;
+
+/// A materialized snapshot's logical state in one canonical order, and the only
+/// input to the one canonical digest. Sequences are deliberately absent: this
+/// type answers "what state", and [`MaterializedPosition`] pairs it with "how
+/// far". Durable head is absent too, because it is a durability fact about the
+/// journal rather than a property of the state the journal produced.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CanonicalMaterializedState {
+    pub snapshot_version: u16,
+    pub table_identities: Vec<TableIdentitySnapshotEntry>,
+    pub schema_tables: Vec<TableSchema>,
+    pub documents: Vec<Document>,
+    pub scheduled_execution_ids: Vec<String>,
+}
+
+impl CanonicalMaterializedState {
+    pub fn digest(&self) -> Result<String> {
+        let payload =
+            serde_json::to_vec(self).map_err(|error| Error::Serialization(error.to_string()))?;
+        Ok(format!("{:x}", Sha256::digest(payload.as_slice())))
+    }
+}
+
+/// Where a materialized artifact sits: the applied sequence plus the digest of
+/// the state that sequence produced. Consumers bind to this instead of a bare
+/// sequence, so a checkpoint, archive, or replica whose content drifted at an
+/// unchanged sequence no longer compares equal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaterializedPosition {
+    pub version: u16,
+    pub applied_sequence: SequenceNumber,
+    pub state_digest: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -64,7 +101,7 @@ pub struct PointInTimeRestoreArchive {
     pub storage_format_version: StorageFormatVersion,
     pub document_version_storage_format: StorageFormatVersion,
     pub index_version_storage_format: StorageFormatVersion,
-    pub target_fingerprint: String,
+    pub target_position: MaterializedPosition,
 }
 
 impl MaterializedJournalSnapshot {
@@ -171,26 +208,56 @@ impl MaterializedJournalSnapshot {
             })
     }
 
-    pub fn canonical_fingerprint(&self) -> Result<String> {
+    /// The snapshot's logical state in one canonical order.
+    ///
+    /// Every collection is sorted here, including the schema: `Schema::tables`
+    /// is a `HashMap`, so serializing it in iteration order gives a different
+    /// digest for the same tables. Callers that need a digest should use
+    /// [`Self::materialized_position`] rather than hashing a snapshot directly.
+    pub fn canonical_state(&self) -> Result<CanonicalMaterializedState> {
         self.validate()?;
-        let mut canonical = self.clone();
-        canonical.table_identities.sort_by(|left, right| {
+
+        let mut table_identities = self.table_identities.clone();
+        table_identities.sort_by(|left, right| {
             left.namespace
                 .cmp(&right.namespace)
                 .then_with(|| left.table.as_str().cmp(right.table.as_str()))
                 .then_with(|| left.table_id.as_str().cmp(right.table_id.as_str()))
                 .then_with(|| left.state.cmp(&right.state))
         });
-        canonical.documents.sort_by(|left, right| {
+
+        let mut schema_tables = self.schema.tables.values().cloned().collect::<Vec<_>>();
+        schema_tables.sort_by(|left, right| left.table.as_str().cmp(right.table.as_str()));
+
+        let mut documents = self.documents.clone();
+        documents.sort_by(|left, right| {
             left.table
                 .as_str()
                 .cmp(right.table.as_str())
                 .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
         });
-        canonical.scheduled_execution_ids.sort_unstable();
-        let payload = serde_json::to_vec(&canonical)
-            .map_err(|error| Error::Serialization(error.to_string()))?;
-        Ok(format!("{:x}", Sha256::digest(payload.as_slice())))
+
+        let mut scheduled_execution_ids = self.scheduled_execution_ids.clone();
+        scheduled_execution_ids.sort_unstable();
+
+        Ok(CanonicalMaterializedState {
+            snapshot_version: self.version,
+            table_identities,
+            schema_tables,
+            documents,
+            scheduled_execution_ids,
+        })
+    }
+
+    /// Where this snapshot sits: how far the journal is applied, and what state
+    /// that produced. Two snapshots at the same sequence with different content
+    /// have different positions, which a bare sequence cannot express.
+    pub fn materialized_position(&self) -> Result<MaterializedPosition> {
+        Ok(MaterializedPosition {
+            version: MATERIALIZED_POSITION_VERSION,
+            applied_sequence: self.applied_sequence,
+            state_digest: self.canonical_state()?.digest()?,
+        })
     }
 
     pub(crate) fn empty_for_point_in_time_base() -> Self {
@@ -441,15 +508,16 @@ impl TenantStore {
             &archive.journal_tail,
             Some(archive.target_sequence),
         )?;
-        let restored_fingerprint = self
+        let restored_position = self
             .export_materialized_journal_snapshot()?
-            .canonical_fingerprint()?;
-        if restored_fingerprint != archive.target_fingerprint {
+            .materialized_position()?;
+        if restored_position != archive.target_position {
             return Err(Error::storage(
                 nimbus_core::StorageErrorKind::Corruption,
                 format!(
-                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
-                    restored_fingerprint, archive.target_fingerprint
+                    "point-in-time restore position mismatch: restored {} expected {}",
+                    describe_materialized_position(&restored_position),
+                    describe_materialized_position(&archive.target_position)
                 ),
             ));
         }
@@ -549,11 +617,8 @@ pub(crate) fn build_point_in_time_restore_archive(
                 && record.sequence.0 <= target_sequence.0
         })
         .collect::<Vec<_>>();
-    let target_fingerprint = materialized_snapshot_fingerprint_after_rebuild(
-        &base_snapshot,
-        &journal_tail,
-        target_sequence,
-    )?;
+    let target_position =
+        materialized_position_after_rebuild(&base_snapshot, &journal_tail, target_sequence)?;
 
     Ok(PointInTimeRestoreArchive {
         version: POINT_IN_TIME_RESTORE_ARCHIVE_VERSION,
@@ -564,7 +629,7 @@ pub(crate) fn build_point_in_time_restore_archive(
         storage_format_version: CURRENT_STORAGE_FORMAT_VERSION,
         document_version_storage_format: CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT,
         index_version_storage_format: CURRENT_INDEX_VERSION_STORAGE_FORMAT,
-        target_fingerprint,
+        target_position,
     })
 }
 
@@ -592,11 +657,11 @@ pub(crate) fn validate_materialized_journal_replay_base_is_empty(
     Ok(())
 }
 
-pub(crate) fn materialized_snapshot_fingerprint_after_rebuild(
+pub(crate) fn materialized_position_after_rebuild(
     base_snapshot: &MaterializedJournalSnapshot,
     journal_tail: &[TenantEventRecord],
     target_sequence: SequenceNumber,
-) -> Result<String> {
+) -> Result<MaterializedPosition> {
     let restored = TenantStore::create_in_memory()?;
     restored.rebuild_materialized_journal_from_snapshot(
         base_snapshot,
@@ -605,7 +670,16 @@ pub(crate) fn materialized_snapshot_fingerprint_after_rebuild(
     )?;
     restored
         .export_materialized_journal_snapshot()?
-        .canonical_fingerprint()
+        .materialized_position()
+}
+
+/// One operator-readable rendering of a position, so a mismatch report names
+/// both the sequence and the digest that disagreed.
+pub(crate) fn describe_materialized_position(position: &MaterializedPosition) -> String {
+    format!(
+        "sequence {} digest {} (format v{})",
+        position.applied_sequence.0, position.state_digest, position.version
+    )
 }
 
 impl TenantReadSnapshot {

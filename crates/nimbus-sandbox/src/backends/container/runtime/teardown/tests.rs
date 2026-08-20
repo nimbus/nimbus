@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+use nimbus_process_harness::PortWindow;
 
 use crate::backends::conmon::runtime_process::{
     RuntimeProcessIdentity, RuntimeProcessIdentityObservation, RuntimeProcessSignal,
@@ -34,6 +35,11 @@ mod retry_recovery;
 
 struct TeardownFixture {
     root: tempfile::TempDir,
+    /// Holds the host ports this fixture handed to the backend. The claim must
+    /// outlive every bind those ports feed, so it lives in the fixture rather
+    /// than in the constructor that took it. Fixtures that never publish a
+    /// port carry `None`.
+    port_window: Option<PortWindow>,
     backend: ContainerSandboxBackend,
     id: crate::SandboxId,
     execution_attempt_id: crate::SandboxExecutionAttemptId,
@@ -173,6 +179,7 @@ impl TeardownFixture {
             .expect("teardown fixture should reserve its exact plan");
         Self {
             root,
+            port_window: None,
             backend,
             id,
             execution_attempt_id,
@@ -207,6 +214,7 @@ impl TeardownFixture {
         assert!(manifest.provision_prepared);
         Self {
             root,
+            port_window: None,
             backend,
             id,
             execution_attempt_id,
@@ -215,17 +223,13 @@ impl TeardownFixture {
 
     fn attached(label: &str) -> Self {
         let root = tempfile::tempdir().expect("temporary root should exist");
-        let published_reservation =
-            TcpListener::bind("127.0.0.1:0").expect("published-port probe should bind");
-        let published_port = published_reservation
-            .local_addr()
-            .expect("published-port probe should report its address")
-            .port();
-        let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP-port probe should bind");
-        let pep_port = pep_reservation
-            .local_addr()
-            .expect("PEP-port probe should report its address")
-            .port();
+        // One claimed window owns both host ports this fixture publishes: the
+        // spec's published binding and the one-port range the egress proxy is
+        // allocated from. The claim excludes every other test process, so the
+        // proxy bind inside the attachment below cannot lose the port.
+        let port_window = PortWindow::claim();
+        let published_port = port_window.port(0);
+        let pep_port = port_window.port(1);
         let mut config = super::super::ContainerSandboxBackendConfig::under_root(root.path());
         config.node_network_supernet = "127.0.0.0/24".to_owned();
         config.published_port_range = pep_port..=pep_port;
@@ -240,8 +244,6 @@ impl TeardownFixture {
         .with_port_binding(crate::SandboxPortBinding::tcp("api", published_port, 8080));
         let execution_attempt_id = sample_execution_attempt_id(&id);
         let plan = sample_provision_network_plan(&spec, &id, label);
-        drop(published_reservation);
-        drop(pep_reservation);
         backend
             .reserve_provision_network(spec, id.clone(), execution_attempt_id.clone(), plan)
             .expect("attached teardown fixture should reserve its exact plan");
@@ -262,6 +264,7 @@ impl TeardownFixture {
         assert!(manifest.egress_proxy.is_some());
         Self {
             root,
+            port_window: Some(port_window),
             backend,
             id,
             execution_attempt_id,

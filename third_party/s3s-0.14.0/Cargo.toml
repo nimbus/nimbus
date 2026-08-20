@@ -99,7 +99,7 @@ version = "0.4.45"
 default-features = false
 
 [dependencies.crc-fast]
-version = "1.10.0"
+version = "=1.6.0"
 
 [dependencies.futures]
 version = "0.3.32"

@@ -199,6 +199,7 @@ mod tests {
 
     use nimbus_core::TenantId;
     use nimbus_network::{NetworkResourceGeneration, NetworkSegmentId};
+    use nimbus_process_harness::PortWindow;
     use tempfile::tempdir;
 
     use super::{
@@ -592,7 +593,10 @@ mod tests {
             .local_addr()
             .expect("target address should be available")
             .port();
-        let proxy_port = unused_local_port();
+        // The proxy binds this port a few lines below, so the number has to be
+        // owned for the whole test rather than probed and released.
+        let port_window = PortWindow::claim();
+        let proxy_port = port_window.port(0);
         let target_thread = thread::spawn(move || {
             let (mut stream, _) = target.accept().expect("target should accept connection");
             let mut request = [0_u8; 4];
@@ -673,15 +677,6 @@ mod tests {
         target_thread
             .join()
             .expect("target thread should finish cleanly");
-    }
-
-    fn unused_local_port() -> u16 {
-        let listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral listener should bind");
-        listener
-            .local_addr()
-            .expect("ephemeral address should be available")
-            .port()
     }
 
     fn connect_with_retry(port: u16) -> TcpStream {

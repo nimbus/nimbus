@@ -1,4 +1,5 @@
 use super::*;
+use nimbus_process_harness::PortWindow;
 
 fn mutate_port_lease_request(
     request: &PortLeaseRequest,
@@ -88,6 +89,10 @@ fn assert_durable_record_substitution_not_ready(
     );
 }
 
+/// The returned [`PortWindow`] is the claim on the PEP's host port. It is
+/// returned rather than dropped here because the PEP socket outlives this
+/// constructor; releasing the claim on return would leave the number in
+/// circulation for the rest of the test.
 fn start_leased_test_pep(
     name: &str,
     policy: &EgressPolicy,
@@ -97,15 +102,13 @@ fn start_leased_test_pep(
     TenantId,
     SandboxId,
     EgressProxyAssignment,
+    PortWindow,
 ) {
     let state_root = tempfile::TempDir::new().expect("egress state root should exist");
     let tenant = tenant();
     let id = SandboxId::new(name);
-    let port = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("port probe should bind")
-        .local_addr()
-        .expect("port probe address should resolve")
-        .port();
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
@@ -128,7 +131,7 @@ fn start_leased_test_pep(
     );
     ensure_egress_proxy_running(&registry, &tenant, &id, Some(&assignment), policy)
         .expect("leased PEP should activate");
-    (state_root, registry, tenant, id, assignment)
+    (state_root, registry, tenant, id, assignment, port_window)
 }
 
 #[test]
@@ -160,7 +163,7 @@ fn ensure_running_rejects_reuse_with_stale_policy_bytes() {
 fn authenticated_readiness_rejects_missing_or_substituted_pep_evidence() {
     use crate::backends::oci::egress::readiness::EgressReadinessFailure;
 
-    let (root, registry, tenant, id, assignment) =
+    let (root, registry, tenant, id, assignment, _port_window) =
         start_leased_test_pep("egress-authenticated-readiness", &EgressPolicy::deny_all());
     assert!(matches!(
         registry
@@ -349,7 +352,7 @@ fn authenticated_readiness_requires_exact_completed_reload_attempt() {
     use crate::backends::oci::egress::readiness::EgressReadinessFailure;
 
     let initial = EgressPolicy::deny_all();
-    let (_root, registry, tenant, id, assignment) =
+    let (_root, registry, tenant, id, assignment, _port_window) =
         start_leased_test_pep("egress-authenticated-reload", &initial);
     let desired = EgressPolicy::new([nimbus_egress::EgressRule::new(
         "reloaded-policy",

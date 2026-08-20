@@ -1,0 +1,20 @@
+SIC4 fail-before — captured on codex/sic-sic4 at 1f1ccce65 before any production change.
+Temporary tests were appended to crates/nimbus-storage/src/tests/recovery.rs, run, then removed.
+
+== A. Shadow recovery accepts a checkpoint whose content changed at the same sequence ==
+ShadowMaterializerManifest::validate binds only checkpoint_sequence == checkpoint.applied_sequence.
+$ cargo test -p nimbus-storage failbefore_shadow -- --nocapture --test-threads=1
+test tests::recovery::failbefore_shadow_recovery_accepts_a_tampered_checkpoint_at_the_same_sequence ... FAILBEFORE-A: recover() ACCEPTED the tampered checkpoint; recovered title = Some(String("tampered"))
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 310 filtered out; finished in 0.20s
+
+== B. canonical_fingerprint is not order-stable: it serializes Schema.tables, a HashMap ==
+$ cargo test -p nimbus-storage failbefore_canonical -- --nocapture --test-threads=1
+test tests::recovery::failbefore_canonical_fingerprint_is_not_stable_across_schema_map_orderings ... FAILBEFORE-B: 200 logically identical snapshots produced 101 distinct canonical_fingerprint values
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 310 filtered out; finished in 0.03s
+
+== C. The consequence: point-in-time restore is broken for a multi-table tenant ==
+build_point_in_time_restore_archive and import_point_in_time_restore_archive each compute the
+digest over a different Schema HashMap instance, so equal logical state hashes differently.
+$ cargo test -p nimbus-storage failbefore_pitr -- --nocapture --test-threads=1
+test tests::recovery::failbefore_pitr_roundtrip_can_fail_for_a_multi_table_tenant ... FAILBEFORE-C: 40/40 point-in-time restores of a 5-table tenant failed; last error: storage error [corruption]: point-in-time restore fingerprint mismatch: restored 1f90516969569d1cfe80570b54101862ee3ece453764162478a52e68831442c1 expected 675c5d301dd0f88ea6c0927c235bc4f2dd62ed3a5f81bef38fc70c985959320a
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 310 filtered out; finished in 17.83s

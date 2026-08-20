@@ -2,8 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use nimbus_blob::BlobStore;
-use nimbus_core::{CommitEntry, Result, TenantId};
-use nimbus_storage::{ObjectManifest, ObjectMultipartUpload};
+use nimbus_core::{CommitEntry, Error, Result, TenantId};
+use nimbus_storage::{
+    ObjectConditionOutcome, ObjectExpectedState, ObjectManifest, ObjectMultipartUpload,
+    ObjectUploadConditionOutcome, ObjectUploadExpectedState,
+};
 
 /// One tenant's byte-plane accessor plus named-metadata handle, resolved once
 /// per request via [`S3TenantResolver::resolve`] instead of re-resolving the
@@ -50,7 +53,24 @@ pub trait S3TenantBlobs: Send + Sync + 'static {
 /// handle itself is tenant-scoped, matching [`BlobStore`]'s per-tenant shape.
 #[async_trait]
 pub trait S3ObjectMeta: Send + Sync + 'static {
-    async fn put_manifest(&self, manifest: ObjectManifest) -> Result<CommitEntry>;
+    /// Writes a manifest, but only if every clause in `expected` holds
+    /// against the commit authority's own read of the current row.
+    ///
+    /// There is no unconditional sibling on this trait. The S3 surface must
+    /// not read a manifest, decide a precondition against that read, and then
+    /// write unconditionally: between the read and the write another request
+    /// can commit at the same key, and both writers then believe they won.
+    /// The clauses travel to the authority instead, which decides them
+    /// against its own serialized read before it assigns a sequence.
+    ///
+    /// Pass an empty `expected` for a genuinely unconditional write, through
+    /// [`put_manifest_unconditional`], which names that choice at the call
+    /// site and rejects the outcome that cannot happen.
+    async fn put_manifest_conditional(
+        &self,
+        manifest: ObjectManifest,
+        expected: Vec<ObjectExpectedState>,
+    ) -> Result<ObjectConditionOutcome>;
     async fn get_manifest(&self, bucket: &str, key: &str) -> Result<Option<ObjectManifest>>;
     async fn delete_manifest(
         &self,
@@ -64,18 +84,56 @@ pub trait S3ObjectMeta: Send + Sync + 'static {
         limit: usize,
     ) -> Result<Vec<ObjectManifest>>;
 
-    async fn put_multipart_upload(&self, upload: ObjectMultipartUpload) -> Result<CommitEntry>;
+    /// Writes a multipart-upload row, but only if every clause in `expected`
+    /// holds against the commit authority's own read.
+    ///
+    /// There is no unconditional sibling, for the reason
+    /// [`put_manifest_conditional`](Self::put_manifest_conditional) gives.
+    /// `UploadPart` merges a part into the whole upload record, so an
+    /// unconditional write here does not overwrite one field — it discards
+    /// every part another request committed since this one read the row.
+    async fn put_multipart_upload_conditional(
+        &self,
+        upload: ObjectMultipartUpload,
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome>;
     async fn get_multipart_upload(&self, upload_id: &str) -> Result<Option<ObjectMultipartUpload>>;
-    async fn delete_multipart_upload(
+    /// Removes a multipart-upload row, but only if every clause in `expected`
+    /// holds. Completion and abort each consume an upload they already read,
+    /// so both fence the delete on that read.
+    async fn delete_multipart_upload_conditional(
         &self,
         upload_id: &str,
-    ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>>;
+        expected: Vec<ObjectUploadExpectedState>,
+    ) -> Result<ObjectUploadConditionOutcome>;
     async fn list_multipart_uploads(
         &self,
         bucket: &str,
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<ObjectMultipartUpload>>;
+}
+
+/// Writes `manifest` with no expected-state clauses and returns the manifest
+/// it superseded, decoded from the commit authority's own read.
+///
+/// Callers use the returned manifest — never a pre-read taken outside the
+/// authority — to decide which of the superseded manifest's blobs the new
+/// manifest still retains.
+///
+/// # Errors
+/// Fails if the commit fails. A clause-free write cannot be rejected, so a
+/// rejection here is an internal contract violation, not a client error.
+pub async fn put_manifest_unconditional(
+    meta: &dyn S3ObjectMeta,
+    manifest: ObjectManifest,
+) -> Result<Option<ObjectManifest>> {
+    match meta.put_manifest_conditional(manifest, Vec::new()).await? {
+        ObjectConditionOutcome::Committed { previous, .. } => Ok(previous),
+        ObjectConditionOutcome::Rejected { .. } => Err(Error::Internal(
+            "a manifest write with no expected state cannot be rejected".to_string(),
+        )),
+    }
 }
 
 /// Resolves a tenant into its byte/metadata planes for the S3 and Convex

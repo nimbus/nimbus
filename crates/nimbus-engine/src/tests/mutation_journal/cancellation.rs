@@ -87,6 +87,18 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
         .map(|write| write.doc_id.clone())
         .expect("durable blocker commit should include the inserted document id");
 
+    // Park the committer before its next drain. The blocker above stops inside
+    // the *publisher's* durable append, not inside the committer, so the
+    // committer stays free to drain and assign the request below the moment it
+    // is enqueued -- which happens before the cancel future has had a chance to
+    // run. Sequence assignment is the point of no return for a queued mutation,
+    // so without this pause the test races the committer for the only window in
+    // which cancellation can still take effect, and loses it under load.
+    let drain_pause = engine
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("mutation journal pause handle should load");
+    drain_pause.arm();
+
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
     let handle = tokio::spawn({
@@ -110,6 +122,16 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
         }
     });
 
+    assert!(
+        tokio::task::spawn_blocking({
+            let drain_pause = drain_pause.clone();
+            move || drain_pause.wait_until_entered(Duration::from_secs(5))
+        })
+        .await
+        .expect("drain pause waiter should join"),
+        "the committer should park before draining the queued mutation"
+    );
+
     cancel.notify_one();
     expect_future_within(
         engine.wait_for_queued_mutation_cancellation_observed_for_testing(&tenant_id),
@@ -117,6 +139,9 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
     )
     .await
     .expect("cancellation observation wait should succeed");
+    // Only now is the request both enqueued and observably cancelled, so the
+    // drain that follows must resolve it without assigning a sequence.
+    drain_pause.release();
     faults.release();
 
     timeout(Duration::from_secs(1), blocker)
