@@ -9,7 +9,7 @@ code keeps its imports unchanged: `initializeApp`, `getFirestore`,
 `collection`, `doc`, `getDoc`, `setDoc`, `query`, `where`, `onSnapshot`,
 batches, and transactions are all exposed with matching signatures. The
 `nimbus` binary provisions it locally into an app's `.nimbus/packages/`
-(`nimbus packages provision firebase`); it is never published to a registry.
+(`nimbus packages install firebase`); it is never published to a registry.
 
 > The compatibility surface is intentionally narrower than a blanket
 > "Firestore-compatible" claim. Every supported feature is backed by focused
@@ -33,7 +33,7 @@ imports:
 
 ```bash
 # in your existing app directory
-nimbus packages provision firebase
+nimbus packages install firebase
 npm install
 ```
 

@@ -1,20 +1,19 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::authoring_root;
 use crate::node_runtime;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DevAdapter {
-    /// A Nimbus-native app: functions in `nimbus/`, authored against
-    /// `@nimbus/nimbus`. Separate from `Convex` because the two roots resolve
-    /// to different package namespaces — codegen emits `@nimbus/nimbus/server`
-    /// imports here, so provisioning the Convex compatibility package instead
-    /// would wire the app to a package its sources never import.
-    Nimbus {
-        source_root: PathBuf,
-    },
     Convex {
         source_root: PathBuf,
+        /// The embedded package this root's functions import, from
+        /// `authoring_root`. A `nimbus/` root authors against
+        /// `@nimbus/nimbus`, a `convex/` root against `convex` — so this
+        /// cannot be a constant, or `dev` wires a dependency the generated
+        /// code never imports.
+        package_target: &'static str,
     },
     CloudFunctions {
         source_roots: Vec<PathBuf>,
@@ -27,10 +26,16 @@ pub(super) enum DevAdapter {
 }
 
 impl DevAdapter {
+    /// The adapter name `dev` reports to the operator.
+    ///
+    /// An authoring root answers with the package it authors against, not with
+    /// a fixed `convex`: the banner and the redetect notice are how an operator
+    /// checks that `dev` adopted the root they expected, so a native app that
+    /// reported `convex` there would contradict the `@nimbus/nimbus` dependency
+    /// the same run wires in.
     pub(super) fn name(&self) -> &'static str {
         match self {
-            Self::Nimbus { .. } => node_runtime::Adapter::Nimbus.name(),
-            Self::Convex { .. } => node_runtime::Adapter::Convex.name(),
+            Self::Convex { package_target, .. } => package_target,
             Self::CloudFunctions { .. } => node_runtime::Adapter::CloudFunctions.name(),
             Self::FirestoreClient => "firestore-client",
         }
@@ -38,9 +43,7 @@ impl DevAdapter {
 
     pub(super) fn source_roots(&self) -> &[PathBuf] {
         match self {
-            Self::Nimbus { source_root } | Self::Convex { source_root } => {
-                std::slice::from_ref(source_root)
-            }
+            Self::Convex { source_root, .. } => std::slice::from_ref(source_root),
             Self::CloudFunctions { source_roots } => source_roots,
             Self::FirestoreClient => &[],
         }
@@ -48,7 +51,6 @@ impl DevAdapter {
 
     pub(super) fn needs_node_dependencies(&self) -> bool {
         match self {
-            Self::Nimbus { .. } => node_runtime::Adapter::Nimbus.needs_node_dependencies(),
             Self::Convex { .. } => node_runtime::Adapter::Convex.needs_node_dependencies(),
             Self::CloudFunctions { .. } => {
                 node_runtime::Adapter::CloudFunctions.needs_node_dependencies()
@@ -65,8 +67,7 @@ impl DevAdapter {
     /// only behind the fail-closed import scan in `dev.rs`.
     pub(super) fn provision_target(&self) -> Option<&'static str> {
         match self {
-            Self::Nimbus { .. } => node_runtime::Adapter::Nimbus.provision_target(),
-            Self::Convex { .. } => node_runtime::Adapter::Convex.provision_target(),
+            Self::Convex { package_target, .. } => Some(package_target),
             Self::CloudFunctions { .. } => node_runtime::Adapter::CloudFunctions.provision_target(),
             Self::FirestoreClient => None,
         }
@@ -74,49 +75,20 @@ impl DevAdapter {
 
     pub(super) fn npm_install_dirs(&self, app_dir: &Path) -> Vec<PathBuf> {
         match self {
-            Self::Nimbus { .. } | Self::Convex { .. } | Self::FirestoreClient => {
-                vec![app_dir.to_path_buf()]
-            }
+            Self::Convex { .. } | Self::FirestoreClient => vec![app_dir.to_path_buf()],
             Self::CloudFunctions { source_roots } => source_roots.clone(),
         }
     }
 }
 
 pub(super) fn detect_dev_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter>> {
-    // convex.json's "functions" setting relocates the source directory (e.g.
-    // Create React App projects that cannot import from outside src/) and
-    // takes precedence over the nimbus/convex directory heuristic below — an
-    // explicit override is an unambiguous signal, so a declared-but-missing
-    // directory is a real misconfiguration to surface, not something to
-    // silently fall through past.
-    if let Some(functions_override) = read_convex_json_functions_field(app_dir) {
-        let functions_root = app_dir.join(&functions_override);
-        if !functions_root.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "convex.json declares \"functions\": {functions_override:?}, but {} is not a directory in {}. Create that directory with your Convex functions inside it, or remove \"functions\" from convex.json.",
-                    functions_root.display(),
-                    app_dir.display(),
-                ),
-            ));
-        }
+    // Precedence 1: an authoring root. `authoring_root` owns which directory
+    // that is and which package it imports, so detection here cannot drift
+    // from what codegen generates and what provisioning wires.
+    if let Some(root) = authoring_root::resolve(app_dir)? {
         return Ok(Some(DevAdapter::Convex {
-            source_root: functions_root,
-        }));
-    }
-
-    let nimbus_root = app_dir.join("nimbus");
-    if nimbus_root.is_dir() {
-        return Ok(Some(DevAdapter::Nimbus {
-            source_root: nimbus_root,
-        }));
-    }
-
-    let convex_root = app_dir.join("convex");
-    if convex_root.is_dir() {
-        return Ok(Some(DevAdapter::Convex {
-            source_root: convex_root,
+            source_root: root.source_root,
+            package_target: root.package_target,
         }));
     }
 
@@ -133,19 +105,6 @@ pub(super) fn detect_dev_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter
     }
 
     Ok(None)
-}
-
-/// Best-effort read of convex.json's top-level "functions" string field.
-/// Malformed JSON, a missing file, or a wrong-typed value all fall through
-/// to `None` (the default nimbus/convex directory heuristic in the caller)
-/// — codegen's own convex.json loader
-/// (packages/codegen/src/project_config.mjs) is the strict validator that
-/// runs right after detection; this detection-time read only needs the
-/// override signal, not full validation.
-fn read_convex_json_functions_field(app_dir: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(app_dir.join("convex.json")).ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
-    parsed.get("functions")?.as_str().map(str::to_owned)
 }
 
 fn detect_cloud_functions_adapter(app_dir: &Path) -> io::Result<Option<DevAdapter>> {
@@ -331,6 +290,7 @@ mod tests {
             detect_dev_adapter(dir.path()).expect("detection should succeed"),
             Some(DevAdapter::Convex {
                 source_root: dir.path().join("convex"),
+                package_target: authoring_root::CONVEX_TARGET,
             })
         );
     }
@@ -347,6 +307,91 @@ mod tests {
             detect_dev_adapter(dir.path()).expect("detection should succeed"),
             None
         );
+    }
+
+    /// The defect this guards: `dev` detected a `nimbus/` root but reported a
+    /// hard-coded `convex` provision target, so the first `nimbus dev` in a
+    /// freshly scaffolded native app added a `convex` dependency while codegen
+    /// wired `@nimbus/nimbus` — one run, two packages.
+    #[test]
+    fn a_nimbus_root_app_provisions_the_native_sdk() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("nimbus")).expect("create nimbus dir");
+        let adapter = detect_dev_adapter(dir.path())
+            .expect("detection should succeed")
+            .expect("a nimbus root should detect an adapter");
+        assert_eq!(
+            adapter,
+            DevAdapter::Convex {
+                source_root: dir.path().join("nimbus"),
+                package_target: authoring_root::NIMBUS_TARGET,
+            }
+        );
+        assert_eq!(
+            adapter.provision_target(),
+            Some(authoring_root::NIMBUS_TARGET)
+        );
+        // The operator-visible name follows the wired package, so the banner
+        // and the dependency cannot disagree.
+        assert_eq!(adapter.name(), authoring_root::NIMBUS_TARGET);
+    }
+
+    #[test]
+    fn a_convex_root_app_provisions_the_compatibility_package() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("convex")).expect("create convex dir");
+        let adapter = detect_dev_adapter(dir.path())
+            .expect("detection should succeed")
+            .expect("a convex root should detect an adapter");
+        assert_eq!(
+            adapter.provision_target(),
+            Some(authoring_root::CONVEX_TARGET)
+        );
+        assert_eq!(adapter.name(), authoring_root::CONVEX_TARGET);
+    }
+
+    /// A dual-root app follows codegen: `nimbus/` wins, and the wired package
+    /// is the one its generated imports name.
+    #[test]
+    fn a_dual_root_app_provisions_the_native_sdk() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("convex")).expect("create convex dir");
+        std::fs::create_dir_all(dir.path().join("nimbus")).expect("create nimbus dir");
+        let adapter = detect_dev_adapter(dir.path())
+            .expect("detection should succeed")
+            .expect("a dual-root app should detect an adapter");
+        assert_eq!(
+            adapter.source_roots(),
+            [dir.path().join("nimbus")].as_slice()
+        );
+        assert_eq!(
+            adapter.provision_target(),
+            Some(authoring_root::NIMBUS_TARGET)
+        );
+    }
+
+    /// `convex.json`'s override is a Convex setting: it selects the
+    /// compatibility package even when it points at a directory named
+    /// `nimbus`, matching `resolveSourceRoot`.
+    #[test]
+    fn a_functions_override_provisions_the_compatibility_package() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("nimbus")).expect("create nimbus dir");
+        std::fs::write(dir.path().join("convex.json"), r#"{"functions": "nimbus"}"#)
+            .expect("write convex.json");
+        let adapter = detect_dev_adapter(dir.path())
+            .expect("detection should succeed")
+            .expect("an override should detect an adapter");
+        assert_eq!(
+            adapter,
+            DevAdapter::Convex {
+                source_root: dir.path().join("nimbus"),
+                package_target: authoring_root::CONVEX_TARGET,
+            }
+        );
+        // A directory named `nimbus` behind a Convex override is still a Convex
+        // app: the name must follow the package, not the directory.
+        assert_eq!(adapter.name(), authoring_root::CONVEX_TARGET);
     }
 
     #[test]

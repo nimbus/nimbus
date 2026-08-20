@@ -919,19 +919,49 @@ Rotates data-encryption keys; provider-specific and may rewrite data.
 
 ## nimbus packages
 
-Provisions the embedded Nimbus JS packages into an app's
-`.nimbus/packages/` directory so `file:` package specifiers resolve offline.
+Installs the embedded Nimbus JS packages into an app's `.nimbus/packages/`
+directory so `file:` package specifiers resolve offline.
 
-### nimbus packages provision
+### nimbus packages install
 
 ```bash
-nimbus packages provision [target] [--app-dir <path>]
+nimbus packages install [target] [--app-dir <path>] [--no-node-install]
 ```
+
+Stages the embedded packages, points the app's `package.json` dependency at
+the staged copy, and runs the Node dependency install so the app can import it
+right away. When the app has no `package.json`, or npm is not on `PATH`, the
+staging and wiring still happen and the command says what is left to run.
+
+Installing over a registry dependency records the spec it replaces under a
+top-level `"nimbus"` key in the same `package.json`, which is what lets
+`nimbus packages uninstall` put the original back.
 
 | Argument / flag | Env var | Default | What it does |
 | --- | --- | --- | --- |
-| `[target]` | — | `all` | What to provision: `all` or an adapter (`convex`, `firebase`, `mongodb`, `dynamodb`, `nimbus`); dependencies are included automatically. |
-| `--app-dir` | — | `.` | App directory to provision into. |
+| `[target]` | — | `all` | What to install: `all` or an adapter (`convex`, `firebase`, `mongodb`, `dynamodb`, `nimbus`); dependencies are included automatically. |
+| `--app-dir` | — | `.` | App directory to install into. |
+| `--no-node-install` | — | `false` | Stage and wire only; skip the Node dependency install. |
+
+### nimbus packages uninstall
+
+```bash
+nimbus packages uninstall <target> [--app-dir <path>]
+```
+
+Undoes `install` for one adapter: restores the recorded registry spec — or
+removes the dependency when Nimbus added it — and deletes `.nimbus/packages/`
+once no dependency points into it. Run `npm install` afterwards to update
+`node_modules`.
+
+Uninstalling also records the detach, so the automatic wiring that `nimbus
+dev`, `nimbus codegen`, and `nimbus deploy` perform does not silently restore
+it. `nimbus packages install <target>` clears that record and wires it again.
+
+| Argument / flag | Env var | Default | What it does |
+| --- | --- | --- | --- |
+| `<target>` | — | required | Which adapter to uninstall: `convex`, `firebase`, `mongodb`, `dynamodb`, or `nimbus`. |
+| `--app-dir` | — | `.` | App directory to uninstall from. |
 
 ### nimbus packages verify
 

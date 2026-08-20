@@ -140,7 +140,7 @@ Three packages support the protocol adapters on the client side:
   protocol via Connect-Web generated protobuf code. Like `convex`, it
   takes the stock npm name, so existing imports work unchanged once the
   app's `firebase` dependency points at the provisioned copy —
-  `nimbus packages provision firebase` rewires the `package.json`
+  `nimbus packages install firebase` rewires the `package.json`
   dependency to `file:./.nimbus/packages/firebase` itself.
 - `@nimbus/mongodb` exports a single `mongoUri` helper that builds a
   connection string pointed at a Nimbus tenant, for use with the stock
@@ -190,6 +190,31 @@ crates/nimbus-assets/embedded/packages/   (rust-embed, version-locked)
   and the installed copies are invalidated so Node reinstalls from the
   fresh bytes. `nimbus packages verify` re-checks every provisioned file
   against the embedded checksums.
+
+### Wiring is reversible
+
+Rewriting an app's dependency spec is only half a contract; an app that
+cannot get its original spec back is stuck. Because `package.json` is strict
+JSON and cannot carry a comment, the record of what was replaced lives under
+a top-level `"nimbus"` key in the same file:
+
+```json
+"nimbus": { "packages": { "convex": { "previous": "^1.17.0" } } }
+```
+
+npm ignores unknown top-level keys, so the record travels with the app
+through git and clones and survives deleting the disposable `.nimbus/` tree —
+which a sidecar file under `.nimbus/` would not. `nimbus packages uninstall
+convex` reads it, restores that exact spec, and removes the staged packages
+once no dependency points into them. An app whose dependency Nimbus *added*
+carries no record: there is nothing to restore, so uninstall removes the key,
+and scaffolded manifests stay untouched.
+
+Uninstalling also writes `{ "detached": true }` in place of the record. The
+wiring runs automatically on every `dev`, `codegen`, and `deploy`, so without
+that marker the next command would silently undo the uninstall. Staging is
+not suppressed — only the `package.json` edit — and `nimbus packages install`
+clears the marker and wires the dependency again.
 
 The codegen tooling itself (a prebundled `@nimbus/codegen` plus esbuild)
 is embedded the same way but is *not* provisioned into apps — it is

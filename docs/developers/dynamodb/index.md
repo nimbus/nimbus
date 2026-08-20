@@ -90,7 +90,7 @@ non-loopback address.
 If your project uses the Nimbus CLI, provision the helper package:
 
 ```bash
-nimbus packages provision dynamodb
+nimbus packages install dynamodb
 ```
 
 `@nimbus/dynamodb` exports `clientConfig()`, a drop-in configuration for

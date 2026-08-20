@@ -6,6 +6,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::authoring_root;
 use crate::cli_ux;
 
 const NODE_DEPENDENCY_STATE_PATH: [&str; 4] = [".nimbus", "cache", "node", "dependency-state.json"];
@@ -42,10 +43,16 @@ impl Adapter {
             .find(|adapter| adapter.name() == s)
     }
 
+    /// The name this adapter answers to on the CLI.
+    ///
+    /// The two authoring adapters borrow their name from `authoring_root`
+    /// rather than spelling it again: `dev` detection, provisioning, and this
+    /// parser all have to agree on one string, and a second literal here is
+    /// exactly how they would drift apart.
     pub(crate) fn name(self) -> &'static str {
         match self {
-            Self::Nimbus => "nimbus",
-            Self::Convex => "convex",
+            Self::Nimbus => authoring_root::NIMBUS_TARGET,
+            Self::Convex => authoring_root::CONVEX_TARGET,
             Self::CloudFunctions => "cloud-functions",
         }
     }
@@ -64,8 +71,8 @@ impl Adapter {
     /// provision from the binary.
     pub(crate) fn provision_target(self) -> Option<&'static str> {
         match self {
-            Self::Nimbus => Some("nimbus"),
-            Self::Convex => Some("convex"),
+            Self::Nimbus => Some(authoring_root::NIMBUS_TARGET),
+            Self::Convex => Some(authoring_root::CONVEX_TARGET),
             Self::CloudFunctions => None,
         }
     }

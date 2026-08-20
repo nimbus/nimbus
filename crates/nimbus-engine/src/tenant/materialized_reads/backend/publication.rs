@@ -9,6 +9,18 @@ use super::state::{
 };
 use super::{MaterializedServingBackend, MaterializedTableDocuments, ServingSnapshotManager};
 
+/// What became of a freshly loaded table offered to the serving surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub(super) enum TableSnapshotPublish {
+    /// The table joined the surface and is serveable at its covered sequence.
+    Published,
+    /// The surface had already folded commits past the sequence this load
+    /// replayed to, so the table was rejected and nothing was mutated. The
+    /// caller must reload from the carried frontier.
+    BehindServingFrontier(SequenceNumber),
+}
+
 impl MaterializedServingBackend {
     pub(crate) fn apply_commit(&self, snapshots: &ServingSnapshotManager, commit: &CommitEntry) {
         let mut tables = self
@@ -20,6 +32,16 @@ impl MaterializedServingBackend {
             writes_by_table.entry(&write.table).or_default().push(write);
         }
         for (table_name, table_state) in tables.iter_mut() {
+            if table_state.current.covered_sequence.0 >= commit.sequence.0 {
+                // A table load can publish at the store's applied head before
+                // the pipeline invalidates the commits that head already
+                // contains, so a resident table can legitimately be at or past
+                // the commit being applied here. Folding it again would
+                // re-apply writes it already contains -- resurrecting a
+                // document a later commit deleted -- and reporting the
+                // commit's sequence would drag its coverage backwards.
+                continue;
+            }
             if let Some(writes) = writes_by_table.get(table_name) {
                 Self::apply_writes_to_current_version(table_state, commit.sequence, writes);
             } else {
@@ -30,6 +52,18 @@ impl MaterializedServingBackend {
         self.publish_serving_snapshot_locked(&tables, snapshots);
     }
 
+    /// Folds a run of commits into every resident table.
+    ///
+    /// Each table folds only the suffix of the run that is past its own
+    /// `covered_sequence`, and a table already at or past the run's end is
+    /// left alone. Tables do not all sit at the same coverage: a warm load
+    /// publishes its table at the sequence it replayed to, and
+    /// `catch_up_loaded_tables_before_publish` replays from the *earliest*
+    /// resident coverage, so a run routinely spans commits some tables have
+    /// already folded. Applying the whole run to all of them would re-insert
+    /// documents a later commit in the run deleted, and stamping every table
+    /// with the run's end would move an already-further-ahead table's
+    /// coverage backwards.
     pub(crate) fn apply_commits<'a>(
         &self,
         snapshots: &ServingSnapshotManager,
@@ -40,19 +74,37 @@ impl MaterializedServingBackend {
             .write()
             .expect("materialized read surface lock should not be poisoned");
         let mut applied_through = None;
-        let mut writes_by_table = HashMap::<&TableName, Vec<&nimbus_core::WriteOp>>::new();
+        let mut writes_by_table =
+            HashMap::<&TableName, Vec<(SequenceNumber, &nimbus_core::WriteOp)>>::new();
         for commit in commits {
             applied_through = Some(commit.sequence);
             for write in &commit.writes {
-                writes_by_table.entry(&write.table).or_default().push(write);
+                writes_by_table
+                    .entry(&write.table)
+                    .or_default()
+                    .push((commit.sequence, write));
             }
         }
         if let Some(applied_through) = applied_through {
             for (table_name, table_state) in tables.iter_mut() {
-                if let Some(writes) = writes_by_table.get(table_name) {
-                    Self::apply_writes_to_current_version(table_state, applied_through, writes);
-                } else {
+                let covered_sequence = table_state.current.covered_sequence;
+                if covered_sequence.0 >= applied_through.0 {
+                    continue;
+                }
+                let writes = writes_by_table
+                    .get(table_name)
+                    .map(|writes| {
+                        writes
+                            .iter()
+                            .filter(|(sequence, _)| sequence.0 > covered_sequence.0)
+                            .map(|(_, write)| *write)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if writes.is_empty() {
                     Self::advance_current_coverage_without_retention(table_state, applied_through);
+                } else {
+                    Self::apply_writes_to_current_version(table_state, applied_through, &writes);
                 }
             }
             self.prune_retained_versions_locked(&mut tables);
@@ -72,6 +124,18 @@ impl MaterializedServingBackend {
         snapshots.publish(snapshot, self.current_version_capacity());
     }
 
+    /// Publishes a freshly loaded table into the serving surface.
+    ///
+    /// Rejects a table that arrives behind the serving frontier instead of
+    /// taking it. Such a table is unusable twice over: the snapshot built from
+    /// it covers the new minimum across resident tables, which
+    /// `ServingSnapshotManager::publish` drops as out of order -- leaving the
+    /// table absent from every retained snapshot, so reads of it fail even
+    /// though its own coverage satisfies them -- and it would sit in the
+    /// surface missing the writes from the commits already folded before it
+    /// arrived. The frontier check runs under the same `tables` write lock as
+    /// the insert, so a commit applied concurrently with a load cannot slip
+    /// between them.
     pub(super) fn publish_table_snapshot(
         &self,
         snapshots: &ServingSnapshotManager,
@@ -79,7 +143,7 @@ impl MaterializedServingBackend {
         generation: u64,
         covered_sequence: SequenceNumber,
         documents: MaterializedTableDocuments,
-    ) {
+    ) -> TableSnapshotPublish {
         let document_count = documents.len();
         let estimated_bytes = documents
             .values()
@@ -93,6 +157,11 @@ impl MaterializedServingBackend {
             .tables
             .write()
             .expect("materialized read surface lock should not be poisoned");
+        if let Some(frontier) = Self::serving_frontier_locked(&tables, snapshots)
+            && covered_sequence.0 < frontier.0
+        {
+            return TableSnapshotPublish::BehindServingFrontier(frontier);
+        }
         let should_publish = match tables.get(&table) {
             Some(existing) => {
                 covered_sequence.0 > existing.current.covered_sequence.0
@@ -102,7 +171,7 @@ impl MaterializedServingBackend {
             None => true,
         };
         if !should_publish {
-            return;
+            return TableSnapshotPublish::Published;
         }
         access.next_access_stamp = access.next_access_stamp.wrapping_add(1);
         if access.next_access_stamp == 0 {
@@ -146,6 +215,30 @@ impl MaterializedServingBackend {
         self.evict_if_needed_locked(&mut tables, &mut access);
         self.publish_serving_snapshot_locked(&tables, snapshots);
         self.table_load_count.fetch_add(1, Ordering::Relaxed);
+        TableSnapshotPublish::Published
+    }
+
+    /// The sequence a freshly loaded table has to reach to be serveable.
+    ///
+    /// Takes the higher of what the resident tables have folded and what the
+    /// snapshot manager last published: the two can differ. Eviction can empty
+    /// the resident set while the manager still retains snapshots covering
+    /// later sequences, and a deliberately lagging table holds the published
+    /// coverage below the folded frontier.
+    fn serving_frontier_locked(
+        tables: &HashMap<TableName, RetainedMaterializedTable>,
+        snapshots: &ServingSnapshotManager,
+    ) -> Option<SequenceNumber> {
+        let folded = tables
+            .values()
+            .map(|table_state| table_state.current.covered_sequence)
+            .max_by_key(|sequence| sequence.0);
+        let published = snapshots.latest_covered_sequence();
+        match (folded, published) {
+            (Some(folded), Some(published)) if published.0 > folded.0 => Some(published),
+            (Some(folded), _) => Some(folded),
+            (None, published) => published,
+        }
     }
 
     fn advance_current_coverage_without_retention(
@@ -277,9 +370,19 @@ pub(super) fn apply_write_to_materialized_documents(
 
 #[cfg(test)]
 mod tests {
-    use nimbus_core::TableName;
 
-    use super::{MaterializedServingBackend, SequenceNumber, ServingSnapshotManager};
+    use nimbus_core::{
+        CommitEntry, Document, DocumentId, TableId, TableName, Timestamp, WriteOp, WriteOpType,
+    };
+
+    use super::{
+        MaterializedServingBackend, MaterializedTableDocuments, SequenceNumber,
+        ServingSnapshotManager, TableSnapshotPublish,
+    };
+
+    fn table_name(table: &str) -> TableName {
+        TableName::new(table).expect("table name should be valid")
+    }
 
     fn seed_table(
         backend: &MaterializedServingBackend,
@@ -287,13 +390,74 @@ mod tests {
         table: &str,
         covered_sequence: u64,
     ) {
-        backend.publish_table_snapshot(
+        seed_table_with_documents(
+            backend,
             snapshots,
-            TableName::new(table).expect("table name should be valid"),
-            1,
-            SequenceNumber(covered_sequence),
-            Default::default(),
+            table,
+            covered_sequence,
+            MaterializedTableDocuments::default(),
         );
+    }
+
+    fn seed_table_with_documents(
+        backend: &MaterializedServingBackend,
+        snapshots: &ServingSnapshotManager,
+        table: &str,
+        covered_sequence: u64,
+        documents: MaterializedTableDocuments,
+    ) {
+        assert_eq!(
+            backend.publish_table_snapshot(
+                snapshots,
+                table_name(table),
+                1,
+                SequenceNumber(covered_sequence),
+                documents,
+            ),
+            TableSnapshotPublish::Published,
+            "seeding {table} at sequence {covered_sequence} should be accepted"
+        );
+    }
+
+    fn document(table: &str, id: &DocumentId) -> Document {
+        Document::with_id(
+            id.clone(),
+            table_name(table),
+            serde_json::Map::from_iter([("body".to_string(), serde_json::json!("seeded"))]),
+        )
+    }
+
+    fn insert_commit(sequence: u64, table: &str, id: &DocumentId) -> CommitEntry {
+        write_commit(
+            sequence,
+            table,
+            id,
+            WriteOpType::Insert,
+            Some(document(table, id)),
+        )
+    }
+
+    fn write_commit(
+        sequence: u64,
+        table: &str,
+        id: &DocumentId,
+        op_type: WriteOpType,
+        current: Option<Document>,
+    ) -> CommitEntry {
+        CommitEntry {
+            sequence: SequenceNumber(sequence),
+            timestamp: Timestamp::from_unix_millis(sequence),
+            writes: vec![WriteOp {
+                table: table_name(table),
+                table_id: TableId::new(),
+                op_type,
+                doc_id: id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current,
+            }],
+        }
     }
 
     #[test]
@@ -304,12 +468,14 @@ mod tests {
         // materialized against (covered_sequence == floor): the caller has
         // already proven `(floor, head]` is inert, so it is sound to widen
         // this table's coverage straight through to `head`.
-        seed_table(&backend, &snapshots, "caught_up", 5);
         // "lagging" has not folded a real commit that landed before `floor`
         // (covered_sequence < floor): a provider catch-up pass, not this
         // zero-write widening, owns bringing it forward. Widening it here
-        // would mark writes it never folded as covered.
+        // would mark writes it never folded as covered. It is seeded first
+        // because the surface refuses a table that arrives behind the serving
+        // frontier.
         seed_table(&backend, &snapshots, "lagging", 3);
+        seed_table(&backend, &snapshots, "caught_up", 5);
 
         let floor = SequenceNumber(5);
         let head = SequenceNumber(8);
@@ -328,5 +494,100 @@ mod tests {
             SequenceNumber(3),
             "a table lagging behind the verified-inert floor must not be advanced"
         );
+    }
+
+    #[test]
+    fn a_table_loaded_behind_the_serving_frontier_is_rejected_instead_of_published_unserveable() {
+        let backend = MaterializedServingBackend::new();
+        let snapshots = ServingSnapshotManager::new();
+        seed_table(&backend, &snapshots, "ahead", 8);
+
+        // A warm load that read the applied head as 7, then lost the race with
+        // the commit that carried "ahead" to 8.
+        let behind = table_name("behind");
+        assert_eq!(
+            backend.publish_table_snapshot(
+                &snapshots,
+                behind.clone(),
+                1,
+                SequenceNumber(7),
+                MaterializedTableDocuments::default(),
+            ),
+            TableSnapshotPublish::BehindServingFrontier(SequenceNumber(8)),
+        );
+        assert!(
+            backend.table_publication_stats(&behind).is_none(),
+            "a rejected load must leave the surface untouched"
+        );
+
+        // Reloaded at the frontier it is accepted, and -- the point of the
+        // rejection -- it is actually serveable. Taking it at 7 would have
+        // published a snapshot covering 7, which the manager drops as out of
+        // order behind the snapshot covering 8, leaving no retained snapshot
+        // that contains the table at all.
+        seed_table(&backend, &snapshots, "behind", 8);
+        assert!(
+            backend
+                .serving_snapshot_for_table_with_mode(&snapshots, &behind, SequenceNumber(8), false)
+                .is_some(),
+            "a table published at the frontier must be serveable at it"
+        );
+    }
+
+    #[test]
+    fn folding_a_catch_up_run_leaves_a_table_that_is_past_it_untouched() {
+        let backend = MaterializedServingBackend::new();
+        let snapshots = ServingSnapshotManager::new();
+        let doomed = DocumentId::new();
+        let survivor = DocumentId::new();
+
+        // "lagging" stopped at 3. It is what makes the catch-up run below
+        // start before the commits "ahead" has already folded, and it is
+        // seeded first because the surface refuses a table that arrives
+        // behind the serving frontier.
+        let mut lagging_documents = MaterializedTableDocuments::default();
+        lagging_documents.insert(survivor.clone(), document("lagging", &survivor));
+        seed_table_with_documents(&backend, &snapshots, "lagging", 3, lagging_documents);
+        // "ahead" was loaded at 6: it folded the insert at 4 and the delete at
+        // 6 that removed the same document again, so it holds nothing.
+        seed_table_with_documents(
+            &backend,
+            &snapshots,
+            "ahead",
+            6,
+            MaterializedTableDocuments::default(),
+        );
+
+        backend.apply_commits(
+            &snapshots,
+            [
+                insert_commit(4, "ahead", &doomed),
+                insert_commit(5, "lagging", &DocumentId::new()),
+            ]
+            .iter(),
+        );
+
+        let ahead = backend
+            .table_publication_stats(&table_name("ahead"))
+            .expect("ahead table should stay published");
+        assert_eq!(
+            ahead.covered_sequence,
+            SequenceNumber(6),
+            "a table past the end of the run must not be dragged backwards"
+        );
+        assert_eq!(
+            ahead.document_count, 0,
+            "re-folding the run would resurrect a document a later commit deleted"
+        );
+
+        let lagging = backend
+            .table_publication_stats(&table_name("lagging"))
+            .expect("lagging table should stay published");
+        assert_eq!(
+            lagging.covered_sequence,
+            SequenceNumber(5),
+            "a table behind the run must be carried to its end"
+        );
+        assert_eq!(lagging.document_count, 2);
     }
 }
