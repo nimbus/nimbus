@@ -587,8 +587,6 @@ fn process_group_is_absent(process_group: i32) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
-    use std::os::unix::process::CommandExt as _;
-    #[cfg(unix)]
     use std::process::Command;
 
     use tempfile::TempDir;
