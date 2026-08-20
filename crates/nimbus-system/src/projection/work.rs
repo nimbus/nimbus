@@ -414,9 +414,13 @@ impl Drop for ProjectionAttempt {
         self.tenant_work
             .current_retry_backoff_millis
             .store(backoff_millis, Ordering::Release);
+        // Release, and after every field above. This counter is the anchor a
+        // diagnostics snapshot acquires, so a reader that sees the retry must
+        // also see the dirty markers, failure count, and backoff it was
+        // recorded for. See `ProjectionWork::stats`.
         self.tenant_work
             .delayed_retry_count
-            .fetch_add(1, Ordering::Relaxed);
+            .fetch_add(1, Ordering::Release);
         let deadline = tokio::time::Instant::now() + Duration::from_millis(backoff_millis);
         {
             let mut not_before = self
@@ -1223,6 +1227,17 @@ impl ProjectionWork {
 
     fn stats(&self, tenant_id: &TenantId) -> ProjectionWorkStats {
         let tenant_work = self.existing_tenant_work(tenant_id);
+        // Anchor the snapshot on the retry counter, read first and with
+        // Acquire. `ProjectionAttempt::drop` records a delayed retry only after
+        // it has published the dirty markers, failure count, and backoff that
+        // the retry was recorded for, so acquiring the counter here orders
+        // every field read below it against that publication. Reading it
+        // relaxed, or later, lets a snapshot pair a recorded retry with the
+        // state that preceded it -- a diagnostics report of a retry with
+        // nothing outstanding to retry.
+        let delayed_retry_count = tenant_work
+            .as_ref()
+            .map_or(0, |work| work.delayed_retry_count.load(Ordering::Acquire));
         ProjectionWorkStats {
             depth: tenant_work
                 .as_ref()
@@ -1250,9 +1265,7 @@ impl ProjectionWork {
             catch_up_projection_count: tenant_work.as_ref().map_or(0, |work| {
                 work.catch_up_projection_count.load(Ordering::Relaxed)
             }),
-            delayed_retry_count: tenant_work
-                .as_ref()
-                .map_or(0, |work| work.delayed_retry_count.load(Ordering::Relaxed)),
+            delayed_retry_count,
             consecutive_failure_count: tenant_work.as_ref().map_or(0, |work| {
                 work.consecutive_failure_count.load(Ordering::Relaxed)
             }),
