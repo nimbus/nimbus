@@ -30,7 +30,7 @@ vi.mock("../../lib/nimbus-client", () => ({
 
 import { useUiStore } from "../../store/ui-store";
 import { routeLoader, routeLoaderDeps } from "../../test/route-internals";
-import { Route, ServicesLoaderError } from "./services";
+import { Route, ServicesLoaderError, ServicesTable } from "./services";
 
 type LoaderArgs = {
   deps: { activeTenant: string | null };
@@ -114,5 +114,48 @@ describe("app/services errorComponent", () => {
     );
     screen.getByTestId("storage-server-error-envelope-cta").click();
     expect(reset).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("app/services empty-state copy", () => {
+  // Markdown backticks were being written into strings that land in a text
+  // node, so the user read a literal ` around the command. Commands are
+  // marked up as <code>, never as markdown.
+  it("marks the compose command up as <code> and leaks no backticks", () => {
+    render(
+      <ServicesTable services={[]} activeTenant="acme" showTenantColumn />,
+    );
+
+    const body = screen.getByTestId("services-empty-body");
+    expect(body.textContent).not.toContain("`");
+    expect(body.textContent).toContain("run nimbus compose up.");
+
+    const commands = Array.from(body.querySelectorAll("code")).map(
+      (el) => el.textContent,
+    );
+    expect(commands).toEqual(["compose.yaml", "nimbus compose up"]);
+  });
+
+  it("keeps the multi-word command on one line", () => {
+    render(
+      <ServicesTable services={[]} activeTenant="acme" showTenantColumn />,
+    );
+
+    // A multi-word command that wraps renders as two separate boxed
+    // fragments once <code> carries a background, so it must not wrap.
+    const command = Array.from(
+      screen.getByTestId("services-empty-body").querySelectorAll("code"),
+    ).find((el) => el.textContent === "nimbus compose up");
+    expect(command?.className).toContain("whitespace-nowrap");
+  });
+
+  it("leaks no backticks in the all-tenant variant", () => {
+    render(
+      <ServicesTable services={[]} activeTenant={null} showTenantColumn />,
+    );
+
+    const body = screen.getByTestId("services-empty-body");
+    expect(body.textContent).not.toContain("`");
+    expect(body.querySelectorAll("code")).toHaveLength(0);
   });
 });

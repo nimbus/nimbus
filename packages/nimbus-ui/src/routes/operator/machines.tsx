@@ -1,12 +1,13 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { api } from "../../../convex/_generated/api";
 import { ConfirmDialog } from "../../components/confirm-dialog";
-import { Td, Th } from "../../components/data-table";
+import { PIN_R, Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
-import { LoadingState } from "../../components/loading-state";
+import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
@@ -19,15 +20,34 @@ import {
 import { MachineDetail } from "./-machine-detail";
 import type { MachineDoc } from "./-machine-types";
 import {
+  actionsForState,
   type LifecycleAction,
   OPTIMISTIC_STATES,
-  actionsForState,
   useMachineActions,
 } from "./-use-machine-actions";
 
 export const Route = createFileRoute("/operator/machines")({
   component: MachinesPage,
 });
+
+const MACHINE_INIT_COMMAND = "nimbus machine init";
+
+// The clipboard API exists only in a secure context, and this console is
+// normally reached over plain http on a remote host, where `navigator.clipboard`
+// is not defined at all. Reading `.writeText` off it outside a try block threw
+// before there was a promise to reject, so the rejection handler could never
+// run: the click did nothing and said nothing. Awaiting inside the try catches
+// the missing API the same way it catches a refused write, and matches the
+// upgrade popover's copy action.
+async function copyMachineInitCommand() {
+  try {
+    await navigator.clipboard.writeText(MACHINE_INIT_COMMAND);
+  } catch {
+    toast.error("Copy failed. The clipboard is not available.");
+    return;
+  }
+  toast(`Copied ${MACHINE_INIT_COMMAND}`);
+}
 
 function MachinesPage() {
   const machines = useQuery(api.machines.list, {
@@ -62,7 +82,7 @@ function MachinesPage() {
                   className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
                 >
                   <span className="flex-1 truncate">{machine.name}</span>
-                  <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                  <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
                     {machine.state}
                   </span>
                 </a>
@@ -96,7 +116,7 @@ function MachinesPage() {
     >
       <PageHeader
         title="Machines"
-        subtitle="Outer Linux VMs that host sandboxes on macOS and Windows dev hosts (krunkit / WSL2). Start, stop, and inspect them. Not the same as cluster Nodes."
+        subtitle="Outer Linux VMs hosting sandboxes on macOS/Windows dev hosts (krunkit / WSL2). Not cluster Nodes."
         trailing={
           <span
             className="font-mono text-xs text-muted"
@@ -112,11 +132,32 @@ function MachinesPage() {
           data-testid="machines-table-container"
         >
           {machines === undefined ? (
-            <LoadingState label="Loading machines…" />
+            // Skeleton rows, not a centered spinner: the header, the panel and
+            // the 40px row rhythm all survive the load, so arriving machines
+            // move nothing vertically. `table-auto` still re-proportions the
+            // nine columns on arrival. No `rowContentHeight`: `Td`'s 40px row
+            // floor already sizes the real and the placeholder rows alike
+            // (measured 40.00px in both states).
+            <SkeletonRows
+              columns={9}
+              head={<MachineTableHead />}
+              label="Loading machines…"
+              testid="machines-loading"
+            />
           ) : machines.length === 0 ? (
             <EmptyState
               title="No machines"
-              body="Machines are the outer dev VM on macOS and Windows. Run `nimbus machine init` to create one — it appears here in real time. Pure-Linux nodes run sandboxes directly and have none."
+              body={
+                <>
+                  Machines are the outer dev VM on macOS and Windows. Run{" "}
+                  <code className="whitespace-nowrap rounded border border-app bg-surface-2 px-1 font-mono text-default">
+                    {MACHINE_INIT_COMMAND}
+                  </code>{" "}
+                  to create one — it appears here in real time. Pure-Linux nodes
+                  run sandboxes directly and have none.
+                </>
+              }
+              cta={{ label: "Copy command", onClick: copyMachineInitCommand }}
               testid="machines-empty"
             />
           ) : (
@@ -182,24 +223,12 @@ function MachineTable({
   onAction: (machine: MachineDoc, action: LifecycleAction) => void;
 }) {
   return (
-    <div className="overflow-auto">
+    <div className="h-full overflow-auto">
       <table
         className="w-full border-collapse text-sm"
         data-testid="machines-table"
       >
-        <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
-          <tr>
-            <Th>Name</Th>
-            <Th>State</Th>
-            <Th>Provider</Th>
-            <Th>Kind</Th>
-            <Th className="text-right">CPU</Th>
-            <Th className="text-right">Memory</Th>
-            <Th className="text-right">Disk</Th>
-            <Th>Updated</Th>
-            <Th className="text-right">Actions</Th>
-          </tr>
-        </thead>
+        <MachineTableHead />
         <tbody>
           {machines.map((machine) => {
             const pendingAction = pending[machine._id];
@@ -217,7 +246,13 @@ function MachineTable({
                 data-selected={isSelected || undefined}
                 className={cn(
                   "border-t border-app hover:bg-surface-2",
-                  isSelected && "bg-surface-2",
+                  // The pinned Actions cell paints `--row-bg`, so the row has
+                  // to publish its own background — hover included, or the
+                  // data columns show through the cell exactly while the
+                  // operator is aiming at it.
+                  isSelected
+                    ? "bg-surface-2 [--row-bg:var(--nimbus-surface-2)]"
+                    : "[--row-bg:var(--nimbus-surface)] hover:[--row-bg:var(--nimbus-surface-2)]",
                 )}
               >
                 <Td>
@@ -237,7 +272,7 @@ function MachineTable({
                     <StateChip state={optimisticState} />
                     {error ? (
                       <span
-                        className="font-mono text-[11px] text-danger"
+                        className="font-mono text-xs text-danger"
                         data-testid={`machines-error-${machine.name}`}
                       >
                         {error}
@@ -273,7 +308,9 @@ function MachineTable({
                     <span className="tabular text-muted">—</span>
                   )}
                 </Td>
-                <Td className="text-right">
+                <Td
+                  className={cn("w-px border-l border-app text-right", PIN_R)}
+                >
                   <div className="inline-flex gap-1">
                     {actions.length === 0 ? (
                       <span className="font-mono text-xs text-muted">
@@ -302,6 +339,26 @@ function MachineTable({
   );
 }
 
+function MachineTableHead() {
+  return (
+    <thead className="sticky top-0 z-20 bg-surface-2 [--row-bg:var(--nimbus-surface-2)] text-xs uppercase tracking-[0.14em] text-muted">
+      <tr>
+        <Th>Name</Th>
+        <Th>State</Th>
+        <Th>Provider</Th>
+        <Th>Kind</Th>
+        <Th className="text-right">CPU</Th>
+        <Th className="text-right">Memory</Th>
+        <Th className="text-right">Disk</Th>
+        <Th>Updated</Th>
+        <Th className={cn("w-px border-l border-app text-right", PIN_R)}>
+          Actions
+        </Th>
+      </tr>
+    </thead>
+  );
+}
+
 function ActionButton({
   action,
   busy,
@@ -315,8 +372,14 @@ function ActionButton({
   onClick: () => void;
   machineName: string;
 }) {
-  const tone =
-    action === "delete"
+  // Graying out swaps the tone rather than dimming it. CSS `opacity`
+  // composites in gamma-encoded sRGB, so the `opacity-50` this used to carry
+  // measured between 1.5:1 and 3.1:1 for the delete and stop tones against the
+  // row behind them — unreadable, worst in the mono dark palette. `text-muted`
+  // is a palette token and stays above 4.5:1 in every palette and theme.
+  const tone = disabled
+    ? "text-muted"
+    : action === "delete"
       ? "text-danger hover:bg-danger/10"
       : action === "stop"
         ? "text-warning hover:bg-warning/10"
@@ -324,13 +387,29 @@ function ActionButton({
   return (
     <button
       type="button"
-      onClick={onClick}
-      disabled={disabled}
+      onClick={() => {
+        if (disabled) return;
+        onClick();
+      }}
+      // `aria-disabled`, not `disabled`, so the control keeps its tab stop:
+      // a disabled element cannot take focus, which turns a focus restore
+      // into a silent no-op and leaves the operator on <body>.
+      //
+      // On this page the branch is unreached today, and deliberately kept.
+      // `OPTIMISTIC_STATES` maps every action onto an in-flight state and
+      // `actionsForState` offers nothing for those, so a row with a pending
+      // action renders no buttons rather than grayed-out ones — `disabled`
+      // is therefore always false wherever this component is mounted. It
+      // stays because it is this component's contract rather than the
+      // caller's, and the caller is one edit away from graying a row in
+      // place. `machines.spec.tsx` pins the render rule that makes it dead,
+      // so a change to either side shows up as a failing test.
+      aria-disabled={disabled}
       aria-busy={busy || undefined}
       data-testid={`machines-action-${action}-${machineName}`}
       className={cn(
-        "rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide",
-        "disabled:cursor-not-allowed disabled:opacity-50",
+        "rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
+        "aria-disabled:cursor-not-allowed",
         tone,
       )}
     >

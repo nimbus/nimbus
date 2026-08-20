@@ -15,7 +15,7 @@ import { CopyChip } from "../../components/copy-chip";
 import { EmptyState } from "../../components/empty-state";
 import { StateChip } from "../../components/state-chip";
 import { cn } from "../../lib/cn";
-import { shortId } from "../../lib/format";
+import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
@@ -121,10 +121,7 @@ function AdminServiceDetailPage() {
       title: "Services",
       search: { placeholder: "Filter services" },
       children: (
-        <AdminDetailSubDrawer
-          services={services}
-          activeServiceId={serviceId}
-        />
+        <AdminDetailSubDrawer services={services} activeServiceId={serviceId} />
       ),
     }),
     [services, serviceId],
@@ -161,13 +158,13 @@ function AdminServiceDetailPage() {
             {displayName}
           </h1>
           {service.kind ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
+            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-muted">
               {service.kind}
             </span>
           ) : null}
           {service.state ? <StateChip state={service.state} /> : null}
           {service.tenantId ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
+            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-muted">
               {service.tenantId}
             </span>
           ) : null}
@@ -177,7 +174,7 @@ function AdminServiceDetailPage() {
               value={bundle.sha256}
               testid="admin-service-detail-bundle"
             >
-              {shortId(bundle.sha256, 12)}
+              {shortHash(bundle.sha256, 12)}
             </CopyChip>
           ) : null}
         </header>
@@ -200,7 +197,7 @@ function AdminServiceDetailPage() {
               className={cn(
                 "flex items-center px-3 py-2 font-mono text-xs",
                 isActive
-                  ? "border-b-2 border-[color:var(--color-brand)] text-default"
+                  ? "border-b-2 border-[color:var(--nimbus-brand)] text-default"
                   : "text-muted hover:text-default",
               )}
             >
@@ -258,16 +255,10 @@ function PlacementTab({
   );
 }
 
-function Stat({
-  label,
-  value,
-}: {
-  label: string;
-  value: React.ReactNode;
-}) {
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-3">
-      <span className="w-32 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+      <span className="w-32 font-mono text-xs uppercase tracking-[0.18em] text-muted">
         {label}
       </span>
       <span className="font-mono text-xs text-default">{value}</span>
@@ -294,7 +285,9 @@ function AdminDetailSubDrawer({
     : services;
   if (services.length === 0) {
     return (
-      <div className="px-3 py-6 text-xs text-muted">No services registered.</div>
+      <div className="px-3 py-6 text-xs text-muted">
+        No services registered.
+      </div>
     );
   }
   if (filtered.length === 0) {
@@ -309,7 +302,7 @@ function AdminDetailSubDrawer({
     <ul className="flex flex-col gap-2 px-2 py-2">
       {grouped.map(([tenant, items]) => (
         <li key={tenant} className="flex flex-col gap-px">
-          <div className="px-2 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+          <div className="px-2 pb-1 pt-2 font-mono text-xs uppercase tracking-[0.18em] text-muted">
             {tenant}
           </div>
           {items.map((svc) => {
@@ -331,7 +324,7 @@ function AdminDetailSubDrawer({
                   {svc.name ?? shortId(svc._id, 12)}
                 </span>
                 {svc.state ? (
-                  <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                  <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
                     {svc.state}
                   </span>
                 ) : null}
@@ -359,7 +352,7 @@ function AdminServiceNotFound() {
       </span>
       <Link
         to="/operator/services"
-        className="rounded border border-app px-3 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
       >
         ← back to services
       </Link>

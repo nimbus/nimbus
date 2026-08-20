@@ -640,8 +640,9 @@ sky for everyone.
 
 Colors are defined in OKLCH so light and dark perceptual lightness stay
 parity-matched. Semantic state tokens (`--success`, `--warning`, `--danger`,
-`--starting`, `--draining`, `--queued`, `--stale`, `--violet`) are stable
-across all palettes — "Running = green" holds in every theme.
+`--running`, `--starting`, `--draining`, `--queued`, `--stale`, `--violet`) are
+stable across all palettes — `Ready` is green and `Running` is teal in every
+theme, so a status never changes meaning when the palette does.
 
 Tokens that swap per palette (the default shown: Warm light / Night Blue
 dark; the Cool Blue light column lives in `globals.css` under
@@ -657,27 +658,37 @@ dark; the Cool Blue light column lives in `globals.css` under
 | `--text` | `oklch(20% 0.020 60)` | `oklch(91% 0.014 252)` | Primary text |
 | `--muted` | `oklch(53% 0.013 75)` | `oklch(67% 0.026 248)` | Secondary text |
 | `--brand` | `oklch(73% 0.17 65)` (`#F59E0B`) | `oklch(72% 0.17 248)` (`#60A5FA`) | Primary identity: active nav stripe, primary CTA fill, connection-state dot |
-| `--accent` | `oklch(80% 0.14 70)` (`#FFB84D`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Interactive feedback: focus ring, selection, `Running` state |
-| `--link` | `oklch(62% 0.17 55)` (`#D97706`) | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
+| `--accent` | `oklch(80% 0.14 70)` (`#FFB84D`) | `oklch(85% 0.10 197)` (`#67E8F9`) | Selection identity: the selected row's left bar, `::selection`. Never a focus ring in a light palette — 1.71:1 on `--surface-2` in Warm, under the 3:1 floor. Not a state colour — `Running` has its own `--running` |
+| `--focus` | `oklch(62% 0.17 55)` | `var(--accent)` | The focus ring, and the only token that paints one. Set against `--surface-2`, the darkest ground a light palette paints on: 3.42:1 Warm, 3.94:1 Blue, 4.15:1 Mono, against WCAG 2.2 SC 1.4.11's 3:1 non-text floor. Resolves to `--accent` in the dark palettes, where that measures 9.87:1 and clears the floor easily |
+| `--link` | `oklch(55% 0.17 52)` | `oklch(82% 0.11 247)` (`#93C5FD`) | Hyperlinks only — not a secondary accent |
 
 Semantic tokens (stable across all palettes):
+
+Every light value here is set against `--surface-2`, the darkest ground a
+light palette paints text on — not against `--surface`, which is pure white in
+all three light palettes and clears AA for colours that fail everywhere else.
 
 | Token | Light (OKLCH) | Dark (OKLCH) | Use |
 | --- | --- | --- | --- |
 | `--success` | `oklch(52% 0.14 145)` | `oklch(72% 0.16 145)` | `Ready`, `Healthy` |
-| `--warning` | `oklch(65% 0.16 75)` | `oklch(78% 0.17 75)` | `Reconnecting`, `Degraded` |
+| `--running` | `oklch(60% 0.13 207)` | `oklch(85% 0.10 197)` | `Running` |
+| `--warning` | `oklch(54.5% 0.15 72)` | `oklch(78% 0.17 75)` | `Reconnecting`, `Degraded` |
 | `--starting` | `oklch(70% 0.17 50)` | `oklch(80% 0.18 50)` | `Starting`, `Provisioning` |
 | `--draining` | `oklch(55% 0.13 280)` | `oklch(72% 0.14 280)` | `Draining`, `Stopping` |
 | `--queued` | `oklch(60% 0.020 240)` | `oklch(70% 0.020 240)` | `Queued`, `Pending` |
-| `--danger` | `oklch(58% 0.20 25)` | `oklch(70% 0.20 25)` | `Failed`, destructive |
+| `--danger` | `oklch(56% 0.20 25)` | `oklch(70% 0.20 25)` | `Failed`, destructive |
 | `--stale` | `oklch(50% 0.012 240)` | `oklch(60% 0.012 240)` | Disconnected/stale (strikethrough) |
 | `--violet` | `oklch(55% 0.18 295)` | `oklch(75% 0.16 295)` | Functions/runs only |
 
 Rules:
 
-- **Three identity tokens, three different jobs.** `--brand` carries
+- **Four identity tokens, four different jobs.** `--brand` carries
   primary identity (active nav, primary CTA, dominant brand fill).
-  `--accent` is interactive feedback (focus, selection, `Running`).
+  `--accent` is selection. `--focus` is the focus ring, and no other token
+  paints one: `--accent` at 1.71:1 and `--brand` at 2.21:1 both miss the
+  3:1 non-text floor on `--surface-2` in Warm light. In the dark palettes
+  `--focus` is defined as `var(--accent)`, so the two coincide there — the
+  rule is that a focus ring names `--focus`, never `--accent` directly.
   `--link` is hyperlinks. Never paint buttons with `--link`. Never paint
   active nav with `--accent` — that's `--brand`'s job.
 - **State colors are universal.** Status state colors do not vary by
@@ -685,7 +696,7 @@ Rules:
 - **Status colors must always have text or icon labels.** Color alone is
   never the only signal.
 - **Surfaces never use accent or brand as a fill.** Identity colors appear
-  as a 1–2px left bar, an inline dot, a focus ring, a small icon, or a
+  as a 1–2px left bar, an inline dot, a 2px `--focus` ring, a small icon, or a
   small CTA — never as a section background.
 - Tailwind v4 `@theme` directive should expose the non-palette tokens as
   CSS variables; palette-scoped tokens live in `@layer base` under
@@ -913,16 +924,27 @@ State → token binding (mandatory; do not improvise mappings):
 
 | State | Token | Dot glyph |
 | --- | --- | --- |
-| `Ready`, `Healthy` | `--success` | ● solid |
-| `Running` | `--accent` | ● pulsing (respects `prefers-reduced-motion`) |
-| `Starting`, `Provisioning` | `--starting` | ◐ half-filled |
-| `Draining`, `Stopping` | `--draining` | ◐ half-filled |
+| `Ready`, `Healthy`, `OK`, `Active`, `Connected`, `Completed` | `--success` | ● solid |
+| `Running` | `--running` | ● pulsing (respects `prefers-reduced-motion`) |
+| `Starting`, `Provisioning`, `Restarting` | `--starting` | ◐ half-filled |
+| `Draining`, `Stopping`, `Deleting` | `--draining` | ◐ half-filled |
 | `Queued`, `Pending` | `--queued` | ○ outline |
 | `NotReady`, `Degraded`, `Reconnecting` | `--warning` | ● solid |
-| `Stopped` | `--muted` | ○ outline |
-| `Failed`, `Crashed` | `--danger` | ● solid |
+| `Stopped`, `Created`, `Idle`, `Paused`, `Uninitialized` | `--muted` | ○ outline |
+| `Failed`, `Crashed`, `Offline` | `--danger` | ● solid |
 | `Stale` (post-disconnect) | `--stale` | ● solid + label strikethrough |
 | `Unknown` | `--muted` | ? glyph |
+
+Each row is a state *family*. Names after the first are aliases that fold onto
+that family — they do not get their own tone. Add a new state by folding it onto
+the family it belongs to; introduce a new row only when the state is genuinely a
+new lifecycle position, and give it a token from the table above.
+
+Any state string the console can produce but this table omits renders as
+`Unknown` — a literal `?`. That is the correct failure mode (it reads as "the
+console lost track of this resource"), which makes an unlisted state a visible
+bug rather than a silent miscolour. Lock the two sides together with a test that
+asserts every state a route or hook can emit renders a non-`?` glyph.
 
 Categorical (filled pill, monospace label, 11px):
 

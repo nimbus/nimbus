@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { system } from "../../../lib/api-mutations";
-import { DialogShell, SectionCard } from "./-primitives";
+import { DialogShell, PageSection } from "./-primitives";
 
 export function DangerZoneSection() {
   const [rotateOpen, setRotateOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
   return (
-    <SectionCard
+    <PageSection
       title="Session lifecycle"
       testid="settings-danger-zone"
       description="Rotate the local admin token, or shut down the running server. Both actions invalidate the current session."
       tone="danger"
+      framed
     >
       <div className="flex flex-wrap items-center gap-3">
         <button
@@ -41,7 +42,7 @@ export function DangerZoneSection() {
       {shutdownOpen ? (
         <ShutdownDialog onClose={() => setShutdownOpen(false)} />
       ) : null}
-    </SectionCard>
+    </PageSection>
   );
 }
 
@@ -124,8 +125,13 @@ function RotateTokenDialog({ onClose }: { onClose: () => void }) {
               autoComplete="off"
               onChange={(e) => setToken(e.target.value)}
               data-testid="settings-rotate-token"
-              className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default focus:border-strong focus:outline-none"
-              placeholder="Paste the value of `nimbus token show`"
+              // No `focus:outline-none`: `--border` -> `--border-strong` is
+              // a 1.35:1 -> 1.74:1 shift on this white field in warm light,
+              // which is not a focus indicator on its own. The tint stays as
+              // emphasis; the console-wide `:focus-visible` outline it used to
+              // cancel is what marks focus.
+              className="rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default focus:border-strong"
+              placeholder="Paste the token printed by nimbus token show"
             />
           </label>
           {error ? (

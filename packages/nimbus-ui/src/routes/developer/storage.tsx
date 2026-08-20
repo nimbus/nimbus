@@ -1,20 +1,16 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
-import { useMemo } from "react";
+import { createFileRoute } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
-import { CopyChip } from "../../components/copy-chip";
-import { Td, Th } from "../../components/data-table";
+import { Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
-import { LoadingState } from "../../components/loading-state";
-import { RelativeTime } from "../../components/time";
+import { LoadingState, SkeletonRows } from "../../components/loading-state";
+import { PageHeader } from "../../components/page-header";
+import { TablesListTable } from "../../components/storage/tables-list-table";
+import { useTablesSubDrawer } from "../../components/storage/tables-sub-drawer";
 import { useTenantList } from "../../hooks/use-tenant-list";
 import type { TableDoc } from "../../lib/types/table";
-import {
-  type SubDrawerSpec,
-  useContributeSubDrawer,
-} from "../../shell/sub-drawer";
 import { useUiStore } from "../../store/ui-store";
 
 export const Route = createFileRoute("/developer/storage")({
@@ -32,85 +28,19 @@ function StoragePage() {
   const hasTenants =
     tenantList.kind === "loaded" ? tenantList.tenants.length > 0 : undefined;
 
-  const sortedTables = (tables ?? [])
-    .slice()
-    .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-
-  const spec = useMemo<SubDrawerSpec>(() => {
-    return {
-      kind: "dynamic",
-      title: "Tables",
-      search: { placeholder: "Filter tables" },
-      children: !tenant ? (
-        <div className="px-3 py-6 text-xs text-muted">
-          {hasTenants === false ? (
-            <>
-              <p>No tenants yet.</p>
-              <p className="mt-2">
-                Click{" "}
-                <code className="font-mono text-default">+ CREATE TENANT</code>{" "}
-                in the top nav to create one. Tables and documents scope to a
-                tenant.
-              </p>
-            </>
-          ) : (
-            <>
-              <p>Select a tenant.</p>
-              <p className="mt-2">
-                Pick a tenant from the top-nav selector to see its tables.
-              </p>
-            </>
-          )}
-        </div>
-      ) : tables === undefined ? (
-        <div className="px-3 py-3 text-xs text-muted">
-          <span aria-hidden>·</span>
-          <span className="sr-only">loading</span>
-        </div>
-      ) : sortedTables.length === 0 ? (
-        <div className="px-3 py-6 text-xs text-muted">
-          <p>No tables yet.</p>
-          <p className="mt-2">
-            Insert a document or call{" "}
-            <code className="font-mono">ctx.db.insert</code> to materialize one.
-          </p>
-        </div>
-      ) : (
-        <ul className="flex flex-col gap-px px-2 py-2">
-          {sortedTables.map((table) => {
-            const name = table.name ?? table._id;
-            return (
-              <li key={table._id}>
-                <Link
-                  to="/developer/storage/$table"
-                  params={{ table: name }}
-                  data-testid={`sub-drawer-item-dev-${name}`}
-                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
-                >
-                  <span className="flex-1 truncate font-mono text-xs">
-                    {name}
-                  </span>
-                  {typeof table.rowCount === "number" ? (
-                    <span className="tabular font-mono text-[10px] text-muted">
-                      {table.rowCount}
-                    </span>
-                  ) : null}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      ),
-    };
-  }, [tenant, tables, sortedTables, hasTenants]);
-  useContributeSubDrawer(spec);
+  // Shared with the table detail route, so the Tables list stays beside the
+  // documents instead of vanishing on drill-in.
+  useTablesSubDrawer({ tenant, tables, hasTenants });
 
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-tenant-tables"
     >
-      <header className="flex flex-col gap-2">
+      {/* Breadcrumb above, shared header molecule below — the same two-part
+          shape the drill-in route `storage_.$table.tsx` uses, so the two pages
+          keep one measure and one title rhythm across the navigation. */}
+      <div className="flex flex-col gap-2">
         <Breadcrumb
           segments={
             tenant
@@ -126,28 +56,50 @@ function StoragePage() {
           }
           testid="tenant-breadcrumb"
         />
-        <div className="flex items-baseline justify-between">
-          <div>
-            <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
-              {tenant ? (
-                <>
-                  Tables in <span className="font-mono">{tenant}</span>
-                </>
-              ) : (
-                "Storage"
-              )}
-            </h1>
-            <p className="text-sm text-muted">
-              Tables are reactive — they appear here as soon as documents are
-              written. A table without a schema accepts any document shape.
-            </p>
-          </div>
-        </div>
-      </header>
+        {/* The tenant id loses its mono span here, matching how the drill-in
+            route titles a bare table name. The breadcrumb directly above still
+            carries the id in mono with its copy affordance, so the identifier
+            treatment is not lost — it stops being duplicated in two faces. */}
+        <PageHeader
+          title={tenant ? `Tables in ${tenant}` : "Storage"}
+          subtitle="Tables appear as soon as documents are written. A table without a schema takes any document shape."
+          testid="tenant-tables-header"
+        />
+      </div>
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         {!tenant ? (
-          hasTenants === false ? (
+          // `useTenantList` reports three kinds and this panel has to honour
+          // all three. Reducing them to a boolean sent "Select a tenant" —
+          // an instruction — to a reader whose tenant list was still in
+          // flight, and left it on screen permanently when the list had
+          // failed outright, with nothing anywhere saying so.
+          tenantList.kind === "loading" ? (
+            <LoadingState
+              label="Loading tenants…"
+              testid="tenant-tables-tenants-loading"
+            />
+          ) : tenantList.kind === "error" ? (
+            <EmptyState
+              title="Tenants endpoint unavailable"
+              body={
+                <>
+                  This deployment can&apos;t reach{" "}
+                  <code className="font-mono text-default">/api/tenants</code>:{" "}
+                  <span
+                    className="font-mono text-default"
+                    data-testid="tenant-tables-tenants-error-message"
+                  >
+                    {tenantList.message}
+                  </span>
+                  . Tables live inside tenants, so none can be listed until the
+                  tenant list loads.
+                </>
+              }
+              cta={{ label: "Retry", onClick: tenantList.reload }}
+              testid="tenant-tables-tenants-error"
+            />
+          ) : hasTenants === false ? (
             <EmptyState
               title="No tenants yet"
               body="Click + CREATE TENANT in the top nav to create one. Tables and documents scope to a tenant — once a tenant exists, you can pick it from the selector to see its tables."
@@ -161,75 +113,50 @@ function StoragePage() {
             />
           )
         ) : tables === undefined ? (
-          <LoadingState label="Loading tables…" />
-        ) : sortedTables.length === 0 ? (
+          // Skeleton rows, not a centered spinner: the header, the panel and
+          // the 40px row rhythm all survive the load, so arriving tables move
+          // nothing vertically. `table-auto` still re-proportions the columns
+          // on arrival — the bars are not the content it measures. No
+          // `rowContentHeight`: `Td`'s 40px row floor already sizes the real
+          // and the placeholder rows alike (measured 40.00px in both states).
+          <SkeletonRows
+            columns={5}
+            head={<TablesTableHead />}
+            label="Loading tables…"
+            testid="tenant-tables-loading"
+          />
+        ) : tables.length === 0 ? (
           <EmptyState
             title="No tables"
             body={`Insert a document via POST /api/tenants/${tenant}/documents or call ctx.db.insert("<table>", ...) from a registered function. Tables appear here as soon as they receive their first write.`}
             testid="tenant-tables-empty"
           />
         ) : (
-          <div className="overflow-auto">
-            <table
-              className="w-full border-collapse text-sm"
-              data-testid="tenant-tables-table"
-            >
-              <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
-                <tr>
-                  <Th>Table</Th>
-                  <Th>Schema</Th>
-                  <Th align="right">Rows</Th>
-                  <Th>Last write</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedTables.map((table) => {
-                  const name = table.name ?? table._id;
-                  return (
-                    <tr
-                      key={table._id}
-                      className="border-t border-app hover:bg-surface-2"
-                      data-testid={`tenant-table-row-${name}`}
-                    >
-                      <Td>
-                        <Link
-                          to="/developer/storage/$table"
-                          params={{ table: name }}
-                          className="font-mono text-default hover:underline"
-                          data-testid={`tenant-table-link-${name}`}
-                        >
-                          {name}
-                        </Link>
-                        <span className="ml-2 align-middle">
-                          <CopyChip
-                            label="table name"
-                            value={name}
-                            hideUntilHover
-                            testid={`tenant-table-copy-${name}`}
-                          >
-                            copy
-                          </CopyChip>
-                        </span>
-                      </Td>
-                      <Td mono>{table.schema ? "defined" : "any"}</Td>
-                      <Td align="right" mono>
-                        {table.rowCount ?? 0}
-                      </Td>
-                      <Td>
-                        {table.lastWriteAt ? (
-                          <RelativeTime epochMs={table.lastWriteAt} />
-                        ) : (
-                          <span className="text-muted">never</span>
-                        )}
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <TablesListTable tables={tables} />
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * The Tables list header, declared here because the loading branch and the
+ * loaded table are owned by different files: `TablesListTable` renders the
+ * rows, this route renders the placeholder that has to match them. Keep the
+ * two column sets in step — the skeleton is only honest while it is.
+ */
+function TablesTableHead() {
+  return (
+    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+      <tr>
+        <Th>Table</Th>
+        <Th>Schema</Th>
+        <Th align="right">Rows</Th>
+        <Th>Last write</Th>
+        <Th align="right" className="w-px">
+          actions
+        </Th>
+      </tr>
+    </thead>
   );
 }

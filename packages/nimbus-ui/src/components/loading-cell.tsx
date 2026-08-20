@@ -28,7 +28,7 @@ export function LoadingCell<T>({
     case "offline":
       return (
         <span
-          className="font-mono text-[10px] uppercase tracking-wide text-muted"
+          className="font-mono text-xs uppercase tracking-wide text-muted"
           data-testid={testid ? `${testid}-offline` : undefined}
           title="Disconnected — value will refresh on reconnect"
         >

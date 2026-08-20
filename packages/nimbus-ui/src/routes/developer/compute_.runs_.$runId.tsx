@@ -5,7 +5,11 @@ import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Breadcrumb } from "../../components/breadcrumb";
 import { CopyChip } from "../../components/copy-chip";
-import { StateChip } from "../../components/state-chip";
+import {
+  resolveStateKind,
+  StateChip,
+  statePalette,
+} from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import { formatAbsoluteTime, formatDuration, shortId } from "../../lib/format";
@@ -91,6 +95,7 @@ function RunDetailBody({
       <TraceWaterfall
         startedAt={startedAt}
         duration={duration}
+        status={run.status}
         events={events}
       />
       <CorrelatedEvents events={events} runId={runId} />
@@ -180,7 +185,7 @@ function Field({
 }) {
   return (
     <div className="flex flex-col gap-1" data-testid={testid}>
-      <span className="text-[10px] uppercase tracking-wide text-muted">
+      <span className="text-xs uppercase tracking-wide text-muted">
         {label}
       </span>
       {children}
@@ -191,10 +196,12 @@ function Field({
 function TraceWaterfall({
   startedAt,
   duration,
+  status,
   events,
 }: {
   startedAt: number | undefined;
   duration: number | null;
+  status: string | undefined;
   events: EventDoc[];
 }) {
   const spans = useMemo(() => {
@@ -234,7 +241,7 @@ function TraceWaterfall({
       data-testid="run-detail-trace"
     >
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+        <h2 className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
           Trace timing
         </h2>
         <span className="font-mono tabular text-xs text-muted">
@@ -242,12 +249,15 @@ function TraceWaterfall({
         </span>
       </div>
       <div className="space-y-2">
+        {/* The run's own span reports the run's own status. It was pinned to
+            `ok`, so a failed run painted itself success-green above the very
+            events that failed it. */}
         <WaterfallBar
           label="run"
           offsetMs={0}
           widthMs={total}
           total={total}
-          tone="ok"
+          state={status}
           testid="run-detail-trace-bar"
         />
         {spans.length === 0 ? (
@@ -265,11 +275,7 @@ function TraceWaterfall({
               offsetMs={span.offsetMs}
               widthMs={Math.max(2, total * 0.02)}
               total={total}
-              tone={
-                (span.level ?? "info").toLowerCase() === "error"
-                  ? "error"
-                  : "muted"
-              }
+              state={span.level ?? "info"}
               testid={`run-detail-trace-span-${span.id}`}
             />
           ))
@@ -279,19 +285,58 @@ function TraceWaterfall({
   );
 }
 
+type WaterfallTone = "ok" | "muted" | "error";
+
+const toneFills: Record<WaterfallTone, string> = {
+  ok: "bg-[color-mix(in_oklch,var(--nimbus-success)_70%,transparent)]",
+  muted: "bg-[color-mix(in_oklch,var(--nimbus-muted)_50%,transparent)]",
+  error: "bg-[color-mix(in_oklch,var(--nimbus-danger)_75%,transparent)]",
+};
+
+/**
+ * A bar's fill is a status color, and DESIGN.md rules that color is never the
+ * only signal. Each status tone therefore also carries a glyph the eye can
+ * separate by *shape* — ✓ against ✗, the way `StateChip` separates its states
+ * — and that glyph names its state to assistive tech. `muted` is the absence
+ * of a status rather than a status, so it claims neither a glyph nor a name.
+ *
+ * A full `StateChip` per row was rejected: the waterfall is a dense trace and
+ * an uppercase state word on every row would out-weigh the bars it annotates.
+ */
+const toneMarkers: Record<
+  WaterfallTone,
+  { glyph: string; token: string } | null
+> = {
+  ok: { glyph: "✓", token: "--nimbus-success" },
+  muted: null,
+  error: { glyph: "✗", token: "--nimbus-danger" },
+};
+
+/**
+ * Resolve any state string the server can write — a run `status`, an event
+ * `level` — onto the three bar tones, through the same palette the chips
+ * read. A state the palette calls danger can then never paint a success bar.
+ */
+function toneForState(state: string | null | undefined): WaterfallTone {
+  const { token } = statePalette[resolveStateKind(state)];
+  if (token === "--nimbus-danger") return "error";
+  if (token === "--nimbus-success") return "ok";
+  return "muted";
+}
+
 function WaterfallBar({
   label,
   offsetMs,
   widthMs,
   total,
-  tone,
+  state,
   testid,
 }: {
   label: string;
   offsetMs: number;
   widthMs: number;
   total: number;
-  tone: "ok" | "muted" | "error";
+  state: string | null | undefined;
   testid: string;
 }) {
   const safeTotal = total > 0 ? total : 1;
@@ -300,22 +345,32 @@ function WaterfallBar({
     100 - leftPct,
     Math.max(0.5, (widthMs / safeTotal) * 100),
   );
-  const tones: Record<typeof tone, string> = {
-    ok: "bg-[color-mix(in_oklch,var(--color-success)_70%,transparent)]",
-    muted: "bg-[color-mix(in_oklch,var(--color-muted)_50%,transparent)]",
-    error: "bg-[color-mix(in_oklch,var(--color-danger)_75%,transparent)]",
-  };
+  const tone = toneForState(state);
+  const marker = toneMarkers[tone];
   return (
     <div
-      className="grid grid-cols-[10rem_1fr_5rem] items-center gap-3 font-mono text-[11px]"
+      className="grid grid-cols-[10rem_1fr_5rem] items-center gap-3 font-mono text-xs"
       data-testid={testid}
     >
-      <span className="truncate text-default" title={label}>
-        {label}
+      {/* The glyph sits outside the truncating span so a long label can never
+          clip the row's only non-color signal. */}
+      <span className="flex min-w-0 items-center gap-1.5" title={label}>
+        {marker ? (
+          <span
+            role="img"
+            aria-label={state ?? tone}
+            className="shrink-0 leading-none"
+            style={{ color: `var(${marker.token})` }}
+            data-testid={`${testid}-marker`}
+          >
+            {marker.glyph}
+          </span>
+        ) : null}
+        <span className="truncate text-default">{label}</span>
       </span>
       <div className="relative h-3 rounded-full bg-surface-2">
         <div
-          className={cn("absolute top-0 h-3 rounded-full", tones[tone])}
+          className={cn("absolute top-0 h-3 rounded-full", toneFills[tone])}
           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
         />
       </div>
@@ -339,13 +394,13 @@ function CorrelatedEvents({
       data-testid="run-detail-events"
     >
       <div className="flex items-baseline justify-between border-b border-app px-4 py-3">
-        <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+        <h2 className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
           Correlated events
         </h2>
         <Link
           to="/developer/observability"
           search={{ tab: "logs", correlationId: runId }}
-          className="font-mono text-[10px] uppercase tracking-wide text-muted hover:text-default focus-visible:text-default"
+          className="font-mono text-xs uppercase tracking-wide text-muted hover:text-default focus-visible:text-default"
           data-testid="run-detail-open-logs"
         >
           open in logs →
@@ -370,7 +425,7 @@ function CorrelatedEvents({
                 epochMs={event.createdAt ?? event._creationTime ?? 0}
               />
               <StateChip state={event.level ?? "info"} />
-              <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+              <span className="font-mono text-xs uppercase tracking-wide text-muted">
                 {event.source ?? "—"}
                 {event.category ? ` · ${event.category}` : ""}
               </span>
@@ -399,7 +454,7 @@ function ErrorPanel({
       className="rounded-md border border-danger bg-surface p-4"
       data-testid="run-detail-error"
     >
-      <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.14em] text-danger">
+      <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.14em] text-danger">
         Error
       </h2>
       {location ? (
@@ -408,14 +463,14 @@ function ErrorPanel({
             to="/developer/compute/$function"
             params={{ function: functionPath }}
             search={{ tab: "source", line }}
-            className="mb-2 inline-block rounded border border-danger px-2 py-0.5 font-mono text-[11px] text-danger hover:bg-surface-2"
+            className="mb-2 inline-block rounded border border-danger px-2 py-0.5 font-mono text-xs text-danger hover:bg-surface-2"
             data-testid="run-detail-error-location"
           >
             at {location} ↗
           </Link>
         ) : (
           <span
-            className="mb-2 inline-block font-mono text-[11px] text-danger"
+            className="mb-2 inline-block font-mono text-xs text-danger"
             data-testid="run-detail-error-location"
           >
             at {location}
@@ -443,7 +498,7 @@ function Panel({
       className="rounded-md border border-app bg-surface p-4"
       data-testid={testid}
     >
-      <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+      <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.14em] text-muted">
         {title}
       </h2>
       <p className="font-mono text-xs text-muted">{empty}</p>
@@ -464,14 +519,14 @@ function RunNotFound() {
       >
         <p className="font-mono text-sm text-default">Run not found</p>
         <p className="max-w-md text-xs text-muted">
-          No run with id <code className="font-mono text-default">{runId}</code>.
-          It may have been pruned, or the correlation id does not point to a run
-          record.
+          No run with id <code className="font-mono text-default">{runId}</code>
+          . It may have been pruned, or the correlation id does not point to a
+          run record.
         </p>
         <Link
           to="/developer/observability"
           search={{ tab: "runs" }}
-          className="mt-2 rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+          className="mt-2 rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
           data-testid="run-detail-back"
         >
           ← all runs

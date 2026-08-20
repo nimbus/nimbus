@@ -1,24 +1,26 @@
+import { useQuery } from "@nimbus/nimbus/react";
 import {
   createFileRoute,
   Link,
   useNavigate,
   useSearch,
 } from "@tanstack/react-router";
-import { useQuery } from "@nimbus/nimbus/react";
 import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { Breadcrumb } from "../../components/breadcrumb";
+import { CategoryChip } from "../../components/category-chip";
 import { CodeBlock } from "../../components/code-block";
 import { CopyChip } from "../../components/copy-chip";
+import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { FunctionRunner } from "../../components/function-runner/function-runner";
-import { LoadingState } from "../../components/loading-state";
+import { LoadingState, SkeletonRows } from "../../components/loading-state";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { useApiRead } from "../../hooks/use-api-read";
 import { cn } from "../../lib/cn";
-import { formatDuration, shortId } from "../../lib/format";
+import { formatDuration, shortHash, shortId } from "../../lib/format";
 import type { FunctionDoc } from "../../lib/types/function";
 import { buildFunctionTree } from "../../shell/function-tree";
 import { FunctionTreeView } from "../../shell/function-tree-view";
@@ -157,16 +159,8 @@ function FunctionDetailPage() {
           >
             {functionPath}
           </h1>
-          {fn?.kind ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
-              {fn.kind}
-            </span>
-          ) : null}
-          {fn?.adapter ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
-              {fn.adapter}
-            </span>
-          ) : null}
+          {fn?.kind ? <CategoryChip value={fn.kind} /> : null}
+          {fn?.adapter ? <CategoryChip value={fn.adapter} /> : null}
           {fn?.lastStatus ? <StateChip state={fn.lastStatus} /> : null}
           {bundle?.sha256 ? (
             <CopyChip
@@ -174,7 +168,7 @@ function FunctionDetailPage() {
               value={bundle.sha256}
               testid="function-detail-bundle"
             >
-              {shortId(bundle.sha256, 12)}
+              {shortHash(bundle.sha256, 12)}
             </CopyChip>
           ) : null}
         </header>
@@ -197,7 +191,7 @@ function FunctionDetailPage() {
               className={cn(
                 "flex items-center px-3 py-2 font-mono text-xs uppercase tracking-wide",
                 isActive
-                  ? "border-b-2 border-[color:var(--color-brand)] text-default"
+                  ? "border-b-2 border-[color:var(--nimbus-brand)] text-default"
                   : "text-muted hover:text-default",
               )}
             >
@@ -257,7 +251,7 @@ function StatisticsTab({
         label="Bundle"
         value={
           bundle?.sha256 ? (
-            <span className="font-mono">{shortId(bundle.sha256, 16)}</span>
+            <span className="font-mono">{shortHash(bundle.sha256, 16)}</span>
           ) : (
             "—"
           )
@@ -286,7 +280,7 @@ function StatisticsTab({
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-3">
-      <span className="w-32 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+      <span className="w-32 font-mono text-xs uppercase tracking-[0.18em] text-muted">
         {label}
       </span>
       <span className="font-mono text-xs text-default">{value}</span>
@@ -318,7 +312,9 @@ type SourceReady = {
   calledBy: CalledByEdge[] | null;
   typeInfo: TypeHint[] | null;
 };
-type SourceValue = { kind: "present"; ready: SourceReady } | { kind: "missing" };
+type SourceValue =
+  | { kind: "present"; ready: SourceReady }
+  | { kind: "missing" };
 
 type RawSource = {
   source?: string;
@@ -398,7 +394,7 @@ function SourceTab({
       className="flex h-full flex-col overflow-hidden"
       data-testid="function-tab-source"
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-app bg-surface-2 px-6 py-1.5 font-mono text-[10px] uppercase tracking-wide text-muted">
+      <div className="flex shrink-0 items-center gap-2 border-b border-app bg-surface-2 px-6 py-1.5 font-mono text-xs uppercase tracking-wide text-muted">
         <span>{modulePath}</span>
         {ready.digest ? (
           <span className="ml-auto normal-case" title={ready.digest}>
@@ -457,7 +453,7 @@ function SymbolsBar({
     >
       {analysis.exports.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+          <span className="font-mono text-xs uppercase tracking-wide text-muted">
             defines
           </span>
           {analysis.exports.map((symbol) => {
@@ -480,7 +476,7 @@ function SymbolsBar({
       ) : null}
       {analysis.references.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+          <span className="font-mono text-xs uppercase tracking-wide text-muted">
             calls
           </span>
           {analysis.references.map((reference) => (
@@ -495,7 +491,7 @@ function SymbolsBar({
       ) : null}
       {callers.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+          <span className="font-mono text-xs uppercase tracking-wide text-muted">
             called by
           </span>
           {callers.map((caller) => (
@@ -523,6 +519,9 @@ function SymbolLink({
   title?: string;
   testid: string;
 }) {
+  // A bordered chip, not an inline link: the border plus the hover fill carry
+  // the affordance, so this keeps `text-link` and stays off `.link-inline` —
+  // a resting underline inside a chip reads as a rendering defect.
   return (
     <Link
       to="/developer/compute/$function"
@@ -530,7 +529,7 @@ function SymbolLink({
       search={{ tab: "source" }}
       data-testid={testid}
       title={title}
-      className="rounded border border-app px-1.5 py-0.5 font-mono text-[11px] text-link hover:bg-surface-2 hover:underline"
+      className="rounded border border-app px-1.5 py-0.5 font-mono text-xs text-link hover:bg-surface-2"
     >
       {label}
     </Link>
@@ -577,7 +576,7 @@ function LogsTab({ fn }: { fn: FunctionDoc }) {
             className="rounded border border-app bg-surface-2 px-3 py-2 font-mono text-xs"
           >
             <div className="flex items-baseline gap-3">
-              <span className="text-[10px] uppercase tracking-wide text-muted">
+              <span className="text-xs uppercase tracking-wide text-muted">
                 {ev.level ?? "info"}
               </span>
               <span className="text-default">{ev.message ?? ""}</span>
@@ -594,14 +593,63 @@ function LogsTab({ fn }: { fn: FunctionDoc }) {
   );
 }
 
-function RunsTab({ fn }: { fn: FunctionDoc }) {
+/**
+ * Shared by the loaded table and its skeleton so the two cannot drift apart,
+ * and the one place the column plan is written.
+ *
+ * Runs is the console's only table whose body is wider than its header -- a
+ * mono run id, a status chip -- so it is the only one whose columns landed
+ * somewhere else once the data arrived (measured: Status moved 50.89px at
+ * 1280 and 61.72px at 1440). The shares below are the widths auto layout was
+ * already choosing, to the nearest whole percent, so the loaded table looks
+ * the same and the skeleton now agrees with it. Both states set `table-fixed`
+ * for the plan to take effect.
+ */
+function RunsTableHead() {
+  return (
+    // Sticky because the pane below scrolls 50 runs and the four columns are a
+    // mono id, a state glyph and two numbers, which read as nothing once their
+    // labels leave the viewport. `bg-surface-2` is load-bearing, not styling: a
+    // transparent sticky head lets the rows scroll visibly through it.
+    <thead className="sticky top-0 z-20 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+      <tr>
+        <Th width="29%">Run ID</Th>
+        <Th width="21%">Status</Th>
+        <Th width="26%">Duration</Th>
+        <Th width="24%">Started</Th>
+      </tr>
+    </thead>
+  );
+}
+
+/** Exported for spec coverage of the loading / empty / loaded branches. */
+export function RunsTab({ fn }: { fn: FunctionDoc }) {
   const runs = useQuery(api.runs.recent, {
     bundleId: null,
     functionPath: fn.path ?? null,
     status: null,
     limit: 50,
   }) as RunDoc[] | undefined;
-  if (runs === undefined) return <LoadingState label="Loading runs…" />;
+  if (runs === undefined) {
+    // Keep the table mounted while the page is in flight: swapping the whole
+    // table out drops the header and the column widths, so the panel jumps
+    // once on load and again on data arrival.
+    return (
+      <div
+        className="h-full overflow-auto px-6 py-4"
+        data-testid="function-tab-runs"
+      >
+        <SkeletonRows
+          className="min-w-[420px]"
+          columns={4}
+          fixed
+          head={<RunsTableHead />}
+          label="Loading runs…"
+          testid="function-tab-runs-skeleton"
+        />
+      </div>
+    );
+  }
   if (runs.length === 0) {
     return (
       <EmptyState
@@ -615,30 +663,15 @@ function RunsTab({ fn }: { fn: FunctionDoc }) {
       className="h-full overflow-auto px-6 py-4"
       data-testid="function-tab-runs"
     >
-      <table className="w-full border-collapse text-sm">
-        <thead className="text-[10px] uppercase tracking-[0.14em] text-muted">
-          <tr>
-            <th className="border-b border-app px-3 py-2 text-left font-normal">
-              Run ID
-            </th>
-            <th className="border-b border-app px-3 py-2 text-left font-normal">
-              Status
-            </th>
-            <th className="border-b border-app px-3 py-2 text-left font-normal">
-              Duration
-            </th>
-            <th className="border-b border-app px-3 py-2 text-left font-normal">
-              Started
-            </th>
-          </tr>
-        </thead>
+      <table className="w-full min-w-[420px] table-fixed border-collapse text-sm">
+        <RunsTableHead />
         <tbody>
           {runs.map((run) => (
             <tr
               key={run._id}
               className="border-t border-app hover:bg-surface-2"
             >
-              <td className="px-3 py-2">
+              <Td>
                 <Link
                   to="/developer/compute/runs/$runId"
                   params={{ runId: run._id }}
@@ -647,11 +680,11 @@ function RunsTab({ fn }: { fn: FunctionDoc }) {
                 >
                   {shortId(run._id, 12)}
                 </Link>
-              </td>
-              <td className="px-3 py-2">
+              </Td>
+              <Td>
                 <StateChip state={run.status} />
-              </td>
-              <td className="px-3 py-2">
+              </Td>
+              <Td>
                 {typeof run.durationMs === "number" ? (
                   <span className="tabular font-mono text-xs">
                     {formatDuration(run.durationMs)}
@@ -659,14 +692,14 @@ function RunsTab({ fn }: { fn: FunctionDoc }) {
                 ) : (
                   <span className="tabular text-muted">—</span>
                 )}
-              </td>
-              <td className="px-3 py-2">
+              </Td>
+              <Td>
                 {typeof run.startedAt === "number" ? (
                   <RelativeTime epochMs={run.startedAt} />
                 ) : (
                   <span className="tabular text-muted">—</span>
                 )}
-              </td>
+              </Td>
             </tr>
           ))}
         </tbody>
@@ -706,7 +739,7 @@ function NotFound({ path }: { path: string }) {
       </span>
       <Link
         to="/developer/compute"
-        className="rounded border border-app px-3 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
       >
         ← back to compute
       </Link>

@@ -1,4 +1,6 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useRef } from "react";
+
+import { useModalFocus } from "../hooks/use-modal-focus";
 
 // Header bar shared by the Slideover and the inline side panels (schema,
 // indexes): a mono title on the left and a close button on the right.
@@ -18,7 +20,7 @@ export function PanelHeader({
         type="button"
         onClick={onClose}
         aria-label={`Close ${title}`}
-        className="rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
       >
         close
       </button>
@@ -40,13 +42,12 @@ export function Slideover({
   testid: string;
   children: ReactNode;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Callers mount the drawer only while it is open, so the trap is armed for
+  // the whole life of the component.
+  useModalFocus({ open: true, panelRef, onEscape: onClose });
+
   return (
     <div className="fixed inset-0 z-30 flex justify-end">
       <button
@@ -57,9 +58,35 @@ export function Slideover({
         data-testid={`${testid}-overlay`}
       />
       <div
+        ref={panelRef}
         role="dialog"
+        aria-modal="true"
         aria-label={title}
-        className="relative flex h-full w-[480px] flex-col gap-2 border-l border-app bg-bg p-4 shadow-xl"
+        // tabIndex -1 so the panel itself can take programmatic focus on open;
+        // outline-none so that lands without painting a ring on the whole panel.
+        tabIndex={-1}
+        // 480px is the preferred width; `max-w-full` is the clamp under it.
+        // With today's bodies the clamp is belt-and-braces: the panel's
+        // min-content floor is 207px (insert) and 245px (edit) — a 60-char
+        // field name changes neither, because the widest child is a textarea,
+        // which takes its intrinsic width from `cols` and never propagates its
+        // content outward — so below 480px the panel just flex-shrinks to the
+        // viewport. The clamp earns its place when a child floors the panel
+        // ABOVE the viewport: a 56-char unbroken title measures a 573px floor,
+        // which pins the panel at 480px, and `justify-end` then sends that
+        // overflow out by the LEFT edge, taking the close button with it.
+        //
+        // `max-w-full` here but `min(480px,90vw)` on the shell error card is a
+        // gutter choice, not a mechanism one: both lower the automatic
+        // minimum, by different routes. A smaller preferred width lowers the
+        // specified size suggestion the minimum is capped by; a max-width
+        // leaves both suggestions alone and clamps the result, since
+        // css-flexbox-1 4.5 clamps the content-based minimum by the maximum
+        // main size (max-width enters the content size suggestion only
+        // through an aspect ratio, which no panel here has). This panel is
+        // edge-anchored and should meet the viewport edge; that card is
+        // centred and needs a gutter to still read as a card.
+        className="relative flex h-full w-[480px] max-w-full flex-col gap-2 border-l border-app bg-surface p-4 shadow-xl outline-none"
         data-testid={testid}
       >
         <PanelHeader title={title} onClose={onClose} />

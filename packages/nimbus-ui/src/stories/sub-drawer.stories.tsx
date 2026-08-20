@@ -35,7 +35,7 @@ function FakeSubDrawerHost({
       className="flex h-[420px] w-64 shrink-0 flex-col border-r border-app bg-surface"
     >
       <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-app px-3">
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+        <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
           {spec.title}
         </span>
       </header>
@@ -47,7 +47,11 @@ function FakeSubDrawerHost({
             onChange={(e) => setSearch(e.target.value)}
             placeholder={spec.search.placeholder}
             data-testid="sub-drawer-search"
-            className="h-7 w-full rounded-md border border-app bg-app px-2 text-xs text-default placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand)]"
+            // A story is where the next author looks for the pattern, so the
+            // failing `--brand` ring must not be modelled here either: 2.24:1
+            // in warm light on this field's own `bg-canvas` ground, under SC
+            // 1.4.11's 3:1 floor.
+            className="h-7 w-full rounded-md border border-app bg-canvas px-2 text-xs text-default placeholder:text-muted"
           />
         </div>
       ) : null}
@@ -88,7 +92,7 @@ function FakeStaticList({
                     : "text-muted hover:bg-surface-2 hover:text-default",
               )}
               style={
-                active ? { borderLeftColor: "var(--color-brand)" } : undefined
+                active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined
               }
             >
               <span className="flex-1 truncate">{item.label}</span>
@@ -112,7 +116,12 @@ const STATIC_SPEC: StaticSubDrawerSpec = {
     { id: "tenants", label: "Tenants", to: "/operator/tenants", count: 4 },
     { id: "tables", label: "Tables", to: "/operator/tables", count: 17 },
     { id: "documents", label: "Documents", to: "/operator/documents" },
-    { id: "indexes", label: "Indexes", to: "/operator/indexes", disabled: true },
+    {
+      id: "indexes",
+      label: "Indexes",
+      to: "/operator/indexes",
+      disabled: true,
+    },
   ],
 };
 
@@ -136,7 +145,7 @@ const DYNAMIC_SPEC: DynamicSubDrawerSpec = {
             <span className="flex-1 truncate font-mono text-xs">
               {svc.label}
             </span>
-            <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+            <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
               {svc.state}
             </span>
           </a>

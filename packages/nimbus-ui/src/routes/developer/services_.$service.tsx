@@ -15,7 +15,7 @@ import { EmptyState } from "../../components/empty-state";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
-import { shortId } from "../../lib/format";
+import { shortHash, shortId } from "../../lib/format";
 import { getNimbusClient } from "../../lib/nimbus-client";
 import type { ServiceDoc } from "../../lib/types/service";
 import {
@@ -166,7 +166,7 @@ function ServiceDetailPage() {
             {displayName}
           </h1>
           {service.kind ? (
-            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted">
+            <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-muted">
               {service.kind}
             </span>
           ) : null}
@@ -177,7 +177,7 @@ function ServiceDetailPage() {
               value={bundle.sha256}
               testid="service-detail-bundle"
             >
-              {shortId(bundle.sha256, 12)}
+              {shortHash(bundle.sha256, 12)}
             </CopyChip>
           ) : null}
         </header>
@@ -200,7 +200,7 @@ function ServiceDetailPage() {
               className={cn(
                 "flex items-center px-3 py-2 font-mono text-xs uppercase tracking-wide",
                 isActive
-                  ? "border-b-2 border-[color:var(--color-brand)] text-default"
+                  ? "border-b-2 border-[color:var(--nimbus-brand)] text-default"
                   : "text-muted hover:text-default",
               )}
             >
@@ -307,7 +307,7 @@ function HealthTab({ service }: { service: ServiceDoc }) {
   );
 }
 
-function BundleTab({
+export function BundleTab({
   service,
   bundle,
 }: {
@@ -318,7 +318,13 @@ function BundleTab({
     return (
       <EmptyState
         title="No bundle attached"
-        body="This service has not been associated with a runtime bundle. Run `nimbus compose up` to register one."
+        body={
+          <>
+            This service has not been associated with a runtime bundle. Run{" "}
+            <code className="whitespace-nowrap">nimbus compose up</code> to
+            register one.
+          </>
+        }
       />
     );
   }
@@ -344,7 +350,7 @@ function BundleTab({
               value={bundle.sha256}
               testid="service-bundle-sha"
             >
-              {shortId(bundle.sha256, 16)}
+              {shortHash(bundle.sha256, 16)}
             </CopyChip>
           ) : (
             "—"
@@ -370,7 +376,7 @@ function BundleTab({
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-3">
-      <span className="w-32 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+      <span className="w-32 font-mono text-xs uppercase tracking-[0.18em] text-muted">
         {label}
       </span>
       <span className="font-mono text-xs text-default">{value}</span>
@@ -427,7 +433,7 @@ function DetailSubDrawer({
                 {svc.name ?? shortId(svc._id, 12)}
               </span>
               {svc.state ? (
-                <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
                   {svc.state}
                 </span>
               ) : null}
@@ -454,7 +460,7 @@ function ServiceNotFound() {
       </span>
       <Link
         to="/developer/services"
-        className="rounded border border-app px-3 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+        className="rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
       >
         ← back to services
       </Link>

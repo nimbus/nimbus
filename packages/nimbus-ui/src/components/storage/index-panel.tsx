@@ -13,12 +13,24 @@ export function IndexPanel({
   const indexes = schema?.indexes ?? [];
   return (
     <aside
-      className="flex w-[420px] shrink-0 flex-col overflow-hidden rounded-md border border-app bg-surface"
+      // 420px is the preferred width, not a floor. With `shrink-0` it was both,
+      // so in a window under ~564px the panel kept all 420px and the row's
+      // `overflow-hidden` cut off its right edge — the close button included —
+      // leaving no way to dismiss it. `min-w-0` lets the panel go below its
+      // min-content width so it stays whole and closeable at any width. It
+      // spans the row until the row can afford 320 + 16 gap + 420 = 756px,
+      // because the table's `min-w-[20rem]` floor leaves an inspector beside
+      // it only 6px at a 390px viewport, and the row stacks the two below
+      // that. The schema panel it alternates with in the same toolbar carries
+      // the identical pair of constraints; `storage_.$table.tsx` owns the
+      // `documents-row` container this query is measured against, and with no
+      // such container in scope the rule never matches and `w-full` stands.
+      className="@min-[756px]/documents-row:w-[420px] flex w-full min-w-0 flex-col overflow-hidden rounded-md border border-app bg-surface"
       data-testid="documents-indexes-panel"
     >
       <PanelHeader title="Indexes" onClose={onClose} />
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3">
-        <p className="font-mono text-[11px] text-muted">
+        <p className="font-mono text-xs text-muted">
           Read-only view derived from the table schema. Index REST endpoints
           (create/drop) ship after the native index API lands.
         </p>
@@ -34,7 +46,7 @@ export function IndexPanel({
             className="w-full border-collapse text-xs"
             data-testid="documents-indexes-table"
           >
-            <thead className="text-[10px] uppercase tracking-wide text-muted">
+            <thead className="text-xs uppercase tracking-wide text-muted">
               <tr>
                 <th className="px-2 py-1 text-left">Name</th>
                 <th className="px-2 py-1 text-left">Fields</th>

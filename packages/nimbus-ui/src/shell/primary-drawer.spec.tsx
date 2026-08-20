@@ -51,11 +51,27 @@ function setPathname(path: string) {
   pathnameRef.current = path;
 }
 
+// The global test setup stubs matchMedia to always report `matches: false`,
+// which is the desktop tier. Narrow it per query to drive the other tiers.
+function stubTier(tier: "mobile" | "tablet") {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: tier === "mobile" ? true : query.includes("1023px"),
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }));
+}
+
 beforeEach(() => {
   setPathname("/developer");
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   // localStorage cleared by global setup
 });
 
@@ -172,6 +188,33 @@ describe("PrimaryDrawer", () => {
     rerender(<PrimaryDrawer />);
     expect(screen.getByTestId("nav-machines")).toBeInTheDocument();
     expect(screen.queryByTestId("nav-compute")).toBeNull();
+  });
+
+  it("defaults to the icon rail below the desktop tier", () => {
+    stubTier("tablet");
+    render(<PrimaryDrawer />);
+    const drawer = screen.getByTestId("primary-drawer");
+    expect(drawer).toHaveAttribute("data-tier", "tablet");
+    expect(drawer).toHaveAttribute("data-collapsed", "true");
+    // The stored preference is untouched: nothing derived from the viewport is
+    // ever persisted, or a single tablet-width visit would overwrite the
+    // operator's desktop choice.
+    expect(
+      window.localStorage.getItem("nimbus-ui:primary-drawer-collapsed"),
+    ).toBeNull();
+  });
+
+  it("lets a tablet expand without writing the desktop preference", () => {
+    stubTier("tablet");
+    render(<PrimaryDrawer />);
+    fireEvent.click(screen.getByTestId("primary-drawer-toggle"));
+    expect(screen.getByTestId("primary-drawer")).toHaveAttribute(
+      "data-collapsed",
+      "false",
+    );
+    expect(
+      window.localStorage.getItem("nimbus-ui:primary-drawer-collapsed"),
+    ).toBeNull();
   });
 
   it("toggles collapse on background double-click but not on nav links", () => {

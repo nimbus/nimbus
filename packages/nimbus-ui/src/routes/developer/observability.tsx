@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 
+import { PageHeader } from "../../components/page-header";
 import { cn } from "../../lib/cn";
 import {
   type StaticSubDrawerSpec,
@@ -84,19 +85,28 @@ function ObservabilityPage() {
 
 function Header({ tab }: { tab: ActiveObservabilityTab }) {
   return (
-    <header className="flex flex-col gap-3">
-      <div>
-        <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
-          Observability
-        </h1>
-        <p className="text-sm text-muted">
-          Live event stream and recent runs. Reads stream from the{" "}
-          <code className="font-mono text-default">_nimbus</code> system tenant.
-        </p>
-      </div>
+    // `shrink-0` on both this column and the tab strip: the page column is
+    // `overflow-hidden`, so anything the flexbox compresses here is clipped
+    // with no way to scroll it back. Today the tab row survives only because
+    // the sibling pane is `min-h-0 flex-1` and absorbs the shrink — an
+    // invariant owned by another file. Pin it locally instead.
+    <div className="flex shrink-0 flex-col gap-3">
+      {/* The tab strip sits below the title rather than in `trailing`, so the
+          title molecule is the shared one and the nav is its sibling. */}
+      <PageHeader
+        title="Observability"
+        subtitle={
+          <>
+            Live event stream and recent runs. Reads stream from the{" "}
+            <code className="font-mono text-default">_nimbus</code> system
+            tenant.
+          </>
+        }
+        testid="observability-header"
+      />
       <nav
         aria-label="Observability tabs"
-        className="flex gap-px overflow-hidden rounded-md border border-app bg-surface-2 self-start"
+        className="flex shrink-0 gap-px self-start overflow-hidden rounded-md border border-app bg-surface-2"
         data-testid="observability-tabs"
       >
         {OBSERVABILITY_SUB_DRAWER.items.map((item) =>
@@ -112,17 +122,11 @@ function Header({ tab }: { tab: ActiveObservabilityTab }) {
           ),
         )}
       </nav>
-    </header>
+    </div>
   );
 }
 
-function DisabledTab({
-  id,
-  label,
-}: {
-  id: ObservabilityTab;
-  label: string;
-}) {
+function DisabledTab({ id, label }: { id: ObservabilityTab; label: string }) {
   return (
     <span
       aria-disabled="true"
@@ -130,13 +134,19 @@ function DisabledTab({
       title={`${label} — coming soon`}
       className={cn(
         "inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
-        "cursor-not-allowed text-muted opacity-60",
+        "cursor-not-allowed text-muted",
       )}
     >
       {label}
+      {/* The bordered, filled chip carries the disabled state. The previous
+          `opacity-60` on the wrapper was the only signal separating this from
+          an enabled-but-inactive tab, and it stacked on 9px muted text — below
+          any legible floor. 11px (`text-xs`) is the smallest sanctioned step.
+          The treatment is `components/category-chip.tsx` verbatim; it stays
+          inline only because CategoryChip takes no testid. */}
       <span
         aria-hidden
-        className="rounded bg-surface-2 px-1 text-[9px] uppercase tracking-wide text-muted"
+        className="inline-flex items-center rounded border border-app bg-surface-2 px-1.5 py-0.5 font-mono text-xs leading-none uppercase tracking-wide text-muted"
         data-testid={`observability-tab-${id}-coming-soon`}
       >
         coming soon

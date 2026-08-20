@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { SectionCard } from "./-primitives";
+import { PageSection } from "./-primitives";
 import type { AdapterCapabilityDoc } from "./-types";
 
 const ADAPTERS = [
@@ -27,7 +27,7 @@ export function IntegrationsSection({
   }, [capabilities]);
 
   return (
-    <SectionCard
+    <PageSection
       title="Integrations"
       testid="settings-integrations"
       description="Adapter capability matrix. Caveats render inline next to the affected feature."
@@ -46,7 +46,7 @@ export function IntegrationsSection({
               >
                 <header className="mb-2 flex items-baseline justify-between">
                   <span className="text-sm text-default">{label}</span>
-                  <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+                  <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
                     {features.length} feature{features.length === 1 ? "" : "s"}
                   </span>
                 </header>
@@ -72,9 +72,7 @@ export function IntegrationsSection({
                           <CapabilityChip status={f.status ?? "unknown"} />
                         </div>
                         {f.caveat ? (
-                          <p className="text-[11px] text-warning">
-                            ⚠ {f.caveat}
-                          </p>
+                          <p className="text-xs text-warning">⚠ {f.caveat}</p>
                         ) : null}
                       </li>
                     ))}
@@ -85,7 +83,7 @@ export function IntegrationsSection({
           })}
         </div>
       )}
-    </SectionCard>
+    </PageSection>
   );
 }
 
@@ -109,7 +107,7 @@ function CapabilityChip({ status }: { status: string }) {
         : "text-muted";
   return (
     <span
-      className={`font-mono text-[10px] uppercase tracking-[0.14em] ${colorClass}`}
+      className={`font-mono text-xs uppercase tracking-[0.14em] ${colorClass}`}
     >
       {status}
     </span>

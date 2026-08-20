@@ -9,15 +9,20 @@ import {
   useRef,
   useState,
 } from "react";
-import { useTenantList, type TenantListEntry } from "../hooks/use-tenant-list";
+import { useTenantList } from "../hooks/use-tenant-list";
 import { cn } from "../lib/cn";
 import { useUiStore } from "../store/ui-store";
 
-type TenantEntry = TenantListEntry;
-
 export type TenantSelectorMode =
   | { kind: "developer" }
-  | { kind: "operator-filter"; currentFilter: string | null };
+  // `unavailable` keeps the affordance on screen while the backend cannot honor
+  // the filter (see EVENTS_TABLE_HAS_TENANT_COLUMN). Removing the control
+  // instead would strand a bookmarked `?tenant=` with nothing to clear it.
+  | {
+      kind: "operator-filter";
+      currentFilter: string | null;
+      unavailable: boolean;
+    };
 
 export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
   const activeTenant = useUiStore((s) => s.activeTenant);
@@ -48,8 +53,15 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
 
   const currentIndex = entries.findIndex((e) => e.id === currentValue);
 
+  // Focusing the menu is what routes ArrowUp/Down/Home/End/Enter/Escape to
+  // `onKeyDown` below: the menu is a sibling of the trigger, not an ancestor,
+  // so without this the keys keep going to the button and the whole menu is
+  // keyboard-dead.
   useEffect(() => {
-    if (open) setFocusIndex(currentIndex >= 0 ? currentIndex : 0);
+    if (open) {
+      setFocusIndex(currentIndex >= 0 ? currentIndex : 0);
+      menuRef.current?.focus();
+    }
   }, [open, currentIndex]);
 
   useEffect(() => {
@@ -123,6 +135,19 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
     [applySelection, entries, focusIndex],
   );
 
+  // Opening from the keyboard must preventDefault: without it the browser
+  // synthesizes a click on keyup, which re-runs the trigger's onClick toggle
+  // and closes the menu the moment it opened.
+  const onTriggerKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLButtonElement>) => {
+      if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setOpen(true);
+      }
+    },
+    [],
+  );
+
   if (
     mode.kind === "developer" &&
     state.kind === "loaded" &&
@@ -135,7 +160,7 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
         onClick={() =>
           navigate({ to: "/operator/tenants", search: { create: 1 } })
         }
-        className="flex h-7 items-center gap-1 rounded-md border border-app bg-surface px-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted hover:bg-surface-2 hover:text-default"
+        className="flex h-7 items-center gap-1 rounded-md border border-app bg-surface px-2 font-mono text-xs uppercase tracking-[0.18em] text-muted hover:bg-surface-2 hover:text-default"
       >
         <Plus size={12} aria-hidden />
         Create tenant
@@ -148,6 +173,39 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
       ? (mode.currentFilter ?? "All tenants")
       : (activeTenant ?? "Select tenant");
 
+  // The backend cannot honor the filter yet, so the control stays on screen but
+  // cannot open and cannot write `?tenant=` — the same "coming soon" treatment
+  // the observability page gives its own unbuilt tabs.
+  if (mode.kind === "operator-filter" && mode.unavailable) {
+    return (
+      <div className="relative" data-testid="tenant-selector">
+        <button
+          ref={buttonRef}
+          type="button"
+          disabled
+          aria-disabled="true"
+          data-testid="tenant-selector-trigger"
+          data-mode={mode.kind}
+          data-unavailable="true"
+          title="Tenant filtering is unavailable until the events table exposes a tenant column"
+          className="flex h-7 max-w-[16rem] cursor-not-allowed items-center gap-2 rounded-md border border-app bg-surface px-2 font-mono text-xs text-default opacity-60"
+        >
+          <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
+            Filter
+          </span>
+          <span className="truncate">All tenants</span>
+          <span
+            aria-hidden
+            className="rounded bg-surface-2 px-1 text-xs uppercase tracking-wide text-muted"
+            data-testid="tenant-selector-coming-soon"
+          >
+            coming soon
+          </span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="relative" data-testid="tenant-selector">
       <button
@@ -159,13 +217,14 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         onClick={() => setOpen((v) => !v)}
+        onKeyDown={onTriggerKeyDown}
         className={cn(
-          "flex h-7 max-w-[14rem] items-center gap-2 rounded-md border border-app bg-surface px-2 font-mono text-[11px] text-default",
+          "flex h-7 max-w-[14rem] items-center gap-2 rounded-md border border-app bg-surface px-2 font-mono text-xs text-default",
           "hover:bg-surface-2",
           open && "bg-surface-2",
         )}
       >
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+        <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
           {mode.kind === "operator-filter" ? "Filter" : "Tenant"}
         </span>
         <span className="truncate">{triggerLabel}</span>
@@ -185,27 +244,33 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
           role="listbox"
           tabIndex={-1}
           aria-label="Tenants"
+          // Guarded on entries: the loading, error and empty branches below
+          // render no options at all, and pointing at a nonexistent id would
+          // leave assistive tech announcing a row that is not there.
+          aria-activedescendant={
+            entries.length > 0 ? `${menuId}-opt-${focusIndex}` : undefined
+          }
           data-testid="tenant-selector-menu"
           onKeyDown={onKeyDown}
           className="absolute right-0 top-full z-10 mt-1 max-h-72 w-[16rem] overflow-auto rounded-md border border-app bg-surface shadow-lg focus:outline-none"
         >
           {state.kind === "loading" ? (
             <p
-              className="px-3 py-2 font-mono text-[11px] text-muted"
+              className="px-3 py-2 font-mono text-xs text-muted"
               data-testid="tenant-selector-loading"
             >
               loading…
             </p>
           ) : state.kind === "error" ? (
             <p
-              className="px-3 py-2 font-mono text-[11px] text-rose-400"
+              className="px-3 py-2 font-mono text-xs text-danger"
               data-testid="tenant-selector-error"
             >
               {state.message}
             </p>
           ) : entries.length === 0 ? (
             <p
-              className="px-3 py-2 font-mono text-[11px] text-muted"
+              className="px-3 py-2 font-mono text-xs text-muted"
               data-testid="tenant-selector-empty"
             >
               No tenants yet.
@@ -218,6 +283,7 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
                 return (
                   <li key={entry.id ?? "__all__"}>
                     <button
+                      id={`${menuId}-opt-${idx}`}
                       type="button"
                       role="option"
                       aria-selected={isActive}
@@ -236,14 +302,17 @@ export function TenantSelector({ mode }: { mode: TenantSelectorMode }) {
                     >
                       <span className="flex-1 truncate">{entry.label}</span>
                       {entry.backend ? (
-                        <span className="rounded border border-app px-1 py-px text-[9px] uppercase tracking-wide text-muted">
+                        <span className="rounded border border-app px-1 py-px text-xs uppercase tracking-wide text-muted">
                           {entry.backend}
                         </span>
                       ) : null}
                       {isActive ? (
+                        // Matches `Select`: the marker takes the active row's
+                        // tone. `text-brand` measured 2.48:1 on --surface in
+                        // the warm palette, failing at 11px.
                         <span
                           aria-hidden
-                          className="font-mono text-[10px] text-brand"
+                          className="font-mono text-xs text-default"
                         >
                           ●
                         </span>

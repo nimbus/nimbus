@@ -55,6 +55,17 @@ describe("SegmentedControl", () => {
     expect(screen.getAllByRole("radio")).toHaveLength(3);
   });
 
+  it("does not clip the focus ring off its segments", () => {
+    renderControl();
+    // The focus ring is drawn 2px outside each segment, so the group must not
+    // clip its own children; the end segments carry the radius instead.
+    expect(screen.getByTestId("mode")).not.toHaveClass("overflow-hidden");
+    expect(screen.getByTestId("mode-light")).toHaveClass("rounded-l-[5px]");
+    expect(screen.getByTestId("mode-system")).toHaveClass("rounded-r-[5px]");
+    expect(screen.getByTestId("mode-dark")).not.toHaveClass("rounded-l-[5px]");
+    expect(screen.getByTestId("mode-dark")).not.toHaveClass("rounded-r-[5px]");
+  });
+
   it("marks the active segment via aria-checked + data-active + tabindex", () => {
     renderControl("dark");
     const light = screen.getByTestId("mode-light");

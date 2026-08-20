@@ -1,5 +1,15 @@
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useCallback, useMemo, useState } from "react";
+import {
+  createFileRoute,
+  Link,
+  useNavigate,
+  useRouter,
+} from "@tanstack/react-router";
+import {
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useMemo,
+  useState,
+} from "react";
 import { toast } from "sonner";
 
 import { api } from "../../../convex/_generated/api";
@@ -17,6 +27,10 @@ import {
   type SubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
+
+// Matches components/storage/documents-table.tsx: a row click must not hijack
+// the tenant link, the copy chip, or the delete button that sit inside it.
+const INTERACTIVE = "button, a, input, label, [role='menuitem']";
 
 type TenantsSearch = {
   create?: 1;
@@ -63,6 +77,7 @@ export const Route = createFileRoute("/operator/tenants")({
 function TenantsPage() {
   const data = Route.useLoaderData();
   const router = useRouter();
+  const navigate = useNavigate();
   const tenants = data.kind === "ok" ? data.tenants : [];
   const tables = data.kind === "ok" ? data.tables : [];
   const serverError = data.kind === "error" ? data.message : null;
@@ -114,6 +129,15 @@ function TenantsPage() {
     [newTenant, reload],
   );
 
+  // This page has no detail drawer, so opening a tenant means going to its
+  // data rather than revealing a panel beside the table.
+  const openTenant = useCallback(
+    (tenantId: string) => {
+      void navigate({ to: "/developer/storage", search: { as: tenantId } });
+    },
+    [navigate],
+  );
+
   const confirmTenantRow = rows.find((r) => r.tenantId === confirmTenant);
 
   const runDelete = useCallback(
@@ -147,15 +171,16 @@ function TenantsPage() {
           <ul className="flex flex-col gap-px px-2 py-2">
             {tenants.map((tenantId) => (
               <li key={tenantId}>
-                <a
-                  href={`/operator/tenants?selected=${tenantId}`}
+                <Link
+                  to="/developer/storage"
+                  search={{ as: tenantId }}
                   data-testid={`sub-drawer-item-op-${tenantId}`}
                   className="flex h-8 items-center rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-default"
                 >
                   <span className="flex-1 truncate font-mono text-xs">
                     {tenantId}
                   </span>
-                </a>
+                </Link>
               </li>
             ))}
           </ul>
@@ -202,7 +227,7 @@ function TenantsPage() {
               type="submit"
               disabled={creating || !newTenant.trim()}
               className={cn(
-                "rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide",
+                "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide",
                 creating || !newTenant.trim()
                   ? "text-muted"
                   : "text-default hover:bg-surface",
@@ -246,12 +271,12 @@ function TenantsPage() {
             testid="storage-empty"
           />
         ) : (
-          <div className="overflow-auto">
+          <div className="h-full overflow-auto">
             <table
               className="w-full border-collapse text-sm"
               data-testid="storage-tenants-table"
             >
-              <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
+              <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
                 <tr>
                   <Th>Tenant</Th>
                   <Th align="right">Tables</Th>
@@ -263,8 +288,14 @@ function TenantsPage() {
                 {rows.map((row) => (
                   <tr
                     key={row.tenantId}
-                    className="border-t border-app hover:bg-surface-2"
+                    className="group cursor-pointer border-t border-app hover:bg-surface-2"
                     data-testid={`storage-tenant-row-${row.tenantId}`}
+                    onClick={(event: ReactMouseEvent<HTMLTableRowElement>) => {
+                      if ((event.target as HTMLElement).closest(INTERACTIVE)) {
+                        return;
+                      }
+                      openTenant(row.tenantId);
+                    }}
                   >
                     <Td>
                       <Link
@@ -295,10 +326,21 @@ function TenantsPage() {
                     <Td align="right">
                       <button
                         type="button"
-                        onClick={() => setConfirmTenant(row.tenantId)}
-                        disabled={deletingTenant === row.tenantId}
+                        // `aria-disabled`, not `disabled`: this button is what
+                        // the confirm dialog hands focus back to, and it grays
+                        // out in the same commit that closes the dialog. A
+                        // disabled element cannot take focus, so that restore
+                        // was a silent no-op and the operator was left on
+                        // <body> with no focus ring and Tab starting again at
+                        // the top of the page. The handler is what refuses the
+                        // second press.
+                        onClick={() => {
+                          if (deletingTenant === row.tenantId) return;
+                          setConfirmTenant(row.tenantId);
+                        }}
+                        aria-disabled={deletingTenant === row.tenantId}
                         className={cn(
-                          "rounded border border-app px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide",
+                          "rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide aria-disabled:cursor-not-allowed",
                           deletingTenant === row.tenantId
                             ? "text-muted"
                             : "text-danger hover:bg-surface-2",

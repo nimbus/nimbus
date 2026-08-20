@@ -1,10 +1,13 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
-import { useMemo, useState } from "react";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { Td, Th } from "../../components/data-table";
+import { EmptyState } from "../../components/empty-state";
+import { SkeletonRows } from "../../components/loading-state";
 import { PageHeader } from "../../components/page-header";
+import { ScrollRegion } from "../../components/scroll-region";
 import { RelativeTime } from "../../components/time";
 import { cn } from "../../lib/cn";
 import {
@@ -141,7 +144,7 @@ function NetworkPage() {
     >
       <PageHeader
         title="Network"
-        subtitle="HTTP routes, listeners, and published ports. Routes are sourced from the live registry — adapters appear as they register."
+        subtitle="HTTP routes, listeners, published ports from the live registry — adapters appear as they register."
         trailing={
           <span
             className="font-mono text-xs text-muted"
@@ -159,7 +162,7 @@ function NetworkPage() {
         data-testid="network-filters"
       >
         <label className="flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+          <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
             filter
           </span>
           <input
@@ -172,11 +175,12 @@ function NetworkPage() {
             className="w-72 rounded border border-app bg-surface px-2 py-1 font-mono text-xs text-default placeholder:text-muted/70"
           />
         </label>
-        <div
-          className="flex items-center gap-1"
-          role="tablist"
-          aria-label="Filter by adapter"
-        >
+        {/* Toggle buttons, not tabs: they filter the table in place and do not
+            own a tabpanel, so a labelled group of `aria-pressed` buttons is the
+            honest contract, and native Tab/Space/Enter is its complete keyboard
+            behavior. */}
+        <fieldset className="flex min-w-0 items-center gap-1">
+          <legend className="sr-only">Filter by adapter</legend>
           <FilterChip
             label="all"
             active={adapterFilter === null}
@@ -190,27 +194,32 @@ function NetworkPage() {
               onClick={() => setAdapterFilter(a)}
             />
           ))}
-        </div>
+        </fieldset>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-app bg-surface">
         {routes === undefined ? (
-          <div className="flex h-32 items-center justify-center text-xs text-muted">
-            Loading routes…
-          </div>
+          // No `rowContentHeight`: `Td`'s 40px row floor already sizes the real
+          // and the placeholder rows alike (measured 40.00px in both states at
+          // 1440px), so the default content box is the matching one.
+          <SkeletonRows
+            columns={6}
+            head={<RoutesTableHead />}
+            label="Loading routes…"
+            testid="network-routes-loading"
+          />
         ) : filtered && filtered.length > 0 ? (
           <RoutesTable routes={filtered} />
         ) : (
-          <div className="flex h-32 flex-col items-center justify-center gap-1 text-center">
-            <span className="font-mono text-sm text-default">
-              No matching routes
-            </span>
-            <span className="max-w-md text-xs text-muted">
-              {routes.length === 0
+          <EmptyState
+            title="No matching routes"
+            body={
+              routes.length === 0
                 ? "Adapters register HTTP routes here as they start."
-                : "Clear the filter or pick a different adapter."}
-            </span>
-          </div>
+                : "Clear the filter or pick a different adapter."
+            }
+            testid="network-routes-empty"
+          />
         )}
       </div>
     </section>
@@ -229,12 +238,11 @@ function FilterChip({
   return (
     <button
       type="button"
-      role="tab"
-      aria-selected={active}
+      aria-pressed={active}
       onClick={onClick}
       data-testid={`network-adapter-${label}`}
       className={cn(
-        "rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide",
+        "rounded border px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
         active
           ? "border-strong bg-surface text-default"
           : "border-app text-muted hover:bg-surface hover:text-default",
@@ -245,75 +253,130 @@ function FilterChip({
   );
 }
 
-function RoutesTable({ routes }: { routes: RouteDoc[] }) {
+function RoutesTableHead() {
   return (
-    <div className="overflow-auto">
-      <table
-        className="w-full border-collapse text-sm"
-        data-testid="network-routes-table"
-      >
-        <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
-          <tr>
-            <Th>Method</Th>
-            <Th>Path</Th>
-            <Th>Adapter</Th>
-            <Th>Handler</Th>
-            <Th>Auth</Th>
-            <Th>Last request</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {routes.map((route) => {
-            const method = (route.method ?? "").toUpperCase();
-            const tone = METHOD_TONE[method] ?? "text-default";
-            return (
-              <tr
-                key={route._id}
-                className="border-t border-app hover:bg-surface-2"
-                data-testid={`network-route-${method}-${route.path ?? route._id}`}
-              >
-                <Td>
-                  <span
-                    className={cn(
-                      "font-mono text-[11px] uppercase tracking-wide",
-                      tone,
+    <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
+      <tr>
+        <Th>Method</Th>
+        <Th>Path</Th>
+        <Th>Adapter</Th>
+        <Th>Handler</Th>
+        <Th>Auth</Th>
+        <Th>Last request</Th>
+      </tr>
+    </thead>
+  );
+}
+
+/**
+ * Tracks whether a horizontal scroller still has content to the right, so the
+ * panel can show a real overflow cue. Clipped text at a hard panel border is
+ * indistinguishable from corrupted data; the fade says "there is more", and the
+ * per-column `max-w-*ch` truncation says "this value was cut".
+ */
+function useHorizontalOverflow<T extends HTMLElement>() {
+  const [overflowing, setOverflowing] = useState(false);
+  const cleanup = useRef<(() => void) | null>(null);
+  const ref = useCallback((node: T | null) => {
+    cleanup.current?.();
+    cleanup.current = null;
+    if (!node) return;
+    const measure = () => {
+      setOverflowing(node.scrollWidth - node.clientWidth - node.scrollLeft > 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    for (const child of Array.from(node.children)) observer.observe(child);
+    node.addEventListener("scroll", measure, { passive: true });
+    cleanup.current = () => {
+      observer.disconnect();
+      node.removeEventListener("scroll", measure);
+    };
+  }, []);
+  useEffect(() => () => cleanup.current?.(), []);
+  return { ref, overflowing };
+}
+
+function RoutesTable({ routes }: { routes: RouteDoc[] }) {
+  const { ref, overflowing } = useHorizontalOverflow<HTMLDivElement>();
+  return (
+    <div className="relative h-full">
+      <ScrollRegion ref={ref} label="Routes" className="h-full">
+        <table
+          className="w-full border-collapse text-base"
+          data-testid="network-routes-table"
+          data-overflowing={overflowing ? "true" : "false"}
+        >
+          <RoutesTableHead />
+          <tbody>
+            {routes.map((route) => {
+              const method = (route.method ?? "").toUpperCase();
+              const tone = METHOD_TONE[method] ?? "text-default";
+              return (
+                <tr
+                  key={route._id}
+                  className="border-t border-app hover:bg-surface-2"
+                  data-testid={`network-route-${method}-${route.path ?? route._id}`}
+                >
+                  <Td className="whitespace-nowrap">
+                    <span
+                      className={cn("font-mono uppercase tracking-wide", tone)}
+                    >
+                      {method || "—"}
+                    </span>
+                  </Td>
+                  <Td>
+                    {/* `block` is required: `truncate` is inert on an inline
+                      span. PATH is the column to sacrifice — it is the widest
+                      and the `title` keeps the full value recoverable. 42ch is
+                      what lands the whole table inside the panel at 1440px;
+                      the fade covers the narrower viewports. */}
+                    <span
+                      className="block max-w-[42ch] truncate font-mono text-default"
+                      title={route.path ?? undefined}
+                    >
+                      {route.path ?? "—"}
+                    </span>
+                  </Td>
+                  <Td className="whitespace-nowrap">
+                    <span className="font-mono text-default">
+                      {route.adapter ?? "—"}
+                    </span>
+                  </Td>
+                  <Td>
+                    <span
+                      className="block max-w-[28ch] truncate font-mono text-muted"
+                      title={route.handler ?? undefined}
+                    >
+                      {route.handler ?? "—"}
+                    </span>
+                  </Td>
+                  <Td className="whitespace-nowrap">
+                    <span className="font-mono uppercase tracking-wide text-muted">
+                      {route.authRequired ? "required" : "public"}
+                    </span>
+                  </Td>
+                  <Td className="whitespace-nowrap">
+                    {typeof route.lastRequestAt === "number" ? (
+                      <RelativeTime epochMs={route.lastRequestAt} />
+                    ) : (
+                      <span className="tabular text-muted">never</span>
                     )}
-                  >
-                    {method || "—"}
-                  </span>
-                </Td>
-                <Td>
-                  <span className="font-mono text-default">
-                    {route.path ?? "—"}
-                  </span>
-                </Td>
-                <Td>
-                  <span className="font-mono text-xs text-default">
-                    {route.adapter ?? "—"}
-                  </span>
-                </Td>
-                <Td>
-                  <span className="font-mono text-xs text-muted">
-                    {route.handler ?? "—"}
-                  </span>
-                </Td>
-                <Td>
-                  <span className="font-mono text-[11px] uppercase tracking-wide text-muted">
-                    {route.authRequired ? "required" : "public"}
-                  </span>
-                </Td>
-                <Td>
-                  {typeof route.lastRequestAt === "number" ? (
-                    <RelativeTime epochMs={route.lastRequestAt} />
-                  ) : (
-                    <span className="tabular text-muted">never</span>
-                  )}
-                </Td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </ScrollRegion>
+      {overflowing ? (
+        <div
+          aria-hidden
+          data-testid="network-routes-overflow-cue"
+          className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-surface to-transparent"
+        />
+      ) : null}
     </div>
   );
 }

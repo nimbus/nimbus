@@ -110,3 +110,72 @@ describe("appearance propagation", () => {
     expect(monoPalette.dataset.active).toBe("false");
   });
 });
+
+/* The swatch used to be a table of hand-copied hexes, which drifted: it
+   previewed an amber "Warm dark" theme that globals.css does not define. It is
+   now a live probe of the cascade. These tests lock the probe mechanism; the
+   colour values it produces are locked in styles/contrast.spec.ts, which reads
+   the real stylesheet (vitest runs with `css: false`, so computed colours are
+   not available here). */
+describe("palette swatch preview", () => {
+  const PALETTE_IDS = ["warm", "blue", "mono"] as const;
+  const MODES = ["light", "dark"] as const;
+
+  // The probe needs data-palette *and* data-theme. Under a dark <html>, a
+  // [data-palette="blue"] / [data-palette="mono"] wrapper alone would win over
+  // the inherited dark tokens and preview the *light* variant of that palette.
+  it.each(MODES)("%s: swatch carries both probe attributes", async (mode) => {
+    const user = userEvent.setup();
+    await mountAppearancePropagation();
+    await user.click(screen.getByTestId(`appearance-mode-${mode}`));
+
+    for (const id of PALETTE_IDS) {
+      const swatch = screen.getByTestId(`appearance-swatch-${id}`);
+      expect(swatch.dataset.palette).toBe(id);
+      expect(swatch.dataset.theme).toBe(mode);
+      expect(document.documentElement.dataset.theme).toBe(mode);
+    }
+  });
+
+  it("paints the swatch from --nimbus-* tokens, never a literal colour", async () => {
+    await mountAppearancePropagation();
+
+    for (const id of PALETTE_IDS) {
+      const swatch = screen.getByTestId(`appearance-swatch-${id}`);
+      // --color-* is not a real custom property: `@theme inline` inlines its
+      // values into utilities and emits no variable, so it would resolve to
+      // nothing here.
+      expect(swatch.outerHTML).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+      expect(swatch.outerHTML).not.toMatch(/var\(--color-/);
+      expect(swatch.style.background).toBe("var(--nimbus-surface)");
+      for (const part of ["brand", "accent"] as const) {
+        const cell = screen.getByTestId(`appearance-swatch-${id}-${part}`);
+        expect(cell.style.background).toBe(`var(--nimbus-${part})`);
+      }
+    }
+  });
+
+  it("explains the shared Night Blue dark variant, in dark mode only", async () => {
+    const user = userEvent.setup();
+    await mountAppearancePropagation();
+
+    await user.click(screen.getByTestId("appearance-mode-dark"));
+    expect(screen.getByTestId("appearance-palette-dark-note")).toBeTruthy();
+
+    await user.click(screen.getByTestId("appearance-mode-light"));
+    expect(screen.queryByTestId("appearance-palette-dark-note")).toBeNull();
+  });
+
+  it("keeps every palette selectable in dark mode, including the two that share it", async () => {
+    const user = userEvent.setup();
+    await mountAppearancePropagation();
+    await user.click(screen.getByTestId("appearance-mode-dark"));
+
+    for (const id of PALETTE_IDS) {
+      const button = screen.getByTestId(`appearance-palette-${id}`);
+      expect(button.hasAttribute("disabled")).toBe(false);
+      await user.click(button);
+      expect(document.documentElement.dataset.palette).toBe(id);
+    }
+  });
+});

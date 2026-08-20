@@ -7,7 +7,12 @@ import {
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
 /** A per-identifier type hint (FSV8): 1-based line/col + the TS-compiler hover. */
-export type CodeHint = { name: string; line: number; col: number; hover: string };
+export type CodeHint = {
+  name: string;
+  line: number;
+  col: number;
+  hover: string;
+};
 
 // A shiki transformer that, for each hint position, sets the matching token
 // span's `title` to the inferred type (native hover tooltip) and marks it so
@@ -104,8 +109,10 @@ export function CodeBlock({
   useEffect(() => {
     let cancelled = false;
     const transformers: ShikiTransformer[] = [];
-    if (hints && hints.length > 0) transformers.push(typeHoverTransformer(hints));
-    if (highlightLine) transformers.push(lineHighlightTransformer(highlightLine));
+    if (hints && hints.length > 0)
+      transformers.push(typeHoverTransformer(hints));
+    if (highlightLine)
+      transformers.push(lineHighlightTransformer(highlightLine));
     getHighlighter()
       .then((hl) =>
         hl.codeToHtml(code, {
@@ -129,14 +136,16 @@ export function CodeBlock({
   // Once highlighted HTML is in the DOM, scroll the highlighted line into view.
   useEffect(() => {
     if (html === null || !highlightLine || !containerRef.current) return;
-    const target = containerRef.current.querySelector("[data-highlighted-line]");
+    const target = containerRef.current.querySelector(
+      "[data-highlighted-line]",
+    );
     target?.scrollIntoView({ block: "center" });
   }, [html, highlightLine]);
 
   if (html === null) {
     return (
       <pre
-        className="m-0 h-full overflow-auto whitespace-pre bg-surface p-4 font-mono text-[12px] leading-5 text-default"
+        className="m-0 h-full overflow-auto whitespace-pre bg-surface-2 p-3 font-mono text-sm leading-[1.5] text-default"
         data-testid={testid}
       >
         {code}
@@ -148,7 +157,8 @@ export function CodeBlock({
     // biome-ignore lint/security/noDangerouslySetInnerHtml: trusted shiki highlighter output built from source text
     <div
       ref={containerRef}
-      className="nimbus-code h-full overflow-auto text-[12px] leading-5"
+      // 1.5 leading, per DESIGN.md's code-block spec; `leading-5` was 1.667.
+      className="nimbus-code h-full overflow-auto text-sm leading-[1.5]"
       data-testid={testid}
       dangerouslySetInnerHTML={{ __html: html }}
     />

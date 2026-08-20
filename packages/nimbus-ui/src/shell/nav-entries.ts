@@ -1,3 +1,4 @@
+import { type QueryEntry, queryEntry } from "@nimbus/nimbus/browser";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
@@ -13,8 +14,6 @@ import {
   Server,
   Settings,
 } from "lucide-react";
-
-import { queryEntry, type QueryEntry } from "@nimbus/nimbus/browser";
 
 import { api } from "../../convex/_generated/api";
 
@@ -38,8 +37,19 @@ export type NavEntry = {
   view: NavView;
   count: NavCountEntry | null;
   countKind?: NavCountKind;
+  // The Developer console is tenant-scoped, so its badges must count the active
+  // tenant's rows and not the whole server's. Set this only where the target
+  // query actually accepts `tenantId`; the drawer then substitutes the active
+  // tenant into `count.args` and skips the read entirely while none is
+  // selected. The `tenantId: null` in those args is a type placeholder the
+  // scoped read always replaces — it is never the value sent.
+  tenantScoped?: true;
 };
 
+// Compute and Observability are deliberately not `tenantScoped`: `functions`
+// and `runs` carry no tenantId column and their queries reject the arg, so
+// scoping them is a backend change (column + by_tenantId index + query arg),
+// not a UI one.
 export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
   {
     id: "overview",
@@ -73,6 +83,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
       state: null,
       limit: 200,
     }),
+    tenantScoped: true,
   },
   {
     id: "schedules",
@@ -85,6 +96,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
       status: null,
       limit: 200,
     }),
+    tenantScoped: true,
   },
   {
     id: "storage",
@@ -93,6 +105,7 @@ export const DEVELOPER_NAV_ENTRIES: NavEntry[] = [
     icon: Database,
     view: "developer",
     count: queryEntry(api.tables.list, { tenantId: null, limit: 200 }),
+    tenantScoped: true,
   },
   {
     id: "files",

@@ -102,7 +102,7 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-muted)" />
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--nimbus-muted)" />
         </marker>
       </defs>
 
@@ -115,7 +115,7 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
           className="font-mono"
           fontSize="10"
           letterSpacing="1.4"
-          fill="var(--color-muted)"
+          fill="var(--nimbus-muted)"
           style={{ textTransform: "uppercase" }}
         >
           {module}
@@ -137,7 +137,7 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
             key={`${edge.from}->${edge.to}`}
             d={`M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`}
             fill="none"
-            stroke="var(--color-muted)"
+            stroke="var(--nimbus-muted)"
             strokeWidth="1.5"
             strokeOpacity="0.7"
             markerEnd="url(#nimbus-graph-arrow)"
@@ -161,15 +161,15 @@ function GraphCanvas({ graph }: { graph: GraphData }) {
               width={NODE_W}
               height={NODE_H}
               rx="6"
-              fill="var(--color-surface-2)"
-              stroke="var(--color-border-strong)"
+              fill="var(--nimbus-surface-2)"
+              stroke="var(--nimbus-border-strong)"
             />
             <text
               x={10}
               y={NODE_H / 2 + 4}
               className="font-mono"
               fontSize="12"
-              fill="var(--color-text)"
+              fill="var(--nimbus-text)"
             >
               {node.name}
             </text>

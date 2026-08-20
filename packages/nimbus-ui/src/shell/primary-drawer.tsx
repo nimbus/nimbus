@@ -1,6 +1,7 @@
+import { useQuery } from "@nimbus/nimbus/react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronsLeft, ChevronsRight } from "lucide-react";
-import { useQuery } from "@nimbus/nimbus/react";
+import { useState } from "react";
 import { api } from "../../convex/_generated/api";
 import { useTenantList } from "../hooks/use-tenant-list";
 import { cn } from "../lib/cn";
@@ -12,6 +13,7 @@ import {
   navEntriesForView,
   viewFromPathname,
 } from "./nav-entries";
+import { useViewportTier, type ViewportTier } from "./use-viewport-tier";
 
 const NAV_ID = "primary-drawer-nav";
 
@@ -27,14 +29,13 @@ export function PrimaryDrawer() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const view = viewFromPathname(pathname);
   const entries = navEntriesForView(view);
-  const collapsed = useUiStore((s) => s.primaryDrawerCollapsed);
-  const togglePrimaryDrawer = useUiStore((s) => s.togglePrimaryDrawer);
+  const { collapsed, toggle, tier } = useDrawerCollapse();
   return (
     <nav
       id={NAV_ID}
       aria-label="Primary"
       onDoubleClick={(e) => {
-        if (!isInteractiveTarget(e.target)) togglePrimaryDrawer();
+        if (!isInteractiveTarget(e.target)) toggle();
       }}
       className={cn(
         "flex h-full shrink-0 flex-col gap-1 border-r border-app bg-surface py-3 transition-[width] duration-150",
@@ -42,6 +43,7 @@ export function PrimaryDrawer() {
       )}
       data-view={view}
       data-collapsed={collapsed ? "true" : "false"}
+      data-tier={tier}
       data-testid="primary-drawer"
     >
       <ul className="flex flex-col gap-px">
@@ -52,7 +54,7 @@ export function PrimaryDrawer() {
       <div className="mt-auto flex flex-col gap-2">
         <button
           type="button"
-          onClick={togglePrimaryDrawer}
+          onClick={toggle}
           aria-expanded={!collapsed}
           aria-controls={NAV_ID}
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
@@ -73,6 +75,42 @@ export function PrimaryDrawer() {
       </div>
     </nav>
   );
+}
+
+// Below the desktop tier the drawer defaults to the icon rail: at 768px the
+// expanded rail plus the sub-drawer own a third of the viewport. The stored
+// preference is only consulted on desktop, and a tablet-width expand is held
+// in ephemeral state so it never overwrites that preference. Resetting the
+// override on a tier change keeps the default authoritative when the window
+// crosses a breakpoint.
+function useDrawerCollapse(): {
+  collapsed: boolean;
+  toggle: () => void;
+  tier: ViewportTier;
+} {
+  const tier = useViewportTier();
+  const stored = useUiStore((s) => s.primaryDrawerCollapsed);
+  const togglePrimaryDrawer = useUiStore((s) => s.togglePrimaryDrawer);
+  // The override carries the tier it was made in, so crossing a breakpoint
+  // discards it during render instead of through a reset effect.
+  const [override, setOverride] = useState<{
+    tier: ViewportTier;
+    value: boolean;
+  } | null>(null);
+  const active = override?.tier === tier ? override.value : null;
+  const collapsed = active ?? (tier === "desktop" ? stored : true);
+  return {
+    collapsed,
+    tier,
+    toggle: () => {
+      if (tier === "desktop") {
+        setOverride(null);
+        togglePrimaryDrawer();
+        return;
+      }
+      setOverride({ tier, value: !collapsed });
+    },
+  };
 }
 
 function DrawerEntry({
@@ -100,7 +138,7 @@ function DrawerEntry({
             ? "bg-surface-2 text-default"
             : "text-muted hover:bg-surface-2 hover:text-default",
         )}
-        style={active ? { borderLeftColor: "var(--color-brand)" } : undefined}
+        style={active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined}
         aria-current={active ? "page" : undefined}
         aria-label={collapsed ? entry.label : undefined}
         data-testid={`nav-${entry.id}`}
@@ -110,7 +148,11 @@ function DrawerEntry({
           <>
             <span className="flex-1">{entry.label}</span>
             {entry.count ? (
-              <QueryNavCount id={entry.id} count={entry.count} />
+              <QueryNavCount
+                id={entry.id}
+                count={entry.count}
+                tenantScoped={entry.tenantScoped ?? false}
+              />
             ) : entry.countKind ? (
               <SpecialNavCount id={entry.id} kind={entry.countKind} />
             ) : null}
@@ -147,8 +189,29 @@ function CountBadge({ id, value }: { id: string; value: number | undefined }) {
 }
 
 // Reactive convex array-length count (machines, services, routes, runs, …).
-function QueryNavCount({ id, count }: { id: string; count: NavCountEntry }) {
-  const result = useQuery(count.ref, count.args);
+// A `tenantScoped` entry counts the active tenant's rows only — the Developer
+// console promises tenant scope, so a server-wide badge above a tenant-scoped
+// page reports other tenants' data. With no tenant selected the read is
+// skipped and the badge shows its loading dot, matching what the Storage route
+// itself does.
+function QueryNavCount({
+  id,
+  count,
+  tenantScoped,
+}: {
+  id: string;
+  count: NavCountEntry;
+  tenantScoped: boolean;
+}) {
+  const tenant = useUiStore((s) => s.activeTenant);
+  const result = useQuery(
+    count.ref,
+    tenantScoped
+      ? tenant
+        ? { ...count.args, tenantId: tenant }
+        : "skip"
+      : count.args,
+  );
   return <CountBadge id={id} value={result?.length} />;
 }
 

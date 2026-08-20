@@ -73,4 +73,34 @@ describe("Breadcrumb", () => {
     const chip = screen.getByTestId("breadcrumb-copy-0");
     expect(chip).toHaveAttribute("aria-label", "Copy tenant id: tnt_demo");
   });
+
+  // The chip reveals itself on hover. In flow, that revealed width shoves
+  // every later segment sideways; out of flow it costs nothing either way.
+  it("takes the copy chip out of flow so revealing it cannot move the trail", () => {
+    render(
+      <Breadcrumb
+        segments={[
+          { label: "Storage", href: "/storage" },
+          { label: "demo", copyValue: "tnt_demo", active: true },
+        ]}
+      />,
+    );
+    const chip = screen.getByTestId("breadcrumb-copy-1");
+    expect(chip.className).toMatch(/\babsolute\b/);
+    expect(chip.parentElement?.className).toMatch(/\brelative\b/);
+  });
+
+  it("keeps the chevron outside the segment it follows", () => {
+    const { container } = render(
+      <Breadcrumb
+        segments={[
+          { label: "Storage", href: "/storage" },
+          { label: "demo", copyValue: "tnt_demo", active: true },
+        ]}
+      />,
+    );
+    const nav = container.querySelector("nav");
+    const chevron = container.querySelector("[aria-hidden='true']");
+    expect(chevron?.parentElement).toBe(nav);
+  });
 });

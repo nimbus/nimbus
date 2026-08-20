@@ -9,13 +9,16 @@ export function PageError({
 }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-10 text-center">
-      <p className="font-mono text-sm text-danger" data-testid="documents-error">
+      <p
+        className="font-mono text-sm text-danger"
+        data-testid="documents-error"
+      >
         {message}
       </p>
       <button
         type="button"
         onClick={onRetry}
-        className="rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-default hover:bg-surface"
+        className="rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-default hover:bg-surface"
         data-testid="documents-retry"
       >
         retry

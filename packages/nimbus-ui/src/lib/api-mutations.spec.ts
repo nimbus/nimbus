@@ -62,9 +62,7 @@ describe("api-mutations core", () => {
 
   it("maps a network failure to { ok:false } without throwing", async () => {
     server.use(
-      http.post("*/api/tenants/:t/query/paginated", () =>
-        HttpResponse.error(),
-      ),
+      http.post("*/api/tenants/:t/query/paginated", () => HttpResponse.error()),
     );
     const result = await documents.queryPaginated(
       "demo",
@@ -108,11 +106,14 @@ describe("api-mutations request shapes", () => {
     let method: string | null = null;
     let body: unknown = null;
     server.use(
-      http.patch("*/api/tenants/:t/documents/:table/:id", async ({ request }) => {
-        method = request.method;
-        body = await request.json();
-        return HttpResponse.json({ ok: true });
-      }),
+      http.patch(
+        "*/api/tenants/:t/documents/:table/:id",
+        async ({ request }) => {
+          method = request.method;
+          body = await request.json();
+          return HttpResponse.json({ ok: true });
+        },
+      ),
     );
     await documents.update("demo", "users", "u1", { name: "grace" });
     expect(method).toBe("PATCH");
@@ -169,6 +170,45 @@ describe("api-mutations request shapes", () => {
       expect(result.data.next_cursor).toBe("c1");
       expect(result.data.has_more).toBe(true);
     }
+  });
+
+  // The query travels as the engine spells it (`nimbus_core::query`): a
+  // snake_case operator, a `direction` on the order, and the cursor as `after`
+  // beside `page_size`. A renamed field here reads as an empty page, not as an
+  // error.
+  it("queryPaginated POSTs the filter, the order and the cursor as the engine names them", async () => {
+    let body: unknown = null;
+    server.use(
+      http.post("*/api/tenants/:t/query/paginated", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({
+          data: [],
+          next_cursor: null,
+          has_more: false,
+        });
+      }),
+    );
+    await documents.queryPaginated(
+      "demo",
+      {
+        table: "users",
+        filters: [{ field: "author", op: "gte", value: 3 }],
+        order: { field: "author", direction: "desc" },
+        limit: null,
+      },
+      25,
+      "cursor-1",
+    );
+    expect(body).toEqual({
+      query: {
+        table: "users",
+        filters: [{ field: "author", op: "gte", value: 3 }],
+        order: { field: "author", direction: "desc" },
+        limit: null,
+      },
+      page_size: 25,
+      after: "cursor-1",
+    });
   });
 });
 

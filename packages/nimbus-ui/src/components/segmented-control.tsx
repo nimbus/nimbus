@@ -7,7 +7,11 @@ export type SegmentedControlOption<T extends string> = {
   value: T;
   label: string;
   description?: string;
-  icon?: ComponentType<{ size?: number; className?: string; "aria-hidden"?: boolean }>;
+  icon?: ComponentType<{
+    size?: number;
+    className?: string;
+    "aria-hidden"?: boolean;
+  }>;
 };
 
 export type SegmentedControlProps<T extends string> = {
@@ -18,7 +22,10 @@ export type SegmentedControlProps<T extends string> = {
   testid?: string;
   className?: string;
   segmentClassName?: string;
-  renderSegment?: (option: SegmentedControlOption<T>, active: boolean) => ReactNode;
+  renderSegment?: (
+    option: SegmentedControlOption<T>,
+    active: boolean,
+  ) => ReactNode;
 };
 
 export function SegmentedControl<T extends string>({
@@ -85,8 +92,12 @@ export function SegmentedControl<T extends string>({
       role="radiogroup"
       aria-label={label}
       data-testid={testid}
+      // No `overflow-hidden` here: the global focus style paints the ring 2px
+      // outside each segment's box, and clipping it leaves the roving-tabindex
+      // focus invisible while arrowing between segments. The end segments carry
+      // the corner treatment themselves instead.
       className={cn(
-        "inline-flex overflow-hidden rounded-md border border-app text-xs",
+        "inline-flex rounded-md border border-app text-xs",
         className,
       )}
     >
@@ -109,7 +120,16 @@ export function SegmentedControl<T extends string>({
             data-testid={testid ? `${testid}-${opt.value}` : undefined}
             data-active={active ? "true" : "false"}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 transition-colors",
+              // `max-h-full` keeps a segment inside the group now that nothing
+              // clips it: a consumer that sets its own segment height (the
+              // top-nav switcher asks for h-7 inside an h-7 group) would
+              // otherwise paint its fill 1px past the group's bottom border.
+              "flex max-h-full items-center gap-1.5 px-3 py-1.5 transition-colors",
+              // 5px, not `rounded-l-md` (6px): the child radius has to match the
+              // parent's inner radius across its 1px border, or the filled end
+              // segments show a hairline corner mismatch.
+              idx === 0 && "rounded-l-[5px]",
+              idx === options.length - 1 && "rounded-r-[5px]",
               idx > 0 && "border-l border-app",
               active
                 ? "bg-surface-2 text-default"
@@ -121,7 +141,9 @@ export function SegmentedControl<T extends string>({
               renderSegment(opt, active)
             ) : (
               <>
-                {Icon ? <Icon size={14} aria-hidden className="shrink-0" /> : null}
+                {Icon ? (
+                  <Icon size={14} aria-hidden className="shrink-0" />
+                ) : null}
                 <span>{opt.label}</span>
               </>
             )}

@@ -22,6 +22,69 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe("SchemaPanel", () => {
+  // jsdom does not lay out, so this locks the constraint, not the width it
+  // resolves to. `w-[420px]` is the panel's preferred width; with `shrink-0`
+  // it was also its floor, so in a window under ~564px the row's
+  // `overflow-hidden` cut off the panel's right edge — the close button
+  // included — and left no way to dismiss it.
+  it("treats 420px as a preferred width, not a floor", () => {
+    render(
+      <SchemaPanel
+        tenant="demo"
+        table="users"
+        schema={null}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    );
+    const panel = screen.getByTestId("documents-schema-panel");
+    expect(panel.className).not.toContain("shrink-0");
+    // min-w-0 is what lets a flex item shrink below its min-content width.
+    expect(panel.className).toContain("min-w-0");
+  });
+
+  // The other half of the same fix. Shrinking kept the panel closeable but not
+  // usable: once the documents table took its own `min-w-[20rem]` floor, the
+  // panel became the side that yields, and a browser measurement of the real
+  // flex row put it at 6px wide on a 390px viewport (342px of row content
+  // width, minus the table's 320px floor, minus the 16px `gap-4`). Full-width
+  // until the row can afford 320 + 16 + 420 = 756px puts it under the table
+  // instead: the same measurement reads 342px at 390px and 420px once the row
+  // clears 756px.
+  //
+  // The threshold is a container query against the `documents-row` container
+  // on the page section, not a viewport breakpoint, because the shell's
+  // drawers take 80px to 480px between the viewport and this row -- `lg` was
+  // the closest single number and still left the panel at 160px on a 1024px
+  // viewport with both drawers open.
+  //
+  // happy-dom performs no layout, so the utility class is the only observable
+  // here -- these assertions lock the constraint, not the width it resolves
+  // to. The bare `w-[420px]` must be *absent* rather than merely outranked:
+  // two conflicting width utilities on one element are settled by stylesheet
+  // order, not by which one the class list mentions last.
+  it("spans the row until it can afford 420px beside the table", () => {
+    render(
+      <SchemaPanel
+        tenant="demo"
+        table="users"
+        schema={null}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    );
+    const classes = screen
+      .getByTestId("documents-schema-panel")
+      .className.split(" ");
+    expect(classes).toContain("w-full");
+    expect(classes).toContain("@min-[756px]/documents-row:w-[420px]");
+    expect(classes).not.toContain("w-[420px]");
+    // The container name is a cross-file contract: this query is only ever
+    // measured against the section in storage_.$table.tsx. A viewport variant
+    // here would silently reintroduce the drawer blind spot.
+    expect(classes).not.toContain("lg:w-[420px]");
+  });
+
   it("PUTs the edited schema through the schema client on save", async () => {
     let put: unknown = null;
     server.use(
@@ -106,9 +169,7 @@ describe("SchemaPanel", () => {
     ).toBeInTheDocument();
     expect(dropped).toBe(false);
 
-    fireEvent.click(
-      screen.getByTestId("documents-drop-schema-dialog-confirm"),
-    );
+    fireEvent.click(screen.getByTestId("documents-drop-schema-dialog-confirm"));
     await waitFor(() => expect(dropped).toBe(true));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
   });

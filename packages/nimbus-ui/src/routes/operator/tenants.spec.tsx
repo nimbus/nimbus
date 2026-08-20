@@ -1,9 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { loaderDataRef, invalidateMock } = vi.hoisted(() => ({
+const { loaderDataRef, invalidateMock, navigateMock } = vi.hoisted(() => ({
   loaderDataRef: { current: null as unknown },
   invalidateMock: vi.fn(),
+  navigateMock: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -12,21 +13,38 @@ vi.mock("@tanstack/react-router", () => ({
     useLoaderData: () => loaderDataRef.current,
   }),
   useRouter: () => ({ invalidate: invalidateMock }),
+  useNavigate: () => navigateMock,
+  // The mock serialises `search` into the href: a link that carries the
+  // tenant only in a prop the mock drops would look correct here while
+  // navigating nowhere in the app.
   Link: ({
     to,
+    search,
     children,
     "data-testid": testId,
     className,
   }: {
     to: string;
+    search?: Record<string, string | undefined>;
     children: React.ReactNode;
     "data-testid"?: string;
     className?: string;
-  }) => (
-    <a href={to} data-testid={testId} className={className}>
-      {children}
-    </a>
-  ),
+  }) => {
+    const query = new URLSearchParams(
+      Object.entries(search ?? {}).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined,
+      ),
+    ).toString();
+    return (
+      <a
+        href={query ? `${to}?${query}` : to}
+        data-testid={testId}
+        className={className}
+      >
+        {children}
+      </a>
+    );
+  },
 }));
 
 const { nimbusQueryMock } = vi.hoisted(() => ({
@@ -37,16 +55,31 @@ vi.mock("../../lib/nimbus-client", () => ({
   getNimbusClient: () => ({ query: nimbusQueryMock }),
 }));
 
+const { removeMock, createMock } = vi.hoisted(() => ({
+  removeMock: vi.fn(),
+  createMock: vi.fn(),
+}));
+
+vi.mock("../../lib/api-mutations", () => ({
+  tenants: { remove: removeMock, create: createMock },
+}));
+
+const { subDrawerSpecRef } = vi.hoisted(() => ({
+  subDrawerSpecRef: { current: null as { children?: React.ReactNode } | null },
+}));
+
 vi.mock("../../shell/sub-drawer", () => ({
-  useContributeSubDrawer: () => undefined,
+  useContributeSubDrawer: (spec: { children?: React.ReactNode }) => {
+    subDrawerSpecRef.current = spec;
+  },
 }));
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-import { Route } from "./tenants";
 import { routeComponent, routeLoader } from "../../test/route-internals";
+import { Route } from "./tenants";
 
 type LoaderResult =
   | { kind: "ok"; tenants: string[]; tables: unknown[] }
@@ -59,7 +92,9 @@ const loader = routeLoader<{ abortController: AbortController }, LoaderResult>(
 
 beforeEach(() => {
   loaderDataRef.current = null;
+  subDrawerSpecRef.current = null;
   invalidateMock.mockReset();
+  navigateMock.mockReset();
   nimbusQueryMock.mockReset();
 });
 
@@ -174,5 +209,96 @@ describe("admin/tenants render", () => {
     expect(
       screen.queryByTestId("storage-server-error-envelope"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("admin/tenants navigation", () => {
+  beforeEach(() => {
+    loaderDataRef.current = {
+      kind: "ok",
+      tenants: ["alpha"],
+      tables: [{ _id: "t1", tenantId: "alpha", name: "users", rowCount: 3 }],
+    };
+  });
+
+  it("points the sub-drawer entry at the tenant's data, not a dead search param", () => {
+    render(<TenantsPage />);
+    render(subDrawerSpecRef.current?.children as React.ReactElement);
+    expect(screen.getByTestId("sub-drawer-item-op-alpha")).toHaveAttribute(
+      "href",
+      "/developer/storage?as=alpha",
+    );
+  });
+
+  it("navigates on a row click", () => {
+    render(<TenantsPage />);
+    fireEvent.click(screen.getByTestId("storage-tenant-row-alpha"));
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/developer/storage",
+      search: { as: "alpha" },
+    });
+  });
+
+  it("leaves the row's own controls to themselves", async () => {
+    render(<TenantsPage />);
+    // The chip settles its own "copied" state asynchronously.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("storage-tenant-copy-alpha"));
+    });
+    fireEvent.click(screen.getByTestId("storage-tenant-delete-alpha"));
+    fireEvent.click(screen.getByTestId("storage-tenant-link-alpha"));
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("admin/tenants delete affordance", () => {
+  beforeEach(() => {
+    loaderDataRef.current = {
+      kind: "ok",
+      tenants: ["alpha"],
+      tables: [{ _id: "t1", tenantId: "alpha", name: "users", rowCount: 3 }],
+    };
+    removeMock.mockReset();
+  });
+
+  // The confirm dialog hands focus back to this button, and the same commit
+  // that closes the dialog grays it out. `disabled` would make that restore a
+  // silent no-op — the element cannot take focus, so the operator lands on
+  // <body> with no ring and Tab restarts at the top of the page. The comment
+  // at the call site says so; nothing enforced it, and the two attributes look
+  // interchangeable to anyone tidying the file. Asserting the class or the
+  // "deleting…" label would not catch the swap, so this asserts the tab stop
+  // itself.
+  it("keeps the busy delete button focusable instead of disabling it", async () => {
+    let settle: (v: { ok: true }) => void = () => {};
+    removeMock.mockReturnValue(
+      new Promise<{ ok: true }>((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    render(<TenantsPage />);
+    fireEvent.click(screen.getByTestId("storage-tenant-delete-alpha"));
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId("storage-delete-tenant-dialog-confirm"),
+      );
+    });
+
+    const button = screen.getByTestId("storage-tenant-delete-alpha");
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).not.toBeDisabled();
+    expect(button).not.toHaveAttribute("disabled");
+
+    button.focus();
+    expect(document.activeElement).toBe(button);
+
+    // The handler, not the attribute, is what refuses the second press.
+    fireEvent.click(button);
+    expect(removeMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settle({ ok: true });
+    });
   });
 });

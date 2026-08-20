@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { CopyChip } from "../../../components/copy-chip";
 import { StateChip } from "../../../components/state-chip";
 import { RelativeTime } from "../../../components/time";
-import { formatRelativeTime, shortId } from "../../../lib/format";
-import { Definition, DefinitionList, SectionCard } from "./-primitives";
+import { shortHash } from "../../../lib/format";
+import { Definition, DefinitionList, PageSection } from "./-primitives";
 import type { BundleDoc, FunctionDoc } from "./-types";
 
 export function DeploysSection({
@@ -56,10 +56,16 @@ export function DeploysSection({
   const canCompare = selectedIds.length === 2;
 
   return (
-    <SectionCard
+    <PageSection
       title="Deploys"
       testid="settings-deploys"
-      description="Active bundle, function inventory, deploy history, and bundle diff. Trigger new deploys with `nimbus deploy` from the CLI."
+      description={
+        <>
+          Active bundle, function inventory, deploy history, and bundle diff.
+          Trigger new deploys with{" "}
+          <code className="whitespace-nowrap">nimbus deploy</code> from the CLI.
+        </>
+      }
     >
       {bundles === undefined ? (
         <p className="text-sm text-muted">Loading bundles…</p>
@@ -110,7 +116,7 @@ export function DeploysSection({
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => toggle(id)}
-                      aria-label={`Select bundle ${shortId(b.sha256 ?? id)}`}
+                      aria-label={`Select bundle ${shortHash(b.sha256 ?? id)}`}
                       data-testid={`settings-deploys-row-${b.sha256 ?? id}`}
                     />
                     <StateChip state={b.status ?? "—"} />
@@ -120,7 +126,7 @@ export function DeploysSection({
                       testid={`settings-deploys-sha-${b.sha256 ?? id}`}
                     >
                       <span className="font-mono text-xs">
-                        {shortId(b.sha256 ?? id, 12)}
+                        {shortHash(b.sha256 ?? id, 12)}
                       </span>
                     </CopyChip>
                     <span className="font-mono text-xs text-muted">
@@ -129,11 +135,17 @@ export function DeploysSection({
                     <span className="ml-auto tabular text-muted">
                       {fns.length} fn
                     </span>
-                    <span className="tabular text-muted">
-                      {b._creationTime
-                        ? formatRelativeTime(b._creationTime)
-                        : "—"}
-                    </span>
+                    {/* The newest bundle is usually the active one, so this
+                        value is on screen twice: formatting it here computed
+                        it once at render, and the history row still read "just
+                        now" while the panel above had walked on to "5m ago".
+                        `RelativeTime` re-ticks and carries the absolute time
+                        as a tooltip. */}
+                    {b._creationTime ? (
+                      <RelativeTime epochMs={b._creationTime} />
+                    ) : (
+                      <span className="tabular text-muted">—</span>
+                    )}
                   </li>
                 );
               })}
@@ -150,7 +162,7 @@ export function DeploysSection({
           ) : null}
         </>
       )}
-    </SectionCard>
+    </PageSection>
   );
 }
 
@@ -163,7 +175,7 @@ function ActiveBundlePanel({
 }) {
   return (
     <article
-      className="rounded-md border border-app bg-surface p-3"
+      className="rounded-md bg-surface-2 p-3"
       data-testid="settings-deploys-active"
     >
       <header className="mb-2 flex items-baseline justify-between">
@@ -213,7 +225,7 @@ function ActiveBundlePanel({
             {functions.map((fn) => (
               <li key={fn._id} className="flex items-baseline gap-2">
                 <span className="font-mono text-default">{fn.path ?? "—"}</span>
-                <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+                <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
                   {fn.kind ?? "—"}
                 </span>
               </li>
@@ -261,12 +273,12 @@ function DiffPanel({
   changed.sort();
   return (
     <div
-      className="mt-4 rounded-md border border-app bg-surface p-3"
+      className="mt-4 rounded-md bg-surface-2 p-3"
       data-testid="settings-deploys-diff"
     >
       <header className="mb-2 flex items-baseline justify-between">
         <h3 className="text-xs uppercase tracking-[0.14em] text-muted">
-          Diff: {shortId(a?.sha256 ?? "")} → {shortId(b?.sha256 ?? "")}
+          Diff: {shortHash(a?.sha256 ?? "")} → {shortHash(b?.sha256 ?? "")}
         </h3>
         <button
           type="button"

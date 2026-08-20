@@ -1,15 +1,19 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@nimbus/nimbus/react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Play, Radio, ScrollText, TriangleAlert } from "lucide-react";
+import { useMemo } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { Td, Th } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
+import { PageHeader } from "../../components/page-header";
+import { ScrollRegion } from "../../components/scroll-region";
 import { StateChip } from "../../components/state-chip";
 import { RelativeTime } from "../../components/time";
-import { cn } from "../../lib/cn";
 import { shortId } from "../../lib/format";
 import {
   type StaticSubDrawerSpec,
+  type SubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
 import {
@@ -28,7 +32,11 @@ export const Route = createFileRoute("/operator/observability")({
   validateSearch: (
     search: Record<string, unknown>,
   ): AdminObservabilitySearch => ({
-    tab: parseTab(search.tab),
+    // Resolve the default here, not at render: the sub-drawer is now the only
+    // sub-view switch, and it marks an item active by matching its `search`
+    // against the location's. A bare /operator/observability would otherwise
+    // show Logs without showing Logs as selected.
+    tab: parseTab(search.tab) ?? "logs",
     tenant: typeof search.tenant === "string" ? search.tenant : undefined,
   }),
 });
@@ -37,43 +45,53 @@ function parseTab(value: unknown): AdminObservabilityTab | undefined {
   return value === "logs" || value === "runs" ? value : undefined;
 }
 
+// The sub-drawer is the only Logs/Runs/Events/Errors switch on this surface.
+// It renders the "coming soon" chip for any item marked `disabled`, so the
+// state explains itself without a second, duplicate tab strip -- and without
+// each caller spelling the marker into its own label.
+const ADMIN_OBSERVABILITY_ITEMS = [
+  {
+    id: "logs",
+    label: "Logs",
+    to: "/operator/observability",
+    search: { tab: "logs" },
+    disabled: false,
+    icon: ScrollText,
+  },
+  {
+    id: "runs",
+    label: "Runs",
+    to: "/operator/observability",
+    search: { tab: "runs" },
+    disabled: false,
+    icon: Play,
+  },
+  {
+    id: "events",
+    label: "Events",
+    to: "/operator/observability",
+    search: { tab: "events" },
+    disabled: true,
+    icon: Radio,
+  },
+  {
+    id: "errors",
+    label: "Errors",
+    to: "/operator/observability",
+    search: { tab: "errors" },
+    disabled: true,
+    icon: TriangleAlert,
+  },
+] as const;
+
 export const ADMIN_OBSERVABILITY_SUB_DRAWER = {
   kind: "static",
   title: "Observability",
-  items: [
-    {
-      id: "logs",
-      label: "Logs",
-      to: "/operator/observability",
-      search: { tab: "logs" },
-      disabled: false,
-    },
-    {
-      id: "runs",
-      label: "Runs",
-      to: "/operator/observability",
-      search: { tab: "runs" },
-      disabled: false,
-    },
-    {
-      id: "events",
-      label: "Events",
-      to: "/operator/observability",
-      search: { tab: "events" },
-      disabled: true,
-    },
-    {
-      id: "errors",
-      label: "Errors",
-      to: "/operator/observability",
-      search: { tab: "errors" },
-      disabled: true,
-    },
-  ],
+  items: ADMIN_OBSERVABILITY_ITEMS,
 } as const satisfies StaticSubDrawerSpec<"logs" | "runs" | "events" | "errors">;
 
 export type AdminObservabilityTab =
-  (typeof ADMIN_OBSERVABILITY_SUB_DRAWER.items)[number]["id"];
+  (typeof ADMIN_OBSERVABILITY_ITEMS)[number]["id"];
 
 type EventDoc = {
   _id: string;
@@ -96,59 +114,46 @@ type RunDoc = {
 };
 
 function AdminObservabilityPage() {
-  useContributeSubDrawer(ADMIN_OBSERVABILITY_SUB_DRAWER);
   const search = Route.useSearch();
   const tab: AdminObservabilityTab = search.tab ?? "logs";
   const scope = parseTenantScope(search.tenant);
+  const navigate = useNavigate({ from: "/operator/observability" });
+  // Collapsing the sub-drawer must not strand the operator without a switch,
+  // so the enabled sub-views are also reachable from the icon rail.
+  const spec = useMemo<SubDrawerSpec>(
+    () => ({
+      ...ADMIN_OBSERVABILITY_SUB_DRAWER,
+      railItems: ADMIN_OBSERVABILITY_ITEMS.filter((item) => !item.disabled).map(
+        (item) => ({
+          id: item.id,
+          label: item.label,
+          icon: item.icon,
+          active: tab === item.id,
+          onSelect: () => {
+            void navigate({
+              to: "/operator/observability",
+              search: (prev) => ({ ...prev, tab: item.id }),
+            });
+          },
+        }),
+      ),
+    }),
+    [tab, navigate],
+  );
+  useContributeSubDrawer(spec);
   return (
     <section
       className="flex h-full flex-col gap-4 overflow-hidden px-6 py-5"
       data-testid="page-admin-observability"
     >
-      <Header tab={tab} scope={scope} />
+      <PageHeader
+        title="Operator observability"
+        subtitle="Logs and runs across every tenant. Tenant filtering waits on a tenant column in the events table."
+        trailing={<ScopeChip scope={scope} />}
+        testid="admin-observability-header"
+      />
       {tab === "logs" ? <LogsTab /> : <RunsTab />}
     </section>
-  );
-}
-
-function Header({
-  tab,
-  scope,
-}: {
-  tab: AdminObservabilityTab;
-  scope: TenantScope;
-}) {
-  return (
-    <header className="flex flex-col gap-3">
-      <div className="flex items-baseline justify-between">
-        <div>
-          <h1 className="text-default" style={{ fontSize: "var(--text-xl)" }}>
-            Operator observability
-          </h1>
-          <p className="text-sm text-muted">
-            Server-wide logs and runs across every tenant. Tenant filtering is
-            gated until the events table exposes a tenant column.
-          </p>
-        </div>
-        <ScopeChip scope={scope} />
-      </div>
-      <nav
-        aria-label="Operator observability tabs"
-        className="flex gap-px overflow-hidden rounded-md border border-app bg-surface-2 self-start"
-        data-testid="admin-observability-tabs"
-      >
-        {ADMIN_OBSERVABILITY_SUB_DRAWER.items.map((item) => (
-          <TabLink
-            key={item.id}
-            id={item.id}
-            label={item.label}
-            active={tab === item.id}
-            disabled={Boolean(item.disabled)}
-            scope={scope}
-          />
-        ))}
-      </nav>
-    </header>
   );
 }
 
@@ -157,7 +162,7 @@ function ScopeChip({ scope }: { scope: TenantScope }) {
   if (requested === undefined) {
     return (
       <span
-        className="rounded border border-app px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted"
+        className="shrink-0 whitespace-nowrap rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted"
         data-testid="admin-observability-scope"
         title="Tenant filter unavailable until events table exposes tenant column"
       >
@@ -167,66 +172,12 @@ function ScopeChip({ scope }: { scope: TenantScope }) {
   }
   return (
     <span
-      className="rounded border border-app px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted"
+      className="shrink-0 whitespace-nowrap rounded border border-app px-2 py-0.5 font-mono text-xs uppercase tracking-wide text-muted"
       data-testid="admin-observability-scope"
       title="Tenant filter requested but not honored — events table does not expose tenant column yet"
     >
       tenant {requested} · filter unavailable
     </span>
-  );
-}
-
-function TabLink({
-  id,
-  label,
-  active,
-  disabled,
-  scope,
-}: {
-  id: AdminObservabilityTab;
-  label: string;
-  active: boolean;
-  disabled: boolean;
-  scope: TenantScope;
-}) {
-  if (disabled) {
-    return (
-      <span
-        aria-disabled="true"
-        data-testid={`admin-observability-tab-${id}`}
-        title={`${label} — coming soon`}
-        className={cn(
-          "inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
-          "cursor-not-allowed text-muted opacity-60",
-        )}
-      >
-        {label}
-        <span
-          aria-hidden
-          className="rounded bg-surface-2 px-1 text-[9px] uppercase tracking-wide text-muted"
-          data-testid={`admin-observability-tab-${id}-coming-soon`}
-        >
-          coming soon
-        </span>
-      </span>
-    );
-  }
-  const tenantQuery = serializeTenantScope(scope);
-  return (
-    <Link
-      to="/operator/observability"
-      search={(prev) => ({ ...prev, tab: id, tenant: tenantQuery })}
-      data-testid={`admin-observability-tab-${id}`}
-      aria-current={active ? "page" : undefined}
-      className={cn(
-        "px-3 py-1.5 font-mono text-xs uppercase tracking-wide",
-        active
-          ? "bg-surface text-default"
-          : "text-muted hover:bg-surface hover:text-default",
-      )}
-    >
-      {label}
-    </Link>
   );
 }
 
@@ -262,8 +213,9 @@ function LogList({ events }: { events: EventDoc[] | undefined }) {
     );
   }
   return (
-    <div
-      className="min-h-0 flex-1 overflow-auto rounded-md border border-app bg-surface"
+    <ScrollRegion
+      label="Event log"
+      className="min-h-0 flex-1 rounded-md border border-app bg-surface"
       data-testid="admin-observability-logs"
     >
       <ul className="divide-y divide-app">
@@ -277,7 +229,7 @@ function LogList({ events }: { events: EventDoc[] | undefined }) {
                 epochMs={event.createdAt ?? event._creationTime ?? 0}
               />
               <StateChip state={event.level ?? "info"} />
-              <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+              <span className="font-mono text-xs uppercase tracking-wide text-muted">
                 {event.source ?? "—"}
                 {event.category ? ` · ${event.category}` : ""}
               </span>
@@ -288,7 +240,7 @@ function LogList({ events }: { events: EventDoc[] | undefined }) {
           </li>
         ))}
       </ul>
-    </div>
+    </ScrollRegion>
   );
 }
 
@@ -324,7 +276,7 @@ function RunsTab() {
       data-testid="admin-observability-runs"
     >
       <table className="w-full border-collapse text-sm">
-        <thead className="sticky top-0 bg-surface-2 text-[10px] uppercase tracking-[0.14em] text-muted">
+        <thead className="sticky top-0 bg-surface-2 text-xs uppercase tracking-[0.14em] text-muted">
           <tr>
             <Th>Function</Th>
             <Th>Status</Th>

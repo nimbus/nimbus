@@ -49,7 +49,7 @@ export function JsonEditorForm({
       <label
         htmlFor={fieldId}
         className={cn(
-          "font-mono text-[10px] uppercase tracking-wide text-muted",
+          "font-mono text-xs uppercase tracking-wide text-muted",
           labelClassName,
         )}
       >
@@ -75,7 +75,7 @@ export function JsonEditorForm({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
+          className="rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default"
         >
           cancel
         </button>
@@ -84,7 +84,7 @@ export function JsonEditorForm({
           onClick={() => void submit()}
           disabled={submitting}
           className={cn(
-            "rounded border border-app px-2 py-1 font-mono text-[11px] uppercase tracking-wide",
+            "rounded border border-app px-2 py-1 font-mono text-xs uppercase tracking-wide",
             submitting ? "text-muted" : "text-default hover:bg-surface",
           )}
           data-testid={`${testidPrefix}-submit`}

@@ -58,7 +58,7 @@ function EmptyStateCtaButton({
   testid?: string;
 }) {
   const className =
-    "mt-2 rounded border border-app px-3 py-1 font-mono text-[11px] uppercase tracking-wide text-muted hover:bg-surface hover:text-default";
+    "mt-2 rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface hover:text-default";
   const ctaTestid = testid ? `${testid}-cta` : undefined;
   if ("to" in cta) {
     return (

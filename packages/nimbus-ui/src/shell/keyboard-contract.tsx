@@ -1,10 +1,25 @@
 import { useEffect } from "react";
 import { useUiStore } from "../store/ui-store";
 
+// `/` focuses the page's own filter input. Page-level filters claim
+// `primary`; the sub-drawer's filter is the fallback, because it precedes page
+// content in the DOM and would otherwise win every document-order lookup on a
+// route that has both.
+function findInlineSearch(): HTMLInputElement | null {
+  return (
+    document.querySelector<HTMLInputElement>(
+      '[data-inline-search="primary"]',
+    ) ??
+    document.querySelector<HTMLInputElement>(
+      '[data-inline-search]:not([data-inline-search="drawer"])',
+    ) ??
+    document.querySelector<HTMLInputElement>('[data-inline-search="drawer"]')
+  );
+}
+
 export function KeyboardContract() {
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const setLensOpen = useUiStore((s) => s.setLensOpen);
-  const setActionMenuOpen = useUiStore((s) => s.setActionMenuOpen);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -21,12 +36,6 @@ export function KeyboardContract() {
         setLensOpen(!lensOpen);
         return;
       }
-      if (meta && event.key === ".") {
-        event.preventDefault();
-        const { actionMenuOpen } = useUiStore.getState();
-        setActionMenuOpen(!actionMenuOpen);
-        return;
-      }
       if (event.key === "Escape") {
         const state = useUiStore.getState();
         if (state.paletteOpen) {
@@ -39,16 +48,9 @@ export function KeyboardContract() {
           setLensOpen(false);
           return;
         }
-        if (state.actionMenuOpen) {
-          event.preventDefault();
-          setActionMenuOpen(false);
-          return;
-        }
       }
       if (event.key === "/" && !isTypingTarget(event.target)) {
-        const search = document.querySelector<HTMLInputElement>(
-          "[data-inline-search]",
-        );
+        const search = findInlineSearch();
         if (search) {
           event.preventDefault();
           search.focus();
@@ -57,7 +59,7 @@ export function KeyboardContract() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setPaletteOpen, setLensOpen, setActionMenuOpen]);
+  }, [setPaletteOpen, setLensOpen]);
   return null;
 }
 

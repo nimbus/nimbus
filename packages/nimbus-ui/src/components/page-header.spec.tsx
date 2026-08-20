@@ -15,6 +15,20 @@ describe("PageHeader", () => {
     expect(screen.getByText("Outer dev VMs")).toBeInTheDocument();
   });
 
+  // The guard is for prose `subtitle-measure.spec.ts` cannot read statically
+  // -- a subtitle built at runtime, say from a server string. Copy inside the
+  // 100-character budget never reaches it, so this is the only test that can
+  // show it is still wired.
+  it("guards against a runaway subtitle", () => {
+    const { container } = render(
+      <PageHeader
+        title="Services"
+        subtitle="Long-running processes with their own lifecycle: they start with the server, restart on failure, and expose health over the local socket."
+      />,
+    );
+    expect(container.querySelector("p")).toHaveClass("max-w-[110ch]");
+  });
+
   it("omits the subtitle paragraph when none is given", () => {
     const { container } = render(<PageHeader title="Network" />);
     expect(container.querySelector("p")).toBeNull();

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Box } from "lucide-react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,7 +76,39 @@ beforeEach(() => {
 
 afterEach(() => {
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
+
+// The global setup stubs matchMedia to always miss, so every other test in this
+// file runs at the desktop tier. This narrows the viewport for the tier tests.
+function stubTablet() {
+  vi.stubGlobal(
+    "matchMedia",
+    (query: string) =>
+      ({
+        matches: query.includes("1023px"),
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }) as unknown as MediaQueryList,
+  );
+}
+
+const DYNAMIC_SPEC: SubDrawerSpec = {
+  kind: "dynamic",
+  title: "Tenants",
+  search: { placeholder: "Filter tenants" },
+  children: <div data-testid="dynamic-body" />,
+};
+
+function renderSubDrawer(spec: SubDrawerSpec = DYNAMIC_SPEC) {
+  return render(
+    <SubDrawerProvider>
+      <Contributor spec={spec} />
+      <SubDrawer />
+    </SubDrawerProvider>,
+  );
+}
 
 describe("SubDrawer", () => {
   it("renders nothing when no contributor mounts", () => {
@@ -151,7 +184,9 @@ describe("SubDrawer", () => {
     const spec: SubDrawerSpec = {
       kind: "static",
       title: "Network",
-      items: [{ id: "routes", label: "Routes", to: "/operator/network/routes" }],
+      items: [
+        { id: "routes", label: "Routes", to: "/operator/network/routes" },
+      ],
     };
     render(
       <SubDrawerProvider>
@@ -243,14 +278,12 @@ describe("SubDrawer", () => {
       "data-collapsed",
       "true",
     );
-    expect(screen.getByTestId("sub-drawer-rail-item-functions")).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-    expect(screen.getByTestId("sub-drawer-rail-item-sandboxes")).toHaveAttribute(
-      "data-active",
-      "false",
-    );
+    expect(
+      screen.getByTestId("sub-drawer-rail-item-functions"),
+    ).toHaveAttribute("data-active", "true");
+    expect(
+      screen.getByTestId("sub-drawer-rail-item-sandboxes"),
+    ).toHaveAttribute("data-active", "false");
     fireEvent.click(screen.getByTestId("sub-drawer-rail-item-sandboxes"));
     expect(onSandboxes).toHaveBeenCalledTimes(1);
     // switching sub-view from the rail does not expand the drawer
@@ -312,9 +345,10 @@ describe("SubDrawer", () => {
         <SubDrawer />
       </SubDrawerProvider>,
     );
-    expect(
-      screen.getByTestId("sub-drawer-item-environment"),
-    ).toHaveAttribute("data-active", "false");
+    expect(screen.getByTestId("sub-drawer-item-environment")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
     expect(screen.getByTestId("sub-drawer-item-secrets")).toHaveAttribute(
       "data-active",
       "true",
@@ -353,5 +387,169 @@ describe("SubDrawer", () => {
     expect(screen.getByTestId("sub-drawer")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("toggle"));
     expect(screen.queryByTestId("sub-drawer")).toBeNull();
+  });
+  describe("below the desktop tier", () => {
+    it("shows the rail without a sheet even when the stored state is open", () => {
+      stubTablet();
+      useUiStore.setState({ subDrawerOpen: true });
+      renderSubDrawer();
+      // The sheet is modal. Honoring a stored desktop preference here would
+      // drop a scrim over the content the moment the viewport narrows.
+      expect(screen.getByTestId("sub-drawer")).toHaveAttribute(
+        "data-collapsed",
+        "true",
+      );
+      expect(screen.queryByTestId("sub-drawer-overlay")).toBeNull();
+      expect(screen.queryByTestId("sub-drawer-scrim")).toBeNull();
+    });
+
+    it("opens an overlay sheet on an explicit expand", () => {
+      stubTablet();
+      useUiStore.setState({ subDrawerOpen: true });
+      renderSubDrawer();
+      fireEvent.click(screen.getByTestId("sub-drawer-toggle"));
+      expect(screen.getByTestId("sub-drawer-overlay")).toBeInTheDocument();
+      expect(screen.getByTestId("sub-drawer-scrim")).toBeInTheDocument();
+      // The rail stays in flow beneath the sheet, so dismissing it still
+      // leaves a visible way back.
+      expect(screen.getByTestId("sub-drawer")).toBeInTheDocument();
+    });
+
+    it("never writes the desktop preference when expanding at tablet width", () => {
+      stubTablet();
+      useUiStore.setState({ subDrawerOpen: true });
+      renderSubDrawer();
+      fireEvent.click(screen.getByTestId("sub-drawer-toggle"));
+      expect(useUiStore.getState().subDrawerOpen).toBe(true);
+      expect(
+        window.localStorage.getItem("nimbus-ui:sub-drawer-open"),
+      ).toBeNull();
+    });
+  });
+});
+
+/**
+ * DESIGN.md §Spacing And Shape: "Icon button: 32px square, 36px on touch
+ * surfaces."
+ *
+ * The two toggles are one control in two positions -- collapse the panel and
+ * the rail's expand button lands where your pointer already is. They shipped at
+ * 24px and 28px, so the smallest targets in the shell were the two buttons that
+ * swap places with each other, sitting beside 32px rail items.
+ *
+ * jsdom performs no layout, so the size utilities are the only thing a test can
+ * read back.
+ */
+describe("SubDrawer icon-button hit targets", () => {
+  const SPEC: SubDrawerSpec = {
+    kind: "dynamic",
+    title: "Compute",
+    children: <div data-testid="dynamic-body" />,
+    railItems: [
+      {
+        id: "functions",
+        label: "Functions",
+        icon: Box,
+        active: true,
+        onSelect: () => {},
+      },
+    ],
+  };
+
+  it("sizes the panel collapse toggle 32px square", () => {
+    renderSubDrawer(SPEC);
+    const collapse = screen.getByTestId("sub-drawer-toggle");
+    expect(collapse.className.split(" ")).toEqual(
+      expect.arrayContaining(["h-8", "w-8"]),
+    );
+  });
+
+  it("sizes the rail expand toggle to match the rail items under it", () => {
+    useUiStore.setState({ subDrawerOpen: false });
+    renderSubDrawer(SPEC);
+    const expand = screen.getByTestId("sub-drawer-toggle");
+    const railItem = screen.getByTestId("sub-drawer-rail-item-functions");
+    // The rail is a 32px column, so both fill its width rather than naming it.
+    expect(expand.className.split(" ")).toEqual(
+      expect.arrayContaining(["h-8", "w-full"]),
+    );
+    expect(railItem.className.split(" ")).toEqual(
+      expect.arrayContaining(["h-8", "w-full"]),
+    );
+  });
+});
+
+/**
+ * A disabled item points at a sub-view that does not exist yet.
+ *
+ * It used to render as a real `<Link>` dimmed with `pointer-events-none`,
+ * which only guards the mouse: the anchor kept its place in the tab order and
+ * still fired on Enter. And because the target view is unbuilt, the router
+ * dropped the item's `tab` search param and landed on a different view than
+ * the label named -- keyboard users were routed somewhere they did not ask
+ * for, silently.
+ */
+describe("SubDrawer disabled items", () => {
+  const SPEC: SubDrawerSpec = {
+    kind: "static",
+    title: "Observability",
+    items: [
+      { id: "logs", label: "Logs", to: "/operator/observability" },
+      {
+        id: "events",
+        label: "Events",
+        to: "/operator/observability",
+        disabled: true,
+      },
+    ],
+  };
+
+  function renderSpec() {
+    setPathname("/operator/observability");
+    render(
+      <SubDrawerProvider>
+        <Contributor spec={SPEC} />
+        <SubDrawer />
+      </SubDrawerProvider>,
+    );
+  }
+
+  it("is not a link and is not in the tab order", async () => {
+    const user = userEvent.setup();
+    renderSpec();
+    const events = screen.getByTestId("sub-drawer-item-events");
+    const logs = screen.getByTestId("sub-drawer-item-logs");
+
+    expect(events.tagName).not.toBe("A");
+    expect(events).not.toHaveAttribute("href");
+    expect(events).toHaveAttribute("aria-disabled", "true");
+    expect(events).not.toHaveAttribute("tabindex");
+
+    // Tab order, not `focus()`: jsdom happily focuses any element you ask it
+    // to, so only sequential navigation answers the question a keyboard user
+    // is actually asking. Events sits directly after Logs in the list, so it
+    // is the very next stop if it is still a link.
+    logs.focus();
+    await user.tab();
+    expect(document.activeElement).not.toBe(events);
+
+    // The enabled sibling is still a link, so the difference is the disabled
+    // state and not a broken renderer.
+    expect(logs.tagName).toBe("A");
+  });
+
+  it("carries the shared coming-soon chip rather than the label text", () => {
+    renderSpec();
+    const chip = screen.getByTestId("sub-drawer-item-events-coming-soon");
+
+    expect(chip).toHaveTextContent("coming soon");
+    // Hidden from the accessibility tree: `aria-disabled` on the row already
+    // announces the state, so the chip would be a duplicate.
+    expect(chip).toHaveAttribute("aria-hidden");
+    // The label itself stays clean -- no "· soon" suffix baked into the route
+    // that each caller has to remember to write.
+    expect(screen.getByTestId("sub-drawer-item-events")).toHaveTextContent(
+      /^Eventscoming soon$/,
+    );
   });
 });

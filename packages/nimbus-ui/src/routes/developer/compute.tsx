@@ -91,10 +91,10 @@ function ComputePage() {
         title="Compute"
         subtitle={
           view === "graph"
-            ? "The deployment's function call graph — api.* / internal.* calls between functions. Click a node to open its source."
+            ? "Function call graph for this deployment — api.* / internal.* edges. Click a node to open its source."
             : view === "sandboxes"
-              ? "Sandboxes are isolated execution environments for this tenant, read live from the sandbox runtime."
-              : "Functions registered to this tenant, grouped by bundle and module. Open one to view its source, logs, and runs."
+              ? "Isolated execution environments for this tenant, read live from the sandbox runtime."
+              : "Functions registered to this tenant, by bundle and module. Open one for source, logs, and runs."
         }
       />
 
@@ -140,7 +140,7 @@ function ComputeDrawer({
                 : "text-muted hover:bg-surface-2 hover:text-default",
             )}
             style={
-              active ? { borderLeftColor: "var(--color-brand)" } : undefined
+              active ? { borderLeftColor: "var(--nimbus-brand)" } : undefined
             }
           >
             <Icon size={14} aria-hidden className="shrink-0" />
@@ -184,6 +184,7 @@ function FunctionsView({
         testid="compute-functions-toolbar"
       >
         <FilterChips
+          ariaLabel="Filter by kind"
           allLabel="all kinds"
           options={kinds}
           active={kind}
@@ -213,7 +214,7 @@ function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
   if (bundles === undefined) {
     return (
       <span
-        className="font-mono text-[11px] text-muted"
+        className="font-mono text-xs text-muted"
         data-testid="compute-bundles-loading"
       >
         bundles: loading…
@@ -223,7 +224,7 @@ function BundleHint({ bundles }: { bundles: BundleDoc[] | undefined }) {
   const active = bundles.filter((b) => b.status === "active").length;
   return (
     <span
-      className="font-mono text-[11px] text-muted"
+      className="font-mono text-xs text-muted"
       data-testid="compute-bundles"
     >
       {bundles.length} bundle{bundles.length === 1 ? "" : "s"}
@@ -290,7 +291,12 @@ function Toolbar({
           onChange={(e) => onSearch(e.target.value)}
           placeholder={placeholder}
           data-testid={testid ? `${testid}-search` : undefined}
-          className="h-7 w-56 rounded border border-app bg-surface pl-7 pr-2 font-mono text-xs text-default placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-[color:var(--color-brand)]"
+          // No `focus:outline-none` and no `--brand` ring: on this field's
+          // own `--surface` ground `--brand` measures 2.48:1 in warm light,
+          // under WCAG 2.2 SC 1.4.11's 3:1 non-text floor (2.21:1 on
+          // `--surface-2`, its worst ground). Cancelling the console-wide
+          // outline for it traded a compliant ring for a failing one.
+          className="h-7 w-56 rounded border border-app bg-surface pl-7 pr-2 font-mono text-xs text-default placeholder:text-muted"
         />
       </div>
       {children}
@@ -298,13 +304,21 @@ function Toolbar({
   );
 }
 
+// Toggle buttons, not tabs. The set is data-derived and each chip filters the
+// list in place rather than swapping a tabpanel, so a labelled group of
+// `aria-pressed` buttons is the honest contract — and native Tab/Space/Enter is
+// its complete keyboard behavior, with no roving tabindex or arrow keys
+// promised. SegmentedControl (DESIGN.md's canonical exclusive-choice control)
+// does not apply: it is scoped to fixed sets of ≤4 options.
 function FilterChips({
+  ariaLabel,
   allLabel,
   options,
   active,
   onChange,
   testidPrefix,
 }: {
+  ariaLabel: string;
   allLabel: string;
   options: string[];
   active: string | null;
@@ -312,7 +326,8 @@ function FilterChips({
   testidPrefix: string;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-1" role="tablist">
+    <fieldset className="flex min-w-0 flex-wrap items-center gap-1">
+      <legend className="sr-only">{ariaLabel}</legend>
       <Chip
         label={allLabel}
         active={active === null}
@@ -328,7 +343,7 @@ function FilterChips({
           testid={`${testidPrefix}-${opt}`}
         />
       ))}
-    </div>
+    </fieldset>
   );
 }
 
@@ -346,12 +361,11 @@ function Chip({
   return (
     <button
       type="button"
-      role="tab"
-      aria-selected={active}
+      aria-pressed={active}
       onClick={onClick}
       data-testid={testid}
       className={cn(
-        "rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide",
+        "rounded border px-2 py-0.5 font-mono text-xs uppercase tracking-wide",
         active
           ? "border-strong bg-surface text-default"
           : "border-app text-muted hover:bg-surface hover:text-default",

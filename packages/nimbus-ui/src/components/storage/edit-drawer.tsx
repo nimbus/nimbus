@@ -32,7 +32,7 @@ export function EditDrawer({
       onClose={onClose}
       testid="documents-edit-drawer"
     >
-      <div className="flex items-center gap-2 font-mono text-[11px] text-muted">
+      <div className="flex items-center gap-2 font-mono text-xs text-muted">
         <span>_id</span>
         <CopyChip
           label="document id"

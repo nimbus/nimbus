@@ -66,12 +66,31 @@ export async function apiFetch<T>(
 
 const enc = encodeURIComponent;
 
-// The filter/order/limit half of a paginated query — kept loose because the
-// storage table only ever sends the empty/unfiltered form today.
+/** Comparison operators the engine accepts (`nimbus_core::query::FilterOp`). */
+export const FILTER_OPS = ["eq", "neq", "gt", "gte", "lt", "lte"] as const;
+export type FilterOp = (typeof FILTER_OPS)[number];
+
+/** One predicate (`nimbus_core::query::Filter`). */
+export type DocumentFilter = {
+  field: string;
+  op: FilterOp;
+  value: unknown;
+};
+
+/** Sort order (`nimbus_core::query::OrderBy`). */
+export type DocumentOrder = {
+  field: string;
+  direction: "asc" | "desc";
+};
+
+// The filter/order/limit half of a paginated query. These shapes mirror
+// `crates/nimbus-core/src/query.rs` field for field: typed rather than
+// `unknown` so the query bar cannot construct a predicate the engine will
+// reject, which reaches the operator only as an opaque page error.
 export type PaginatedQuery = {
   table: string;
-  filters: unknown[];
-  order: unknown;
+  filters: DocumentFilter[];
+  order: DocumentOrder | null;
   limit: number | null;
 };
 

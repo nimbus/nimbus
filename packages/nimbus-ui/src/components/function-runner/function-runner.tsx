@@ -172,20 +172,20 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
           <ChevronRight size={12} aria-hidden />
         )}
         <span>Runner</span>
-        <span className="text-[10px] text-muted">
+        <span className="text-xs text-muted">
           {open ? "click to collapse" : "click to invoke this function"}
         </span>
         <span className="ml-auto">
           {result.kind === "running" ? (
-            <span className="rounded border border-app px-1.5 py-0.5 text-[10px] uppercase text-muted">
+            <span className="rounded border border-app px-1.5 py-0.5 text-xs uppercase text-muted">
               running…
             </span>
           ) : result.kind === "ok" ? (
-            <span className="rounded border border-app px-1.5 py-0.5 text-[10px] uppercase text-success">
+            <span className="rounded border border-app px-1.5 py-0.5 text-xs uppercase text-success">
               ok · {result.durationMs}ms
             </span>
           ) : result.kind === "error" ? (
-            <span className="rounded border border-app px-1.5 py-0.5 text-[10px] uppercase text-danger">
+            <span className="rounded border border-app px-1.5 py-0.5 text-xs uppercase text-danger">
               error
             </span>
           ) : null}
@@ -195,11 +195,11 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
         <div className="grid grid-cols-[1fr_1fr] gap-3 border-t border-app px-6 py-3">
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+              <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
                 tenant
               </span>
               {tenantError ? (
-                <span className="font-mono text-[11px] text-danger">
+                <span className="font-mono text-xs text-danger">
                   failed: {tenantError}
                 </span>
               ) : (
@@ -221,8 +221,11 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
                 </select>
               )}
             </div>
-            <label className="flex flex-col gap-1" data-testid="function-runner-args">
-              <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+            <label
+              className="flex flex-col gap-1"
+              data-testid="function-runner-args"
+            >
+              <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
                 arguments (json object)
               </span>
               <textarea
@@ -234,8 +237,8 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
                 className="rounded border border-app bg-surface-2 px-2 py-1 font-mono text-xs text-default placeholder:text-muted/70"
                 placeholder='{ "key": "value" }'
               />
-              {parseError ?? (!parsedArgs.ok && parsedArgs.error) ? (
-                <span className="font-mono text-[11px] text-danger">
+              {(parseError ?? (!parsedArgs.ok && parsedArgs.error)) ? (
+                <span className="font-mono text-xs text-danger">
                   {parseError ?? (parsedArgs.ok ? null : parsedArgs.error)}
                 </span>
               ) : null}
@@ -258,7 +261,7 @@ export function FunctionRunner({ fn }: { fn: FunctionRunnerFn }) {
                   : `Run ${inferredKind || "function"}`}
               </button>
               {isQuery ? (
-                <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
+                <span className="font-mono text-xs uppercase tracking-wide text-muted">
                   queries are read-only
                 </span>
               ) : null}
@@ -275,7 +278,7 @@ function ResultPanel({ result }: { result: RunResult }) {
   if (result.kind === "idle") {
     return (
       <div
-        className="rounded border border-app bg-surface-2 px-3 py-2 font-mono text-[11px] text-muted"
+        className="rounded border border-app bg-surface-2 px-3 py-2 font-mono text-xs text-muted"
         data-testid="function-runner-result-idle"
       >
         No result yet — submit to invoke.
@@ -285,7 +288,7 @@ function ResultPanel({ result }: { result: RunResult }) {
   if (result.kind === "running") {
     return (
       <div
-        className="rounded border border-app bg-surface-2 px-3 py-2 font-mono text-[11px] text-muted"
+        className="rounded border border-app bg-surface-2 px-3 py-2 font-mono text-xs text-muted"
         data-testid="function-runner-result-running"
       >
         Running…
@@ -299,15 +302,15 @@ function ResultPanel({ result }: { result: RunResult }) {
         data-testid="function-runner-result-error"
       >
         <div className="flex items-center gap-2">
-          <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-danger">
+          <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-danger">
             error
           </span>
           {result.code ? (
-            <span className="font-mono text-[11px] uppercase tracking-wide text-muted">
+            <span className="font-mono text-xs uppercase tracking-wide text-muted">
               {result.code}
             </span>
           ) : null}
-          <span className="tabular text-[11px] text-muted">
+          <span className="tabular text-xs text-muted">
             {result.durationMs}ms
           </span>
         </div>
@@ -333,10 +336,10 @@ function ResultPanel({ result }: { result: RunResult }) {
       data-testid="function-runner-result-ok"
     >
       <div className="flex items-center gap-2">
-        <span className="rounded border border-app px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-success">
+        <span className="rounded border border-app px-1.5 py-0.5 font-mono text-xs uppercase tracking-wide text-success">
           ok
         </span>
-        <span className="tabular text-[11px] text-muted">
+        <span className="tabular text-xs text-muted">
           {result.durationMs}ms
         </span>
         {result.correlationId ? (
@@ -350,7 +353,7 @@ function ResultPanel({ result }: { result: RunResult }) {
         ) : null}
       </div>
       <pre
-        className="max-h-48 overflow-auto rounded border border-app bg-surface p-2 font-mono text-[11px] text-default"
+        className="max-h-48 overflow-auto rounded border border-app bg-surface p-2 font-mono text-xs text-default"
         data-testid="function-runner-result-json"
       >
         {JSON.stringify(result.data, null, 2)}

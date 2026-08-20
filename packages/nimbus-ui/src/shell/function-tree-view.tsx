@@ -260,11 +260,11 @@ function LeafRow({
       <Icon size={13} aria-hidden className="shrink-0" />
       <span className="flex-1 truncate font-mono text-xs">{leaf.name}</span>
       {leaf.fnKind ? (
-        <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted">
+        <span className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
           {leaf.fnKind}
         </span>
       ) : leaf.lastStatus ? (
-        <span className="tabular font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+        <span className="tabular font-mono text-xs uppercase tracking-[0.18em] text-muted">
           {leaf.lastStatus}
         </span>
       ) : null}

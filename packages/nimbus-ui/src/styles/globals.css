@@ -14,8 +14,9 @@
      mono  → Monochrome (light) / Reverse Mono (dark)      — minimal/enterprise
    The default is the "sky cycle": golden daylight, night-blue dark. Dark mode
    is Night Blue for every palette except mono (Reverse Mono).
-   Semantic state colors (success/warning/danger/starting/draining/queued/stale)
-   stay constant across palettes so "Running = green" everywhere.
+   Semantic state colors (success/warning/danger/running/starting/draining/
+   queued/stale) stay constant across palettes: Ready is green and Running is
+   teal in every theme, so a status never changes meaning when the palette does.
 */
 @theme {
   --font-sans:
@@ -34,103 +35,176 @@
   --statusbar-height: 1.75rem;
 }
 
+/* Bridge the palette into Tailwind's colour namespace.
+   `@theme inline` makes each name a real theme key, so Tailwind generates the
+   base utility *and every variant of it* — `hover:bg-surface-2`,
+   `aria-selected:text-default`, `divide-app`, `bg-danger/10`. Hand-writing
+   these as plain classes in `@layer components` (what this file used to do)
+   produces the base class only: Tailwind cannot generate a variant of a class
+   it does not know about, so 184 `hover:` / `focus-visible:` / `aria-selected:`
+   usages across the console silently emitted nothing.
+   `inline` keeps the utilities pointing at `var(--nimbus-*)`, which the
+   `[data-theme]` / `[data-palette]` blocks below re-declare — so a palette
+   switch restyles the whole app without regenerating any CSS. */
+@theme inline {
+  --color-canvas: var(--nimbus-bg);
+  --color-surface: var(--nimbus-surface);
+  --color-surface-2: var(--nimbus-surface-2);
+  --color-app: var(--nimbus-border);
+  --color-strong: var(--nimbus-border-strong);
+  --color-default: var(--nimbus-text);
+  --color-muted: var(--nimbus-muted);
+
+  --color-brand: var(--nimbus-brand);
+  --color-on-brand: var(--nimbus-on-brand);
+  --color-accent: var(--nimbus-accent);
+  --color-focus: var(--nimbus-focus);
+  --color-link: var(--nimbus-link);
+
+  --color-success: var(--nimbus-success);
+  --color-warning: var(--nimbus-warning);
+  --color-running: var(--nimbus-running);
+  --color-starting: var(--nimbus-starting);
+  --color-draining: var(--nimbus-draining);
+  --color-queued: var(--nimbus-queued);
+  --color-danger: var(--nimbus-danger);
+  --color-stale: var(--nimbus-stale);
+  --color-violet: var(--nimbus-violet);
+}
+
 @layer base {
   /* Defaults: Warm palette, Light mode (golden daylight — sky-cycle default) */
   :root {
     color-scheme: light;
 
-    --color-bg: oklch(96.5% 0.020 82);
-    --color-surface: oklch(100% 0 0);
-    --color-surface-2: oklch(96% 0.025 82);
-    --color-border: oklch(90% 0.025 82);
-    --color-border-strong: oklch(82% 0.040 78);
-    --color-text: oklch(20% 0.020 60);
-    --color-muted: oklch(53% 0.013 75);
+    --nimbus-bg: oklch(96.5% 0.020 82);
+    --nimbus-surface: oklch(100% 0 0);
+    --nimbus-surface-2: oklch(96% 0.025 82);
+    --nimbus-border: oklch(90% 0.025 82);
+    --nimbus-border-strong: oklch(82% 0.040 78);
+    --nimbus-text: oklch(20% 0.020 60);
+    --nimbus-muted: oklch(53% 0.013 75);
 
-    --color-brand: oklch(73% 0.17 65);      /* #F59E0B — amber-500 */
-    --color-accent: oklch(80% 0.14 70);     /* #FFB84D */
-    --color-link: oklch(62% 0.17 55);       /* #D97706 — Golden Hour primary */
+    --nimbus-brand: oklch(73% 0.17 65);      /* #F59E0B — amber-500 */
+    --nimbus-on-brand: oklch(20% 0.020 60); /* ink on amber */
+    --nimbus-accent: oklch(80% 0.14 70);     /* #FFB84D */
+    /* Golden Hour, darkened from oklch(62% …) to clear WCAG AA as body text:
+       5.14:1 on --surface, 4.64:1 on --bg, 4.57:1 on --surface-2. Links render
+       at 11–12px everywhere in the console, so 4.5:1 is the binding floor. */
+    --nimbus-link: oklch(55% 0.17 52);
+    /* Focus is its own token, not --accent: the ring must clear the 3:1
+       non-text floor (WCAG 2.2 SC 1.4.11), which --accent misses at 1.91:1.
+       3.84:1 on --surface, 3.47:1 on --bg, 3.42:1 on --surface-2. */
+    --nimbus-focus: oklch(62% 0.17 55);
 
-    /* Semantic state — stable across palettes for consistent affordances. */
-    --color-success: oklch(52% 0.14 145);
-    --color-warning: oklch(65% 0.16 75);
-    --color-starting: oklch(70% 0.17 50);
-    --color-draining: oklch(55% 0.13 280);
-    --color-queued: oklch(60% 0.020 240);
-    --color-danger: oklch(58% 0.20 25);
-    --color-stale: oklch(50% 0.012 240);
-    --color-violet: oklch(55% 0.18 295);
+    /* Semantic state — stable across palettes for consistent affordances.
+
+       --warning and --danger are set from the *darkest* light ground, not from
+       --surface. --surface in every light palette is pure white, so a token
+       tuned against it clears AA on the one ground that flatters it and fails
+       on the warm canvas and on --surface-2, which is where a panel actually
+       paints. Both were a shade too light for that: 4.24:1 and 4.21:1 on
+       --surface-2 against a 4.5:1 floor. */
+    --nimbus-success: oklch(52% 0.14 145);
+    --nimbus-warning: oklch(54.5% 0.15 72); /* 4.52:1 on --surface-2 */
+    --nimbus-running: oklch(60% 0.13 207); /* 3.60:1 on --surface */
+    --nimbus-starting: oklch(70% 0.17 50);
+    --nimbus-draining: oklch(55% 0.13 280);
+    --nimbus-queued: oklch(60% 0.020 240);
+    --nimbus-danger: oklch(56% 0.20 25); /* 4.59:1 on --surface-2 */
+    --nimbus-stale: oklch(50% 0.012 240);
+    --nimbus-violet: oklch(55% 0.18 295);
   }
 
   /* Blue palette, Light mode (Cool Blue — explicit cool alternative) */
   [data-palette="blue"] {
-    --color-bg: oklch(96.5% 0.008 248);
-    --color-surface: oklch(100% 0 0);
-    --color-surface-2: oklch(96% 0.008 248);
-    --color-border: oklch(91% 0.013 252);
-    --color-border-strong: oklch(82% 0.020 250);
-    --color-text: oklch(20% 0.035 263);
-    --color-muted: oklch(48% 0.028 255);
+    --nimbus-bg: oklch(96.5% 0.008 248);
+    --nimbus-surface: oklch(100% 0 0);
+    --nimbus-surface-2: oklch(96% 0.008 248);
+    --nimbus-border: oklch(91% 0.013 252);
+    --nimbus-border-strong: oklch(82% 0.020 250);
+    --nimbus-text: oklch(20% 0.035 263);
+    --nimbus-muted: oklch(48% 0.028 255);
 
-    --color-brand: oklch(62% 0.20 258);     /* #3B82F6 — Cool Blue primary */
-    --color-accent: oklch(70% 0.13 207);    /* #06B6D4 — brand teal (cyan-500) */
-    --color-link: oklch(54% 0.22 264);      /* #2563EB — Cool Blue primary-dark */
+    --nimbus-brand: oklch(62% 0.20 258);     /* #3B82F6 — Cool Blue primary */
+    --nimbus-on-brand: oklch(100% 0 0);     /* white on blue */
+    --nimbus-accent: oklch(70% 0.13 207);    /* #06B6D4 — brand teal (cyan-500) */
+    --nimbus-link: oklch(54% 0.22 264);      /* #2563EB — Cool Blue primary-dark */
+    /* --accent is 2.51:1 — too pale for a focus ring. Same teal, darkened:
+       4.42:1 on --surface, 3.99:1 on --bg, 3.93:1 on --surface-2. */
+    --nimbus-focus: oklch(54% 0.15 210);
   }
 
   /* Dark mode (Night Blue) — default dark for every palette except mono. */
   [data-theme="dark"] {
     color-scheme: dark;
 
-    --color-bg: oklch(13% 0.026 263);
-    --color-surface: oklch(19% 0.030 258);
-    --color-surface-2: oklch(24% 0.030 258);
-    --color-border: oklch(32% 0.030 258);
-    --color-border-strong: oklch(40% 0.030 258);
-    --color-text: oklch(91% 0.014 252);
-    --color-muted: oklch(67% 0.026 248);
+    --nimbus-bg: oklch(13% 0.026 263);
+    --nimbus-surface: oklch(19% 0.030 258);
+    --nimbus-surface-2: oklch(24% 0.030 258);
+    --nimbus-border: oklch(32% 0.030 258);
+    --nimbus-border-strong: oklch(40% 0.030 258);
+    --nimbus-text: oklch(91% 0.014 252);
+    --nimbus-muted: oklch(67% 0.026 248);
 
-    --color-brand: oklch(72% 0.17 248);     /* #60A5FA — Night Blue primary */
-    --color-accent: oklch(85% 0.10 197);    /* #67E8F9 — brand teal gradient hi */
-    --color-link: oklch(82% 0.11 247);      /* #93C5FD */
+    --nimbus-brand: oklch(72% 0.17 248);     /* #60A5FA — Night Blue primary */
+    --nimbus-on-brand: oklch(13% 0.026 263);/* ink on light blue */
+    --nimbus-accent: oklch(85% 0.10 197);    /* #67E8F9 — brand teal gradient hi */
+    --nimbus-link: oklch(82% 0.11 247);      /* #93C5FD */
+    /* Dark accents already clear 3:1 by a wide margin (12.1:1 night blue,
+       11.7:1 reverse mono), so the ring stays on --accent in both dark
+       palettes — the var() resolves against whichever accent won here. */
+    --nimbus-focus: var(--nimbus-accent);
 
-    --color-success: oklch(72% 0.16 145);
-    --color-warning: oklch(78% 0.17 75);
-    --color-starting: oklch(80% 0.18 50);
-    --color-draining: oklch(72% 0.14 280);
-    --color-queued: oklch(70% 0.020 240);
-    --color-danger: oklch(70% 0.20 25);
-    --color-stale: oklch(60% 0.012 240);
-    --color-violet: oklch(75% 0.16 295);
+    --nimbus-success: oklch(72% 0.16 145);
+    --nimbus-warning: oklch(78% 0.17 75);
+    --nimbus-running: oklch(85% 0.10 197);
+    --nimbus-starting: oklch(80% 0.18 50);
+    --nimbus-draining: oklch(72% 0.14 280);
+    --nimbus-queued: oklch(70% 0.020 240);
+    --nimbus-danger: oklch(70% 0.20 25);
+    --nimbus-stale: oklch(60% 0.012 240);
+    --nimbus-violet: oklch(75% 0.16 295);
   }
 
   /* Mono palette, Light mode (Monochrome) */
   [data-palette="mono"] {
-    --color-bg: oklch(96.5% 0.006 257);
-    --color-surface: oklch(100% 0 0);
-    --color-surface-2: oklch(96% 0.005 257);
-    --color-border: oklch(91% 0.008 257);
-    --color-border-strong: oklch(82% 0.010 257);
-    --color-text: oklch(20% 0.014 263);
-    --color-muted: oklch(44% 0.012 258);
+    --nimbus-bg: oklch(96.5% 0.006 257);
+    --nimbus-surface: oklch(100% 0 0);
+    --nimbus-surface-2: oklch(96% 0.005 257);
+    --nimbus-border: oklch(91% 0.008 257);
+    --nimbus-border-strong: oklch(82% 0.010 257);
+    --nimbus-text: oklch(20% 0.014 263);
+    --nimbus-muted: oklch(44% 0.012 258);
 
-    --color-brand: oklch(20% 0.014 263);    /* #111827 — ink as brand */
-    --color-accent: oklch(44% 0.012 258);   /* #4B5563 — mid gray */
-    --color-link: oklch(27% 0.014 261);     /* #1F2937 */
+    --nimbus-brand: oklch(20% 0.014 263);    /* #111827 — ink as brand */
+    --nimbus-on-brand: oklch(100% 0 0);     /* white on ink */
+    /* Lifted off --muted, which it used to equal byte-for-byte (1.00:1) —
+       that collapsed focus, selection and every accent-bound state into the
+       same grey as secondary text. 4.65:1 on --surface, 1.67:1 vs --muted. */
+    --nimbus-accent: oklch(56% 0.014 258);
+    --nimbus-focus: var(--nimbus-accent);
+    /* Mono is deliberately chromaless, so a link cannot be identified by hue.
+       It carries the ink colour and takes its identity from the underline
+       (.link-inline below) — never from a grey shift that would read as
+       disabled text. */
+    --nimbus-link: var(--nimbus-text);
   }
 
   /* Mono palette, Dark mode (Reverse Mono) */
   [data-palette="mono"][data-theme="dark"] {
-    --color-bg: oklch(17% 0.018 263);
-    --color-surface: oklch(22% 0.018 261);
-    --color-surface-2: oklch(28% 0.014 258);
-    --color-border: oklch(36% 0.013 258);
-    --color-border-strong: oklch(44% 0.012 258);
-    --color-text: oklch(100% 0 0);
-    --color-muted: oklch(70% 0.013 256);
+    --nimbus-bg: oklch(17% 0.018 263);
+    --nimbus-surface: oklch(22% 0.018 261);
+    --nimbus-surface-2: oklch(28% 0.014 258);
+    --nimbus-border: oklch(36% 0.013 258);
+    --nimbus-border-strong: oklch(44% 0.012 258);
+    --nimbus-text: oklch(100% 0 0);
+    --nimbus-muted: oklch(70% 0.013 256);
 
-    --color-brand: oklch(100% 0 0);         /* #FFFFFF — white as brand */
-    --color-accent: oklch(87% 0.012 257);   /* #D1D5DB */
-    --color-link: oklch(91% 0.008 257);     /* #E5E7EB */
+    --nimbus-brand: oklch(100% 0 0);         /* #FFFFFF — white as brand */
+    --nimbus-on-brand: oklch(17% 0.018 263);/* ink on white */
+    --nimbus-accent: oklch(87% 0.012 257);   /* #D1D5DB */
+    --nimbus-link: var(--nimbus-text);       /* see mono light: underline, not hue */
   }
 
   /* Warm palette, Light mode = the :root default above; Warm dark mode =
@@ -144,8 +218,8 @@
 
   body {
     margin: 0;
-    background: var(--color-bg);
-    color: var(--color-text);
+    background: var(--nimbus-bg);
+    color: var(--nimbus-text);
     font-family: var(--font-sans);
     font-size: var(--text-md);
     line-height: 1.5;
@@ -163,82 +237,158 @@
     letter-spacing: -0.01em;
   }
 
+  /* Inline code, per DESIGN.md ("monospace + subtle surface-2 background +
+     1px border"). This is a floor, not an override: Tailwind declares
+     `@layer theme, base, components, utilities`, so every utility a call site
+     already sets — `bg-surface-2`, `border border-app`, `rounded`, `px-1`,
+     `text-xs` — wins on layer order regardless of this selector's specificity.
+     Sites that style themselves are unchanged; sites that render a bare
+     `<code>` stop rendering as unmarked body text.
+     `:not(pre) >` keeps it off code blocks: shiki emits `<pre><code>`, and
+     the fallback in components/code-block.tsx is a bare `<pre>`, so neither
+     picks up a chip border. */
+  :not(pre) > code {
+    background: var(--nimbus-surface-2);
+    border: 1px solid var(--nimbus-border);
+    border-radius: 3px;
+    padding: 0 0.25em;
+    font-size: 0.9em;
+  }
+
   /* Hard requirement per DESIGN.md: numeric columns never reflow. */
   .tabular {
     font-variant-numeric: tabular-nums;
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--nimbus-focus);
     outline-offset: 2px;
     border-radius: 4px;
   }
 
+  /* Vestibular-safety backstop for the whole console, so a new `animate-*` or
+     `transition-*` cannot ship ignoring the preference. It is a net, not a
+     licence: fix each offender at its call site too.
+     Measured under an emulated `reduce` — a loaded page drops from 2 running
+     animations to 0, and an unguarded indefinite indicator (`animate-pulse`)
+     comes to rest at opacity 1, because `animation-fill-mode` stays `none` and
+     the element reverts to its base style instead of freezing mid-cycle. So a
+     per-site `motion-reduce:animate-none` documents intent; it is not what
+     makes the pulse stop. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Checkbox (components/checkbox.tsx). The platform control paints an
+     unchecked box as a light fill, which reads as *checked* on a dark surface,
+     so the console draws its own box from theme tokens. */
+  .nimbus-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    margin: 0;
+    position: relative;
+    border: 1px solid var(--nimbus-border-strong);
+    border-radius: 3px;
+    background: var(--nimbus-surface);
+    transition:
+      background-color 100ms ease,
+      border-color 100ms ease;
+  }
+
+  .nimbus-checkbox:hover:not(:checked):not(:indeterminate) {
+    border-color: var(--nimbus-brand);
+  }
+
+  .nimbus-checkbox:checked,
+  .nimbus-checkbox:indeterminate {
+    background: var(--nimbus-brand);
+    border-color: var(--nimbus-brand);
+  }
+
+  .nimbus-checkbox:checked::after {
+    content: "";
+    position: absolute;
+    left: 3.5px;
+    top: 0.5px;
+    width: 4px;
+    height: 8px;
+    border: solid var(--nimbus-surface);
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+  }
+
+  .nimbus-checkbox:indeterminate::after {
+    content: "";
+    position: absolute;
+    left: 2.5px;
+    top: 5.5px;
+    width: 7px;
+    height: 1.5px;
+    background: var(--nimbus-surface);
+  }
+
   ::selection {
-    background: color-mix(in oklch, var(--color-accent) 30%, transparent);
+    background: color-mix(in oklch, var(--nimbus-accent) 30%, transparent);
   }
 }
 
 @layer components {
-  .bg-app {
-    background: var(--color-bg);
+  /* Inline prose hyperlink. The resting underline — not the colour — is what
+     identifies it, so the affordance survives the chromaless mono palette and
+     satisfies WCAG 1.4.1 (never colour alone). Reserve this for links inside a
+     line of text; a bordered chip that happens to navigate keeps `text-link`
+     plus its border, where a resting underline would read as a defect. */
+  .link-inline {
+    color: var(--nimbus-link);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+    text-decoration-color: color-mix(in oklch, currentColor 40%, transparent);
   }
-  .bg-surface {
-    background: var(--color-surface);
+
+  .link-inline:hover {
+    text-decoration-color: currentColor;
   }
-  .bg-surface-2 {
-    background: var(--color-surface-2);
-  }
-  .text-default {
-    color: var(--color-text);
-  }
-  .text-muted {
-    color: var(--color-muted);
-  }
-  .border-app {
-    border-color: var(--color-border);
-  }
-  .border-strong {
-    border-color: var(--color-border-strong);
-  }
-  .text-brand {
-    color: var(--color-brand);
-  }
-  .bg-brand {
-    background: var(--color-brand);
-  }
-  .border-brand {
-    border-color: var(--color-brand);
-  }
-  .text-accent {
-    color: var(--color-accent);
-  }
-  .bg-accent {
-    background: var(--color-accent);
-  }
-  .text-link {
-    color: var(--color-link);
-  }
-  .text-success {
-    color: var(--color-success);
-  }
-  .text-warning {
-    color: var(--color-warning);
-  }
-  .text-danger {
-    color: var(--color-danger);
-  }
-  .text-violet {
-    color: var(--color-violet);
+
+  /* The uppercase micro-label: field labels, section heads inside a panel.
+     It sets no colour — every call site keeps its own `text-muted` /
+     `text-danger` / computed tone class.
+
+     11px, not 10px. DESIGN.md's scale starts at 11px and this utility was the
+     only thing in the console below it, which put the console's smallest type
+     under its own floor: uppercase at wide tracking is already the hardest
+     shape to read, and the one instance that also carried a tone (`active` in
+     the palette picker) measured 2.2:1. 11px is what the ~50 micro-labels
+     that spell this treatment out inline already use, so the named form and
+     the inline form now render the same pixels.
+
+     A second tier (`.label-chrome`, same size at 0.18em and monospace) used to
+     sit here and never picked up a single call site. */
+  .label {
+    font-size: 11px;
+    line-height: 1.45;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
   }
 }
+
 
 /* Shiki dual-theme code blocks (see components/code-block.tsx). With
    defaultColor:false, shiki emits --shiki-light / --shiki-dark CSS vars; pick
    the set that matches the app's data-theme. */
 .nimbus-code .shiki {
   margin: 0;
-  padding: 1rem;
+  /* 12px, matching both the `p-3` fallback <pre> in components/code-block.tsx
+     and DESIGN.md's "12px padding" for multi-line blocks, so the highlighted
+     and unhighlighted renderings are the same box. */
+  padding: 0.75rem;
   background-color: var(--shiki-light-bg);
 }
 .nimbus-code .shiki,
@@ -257,7 +407,7 @@
 .nimbus-code .shiki span[data-typed] {
   cursor: help;
   text-decoration: underline dotted
-    color-mix(in oklch, var(--color-muted) 55%, transparent);
+    color-mix(in oklch, var(--nimbus-muted) 55%, transparent);
   text-underline-offset: 3px;
 }
 
@@ -266,6 +416,6 @@
 .nimbus-code .shiki .line[data-highlighted-line] {
   display: inline-block;
   width: 100%;
-  background: color-mix(in oklch, var(--color-danger) 18%, transparent);
-  box-shadow: inset 2px 0 0 var(--color-danger);
+  background: color-mix(in oklch, var(--nimbus-danger) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--nimbus-danger);
 }

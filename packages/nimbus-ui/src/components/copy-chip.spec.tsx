@@ -71,6 +71,35 @@ describe("CopyChip", () => {
     );
   });
 
+  it("reserves no layout width in the hideUntilHover variant", () => {
+    render(
+      <CopyChip label="table" value="messages" hideUntilHover testid="chip">
+        copy
+      </CopyChip>,
+    );
+    const chip = screen.getByTestId("chip");
+    // Collapsed, not merely transparent: `opacity-0` on its own keeps the
+    // chip's full width reserved and punches a hole into the row.
+    expect(chip).toHaveClass("w-0", "p-0", "opacity-0");
+    expect(chip).toHaveClass("group-hover:w-auto", "group-hover:opacity-100");
+    expect(chip).toHaveClass(
+      "group-focus-within:w-auto",
+      "focus-visible:w-auto",
+    );
+    // Still rendered and focusable — `hidden` would drop it from the tab order.
+    expect(chip).not.toHaveClass("hidden");
+    expect(chip.tagName).toBe("BUTTON");
+    chip.focus();
+    expect(document.activeElement).toBe(chip);
+  });
+
+  it("keeps its padding when not hidden until hover", () => {
+    render(<CopyChip label="table" value="messages" testid="chip" />);
+    const chip = screen.getByTestId("chip");
+    expect(chip).toHaveClass("px-1");
+    expect(chip).not.toHaveClass("w-0");
+  });
+
   it("toasts an error when the clipboard call rejects", async () => {
     writeText.mockRejectedValueOnce(new Error("denied"));
     render(<CopyChip label="bundle" value="abc123" />);

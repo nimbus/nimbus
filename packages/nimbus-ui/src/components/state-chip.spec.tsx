@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import axe from "axe-core";
 import { describe, expect, it } from "vitest";
 
-import { StateChip } from "./state-chip";
+import { StateChip, statePalette } from "./state-chip";
 
 describe("StateChip", () => {
   it("renders the raw label when state is known", () => {
@@ -68,6 +68,26 @@ describe("StateChip", () => {
     expect(chip).toHaveAttribute("data-glyph", "pulsing");
   });
 
+  it("binds running to --running and never to the brand accent", () => {
+    expect(statePalette.running.token).toBe("--nimbus-running");
+    expect(statePalette.running.token).not.toBe("--nimbus-accent");
+  });
+
+  it("keeps no state on --accent, which the brand palette redefines", () => {
+    // DESIGN.md's state table names only semantic tokens. A state bound to
+    // --accent inherits the brand hue, which in the warm palette (hue 70)
+    // lands on top of --warning (hue 72) — Running and Degraded then differ
+    // by lightness alone.
+    const onAccent = Object.entries(statePalette)
+      .filter(([, entry]) => entry.token === "--nimbus-accent")
+      .map(([state]) => state);
+    expect(onAccent).toEqual([]);
+  });
+
+  it("gives running and degraded distinct tokens", () => {
+    expect(statePalette.running.token).not.toBe(statePalette.degraded.token);
+  });
+
   it("uses a half-filled dot for starting", () => {
     const { container } = render(<StateChip state="starting" />);
     expect(container.querySelector("[data-state]")).toHaveAttribute(
@@ -89,6 +109,35 @@ describe("StateChip", () => {
     expect(container.querySelector("[data-state]")).toHaveAttribute(
       "data-glyph",
       "outline",
+    );
+  });
+
+  it.each([
+    ["restarting", "half"],
+    ["deleting", "half"],
+  ])("names the in-flight lifecycle state %s with a transitional %s dot", (state, glyph) => {
+    const { container } = render(<StateChip state={state} />);
+    const chip = container.querySelector("[data-state]");
+    expect(chip).toHaveAttribute("data-state", state);
+    expect(chip).toHaveAttribute("data-glyph", glyph);
+  });
+
+  it("names a created machine with the stopped-family outline dot", () => {
+    const { container } = render(<StateChip state="created" />);
+    expect(container.querySelector("[data-state]")).toHaveAttribute(
+      "data-glyph",
+      "outline",
+    );
+  });
+
+  it.each([
+    "connected",
+    "offline",
+  ])("names the connection state %s so StateDot and StateChip agree", (state) => {
+    const { container } = render(<StateChip state={state} />);
+    expect(container.querySelector("[data-state]")).toHaveAttribute(
+      "data-state",
+      state,
     );
   });
 
@@ -141,4 +190,51 @@ describe("StateChip", () => {
       ),
     ).toEqual([]);
   });
+});
+
+// The console renders whatever string the server wrote into the record, so
+// these four vocabularies are the badge's real input domain. Nothing else in
+// the JS tree names them — they are declared in Rust — and a state missing
+// from the palette does not fail a type check or log a warning: the row just
+// renders `?`, the "console lost track of this resource" glyph, on a resource
+// the server is perfectly sure about. `completed` shipped that way, so a
+// finished scheduled job read `? completed`.
+describe("states the server can write into a record", () => {
+  const glyphFor = (state: string): string | null => {
+    const { container } = render(<StateChip state={state} />);
+    return (
+      container.querySelector("[data-state]")?.getAttribute("data-glyph") ??
+      null
+    );
+  };
+
+  // Source of truth is Rust, cited so the next reader can re-derive the list:
+  const VOCABULARIES: Array<[string, string, string[]]> = [
+    [
+      "scheduled jobs",
+      "crates/nimbus-system/src/records/scheduler.rs",
+      ["pending", "completed", "failed"],
+    ],
+    [
+      "cron jobs",
+      "crates/nimbus-system/src/records/scheduler.rs",
+      ["active", "paused"],
+    ],
+    [
+      "machines",
+      "crates/nimbus-machine/src/state.rs",
+      ["uninitialized", "stopped", "starting", "running", "failed"],
+    ],
+    [
+      "runs",
+      "convex/handlers/function_routes/{queries,mutations,actions}.rs",
+      ["ok", "error"],
+    ],
+  ];
+
+  for (const [subject, source, states] of VOCABULARIES) {
+    it.each(states)(`names ${subject} state %s (${source})`, (state) => {
+      expect(glyphFor(state)).not.toBe("question");
+    });
+  }
 });

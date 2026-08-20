@@ -1,7 +1,8 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
 import { useNimbusConnectionState, useQuery } from "@nimbus/nimbus/react";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { api } from "../../../convex/_generated/api";
+import { CategoryChip } from "../../components/category-chip";
 import { CopyChip } from "../../components/copy-chip";
 import { LoadingCell } from "../../components/loading-cell";
 import { PageHeader } from "../../components/page-header";
@@ -68,13 +69,9 @@ function OverviewPage() {
     limit: 20,
   }) as AnyDoc[] | undefined;
 
-  const tenantIdSet = new Set<string>();
-  for (const doc of services ?? []) {
-    if (typeof doc.tenantId === "string") tenantIdSet.add(doc.tenantId);
-  }
-  for (const doc of tables ?? []) {
-    if (typeof doc.tenantId === "string") tenantIdSet.add(doc.tenantId);
-  }
+  const serviceTenantIds = distinctTenantIds(services);
+  const tableTenantIds = distinctTenantIds(tables);
+  const tenantIdSet = new Set([...serviceTenantIds, ...tableTenantIds]);
 
   return (
     <section
@@ -86,7 +83,7 @@ function OverviewPage() {
         subtitle="Deployment health, recent activity, and live resource counts."
       />
 
-      <TopStrip status={status} />
+      <TopStrip status={toStatusValue(status, conn)} />
 
       <ResourceCountsGrid
         machines={toLoadingValue(machines, conn)}
@@ -95,6 +92,16 @@ function OverviewPage() {
         tables={toLoadingValue(tables, conn)}
         runs={toLoadingValue(runs, conn)}
         tenantCount={tenantIdSet.size}
+        tenantSubline={
+          services === undefined
+            ? undefined
+            : `${serviceTenantIds.size} with services`
+        }
+        tableSubline={
+          tables === undefined
+            ? undefined
+            : `across ${tableTenantIds.size} ${tableTenantIds.size === 1 ? "tenant" : "tenants"}`
+        }
       />
 
       <div
@@ -108,6 +115,14 @@ function OverviewPage() {
   );
 }
 
+function distinctTenantIds(docs: AnyDoc[] | undefined): Set<string> {
+  const ids = new Set<string>();
+  for (const doc of docs ?? []) {
+    if (typeof doc.tenantId === "string") ids.add(doc.tenantId);
+  }
+  return ids;
+}
+
 function useConnSnapshot(): ConnectionSnapshot {
   const conn = useNimbusConnectionState();
   return {
@@ -116,62 +131,116 @@ function useConnSnapshot(): ConnectionSnapshot {
   };
 }
 
-function TopStrip({ status }: { status: SystemStatusDoc | undefined }) {
+type SystemStatus = NonNullable<SystemStatusDoc>;
+
+/**
+ * `useQuery` resolves to `null` when the server has no status row. That is an
+ * answer, so it must not go through `toLoadingValue`, whose null-or-undefined
+ * branch means "loading" — the strip would then sit on the loading marker for
+ * the life of the page on a deployment that simply has no status document.
+ */
+function toStatusValue(
+  status: SystemStatusDoc | undefined,
+  conn: ConnectionSnapshot,
+): LoadingValue<SystemStatus> {
+  if (status === null) return { kind: "ok", value: {} };
+  return toLoadingValue(status, conn);
+}
+
+// A field the server did not report is not a value. Both of these used to fall
+// through to a literal — `license` to the string "developer" — so a pending
+// read and a server that omits the field rendered the same confident answer as
+// a real reading, in the same face and colour.
+function detailString(status: SystemStatus, ...keys: string[]): string | null {
+  const details = (status.details ?? {}) as Record<string, unknown>;
+  for (const key of keys) {
+    const value = details[key];
+    if (typeof value === "string") return value;
+  }
+  return null;
+}
+
+/**
+ * Every cell here reads one query, so the strip reports that query's state
+ * through `LoadingCell` exactly as the rest of the page does: the loading
+ * marker while it is in flight, "offline" once the socket has dropped, the
+ * message on failure. It used to render its fallbacks unconditionally and so
+ * looked fully loaded, and slightly broken, before it had been told anything.
+ */
+function TopStrip({ status }: { status: LoadingValue<SystemStatus> }) {
   const activeTenant = useUiStore((s) => s.activeTenant);
-  const details = (status?.details ?? {}) as Record<string, unknown>;
-  const storageBackend =
-    typeof details.storageBackend === "string"
-      ? details.storageBackend
-      : typeof details.storage === "string"
-        ? details.storage
-        : "—";
-  const license =
-    typeof details.license === "string"
-      ? details.license
-      : typeof details.licensePosture === "string"
-        ? details.licensePosture
-        : "developer";
-  const version = status?.version ?? "—";
-  const health = status?.health ?? (status === null ? "unknown" : "—");
-  const startedAt =
-    typeof status?.startedAt === "number" ? status.startedAt : null;
+  // `shrink-0` below is load-bearing. This grid is a flex child of a column
+  // that overflows once the activity feeds fill up, and `overflow-hidden`
+  // means flexbox can shrink it to a hairline without leaving any visual cue
+  // that the health header was removed. The page container already scrolls
+  // (`overflow-y-auto`); let it, rather than eating the strip.
   return (
     <div
       data-testid="overview-top-strip"
-      className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-app bg-surface-2 md:grid-cols-4"
+      className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-md border border-app bg-surface-2 md:grid-cols-4"
     >
       <Cell label="Server">
-        <StateChip state={health} />
+        <LoadingCell value={status} testid="overview-server">
+          {(s) => <StateChip state={s.health ?? "unknown"} />}
+        </LoadingCell>
       </Cell>
       <Cell label="Version">
-        <CopyChip label="version" value={version} testid="overview-version" />
+        <LoadingCell value={status} testid="overview-version">
+          {(s) => (
+            <CopyChip
+              label="version"
+              value={s.version ?? "—"}
+              testid="overview-version"
+            />
+          )}
+        </LoadingCell>
       </Cell>
       <Cell label="Uptime">
-        {startedAt ? (
-          <Uptime startedAtMs={startedAt} />
-        ) : (
-          <span className="tabular text-muted">—</span>
-        )}
+        <LoadingCell value={status} testid="overview-uptime">
+          {(s) =>
+            typeof s.startedAt === "number" ? (
+              <Uptime startedAtMs={s.startedAt} />
+            ) : (
+              <StripDash />
+            )
+          }
+        </LoadingCell>
       </Cell>
       <Cell label="Storage">
-        <span className="font-mono text-xs text-default">{storageBackend}</span>
+        <LoadingCell value={status} testid="overview-storage">
+          {(s) => (
+            <StripValue value={detailString(s, "storageBackend", "storage")} />
+          )}
+        </LoadingCell>
       </Cell>
       <Cell label="License">
-        <span className="font-mono text-xs text-default">{license}</span>
+        <LoadingCell value={status} testid="overview-license">
+          {(s) => (
+            <StripValue value={detailString(s, "license", "licensePosture")} />
+          )}
+        </LoadingCell>
       </Cell>
       <Cell label="Started">
-        {startedAt ? (
-          <RelativeTime epochMs={startedAt} />
-        ) : (
-          <span className="tabular text-muted">—</span>
-        )}
+        <LoadingCell value={status} testid="overview-started">
+          {(s) =>
+            typeof s.startedAt === "number" ? (
+              <RelativeTime epochMs={s.startedAt} />
+            ) : (
+              <StripDash />
+            )
+          }
+        </LoadingCell>
       </Cell>
       <Cell label="Updated">
-        {typeof status?.updatedAt === "number" ? (
-          <RelativeTime epochMs={status.updatedAt} />
-        ) : (
-          <span className="tabular text-muted">—</span>
-        )}
+        <LoadingCell value={status} testid="overview-updated">
+          {(s) =>
+            typeof s.updatedAt === "number" ? (
+              <RelativeTime epochMs={s.updatedAt} />
+            ) : (
+              <StripDash />
+            )
+          }
+        </LoadingCell>
       </Cell>
       <Cell label="Tenant">
         <CopyChip
@@ -184,6 +253,15 @@ function TopStrip({ status }: { status: SystemStatusDoc | undefined }) {
   );
 }
 
+function StripValue({ value }: { value: string | null }) {
+  if (value === null) return <StripDash />;
+  return <span className="font-mono text-xs text-default">{value}</span>;
+}
+
+function StripDash() {
+  return <span className="tabular text-muted">—</span>;
+}
+
 function Cell({
   label,
   children,
@@ -193,10 +271,14 @@ function Cell({
 }) {
   return (
     <div className="flex flex-col gap-1 bg-surface px-3 py-2">
-      <span className="text-[10px] uppercase tracking-[0.14em] text-muted">
+      <span className="text-xs uppercase tracking-[0.14em] text-muted">
         {label}
       </span>
-      <span className="text-sm">{children}</span>
+      {/* The value line is reserved at 20px whatever occupies it. The loading
+          marker is a bare `·` at text-sm and the loaded cells are text-xs
+          chips, so without a floor the whole eight-cell strip resized under
+          itself the moment the status query landed. */}
+      <span className="flex min-h-5 items-center text-sm">{children}</span>
     </div>
   );
 }
@@ -208,6 +290,8 @@ function ResourceCountsGrid({
   tables,
   runs,
   tenantCount,
+  tenantSubline,
+  tableSubline,
 }: {
   machines: LoadingValue<AnyDoc[]>;
   services: LoadingValue<AnyDoc[]>;
@@ -215,6 +299,8 @@ function ResourceCountsGrid({
   tables: LoadingValue<AnyDoc[]>;
   runs: LoadingValue<AnyDoc[]>;
   tenantCount: number;
+  tenantSubline?: React.ReactNode;
+  tableSubline?: React.ReactNode;
 }) {
   return (
     <div
@@ -240,14 +326,14 @@ function ResourceCountsGrid({
         testid="overview-count-tenants"
         docs={{ kind: "ok", value: [] }}
         explicitTotal={tenantCount}
-        groupBy={null}
+        subline={tenantSubline}
         to="/developer/storage"
       />
       <CountPanel
         title="Tables"
         testid="overview-count-tables"
         docs={tables}
-        groupBy={null}
+        subline={tableSubline}
         to="/developer/storage"
       />
       <CountPanel
@@ -255,6 +341,7 @@ function ResourceCountsGrid({
         testid="overview-count-functions"
         docs={functions}
         groupBy="kind"
+        groupKind="category"
         to="/developer/compute"
       />
       <CountPanel
@@ -268,18 +355,34 @@ function ResourceCountsGrid({
   );
 }
 
+/**
+ * One count tile. The second line is either a breakdown of the counted
+ * documents (`groupBy`) or a caller-supplied fact (`subline`) — never a
+ * sentence apologising for the absence of a breakdown a tile was never
+ * built to have. Tenants and tables have no lifecycle state, so "No state
+ * breakdown" was reporting the absence of something that cannot exist.
+ *
+ * `groupKind` decides the badge. A state gets a labeled dot from the
+ * DESIGN.md token table; a category (function kind, adapter, backend) gets
+ * a filled pill. Routing a category through `StateChip` is what made the
+ * landing page read "? QUERY 3   ? MUTATION 3".
+ */
 function CountPanel({
   title,
   testid,
   docs,
   groupBy,
+  groupKind = "state",
+  subline,
   to,
   explicitTotal,
 }: {
   title: string;
   testid: string;
   docs: LoadingValue<AnyDoc[]>;
-  groupBy: string | null;
+  groupBy?: string;
+  groupKind?: "state" | "category";
+  subline?: React.ReactNode;
   to:
     | "/operator/machines"
     | "/developer/compute"
@@ -311,18 +414,37 @@ function CountPanel({
           )}
         </span>
       </div>
-      <CountPanelBreakdown docs={docs} groupBy={groupBy} />
+      {/* The slot keeps its line whatever it holds — dash, sentence, dots,
+          or the slightly taller category pills — so all six tiles and both
+          grid rows stay the same height. */}
+      <div
+        className="flex min-h-5 items-center"
+        data-testid={`${testid}-subline`}
+      >
+        <CountPanelSubline
+          docs={docs}
+          groupBy={groupBy}
+          groupKind={groupKind}
+          subline={subline}
+        />
+      </div>
     </Link>
   );
 }
 
-function CountPanelBreakdown({
+function CountPanelSubline({
   docs,
   groupBy,
+  groupKind,
+  subline,
 }: {
   docs: LoadingValue<AnyDoc[]>;
-  groupBy: string | null;
+  groupBy?: string;
+  groupKind: "state" | "category";
+  subline?: React.ReactNode;
 }) {
+  // Connection state outranks both paths: a tile whose query has not landed
+  // must not present a stale breakdown or a confident subline.
   if (docs.kind === "loading") {
     return <span className="text-xs text-muted">Loading…</span>;
   }
@@ -340,21 +462,37 @@ function CountPanelBreakdown({
       </span>
     );
   }
-  const breakdown = groupBy ? groupCount(docs.value, groupBy) : [];
-  if (breakdown.length === 0) {
-    return <span className="text-xs text-muted">No state breakdown</span>;
+  if (groupBy === undefined) {
+    if (subline === undefined) return <Dash />;
+    return <span className="text-xs text-muted">{subline}</span>;
   }
+  const breakdown = groupCount(docs.value, groupBy);
+  // Groupable but genuinely empty. The count already says zero; DESIGN.md
+  // allows the em dash at row scope, and it costs no reading.
+  if (breakdown.length === 0) return <Dash />;
   return (
     <ul className="flex flex-wrap gap-1.5">
       {breakdown.map(([key, count]) => (
         <li key={key} className="inline-flex items-center gap-1">
-          <StateChip state={key} />
+          {groupKind === "category" ? (
+            <CategoryChip value={key} />
+          ) : (
+            <StateChip state={key} />
+          )}
           <span className="tabular font-mono text-xs text-default">
             {count}
           </span>
         </li>
       ))}
     </ul>
+  );
+}
+
+function Dash() {
+  return (
+    <span className="text-xs text-muted" aria-hidden="true">
+      —
+    </span>
   );
 }
 
@@ -372,22 +510,24 @@ function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
   return (
     <section
       data-testid="overview-events"
-      className="flex flex-col rounded-md border border-app bg-surface"
+      className="flex min-h-[200px] flex-col rounded-md border border-app bg-surface"
     >
       <header className="flex items-baseline justify-between border-b border-app px-3 py-2">
         <h2 className="text-xs uppercase tracking-[0.14em] text-muted">
           Recent events
         </h2>
-        <Link
-          to="/developer/observability"
-          className="text-xs text-link hover:underline"
-        >
+        <Link to="/developer/observability" className="text-xs link-inline">
           View all
         </Link>
       </header>
       <FeedBody
         value={events}
-        emptyMessage="No events recorded yet — the feed updates live."
+        testid="overview-events"
+        empty={{
+          title: "No events recorded yet",
+          body: "Server, scheduler, and function activity streams here live.",
+          action: { label: "Open Compute", to: "/developer/compute" },
+        }}
         renderItems={(items) => (
           <ul className="divide-y divide-app">
             {items.slice(0, 20).map((event) => (
@@ -400,39 +540,89 @@ function EventsFeed({ events }: { events: LoadingValue<AnyDoc[]> }) {
   );
 }
 
+type FeedEmpty = {
+  title: string;
+  body: string;
+  action: { label: string; to: "/developer/compute" };
+};
+
+/**
+ * The two feeds sit in a stretched two-column grid, so the shorter card is
+ * handed the taller one's height whether it has content or not. Rather than
+ * un-stretching the grid — which only moves the ragged edge, since the events
+ * feed shows 20 rows and the runs feed 10 — the non-list branches fill the
+ * frame they are given and centre in it. A centred two-line message with a
+ * next action reads as a deliberate empty state; the same words pinned to the
+ * top-left of a tall empty box read as a list that failed to load.
+ */
 function FeedBody({
   value,
-  emptyMessage,
+  empty,
+  testid,
   renderItems,
 }: {
   value: LoadingValue<AnyDoc[]>;
-  emptyMessage: string;
+  empty: FeedEmpty;
+  testid: string;
   renderItems: (items: AnyDoc[]) => React.ReactNode;
 }) {
   if (value.kind === "loading") {
-    return <p className="px-3 py-4 text-xs text-muted">Loading…</p>;
+    return <FeedNotice>Loading…</FeedNotice>;
   }
   if (value.kind === "offline") {
     return (
-      <p
-        className="px-3 py-4 text-xs text-muted"
-        title="Disconnected — stream resumes on reconnect"
-      >
+      <FeedNotice title="Disconnected — stream resumes on reconnect">
         offline · live feed paused
-      </p>
+      </FeedNotice>
     );
   }
   if (value.kind === "error") {
     return (
-      <p className="px-3 py-4 text-xs text-danger" title={value.message}>
+      <FeedNotice title={value.message} tone="danger">
         {value.message}
-      </p>
+      </FeedNotice>
     );
   }
   if (value.value.length === 0) {
-    return <p className="px-3 py-4 text-xs text-muted">{emptyMessage}</p>;
+    return (
+      <div
+        className="flex flex-1 flex-col items-center justify-center gap-1 px-3 py-6 text-center"
+        data-testid={`${testid}-empty`}
+      >
+        <p className="text-xs text-default">{empty.title}</p>
+        <p className="max-w-[40ch] text-xs text-muted">{empty.body}</p>
+        <Link
+          to={empty.action.to}
+          className="mt-2 rounded border border-app px-3 py-1 font-mono text-xs uppercase tracking-wide text-muted hover:bg-surface-2 hover:text-default"
+          data-testid={`${testid}-empty-cta`}
+        >
+          {empty.action.label}
+        </Link>
+      </div>
+    );
   }
   return <>{renderItems(value.value)}</>;
+}
+
+function FeedNotice({
+  children,
+  title,
+  tone = "muted",
+}: {
+  children: React.ReactNode;
+  title?: string;
+  tone?: "muted" | "danger";
+}) {
+  return (
+    <p
+      className={`flex flex-1 items-center justify-center px-3 py-6 text-center text-xs ${
+        tone === "danger" ? "text-danger" : "text-muted"
+      }`}
+      title={title}
+    >
+      {children}
+    </p>
+  );
 }
 
 function EventRow({ event }: { event: AnyDoc }) {
@@ -476,22 +666,24 @@ function RecentRuns({ runs }: { runs: LoadingValue<AnyDoc[]> }) {
   return (
     <section
       data-testid="overview-runs"
-      className="flex flex-col rounded-md border border-app bg-surface"
+      className="flex min-h-[200px] flex-col rounded-md border border-app bg-surface"
     >
       <header className="flex items-baseline justify-between border-b border-app px-3 py-2">
         <h2 className="text-xs uppercase tracking-[0.14em] text-muted">
           Recent runs
         </h2>
-        <Link
-          to="/developer/observability"
-          className="text-xs text-link hover:underline"
-        >
+        <Link to="/developer/observability" className="text-xs link-inline">
           View all
         </Link>
       </header>
       <FeedBody
         value={runs}
-        emptyMessage="No runs yet — invoke a function to populate this list."
+        testid="overview-runs"
+        empty={{
+          title: "No runs yet",
+          body: "A run is recorded each time a query, mutation, or action executes.",
+          action: { label: "Open Compute", to: "/developer/compute" },
+        }}
         renderItems={(items) => (
           <ul className="divide-y divide-app">
             {items.slice(0, 10).map((run) => (
