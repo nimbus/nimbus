@@ -844,6 +844,65 @@ mod tests {
     use nimbus_core::{CommitErrorClass, Retryability, RuntimeTimeoutKind};
     use nimbus_testing::commit_taxonomy::assert_commit_taxonomy_mapping;
 
+    /// The wire names the SDK reads.
+    ///
+    /// `decodeNimbusErrorEnvelope` in `packages/nimbus/src/errors.ts` pulls
+    /// `requestId`, `timestamp`, `severity`, and `remediation.{action,message}`
+    /// off this struct by exact key, and drops anything whose shape does not
+    /// match rather than failing. A rename here would therefore not break a
+    /// client loudly — it would quietly hand every caller `undefined` for the
+    /// field. This pins the serialized shape so the rename fails here instead.
+    #[test]
+    fn public_error_serializes_the_key_set_the_sdk_decodes() {
+        let public = PublicError::protocol_no_overlap(vec!["nimbus.v1".to_string()]);
+        let serialized = serde_json::to_value(&public).expect("public error should serialize");
+        let object = serialized
+            .as_object()
+            .expect("a public error serializes as an object");
+
+        let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "code",
+                "detail",
+                "message",
+                "remediation",
+                "requestId",
+                "retryable",
+                "severity",
+                "timestamp",
+            ],
+        );
+
+        let mut remediation_keys: Vec<&str> = serialized["remediation"]
+            .as_object()
+            .expect("a remediation serializes as an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        remediation_keys.sort_unstable();
+        assert_eq!(remediation_keys, ["action", "message"]);
+
+        // The SDK accepts exactly "fatal", "error", and "warning"; anything
+        // else decodes to `undefined`.
+        assert_eq!(serialized["severity"], serde_json::json!("fatal"));
+
+        // A remediation is optional on the wire, and its absence must drop the
+        // key rather than encode a null the SDK would have to special-case.
+        let without = PublicError::route_not_found("no route");
+        let serialized_without =
+            serde_json::to_value(&without).expect("public error should serialize");
+        assert!(
+            !serialized_without
+                .as_object()
+                .expect("a public error serializes as an object")
+                .contains_key("remediation"),
+            "an absent remediation must not serialize as a key"
+        );
+    }
+
     #[test]
     fn server_envelope_encodes_full_commit_taxonomy_for_sdk_decoders() {
         #[rustfmt::skip]

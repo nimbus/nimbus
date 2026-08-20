@@ -860,9 +860,12 @@ fn egress_proxy_pure_success_allow_writes_one_durable_intent_row() {
 
 #[test]
 fn egress_proxy_plain_http_upstream_failure_writes_terminal_row_before_502() {
-    let dead = TcpListener::bind(("127.0.0.1", 0)).expect("dead port should bind");
-    let dead_port = dead.local_addr().expect("dead addr should read").port();
-    drop(dead);
+    // The claim is what keeps this endpoint dead: the window reserves the port
+    // for this process and binds nothing on it, so the upstream dial below is
+    // refused. The probe it replaces released the port before the dial, which
+    // let any other process answer in its place.
+    let port_window = PortWindow::claim();
+    let dead_port = port_window.port(0);
     let captured = Arc::new(Mutex::new(Vec::new()));
     let (durable_sink, terminal_started, release_terminal) =
         blocking_second_durable_sink_for_test(Arc::clone(&captured));
@@ -935,9 +938,12 @@ fn egress_proxy_plain_http_upstream_failure_writes_terminal_row_before_502() {
 
 #[test]
 fn egress_proxy_plain_http_failed_terminal_append_closes_without_502_and_marks_unhealthy() {
-    let dead = TcpListener::bind(("127.0.0.1", 0)).expect("dead port should bind");
-    let dead_port = dead.local_addr().expect("dead addr should read").port();
-    drop(dead);
+    // The claim is what keeps this endpoint dead: the window reserves the port
+    // for this process and binds nothing on it, so the upstream dial below is
+    // refused. The probe it replaces released the port before the dial, which
+    // let any other process answer in its place.
+    let port_window = PortWindow::claim();
+    let dead_port = port_window.port(0);
     let captured = Arc::new(Mutex::new(Vec::new()));
     let proxy = start_test_proxy_with_store_logger_and_durable_sink(
         allow_policy([
@@ -1105,9 +1111,12 @@ fn egress_proxy_plain_http_informational_response_then_upstream_close_is_termina
 
 #[test]
 fn egress_proxy_concurrent_upstream_failures_pair_rows_by_request_id() {
-    let dead = TcpListener::bind(("127.0.0.1", 0)).expect("dead port should bind");
-    let dead_port = dead.local_addr().expect("dead addr should read").port();
-    drop(dead);
+    // The claim is what keeps this endpoint dead: the window reserves the port
+    // for this process and binds nothing on it, so the upstream dial below is
+    // refused. The probe it replaces released the port before the dial, which
+    // let any other process answer in its place.
+    let port_window = PortWindow::claim();
+    let dead_port = port_window.port(0);
     let captured = Arc::new(Mutex::new(Vec::new()));
     let intent_count = Arc::new(AtomicUsize::new(0));
     let durable_sink = {

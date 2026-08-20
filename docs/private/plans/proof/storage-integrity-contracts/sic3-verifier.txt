@@ -1,0 +1,17 @@
+storage integrity contracts verification
+========================================
+  PASS  1. typed ObjectExpectedState + ObjectConditionOutcome live in the storage seam
+  PASS  2. the condition crosses S3ObjectMeta and the S3 pre-read decision is gone
+  PASS  3. the committer actor decides the condition before sequence assignment
+  PASS  4. sequential + concurrent conditional probes pass
+  PASS  5. rejection has no commit or blob effect (1 test(s))
+  PASS  6. concurrent multipart writes preserve every accepted part (1 test(s))
+  PASS  7. all storage writers are inventoried (1 test(s))
+  PASS  8. an omitted effect fails the ownership gate (1 test(s))
+  FAIL  9. one canonical digest  [MaterializedPosition missing from crates/nimbus-storage/src/store/journal_snapshot.rs, or the engine canonicalizer still exists in crates/nimbus-engine/src/verification.rs]
+  FAIL  10. divergence + ordering tests  [divergence=0 ordering=0 exit=0]
+  FAIL  11. materialized consumers bind the position  [shadow=0 pitr=0 exits=0/0]
+  FAIL  12. provider qualification matrix is complete  [no test matching 'provider_contract_matrix_is_complete' ran in nimbus-storage (vacuous filter)]
+  FAIL  13. physical SQLite durability faults  [0/4 cases passed, exit=0]
+========================================
+Summary: 8 passed, 5 failed

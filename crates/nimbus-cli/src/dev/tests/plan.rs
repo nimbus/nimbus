@@ -122,10 +122,18 @@ fn dev_plan_retains_every_advertised_wire_socket_until_start_handoff() {
     listeners
         .close_and_settle()
         .expect("discarded dev plan should close and settle every listener");
-    for port in advertised_ports {
-        std::net::TcpListener::bind(("127.0.0.1", port))
-            .expect("explicit plan cancellation should release the advertised socket");
-    }
+    // These ports are the kernel's, not the test's: an undetected wire surface
+    // takes a provider-assigned port, so there is nothing here for a
+    // `PortWindow` to claim in advance. Holding each re-bound socket until the
+    // loop ends at least proves all three are free at the same moment rather
+    // than one at a time.
+    let _released: Vec<std::net::TcpListener> = advertised_ports
+        .into_iter()
+        .map(|port| {
+            std::net::TcpListener::bind(("127.0.0.1", port))
+                .expect("explicit plan cancellation should release the advertised socket")
+        })
+        .collect();
 }
 
 #[test]

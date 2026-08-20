@@ -220,6 +220,16 @@ incremental = false
 # dependency updates for RUSTSEC-2026-0194.
 object_store = { path = "third_party/object_store-0.14.0" }
 s3s = { path = "third_party/s3s-0.14.0" }
+# libsql 0.9.30 enables Hyper's HTTP/2 feature even though its connector is
+# explicitly HTTP/1-only. The local copy removes that unused feature so the
+# unsupported, vulnerable h2 0.3 line is not linked.
+libsql = { path = "third_party/libsql-0.9.30" }
+# flume 0.12.0 declares spin 0.9.8 even for consumers such as fjall that
+# disable every flume feature. The local copy selects the current spin line.
+flume = { path = "third_party/flume-0.12.0" }
+# lazy_static 1.5.0's no-std feature selects yanked spin 0.9.8. Its use of
+# spin::Once is source-compatible with the current spin line.
+lazy_static = { path = "third_party/lazy_static-1.5.0" }
 # Pingora 0.8.1 depends on brotli 3 with default features, whose `ffi-api`
 # exports C Brotli symbols that collide with the pinned Deno runtime.
 brotli = { path = "third_party/brotli-3.5.0" }

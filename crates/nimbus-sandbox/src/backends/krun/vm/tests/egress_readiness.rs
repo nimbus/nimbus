@@ -3,6 +3,8 @@
 use super::support::*;
 use std::sync::Arc;
 
+use nimbus_process_harness::PortWindow;
+
 use crate::backends::oci::egress::{
     PepPreAdoptionReleaseAuthority, ensure_egress_proxy_running_with_release_authority,
 };
@@ -13,17 +15,15 @@ use crate::backends::oci::network::{
 #[test]
 fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_ready() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let endpoint_listener =
-        TcpListener::bind("127.0.0.1:0").expect("published endpoint fixture should bind");
-    let endpoint_port = endpoint_listener
-        .local_addr()
-        .expect("published endpoint fixture should report its address")
-        .port();
-    let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP port fixture should bind");
-    let pep_port = pep_reservation
-        .local_addr()
-        .expect("PEP port fixture should report its address")
-        .port();
+    // One claimed window owns both fixture ports, partitioned so the published
+    // endpoint and the PEP can never be handed the same number. The endpoint
+    // listener still occupies its port for the whole test; the PEP binds its
+    // own port for real, which the window keeps free of other test processes.
+    let port_window = PortWindow::claim();
+    let endpoint_port = port_window.port(0);
+    let endpoint_listener = TcpListener::bind(("127.0.0.1", endpoint_port))
+        .expect("published endpoint fixture should bind");
+    let pep_port = port_window.port(1);
     let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = pep_port..=pep_port;
@@ -82,7 +82,6 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
         1,
         "complete initial attachment should apply the exact egress pin once"
     );
-    drop(pep_reservation);
     ensure_egress_proxy_running_with_release_authority(
         &backend.egress_proxies,
         &manifest.spec.tenant_id,

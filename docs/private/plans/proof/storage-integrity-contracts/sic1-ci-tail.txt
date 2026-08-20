@@ -1,0 +1,175 @@
+# make test-rust-docs verify-harness build-js typecheck-js (filtered)
+# full log 146KB, mostly third_party build warnings; retained: lane commands, results, errors
+1:bash scripts/single-flight.sh --key cargo-doc-tests-workspace-ci -- cargo test --workspace --exclude nimbus-runtime --doc
+220:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+226:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+232:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+238:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+244:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+250:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+256:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+262:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+268:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+274:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+280:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+286:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+292:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+298:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+304:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+310:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+316:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+322:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+328:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+334:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+340:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+346:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+352:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+358:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+364:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+370:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+376:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+382:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+388:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+394:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+400:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+406:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+412:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+418:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+424:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+430:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+436:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+442:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+450:test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.24s
+456:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+462:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+464:bash scripts/verification-harness.sh required all
+471:test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 304 filtered out; finished in 0.48s
+692:test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 674 filtered out; finished in 0.83s
+698:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+921:test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 695 filtered out; finished in 6.76s
+927:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.01s
+933:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.01s
+939:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.01s
+945:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+951:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+957:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+1190:test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 697 filtered out; finished in 3.31s
+1196:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.00s
+1202:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.00s
+1208:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+1214:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+1220:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+1226:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+1241:test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1392 filtered out; finished in 7.71s
+1247:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+1253:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+1259:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+1265:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+1271:test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+1273:npm run build --workspaces --if-present
+1275:> convex@0.1.45 build
+1276:> node ../../scripts/build-js-package.mjs convex && node ./build.mjs
+1282:> firebase@0.1.45 build
+1283:> npm run codegen:proto && node ../../scripts/build-js-package.mjs firebase
+1286:> firebase@0.1.45 codegen:proto
+1287:> node ./src/codegen-protos.mjs
+1301:> @nimbus/nimbus@0.1.45 build
+1302:> node ../../scripts/build-js-package.mjs nimbus
+1306:> nimbus-ui@0.1.45 build
+1307:> npm run codegen && tsc -p tsconfig.json --noEmit && vite build
+1310:> nimbus-ui@0.1.45 codegen
+1311:> node ../codegen/src/cli.mjs --app . && node scripts/generate-routes.mjs
+2026:> @nimbus/codegen@0.1.45 build
+2027:> node ./build.mjs
+2031:> @nimbus/mongodb@0.1.45 build
+2032:> node ../../scripts/build-js-package.mjs mongodb
+2036:> @nimbus/dynamodb@0.1.45 build
+2037:> node ../../scripts/build-js-package.mjs dynamodb
+2041:> build
+2042:> npm run codegen && vite build
+2045:> codegen
+2046:> convex codegen --app .
+2057:> build
+2058:> npm run codegen && vite build
+2061:> codegen
+2062:> convex codegen --app .
+2073:> build
+2074:> npm run codegen && vite build
+2077:> codegen
+2078:> convex codegen --app .
+2090:> build
+2091:> vite build
+2103:> build
+2104:> vite build
+2116:> build
+2117:> vite build
+2129:> build
+2130:> vite build
+2142:> build
+2143:> npm run codegen && vite build
+2146:> codegen
+2147:> nimbus-codegen --app .
+2158:npm run typecheck --workspaces --if-present
+2160:> convex@0.1.45 typecheck
+2161:> node ./src/selftest.mjs --typecheck-only
+2164:> firebase@0.1.45 typecheck
+2165:> npm run codegen:proto && node ./src/selftest.mjs --typecheck-only
+2168:> firebase@0.1.45 codegen:proto
+2169:> node ./src/codegen-protos.mjs
+2202:> @nimbus/nimbus@0.1.45 typecheck
+2203:> node ./src/selftest.mjs --typecheck-only
+2207:> nimbus-ui@0.1.45 typecheck
+2208:> npm run codegen && tsc -p tsconfig.json --noEmit
+2211:> nimbus-ui@0.1.45 codegen
+2212:> node ../codegen/src/cli.mjs --app . && node scripts/generate-routes.mjs
+2378:> @nimbus/codegen@0.1.45 typecheck
+2379:> node ./src/selftest.mjs --typecheck-only
+2382:> @nimbus/mongodb@0.1.45 typecheck
+2383:> node ./src/selftest.mjs --typecheck-only
+2388:> @nimbus/dynamodb@0.1.45 typecheck
+2389:> node ./src/selftest.mjs --typecheck-only
+2394:> typecheck
+2395:> npm run codegen && tsc -p convex/tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+2398:> codegen
+2399:> node ./scripts/vendor-external-packages.mjs && convex codegen --app .
+2403:> typecheck
+2404:> npm run codegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+2407:> codegen
+2408:> convex codegen --app .
+2411:> typecheck
+2412:> tsc -p tsconfig.json --noEmit
+2415:> typecheck
+2416:> tsc -p tsconfig.json --noEmit
+2418:src/index.ts(1,31): error TS2307: Cannot find module 'firebase-admin/app' or its corresponding type declarations.
+2419:src/index.ts(2,30): error TS2307: Cannot find module 'firebase-admin/firestore' or its corresponding type declarations.
+2420:src/index.ts(3,35): error TS2307: Cannot find module 'firebase-functions/v2/firestore' or its corresponding type declarations.
+2421:src/index.ts(4,27): error TS2307: Cannot find module 'firebase-functions/v2/https' or its corresponding type declarations.
+2422:src/index.ts(10,45): error TS7006: Parameter 'req' implicitly has an 'any' type.
+2423:src/index.ts(10,50): error TS7006: Parameter 'res' implicitly has an 'any' type.
+2424:src/index.ts(34,11): error TS7006: Parameter 'event' implicitly has an 'any' type.
+2425:npm error Lifecycle script `typecheck` failed with error:
+2426:npm error code 2
+2427:npm error path /Users/jack/src/github.com/nimbus/nimbus/examples/cloud-functions/tasks/functions
+2428:npm error workspace cloud-functions-tasks-functions
+2429:npm error location /Users/jack/src/github.com/nimbus/nimbus/examples/cloud-functions/tasks/functions
+2430:npm error command failed
+2431:npm error command sh -c tsc -p tsconfig.json --noEmit
+2434:> typecheck
+2435:> tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+2438:> typecheck
+2439:> tsc -p tsconfig.json --noEmit
+2442:> typecheck
+2443:> tsc -p tsconfig.json --noEmit
+2446:> typecheck
+2447:> tsc -p tsconfig.json --noEmit
+2450:> typecheck
+2451:> tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+2454:> typecheck
+2455:> npm run codegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+2458:> codegen
+2459:> nimbus-codegen --app .
+2462:> typecheck
+2463:> npm run codegen && tsc -p tsconfig.json --noEmit
+2466:> codegen
+2467:> nimbus-codegen --app .
+2469:make: *** [typecheck-js] Error 2

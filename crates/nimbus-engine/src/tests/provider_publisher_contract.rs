@@ -415,8 +415,15 @@ pub(crate) async fn exercise_provider_publisher_contract(
         .expect("journal pause waiter should join"),
         "queued follower should reach the pre-assignment pause"
     );
-    let scheduler_cancel = Arc::new(Notify::new());
-    let scheduler_cancel_for_wait = scheduler_cancel.clone();
+    // A scheduler write does not travel the mutation journal. It commits on the
+    // tenant committer actor, which the armed pause above does not hold: that
+    // pause parks the journal drain task. Signalling cancellation through the
+    // cancel future would therefore only race the actor, and lose whenever the
+    // actor reaches the write first -- `select!` polls the submission before
+    // the cancel arm, so the actor can be inside the guard before the arm is
+    // polled at all. `check_cancel` is the deterministic boundary instead. The
+    // committer calls it before it prepares any write, so a guard that reports
+    // cancellation fixes the outcome whatever the interleaving.
     let cancelled_scheduler_write = tokio::spawn({
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
@@ -432,14 +439,13 @@ pub(crate) async fn exercise_provider_publisher_contract(
                             fields: marker("cancelled-scheduler"),
                         },
                     },
-                    async move { scheduler_cancel_for_wait.notified().await },
-                    || Ok(()),
+                    std::future::pending(),
+                    || Err(Error::Cancelled),
                 )
                 .await
         }
     });
     cancel.notify_one();
-    scheduler_cancel.notify_one();
     timeout(
         Duration::from_secs(5),
         engine.wait_for_queued_mutation_cancellation_observed_for_testing(&tenant_id),

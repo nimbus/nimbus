@@ -38,7 +38,7 @@ futures-sink = { version = "0.3" }
 futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
 hashbrown = { version = "0.17" }
-hyper-582f2526e08bb6a0 = { package = "hyper", version = "0.14", features = ["client", "http1", "http2", "runtime", "stream"] }
+hyper-582f2526e08bb6a0 = { package = "hyper", version = "0.14", features = ["client", "http1", "runtime", "stream"] }
 hyper-dff4ba8e3ae991db = { package = "hyper", version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "client-proxy", "server-auto", "service"] }
 icu_locale_core = { version = "2", default-features = false, features = ["alloc", "zerovec"] }
@@ -63,10 +63,8 @@ phf_shared-594e8ee84c453af0 = { package = "phf_shared", version = "0.13", defaul
 phf_shared-a6292c17cd707f01 = { package = "phf_shared", version = "0.11", features = ["uncased"] }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 prost = { version = "0.13", features = ["prost-derive"] }
-rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 rand-93f6ce9d446188ac = { package = "rand", version = "0.10" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
-rand_chacha = { version = "0.9", default-features = false, features = ["std"] }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }

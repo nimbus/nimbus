@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { defaultRuntimeDiagnostics } from "../../../test/handlers";
-import { ConfigurationSection } from "./configuration";
+import { ConfigurationSection } from "./-configuration";
 
 describe("ConfigurationSection runtime diagnostics", () => {
   it("renders the default V8 lane and fail-closed Bun/JSC lane contract", () => {

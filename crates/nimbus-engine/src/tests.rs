@@ -438,7 +438,7 @@ pub(crate) fn materialized_snapshot_with_documents(
         })
         .collect();
     crate::MaterializedJournalSnapshot {
-        version: 2,
+        version: nimbus_storage::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
         applied_sequence: SequenceNumber(1),
         durable_head: SequenceNumber(1),
         table_identities,

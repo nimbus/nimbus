@@ -1,7 +1,6 @@
 //! Container manifest schema and crash-publication proofs.
 
 use std::fs::OpenOptions;
-use std::net::{Ipv4Addr, TcpListener};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -14,6 +13,7 @@ use super::support::*;
 use super::*;
 use fs2::FileExt;
 use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
+use nimbus_process_harness::PortWindow;
 use tempfile::TempDir;
 
 #[test]
@@ -477,7 +477,10 @@ fn retained_startup_failure_fences_egress_reload_before_live_policy_mutation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let proxy_port = unused_loopback_port();
+    // Held for the whole test: the published-port range below hands this port
+    // to the container proxy, which binds it after the backend starts.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
     config.published_port_range = proxy_port..=proxy_port;
     let mut backend = ContainerSandboxBackend::new(config.clone());
     let manifest = backend
@@ -566,7 +569,10 @@ fn direct_predecision_egress_reload_cannot_create_a_provider_effect() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let proxy_port = unused_loopback_port();
+    // Held for the whole test: the published-port range below hands this port
+    // to the container proxy, which binds it after the backend starts.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
     config.published_port_range = proxy_port..=proxy_port;
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
@@ -624,7 +630,10 @@ fn reload_acknowledgement_before_completion_persistence_retains_durable_desired_
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let proxy_port = unused_loopback_port();
+    // Held for the whole test: the published-port range below hands this port
+    // to the container proxy, which binds it after the backend starts.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
     config.published_port_range = proxy_port..=proxy_port;
     let baseline = ContainerSandboxBackend::new(config.clone());
     let mut manifest = baseline
@@ -863,12 +872,4 @@ fn plan_only_config(root: &std::path::Path) -> ContainerSandboxBackendConfig {
         start_mode: ContainerStartMode::PlanOnly,
         ..ContainerSandboxBackendConfig::under_root(root)
     }
-}
-
-fn unused_loopback_port() -> u16 {
-    TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("ephemeral listener should bind")
-        .local_addr()
-        .expect("ephemeral listener should expose address")
-        .port()
 }

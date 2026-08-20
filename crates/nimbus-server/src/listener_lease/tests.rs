@@ -4,6 +4,7 @@ use nimbus_network::{
     ListenerId, NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim,
     NetworkResourceId, PortBindingProvenance, PortLeaseEffectScope, PortLeaseId, PortLeasePhase,
 };
+use nimbus_process_harness::PortWindow;
 
 use super::*;
 
@@ -208,6 +209,12 @@ fn live_listener_observation_evidence_is_exact_stripped_and_effect_free() {
 #[test]
 fn dead_workload_ingress_owner_rebinds_same_provider_assigned_port() {
     let state_root = tempfile::tempdir().expect("state root should be created");
+    // The port the simulated provider assigns is rebound further down, once
+    // the first owner is confirmed dead. Sourcing it from a window this
+    // process holds keeps that rebind a statement about the lease rather than
+    // a race with whatever else is running on the host.
+    let window = PortWindow::claim();
+    let provider_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, window.port(0)));
     let request = workload_request();
     let reservation = workload_reservation_claim();
     let port_authority =
@@ -220,7 +227,7 @@ fn dead_workload_ingress_owner_rebinds_same_provider_assigned_port() {
         .expect("first publisher should claim");
     let first = first
         .adopt_std(
-            std::net::TcpListener::bind("127.0.0.1:0")
+            std::net::TcpListener::bind(provider_addr)
                 .expect("first provider-assigned socket should bind"),
         )
         .expect("first listener should adopt");
@@ -537,14 +544,20 @@ async fn external_listener_adoption_records_external_provenance() {
 #[tokio::test]
 async fn dead_process_bound_listener_drop_reconciles_before_next_prepare() {
     let state_root = tempfile::tempdir().expect("state root should be created");
+    // The request stays provider-assigned, so `prepare_main` keeps receiving
+    // port zero. Only the concrete socket moves into a window this process
+    // holds: the replacement below rebinds the released port, and that has to
+    // prove reconciliation rather than race the rest of the suite for a port.
+    let window = PortWindow::claim();
     let first_authority = direct_authority(state_root.path());
     let requested_addr = "127.0.0.1:0".parse().expect("fixture address should parse");
     let first_prepared = first_authority
         .prepare_main(requested_addr)
         .expect("first listener should prepare");
-    let first_raw = tokio::net::TcpListener::bind(requested_addr)
-        .await
-        .expect("first listener should bind");
+    let first_raw =
+        tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, window.port(0))))
+            .await
+            .expect("first listener should bind");
     let actual_addr = first_raw
         .local_addr()
         .expect("bound address should resolve");
@@ -693,8 +706,12 @@ async fn fresh_authority_reclaims_the_same_surviving_external_listener() {
 async fn rebound_same_address_external_listener_cannot_reclaim_prior_provider_incarnation() {
     let state_root = tempfile::tempdir().expect("state root should be created");
     let original_context = external_context("original-main", 1);
+    // The same address is rebound below as a fresh provider incarnation, so
+    // the external owner takes a port this process holds for the whole test.
+    let window = PortWindow::claim();
     let original =
-        std::net::TcpListener::bind("127.0.0.1:0").expect("original external owner should bind");
+        std::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, window.port(0))))
+            .expect("original external owner should bind");
     original
         .set_nonblocking(true)
         .expect("original listener should become nonblocking");
@@ -907,18 +924,25 @@ async fn external_main_pre_adoption_live_owner_rejects_reclaim() {
 #[tokio::test]
 async fn adoption_failure_closes_socket_and_releases_never_bound_owned_claim() {
     let state_root = tempfile::tempdir().expect("state root should be created");
-    let requested_owner = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("requested-port selector should bind");
+    // Two window ports with distinct jobs: offset 0 stays bound as a live
+    // kernel owner, proving the durable prepare needs no socket of its own,
+    // and offset 1 carries the mismatched listener whose closure the final
+    // assertion re-binds.
+    let window = PortWindow::claim();
+    let requested_owner =
+        tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, window.port(0))))
+            .await
+            .expect("requested-port owner should bind");
     let requested_addr = requested_owner
         .local_addr()
         .expect("requested address should resolve");
     let prepared = direct_authority(state_root.path())
         .prepare_main(requested_addr)
         .expect("exact request should prepare independently of the kernel owner");
-    let wrong_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("mismatched listener should bind");
+    let wrong_listener =
+        tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, window.port(1))))
+            .await
+            .expect("mismatched listener should bind");
     let wrong_addr = wrong_listener
         .local_addr()
         .expect("mismatched listener address should resolve");
@@ -942,13 +966,12 @@ async fn adoption_failure_closes_socket_and_releases_never_bound_owned_claim() {
 #[tokio::test]
 async fn durable_reservation_conflict_is_reported_as_addr_in_use() {
     let state_root = tempfile::tempdir().expect("state root should be created");
-    let selector = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("port selector should bind");
-    let requested_addr = selector
-        .local_addr()
-        .expect("selected address should resolve");
-    drop(selector);
+    // Nothing binds this address until the final probe: the point of the test
+    // is that the durable loser runs no kernel effect. The port comes from a
+    // window this process holds so that probe cannot be defeated by an
+    // unrelated owner and blamed on the durable layer.
+    let window = PortWindow::claim();
+    let requested_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, window.port(0)));
     let _winner = direct_authority(state_root.path())
         .prepare_main(requested_addr)
         .expect("first authority should prepare");
@@ -1008,13 +1031,17 @@ fn dropping_prebound_bundle_closes_socket_and_settles_active_lease() {
     let state_root = tempfile::tempdir().expect("state root should be created");
     let mut listeners = PreboundServerListeners::reconstruct_direct(state_root.path())
         .expect("pre-bound listener authority should reconstruct once");
+    // The reservation stays provider-assigned, so `prepare` keeps receiving
+    // port zero. The provider's actual socket takes a port this process holds,
+    // because the closing assertion below re-binds that exact address.
+    let window = PortWindow::claim();
     let requested_addr = "127.0.0.1:0"
         .parse()
         .expect("provider-assigned address should parse");
     let prepared = listeners
         .prepare("dev-mongodb-provider-assigned", requested_addr)
         .expect("pre-bound listener should reserve");
-    let raw = std::net::TcpListener::bind(requested_addr)
+    let raw = std::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, window.port(0))))
         .expect("provider should bind its requested socket");
     let listener = prepared
         .adopt_std(raw)

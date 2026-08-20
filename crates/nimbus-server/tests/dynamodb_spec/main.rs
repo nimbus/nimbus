@@ -25,6 +25,7 @@ use aws_sdk_dynamodb::types::{
 };
 use nimbus_core::TenantId;
 use nimbus_engine::Engine;
+use nimbus_process_harness::PortWindow;
 use nimbus_server::{DynamoDbConfig, ServeOptions, serve};
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
@@ -39,6 +40,10 @@ const TENANT: &str = "acme";
 struct Fixture {
     addr: SocketAddr,
     _temp: tempfile::TempDir,
+    /// Holds the claimed host-port window for as long as the adapter serves on
+    /// it. Dropping the window would release the claim while the listener is
+    /// still bound.
+    _ports: PortWindow,
     listener: tokio::task::JoinHandle<std::io::Result<()>>,
     /// Retained engine handle so tests can configure persisted state (e.g. the
     /// D7.3 access-key store) on the same `Engine` the listener serves.
@@ -95,16 +100,20 @@ impl Fixture {
     }
 }
 
-/// Boot a fresh adapter on `127.0.0.1:0` with the given access-key → tenant
-/// bindings, in the secure-by-default [`AuthMode::Strict`] mode. Every key is
-/// bound with [`CLIENT_SECRET`] — the same secret [`Fixture::client`] signs
-/// with — so every parity scenario exercises real SigV4 verification end to end
-/// rather than the signature-skipping lookup escape hatch.
+/// Boot a fresh adapter on a claimed loopback port with the given access-key →
+/// tenant bindings, in the secure-by-default [`AuthMode::Strict`] mode. Every
+/// key is bound with [`CLIENT_SECRET`] — the same secret [`Fixture::client`]
+/// signs with — so every parity scenario exercises real SigV4 verification end
+/// to end rather than the signature-skipping lookup escape hatch.
 async fn fixture_with_keys(bindings: &[(&str, &str)]) -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
     let engine =
         Arc::new(Engine::new_with_memory_persistence(temp.path()).expect("memory provider engine"));
-    let port = reserve_loopback_port().await;
+    // The adapter binds this port itself inside the spawned `serve` task, so
+    // the fixture holds the window until it drops rather than handing over a
+    // port number that is merely free right now.
+    let ports = PortWindow::claim();
+    let port = ports.port(0);
     let mut config = DynamoDbConfig::new(port).with_ttl_sweep_interval(None);
     for (key, tenant) in bindings {
         config = config.with_signed_access_key(
@@ -125,6 +134,7 @@ async fn fixture_with_keys(bindings: &[(&str, &str)]) -> Fixture {
     Fixture {
         addr,
         _temp: temp,
+        _ports: ports,
         listener: handle,
         engine,
     }
@@ -145,7 +155,9 @@ async fn fixture_strict(secret: &str) -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
     let engine =
         Arc::new(Engine::new_with_memory_persistence(temp.path()).expect("memory provider engine"));
-    let port = reserve_loopback_port().await;
+    // Held for the fixture's lifetime; see `fixture_with_keys`.
+    let ports = PortWindow::claim();
+    let port = ports.port(0);
     let config = DynamoDbConfig::new(port)
         .with_signed_access_key(ACCESS_KEY, TenantId::new(TENANT).expect("tenant"), secret)
         .with_ttl_sweep_interval(None);
@@ -161,6 +173,7 @@ async fn fixture_strict(secret: &str) -> Fixture {
     Fixture {
         addr,
         _temp: temp,
+        _ports: ports,
         listener: handle,
         engine,
     }
@@ -173,7 +186,9 @@ async fn fixture_strict_store_only() -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
     let engine =
         Arc::new(Engine::new_with_memory_persistence(temp.path()).expect("memory provider engine"));
-    let port = reserve_loopback_port().await;
+    // Held for the fixture's lifetime; see `fixture_with_keys`.
+    let ports = PortWindow::claim();
+    let port = ports.port(0);
     let config = DynamoDbConfig::new(port).with_ttl_sweep_interval(None);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -187,19 +202,10 @@ async fn fixture_strict_store_only() -> Fixture {
     Fixture {
         addr,
         _temp: temp,
+        _ports: ports,
         listener: handle,
         engine,
     }
-}
-
-async fn reserve_loopback_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("ephemeral listener should bind");
-    listener
-        .local_addr()
-        .expect("ephemeral listener address should resolve")
-        .port()
 }
 
 async fn wait_for_tcp_port(

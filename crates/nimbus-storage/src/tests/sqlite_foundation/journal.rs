@@ -1493,3 +1493,33 @@ fn sqlite_changefeed_stream_reports_retention_expired_after_journal_floor_cut() 
         }
     ));
 }
+
+#[test]
+// Shares the sqlite write-observation serial group: these open their own
+// stores and would otherwise add write load to the concurrency probes.
+#[serial_test::serial(sqlite_write_observation)]
+fn sqlite_journal_progress_round_trips_through_insert_update_delete() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    crate::tests::contract_scenarios::exercise_journal_progress_round_trip(
+        &store,
+        "sqlite_progress_tasks",
+    );
+}
+
+#[test]
+// Shares the sqlite write-observation serial group: these open their own
+// stores and would otherwise add write load to the concurrency probes.
+#[serial_test::serial(sqlite_write_observation)]
+fn sqlite_materialized_position_matches_the_provider_independent_reference() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    assert_eq!(
+        crate::tests::contract_scenarios::exercise_materialized_position_is_provider_independent(
+            &store
+        ),
+        crate::tests::contract_scenarios::reference_materialized_position()
+    );
+}

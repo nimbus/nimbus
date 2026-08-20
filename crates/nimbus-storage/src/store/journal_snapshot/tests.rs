@@ -235,7 +235,7 @@ fn materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence() {
 }
 
 #[test]
-fn point_in_time_archive_restores_sequence_and_timestamp_to_matching_fingerprints() {
+fn point_in_time_archive_restores_sequence_and_timestamp_to_matching_positions() {
     let clock = Arc::new(ManualWallClock::new(Timestamp(1_000)));
     let live =
         TenantStore::create_in_memory_with_simulation(clock.clone(), Arc::new(NoopFaultInjector))
@@ -293,8 +293,8 @@ fn point_in_time_archive_restores_sequence_and_timestamp_to_matching_fingerprint
     assert_eq!(sequence_archive.target_sequence, second_commit.sequence);
     assert_eq!(timestamp_archive.target_sequence, second_commit.sequence);
     assert_eq!(
-        sequence_archive.target_fingerprint,
-        timestamp_archive.target_fingerprint
+        sequence_archive.target_position,
+        timestamp_archive.target_position
     );
     assert_eq!(
         sequence_archive.storage_format_version,
@@ -321,9 +321,9 @@ fn point_in_time_archive_restores_sequence_and_timestamp_to_matching_fingerprint
         .expect("sequence restored snapshot should export");
     assert_eq!(
         sequence_snapshot
-            .canonical_fingerprint()
-            .expect("sequence restored fingerprint should compute"),
-        sequence_archive.target_fingerprint
+            .materialized_position()
+            .expect("sequence restored position should compute"),
+        sequence_archive.target_position
     );
 
     let restored_from_timestamp =
@@ -337,9 +337,9 @@ fn point_in_time_archive_restores_sequence_and_timestamp_to_matching_fingerprint
         .expect("timestamp restored snapshot should export");
     assert_eq!(
         timestamp_snapshot
-            .canonical_fingerprint()
-            .expect("timestamp restored fingerprint should compute"),
-        sequence_archive.target_fingerprint
+            .materialized_position()
+            .expect("timestamp restored position should compute"),
+        sequence_archive.target_position
     );
     assert_eq!(
         timestamp_snapshot.table_identities,
@@ -569,5 +569,201 @@ fn journal_replay_base_validator_accepts_empty_and_rejects_each_populated_field(
             Err(Error::InvalidInput(_))
         ),
         "a non-empty scheduled_execution_ids set must be rejected"
+    );
+}
+
+/// One table's contribution to a snapshot, built once so that every assembled
+/// snapshot carries byte-identical parts and only their ordering varies.
+struct SnapshotPart {
+    schema: TableSchema,
+    identity: TableIdentitySnapshotEntry,
+    document: nimbus_core::Document,
+}
+
+fn snapshot_parts(tables: &[(&str, i64)]) -> Vec<SnapshotPart> {
+    tables
+        .iter()
+        .map(|(name, rank)| {
+            let table = TableName::new(*name).expect("table name should parse");
+            let mut schema = tasks_schema();
+            schema.table = table.clone();
+            SnapshotPart {
+                schema,
+                identity: TableIdentitySnapshotEntry::default_namespace(
+                    table.clone(),
+                    TableId::new(),
+                ),
+                document: nimbus_core::Document::new(
+                    table,
+                    serde_json::Map::from_iter([("rank".to_string(), json!(rank))]),
+                ),
+            }
+        })
+        .collect()
+}
+
+/// Assemble a snapshot from `parts` in `order`. The order reaches the schema
+/// `HashMap` as insertion order and the identity and document vectors as
+/// element order, which is exactly what the canonical state must normalize.
+fn assemble_snapshot(
+    applied_sequence: SequenceNumber,
+    parts: &[SnapshotPart],
+    order: &[usize],
+    scheduled_execution_ids: Vec<String>,
+) -> MaterializedJournalSnapshot {
+    let mut schema = nimbus_core::Schema::default();
+    let mut table_identities = Vec::new();
+    let mut documents = Vec::new();
+    for index in order {
+        let part = &parts[*index];
+        schema
+            .tables
+            .insert(part.schema.table.clone(), part.schema.clone());
+        table_identities.push(part.identity.clone());
+        documents.push(part.document.clone());
+    }
+
+    MaterializedJournalSnapshot {
+        version: crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
+        applied_sequence,
+        durable_head: applied_sequence,
+        table_identities,
+        schema,
+        documents,
+        scheduled_execution_ids,
+    }
+}
+
+#[test]
+fn same_sequence_different_state_has_different_materialized_position() {
+    let sequence = SequenceNumber(7);
+    let parts = snapshot_parts(&[("alpha", 1), ("beta", 2)]);
+    let baseline = assemble_snapshot(sequence, &parts, &[0, 1], vec!["exec-a".to_string()]);
+
+    let mut drifted = baseline.clone();
+    drifted
+        .documents
+        .first_mut()
+        .expect("baseline snapshot should carry a document")
+        .fields
+        .insert("rank".to_string(), json!(99));
+
+    let baseline_position = baseline
+        .materialized_position()
+        .expect("baseline position should compute");
+    let drifted_position = drifted
+        .materialized_position()
+        .expect("drifted position should compute");
+
+    // The sequence alone cannot tell these apart. That is exactly the silence
+    // this contract closes: equal sequence, unequal state, unequal position.
+    assert_eq!(
+        baseline_position.applied_sequence, drifted_position.applied_sequence,
+        "the drift must not move the applied sequence, or the test proves nothing"
+    );
+    assert_ne!(
+        baseline_position.state_digest, drifted_position.state_digest,
+        "a document change at an unchanged sequence must change the state digest"
+    );
+    assert_ne!(
+        baseline_position, drifted_position,
+        "positions must differ when the materialized state differs"
+    );
+}
+
+#[test]
+fn logical_order_does_not_change_materialized_position() {
+    let sequence = SequenceNumber(7);
+    let parts = snapshot_parts(&[("alpha", 1), ("beta", 2), ("gamma", 3), ("delta", 4)]);
+    let scheduled = vec!["exec-b".to_string(), "exec-a".to_string()];
+
+    // Same logical state, opposite insertion order. `Schema::tables` is a
+    // `HashMap`, so serializing it in iteration order gives a different digest
+    // per instance; the canonical state has to sort that out.
+    let forward = assemble_snapshot(sequence, &parts, &[0, 1, 2, 3], scheduled.clone());
+    let reversed = assemble_snapshot(
+        sequence,
+        &parts,
+        &[3, 2, 1, 0],
+        scheduled.iter().rev().cloned().collect(),
+    );
+
+    let forward_position = forward
+        .materialized_position()
+        .expect("forward position should compute");
+    let reversed_position = reversed
+        .materialized_position()
+        .expect("reversed position should compute");
+    assert_eq!(
+        forward_position, reversed_position,
+        "logically equal snapshots must share one position regardless of ordering"
+    );
+
+    // Repeat over fresh snapshot instances: each `HashMap` carries its own
+    // `RandomState`, so an unsorted digest drifts across instances even when
+    // the insertion order never changes.
+    let repeats = (0..32)
+        .map(|_| {
+            assemble_snapshot(sequence, &parts, &[0, 1, 2, 3], scheduled.clone())
+                .canonical_state()
+                .expect("canonical state should build")
+                .digest()
+                .expect("digest should compute")
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        repeats.len(),
+        1,
+        "the canonical digest must be stable across snapshot instances, saw {} distinct values",
+        repeats.len()
+    );
+}
+
+#[test]
+fn pitr_import_rejects_wrong_target_digest() {
+    let clock = Arc::new(ManualWallClock::new(Timestamp(1_000)));
+    let live =
+        TenantStore::create_in_memory_with_simulation(clock.clone(), Arc::new(NoopFaultInjector))
+            .expect("live store should open");
+    let table_schema = tasks_schema();
+    let table = table_schema.table.clone();
+    live.replace_table_schema(&table_schema)
+        .expect("table schema should persist");
+
+    clock.set(Timestamp(1_100));
+    let document = nimbus_core::Document::new(
+        table.clone(),
+        serde_json::Map::from_iter([("rank".to_string(), json!(1))]),
+    );
+    let commit = live
+        .insert_with_indexes(&document, &table_schema.indexes)
+        .expect("insert should succeed");
+
+    let mut archive = live
+        .export_point_in_time_restore_archive(
+            PointInTimeRestoreTarget::Sequence(commit.sequence),
+            RetentionGcConfig::retain_all(),
+        )
+        .expect("archive should export");
+
+    let honest = TenantStore::create_in_memory().expect("honest restore store should open");
+    honest
+        .import_point_in_time_restore_archive(&archive)
+        .expect("an untampered archive must restore");
+
+    // Only the digest is wrong: the target sequence, the base snapshot, and the
+    // journal tail all still agree, so a sequence-only target would accept this
+    // restore without noticing that the state it produced is not the state the
+    // archive promised.
+    archive.target_position.state_digest =
+        "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    let restored = TenantStore::create_in_memory().expect("restore store should open");
+    let error = restored
+        .import_point_in_time_restore_archive(&archive)
+        .expect_err("a restore whose target digest does not match must fail");
+    let message = error.to_string();
+    assert!(
+        message.contains("point-in-time restore position mismatch"),
+        "expected a position mismatch, saw {message}"
     );
 }

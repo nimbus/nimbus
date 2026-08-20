@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, SocketAddr, TcpListener as StdTcpListener};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
 use std::time::Duration;
 
@@ -13,14 +13,16 @@ use nimbus_network::{
     PortLeasePhase,
 };
 use nimbus_process_harness::{
-    ContentionOutcome, ProcessRoleSpec, SubprocessCrashCutHarness, TwoProcessContentionHarness,
-    run_contention_child, run_crash_cut_child, run_crash_recovery_child,
+    ContentionOutcome, PortWindow, ProcessRoleSpec, SubprocessCrashCutHarness,
+    TwoProcessContentionHarness, run_contention_child, run_crash_cut_child,
+    run_crash_recovery_child,
 };
 
 const CHILD_TEST: &str = "nnc3_6_kv_listener_child";
 const CHILD_ADDR_ENV: &str = "NIMBUS_NNC3_6_KV_ADDR";
 const RECOVERY_CHILD_TEST: &str = "nnc3_8_kv_listener_recovery_child";
 const RECOVERY_MODE_ENV: &str = "NIMBUS_NNC3_8_KV_MODE";
+const RECOVERY_PORT_ENV: &str = "NIMBUS_NNC3_8_KV_PORT";
 const KV_ACTIVE_BOUNDARY: &str = "network.kv-listener.active-process-owner";
 const KV_RECOVERY_OBSERVATION: &str = "old-released:replacement-active";
 
@@ -42,18 +44,14 @@ fn config(
     )
 }
 
-fn selected_loopback_addr() -> SocketAddr {
-    let selector =
-        StdTcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port selector should bind");
-    selector
-        .local_addr()
-        .expect("selected address should resolve")
-}
-
 #[test]
 fn two_standalone_kv_processes_contend_in_one_authority() {
     let root = tempfile::tempdir().expect("state root should exist");
-    let addr = selected_loopback_addr();
+    // Both children bind this exact port, so the parent keeps the window
+    // claimed for the whole run rather than handing out a number that no
+    // process owns any more.
+    let ports = PortWindow::claim();
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, ports.port(0)));
     let result = TwoProcessContentionHarness::new(Duration::from_secs(10))
         .run(root.path(), [child("alpha", addr), child("beta", addr)])
         .unwrap_or_else(|error| panic!("KV listener contention failed: {error}"));
@@ -77,12 +75,18 @@ fn two_standalone_kv_processes_contend_in_one_authority() {
 #[test]
 fn fresh_process_kv_reconciles_dead_listener_before_exact_rebind() {
     let root = tempfile::tempdir().expect("state root should exist");
+    // The crash child binds this port and the recovery child re-binds the same
+    // number after the parent kills that owner. The parent holds the window
+    // across the kill, so the second bind proves the release instead of racing
+    // an unrelated process for a briefly free port.
+    let ports = PortWindow::claim();
     SubprocessCrashCutHarness::new(Duration::from_secs(10))
         .run(
             root.path(),
             KV_ACTIVE_BOUNDARY,
             KV_RECOVERY_OBSERVATION,
-            recovery_child("crash-kv-owner", "crash-active"),
+            recovery_child("crash-kv-owner", "crash-active")
+                .env(RECOVERY_PORT_ENV, ports.port(0).to_string()),
             recovery_child("fresh-kv-owner", "recover-active"),
         )
         .unwrap_or_else(|error| panic!("fresh-process KV recovery failed: {error}"));
@@ -91,7 +95,10 @@ fn fresh_process_kv_reconciles_dead_listener_before_exact_rebind() {
 #[tokio::test]
 async fn fixed_conflict_reports_both_stable_owner_identities() {
     let root = tempfile::tempdir().expect("state root should exist");
-    let addr = selected_loopback_addr();
+    // The winner really binds this port, so the window has to outlive the
+    // conflict assertions below.
+    let ports = PortWindow::claim();
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, ports.port(0)));
     let winner_config = config(root.path(), addr, "alpha");
     let contender_config = config(root.path(), addr, "beta");
     let winner_owner = winner_config.listener.listener_id().clone();
@@ -207,11 +214,16 @@ async fn provider_assigned_bind_activates_exact_kernel_port_and_releases_on_conf
 #[tokio::test]
 async fn dead_process_bound_listener_drop_reconciles_before_reuse() {
     let root = tempfile::tempdir().expect("state root should exist");
-    let requested = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+    // This port is re-bound twice after the owner drops it: once by the kernel
+    // probe that proves Nimbus closed its descriptor, and once through the
+    // product itself. The window holds the port across both, so a foreign
+    // binder cannot turn a correct release into a failure blamed on Nimbus.
+    let ports = PortWindow::claim();
+    let requested = SocketAddr::from((Ipv4Addr::LOCALHOST, ports.port(0)));
     let owner_config = config(root.path(), requested, "ambiguous-owner");
     let listener = bind_listener(&owner_config)
         .await
-        .expect("provider-assigned KV listener should bind");
+        .expect("the process-bound KV listener should bind the fixture port");
     let actual = listener
         .local_addr()
         .expect("bound listener should report an address");
@@ -316,11 +328,16 @@ async fn external_kernel_collision_records_durable_no_effect_failure() {
 #[tokio::test]
 async fn prebound_address_mismatch_closes_socket_without_creating_authority() {
     let root = tempfile::tempdir().expect("state root should exist");
-    let raw = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+    // Two ports partitioned out of one window: offset 0 carries the pre-bound
+    // socket that the final assertion re-binds to prove failed adoption closed
+    // it, and offset 1 is only ever the deliberately mismatched configured
+    // address.
+    let ports = PortWindow::claim();
+    let raw = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, ports.port(0)))
         .await
         .expect("pre-bound listener should bind");
     let actual = raw.local_addr().expect("listener should report an address");
-    let configured = selected_loopback_addr();
+    let configured = SocketAddr::from((Ipv4Addr::LOCALHOST, ports.port(1)));
     assert_ne!(actual, configured);
     let config = config(root.path(), configured, "mismatch");
 
@@ -526,7 +543,14 @@ fn nnc3_8_kv_listener_recovery_child() {
     let mode = std::env::var(RECOVERY_MODE_ENV).expect("recovery mode should be set");
     match mode.as_str() {
         "crash-active" => run_crash_cut_child(|context| {
-            let requested = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+            // The parent owns the port window and stays alive across the kill
+            // boundary, so the recovery child below can re-bind this exact
+            // number and have that bind mean something.
+            let port: u16 = std::env::var(RECOVERY_PORT_ENV)
+                .map_err(|error| format!("missing crash-owned listener port: {error}"))?
+                .parse()
+                .map_err(|error| format!("invalid crash-owned listener port: {error}"))?;
+            let requested = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
             let config = config(context.state_root(), requested, "crash-kv-incarnation");
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()

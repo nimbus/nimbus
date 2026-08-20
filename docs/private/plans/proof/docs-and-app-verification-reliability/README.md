@@ -1,9 +1,9 @@
 # Documentation and Application Verification Reliability Proofs
 
-Status: AVR0 through AVR6 are complete. Phase-one PR #275 merged into main.
-The owner reconciled it, and AVR7 is in progress.
+Status: AVR0 through AVR11 are complete. PRs #275, #276, and #277 merged into
+main. AVR12 cleanup PR [#278](https://github.com/nimbus/nimbus/pull/278) is open.
 
-Owner: `docs/private/plans/docs-and-app-verification-reliability-plan.md`
+Owner: `docs/private/plans/archive/docs-and-app-verification-reliability-plan.md`
 
 [`plan-review-resolution.md`](plan-review-resolution.md) records the complete
 pre-activation review disposition. [`acceptance-contract.md`](acceptance-contract.md)
@@ -21,10 +21,19 @@ commands.
   deleted tracked-file sideline.
 - [`avr6.md`](avr6.md) records equal explicit and bare-local invocation,
   isolated credential routing, and fail-closed trust evidence.
+- [`avr7.md`](avr7.md) records fail-closed lifetime ownership and the second
+  implementation pull request.
+- [`avr8.md`](avr8.md) records canonical JSON and JUnit evidence.
+- [`avr9.md`](avr9.md) records bounded parallel execution and benchmark proof.
+- [`avr10.md`](avr10.md) records documentation and operator-guidance truth.
+- [`avr11.md`](avr11.md) records integrated local, minicloud, review, and hosted
+  acceptance for the third implementation pull request.
+- [`avr12.md`](avr12.md) records archive, routing, cleanup, and final merge
+  evidence.
 
-Each later task creates its proof when work starts. A task proof records
-fail-before evidence, exact commands, counts, hashes, review results, and
-residual risk. Checks that cannot run use `UNVERIFIED` with a reason.
+Each task proof records fail-before evidence, exact commands, counts, hashes,
+review results, and residual risk. Checks that cannot run use `UNVERIFIED` with
+a reason.
 
 The final closeout proof records all three implementation pull requests, the
 cleanup pull request, merge commits, hosted runs, minicloud reports, and cleanup

@@ -51,7 +51,7 @@ run_test() {
     return
   fi
   local out status
-  out="$(cargo test -q -p "$krate" "$@" "$filter" -- --nocapture 2>&1)"
+  out="$(cargo test -p "$krate" "$@" "$filter" -- --nocapture 2>&1)"
   status=$?
   local ran
   ran="$(printf '%s\n' "$out" | grep -cE "^test .*${filter}.* \.\.\. ok$")"
@@ -117,7 +117,7 @@ if [ "${SIC_SKIP_TESTS:-0}" = 1 ]; then
   echo "  FAIL  4. sequential + concurrent conditional probes  [SIC_SKIP_TESTS=1: not evaluated]"
   fail=$((fail + 1))
 else
-  out4="$(cargo test -q -p nimbus-s3 conditional_ -- --nocapture 2>&1)"
+  out4="$(cargo test -p nimbus-s3 conditional_ -- --nocapture 2>&1)"
   st4=$?
   seq_ok="$(printf '%s\n' "$out4" | grep -cE '^test .*conditional_put_probe_create_reject_update_reject_stale.* \.\.\. ok$')"
   lin_ok="$(printf '%s\n' "$out4" | grep -cE '^test .*conditional_put_if_none_match_is_linearizable.* \.\.\. ok$')"
@@ -168,7 +168,7 @@ if [ "${SIC_SKIP_TESTS:-0}" = 1 ]; then
   echo "  FAIL  10. divergence + ordering tests  [SIC_SKIP_TESTS=1: not evaluated]"
   fail=$((fail + 1))
 else
-  out10="$(cargo test -q -p nimbus-storage materialized_position -- --nocapture 2>&1)"
+  out10="$(cargo test -p nimbus-storage materialized_position -- --nocapture 2>&1)"
   st10=$?
   div_ok="$(printf '%s\n' "$out10" | grep -cE '^test .*same_sequence_different_state_has_different_materialized_position.* \.\.\. ok$')"
   ord_ok="$(printf '%s\n' "$out10" | grep -cE '^test .*logical_order_does_not_change_materialized_position.* \.\.\. ok$')"
@@ -185,9 +185,9 @@ if [ "${SIC_SKIP_TESTS:-0}" = 1 ]; then
   echo "  FAIL  11. materialized consumers bind the position  [SIC_SKIP_TESTS=1: not evaluated]"
   fail=$((fail + 1))
 else
-  out11a="$(cargo test -q -p nimbus-engine shadow_recovery_rejects_wrong_checkpoint_digest -- --nocapture 2>&1)"
+  out11a="$(cargo test -p nimbus-engine shadow_recovery_rejects_wrong_checkpoint_digest -- --nocapture 2>&1)"
   st11a=$?
-  out11b="$(cargo test -q -p nimbus-storage pitr_import_rejects_wrong_target_digest -- --nocapture 2>&1)"
+  out11b="$(cargo test -p nimbus-storage pitr_import_rejects_wrong_target_digest -- --nocapture 2>&1)"
   st11b=$?
   a_ok="$(printf '%s\n' "$out11a" | grep -cE '^test .*shadow_recovery_rejects_wrong_checkpoint_digest.* \.\.\. ok$')"
   b_ok="$(printf '%s\n' "$out11b" | grep -cE '^test .*pitr_import_rejects_wrong_target_digest.* \.\.\. ok$')"
@@ -215,7 +215,7 @@ if [ "${SIC_SKIP_TESTS:-0}" = 1 ]; then
   echo "  FAIL  13. physical SQLite durability faults  [SIC_SKIP_TESTS=1: not evaluated]"
   fail=$((fail + 1))
 else
-  out13="$(cargo test -q -p nimbus-storage sqlite_physical_durability -- --nocapture 2>&1)"
+  out13="$(cargo test -p nimbus-storage sqlite_physical_durability -- --nocapture 2>&1)"
   st13=$?
   cases=0
   for case_name in \

@@ -79,6 +79,22 @@ third_party/s3s-0.14.0/LICENSE.
 Nimbus uses a locally patched copy at third_party/s3s-0.14.0 while upstream
 dependency updates are pending.
 ================================================================================
+libSQL — https://github.com/tursodatabase/libsql
+Copyright 2023 the sqld authors
+Licensed under the MIT License. Nimbus uses a locally patched copy at
+third_party/libsql-0.9.30. The upstream license from source revision
+0653c5788d77ef16a97c56ff3e9fdc11717a72d9 is retained in that directory.
+================================================================================
+flume — https://github.com/zesterer/flume
+Licensed under the Apache License, Version 2.0, or the MIT License. Nimbus uses
+a locally patched copy at third_party/flume-0.12.0. The complete upstream
+licenses are retained in that directory.
+================================================================================
+lazy_static — https://github.com/rust-lang-nursery/lazy-static.rs
+Licensed under the MIT License or the Apache License, Version 2.0. Nimbus uses
+a locally patched copy at third_party/lazy_static-1.5.0. The complete upstream
+licenses are retained in that directory.
+================================================================================
 brotli — https://github.com/dropbox/rust-brotli
 brotli-decompressor — https://github.com/dropbox/rust-brotli-decompressor
 Licensed under the 3-Clause BSD License or the MIT License. Nimbus uses locally

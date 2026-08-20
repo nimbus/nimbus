@@ -8,16 +8,88 @@ use crate::MySqlTenantStore;
 #[cfg(feature = "postgres")]
 use crate::PostgresTenantStore;
 use crate::{
-    CURRENT_STORAGE_FORMAT_VERSION, JournalProgress, SqliteTenantStore, StorageFormatVersion,
-    TableBackendLayout, TenantStore,
+    CURRENT_STORAGE_FORMAT_VERSION, JournalProgress, MemoryTenantStore, SqliteTenantStore,
+    StorageFormatVersion, TableBackendLayout, TenantStore,
 };
 use crate::{RetentionGcConfig, RetentionGcWatermarks, RetentionPin};
+
+/// Whether a backend owns one storage semantic contract.
+///
+/// The qualification matrix in the test tree decides these values once per
+/// backend, and the gate there fails when a backend's declared profile stops
+/// matching the scenarios that actually run against it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticQualification {
+    /// The backend owns the contract and qualified scenarios cover it.
+    Qualified,
+    /// The backend does not implement the contract at all, so there is nothing
+    /// to qualify. This is a declared position, never a coverage gap.
+    NotOwned,
+}
+
+/// The semantic contracts one storage backend is qualified against.
+///
+/// Every field is a compile-time constant of the backend, so reading this
+/// costs nothing and probes no provider. An operator asking "does this backend
+/// fence a stale committer?" reads the answer here instead of provoking the
+/// behaviour on a live tenant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticContractProfile {
+    /// Document write, index effects, and commit-log append land in one
+    /// storage transaction, or none of them do.
+    pub atomic_effects: SemanticQualification,
+    /// A durable apply validates the committer lease `(owner, epoch, head)` in
+    /// the same transaction and refuses a stale owner.
+    pub committer_fencing: SemanticQualification,
+    /// A replayed sequence with identical content is idempotent, and the same
+    /// sequence with different content is rejected.
+    pub conditional_admission: SemanticQualification,
+    /// `journal_progress` reports the durable and applied heads that the
+    /// commit log actually holds.
+    pub journal_progress: SemanticQualification,
+    /// Durable-but-unapplied records replay into visible state on recovery.
+    pub durable_recovery: SemanticQualification,
+    /// A pending journal prefix blocks a write that would commit past it.
+    pub write_isolation: SemanticQualification,
+    /// The materialized position is provider independent: the same record
+    /// history yields the same position on every backend.
+    pub position_parity: SemanticQualification,
+}
+
+impl SemanticContractProfile {
+    /// A backend that owns every contract, committer fencing included.
+    ///
+    /// The three remote providers register a `CommitterLeaseStore` and a
+    /// fenced durable apply, so a second process can take the lease over and
+    /// fence the first.
+    pub const FENCED: Self = Self {
+        atomic_effects: SemanticQualification::Qualified,
+        committer_fencing: SemanticQualification::Qualified,
+        conditional_admission: SemanticQualification::Qualified,
+        journal_progress: SemanticQualification::Qualified,
+        durable_recovery: SemanticQualification::Qualified,
+        write_isolation: SemanticQualification::Qualified,
+        position_parity: SemanticQualification::Qualified,
+    };
+
+    /// A single-process local backend.
+    ///
+    /// `impl_unsupported_fenced_durable_apply!` covers redb, SQLite, and the
+    /// in-memory store: there is no lease to fence because there is no second
+    /// writer process to fence off. Every other contract still applies.
+    pub const LOCAL_UNFENCED: Self = Self {
+        committer_fencing: SemanticQualification::NotOwned,
+        ..Self::FENCED
+    };
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageCapabilities {
     pub backend: String,
     pub backend_layout: TableBackendLayout,
     pub capability_profile: StorageCapabilityProfile,
+    pub semantic_contract: SemanticContractProfile,
     pub strong_reads: bool,
     pub eventual_reads: bool,
     pub tenant_event_journal: bool,
@@ -32,6 +104,7 @@ pub struct StorageHealthDiagnostic {
     pub backend: String,
     pub backend_layout: TableBackendLayout,
     pub backend_capability_profile: StorageCapabilityProfile,
+    pub semantic_contract: SemanticContractProfile,
     pub event_log_head: SequenceNumber,
     pub applied_head: SequenceNumber,
     pub retention_floor: Option<SequenceNumber>,
@@ -304,6 +377,7 @@ impl BackendParityDiagnostic {
 fn capabilities(
     backend: &str,
     backend_layout: TableBackendLayout,
+    semantic_contract: SemanticContractProfile,
     eventual_reads: bool,
     encryption_posture: &str,
 ) -> StorageCapabilities {
@@ -313,6 +387,7 @@ fn capabilities(
         backend: backend.to_string(),
         backend_layout,
         capability_profile,
+        semantic_contract,
         strong_reads: true,
         eventual_reads,
         tenant_event_journal: true,
@@ -366,6 +441,7 @@ fn diagnostic(input: StorageHealthDiagnosticInput) -> StorageHealthDiagnostic {
         backend: capabilities.backend,
         backend_layout: capabilities.backend_layout,
         backend_capability_profile: capabilities.capability_profile,
+        semantic_contract: capabilities.semantic_contract,
         event_log_head: progress.durable_head,
         applied_head: progress.applied_head,
         retention_floor,
@@ -688,8 +764,25 @@ impl TenantStore {
         capabilities(
             "redb",
             TableBackendLayout::RedbKeyspaceByTableId,
+            SemanticContractProfile::LOCAL_UNFENCED,
             false,
             "configured_per_store",
+        )
+    }
+}
+
+impl MemoryTenantStore {
+    /// The in-memory store publishes capabilities but no health diagnostic:
+    /// it keeps no retention floor and no version tables to report on. The
+    /// semantic profile is the part an operator (and the qualification matrix)
+    /// still needs from it.
+    pub fn storage_capabilities(&self) -> StorageCapabilities {
+        capabilities(
+            "memory",
+            TableBackendLayout::InMemoryKeyspaceByTableId,
+            SemanticContractProfile::LOCAL_UNFENCED,
+            false,
+            "not_configured",
         )
     }
 }
@@ -699,6 +792,7 @@ impl SqliteTenantStore {
         capabilities(
             "sqlite",
             TableBackendLayout::SharedDocumentsByTableId,
+            SemanticContractProfile::LOCAL_UNFENCED,
             false,
             if self.is_encrypted() {
                 "sqlcipher"
@@ -715,6 +809,7 @@ impl PostgresTenantStore {
         capabilities(
             "postgres",
             TableBackendLayout::SharedDocumentsByTableId,
+            SemanticContractProfile::FENCED,
             false,
             "server_managed",
         )
@@ -727,6 +822,7 @@ impl MySqlTenantStore {
         capabilities(
             "mysql",
             TableBackendLayout::SharedDocumentsByTableId,
+            SemanticContractProfile::FENCED,
             false,
             "server_managed",
         )
@@ -739,6 +835,7 @@ impl LibsqlReplicaTenantStore {
         capabilities(
             "libsql",
             TableBackendLayout::LibsqlReplicaSharedDocumentsByTableId,
+            SemanticContractProfile::FENCED,
             true,
             "replica_cache_optional",
         )

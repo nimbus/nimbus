@@ -46,7 +46,10 @@ const RECOVERY_MATRIX_READ_MODE: &str = "recover";
 const RECOVERY_MATRIX_BOUNDARY: &str = "workload-saga.phase-matrix-durable";
 const RECOVERY_MATRIX_OBSERVATION: &str =
     "matrix-30-d06922fc44ef2801589923a1335c16830f2c860cd9069248c56b78225694cb71";
-const RECOVERY_MATRIX_TIMEOUT: Duration = Duration::from_secs(20);
+// The matrix performs many individually durable transitions before its crash
+// boundary. Keep the wait bounded while allowing slower supported hosts to
+// complete their fsync work.
+const RECOVERY_MATRIX_TIMEOUT: Duration = Duration::from_secs(60);
 const RECOVERY_MATRIX_PID_PREFIX: &str = "NIMBUS_NNC61E_PROCESS_ID";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

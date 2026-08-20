@@ -1406,6 +1406,37 @@ mod tests {
         );
     }
 
+    /// `@nimbus/codegen` is wired as a dev dependency, and the install path
+    /// resolves both sections. `uninstall` must judge the staged tree by the
+    /// same rule, or it deletes the payload a dev-only spec still resolves
+    /// through and leaves the app unable to install.
+    #[test]
+    fn uninstall_keeps_staged_packages_a_dev_dependency_still_uses() {
+        let app = tempfile::tempdir().unwrap();
+        fs::write(app.path().join("package.json"), "{}\n").unwrap();
+        provision_packages(app.path(), &Selection::All).unwrap();
+        wire_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+
+        let manifest_path = app.path().join("package.json");
+        let wired = fs::read_to_string(&manifest_path).unwrap();
+        let with_dev = wired.replace(
+            "\n}",
+            ",\n  \"devDependencies\": {\n    \"@nimbus/codegen\": \"file:./.nimbus/packages/codegen\"\n  }\n}",
+        );
+        assert_ne!(with_dev, wired, "the fixture must actually add the section");
+        fs::write(&manifest_path, &with_dev).unwrap();
+
+        detach_app_dependency(app.path(), &Selection::Adapter("convex".into())).unwrap();
+        assert_eq!(
+            remove_staged_packages(app.path()).unwrap(),
+            StagedRemoval::StillInUse
+        );
+        assert!(
+            app.path().join(PACKAGES_REL).is_dir(),
+            "a dev-only spec keeps the staged tree it resolves through"
+        );
+    }
+
     #[test]
     fn verify_provisioned_rejects_missing_or_empty_payload() {
         let app = tempfile::tempdir().unwrap();

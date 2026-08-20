@@ -1,0 +1,53 @@
+SIC6 fail-before evidence
+=========================
+
+A. Before this change, the four physical-durability cases do not exist.
+   Verifier condition 13 on main (a46c44e00):
+     FAIL  13. physical SQLite durability faults  [0/4 cases passed, exit=0]
+     Summary: 11 passed, 2 failed
+   (Condition 12 also fails on this branch because SIC5 is still in PR #289.)
+
+B. Mutation: the acknowledgement rule is broken so it accepts everything
+   (`check_acknowledgement_survives` returns Ok unconditionally).
+
+running 6 tests
+test tests::sqlite_physical_durability::crash_child_writes_and_parks ... ignored, spawned by sqlite_crash_after_durable_commit_recovers_matching_position
+test tests::sqlite_physical_durability::sqlite_disk_full_preserves_last_acknowledged_position ... ok
+test tests::sqlite_physical_durability::physical_durability_checker_detects_a_broken_acknowledgement_rule ... FAILED
+test tests::sqlite_physical_durability::sqlite_sync_failure_is_not_acknowledged ... ok
+test tests::sqlite_physical_durability::sqlite_crash_after_durable_commit_recovers_matching_position ... ok
+test tests::sqlite_physical_durability::sqlite_wal_failure_never_exposes_partial_effects ... ok
+failures:
+---- tests::sqlite_physical_durability::physical_durability_checker_detects_a_broken_acknowledgement_rule stdout ----
+thread 'tests::sqlite_physical_durability::physical_durability_checker_detects_a_broken_acknowledgement_rule' (74684901) panicked at crates/nimbus-storage/src/tests/sqlite_physical_durability.rs:357:10:
+losing acknowledged commits must fail the rule: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+failures:
+    tests::sqlite_physical_durability::physical_durability_checker_detects_a_broken_acknowledgement_rule
+test result: FAILED. 4 passed; 1 failed; 1 ignored; 0 measured; 311 filtered out; finished in 0.08s
+error: test failed, to rerun pass `-p nimbus-storage --lib`
+
+C. Mutation: the shim never fails an operation (`decide` always passes through).
+   The three armed cases must stop passing, which proves they are driven by a
+   real physical failure and not by an incidental error.
+
+test tests::sqlite_physical_durability::crash_child_writes_and_parks ... ignored, spawned by sqlite_crash_after_durable_commit_recovers_matching_position
+test tests::sqlite_physical_durability::sqlite_crash_after_durable_commit_recovers_matching_position ... ok
+test tests::sqlite_physical_durability::sqlite_disk_full_preserves_last_acknowledged_position ... FAILED
+test tests::sqlite_physical_durability::physical_durability_checker_detects_a_broken_acknowledgement_rule ... ok
+test tests::sqlite_physical_durability::sqlite_wal_failure_never_exposes_partial_effects ... FAILED
+test tests::sqlite_physical_durability::sqlite_sync_failure_is_not_acknowledged ... FAILED
+thread 'tests::sqlite_physical_durability::sqlite_disk_full_preserves_last_acknowledged_position' (74685826) panicked at crates/nimbus-storage/src/tests/sqlite_physical_durability.rs:148:5:
+thread 'tests::sqlite_physical_durability::sqlite_wal_failure_never_exposes_partial_effects' (74685828) panicked at crates/nimbus-storage/src/tests/sqlite_physical_durability.rs:226:5:
+thread 'tests::sqlite_physical_durability::sqlite_sync_failure_is_not_acknowledged' (74685827) panicked at crates/nimbus-storage/src/tests/sqlite_physical_durability.rs:177:5:
+test result: FAILED. 2 passed; 3 failed; 1 ignored; 0 measured; 311 filtered out; finished in 0.04s
+
+D. Restored sources, all cases pass:
+
+test tests::sqlite_physical_durability::crash_child_writes_and_parks ... ignored, spawned by sqlite_crash_after_durable_commit_recovers_matching_position
+test tests::sqlite_physical_durability::sqlite_sync_failure_is_not_acknowledged ... ok
+test tests::sqlite_physical_durability::sqlite_disk_full_preserves_last_acknowledged_position ... ok
+test tests::sqlite_physical_durability::physical_durability_checker_detects_a_broken_acknowledgement_rule ... ok
+test tests::sqlite_physical_durability::sqlite_wal_failure_never_exposes_partial_effects ... ok
+test tests::sqlite_physical_durability::sqlite_crash_after_durable_commit_recovers_matching_position ... ok
+test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 311 filtered out; finished in 0.07s

@@ -1,0 +1,99 @@
+=== cargo test -p nimbus-storage journal_snapshot -- --nocapture
+    |            ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `try_wake_receiver_if_pending` is never used
+   --> third_party/flume-0.12.0/src/lib.rs:464:8
+    |
+447 | impl<T> Chan<T> {
+    | --------------- method in this implementation
+...
+464 |     fn try_wake_receiver_if_pending(&mut self) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `as_any` is never used
+  --> third_party/flume-0.12.0/src/signal.rs:13:8
+   |
+ 7 | pub trait Signal: Send + Sync + 'static {
+   |           ------ method in this trait
+...
+13 |     fn as_any(&self) -> &(dyn Any + 'static);
+   |        ^^^^^^
+
+warning: `flume` (lib) generated 4 warnings (run `cargo fix --lib -p flume` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.23s
+     Running unittests src/lib.rs (target/debug/deps/nimbus_storage-d1bc9b48d7ff318e)
+
+running 10 tests
+test store::journal_snapshot::tests::materialized_snapshot_rejects_lifecycle_namespace_state_mismatch ... ok
+test store::journal_snapshot::tests::journal_replay_base_validator_accepts_empty_and_rejects_each_populated_field ... ok
+test store::journal_snapshot::tests::same_sequence_different_state_has_different_materialized_position ... ok
+test store::journal_snapshot::tests::logical_order_does_not_change_materialized_position ... ok
+test store::journal_snapshot::tests::point_in_time_archive_rejects_expired_retention_target ... ok
+test store::journal_snapshot::tests::materialized_snapshot_plus_journal_tail_rebuild_matches_live_state ... ok
+test store::journal_snapshot::tests::materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence ... ok
+test store::journal_snapshot::tests::materialized_snapshot_records_durable_boundary_and_rejects_incomplete_tail ... ok
+test store::journal_snapshot::tests::pitr_import_rejects_wrong_target_digest ... ok
+test store::journal_snapshot::tests::point_in_time_archive_restores_sequence_and_timestamp_to_matching_positions ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 301 filtered out; finished in 0.81s
+
+
+=== cargo test -p nimbus-engine verification -- --nocapture
+    |                ^^^^^         ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                |
+    |                the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+279 |     fn columns(&self) -> Vec<crate::Column<'_>> {
+    |                                           ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> third_party/libsql-0.9.30/src/hrana/cursor.rs:150:28
+    |
+150 |     pub async fn next_step(&mut self) -> Result<CursorStep<S>> {
+    |                            ^^^^^^^^^            ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                            |
+    |                            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+150 |     pub async fn next_step(&mut self) -> Result<CursorStep<'_, S>> {
+    |                                                            +++
+
+warning: `libsql` (lib) generated 4 warnings (run `cargo fix --lib -p libsql` to apply 4 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.14s
+     Running unittests src/lib.rs (target/debug/deps/nimbus_engine-0ff98392b724d31b)
+
+running 2 tests
+test tests::consistency::verification_harness_nightly_generated_history_seed_corpus_matches_model ... ignored, verification harness nightly corpus runs in dedicated harness lanes
+test tests::consistency::verification_harness_required_generated_history_seed_corpus_matches_model ... ignored, verification harness required corpus runs in dedicated harness lanes
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 674 filtered out; finished in 0.00s
+
+     Running tests/loom_handoff.rs (target/debug/deps/loom_handoff-887d81b0d5b720a6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+=== NOTE: the filter `verification` matches only the two ignored harness cases in nimbus-engine.
+=== The verification module`s behavior is exercised by tests::consistency, run below.
+=== cargo test -p nimbus-engine consistency -- --nocapture
+test tests::consistency::schema_async_write_path_rebuilds_and_removes_indexes_durably_redb ... ok
+test tests::consistency::schema_async_write_path_rebuilds_and_removes_indexes_durably_sqlite ... ok
+test tests::consistency::generated_task_history_matches_model_across_live_shadow_and_embedded_replica_surfaces ... ok
+
+test result: ok. 20 passed; 0 failed; 2 ignored; 0 measured; 654 filtered out; finished in 1.52s
+
+     Running tests/loom_handoff.rs (target/debug/deps/loom_handoff-887d81b0d5b720a6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

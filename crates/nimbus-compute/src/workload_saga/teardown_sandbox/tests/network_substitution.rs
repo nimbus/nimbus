@@ -1,10 +1,10 @@
 //! Compute acceptance tests for real network teardown substitution.
 
-use std::net::TcpListener;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use nimbus_process_harness::PortWindow;
 use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig};
 use nimbus_sandbox::backends::test_hooks::{
@@ -352,23 +352,24 @@ async fn real_krun_attachment_execute_and_inspect_reopen_exact_missing_state() {
 #[tokio::test]
 async fn real_container_attachment_detach_and_release_succeed_after_execution_stopped() {
     let root = tempfile::tempdir().expect("temporary root should exist");
+    // The fixture narrows the backend's published range to this one port and the
+    // egress proxy binds it, so the port must belong to this process for the
+    // whole test. The claimed window holds it; nothing else can be handed it.
+    let ports = PortWindow::claim();
+    let pep_port = ports.port(0);
     assert_real_attachment_success(
         SandboxBackendKind::Container,
         root.path(),
         |stopped, detached, plan| {
-            let pep_reservation = TcpListener::bind("127.0.0.1:0")
-                .expect("Container fixture PEP port should reserve");
-            let pep_port = pep_reservation
-                .local_addr()
-                .expect("Container fixture PEP address should resolve")
-                .port();
             PreparedContainerNetworkTeardown::new(
                 root.path(),
                 stopped,
                 detached,
                 plan,
                 pep_port,
-                move || drop(pep_reservation),
+                // Nothing to release: the window owns the port instead of a
+                // throwaway socket the fixture would have to let go.
+                || {},
             )
             .expect("exact Container network fixture should prepare")
         },
@@ -385,23 +386,23 @@ async fn real_container_attachment_detach_and_release_succeed_after_execution_st
 #[tokio::test]
 async fn real_krun_attachment_detach_and_release_succeed_after_execution_stopped() {
     let root = tempfile::tempdir().expect("temporary root should exist");
+    // The Krun twin of the Container fixture above: one claimed window port
+    // stays this process's own for as long as the egress proxy holds it.
+    let ports = PortWindow::claim();
+    let pep_port = ports.port(0);
     assert_real_attachment_success(
         SandboxBackendKind::Krun,
         root.path(),
         |stopped, detached, plan| {
-            let pep_reservation =
-                TcpListener::bind("127.0.0.1:0").expect("Krun fixture PEP port should reserve");
-            let pep_port = pep_reservation
-                .local_addr()
-                .expect("Krun fixture PEP address should resolve")
-                .port();
             PreparedKrunNetworkTeardown::new(
                 root.path(),
                 stopped,
                 detached,
                 plan,
                 pep_port,
-                move || drop(pep_reservation),
+                // Nothing to release: the window owns the port instead of a
+                // throwaway socket the fixture would have to let go.
+                || {},
             )
             .expect("exact Krun network fixture should prepare")
         },

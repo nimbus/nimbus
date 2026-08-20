@@ -16,14 +16,14 @@ import {
   type SubDrawerSpec,
   useContributeSubDrawer,
 } from "../../shell/sub-drawer";
-import { MachineDetail } from "./machine-detail";
-import type { MachineDoc } from "./machine-types";
+import { MachineDetail } from "./-machine-detail";
+import type { MachineDoc } from "./-machine-types";
 import {
   type LifecycleAction,
   OPTIMISTIC_STATES,
   actionsForState,
   useMachineActions,
-} from "./use-machine-actions";
+} from "./-use-machine-actions";
 
 export const Route = createFileRoute("/operator/machines")({
   component: MachinesPage,

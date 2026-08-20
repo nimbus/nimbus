@@ -1,0 +1,51 @@
+advisories ok, bans ok, licenses ok, sources ok
+test result: ok. 517 passed; 0 failed; 134 ignored; 0 measured; 742 filtered out; finished in 59.94s
+        FAIL [   0.169s] ( 928/7429) nimbus-cli machine::tests::os_image::bootc_machine_os_apply_requires_guest_api_without_replacing_host_disk
+        FAIL [   0.179s] ( 929/7429) nimbus-cli machine::tests::os_image::bootc_machine_os_upgrade_requires_guest_api_without_replacing_host_disk
+        FAIL [   0.152s] ( 930/7429) nimbus-cli machine::tests::os_image::default_nimbus_image_initializes_bootc_native_machine_config
+        FAIL [   0.148s] ( 939/7429) nimbus-cli machine::tests::os_image::default_nimbus_image_rejects_legacy_ignition_override
+        FAIL [   0.135s] ( 965/7429) nimbus-cli machine::tests::os_image::machine_os_apply_updates_config_and_invalidates_materialized_artifacts
+        FAIL [   0.182s] ( 984/7429) nimbus-cli machine::tests::records_state::machine_init_writes_named_machine_records
+        FAIL [   0.210s] ( 985/7429) nimbus-cli machine::tests::records_state::machine_init_writes_config_and_status_files
+        FAIL [   0.207s] ( 986/7429) nimbus-cli machine::tests::records_state::machine_remove_deletes_config_state_and_runtime_roots
+        FAIL [   0.207s] ( 987/7429) nimbus-cli machine::tests::records_state::machine_remove_only_deletes_requested_machine
+        FAIL [   0.226s] ( 990/7429) nimbus-cli machine::tests::records_state::machine_set_requires_at_least_one_resource_flag
+        FAIL [   0.235s] ( 993/7429) nimbus-cli machine::tests::records_state::machine_set_updates_stopped_machine_config
+        FAIL [   0.221s] ( 994/7429) nimbus-cli machine::tests::records_state::production_machine_stop_fallback_never_invents_engine_persistence
+        FAIL [   0.310s] (1010/7429) nimbus-cli machine::tests::records_state::machine_set_rejects_running_machine
+        FAIL [   0.197s] (1022/7429) nimbus-cli machine::tests::startup_failures::machine_start_rejects_create_if_missing_overrides_when_machine_exists
+        FAIL [   0.234s] (1024/7429) nimbus-cli machine::tests::startup_failures::machine_start_auto_initializes_before_start_failure
+        FAIL [   0.254s] (1025/7429) nimbus-cli machine::tests::startup_failures::machine_init_now_attempts_start_after_initialization
+        FAIL [   0.285s] (1026/7429) nimbus-cli machine::tests::startup_failures::machine_start_auto_initializes_named_machine_before_start_failure
+        FAIL [   0.379s] (1028/7429) nimbus-cli machine::tests::startup_failures::machine_start_reports_oci_materialization_failure_for_unreachable_registry_image
+        FAIL [   7.150s] (5774/7429) nimbus-server construction::tests::nnc3_5_sibling_bind_is_claimed_before_guard_and_serves_identical_bytes
+        FAIL [   5.852s] (5775/7429) nimbus-server listener_group::tests::listener_projection_failure_keeps_every_listener_active_and_retries
+     Summary [ 477.471s] 7429 tests run: 7409 passed (5 slow, 2 leaky), 20 failed, 107 skipped
+        FAIL [   0.169s] ( 928/7429) nimbus-cli machine::tests::os_image::bootc_machine_os_apply_requires_guest_api_without_replacing_host_disk
+        FAIL [   0.179s] ( 929/7429) nimbus-cli machine::tests::os_image::bootc_machine_os_upgrade_requires_guest_api_without_replacing_host_disk
+        FAIL [   0.152s] ( 930/7429) nimbus-cli machine::tests::os_image::default_nimbus_image_initializes_bootc_native_machine_config
+        FAIL [   0.148s] ( 939/7429) nimbus-cli machine::tests::os_image::default_nimbus_image_rejects_legacy_ignition_override
+        FAIL [   0.135s] ( 965/7429) nimbus-cli machine::tests::os_image::machine_os_apply_updates_config_and_invalidates_materialized_artifacts
+        FAIL [   0.182s] ( 984/7429) nimbus-cli machine::tests::records_state::machine_init_writes_named_machine_records
+        FAIL [   0.210s] ( 985/7429) nimbus-cli machine::tests::records_state::machine_init_writes_config_and_status_files
+        FAIL [   0.207s] ( 986/7429) nimbus-cli machine::tests::records_state::machine_remove_deletes_config_state_and_runtime_roots
+        FAIL [   0.207s] ( 987/7429) nimbus-cli machine::tests::records_state::machine_remove_only_deletes_requested_machine
+        FAIL [   0.226s] ( 990/7429) nimbus-cli machine::tests::records_state::machine_set_requires_at_least_one_resource_flag
+        FAIL [   0.235s] ( 993/7429) nimbus-cli machine::tests::records_state::machine_set_updates_stopped_machine_config
+        FAIL [   0.221s] ( 994/7429) nimbus-cli machine::tests::records_state::production_machine_stop_fallback_never_invents_engine_persistence
+        FAIL [   0.310s] (1010/7429) nimbus-cli machine::tests::records_state::machine_set_rejects_running_machine
+        FAIL [   0.197s] (1022/7429) nimbus-cli machine::tests::startup_failures::machine_start_rejects_create_if_missing_overrides_when_machine_exists
+        FAIL [   0.234s] (1024/7429) nimbus-cli machine::tests::startup_failures::machine_start_auto_initializes_before_start_failure
+        FAIL [   0.254s] (1025/7429) nimbus-cli machine::tests::startup_failures::machine_init_now_attempts_start_after_initialization
+        FAIL [   0.285s] (1026/7429) nimbus-cli machine::tests::startup_failures::machine_start_auto_initializes_named_machine_before_start_failure
+        FAIL [   0.379s] (1028/7429) nimbus-cli machine::tests::startup_failures::machine_start_reports_oci_materialization_failure_for_unreachable_registry_image
+        FAIL [   7.150s] (5774/7429) nimbus-server construction::tests::nnc3_5_sibling_bind_is_claimed_before_guard_and_serves_identical_bytes
+        FAIL [   5.852s] (5775/7429) nimbus-server listener_group::tests::listener_projection_failure_keeps_every_listener_active_and_retries
+MAKE_CI_RC=2 (test-rust-workspace)
+=== lanes after test-rust-workspace, run individually ===
+test-rust-docs rc=0
+verify-harness rc=0
+build-js rc=0
+typecheck-js rc=0
+test-js rc=0
+proof-helpers rc=0

@@ -8,8 +8,9 @@ use http::HeaderMap;
 use nimbus_blob::BlobHash;
 use nimbus_core::TenantId;
 use nimbus_storage::{
-    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMultipartPart,
-    ObjectMultipartUpload,
+    ObjectChunkRef, ObjectConditionOutcome, ObjectExpectedState, ObjectManifest,
+    ObjectManifestAttributes, ObjectMultipartPart, ObjectMultipartUpload,
+    ObjectUploadConditionOutcome, ObjectUploadExpectedState,
 };
 use s3s::dto::ChecksumAlgorithm;
 use s3s::dto::{
@@ -24,13 +25,19 @@ use s3s::{Body, S3Error, S3ErrorCode, S3Request, S3Response, S3Result, TrailingH
 use serde_json::{Map, Value};
 
 use crate::auth::AccessKeyRegistry;
-use crate::backend::{S3TenantObjects, S3TenantResolver};
+use crate::backend::{S3TenantObjects, S3TenantResolver, put_manifest_unconditional};
 use crate::checksum::{ComputedChecksums, decode_md5_base64, multipart_etag};
 use crate::object_io;
 
 const DEFAULT_MAX_KEYS: i32 = 1000;
 const MAX_MAX_KEYS: i32 = 1000;
 const CRC64NVME_HEADER: &str = "x-amz-checksum-crc64nvme";
+
+/// Bounded re-merge budget for `UploadPart`. Each attempt reloads the
+/// published upload image and re-applies this request's part, so the retry
+/// covers only a pure merge that lost a conditional decision — never an
+/// ambiguous durable outcome.
+const UPLOAD_PART_MERGE_ATTEMPTS: u32 = 8;
 
 #[derive(Clone)]
 pub struct NimbusS3 {
@@ -107,16 +114,12 @@ impl s3s::S3 for NimbusS3 {
         computed.verify_content_md5(input.content_md5.as_deref())?;
         computed.verify_crc64nvme(checksum_crc64nvme.as_deref())?;
 
-        let previous = ctx
-            .meta
-            .get_manifest(&input.bucket, &input.key)
-            .await
-            .map_err(map_core_error)?;
-        verify_write_preconditions(
-            previous.as_ref(),
-            input.if_match.as_ref(),
-            input.if_none_match.as_ref(),
-        )?;
+        // The preconditions travel to the commit authority as expected-state
+        // clauses. This surface never reads the manifest and then decides
+        // against that read: two concurrent requests would both observe the
+        // pre-write state and both believe they won.
+        let expected =
+            write_condition_clauses(input.if_match.as_ref(), input.if_none_match.as_ref())?;
         let blobs = ctx.blobs().await.map_err(map_core_error)?;
         let hash = blobs.put(bytes).await.map_err(map_core_error)?;
         let manifest = match ObjectManifest::whole(
@@ -133,18 +136,29 @@ impl s3s::S3 for NimbusS3 {
         ) {
             Ok(manifest) => manifest,
             Err(error) => {
-                self.release_blob_unless_manifest_retains(&ctx, &hash, previous.as_ref())
+                self.release_uncommitted_blob(&ctx, &input.bucket, &input.key, &hash)
                     .await?;
                 return Err(map_core_error(error));
             }
         };
         let size = manifest.size;
         let retained = manifest.clone();
-        if let Err(error) = ctx.meta.put_manifest(manifest).await {
-            self.release_blob_unless_manifest_retains(&ctx, &hash, previous.as_ref())
-                .await?;
-            return Err(map_core_error(error));
-        }
+        let previous = match ctx.meta.put_manifest_conditional(manifest, expected).await {
+            Ok(ObjectConditionOutcome::Committed { previous, .. }) => previous,
+            Ok(ObjectConditionOutcome::Rejected { unmet, current }) => {
+                // Nothing was sequenced, journalled, or fanned out. The only
+                // residue is the blob this request just wrote, and it stays
+                // only if the manifest that won still names it.
+                self.release_blob_unless_manifest_retains(&ctx, &hash, current.as_ref())
+                    .await?;
+                return Err(condition_rejected(&unmet));
+            }
+            Err(error) => {
+                self.release_uncommitted_blob(&ctx, &input.bucket, &input.key, &hash)
+                    .await?;
+                return Err(map_core_error(error));
+            }
+        };
         if let Some(previous) = previous {
             self.release_manifest_blobs_except(&ctx, &previous, Some(&retained))
                 .await?;
@@ -364,10 +378,22 @@ impl s3s::S3 for NimbusS3 {
             current_millis(),
         )
         .map_err(map_core_error)?;
-        ctx.meta
-            .put_multipart_upload(upload)
+        // `Absent` makes the commit authority prove the freshly minted id is
+        // unused instead of trusting the generator and overwriting a row.
+        match ctx
+            .meta
+            .put_multipart_upload_conditional(upload, vec![ObjectUploadExpectedState::Absent])
             .await
-            .map_err(map_core_error)?;
+            .map_err(map_core_error)?
+        {
+            ObjectUploadConditionOutcome::Committed { .. } => {}
+            ObjectUploadConditionOutcome::Rejected { .. } => {
+                return Err(S3Error::with_message(
+                    S3ErrorCode::InternalError,
+                    "a new multipart upload id collided with an existing upload",
+                ));
+            }
+        }
         Ok(S3Response::new(CreateMultipartUploadOutput {
             bucket: Some(input.bucket),
             key: Some(input.key),
@@ -384,7 +410,7 @@ impl s3s::S3 for NimbusS3 {
         let ctx = self.resolve(&tenant).await?;
         let trailing_headers = req.trailing_headers.clone();
         let input = req.input;
-        let mut upload = ctx
+        let upload = ctx
             .meta
             .get_multipart_upload(&input.upload_id)
             .await
@@ -425,39 +451,96 @@ impl s3s::S3 for NimbusS3 {
         let blobs = ctx.blobs().await.map_err(map_core_error)?;
         let hash = blobs.put(bytes).await.map_err(map_core_error)?;
         let hash_hex = hash.to_hex();
-        let original_upload_retains_hash =
-            object_io::multipart_upload_contains_blob(&upload, &hash).map_err(map_core_error)?;
-        let replaced = match upload.replace_part(ObjectMultipartPart {
-            part_number: input.part_number as u32,
-            blob_hash: hash_hex.clone(),
-            size: byte_len,
-            etag: computed.md5_hex.clone(),
-            checksums: computed.object_checksums(),
-            last_modified_millis: current_millis(),
-        }) {
-            Ok(replaced) => replaced,
-            Err(error) => {
-                self.release_blob_unless_upload_retains(&ctx, &hash, original_upload_retains_hash)
-                    .await?;
-                return Err(map_core_error(error));
+        // `UploadPart` merges one part into the whole upload record, so an
+        // unconditional write does not overwrite one field — it discards every
+        // part another request committed since this one read the row. The
+        // observed revision travels to the commit authority, which decides it
+        // against its own serialized read. The merge itself is pure, so a
+        // rejection reloads the published image and re-applies this part to
+        // it. An ambiguous durable outcome is never retried this way.
+        let mut observed = upload;
+        let mut attempt = 0_u32;
+        let replaced_release_hash = loop {
+            attempt += 1;
+            let observed_retains_hash = object_io::multipart_upload_contains_blob(&observed, &hash)
+                .map_err(map_core_error)?;
+            let expected = vec![observed.observed_state()];
+            let mut merged = observed.clone();
+            let replaced = match merged.replace_part(ObjectMultipartPart {
+                part_number: input.part_number as u32,
+                blob_hash: hash_hex.clone(),
+                size: byte_len,
+                etag: computed.md5_hex.clone(),
+                checksums: computed.object_checksums(),
+                last_modified_millis: current_millis(),
+            }) {
+                Ok(replaced) => replaced,
+                Err(error) => {
+                    self.release_blob_unless_upload_retains(&ctx, &hash, observed_retains_hash)
+                        .await?;
+                    return Err(map_core_error(error));
+                }
+            };
+            let replaced_release_hash = if let Some(replaced) = replaced
+                && replaced.blob_hash != hash_hex
+            {
+                let replaced_hash =
+                    object_io::parse_blob_hash(&replaced.blob_hash).map_err(map_core_error)?;
+                (!object_io::multipart_upload_contains_blob(&merged, &replaced_hash)
+                    .map_err(map_core_error)?)
+                .then_some(replaced_hash)
+            } else {
+                None
+            };
+            merged.advance_revision();
+            match ctx
+                .meta
+                .put_multipart_upload_conditional(merged, expected)
+                .await
+            {
+                Ok(ObjectUploadConditionOutcome::Committed { .. }) => break replaced_release_hash,
+                Ok(ObjectUploadConditionOutcome::Rejected { current, .. }) => {
+                    let Some(current) = current else {
+                        // Completion or abort consumed the upload while this
+                        // part was in flight. Nothing merged, so the only
+                        // residue is the blob this request wrote.
+                        self.release_blob_unless_upload_retains(&ctx, &hash, false)
+                            .await?;
+                        return Err(s3_error!(NoSuchUpload));
+                    };
+                    if attempt >= UPLOAD_PART_MERGE_ATTEMPTS {
+                        let current_retains_hash =
+                            object_io::multipart_upload_contains_blob(&current, &hash)
+                                .map_err(map_core_error)?;
+                        self.release_blob_unless_upload_retains(&ctx, &hash, current_retains_hash)
+                            .await?;
+                        return Err(S3Error::with_message(
+                            S3ErrorCode::OperationAborted,
+                            "concurrent multipart writes did not converge; retry this part",
+                        ));
+                    }
+                    observed = current;
+                }
+                Err(error) => {
+                    // The outcome is ambiguous, not rejected: the write can
+                    // still have become durable. Re-read the authority before
+                    // deciding whether the blob has a holder.
+                    let current = ctx
+                        .meta
+                        .get_multipart_upload(&input.upload_id)
+                        .await
+                        .map_err(map_core_error)?;
+                    let current_retains_hash = match current.as_ref() {
+                        Some(current) => object_io::multipart_upload_contains_blob(current, &hash)
+                            .map_err(map_core_error)?,
+                        None => false,
+                    };
+                    self.release_blob_unless_upload_retains(&ctx, &hash, current_retains_hash)
+                        .await?;
+                    return Err(map_core_error(error));
+                }
             }
         };
-        let replaced_release_hash = if let Some(replaced) = replaced
-            && replaced.blob_hash != hash_hex
-        {
-            let replaced_hash =
-                object_io::parse_blob_hash(&replaced.blob_hash).map_err(map_core_error)?;
-            (!object_io::multipart_upload_contains_blob(&upload, &replaced_hash)
-                .map_err(map_core_error)?)
-            .then_some(replaced_hash)
-        } else {
-            None
-        };
-        if let Err(error) = ctx.meta.put_multipart_upload(upload).await {
-            self.release_blob_unless_upload_retains(&ctx, &hash, original_upload_retains_hash)
-                .await?;
-            return Err(map_core_error(error));
-        }
         if let Some(replaced_hash) = replaced_release_hash {
             blobs
                 .release(&replaced_hash)
@@ -550,21 +633,33 @@ impl s3s::S3 for NimbusS3 {
         )
         .map_err(map_core_error)?;
         let retained = manifest.clone();
-        let previous = ctx
+        // The upload row is consumed first, fenced on the revision this
+        // request read. A completion that lost the race to another completion
+        // or to an abort is rejected here, before anything is sequenced: it
+        // publishes no manifest and releases no blob.
+        let consumed = match ctx
             .meta
-            .get_manifest(&input.bucket, &input.key)
+            .delete_multipart_upload_conditional(&input.upload_id, vec![upload.observed_state()])
             .await
-            .map_err(map_core_error)?;
-        ctx.meta
-            .put_manifest(manifest)
-            .await
-            .map_err(map_core_error)?;
-        ctx.meta
-            .delete_multipart_upload(&input.upload_id)
+            .map_err(map_core_error)?
+        {
+            ObjectUploadConditionOutcome::Committed { previous, .. } => previous,
+            ObjectUploadConditionOutcome::Rejected { current, .. } => {
+                return Err(stale_upload_error(current.is_some()));
+            }
+        };
+        // Unconditional by contract: CompleteMultipartUpload takes no
+        // preconditions. The superseded manifest comes back from the commit
+        // authority's own read, so blob cleanup never acts on a stale image.
+        let previous = put_manifest_unconditional(ctx.meta.as_ref(), manifest)
             .await
             .map_err(map_core_error)?;
         if let Some(previous) = previous {
             self.release_manifest_blobs_except(&ctx, &previous, Some(&retained))
+                .await?;
+        }
+        if let Some(consumed) = consumed {
+            self.release_upload_parts_except(&ctx, &consumed, Some(&retained))
                 .await?;
         }
         Ok(S3Response::new(CompleteMultipartUploadOutput {
@@ -584,15 +679,38 @@ impl s3s::S3 for NimbusS3 {
         let tenant = self.tenant(&req)?;
         let ctx = self.resolve(&tenant).await?;
         let input = req.input;
-        if let Some((_, upload)) = ctx
+        let Some(upload) = ctx
             .meta
-            .delete_multipart_upload(&input.upload_id)
+            .get_multipart_upload(&input.upload_id)
             .await
             .map_err(map_core_error)?
-            && !upload.parts.is_empty()
+        else {
+            return Ok(S3Response::new(AbortMultipartUploadOutput::default()));
+        };
+        // Fenced on the revision this request read: an abort that raced a
+        // completion or a concurrent part must not release bytes the winner
+        // still owns.
+        let aborted = match ctx
+            .meta
+            .delete_multipart_upload_conditional(&input.upload_id, vec![upload.observed_state()])
+            .await
+            .map_err(map_core_error)?
+        {
+            ObjectUploadConditionOutcome::Committed { previous, .. } => previous,
+            ObjectUploadConditionOutcome::Rejected { current, .. } => {
+                if current.is_none() {
+                    // Another abort or completion already consumed the upload.
+                    // Abort stays idempotent against an absent row.
+                    return Ok(S3Response::new(AbortMultipartUploadOutput::default()));
+                }
+                return Err(stale_upload_error(true));
+            }
+        };
+        if let Some(aborted) = aborted
+            && !aborted.parts.is_empty()
         {
             let blobs = ctx.blobs().await.map_err(map_core_error)?;
-            for part in upload.parts {
+            for part in aborted.parts {
                 blobs
                     .release(&object_io::parse_blob_hash(&part.blob_hash).map_err(map_core_error)?)
                     .await
@@ -653,6 +771,55 @@ impl NimbusS3 {
             .release(hash)
             .await
             .map_err(map_core_error)
+    }
+
+    /// Releases a blob written for a manifest that never committed.
+    ///
+    /// Re-reads the authoritative manifest rather than trusting a pre-read:
+    /// a failed commit can still have become durable, and a concurrent writer
+    /// can have stored the identical bytes under the same content hash. The
+    /// blob goes only when the committed manifest does not name it.
+    async fn release_uncommitted_blob(
+        &self,
+        ctx: &S3TenantObjects,
+        bucket: &str,
+        key: &str,
+        hash: &BlobHash,
+    ) -> S3Result<()> {
+        let current = ctx
+            .meta
+            .get_manifest(bucket, key)
+            .await
+            .map_err(map_core_error)?;
+        self.release_blob_unless_manifest_retains(ctx, hash, current.as_ref())
+            .await
+    }
+
+    /// Releases the part blobs of a consumed upload that the manifest built
+    /// from it does not retain. A part the client did not name in the
+    /// completion is discarded by the S3 contract, and nothing else holds its
+    /// bytes.
+    async fn release_upload_parts_except(
+        &self,
+        ctx: &S3TenantObjects,
+        upload: &ObjectMultipartUpload,
+        retained: Option<&ObjectManifest>,
+    ) -> S3Result<()> {
+        for part in &upload.parts {
+            let hash = object_io::parse_blob_hash(&part.blob_hash).map_err(map_core_error)?;
+            if let Some(retained) = retained
+                && object_io::manifest_contains_blob(retained, &hash).map_err(map_core_error)?
+            {
+                continue;
+            }
+            ctx.blobs()
+                .await
+                .map_err(map_core_error)?
+                .release(&hash)
+                .await
+                .map_err(map_core_error)?;
+        }
+        Ok(())
     }
 
     async fn release_blob_unless_upload_retains(
@@ -728,31 +895,75 @@ pub(crate) fn trailing_crc64nvme_from_headers(headers: &HeaderMap) -> S3Result<O
         })
 }
 
-fn verify_write_preconditions(
-    existing: Option<&ObjectManifest>,
+/// Translates the write preconditions on a request into expected-state
+/// clauses for the commit authority.
+///
+/// This is wire policy only — `ETag` syntax and RFC 9110 strong against weak
+/// comparison — and it reads no object state. Stored `ETag`s are always
+/// strong ([`manifest_etag`]), which is what lets both comparisons reduce to
+/// an opaque-value clause:
+///
+/// + `If-Match: *` requires the row to be present.
+/// + `If-Match: "v"` requires the row to carry exactly `v`. Strong comparison
+///   against a strong stored `ETag` is opaque-value equality.
+/// + `If-Match: W/"v"` can never match a strong stored `ETag` under strong
+///   comparison, so it fails here. The answer does not depend on any object
+///   state, so deciding it on this side is not a read-then-write race.
+/// + `If-None-Match: *` requires the row to be absent.
+/// + `If-None-Match: "v"` or `W/"v"` requires the row to be absent or to
+///   carry something other than `v`; weak comparison ignores the strength
+///   marker and compares the opaque value.
+fn write_condition_clauses(
     if_match: Option<&ETagCondition>,
     if_none_match: Option<&ETagCondition>,
-) -> S3Result<()> {
-    let current = existing.map(manifest_etag);
-    if let Some(condition) = if_match
-        && !current
-            .as_ref()
-            .is_some_and(|etag| etag_condition_matches(condition, etag, true))
-    {
-        return Err(precondition_failed(
-            "If-Match did not match the current ETag",
-        ));
+) -> S3Result<Vec<ObjectExpectedState>> {
+    let mut clauses = Vec::new();
+    if let Some(condition) = if_match {
+        if condition.is_any() {
+            clauses.push(ObjectExpectedState::Present);
+        } else {
+            let expected = condition
+                .as_etag()
+                .and_then(ETag::as_strong)
+                .ok_or_else(|| precondition_failed("If-Match did not match the current ETag"))?;
+            clauses.push(ObjectExpectedState::PresentWithEtag(expected.to_string()));
+        }
     }
-    if let Some(condition) = if_none_match
-        && current
-            .as_ref()
-            .is_some_and(|etag| etag_condition_matches(condition, etag, false))
-    {
-        return Err(precondition_failed(
-            "If-None-Match matched the current ETag",
-        ));
+    if let Some(condition) = if_none_match {
+        if condition.is_any() {
+            clauses.push(ObjectExpectedState::Absent);
+        } else if let Some(etag) = condition.as_etag() {
+            clauses.push(ObjectExpectedState::AbsentOrEtagDiffers(
+                etag.value().to_string(),
+            ));
+        }
     }
-    Ok(())
+    Ok(clauses)
+}
+
+/// Maps the clause the commit authority found unmet onto its S3 response.
+fn condition_rejected(unmet: &ObjectExpectedState) -> S3Error {
+    match unmet {
+        ObjectExpectedState::Present | ObjectExpectedState::PresentWithEtag(_) => {
+            precondition_failed("If-Match did not match the current ETag")
+        }
+        ObjectExpectedState::Absent | ObjectExpectedState::AbsentOrEtagDiffers(_) => {
+            precondition_failed("If-None-Match matched the current ETag")
+        }
+    }
+}
+
+/// Maps a rejected multipart fence onto its S3 response. Nothing was
+/// sequenced, journalled, or fanned out, so the client can re-read and retry.
+fn stale_upload_error(exists: bool) -> S3Error {
+    if exists {
+        S3Error::with_message(
+            S3ErrorCode::OperationAborted,
+            "a conflicting multipart operation changed this upload; retry it",
+        )
+    } else {
+        s3_error!(NoSuchUpload)
+    }
 }
 
 fn verify_read_preconditions(

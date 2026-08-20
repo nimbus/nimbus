@@ -1124,9 +1124,12 @@ fn egress_proxy_intercepted_https_dlp_fails_closed_for_oversized_and_client_abor
 
 #[test]
 fn egress_proxy_intercepted_https_maps_upstream_dial_failure_to_tls_502_and_deny_log() {
-    let dead = TcpListener::bind(("127.0.0.1", 0)).expect("dead port should bind");
-    let dead_port = dead.local_addr().expect("dead addr should read").port();
-    drop(dead);
+    // The claim is what keeps this endpoint dead: the window reserves the port
+    // for this process and binds nothing on it, so the upstream dial below is
+    // refused. The probe it replaces released the port before the dial, which
+    // let any other process answer in its place.
+    let port_window = PortWindow::claim();
+    let dead_port = port_window.port(0);
     let proxy_authority =
         WorkloadPepTlsAuthority::generate_ephemeral_with_upstream_trust_anchors([])
             .expect("proxy authority should build");
