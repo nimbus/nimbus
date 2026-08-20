@@ -1011,3 +1011,22 @@ async fn libsql_pre_visibility_fault_rolls_back_and_leaves_the_store_writable() 
     })
     .await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn libsql_materialized_position_matches_the_provider_independent_reference() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("position-parity").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        assert_eq!(
+            crate::tests::contract_scenarios::exercise_materialized_position_is_provider_independent(
+                opened.store.as_ref()
+            ),
+            crate::tests::contract_scenarios::reference_materialized_position(),
+            "the libSQL replica store must reach the same materialized position as every other provider"
+        );
+    })
+    .await;
+}

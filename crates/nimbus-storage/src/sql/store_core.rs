@@ -67,6 +67,7 @@ use crate::sql::write_pipeline::SqlWritePipelineMetrics;
 use crate::store::{
     JournalProgress, MaterializedJournalSnapshot, PointInTimeRestoreArchive,
     PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite, TenantWriteCommit,
+    describe_materialized_position,
 };
 use crate::traits::{CommitterLeaseError, CommitterLeaseResult};
 
@@ -390,15 +391,16 @@ pub(crate) trait SqlStoreCore: Sized {
         crate::store::validate_materialized_journal_replay_base_is_empty(&current)?;
         self.append_durable_records_batch(&archive.journal_tail)?;
         let progress = self.recover_durable_journal()?;
-        let restored_fingerprint = self
+        let restored_position = self
             .export_materialized_journal_snapshot()?
-            .canonical_fingerprint()?;
-        if restored_fingerprint != archive.target_fingerprint {
+            .materialized_position()?;
+        if restored_position != archive.target_position {
             return Err(Error::storage(
                 nimbus_core::StorageErrorKind::Corruption,
                 format!(
-                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
-                    restored_fingerprint, archive.target_fingerprint
+                    "point-in-time restore position mismatch: restored {} expected {}",
+                    describe_materialized_position(&restored_position),
+                    describe_materialized_position(&archive.target_position)
                 ),
             ));
         }
@@ -427,15 +429,16 @@ pub(crate) trait SqlStoreCore: Sized {
             &archive.journal_tail,
         )?;
         let progress = self.journal_progress()?;
-        let restored_fingerprint = self
+        let restored_position = self
             .export_materialized_journal_snapshot()?
-            .canonical_fingerprint()?;
-        if restored_fingerprint != archive.target_fingerprint {
+            .materialized_position()?;
+        if restored_position != archive.target_position {
             return Err(Error::storage(
                 nimbus_core::StorageErrorKind::Corruption,
                 format!(
-                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
-                    restored_fingerprint, archive.target_fingerprint
+                    "point-in-time restore position mismatch: restored {} expected {}",
+                    describe_materialized_position(&restored_position),
+                    describe_materialized_position(&archive.target_position)
                 ),
             )
             .into());

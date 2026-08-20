@@ -12,6 +12,7 @@ use nimbus_engine::Engine;
 use nimbus_network::{
     LocalPortLeaseAuthority, NetworkResourceGeneration, PortBindingProvenance, PortLeasePhase,
 };
+use nimbus_process_harness::PortWindow;
 use nimbus_storage::{FaultInjector, FaultPoint};
 use nimbus_testing::EngineFixture;
 use tokio::time::timeout;
@@ -44,6 +45,10 @@ enum GuardAction {
 
 struct ObservedAdapter {
     name: &'static str,
+    /// The concrete address the group binds for this adapter. Callers take it
+    /// from a claimed port window, so a test can re-bind the address later and
+    /// have that prove the group closed the socket.
+    bind_addr: SocketAddr,
     bound_addr: Arc<Mutex<Option<SocketAddr>>>,
     guard: GuardAction,
     behavior: TaskBehavior,
@@ -59,7 +64,7 @@ impl WireProtocolAdapter for ObservedAdapter {
     }
 
     fn bind_addr(&self) -> SocketAddr {
-        "127.0.0.1:0".parse().expect("test address should parse")
+        self.bind_addr
     }
 
     fn guard(&self, addr: SocketAddr) -> io::Result<()> {
@@ -247,10 +252,18 @@ fn task_future(
     }
 }
 
+/// Prepare and activate one sibling lease on `port`.
+///
+/// The reservation stays provider-assigned, so `prepare_sibling` still asks
+/// for port zero. The socket itself binds `port`, which the caller takes from
+/// a port window it holds for the rest of the test — several callers re-bind
+/// the returned address to prove the group closed the listener, and that
+/// assertion is only about the group when no other process can win the port.
 async fn active_listener(
     state_root: &Path,
     ordinal: usize,
     adapter: &'static str,
+    port: u16,
 ) -> (
     tokio::net::TcpListener,
     ActiveServerListenerLease,
@@ -262,7 +275,7 @@ async fn active_listener(
     let prepared = authority
         .prepare_sibling(ordinal, adapter, requested)
         .expect("test listener should prepare");
-    let listener = tokio::net::TcpListener::bind(requested)
+    let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)))
         .await
         .expect("test listener should bind");
     let address = listener
@@ -306,18 +319,24 @@ async fn assert_address_rebinds(address: SocketAddr) {
 #[tokio::test]
 async fn kth_guard_failure_unwinds_every_prior_listener() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
+    // Both sibling addresses are re-bound below to prove the unwind closed
+    // them, so each member binds a port this process holds: offset 0 for the
+    // accepted member and offset 1 for the rejected one.
+    let window = PortWindow::claim();
     let first_addr = Arc::new(Mutex::new(None));
     let rejected_addr = Arc::new(Mutex::new(None));
     let options = ServeOptions::reconstruct_direct(fixture.engine())
         .expect("test server authority should reconstruct")
         .with_test_wire_adapter(Box::new(ObservedAdapter {
             name: "first-guard-member",
+            bind_addr: SocketAddr::from(([127, 0, 0, 1], window.port(0))),
             bound_addr: Arc::clone(&first_addr),
             guard: GuardAction::Allow,
             behavior: TaskBehavior::Pending,
         }))
         .with_test_wire_adapter(Box::new(ObservedAdapter {
             name: "rejected-guard-member",
+            bind_addr: SocketAddr::from(([127, 0, 0, 1], window.port(1))),
             bound_addr: Arc::clone(&rejected_addr),
             guard: GuardAction::Reject("injected guard refusal"),
             behavior: TaskBehavior::Pending,
@@ -349,18 +368,24 @@ async fn listener_projection_failure_keeps_every_listener_active_and_retries() {
     let fixture = EngineFixture::new(move |path| {
         Engine::new_with_simulation(path, Arc::new(nimbus_core::SystemWallClock), engine_fault)
     });
+    // Both members stay bound for the whole test, so each takes its own held
+    // port: offset 0 for the first member and offset 1 for the one whose
+    // projection fails.
+    let window = PortWindow::claim();
     let first_addr = Arc::new(Mutex::new(None));
     let rejected_addr = Arc::new(Mutex::new(None));
     let options = ServeOptions::reconstruct_direct(fixture.engine())
         .expect("test server authority should reconstruct")
         .with_test_wire_adapter(Box::new(ObservedAdapter {
             name: "first-projection-member",
+            bind_addr: SocketAddr::from(([127, 0, 0, 1], window.port(0))),
             bound_addr: Arc::clone(&first_addr),
             guard: GuardAction::Allow,
             behavior: TaskBehavior::Pending,
         }))
         .with_test_wire_adapter(Box::new(ObservedAdapter {
             name: "rejected-projection-member",
+            bind_addr: SocketAddr::from(([127, 0, 0, 1], window.port(1))),
             bound_addr: Arc::clone(&rejected_addr),
             guard: GuardAction::ArmProjectionFailure(Arc::clone(&projection_fault)),
             behavior: TaskBehavior::Pending,
@@ -422,11 +447,15 @@ async fn listener_projection_failure_keeps_every_listener_active_and_retries() {
 #[tokio::test]
 async fn child_exit_is_propagated_through_serve_leased() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
+    // The sibling address is re-bound below to prove the stopped server closed
+    // it, so the adapter binds a port this process holds.
+    let window = PortWindow::claim();
     let sibling_addr = Arc::new(Mutex::new(None));
     let options = ServeOptions::reconstruct_direct(fixture.engine())
         .expect("test server authority should reconstruct")
         .with_test_wire_adapter(Box::new(ObservedAdapter {
             name: "exiting-adapter",
+            bind_addr: SocketAddr::from(([127, 0, 0, 1], window.port(0))),
             bound_addr: Arc::clone(&sibling_addr),
             guard: GuardAction::Allow,
             behavior: TaskBehavior::ReturnOk,
@@ -517,7 +546,10 @@ async fn setup_failure_withdraws_but_does_not_release_an_inherited_main_listener
 #[tokio::test]
 async fn task_build_error_closes_and_settles_the_untransferred_listener() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let (listener, lease, address) = active_listener(fixture.data_dir(), 0, "build-error").await;
+    // Held past the closing re-bind, which is what proves the listener closed.
+    let window = PortWindow::claim();
+    let (listener, lease, address) =
+        active_listener(fixture.data_dir(), 0, "build-error", window.port(0)).await;
     let mut group = WireListenerGroup::new();
 
     let error = group
@@ -562,8 +594,11 @@ async fn task_build_and_listener_factory_panics_close_and_settle_the_listener() 
         ),
     ] {
         let fixture = EngineFixture::new(|path| Engine::new(path));
+        // Claimed per case: each iteration finishes its re-bind assertion
+        // before the next one starts.
+        let window = PortWindow::claim();
         let (listener, lease, address) =
-            active_listener(fixture.data_dir(), ordinal, "panic-build").await;
+            active_listener(fixture.data_dir(), ordinal, "panic-build", window.port(0)).await;
         let mut group = WireListenerGroup::new();
 
         let error = group
@@ -593,7 +628,9 @@ async fn task_build_and_listener_factory_panics_close_and_settle_the_listener() 
 #[tokio::test]
 async fn successful_child_exit_stops_the_server_and_settles_its_lease() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let (listener, lease, address) = active_listener(fixture.data_dir(), 0, "early-exit").await;
+    let window = PortWindow::claim();
+    let (listener, lease, address) =
+        active_listener(fixture.data_dir(), 0, "early-exit", window.port(0)).await;
     let mut group = WireListenerGroup::new();
     group
         .prepare(
@@ -636,8 +673,10 @@ async fn returned_error_and_panic_are_named_and_settle_the_listener() {
         (1, TaskBehavior::Panic("listener panic"), "listener panic"),
     ] {
         let fixture = EngineFixture::new(|path| Engine::new(path));
+        // Claimed per case: each iteration finishes before the next starts.
+        let window = PortWindow::claim();
         let (listener, lease, address) =
-            active_listener(fixture.data_dir(), ordinal, "failed-child").await;
+            active_listener(fixture.data_dir(), ordinal, "failed-child", window.port(0)).await;
         let mut group = WireListenerGroup::new();
         group
             .prepare(
@@ -673,13 +712,15 @@ async fn returned_error_and_panic_are_named_and_settle_the_listener() {
 async fn shutdown_reports_every_task_failure_in_registration_order() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let mut group = WireListenerGroup::new();
+    // Both members are live at once, so the window is partitioned explicitly.
+    let window = PortWindow::claim();
     let mut addresses = Vec::new();
-    for (ordinal, adapter, message) in [
-        (0, "first-adapter", "first task failure"),
-        (1, "second-adapter", "second task failure"),
+    for (ordinal, adapter, message, port) in [
+        (0, "first-adapter", "first task failure", window.port(0)),
+        (1, "second-adapter", "second task failure", window.port(1)),
     ] {
         let (listener, lease, address) =
-            active_listener(fixture.data_dir(), ordinal, adapter).await;
+            active_listener(fixture.data_dir(), ordinal, adapter, port).await;
         addresses.push(address);
         group
             .prepare(
@@ -729,13 +770,19 @@ async fn shutdown_attempts_every_lease_settlement_after_state_corruption() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let mut group = WireListenerGroup::new();
     let mut authority_paths = Vec::<PathBuf>::new();
+    // Both members are live at once and both addresses are re-bound at the
+    // end, so the window is partitioned explicitly and held until then.
+    let window = PortWindow::claim();
     let mut addresses = Vec::new();
-    for (ordinal, adapter) in [(0, "first-lease"), (1, "second-lease")] {
+    for (ordinal, adapter, port) in [
+        (0, "first-lease", window.port(0)),
+        (1, "second-lease", window.port(1)),
+    ] {
         let root = tempfile::tempdir().expect("network root should create");
         let authority =
             LocalPortLeaseAuthority::open(root.path()).expect("port authority should initialize");
         authority_paths.push(authority.authority_path().to_path_buf());
-        let (listener, lease, address) = active_listener(root.path(), ordinal, adapter).await;
+        let (listener, lease, address) = active_listener(root.path(), ordinal, adapter, port).await;
         addresses.push((root, address));
         group
             .prepare(

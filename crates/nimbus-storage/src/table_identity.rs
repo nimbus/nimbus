@@ -181,6 +181,7 @@ impl TableIdentitySnapshotEntry {
 #[serde(rename_all = "snake_case")]
 pub enum TableBackendLayout {
     RedbKeyspaceByTableId,
+    InMemoryKeyspaceByTableId,
     SharedDocumentsByTableId,
     LibsqlReplicaSharedDocumentsByTableId,
 }
@@ -189,6 +190,7 @@ impl TableBackendLayout {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::RedbKeyspaceByTableId => "redb_keyspace_by_table_id",
+            Self::InMemoryKeyspaceByTableId => "in_memory_keyspace_by_table_id",
             Self::SharedDocumentsByTableId => "shared_documents_by_table_id",
             Self::LibsqlReplicaSharedDocumentsByTableId => {
                 "libsql_replica_shared_documents_by_table_id"

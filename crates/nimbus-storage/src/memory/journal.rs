@@ -9,7 +9,7 @@ use crate::retention::RetentionGcConfig;
 use crate::simulation::{DurableApplyKind, FaultPoint};
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
-    PointInTimeRestoreArchive, PointInTimeRestoreTarget,
+    PointInTimeRestoreArchive, PointInTimeRestoreTarget, describe_materialized_position,
 };
 
 use super::MemoryTenantStore;
@@ -563,15 +563,16 @@ impl MemoryTenantStore {
             &archive.journal_tail,
             Some(archive.target_sequence),
         )?;
-        let fingerprint = self
+        let restored_position = self
             .export_materialized_journal_snapshot()?
-            .canonical_fingerprint()?;
-        if fingerprint != archive.target_fingerprint {
+            .materialized_position()?;
+        if restored_position != archive.target_position {
             return Err(Error::storage(
                 nimbus_core::StorageErrorKind::Corruption,
                 format!(
-                    "point-in-time restore fingerprint mismatch: restored {fingerprint} expected {}",
-                    archive.target_fingerprint
+                    "point-in-time restore position mismatch: restored {} expected {}",
+                    describe_materialized_position(&restored_position),
+                    describe_materialized_position(&archive.target_position)
                 ),
             ));
         }

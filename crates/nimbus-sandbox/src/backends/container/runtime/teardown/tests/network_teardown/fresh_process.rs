@@ -339,6 +339,10 @@ struct PreparedFixture {
     root: tempfile::TempDir,
     id: SandboxId,
     pep_port: u16,
+    /// The child processes below re-open the backend on `pep_port` and bind
+    /// the egress proxy there, so this parent keeps the window claimed for the
+    /// whole run rather than releasing it with the fixture it came from.
+    _port_window: Option<PortWindow>,
     artifact_sentinel: Option<PathBuf>,
     runtime_artifacts: Option<[PathBuf; 3]>,
 }
@@ -402,7 +406,11 @@ fn prepared_fixture(label: &str, operation: SandboxNetworkTeardownOperation) -> 
         None
     };
     let TeardownFixture {
-        root, backend, id, ..
+        root,
+        port_window,
+        backend,
+        id,
+        ..
     } = fixture;
     drop(runtime);
     drop(backend);
@@ -410,6 +418,7 @@ fn prepared_fixture(label: &str, operation: SandboxNetworkTeardownOperation) -> 
         root,
         id,
         pep_port,
+        _port_window: port_window,
         artifact_sentinel,
         runtime_artifacts,
     }

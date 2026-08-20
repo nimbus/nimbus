@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use nimbus_process_harness::PortWindow;
+
 use super::*;
 
 fn adapter_serve_options(
@@ -112,18 +114,16 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
             .expect("opted-out engine should build"),
     );
 
-    // Reserve listener ports for the sibling adapter listeners.
-    let reserve = |_| async {
-        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .await
-            .expect("port reservation should bind");
-        let port = listener.local_addr().expect("addr should resolve").port();
-        drop(listener);
-        port
-    };
-    let mongodb_port = reserve(()).await;
-    let dynamodb_port = reserve(()).await;
-    let s3_port = reserve(()).await;
+    // One claimed window owns every sibling adapter port this fixture hands
+    // the server, and stays alive for the whole case. That makes both
+    // directions of the smoke sound: the served listeners cannot lose their
+    // ports to another process, and the "listener must stay off" probes under
+    // the opt-outs cannot be answered by an unrelated program that happened to
+    // take the same number.
+    let adapter_ports = PortWindow::claim();
+    let mongodb_port = adapter_ports.port(0);
+    let dynamodb_port = adapter_ports.port(1);
+    let s3_port = adapter_ports.port(2);
 
     // Opt-outs first: a fully opted-out server mounts none of the
     // surfaces. (Runs before the serving server because sibling adapter
@@ -188,7 +188,7 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
     opted_out_engine.quiesce().await;
 
     // Default-shaped boot: no credentials, no bindings — only explicit
-    // ports (reserved above so the conventional ones can't flake the
+    // ports (claimed above so the conventional ones can't flake the
     // test). Everything else is exactly what a bare `nimbus start` does:
     // the wire-credential store under the control data dir backs both
     // listeners.

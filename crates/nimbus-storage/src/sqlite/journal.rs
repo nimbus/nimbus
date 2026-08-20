@@ -14,7 +14,7 @@ use crate::sqlite::document_versions::{
 use crate::sqlite::index_versions::{
     record_index_versions_for_events_in_conn, record_index_versions_for_writes_in_conn,
 };
-use crate::store::TRIGGER_DELIVERY_CURSOR_KEY;
+use crate::store::{TRIGGER_DELIVERY_CURSOR_KEY, describe_materialized_position};
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
 };
@@ -214,15 +214,16 @@ impl SqliteTenantStore {
             &archive.journal_tail,
             Some(archive.target_sequence),
         )?;
-        let restored_fingerprint = self
+        let restored_position = self
             .export_materialized_journal_snapshot()?
-            .canonical_fingerprint()?;
-        if restored_fingerprint != archive.target_fingerprint {
+            .materialized_position()?;
+        if restored_position != archive.target_position {
             return Err(Error::storage(
                 nimbus_core::StorageErrorKind::Corruption,
                 format!(
-                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
-                    restored_fingerprint, archive.target_fingerprint
+                    "point-in-time restore position mismatch: restored {} expected {}",
+                    describe_materialized_position(&restored_position),
+                    describe_materialized_position(&archive.target_position)
                 ),
             ));
         }

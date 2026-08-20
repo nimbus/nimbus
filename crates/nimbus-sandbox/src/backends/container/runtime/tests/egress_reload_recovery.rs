@@ -3,7 +3,7 @@
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
 use nimbus_network::{LocalPortLeaseAuthority, PortLeaseEffectScope, PortLeasePhase};
+use nimbus_process_harness::PortWindow;
 use tempfile::TempDir;
 
 use super::support::*;
@@ -34,7 +35,10 @@ const CHILD_TIMEOUT: Duration = Duration::from_secs(10);
 #[test]
 fn fresh_process_recovers_acknowledged_egress_reload_without_rollback_or_duplicate_attempt() {
     let root = TempDir::new().expect("shared crash state root should exist");
-    let port = unused_loopback_port();
+    // Held for the whole test. The port travels to a child process that binds
+    // it, so the claim has to survive well past this statement.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let mut crash = spawn_child(CRASH_CHILD_TEST, root.path(), port);
     let stdout = crash
         .stdout
@@ -134,7 +138,10 @@ fn fresh_process_recovers_acknowledged_egress_reload_without_rollback_or_duplica
 #[test]
 fn container_ready_rejects_active_pep_for_prior_desired_policy_attempt() {
     let root = TempDir::new().expect("stale-policy state root should exist");
-    let pep_port = unused_loopback_port();
+    // Held for the whole test: `backend_config` hands this port to the PEP,
+    // which binds it after this statement returns.
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     let backend = ContainerSandboxBackend::new(backend_config(root.path(), pep_port));
     let sandbox_id = SandboxId::new("container-stale-egress-policy");
     let mut manifest = backend
@@ -260,7 +267,10 @@ fn container_ready_rejects_active_pep_for_prior_desired_policy_attempt() {
 #[test]
 fn stable_reload_reseeds_exact_attempt_after_pep_process_replacement() {
     let root = TempDir::new().expect("replacement state root should exist");
-    let pep_port = unused_loopback_port();
+    // Held for the whole test: `backend_config` hands this port to the PEP,
+    // which binds it after this statement returns.
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     let config = backend_config(root.path(), pep_port);
     let backend = ContainerSandboxBackend::new(config.clone());
     let sandbox_id = SandboxId::new("stable-reload-pep-replacement");
@@ -354,7 +364,10 @@ fn stable_reload_reseeds_exact_attempt_after_pep_process_replacement() {
 #[test]
 fn applying_reload_rejects_foreign_listener_before_policy_or_manifest_completion() {
     let root = TempDir::new().expect("foreign-listener state root should exist");
-    let pep_port = unused_loopback_port();
+    // Held for the whole test: `backend_config` hands this port to the PEP,
+    // which binds it after this statement returns.
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     let backend = ContainerSandboxBackend::new(backend_config(root.path(), pep_port));
     let sandbox_id = SandboxId::new("reload-foreign-listener");
     let mut manifest = backend
@@ -698,7 +711,10 @@ fn reload_egress_policy_updates_running_container_proxy() {
     let first = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst");
     let second = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecond");
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let proxy_port = unused_loopback_port();
+    // Held for the whole test: the published-port range below hands this port
+    // to the container proxy, which binds it after the backend starts.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = proxy_port..=proxy_port;
@@ -795,7 +811,10 @@ fn reload_egress_policy_updates_running_container_proxy() {
 #[test]
 fn reload_egress_policy_rejects_a_reserved_launch_without_runtime_effect_evidence() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let proxy_port = unused_loopback_port();
+    // Held for the whole test: the published-port range below hands this port
+    // to the container proxy, which binds it after the backend starts.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = proxy_port..=proxy_port;
@@ -860,12 +879,4 @@ impl TestHttpServer {
         });
         Self { addr }
     }
-}
-
-fn unused_loopback_port() -> u16 {
-    TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
-        .expect("test-only port picker should bind")
-        .local_addr()
-        .expect("test-only port picker should inspect")
-        .port()
 }

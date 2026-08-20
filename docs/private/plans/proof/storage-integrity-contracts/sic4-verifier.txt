@@ -1,0 +1,17 @@
+storage integrity contracts verification
+========================================
+  PASS  1. typed ObjectExpectedState + ObjectConditionOutcome live in the storage seam
+  PASS  2. the condition crosses S3ObjectMeta and the S3 pre-read decision is gone
+  PASS  3. the committer actor decides the condition before sequence assignment
+  PASS  4. sequential + concurrent conditional probes pass
+  PASS  5. rejection has no commit or blob effect (1 test(s))
+  PASS  6. concurrent multipart writes preserve every accepted part (1 test(s))
+  PASS  7. all storage writers are inventoried (1 test(s))
+  PASS  8. an omitted effect fails the ownership gate (1 test(s))
+  PASS  9. storage owns the one canonical digest implementation
+  PASS  10. divergence + ordering tests pass
+  PASS  11. shadow recovery and PITR import both bind the position
+  FAIL  12. provider qualification matrix is complete  [no test matching 'provider_contract_matrix_is_complete' ran in nimbus-storage (vacuous filter)]
+  FAIL  13. physical SQLite durability faults  [0/4 cases passed, exit=0]
+========================================
+Summary: 11 passed, 2 failed

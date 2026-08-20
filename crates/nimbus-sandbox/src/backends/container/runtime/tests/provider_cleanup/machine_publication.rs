@@ -10,15 +10,19 @@ use super::*;
 #[test]
 fn machine_never_bound_final_cleanup_releases_without_publication_authority() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
+    // Offset 0 is the forwarder endpoint and offset 1 the never-bound
+    // published port. Both stay exclusive for the whole proof, so the absence
+    // this test asserts stays observable.
+    let port_window = PortWindow::claim();
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(0)));
     let backend = ContainerSandboxBackend::new(config);
     let mut manifest = backend
         .plan_start_with_id(
             &sample_spec().with_port_binding(SandboxPortBinding::tcp(
                 "never-bound",
-                unused_loopback_port(),
+                port_window.port(1),
                 5432,
             )),
             &SandboxId::new("machine-never-bound-final-cleanup"),
@@ -81,7 +85,11 @@ fn machine_never_bound_final_cleanup_releases_without_publication_authority() {
 
 #[test]
 fn fresh_machine_partial_start_shutdown_diagnostic_replays_terminal_release() {
-    let published_port = unused_loopback_port();
+    // Offset 0 is the published binding and offset 1 the one-port PEP range.
+    // Distinct offsets replace the retry loop that used to reject a duplicate
+    // draw, and the claim covers both for the whole proof.
+    let port_window = PortWindow::claim();
+    let published_port = port_window.port(0);
     let forwarder_listener =
         TcpListener::bind("127.0.0.1:0").expect("forwarder listener should bind");
     let forwarder_port = forwarder_listener
@@ -91,10 +99,7 @@ fn fresh_machine_partial_start_shutdown_diagnostic_replays_terminal_release() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let mut pep_port = unused_loopback_port();
-    while pep_port == published_port {
-        pep_port = unused_loopback_port();
-    }
+    let pep_port = port_window.port(1);
     config.published_port_range = pep_port..=pep_port;
     config.machine_port_forwarder = Some(sample_forwarder(forwarder_port));
     let backend = ContainerSandboxBackend::new(config);
@@ -183,11 +188,13 @@ fn fresh_machine_partial_start_shutdown_diagnostic_replays_terminal_release() {
 
 #[test]
 fn retained_machine_partial_start_shutdown_diagnostic_replays_restart() {
-    let published_port = unused_loopback_port();
+    // Offset 0 is the published binding and offset 1 the forwarder endpoint.
+    let port_window = PortWindow::claim();
+    let published_port = port_window.port(0);
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let mut manifest = backend
         .plan_start_with_id(
@@ -310,7 +317,12 @@ fn failed_restart_teardown_retains_runtime_receipts_for_retry() {
 
 #[test]
 fn terminal_cleanup_uses_manifest_machine_forwarder_after_backend_config_drift() {
-    let published_port = unused_loopback_port();
+    // Offset 0 is the published binding and offset 1 the one-port PEP range.
+    // Distinct offsets replace the retry loop that used to reject a duplicate
+    // draw. The two forwarder endpoints below stay ephemeral because their
+    // listeners live for the whole test.
+    let port_window = PortWindow::claim();
+    let published_port = port_window.port(0);
     let launch_listener = TcpListener::bind("127.0.0.1:0").expect("launch forwarder should bind");
     let launch_forwarder_port = launch_listener
         .local_addr()
@@ -326,10 +338,7 @@ fn terminal_cleanup_uses_manifest_machine_forwarder_after_backend_config_drift()
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path())
         .with_network_state_root(temp_dir.path().join("node-network-state"));
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let mut egress_proxy_port = unused_loopback_port();
-    while egress_proxy_port == published_port {
-        egress_proxy_port = unused_loopback_port();
-    }
+    let egress_proxy_port = port_window.port(1);
     config.published_port_range = egress_proxy_port..=egress_proxy_port;
     config.machine_port_forwarder = Some(sample_forwarder(launch_forwarder_port));
     let mut backend = ContainerSandboxBackend::new(config);
@@ -463,20 +472,19 @@ fn terminal_cleanup_uses_manifest_machine_forwarder_after_backend_config_drift()
 
 #[test]
 fn machine_forwarder_unexpose_failure_keeps_port_lease_fenced() {
-    let published_port = unused_loopback_port();
-    let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
-    let port = listener
-        .local_addr()
-        .expect("listener address should resolve")
-        .port();
+    // Offset 0 is the published binding, offset 1 the one-port PEP range, and
+    // offset 2 the forwarder endpoint. The forwarder port needs the claim
+    // because the retry observer below re-binds it after the first observer
+    // closes it, and only the claim keeps that window free of a foreign bind.
+    let port_window = PortWindow::claim();
+    let published_port = port_window.port(0);
+    let port = port_window.port(2);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("listener should bind");
 
     let temp_dir = TempDir::new().expect("tempdir should build");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let mut egress_proxy_port = unused_loopback_port();
-    while egress_proxy_port == published_port {
-        egress_proxy_port = unused_loopback_port();
-    }
+    let egress_proxy_port = port_window.port(1);
     config.published_port_range = egress_proxy_port..=egress_proxy_port;
     let forwarder = sample_forwarder(port);
     config.machine_port_forwarder = Some(forwarder.clone());
@@ -587,24 +595,21 @@ fn machine_forwarder_unexpose_failure_keeps_port_lease_fenced() {
 
 #[test]
 fn machine_forwarder_unexpose_attempts_every_binding_and_retries_only_failures() {
-    let first_port = unused_loopback_port();
-    let mut second_port = unused_loopback_port();
-    while second_port == first_port {
-        second_port = unused_loopback_port();
-    }
-    let listener = TcpListener::bind("127.0.0.1:0").expect("forwarder listener should bind");
-    let forwarder_port = listener
-        .local_addr()
-        .expect("forwarder address should resolve")
-        .port();
+    // Offsets 0 and 1 are the two published bindings, offset 2 the one-port PEP
+    // range, and offset 3 the forwarder endpoint. The forwarder port needs the
+    // claim because the retry observer below re-binds it after the first-pass
+    // observer closes it.
+    let port_window = PortWindow::claim();
+    let first_port = port_window.port(0);
+    let second_port = port_window.port(1);
+    let forwarder_port = port_window.port(3);
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, forwarder_port))
+        .expect("forwarder listener should bind");
 
     let temp_dir = TempDir::new().expect("tempdir should build");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let mut egress_proxy_port = unused_loopback_port();
-    while [first_port, second_port].contains(&egress_proxy_port) {
-        egress_proxy_port = unused_loopback_port();
-    }
+    let egress_proxy_port = port_window.port(2);
     config.published_port_range = egress_proxy_port..=egress_proxy_port;
     config.machine_port_forwarder = Some(sample_forwarder(forwarder_port));
     let backend = ContainerSandboxBackend::new(config);
@@ -731,16 +736,16 @@ fn machine_forwarder_unexpose_attempts_every_binding_and_retries_only_failures()
 
 #[test]
 fn restart_retained_machine_listener_releases_without_process_registry() {
-    let published_port = unused_loopback_port();
+    // Offset 0 is the published binding, offset 1 the one-port PEP range, and
+    // offset 2 the forwarder endpoint.
+    let port_window = PortWindow::claim();
+    let published_port = port_window.port(0);
     let temp_dir = TempDir::new().expect("tempdir should build");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
-    let mut egress_proxy_port = unused_loopback_port();
-    while egress_proxy_port == published_port {
-        egress_proxy_port = unused_loopback_port();
-    }
+    let egress_proxy_port = port_window.port(1);
     config.published_port_range = egress_proxy_port..=egress_proxy_port;
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(2)));
     let mut backend = ContainerSandboxBackend::new(config);
     let mut manifest = backend
         .plan_start_with_id(

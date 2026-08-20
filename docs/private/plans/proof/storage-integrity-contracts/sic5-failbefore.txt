@@ -1,0 +1,66 @@
+SIC5 fail-before: the baseline has no complete-matrix gate.
+
+A. No such test exists on the baseline.
+$ grep -rn provider_contract_matrix crates/ | wc -l
+       0
+
+B. Delete one registered provider scenario wrapper and the baseline stays green.
+   Removed `postgres_historical_index_scan_eq_and_range_use_versioned_visibility`
+   from crates/nimbus-storage/src/tests/postgres_provider/versions.rs.
+$ NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-storage --features libsql,mysql,postgres
+warning: unused import: `thread`
+test result: ok. 453 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 8.91s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+The suite is green with the registration gone. The only warning in the run,
+`unused import: thread`, comes from `third_party/flume-0.12.0/src/lib.rs:54`
+and is present with or without the deletion, so the removal produced no
+diagnostic at all. PostgreSQL simply stops proving historical index
+visibility and nothing reports the loss.
+
+C. Restore.
+$ git diff --stat -- crates
+(empty)
+
+
+=====================================================================
+After: the same deletions now fail the gate.
+=====================================================================
+
+D. Rename a matrix-named local scenario.
+   `memory_durable_recovery_replays_durable_but_unapplied_records` ->
+   `memory_recovery_scenario_renamed` in memory_conformance.rs.
+$ cargo test -p nimbus-storage --lib provider_contract_matrix_is_complete
+test tests::provider_contract_matrix::provider_contract_matrix_is_complete ... FAILED
+panicked at crates/nimbus-storage/src/tests/provider_contract_matrix.rs:635:9:
+memory x durable-recovery names `memory_durable_recovery_replays_durable_but_unapplied_records`, which no test in the tree declares
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 322 filtered out
+
+E. Rename a matrix-named remote scenario, with the fixture absent.
+   This is the case part B could not catch: PostgreSQL is UNVERIFIED on this
+   host, and the wrapper itself passes vacuously, yet the loss still fails.
+   `postgres_durable_journal_recovery_applies_pending_records` ->
+   `postgres_recovery_scenario_renamed`.
+$ NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 \
+    cargo test -p nimbus-storage --features libsql,mysql,postgres \
+    --lib provider_contract_matrix_is_complete
+panicked at crates/nimbus-storage/src/tests/provider_contract_matrix.rs:642:9:
+postgres x durable-recovery names `postgres_durable_journal_recovery_applies_pending_records`, which no test in the tree declares
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 470 filtered out
+
+F. Drift the operator-visible profile away from the qualified scenarios.
+   redb's `storage_capabilities` in diagnostics.rs changed
+   `SemanticContractProfile::LOCAL_UNFENCED` to `::FENCED`, claiming a
+   fencing guarantee redb does not own and no scenario proves.
+$ cargo test -p nimbus-storage --lib provider_contract_matrix_is_complete
+panicked at crates/nimbus-storage/src/tests/provider_contract_matrix.rs:712:13:
+assertion `left == right` failed: redb x committer-fencing: the profile published through diagnostics disagrees with the matrix
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 322 filtered out
+
+   Case F fails only because `published_profile` reads the real
+   `diagnostics.rs` text instead of restating the mapping in the test. The
+   first draft of the gate restated it, and this exact edit passed.
+
+G. Restore all three.
+$ cargo test -p nimbus-storage --lib provider_contract_matrix
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 321 filtered out

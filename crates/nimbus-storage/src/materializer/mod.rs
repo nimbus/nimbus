@@ -5,10 +5,11 @@ use nimbus_core::{
     TenantEventRecord, WriteOp, WriteOpType,
 };
 
+use crate::store::describe_materialized_position;
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
 };
-use crate::{MaterializedJournalSnapshot, TableIdentitySnapshotEntry};
+use crate::{MaterializedJournalSnapshot, MaterializedPosition, TableIdentitySnapshotEntry};
 
 const SHADOW_MATERIALIZER_MANIFEST_VERSION: u16 = 1;
 
@@ -39,7 +40,7 @@ impl Default for ShadowMaterializerConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShadowMaterializerManifest {
     pub version: u16,
-    pub checkpoint_sequence: SequenceNumber,
+    pub checkpoint_position: MaterializedPosition,
     pub current_sequence: SequenceNumber,
     pub pending_record_count: usize,
     pub compaction_runs: u64,
@@ -64,16 +65,20 @@ impl ShadowMaterializerManifest {
                 self.compaction_threshold_records, config.compaction_threshold_records
             )));
         }
-        if self.checkpoint_sequence != checkpoint.applied_sequence {
+        // The position, not the sequence: a checkpoint whose content drifted
+        // while its applied sequence stayed put must not recover as valid.
+        let checkpoint_position = checkpoint.materialized_position()?;
+        if self.checkpoint_position != checkpoint_position {
             return Err(Error::InvalidInput(format!(
-                "shadow materializer manifest checkpoint sequence {} does not match snapshot sequence {}",
-                self.checkpoint_sequence.0, checkpoint.applied_sequence.0
+                "shadow materializer manifest checkpoint position {} does not match snapshot position {}",
+                describe_materialized_position(&self.checkpoint_position),
+                describe_materialized_position(&checkpoint_position)
             )));
         }
-        if self.current_sequence.0 < self.checkpoint_sequence.0 {
+        if self.current_sequence.0 < self.checkpoint_position.applied_sequence.0 {
             return Err(Error::InvalidInput(format!(
                 "shadow materializer current sequence {} is behind checkpoint sequence {}",
-                self.current_sequence.0, self.checkpoint_sequence.0
+                self.current_sequence.0, self.checkpoint_position.applied_sequence.0
             )));
         }
 
@@ -82,7 +87,8 @@ impl ShadowMaterializerManifest {
                 "shadow materializer pending record count exceeds supported range".to_string(),
             )
         })?;
-        let expected_pending = self.current_sequence.0 - self.checkpoint_sequence.0;
+        let expected_pending =
+            self.current_sequence.0 - self.checkpoint_position.applied_sequence.0;
         if pending_record_count != expected_pending {
             return Err(Error::InvalidInput(format!(
                 "shadow materializer manifest pending count {} does not match sequence gap {}",
@@ -142,7 +148,7 @@ impl ShadowMaterializer {
             checkpoint: checkpoint.clone(),
             manifest: ShadowMaterializerManifest {
                 version: SHADOW_MATERIALIZER_MANIFEST_VERSION,
-                checkpoint_sequence: checkpoint.applied_sequence,
+                checkpoint_position: checkpoint.materialized_position()?,
                 current_sequence: checkpoint.applied_sequence,
                 pending_record_count: 0,
                 compaction_runs: 0,
@@ -426,7 +432,7 @@ impl ShadowMaterializer {
     fn compact(&mut self) -> Result<()> {
         self.checkpoint = self.current_snapshot();
         self.pending_records.clear();
-        self.manifest.checkpoint_sequence = self.checkpoint.applied_sequence;
+        self.manifest.checkpoint_position = self.checkpoint.materialized_position()?;
         self.manifest.pending_record_count = 0;
         self.manifest.compaction_runs = self.manifest.compaction_runs.saturating_add(1);
         self.validate_manifest()?;
@@ -443,7 +449,12 @@ impl ShadowMaterializer {
             )));
         }
         if let Some(first_record) = self.pending_records.first() {
-            let expected_first = self.manifest.checkpoint_sequence.0.saturating_add(1);
+            let expected_first = self
+                .manifest
+                .checkpoint_position
+                .applied_sequence
+                .0
+                .saturating_add(1);
             if first_record.sequence.0 != expected_first {
                 return Err(Error::InvalidInput(format!(
                     "shadow materializer pending tail starts at sequence {} instead of {}",
@@ -458,10 +469,13 @@ impl ShadowMaterializer {
                     last_record.sequence.0, self.manifest.current_sequence.0
                 )));
             }
-        } else if self.manifest.current_sequence != self.manifest.checkpoint_sequence {
+        } else if self.manifest.current_sequence
+            != self.manifest.checkpoint_position.applied_sequence
+        {
             return Err(Error::InvalidInput(format!(
                 "shadow materializer has no pending tail but current sequence {} differs from checkpoint sequence {}",
-                self.manifest.current_sequence.0, self.manifest.checkpoint_sequence.0
+                self.manifest.current_sequence.0,
+                self.manifest.checkpoint_position.applied_sequence.0
             )));
         }
         Ok(())

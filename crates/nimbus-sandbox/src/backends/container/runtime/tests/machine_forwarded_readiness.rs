@@ -19,6 +19,10 @@ const INSPECTION_TIMEOUT: Duration = Duration::from_secs(3);
 
 struct CompleteMachineReadinessFixture {
     _temp_dir: TempDir,
+    /// Holds the published-endpoint and PEP ports this fixture configured. The
+    /// machine proxies and the egress proxy bind them, so the claim has to
+    /// outlive the constructor that handed them over.
+    _port_window: PortWindow,
     backend: ContainerSandboxBackend,
     manifest: ContainerSandboxManifest,
     forwarder_listener: Option<TcpListener>,
@@ -37,37 +41,28 @@ impl CompleteMachineReadinessFixture {
 
     fn with_binding_count(name: &str, binding_count: usize) -> Self {
         let temp_dir = TempDir::new().expect("tempdir should build");
-        let mut port_reservations = reserve_contiguous_loopback_ports(binding_count + 1);
-        let endpoint_ports = port_reservations
-            .iter()
-            .take(binding_count)
-            .map(|reservation| {
-                reservation
-                    .local_addr()
-                    .expect("endpoint reservation should report its address")
-                    .port()
-            })
+        // The window supplies one contiguous run: offsets `0..binding_count`
+        // are the published endpoints, the next offset is the PEP, and the one
+        // after that is the forwarder tripwire. The claim replaces the held
+        // reservations this fixture used to drop just before the product bound
+        // the very same ports.
+        let port_window = PortWindow::claim();
+        let endpoint_count =
+            u16::try_from(binding_count).expect("fixture binding count should fit u16");
+        let endpoint_ports = (0..endpoint_count)
+            .map(|offset| port_window.port(offset))
             .collect::<Vec<_>>();
-        let pep_port = port_reservations
-            .last()
-            .expect("the PEP reservation should exist")
-            .local_addr()
-            .expect("PEP reservation should report its address")
-            .port();
-        let forwarder_listener =
-            TcpListener::bind("127.0.0.1:0").expect("forwarder fixture should bind");
-        let forwarder_port = forwarder_listener
-            .local_addr()
-            .expect("forwarder fixture should report its address")
-            .port();
+        let pep_port = port_window.port(endpoint_count);
+        // The tripwire keeps this socket for the fixture's whole life — the
+        // product connects to it, and `assert_no_provider_io` proves when it
+        // did not. Binding an explicit claimed port rather than port zero keeps
+        // the number ours without changing what the listener proves.
+        let forwarder_port = port_window.port(endpoint_count + 1);
+        let forwarder_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, forwarder_port))
+            .expect("forwarder fixture should bind");
         let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
         config.node_network_supernet = "127.0.0.0/24".to_owned();
-        config.published_port_range = port_reservations
-            .first()
-            .expect("the published range should have a start")
-            .local_addr()
-            .expect("range start should report its address")
-            .port()..=pep_port;
+        config.published_port_range = port_window.port(0)..=pep_port;
         config.machine_port_forwarder = Some(sample_forwarder(forwarder_port));
         let pin = Arc::new(FixedOciEgressPinProvider::ready());
         let backend = ContainerSandboxBackend::new(config).with_egress_pin_provider(pin.clone());
@@ -105,9 +100,6 @@ impl CompleteMachineReadinessFixture {
             .expect("manifest should select its exact port authority");
         let hostname = hostname_for(&manifest.spec);
 
-        // The deterministic attachment provider and the machine/PEP adapters
-        // now own these exact listeners.
-        port_reservations.clear();
         backend
             .attachment_adapter(
                 &manifest,
@@ -147,6 +139,7 @@ impl CompleteMachineReadinessFixture {
 
         Self {
             _temp_dir: temp_dir,
+            _port_window: port_window,
             backend,
             manifest,
             forwarder_listener: Some(forwarder_listener),
@@ -224,34 +217,6 @@ fn exposed_receipts(manifest: &ContainerSandboxManifest) -> Vec<MachinePortForwa
             provider_generation: forwarder.provider_generation(),
         })
         .collect()
-}
-
-fn reserve_contiguous_loopback_ports(count: usize) -> Vec<TcpListener> {
-    assert!(count > 0, "at least the PEP listener must be reserved");
-    for _ in 0..256 {
-        let first = TcpListener::bind("127.0.0.1:0").expect("first port fixture should bind");
-        let first_port = first
-            .local_addr()
-            .expect("first port fixture should report its address")
-            .port();
-        let Ok(last_offset) = u16::try_from(count - 1) else {
-            panic!("fixture port count should fit u16");
-        };
-        let Some(last_port) = first_port.checked_add(last_offset) else {
-            continue;
-        };
-        let mut reservations = vec![first];
-        for port in first_port + 1..=last_port {
-            match TcpListener::bind(("127.0.0.1", port)) {
-                Ok(listener) => reservations.push(listener),
-                Err(_) => break,
-            }
-        }
-        if reservations.len() == count {
-            return reservations;
-        }
-    }
-    panic!("{count} contiguous loopback ports should become available");
 }
 
 fn exact_inspection_response(bindings: &[SandboxPortBinding]) -> Vec<u8> {
@@ -407,8 +372,11 @@ fn snapshot_machine_registry(fixture: &CompleteMachineReadinessFixture) -> Machi
 #[test]
 fn nnc5_3a_machine_pre_spawn_rejects_missing_complete_readiness() {
     let temp_dir = TempDir::new().expect("tempdir should build");
+    // The forwarder endpoint must stay unanswered: this proof rejects before
+    // any provider I/O, and the claim keeps a foreign listener out of it.
+    let port_window = PortWindow::claim();
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(0)));
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
         .plan_start_with_id(
@@ -435,15 +403,15 @@ fn nnc5_3a_machine_pre_spawn_rejects_missing_complete_readiness() {
 #[test]
 fn nnc5_3a_machine_live_status_rejects_pep_only_readiness() {
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP port fixture should bind");
-    let pep_port = pep_reservation
-        .local_addr()
-        .expect("PEP port fixture should report its address")
-        .port();
+    // Offset 0 is the one-port PEP range the proxy binds below; offset 1 is the
+    // forwarder endpoint, which stays unanswered. The claim covers both until
+    // the test ends.
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = pep_port..=pep_port;
-    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    config.machine_port_forwarder = Some(sample_forwarder(port_window.port(1)));
     let backend = ContainerSandboxBackend::new(config);
     let mut manifest = backend
         .plan_start_with_id(
@@ -459,7 +427,6 @@ fn nnc5_3a_machine_live_status_rejects_pep_only_readiness() {
         .as_ref()
         .expect("execute plan should retain reservation authority")
         .clone();
-    drop(pep_reservation);
     backend
         .ensure_egress_proxy_running_with_release_authority(
             &manifest,

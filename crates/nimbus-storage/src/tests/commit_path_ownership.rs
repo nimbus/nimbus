@@ -7,6 +7,12 @@
 //! stories. `StorageCommit*` is shared logic, so it is **banned** everywhere
 //! outside the core. `Journal*` placement is a genuine dialect axis, so it is
 //! **pinned** to its known owners by exact count instead.
+//!
+//! SIC3 adds a third gate in the child modules: the writer ownership matrix
+//! and the source checks that keep it honest.
+
+mod effect_gate;
+mod effect_matrix;
 
 /// The two write-transaction commit-sequence fault points, named without a path
 /// prefix so the scan catches `FaultPoint::X`, `crate::FaultPoint::X`, and a

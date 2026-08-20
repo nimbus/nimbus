@@ -21,7 +21,7 @@ use sha2::Sha256;
 use zip::CompressionMethod;
 use zip::write::SimpleFileOptions;
 
-use crate::backend::{S3TenantObjects, S3TenantResolver};
+use crate::backend::{S3TenantObjects, S3TenantResolver, put_manifest_unconditional};
 use crate::checksum::ComputedChecksums;
 use crate::object_io::{
     read_manifest_bytes, release_manifest_blobs, release_manifest_blobs_except,
@@ -330,7 +330,10 @@ impl ConvexObjectStorage {
             hash.to_hex(),
             attributes,
         )?;
-        ctx.meta.put_manifest(manifest.clone()).await?;
+        // The Convex storage surface writes each object under a freshly
+        // generated internal key and supersedes the old one by deleting it
+        // below, so this write carries no expected state.
+        put_manifest_unconditional(ctx.meta.as_ref(), manifest.clone()).await?;
         if let Some(previous) = previous
             && ctx
                 .meta

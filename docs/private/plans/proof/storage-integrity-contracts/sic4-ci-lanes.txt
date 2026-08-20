@@ -1,0 +1,39 @@
+SIC4 make ci — distilled lane results. MAKE_RC is the last line of the full run.
+
+advisories ok, bans ok, licenses ok, sources ok
+test result: ok. 517 passed; 0 failed; 134 ignored; 0 measured; 742 filtered out; finished in 69.60s
+Summary [ 579.971s] 7433 tests run: 7433 passed (9 slow, 1 leaky), 107 skipped
+
+No FAIL line appears anywhere in the run:
+$ grep -c '^ *FAIL ' sic4-ci.txt -> 0
+      Tests  336 passed (336)
+> npm run codegen && tsc -p tsconfig.json --noEmit
+> npm run codegen && tsc -p tsconfig.json --noEmit
+> npm run codegen && tsc -p tsconfig.json --noEmit
+> npm run codegen && tsc -p convex/tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+> npm run codegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+> tsc -p tsconfig.json --noEmit
+> npm run codegen && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.smoke.json --noEmit
+> npm run codegen && tsc -p tsconfig.json --noEmit
+Elle proof helper: selection/checksums/download bounds/UNVERIFIED/exit propagation passed
+verified: sqlcipher proof bundle collector discovers and downloads matching artifacts
+verified: nimbus machine guest proof helper captured deterministic guest-image evidence
+verified: nimbus machine service proof helper captured deterministic forwarded-service evidence
+verified: nimbus homebrew cask proof helper captures the packaged macOS release-asset contract with bundled-first gvproxy and vfkit helpers deterministically
+verified: Bun/JSC adapter package helper accepts a good fixture with SBOM/provenance and rejects missing library, bad checksum, checksum subject spoofing, missing evidence, bad evidence checksum, wrong provenance subject, bad manifest, unsafe modes, wrong exports, and native leaks
+verified: Bun/JSC release asset helper accepts absent-optional and good assets with SBOM/provenance, rejects missing required assets, bad release checksums, checksum subject spoofing, unknown platforms, and tampered adapter packages
+verified: release OCI image helper covers image definition, license evidence, least-permission workflow wiring, deterministic report rendering, release identity asset validation, stdout/stderr logging evidence, and smoke contract
+verified: live OCI image verifier accepts complete release fixtures with optional adapter assets and rejects missing LICENSE or unchecksummed release assets with stubbed GitHub evidence
+verified: linux package builder rendered deterministic nimbus/nimbus-libkrun/nimbus-crun/nimbus-bun-jsc-adapter deb/rpm manifests with package license and copyright files (nfpm not installed; package build skipped)
+verified: install script helper passed 44 tests
+
+First attempt failed in the workspace lane before any test ran:
+  ld: write() failed, errno=28
+  clang: error: linker command failed with exit code 1
+  error: could not compile `nimbus-cli` (lib test) due to 1 previous error
+  error: could not compile `nimbus-server` (lib test) due to 1 previous error
+  make: *** [test-rust-workspace] Error 101
+ENOSPC, not a code failure: the volume had 2.7 GiB free with this repo's
+target/ at 109 GiB. `cargo clean` on two idle sibling checkouts
+(nimbus-dx-scaffold, nimbus-dx-review) freed 29.7 GiB; no build was running in
+either. The rerun above linked and ran clean.

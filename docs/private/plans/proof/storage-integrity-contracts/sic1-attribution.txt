@@ -1,0 +1,23 @@
+### A. nimbus-cli machine tests, ORIGINAL TMPDIR (live server discoverable)
+        FAIL [   0.260s] (110/113) nimbus-cli machine::tests::startup_failures::machine_start_rejects_create_if_missing_overrides_when_machine_exists
+        FAIL [   0.292s] (111/113) nimbus-cli machine::tests::startup_failures::machine_start_auto_initializes_before_start_failure
+        FAIL [   0.297s] (112/113) nimbus-cli machine::tests::startup_failures::machine_start_auto_initializes_named_machine_before_start_failure
+        FAIL [   0.270s] (113/113) nimbus-cli machine::tests::startup_failures::machine_start_reports_oci_materialization_failure_for_unreachable_registry_image
+error: test run failed
+
+### B. nimbus-cli machine tests, ISOLATED TMPDIR=/private/tmp/claude-501/-Users-jack-src-github-com-nimbus-nimbus/042036cc-9a3e-4b7c-8c22-3c72ca2c5d0d/scratchpad/iso-tmp (no server.json)
+        PASS [   1.018s] (113/113) nimbus-cli machine::tests::startup_failures::machine_start_reports_oci_materialization_failure_for_unreachable_registry_image
+────────────
+     Summary [   1.811s] 113 tests run: 112 passed, 1 failed, 912 skipped
+        FAIL [   0.146s] (  8/113) nimbus-cli machine::tests::forwarded_api::machine_status_detects_reachable_machine_api_socket
+error: test run failed
+
+### C. nimbus-sandbox + nimbus-server, serial
+    Starting 1 test across 7 binaries (1261 tests skipped)
+        PASS [   0.359s] (1/1) nimbus-sandbox backends::container::runtime::tests::lifecycle::runner_recovery::runtime_observed_rejects_missing_creator_attempt_annotation
+────────────
+     Summary [   0.361s] 1 test run: 1 passed, 1261 skipped
+    Starting 1 test across 7 binaries (791 tests skipped)
+        PASS [  14.661s] (1/1) nimbus-server workload_saga_store::tests::composition::fresh_process_reopens_engine_and_plans_every_workload_saga_phase_without_snapshot_handoff
+────────────
+     Summary [  14.662s] 1 test run: 1 passed, 791 skipped

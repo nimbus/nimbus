@@ -1,0 +1,45 @@
+SIC2 — hosted CI nondeterminism on PR #284, head ef897a02f
+
+The docs-only push from 36ec4edcc to ef897a02f changed exactly two files:
+
+  docs/private/plans/proof/storage-integrity-contracts/sic2-libsql-attribution.txt
+  docs/private/plans/storage-integrity-contracts-plan.md
+
+`git diff --stat 36ec4edcc..ef897a02f -- crates packages` is EMPTY. The compiled
+tree is byte-identical to the one that had already passed all three workspace
+shards. Any workspace-shard failure on the new head is therefore not caused by a
+code change on this branch.
+
+Three distinct tests failed across the runs, each in a different subsystem, none
+reachable from the SIC2 diff, and each verified green on the identical tree:
+
+1. nimbus-engine tests::materialized_serving::reuse::
+     warmed_tables_do_not_block_each_other_from_reusing_serving_snapshots
+   reuse.rs:316  assert_eq!(stats.table_load_count, 2)  left: 3, right: 2
+   The test's own comment above that assertion documents the nondeterminism:
+   "the cursor worker runs on its own OS thread and can widen coverage between
+   two back-to-back accessor calls, breaking the exact-equality assertion
+   nondeterministically."
+   Local on this tree: PASS 0.414s.
+
+2. nimbus-engine tests::embedded_providers::
+     provider_publisher_contract_matches_memory_redb_and_sqlite
+   provider_publisher_contract.rs:461
+   "cancelled scheduler write must not persist: DocumentId(...)"
+   A cancellation race: under load the cancellation can land after the write
+   commits.
+   Local on this tree: PASS 0.936s.
+
+3. nimbus-sandbox backends::container::runtime::tests::lifecycle::
+     machine_forwarded_readiness::
+     registry_route_lifetime_and_worker_substitutions_fail_before_provider_io
+   machine_forwarded_readiness.rs:140. Process-harness wall-clock class, the
+   same class as blocker B2.
+
+Shard 2/3 failed twice in a row but with a DIFFERENT test each time. A
+deterministic regression reproduces the same failure; a loaded runner does not.
+
+Final state after re-running the failed jobs against the unchanged tree:
+  53 checks pass, 0 fail, 3 skipping.
+
+No bound was widened, no test was skipped, and no assertion was weakened.

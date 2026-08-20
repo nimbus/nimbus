@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use nimbus_core::TenantId;
 use nimbus_network::{LocalPortLeaseAuthority, PortBindFailureKind, PortLeasePhase};
+use nimbus_process_harness::PortWindow;
 use tempfile::TempDir;
 
 use super::{
@@ -883,12 +884,10 @@ fn machine_port_proxy_rejects_bind_without_port_lease() {
 #[test]
 fn restart_route_failure_retains_reserved_machine_listener_authority() {
     let state = TempDir::new().expect("state root");
-    let port_probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port probe should bind");
-    let port = port_probe
-        .local_addr()
-        .expect("probe address should resolve")
-        .port();
-    drop(port_probe);
+    // Held for the whole test: the coordinator range hands this port to the
+    // machine-port proxy, which binds it after this statement returns.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let manager =
         OciPortLeaseCoordinator::new(state.path(), port..=port).with_machine_port_proxy_bindings();
     let tenant = TenantId::new("machine-restart-route").expect("tenant should validate");
@@ -959,12 +958,13 @@ fn restart_route_failure_retains_reserved_machine_listener_authority() {
 
 #[test]
 fn machine_port_proxy_collision_records_durable_no_effect_failure() {
+    // `external` is the point of the test: it must be the one owner of this
+    // port so the provider's bind loses to it. The window keeps the number away
+    // from every other test process; `external` keeps the socket occupied.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let external =
-        TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("external guest owner should bind");
-    let port = external
-        .local_addr()
-        .expect("external address should resolve")
-        .port();
+        TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).expect("external guest owner should bind");
     let state = TempDir::new().expect("state root");
     let manager =
         OciPortLeaseCoordinator::new(state.path(), port..=port).with_machine_port_proxy_bindings();
@@ -1010,12 +1010,11 @@ fn machine_port_proxy_collision_records_durable_no_effect_failure() {
 
 #[test]
 fn retained_machine_proxy_bind_failure_returns_to_reserved_and_retries() {
-    let port_probe = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("port probe should bind");
-    let port = port_probe
-        .local_addr()
-        .expect("port probe address should resolve")
-        .port();
-    drop(port_probe);
+    // Held for the whole test: the provider binds this port, the `blocker`
+    // below deliberately occupies it between attempts, and the retry rebinds
+    // it. Every one of those steps needs the number to stay ours.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let state = TempDir::new().expect("state root");
     let manager =
         OciPortLeaseCoordinator::new(state.path(), port..=port).with_machine_port_proxy_bindings();
@@ -1144,20 +1143,11 @@ fn retained_machine_proxy_bind_failure_returns_to_reserved_and_retries() {
 
 #[test]
 fn same_request_machine_replay_cannot_fail_or_release_held_batch() {
-    let first_probe =
-        TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("first port probe should bind");
-    let first_port = first_probe
-        .local_addr()
-        .expect("first port should resolve")
-        .port();
-    let second_probe =
-        TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("second port probe should bind");
-    let second_port = second_probe
-        .local_addr()
-        .expect("second port should resolve")
-        .port();
+    // Held for the whole test: both ports go into the batch the provider binds.
+    let port_window = PortWindow::claim();
+    let first_port = port_window.port(0);
+    let second_port = port_window.port(1);
     assert_ne!(first_port, second_port);
-    drop((first_probe, second_probe));
 
     let state = TempDir::new().expect("state root");
     let manager = OciPortLeaseCoordinator::new(
@@ -1256,20 +1246,16 @@ fn same_request_machine_replay_cannot_fail_or_release_held_batch() {
 
 #[test]
 fn later_machine_proxy_collision_releases_never_bound_siblings() {
-    let first_probe =
-        TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("first port probe should bind");
-    let first_port = first_probe
-        .local_addr()
-        .expect("first probe address should resolve")
-        .port();
-    let external =
-        TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("external guest owner should bind");
-    let second_port = external
-        .local_addr()
-        .expect("external address should resolve")
-        .port();
+    // Held for the whole test. Offset 0 is the sibling the provider binds and
+    // then must release — the rebind near the end of this test proves it let go,
+    // so nothing else may take the number in between. Offset 1 belongs to
+    // `external`, the live owner whose collision is the point of the test.
+    let port_window = PortWindow::claim();
+    let first_port = port_window.port(0);
+    let second_port = port_window.port(1);
+    let external = TcpListener::bind((Ipv4Addr::UNSPECIFIED, second_port))
+        .expect("external guest owner should bind");
     assert_ne!(first_port, second_port, "test ports must be distinct");
-    drop(first_probe);
 
     let state = TempDir::new().expect("state root");
     let manager = OciPortLeaseCoordinator::new(
@@ -1337,13 +1323,10 @@ fn prepared_machine_proxy_is_inert_until_exact_lease_is_active() {
         .local_addr()
         .expect("target address should resolve")
         .port();
-    let port_probe =
-        TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("proxy port guard should bind");
-    let proxy_port = port_probe
-        .local_addr()
-        .expect("proxy address should resolve")
-        .port();
-    drop(port_probe);
+    // Held for the whole test: the prepared proxy binds this port, and the
+    // client below connects to it by number.
+    let port_window = PortWindow::claim();
+    let proxy_port = port_window.port(0);
 
     let state = TempDir::new().expect("state root");
     let manager = OciPortLeaseCoordinator::new(state.path(), proxy_port..=proxy_port)
