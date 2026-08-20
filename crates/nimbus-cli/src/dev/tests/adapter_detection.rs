@@ -56,6 +56,12 @@ fn dev_plan_prefers_native_source_root_for_watch_when_both_exist() {
             package_target: crate::authoring_root::NIMBUS_TARGET,
         })
     );
+    assert_eq!(
+        plan.adapter.as_ref().and_then(DevAdapter::provision_target),
+        Some(crate::authoring_root::NIMBUS_TARGET),
+        "a native source root provisions the Nimbus SDK, not the Convex \
+         compatibility package"
+    );
 }
 
 #[test]

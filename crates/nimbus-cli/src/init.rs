@@ -2,7 +2,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use clap::Args;
-use nimbus_assets::templates::{cloud_functions, convex};
+use nimbus_assets::templates::{cloud_functions, convex, nimbus};
 
 use crate::cli_ux;
 
@@ -13,17 +13,15 @@ pub(crate) const CODEGEN_VERSION: &str = env!("NIMBUS_CODEGEN_VERSION");
 #[derive(Debug, Args)]
 #[command(help_template = crate::cli_ux::COMMAND_HELP_TEMPLATE)]
 pub(crate) struct InitCommand {
-    /// Adapter to scaffold (e.g. convex, cloud-functions).
-    #[arg(value_parser = ["convex", "cloud-functions"])]
+    /// Adapter to scaffold (e.g. nimbus, convex, cloud-functions).
+    #[arg(value_parser = clap::builder::PossibleValuesParser::new(
+        crate::node_runtime::Adapter::cli_arg_values(),
+    ))]
     pub(crate) adapter: String,
 
     /// Target directory (created if it does not exist).
     #[arg(default_value = ".")]
     pub(crate) directory: PathBuf,
-
-    /// Source root directory name (convex adapter only).
-    #[arg(long, default_value = "convex")]
-    pub(crate) source_root: String,
 
     /// Install adapter dependencies after scaffolding.
     #[arg(long, default_value_t = false)]
@@ -35,10 +33,6 @@ pub(crate) async fn run_init_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let adapter = crate::node_runtime::Adapter::from_cli_arg(&command.adapter)
         .ok_or_else(|| format!("unknown adapter: {}", command.adapter))?;
-
-    if adapter == crate::node_runtime::Adapter::Convex {
-        check_source_root_flag(&command.source_root)?;
-    }
 
     let target = if command.directory.is_absolute() {
         command.directory.clone()
@@ -116,6 +110,29 @@ enum TemplateContent {
     Static(&'static str),
     Template(&'static str),
 }
+
+const NIMBUS_TEMPLATE: &[TemplateFile] = &[
+    TemplateFile {
+        relative_path: "nimbus/schema.ts",
+        content: TemplateContent::Static(nimbus::SCHEMA_TS),
+    },
+    TemplateFile {
+        relative_path: "nimbus/messages.ts",
+        content: TemplateContent::Static(nimbus::MESSAGES_TS),
+    },
+    TemplateFile {
+        relative_path: ".gitignore",
+        content: TemplateContent::Static(nimbus::GITIGNORE),
+    },
+    TemplateFile {
+        relative_path: "tsconfig.json",
+        content: TemplateContent::Static(nimbus::TSCONFIG_JSON),
+    },
+    TemplateFile {
+        relative_path: "package.json",
+        content: TemplateContent::Template(nimbus::PACKAGE_JSON_TMPL),
+    },
+];
 
 const CONVEX_TEMPLATE: &[TemplateFile] = &[
     TemplateFile {
@@ -207,6 +224,7 @@ fn is_unsafe_directory(dir: &Path) -> Option<&'static str> {
 
 fn adapter_templates(adapter: crate::node_runtime::Adapter) -> &'static [TemplateFile] {
     match adapter {
+        crate::node_runtime::Adapter::Nimbus => NIMBUS_TEMPLATE,
         crate::node_runtime::Adapter::Convex => CONVEX_TEMPLATE,
         crate::node_runtime::Adapter::CloudFunctions => CLOUD_FUNCTIONS_TEMPLATE,
     }
@@ -217,7 +235,7 @@ fn check_adapter_already_exists(
     target_dir: &Path,
 ) -> Result<(), String> {
     match adapter {
-        crate::node_runtime::Adapter::Convex => {
+        crate::node_runtime::Adapter::Nimbus | crate::node_runtime::Adapter::Convex => {
             if target_dir.join("convex").is_dir() || target_dir.join("nimbus").is_dir() {
                 return Err(
                     "Source root already exists. Run `nimbus dev` to start the development server."
@@ -239,7 +257,9 @@ fn check_adapter_already_exists(
 
 fn adapter_npm_install_dir(adapter: crate::node_runtime::Adapter, target_dir: &Path) -> PathBuf {
     match adapter {
-        crate::node_runtime::Adapter::Convex => target_dir.to_path_buf(),
+        crate::node_runtime::Adapter::Nimbus | crate::node_runtime::Adapter::Convex => {
+            target_dir.to_path_buf()
+        }
         crate::node_runtime::Adapter::CloudFunctions => target_dir.join("functions"),
     }
 }
@@ -297,17 +317,6 @@ fn scaffold_project(
     Ok(ScaffoldResult { actions })
 }
 
-pub(crate) fn check_source_root_flag(source_root: &str) -> Result<(), String> {
-    if source_root == "nimbus" {
-        return Err(
-            "The nimbus/ source root is experimental and not yet supported \
-             by the scaffold templates."
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -345,6 +354,52 @@ mod tests {
             CODEGEN_VERSION.contains('.'),
             "NIMBUS_CODEGEN_VERSION should be a semver string, got: {CODEGEN_VERSION}"
         );
+    }
+
+    #[test]
+    fn nimbus_package_json_template_substitution() {
+        let rendered = render_template(nimbus::PACKAGE_JSON_TMPL, "my-app");
+        // The native scaffold references the binary-provisioned SDK through the
+        // same `file:` specifier `nimbus packages provision` writes, so a fresh
+        // `npm install` resolves offline and `provision::ensure` finds nothing
+        // to rewrite.
+        let spec = crate::provision::provisioned_spec("@nimbus/nimbus");
+        assert!(
+            rendered.contains(&format!("\"@nimbus/nimbus\": \"{spec}\"")),
+            "rendered package.json should reference @nimbus/nimbus via the provisioned spec {spec}, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("\"convex\""),
+            "the native scaffold must not depend on the Convex compatibility package"
+        );
+        assert!(
+            !rendered.contains("@nimbus/codegen"),
+            "scaffold must not declare @nimbus/codegen (codegen runs in-binary)"
+        );
+        assert!(
+            !rendered.contains('^'),
+            "scaffold must not declare registry version ranges for Nimbus packages"
+        );
+        assert!(
+            rendered.contains("\"name\": \"my-app\""),
+            "rendered package.json should contain the project name"
+        );
+        assert!(
+            !rendered.contains("{{"),
+            "rendered package.json should not contain unresolved placeholders"
+        );
+    }
+
+    #[test]
+    fn nimbus_adapter_provisions_the_native_sdk() {
+        let adapter = crate::node_runtime::Adapter::from_cli_arg("nimbus")
+            .expect("nimbus should be a known adapter");
+        assert_eq!(adapter, crate::node_runtime::Adapter::Nimbus);
+        let target = adapter
+            .provision_target()
+            .expect("the native scaffold provisions packages from the binary");
+        crate::provision::Selection::parse(target)
+            .expect("the native provision target should be a known selection");
     }
 
     #[test]
@@ -433,6 +488,36 @@ mod tests {
         assert!(
             !pkg.contains("{{"),
             "package.json should not have unresolved placeholders"
+        );
+    }
+
+    #[test]
+    fn scaffold_nimbus_writes_all_files_to_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = scaffold_project(tmp.path(), NIMBUS_TEMPLATE).unwrap();
+
+        assert_eq!(result.actions.len(), 5);
+        for action in &result.actions {
+            assert!(
+                matches!(action, ScaffoldAction::Created(_)),
+                "all files should be created in empty dir"
+            );
+        }
+
+        assert!(tmp.path().join("nimbus/schema.ts").exists());
+        assert!(tmp.path().join("nimbus/messages.ts").exists());
+        assert!(
+            !tmp.path().join("convex").exists(),
+            "the native scaffold writes nimbus/, never convex/"
+        );
+        assert!(tmp.path().join(".gitignore").exists());
+        assert!(tmp.path().join("tsconfig.json").exists());
+        assert!(tmp.path().join("package.json").exists());
+
+        let schema = std::fs::read_to_string(tmp.path().join("nimbus/schema.ts")).unwrap();
+        assert!(
+            schema.contains("@nimbus/nimbus/server"),
+            "starter schema should author against the Nimbus SDK"
         );
     }
 
@@ -567,25 +652,48 @@ mod tests {
     }
 
     #[test]
-    fn source_root_nimbus_returns_advisory() {
-        let result = check_source_root_flag("nimbus");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("experimental"));
-    }
-
-    #[test]
-    fn source_root_convex_is_accepted() {
-        assert!(check_source_root_flag("convex").is_ok());
-    }
-
-    #[test]
     fn cli_parses_init_defaults() {
         let command = parse_init(["nimbus", "init", "convex"]);
 
         assert_eq!(command.adapter, "convex");
         assert_eq!(command.directory, PathBuf::from("."));
-        assert_eq!(command.source_root, "convex");
         assert!(!command.install);
+    }
+
+    /// The CLI offers exactly the adapters it can resolve. Both halves matter:
+    /// a name clap accepts but `from_cli_arg` cannot resolve fails at run time
+    /// with "unknown adapter" after parsing cleanly, and a name clap rejects
+    /// makes a real adapter unreachable.
+    #[test]
+    fn cli_offers_exactly_the_resolvable_adapters() {
+        for adapter in crate::node_runtime::Adapter::ALL {
+            let command = parse_init(["nimbus", "init", adapter.name()]);
+            assert_eq!(
+                crate::node_runtime::Adapter::from_cli_arg(&command.adapter),
+                Some(*adapter),
+                "`nimbus init {}` parses but does not resolve",
+                adapter.name(),
+            );
+            assert!(
+                adapter_templates(*adapter).len() > 1,
+                "`nimbus init {}` is offered but scaffolds nothing",
+                adapter.name(),
+            );
+        }
+
+        // Negative control: the parser is not simply accepting anything.
+        assert!(
+            Cli::try_parse_from(["nimbus", "init", "firestore-client"]).is_err(),
+            "init must reject an adapter it cannot scaffold"
+        );
+    }
+
+    #[test]
+    fn cli_parses_init_native_adapter() {
+        let command = parse_init(["nimbus", "init", "nimbus", "./my-app"]);
+
+        assert_eq!(command.adapter, "nimbus");
+        assert_eq!(command.directory, PathBuf::from("./my-app"));
     }
 
     #[test]
@@ -616,7 +724,6 @@ mod tests {
         let command = InitCommand {
             directory: tmp.path().to_path_buf(),
             adapter: "convex".to_string(),
-            source_root: "convex".to_string(),
             install: false,
         };
         run_init_command(command).await.unwrap();
@@ -641,7 +748,6 @@ mod tests {
         let command = InitCommand {
             directory: target.clone(),
             adapter: "convex".to_string(),
-            source_root: "convex".to_string(),
             install: false,
         };
         run_init_command(command).await.unwrap();
@@ -665,7 +771,6 @@ mod tests {
         let command = InitCommand {
             directory: tmp.path().to_path_buf(),
             adapter: "convex".to_string(),
-            source_root: "convex".to_string(),
             install: false,
         };
         let err = run_init_command(command).await.unwrap_err();
@@ -676,18 +781,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn init_command_rejects_nimbus_source_root() {
+    async fn init_command_scaffolds_native_project() {
         let tmp = tempfile::tempdir().unwrap();
         let command = InitCommand {
             directory: tmp.path().to_path_buf(),
-            adapter: "convex".to_string(),
-            source_root: "nimbus".to_string(),
+            adapter: "nimbus".to_string(),
+            install: false,
+        };
+        run_init_command(command).await.unwrap();
+
+        assert!(tmp.path().join("nimbus/schema.ts").exists());
+        assert!(tmp.path().join("nimbus/messages.ts").exists());
+        assert!(
+            !tmp.path().join("convex").exists(),
+            "`nimbus init nimbus` must not scaffold a Convex source root"
+        );
+
+        // The provisioned SDK has to be on disk for the scaffold's `file:`
+        // specifier to resolve; without it `npm install` links a dangling path.
+        let provisioned = tmp
+            .path()
+            .join(".nimbus/packages/@nimbus/nimbus/package.json");
+        assert!(
+            provisioned.exists(),
+            "init should provision @nimbus/nimbus into .nimbus/packages"
+        );
+
+        let pkg = std::fs::read_to_string(tmp.path().join("package.json")).unwrap();
+        let spec = crate::provision::provisioned_spec("@nimbus/nimbus");
+        assert!(
+            pkg.contains(&format!("\"@nimbus/nimbus\": \"{spec}\"")),
+            "package.json should reference the provisioned SDK, got: {pkg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn init_command_native_errors_when_convex_root_exists() {
+        // nimbus/ and convex/ are the two names dev and codegen resolve as the
+        // one source root, so an existing convex/ already claims the app.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("convex")).unwrap();
+        let command = InitCommand {
+            directory: tmp.path().to_path_buf(),
+            adapter: "nimbus".to_string(),
             install: false,
         };
         let err = run_init_command(command).await.unwrap_err();
         assert!(
-            err.to_string().contains("experimental"),
-            "should mention nimbus source root is experimental"
+            err.to_string().contains("already exists"),
+            "should mention the source root already exists"
         );
     }
 
@@ -697,7 +839,6 @@ mod tests {
         let command = InitCommand {
             directory: tmp.path().to_path_buf(),
             adapter: "cloud-functions".to_string(),
-            source_root: "convex".to_string(),
             install: false,
         };
         run_init_command(command).await.unwrap();
@@ -717,13 +858,21 @@ mod tests {
         let command = InitCommand {
             directory: tmp.path().to_path_buf(),
             adapter: "cloud-functions".to_string(),
-            source_root: "convex".to_string(),
             install: false,
         };
         let err = run_init_command(command).await.unwrap_err();
         assert!(
             err.to_string().contains("firebase.json already exists"),
             "should mention firebase.json already exists"
+        );
+    }
+
+    #[test]
+    fn adapter_npm_install_dir_nimbus_is_project_root() {
+        let dir = Path::new("/project");
+        assert_eq!(
+            adapter_npm_install_dir(crate::node_runtime::Adapter::Nimbus, dir),
+            PathBuf::from("/project")
         );
     }
 

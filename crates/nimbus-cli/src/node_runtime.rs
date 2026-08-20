@@ -6,6 +6,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::authoring_root;
 use crate::cli_ux;
 
 const NODE_DEPENDENCY_STATE_PATH: [&str; 4] = [".nimbus", "cache", "node", "dependency-state.json"];
@@ -16,40 +17,62 @@ const DEFAULT_FIREBASE_FUNCTIONS_CODEBASE: &str = "default";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Adapter {
+    /// Nimbus-native functions in `nimbus/`, authored against `@nimbus/nimbus`.
+    Nimbus,
     Convex,
     CloudFunctions,
 }
 
 impl Adapter {
-    pub(crate) fn from_cli_arg(s: &str) -> Option<Adapter> {
-        match s {
-            "convex" => Some(Self::Convex),
-            "cloud-functions" => Some(Self::CloudFunctions),
-            _ => None,
-        }
+    /// Every adapter, in the order the CLI offers them. `init`'s value parser
+    /// and `from_cli_arg` both read this one list, so the set of names the CLI
+    /// accepts cannot drift from the set it can resolve -- a drift that would
+    /// otherwise surface as `nimbus init <adapter>` parsing cleanly and then
+    /// failing at run time with "unknown adapter".
+    pub(crate) const ALL: &'static [Adapter] = &[Self::Nimbus, Self::Convex, Self::CloudFunctions];
+
+    /// The names `ALL` answers to, for a clap `PossibleValuesParser`.
+    pub(crate) fn cli_arg_values() -> Vec<&'static str> {
+        Self::ALL.iter().map(|adapter| adapter.name()).collect()
     }
 
+    pub(crate) fn from_cli_arg(s: &str) -> Option<Adapter> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|adapter| adapter.name() == s)
+    }
+
+    /// The name this adapter answers to on the CLI.
+    ///
+    /// The two authoring adapters borrow their name from `authoring_root`
+    /// rather than spelling it again: `dev` detection, provisioning, and this
+    /// parser all have to agree on one string, and a second literal here is
+    /// exactly how they would drift apart.
     pub(crate) fn name(self) -> &'static str {
         match self {
-            Self::Convex => "convex",
+            Self::Nimbus => authoring_root::NIMBUS_TARGET,
+            Self::Convex => authoring_root::CONVEX_TARGET,
             Self::CloudFunctions => "cloud-functions",
         }
     }
 
     pub(crate) fn needs_node_dependencies(self) -> bool {
         match self {
-            Self::Convex | Self::CloudFunctions => true,
+            Self::Nimbus | Self::Convex | Self::CloudFunctions => true,
         }
     }
 
     /// The embedded-package provision target for this adapter's scaffold, or
     /// `None` when the scaffold declares no binary-provisioned Nimbus packages.
-    /// Convex apps depend on the `file:`-provisioned `convex` closure; Cloud
-    /// Functions uses developer-supplied Firebase SDKs from the registry, so
-    /// it has nothing to provision from the binary.
+    /// Native apps depend on the `file:`-provisioned `@nimbus/nimbus` closure
+    /// and Convex apps on the `convex` one; Cloud Functions uses
+    /// developer-supplied Firebase SDKs from the registry, so it has nothing to
+    /// provision from the binary.
     pub(crate) fn provision_target(self) -> Option<&'static str> {
         match self {
-            Self::Convex => Some("convex"),
+            Self::Nimbus => Some(authoring_root::NIMBUS_TARGET),
+            Self::Convex => Some(authoring_root::CONVEX_TARGET),
             Self::CloudFunctions => None,
         }
     }
@@ -596,6 +619,39 @@ fn validate_node_runtime_version(version: &Version) -> io::Result<NodeRuntimeVer
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_adapter_is_offered_by_the_cli_and_round_trips() {
+        // Exhaustive match: a new `Adapter` variant fails to compile here
+        // until it is named, which is the prompt to add it to `Adapter::ALL`
+        // as well. Without that, the variant would exist but no CLI argument
+        // could ever reach it.
+        for adapter in Adapter::ALL {
+            match adapter {
+                Adapter::Nimbus | Adapter::Convex | Adapter::CloudFunctions => {}
+            }
+        }
+
+        // Every offered value resolves, and resolves to the adapter that
+        // answers to it -- the property `init`'s value parser relies on.
+        for adapter in Adapter::ALL {
+            assert_eq!(
+                Adapter::from_cli_arg(adapter.name()),
+                Some(*adapter),
+                "`{}` is offered by the CLI but does not resolve back to itself",
+                adapter.name(),
+            );
+        }
+
+        assert_eq!(
+            Adapter::cli_arg_values(),
+            vec!["nimbus", "convex", "cloud-functions"],
+            "the native adapter leads the offered values: it is the default \
+             choice for a new project",
+        );
+        assert_eq!(Adapter::from_cli_arg("firestore-client"), None);
+        assert_eq!(Adapter::from_cli_arg(""), None);
+    }
 
     #[test]
     fn adapter_from_cli_arg_convex() {

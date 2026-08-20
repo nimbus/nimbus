@@ -275,10 +275,14 @@ the project template; existing files are never overwritten.
 
 | Argument / flag | Env var | Default | What it does |
 | --- | --- | --- | --- |
-| `<adapter>` | — | required | Adapter to scaffold: `convex` or `cloud-functions`. |
+| `<adapter>` | — | required | Adapter to scaffold: `nimbus`, `convex`, or `cloud-functions`. |
 | `[directory]` | — | `.` | Target directory, created if it does not exist. |
-| `--source-root` | — | `convex` | Source root directory name (convex adapter only). |
 | `--install` | — | `false` | Install adapter dependencies after scaffolding. |
+
+`nimbus` scaffolds functions in `nimbus/` against the `@nimbus/nimbus` SDK.
+`convex` scaffolds functions in `convex/` against the `convex` compatibility
+package. Both serve the same app through the same engine, so pick `nimbus` for
+a new project and `convex` to keep an existing Convex codebase portable.
 
 ## nimbus kv
 
