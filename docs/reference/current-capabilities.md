@@ -18,6 +18,9 @@ Each capability carries one of three statuses:
   non-default enablement path described in the notes.
 - **Not yet** — does not exist today; there is nothing to enable.
 
+A status describes the implementation, not release maturity. Nimbus is beta
+across every row below: APIs can break between releases.
+
 ## Core data platform
 
 | Capability | Status | Notes |
@@ -69,7 +72,7 @@ Each capability carries one of three statuses:
 | Encryption at rest | Available | Per-file data keys with master-key-file, key-directory, or AWS KMS providers, plus key-rotation commands. See [encryption](/operators/encryption/). |
 | Backup and restore | Available with caveats | `nimbus backup create`/`restore` for the embedded SQLite and redb providers — one offline, per-tenant archive captured at each tenant's latest committed sequence (server stopped), verified by fingerprint on restore. External backends and encrypted data directories use native or cold-copy procedures; there is no continuous point-in-time recovery. See [backup & restore](/operators/backup-restore/). |
 | Object byte plane and erasure health | Available with caveats | On by default with a local pack leg, local-only placement, and a per-deployment master key created on first use; the S3 adapter reads and writes through it. Erasure coding and cloud placement targets are opt-in via environment variables. `nimbus object-storage` administers placement, GC and erasure health/healing, offline byte-plane backup/restore, and destructive tenant removal. See [object storage](/operators/object-storage/). |
-| Production deployment | Available | [Linux servers](/operators/deploy-linux/), the official [container image](/operators/container-image/), and a [desktop install](/operators/desktop-install/) for the operator console. |
+| Server deployment | Available | [Linux servers](/operators/deploy-linux/), the official [container image](/operators/container-image/), and a [desktop install](/operators/desktop-install/) for the operator console. |
 
 ## Services, sandboxes, and machines
 

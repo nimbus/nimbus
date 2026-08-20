@@ -216,9 +216,11 @@ fn dev_help_is_honest_about_watch_scope() {
     assert!(rendered.contains("--network-state-dir"));
     assert!(rendered.contains("--once"));
     assert!(rendered.contains("--tail-logs"));
-    assert!(rendered.contains("debounced codegen reruns"));
-    assert!(rendered.contains("locally activates"));
-    assert!(rendered.contains("runtime log multiplexing"));
+    assert!(rendered.contains("reruns codegen"));
+    assert!(rendered.contains("activate locally"));
+    assert!(rendered.contains("log multiplexing is not"));
+    // Shipped help is product documentation, not plan notes.
+    assert!(!rendered.contains("P3 scope"));
     assert!(rendered.contains("COMPOSE_FILE"));
     assert!(rendered.contains("--no-compose-discovery"));
 }
