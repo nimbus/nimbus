@@ -43,6 +43,7 @@ impl MaterializedServingBackend {
                 super::DEFAULT_MATERIALIZED_SURFACE_VERSION_CAPACITY,
             ),
             table_load_count: std::sync::atomic::AtomicU64::new(0),
+            load_restart_count: std::sync::atomic::AtomicU64::new(0),
             bypass_count: std::sync::atomic::AtomicU64::new(0),
             eviction_count: std::sync::atomic::AtomicU64::new(0),
             in_flight_load_count: std::sync::atomic::AtomicU64::new(0),

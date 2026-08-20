@@ -34,6 +34,7 @@ pub(super) struct MaterializedServingBackend {
     byte_capacity: AtomicUsize,
     version_capacity: AtomicUsize,
     table_load_count: AtomicU64,
+    load_restart_count: AtomicU64,
     bypass_count: AtomicU64,
     eviction_count: AtomicU64,
     in_flight_load_count: AtomicU64,

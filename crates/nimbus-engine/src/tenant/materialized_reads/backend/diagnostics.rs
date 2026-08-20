@@ -31,6 +31,7 @@ impl MaterializedServingBackend {
             byte_capacity: self.byte_capacity.load(Ordering::Relaxed),
             version_capacity: self.version_capacity.load(Ordering::Relaxed),
             table_load_count: self.table_load_count.load(Ordering::Relaxed),
+            load_restart_count: self.load_restart_count.load(Ordering::Relaxed),
             bypass_count: self.bypass_count.load(Ordering::Relaxed),
             eviction_count: self.eviction_count.load(Ordering::Relaxed),
             in_flight_load_count: self.in_flight_load_count.load(Ordering::Relaxed),
