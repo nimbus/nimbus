@@ -287,7 +287,8 @@ fn nnc5_4a_fresh_process_exposure_response_loss_recovers_each_slot() {
             .expect("surviving exposure provider address should resolve")
             .port();
         let sandbox_id = format!("machine-exposure-process-loss-{lost_index}");
-        let (_setup, manifest) = prepare_manifest(root.path(), forwarder_port, &sandbox_id);
+        let (_port_window, _setup, manifest) =
+            prepare_manifest(root.path(), forwarder_port, &sandbox_id);
         let lost_local = binding_local(&manifest.spec.port_bindings[lost_index]);
         let provider = SurvivingProvider::spawn(
             listener,
@@ -354,7 +355,8 @@ fn nnc5_4a_fresh_process_withdrawal_response_loss_recovers_each_slot() {
             .expect("surviving withdrawal provider address should resolve")
             .port();
         let sandbox_id = format!("machine-withdrawal-process-loss-{lost_index}");
-        let (_setup, manifest) = prepare_manifest(root.path(), forwarder_port, &sandbox_id);
+        let (_port_window, _setup, manifest) =
+            prepare_manifest(root.path(), forwarder_port, &sandbox_id);
         let initial_routes = desired_routes(&manifest);
         let lost_local = binding_local(&manifest.spec.port_bindings[lost_index]);
         let provider = SurvivingProvider::spawn(
@@ -427,7 +429,8 @@ fn nnc5_4a_every_named_exposure_cut_recovers_in_a_fresh_process() {
             .expect("named exposure provider address should resolve")
             .port();
         let sandbox_id = format!("machine-exposure-cut-{}", cut.replace('.', "-"));
-        let (_setup, manifest) = prepare_manifest(root.path(), forwarder_port, &sandbox_id);
+        let (_port_window, _setup, manifest) =
+            prepare_manifest(root.path(), forwarder_port, &sandbox_id);
         let provider = SurvivingProvider::spawn(listener, BTreeSet::new(), None, false);
 
         kill_child_at_marker(
@@ -486,7 +489,8 @@ fn nnc5_4a_every_named_withdrawal_cut_recovers_in_a_fresh_process() {
             .expect("named withdrawal provider address should resolve")
             .port();
         let sandbox_id = format!("machine-withdrawal-cut-{}", cut.replace('.', "-"));
-        let (_setup, manifest) = prepare_manifest(root.path(), forwarder_port, &sandbox_id);
+        let (_port_window, _setup, manifest) =
+            prepare_manifest(root.path(), forwarder_port, &sandbox_id);
         let provider = SurvivingProvider::spawn(listener, desired_routes(&manifest), None, false);
 
         kill_child_at_marker(
@@ -549,7 +553,7 @@ fn nnc5_4a_two_process_contenders_share_one_generation_and_effect_sequence() {
         .expect("contended surviving provider address should resolve")
         .port();
     let sandbox_id = "machine-publication-process-contention";
-    let (setup, manifest) = prepare_manifest(root.path(), forwarder_port, sandbox_id);
+    let (_port_window, setup, manifest) = prepare_manifest(root.path(), forwarder_port, sandbox_id);
     setup
         .ensure_machine_port_proxies_running_with_publication(
             &manifest.handle.id,
@@ -975,16 +979,21 @@ fn contention_waiter_child() {
     emit_child_event("contention-timeout");
 }
 
+/// Returns the claimed window alongside the fixture. The child processes below
+/// bind both published ports, so the caller must keep the claim alive until the
+/// last child exits rather than letting it end with this constructor.
 fn prepare_manifest(
     root: &Path,
     forwarder_port: u16,
     sandbox_id: &str,
-) -> (ContainerSandboxBackend, ContainerSandboxManifest) {
-    let first_port = unused_loopback_port();
-    let mut second_port = unused_loopback_port();
-    while second_port == first_port {
-        second_port = unused_loopback_port();
-    }
+) -> (
+    PortWindow,
+    ContainerSandboxBackend,
+    ContainerSandboxManifest,
+) {
+    let port_window = PortWindow::claim();
+    let first_port = port_window.port(0);
+    let second_port = port_window.port(1);
     let mut config = ContainerSandboxBackendConfig::under_root(root);
     config.machine_port_forwarder = Some(sample_forwarder(forwarder_port));
     let backend = ContainerSandboxBackend::new(config);
@@ -1004,7 +1013,7 @@ fn prepare_manifest(
     backend
         .write_manifest(&manifest)
         .expect("fresh-process manifest should be durable before child launch");
-    (backend, manifest)
+    (port_window, backend, manifest)
 }
 
 fn child_backend_and_manifest() -> (ContainerSandboxBackend, ContainerSandboxManifest) {

@@ -1,5 +1,6 @@
 use super::*;
 use nimbus_network::PortLeasePhase;
+use nimbus_process_harness::PortWindow;
 
 fn replace_anchor_with_nonempty_directory(path: &Path) {
     fs::remove_file(path).expect("published trust anchor should remove");
@@ -22,11 +23,10 @@ enum PepCleanup {
 fn assert_assignmentless_cleanup_preserves_live_leased_pep(id: SandboxId, cleanup: PepCleanup) {
     let state_root = tempfile::TempDir::new().expect("egress state root should exist");
     let tenant = tenant();
-    let port = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("port probe should bind")
-        .local_addr()
-        .expect("port probe address should resolve")
-        .port();
+    // Held for the rest of the body: the coordinator range below hands this
+    // port to the PEP, which binds it after this statement returns.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
@@ -354,11 +354,10 @@ fn activation_ack_loss_anchor_failure_retains_restart_tombstone() {
     let state_root = tempfile::TempDir::new().expect("egress state root should exist");
     let tenant = tenant();
     let id = SandboxId::new("egress-activation-ack-restart-tombstone");
-    let port = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("port probe should bind")
-        .local_addr()
-        .expect("port probe address should resolve")
-        .port();
+    // Held for the rest of the body: the coordinator range below hands this
+    // port to the PEP, which binds it after this statement returns.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
@@ -479,11 +478,10 @@ fn fresh_launch_activation_ack_loss_anchor_failure_fences_release() {
     let state_root = tempfile::TempDir::new().expect("egress state root should exist");
     let tenant = tenant();
     let id = SandboxId::new("egress-activation-ack-final-tombstone");
-    let port = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("port probe should bind")
-        .local_addr()
-        .expect("port probe address should resolve")
-        .port();
+    // Held for the rest of the body: the coordinator range below hands this
+    // port to the PEP, which binds it after this statement returns.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease, reservation_claim) = manager
         .reserve_internal_listener_for_coordinator(
@@ -583,11 +581,10 @@ fn released_lease_replay_does_not_repeat_withdraw_after_checkpoint_loss() {
     let state_root = tempfile::TempDir::new().expect("egress state root should exist");
     let tenant = tenant();
     let id = SandboxId::new("egress-released-checkpoint-loss");
-    let port = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("port probe should bind")
-        .local_addr()
-        .expect("port probe address should resolve")
-        .port();
+    // Held for the rest of the body: the coordinator range below hands this
+    // port to the PEP, which binds it after this statement returns.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
@@ -666,11 +663,10 @@ fn restart_rejects_released_lease_without_process_local_provider() {
     let state_root = tempfile::TempDir::new().expect("egress state root should exist");
     let tenant = tenant();
     let id = SandboxId::new("egress-restart-released");
-    let port = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("port probe should bind")
-        .local_addr()
-        .expect("port probe address should resolve")
-        .port();
+    // Held for the rest of the body: the coordinator range below hands this
+    // port to the PEP, which binds it after this statement returns.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
@@ -725,11 +721,10 @@ fn restart_rejects_failed_lease_without_process_local_provider() {
     let state_root = tempfile::TempDir::new().expect("egress state root should exist");
     let tenant = tenant();
     let id = SandboxId::new("egress-restart-failed");
-    let port = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("port probe should bind")
-        .local_addr()
-        .expect("port probe address should resolve")
-        .port();
+    // Held for the rest of the body: the coordinator range below hands this
+    // port to the PEP, which binds it after this statement returns.
+    let port_window = PortWindow::claim();
+    let port = port_window.port(0);
     let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease, reservation_claim) = manager
         .reserve_internal_listener_for_coordinator(

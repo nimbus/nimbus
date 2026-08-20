@@ -1,7 +1,8 @@
 //! Exact-attempt proofs for the krun restart provider phases.
 
-use std::net::TcpListener;
 use std::sync::Arc;
+
+use nimbus_process_harness::PortWindow;
 
 use crate::backends::conmon::creator::OwnedConmonCreator;
 use crate::backends::oci::command::CommandSpec;
@@ -356,11 +357,10 @@ fn exact_restart_quiescence_and_target_switch_replay_across_fresh_backends() {
 #[test]
 fn fresh_backend_execute_repairs_process_local_retained_network_state() {
     let root = TempDir::new().expect("temporary root should exist");
-    let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP tripwire should bind");
-    let pep_port = pep_reservation
-        .local_addr()
-        .expect("PEP tripwire should expose its address")
-        .port();
+    // The claimed window owns this port for the whole test, so the process-local
+    // PEP binds it for real without racing another test process for the number.
+    let port_window = PortWindow::claim();
+    let pep_port = port_window.port(0);
     let mut config = KrunSandboxBackendConfig::under_root(root.path().to_path_buf());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = pep_port..=pep_port;
@@ -434,7 +434,6 @@ fn fresh_backend_execute_repairs_process_local_retained_network_state() {
             )
             .expect("fixture should realize the private attachment");
     }
-    drop(pep_reservation);
     backend
         .start_planned_provision_pep(&manifest, &reservation_claim)
         .expect("fixture should start its process-local PEP");

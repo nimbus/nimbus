@@ -15,6 +15,7 @@ use nimbus_egress::{
     CompiledEgressPolicy, EgressCredentialInjection, EgressDlpRule, EgressPolicy, EgressProtocol,
     EgressRule,
 };
+use nimbus_process_harness::PortWindow;
 
 mod connect_tunnel;
 mod credentials_dlp;

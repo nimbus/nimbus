@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use nimbus_core::Cidr;
 use nimbus_network::{LocalNetworkManager, PortLeasePhase};
+use nimbus_process_harness::PortWindow;
 use tempfile::TempDir;
 
 use crate::backends::oci::network::OciNetworkProcess;
@@ -27,16 +28,33 @@ fn oci_network_process_contract_container_backends_share_real_machine_proxy_life
     .expect("the OCI process composition should construct");
     drop(bootstrap);
 
-    let published_port = unused_loopback_port_in(32_500..=32_999);
-    let forwarder = sample_forwarder(unused_loopback_port());
+    // Held to the end of the test. The shared machine proxy binds the published
+    // port after `plan_start` returns, and the assertions below rebind that exact
+    // port to prove the one provider stayed bound and then released it. A foreign
+    // process taking it in between would read as a provider that never let go.
+    //
+    // The window is partitioned: offset 0 is the machine forwarder's own port,
+    // and the rest is the published-port pool both facades register a listener
+    // over. The pool needs more than one slot because two facades share it, and
+    // the test names its first port so the rebind assertions can address the
+    // exact provider socket.
+    let port_window = PortWindow::claim();
+    let forwarder = sample_forwarder(port_window.port(0));
+    let published_pool = port_window.ports(1, port_window.usable() - 1);
+    let published_port = *published_pool.start();
     let workload_root = root.path().join("container-machine-workload");
     let first_backend = ContainerSandboxBackend::with_network_process(
-        machine_backend_config(&workload_root, &node_root, forwarder.clone()),
+        machine_backend_config(
+            &workload_root,
+            &node_root,
+            forwarder.clone(),
+            published_pool.clone(),
+        ),
         Arc::clone(&process),
     )
     .expect("first container should authenticate the process composition");
     let second_backend = ContainerSandboxBackend::with_network_process(
-        machine_backend_config(&workload_root, &node_root, forwarder),
+        machine_backend_config(&workload_root, &node_root, forwarder, published_pool),
         Arc::clone(&process),
     )
     .expect("second container should authenticate the process composition");
@@ -153,27 +171,15 @@ fn machine_backend_config(
     workload_root: &std::path::Path,
     network_root: &std::path::Path,
     forwarder: crate::backends::oci::network::OciMachinePortForwarderConfig,
+    published_pool: std::ops::RangeInclusive<u16>,
 ) -> ContainerSandboxBackendConfig {
     let mut config = ContainerSandboxBackendConfig::under_root(workload_root)
         .with_network_state_root(network_root);
     config.node_network_supernet = "10.80.0.0/16".to_owned();
     config.node_tenant_subnet_prefix = 24;
-    config.published_port_range = 32_000..=32_999;
+    // The caller holds the claim on every port in this pool, so the fixture
+    // publishes into it directly instead of searching for a free one.
+    config.published_port_range = published_pool;
     config.machine_port_forwarder = Some(forwarder);
     config
-}
-
-fn unused_loopback_port() -> u16 {
-    TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("ephemeral listener should bind")
-        .local_addr()
-        .expect("ephemeral listener should have an address")
-        .port()
-}
-
-fn unused_loopback_port_in(range: std::ops::RangeInclusive<u16>) -> u16 {
-    range
-        .into_iter()
-        .find(|port| TcpListener::bind((Ipv4Addr::LOCALHOST, *port)).is_ok())
-        .expect("fixture published-port range should have an unused listener")
 }
