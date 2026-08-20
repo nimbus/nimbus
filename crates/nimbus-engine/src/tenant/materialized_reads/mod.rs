@@ -146,6 +146,7 @@ impl TenantMaterializedReadSurface {
             byte_capacity: backend.byte_capacity,
             version_capacity: backend.version_capacity,
             table_load_count: backend.table_load_count,
+            load_restart_count: backend.load_restart_count,
             evaluation_count: self.evaluation_count.load(Ordering::Relaxed),
             paginated_count: self.paginated_count.load(Ordering::Relaxed),
             get_hit_count: self.get_hit_count.load(Ordering::Relaxed),

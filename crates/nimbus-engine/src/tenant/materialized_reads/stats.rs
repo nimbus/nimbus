@@ -12,6 +12,12 @@ pub struct MaterializedReadSurfaceStats {
     pub byte_capacity: usize,
     pub version_capacity: usize,
     pub table_load_count: u64,
+    /// Table loads discarded and restarted because the serving surface
+    /// advanced past the sequence the scan had replayed to. A few under
+    /// write load are normal. A count that climbs without
+    /// `table_load_count` climbing with it means loads of a hot table are
+    /// losing the race repeatedly and rescanning each time.
+    pub load_restart_count: u64,
     pub evaluation_count: u64,
     pub paginated_count: u64,
     pub get_hit_count: u64,
@@ -35,6 +41,7 @@ pub(super) struct MaterializedServingBackendStats {
     pub(super) byte_capacity: usize,
     pub(super) version_capacity: usize,
     pub(super) table_load_count: u64,
+    pub(super) load_restart_count: u64,
     pub(super) bypass_count: u64,
     pub(super) eviction_count: u64,
     pub(super) in_flight_load_count: u64,
