@@ -48,7 +48,7 @@ surface; it is not an executed end-to-end claim.
 ## Helper package
 
 `@nimbus/mongodb` is a small optional package, provisioned into a Nimbus
-project with `nimbus packages provision mongodb`. It exports one function:
+project with `nimbus packages install mongodb`. It exports one function:
 
 | Export | Behavior |
 | --- | --- |

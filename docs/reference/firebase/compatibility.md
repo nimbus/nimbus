@@ -20,7 +20,7 @@ Nimbus has three distinct Firebase-facing stories:
    once the app's `firebase` dependency points at the copy provisioned by
    the `nimbus` binary — `nimbus dev` wires that dependency automatically
    after its import scan confirms every Firebase import is covered, and
-   `nimbus packages provision firebase` wires it directly.
+   `nimbus packages install firebase` wires it directly.
 2. A live Firestore server surface: REST, selected native gRPC, gRPC-Web,
    and WebSocket `Listen`.
 3. Deferred wire compatibility with the registry-published Google

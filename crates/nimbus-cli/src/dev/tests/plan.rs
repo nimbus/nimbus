@@ -20,6 +20,7 @@ fn dev_plan_uses_project_local_persistence_root() {
         plan.adapter,
         Some(DevAdapter::Convex {
             source_root: plan.app_dir.join("convex"),
+            package_target: crate::authoring_root::CONVEX_TARGET,
         })
     );
     assert!(!plan.once);
