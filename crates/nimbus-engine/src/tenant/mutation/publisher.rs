@@ -112,6 +112,20 @@ fn take_committer_arm_for_testing(tenant_id: &TenantId) -> Option<CommitterArm> 
         .remove(tenant_id)
 }
 
+/// Pins a tenant's publisher queue limits for the rest of the process.
+///
+/// Unlike [`configure_committer_arm_for_testing`], this selection is *not*
+/// consumed on read. A committer arm is chosen once because production derives
+/// it from persistence topology at construction; publisher limits describe how
+/// a tenant behaves for the whole test, and a test that reopens its engine or
+/// replays after an ambiguous commit still wants the queue depth it asked for.
+/// Consuming the entry here made every rebuilt runtime fall back to the
+/// production default instead, so overload scenarios stopped overloading —
+/// silently, because the fallback is a valid configuration.
+///
+/// Entries live until the process exits. Callers key them by a `TenantId` that
+/// is unique to one test, so the map neither grows without bound nor lets two
+/// tests observe each other's configuration.
 #[cfg(test)]
 pub(crate) fn configure_publisher_limits_for_testing(
     tenant_id: TenantId,
@@ -126,12 +140,13 @@ pub(crate) fn configure_publisher_limits_for_testing(
 }
 
 #[cfg(test)]
-fn take_publisher_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, Duration)> {
+fn publisher_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, Duration)> {
     PUBLISHER_LIMITS_FOR_TESTING
         .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
         .lock()
         .expect("publisher test-limit lock should not be poisoned")
-        .remove(tenant_id)
+        .get(tenant_id)
+        .copied()
 }
 
 #[cfg(test)]
@@ -986,7 +1001,7 @@ impl PublisherHandoff {
     pub(crate) fn new(committer_arm: CommitterArm, _tenant_id: &TenantId) -> Self {
         #[cfg(test)]
         let (capacity, send_timeout) =
-            take_publisher_limits_for_testing(_tenant_id).unwrap_or_else(publisher_limits_from_env);
+            publisher_limits_for_testing(_tenant_id).unwrap_or_else(publisher_limits_from_env);
         #[cfg(not(test))]
         let (capacity, send_timeout) = publisher_limits_from_env();
         let (sender, receiver) = mpsc::channel(capacity);

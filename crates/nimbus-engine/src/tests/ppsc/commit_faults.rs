@@ -264,7 +264,6 @@ impl PpscEngineRunner {
             "post-durable panic must demand crash-and-replay: {error}"
         );
 
-        self.prepare_publisher_limits_for_runtime_load(&tenant_id);
         let recovered = timeout(
             COMMIT_PHASE_TIMEOUT,
             self.engine
