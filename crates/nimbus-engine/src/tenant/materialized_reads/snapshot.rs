@@ -238,6 +238,17 @@ impl ServingSnapshotManager {
             .cloned()
     }
 
+    /// The coverage of the newest retained version, or `None` before anything
+    /// has been published.
+    pub(super) fn latest_covered_sequence(&self) -> Option<SequenceNumber> {
+        self.state
+            .lock()
+            .expect("serving snapshot manager lock should not be poisoned")
+            .versions
+            .back()
+            .map(|snapshot| snapshot.covered_sequence())
+    }
+
     pub(super) fn snapshot_covering_table(
         &self,
         table: &TableName,
