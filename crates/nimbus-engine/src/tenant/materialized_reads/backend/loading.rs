@@ -107,14 +107,32 @@ impl MaterializedServingBackend {
                         .sum::<usize>();
                     let mut replayed_sequence = starting_sequence;
 
+                    // The catch-up target is the higher of the store's
+                    // applied head and the sequence the caller requires.
+                    //
+                    // `applied_sequence` reports what apply has made visible
+                    // to reads, and the store is free to hold it behind a
+                    // journal that is already durably appended further. The
+                    // caller takes `required_sequence` from that durable head,
+                    // so a load routinely receives a sequence the applied head
+                    // has not reached. Converging on the applied head alone
+                    // publishes the table short of what was asked for, and the
+                    // load then reports its own under-delivery as an internal
+                    // error against a store that honored its contract. Folding
+                    // the durable commit log to `required_sequence` is the
+                    // same operation the loop already performs, just carried
+                    // to the position the read actually needs.
                     loop {
                         check_cancel()?;
-                        let target_sequence = store.applied_sequence()?;
+                        let target_sequence =
+                            SequenceNumber(store.applied_sequence()?.0.max(required_sequence.0));
                         if replayed_sequence.0 >= target_sequence.0 {
                             #[cfg(test)]
                             self.wait_if_publish_pause_armed();
                             check_cancel()?;
-                            let publish_target_sequence = store.applied_sequence()?;
+                            let publish_target_sequence = SequenceNumber(
+                                store.applied_sequence()?.0.max(required_sequence.0),
+                            );
                             if replayed_sequence.0 >= publish_target_sequence.0 {
                                 break;
                             }
@@ -421,14 +439,21 @@ mod tests {
     fn a_load_rejected_behind_the_serving_frontier_counts_its_restart_and_then_converges() {
         let backend = MaterializedServingBackend::new();
         let snapshots = ServingSnapshotManager::new();
-        // A resident table already folded through 5, so it holds the serving
-        // frontier there. Anything published below 5 is rejected.
+        // A resident table already folded through 7, so it holds the serving
+        // frontier there. Anything published below 7 is rejected.
+        //
+        // The frontier has to sit above the sequence the load requires. A load
+        // now folds the durable commit log to `required_sequence` before it
+        // publishes, so it can no longer arrive behind a frontier that only
+        // matches what the read asked for. It arrives behind one that a
+        // faster-moving sibling table pushed past that point, which is the
+        // race this rejection exists to catch.
         assert_eq!(
             backend.publish_table_snapshot(
                 &snapshots,
                 table_name("ahead"),
                 1,
-                SequenceNumber(5),
+                SequenceNumber(7),
                 MaterializedTableDocuments::default(),
             ),
             TableSnapshotPublish::Published,
@@ -439,12 +464,13 @@ mod tests {
             "an accepted publication is not a restart"
         );
 
-        // One load attempt reads the applied head three times: once for its
-        // scan's starting sequence, then the catch-up loop's target read and
-        // its confirming re-read. Holding all three at 3 makes that attempt
-        // replay to 3 and offer a table behind the frontier at 5, so it is
-        // rejected. The restart reads 5 and is accepted.
-        let store = StalledHeadStore::new(3, 5, 3);
+        // One load attempt reads the applied head four times: once for its
+        // scan's starting sequence, then the catch-up loop's target read, a
+        // second target read after the fold, and its confirming re-read.
+        // Holding all four at 3 makes that attempt fold only to the sequence
+        // it requires, 5, and offer a table behind the frontier at 7, so it is
+        // rejected. The restart reads 7 and is accepted.
+        let store = StalledHeadStore::new(3, 7, 4);
         let snapshot = backend
             .load_serving_snapshot_cancellable(
                 &snapshots,
@@ -475,6 +501,165 @@ mod tests {
             backend.stats().table_load_count,
             2,
             "a restart is not a publication; only 'ahead' and the converged 'behind' publish"
+        );
+    }
+
+    /// A store whose journal is durably appended past what its applied head
+    /// has made visible to reads.
+    ///
+    /// `latest_sequence` and `applied_sequence` are different contracts: the
+    /// journal may be durably appended ahead of the position apply has
+    /// materialized. A caller that takes its required sequence from the
+    /// durable head therefore asks for a sequence the applied head has not
+    /// reached yet, and the load has to fold the durable commit log to get
+    /// there. Holding the applied head still makes that permanent rather than
+    /// a timing accident.
+    struct ApplyLaggingStore {
+        applied: SequenceNumber,
+        durable: SequenceNumber,
+        scans: AtomicU64,
+    }
+
+    impl ApplyLaggingStore {
+        fn new(applied: u64, durable: u64) -> Self {
+            Self {
+                applied: SequenceNumber(applied),
+                durable: SequenceNumber(durable),
+                scans: AtomicU64::new(0),
+            }
+        }
+
+        fn scan_count(&self) -> u64 {
+            self.scans.load(Ordering::Relaxed)
+        }
+    }
+
+    impl MaterializedRebuild for ApplyLaggingStore {
+        fn scan_table_matching_cancellable<F>(
+            &self,
+            _table: &TableName,
+            check_cancel: &mut dyn FnMut() -> Result<()>,
+            _include_document: F,
+        ) -> Result<Vec<Document>>
+        where
+            F: FnMut(&Document) -> Result<bool>,
+        {
+            check_cancel()?;
+            self.scans.fetch_add(1, Ordering::Relaxed);
+            Ok(Vec::new())
+        }
+    }
+
+    impl DurableJournal for ApplyLaggingStore {
+        fn applied_sequence(&self) -> Result<SequenceNumber> {
+            Ok(self.applied)
+        }
+
+        fn read_commit_log_from(&self, sequence: SequenceNumber) -> Result<Vec<CommitEntry>> {
+            Ok((sequence.0..=self.durable.0)
+                .map(|sequence| CommitEntry {
+                    sequence: SequenceNumber(sequence),
+                    timestamp: Timestamp::from_unix_millis(sequence),
+                    writes: Vec::new(),
+                })
+                .collect())
+        }
+
+        fn journal_progress(&self) -> Result<JournalProgress> {
+            unimplemented!("the load path does not read journal progress")
+        }
+
+        fn read_durable_journal_from(
+            &self,
+            _sequence: SequenceNumber,
+        ) -> Result<Vec<TenantEventRecord>> {
+            unimplemented!("the load path does not read the durable journal")
+        }
+
+        fn stream_durable_journal(
+            &self,
+            _after: SequenceNumber,
+            _limit: usize,
+        ) -> Result<DurableJournalPage> {
+            unimplemented!("the load path does not stream the durable journal")
+        }
+
+        fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
+            unimplemented!("the load path does not export a bootstrap")
+        }
+
+        fn latest_sequence(&self) -> Result<SequenceNumber> {
+            unimplemented!("the load path reads the applied head, not the durable head")
+        }
+
+        fn recover_durable_journal(&self) -> Result<JournalProgress> {
+            unimplemented!("the load path does not recover")
+        }
+
+        fn append_durable_records_batch(&self, _records: &[TenantEventRecord]) -> Result<()> {
+            unimplemented!("the load path does not write")
+        }
+
+        fn apply_durable_records_batch(&self, _records: &[TenantEventRecord]) -> Result<()> {
+            unimplemented!("the load path does not write")
+        }
+
+        fn export_point_in_time_restore_archive(
+            &self,
+            _target: PointInTimeRestoreTarget,
+            _retention_config: RetentionGcConfig,
+        ) -> Result<PointInTimeRestoreArchive> {
+            unimplemented!("the load path does not export an archive")
+        }
+
+        fn import_point_in_time_restore_archive(
+            &self,
+            _archive: &PointInTimeRestoreArchive,
+        ) -> Result<JournalProgress> {
+            unimplemented!("the load path does not import an archive")
+        }
+    }
+
+    /// A read whose required sequence is durable but not yet applied must
+    /// still be served.
+    ///
+    /// `Engine` takes `required_sequence` from the tenant's durable head, so a
+    /// load routinely receives a sequence the store's applied head has not
+    /// reached. Converging the catch-up on the applied head alone publishes
+    /// the table below what the caller asked for, and the load then reports
+    /// its own under-delivery as an internal error against a store that did
+    /// nothing wrong.
+    #[test]
+    fn a_load_reaches_a_required_sequence_the_applied_head_has_not_made_visible() {
+        let backend = MaterializedServingBackend::new();
+        let snapshots = ServingSnapshotManager::new();
+        let store = ApplyLaggingStore::new(5, 10);
+
+        let snapshot = backend
+            .load_serving_snapshot_cancellable(
+                &snapshots,
+                &store,
+                &table_name("lagging"),
+                SequenceNumber(10),
+                &mut || Ok(()),
+            )
+            .expect("a load must reach the durable sequence its caller requires");
+
+        assert!(
+            snapshot.covered_sequence().0 >= 10,
+            "the published snapshot must cover the required sequence, not the applied head: covered {}",
+            snapshot.covered_sequence().0
+        );
+        assert!(
+            snapshot
+                .table_document_count(&table_name("lagging"))
+                .is_some(),
+            "the load must serve the table it was asked for"
+        );
+        assert_eq!(
+            store.scan_count(),
+            1,
+            "folding the durable log to the required sequence needs no rescan"
         );
     }
 }
